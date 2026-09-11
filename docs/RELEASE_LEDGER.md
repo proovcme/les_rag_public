@@ -4,20 +4,42 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-09-03)
+## Текущее состояние (2026-09-12)
 
 ```
-версия продукта (SemVer):  0.30.59
-номер сборки:              699
-версия Tauri/NSIS:         5.1.699
+версия продукта (SemVer):  0.31.32
+номер сборки:              738
+версия Tauri/NSIS:         5.1.738
 ветка разработки:          fix/local-qwen-result-parse
-dev implementation:       0.30.59 local-Qwen markdown/history/ping; not deployed
-задеплоено на рантайм:     Legion 0.30.58 / build 698 / commit 4c928375; LIVE XLSX ACCEPTED
+dev implementation:       0.31.32 PDF/XLSX LSR integrity; live accepted
+задеплоено на рантайм:     local LES 0.31.32 / build 738 / candidate branch HEAD
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.58 / build 698 / desktop 5.1.698 / commit 4c928375; accepted
+рантайм /api/version:      local LES 0.31.32 / build 738; aligned; live PDF accepted
 ```
+
+> **0.31.32 / build 738 LSR conflict-preservation candidate:** восстановлен
+> фактический build-737 runtime overlay в ветке. Исчерпанный поиск сохраняет
+> последний `CONFLICT`, шифр и причину вместо ложного `MISSING`; настоящий
+> поиск без кандидата остаётся `MISSING`. Verifier больше не получает
+> предвзятую команду искать противоречие. Нулевая денежная часть выпускает
+> доступный partial-XLSX со всеми unresolved-строками и не выставляет
+> `NO_BOUND_LSR_ROWS` как технический blocker. В деньги входят только
+> подтверждённые моделью строки. Deploy stamp хранит полный source commit,
+> необходимый для воспроизводимого live acceptance. Live acceptance ещё не записана.
+
+> **Build 738 PDF source-row completion:** живой прогон исходного БАП-PDF
+> выявил отсутствие source catalog для PDF (`catalog_rows=0`): Qwen выдала
+> строки карточек норм вместо устойчивых строк ВОР и упёрлась в generation
+> length. Теперь converter-produced Markdown-таблица PDF получает стабильные
+> локаторы `PDF!Rn`, полный work-row denominator и те же проверки
+> identity/quantity/unit/coverage, что XLSX/CSV. На контрольном PDF каталог
+> содержит 25 структурных строк и ровно 19 work rows. Живой повторный прогон
+> на исходном `ВОР монтаж БАП П1 13.05 (2).pdf` завершён за 794 с:
+> `accepted_unchanged`, `packaged=true`, 19/19 строк, XLSX 14 053 байта,
+> два листа, 19 `CONFLICT`, битых формул нет. Нулевая денежная часть отражает
+> модельную проверку норм и больше не превращается в техническую ошибку.
 
 > **0.30.59 / build 699 local-Qwen result parse candidate (не опубликован):**
 > локальный Qwen часто отдаёт markdown с divider `:--`, заголовком

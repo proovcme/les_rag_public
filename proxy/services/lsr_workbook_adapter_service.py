@@ -7,12 +7,128 @@ and renders that trace to XLSX.
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from proxy.services import fgis_price_service
 from proxy.services.rim_lsr_trace_service import build_lsr_trace_from_visible_rows
 from proxy.services.rim_trace_xlsx_service import render_lsr_xlsx
+
+_QUESTION_LIKE_TITLES = {
+    "собери лср",
+    "составь лср",
+    "сделай лср",
+    "собери смету",
+    "локальный сметный расчёт",
+    "локальный сметный расчет",
+}
+_QUARTER_RE = re.compile(
+    r"(?i)(?P<num>[1-4])\s*(?:квартал|кв\.?)\s*(?P<year>20\d{2})"
+)
+_LABEL_RES = (
+    ("customer", re.compile(r"(?im)^\s*заказчик\s*[:\-–]\s*(.+?)\s*$")),
+    ("object", re.compile(
+        r"(?im)^\s*объект(?:\s+капитального\s+строительства)?\s*[:\-–]\s*(.+?)\s*$"
+    )),
+    ("stroika", re.compile(
+        r"(?im)^\s*(?:стройка|наименование\s+стройки)\s*[:\-–]\s*(.+?)\s*$"
+    )),
+    ("basis", re.compile(r"(?im)^\s*основание\s*[:\-–]\s*(.+?)\s*$")),
+    ("title", re.compile(
+        r"(?im)^\s*(ведомость\s+объ[её]м(?:а|ов)\s+работ[^\n]*)\s*$"
+    )),
+)
+
+
+def _clean_identity_value(value: str) -> str:
+    text = " ".join(str(value or "").replace("\u00a0", " ").split())
+    return text.strip(" .;:-")
+
+
+def extract_lsr_source_identity(
+    *,
+    source_text: str = "",
+    source_name: str = "",
+) -> dict[str, str]:
+    """Labeled VOR identity only. Never uses the chat question as a title."""
+
+    filename = Path(str(source_name or "").strip()).name
+    stem = Path(filename).stem if filename else ""
+    fields: dict[str, str] = {}
+    for key, pattern in _LABEL_RES:
+        match = pattern.search(str(source_text or ""))
+        if match:
+            cleaned = _clean_identity_value(match.group(1))
+            if cleaned:
+                fields[key] = cleaned
+    title = fields.get("title") or stem
+    if _clean_identity_value(title).casefold() in _QUESTION_LIKE_TITLES:
+        title = stem
+    title = title or "Локальный сметный расчёт"
+    quarter = _QUARTER_RE.search(str(source_text or ""))
+    price_level = (
+        f"{quarter.group('num')} квартал {quarter.group('year')}"
+        if quarter
+        else "—"
+    )
+    stroika = fields.get("stroika") or ""
+    customer = fields.get("customer") or ""
+    if not stroika and customer:
+        stroika = customer
+    return {
+        "title": title,
+        "object": fields.get("object") or "",
+        "stroika": stroika,
+        "customer": customer,
+        "osnovanie": fields.get("basis") or filename or "—",
+        "price_level": price_level,
+    }
+
+
+def _read_source_preview_text(path: Path) -> str:
+    if path.suffix.lower() != ".pdf" or not path.exists():
+        return ""
+    try:
+        import fitz
+    except Exception:
+        return ""
+    try:
+        with fitz.open(str(path)) as document:
+            pages: list[str] = []
+            for index, page in enumerate(document):
+                if index >= 2:
+                    break
+                pages.append(page.get_text() or "")
+            return "\n".join(pages)
+    except Exception:
+        return ""
+
+
+def collect_lsr_workbook_gaps(trace: Mapping[str, Any]) -> list[str]:
+    """Operator-visible bind/price gaps. Code does not choose replacement norms."""
+
+    gaps: list[str] = []
+    for binding in trace.get("row_bindings") or []:
+        if not isinstance(binding, Mapping):
+            continue
+        if str(binding.get("status") or "") == "bound":
+            continue
+        gaps.append(
+            f"row:{binding.get('row')}:{binding.get('status') or 'unresolved'}"
+        )
+    for section in trace.get("sections") or []:
+        if not isinstance(section, Mapping):
+            continue
+        for position in section.get("positions") or []:
+            if not isinstance(position, Mapping):
+                continue
+            reasons = (position.get("summary") or {}).get("completeness_reasons") or []
+            for reason in reasons:
+                text = str(reason)
+                if text.startswith("price_missing:"):
+                    gaps.append(text)
+    return gaps
 
 
 async def build_lsr_workbook_from_decisions(
@@ -35,47 +151,51 @@ async def build_lsr_workbook_from_decisions(
         else None
     )
     pricebook_name = Path(pricebook_path).stem if pricebook_path else ""
+    source_name = str(args.get("_source_name") or _source_path.name or "")
+    source_text = str(args.get("_source_text") or "") or _read_source_preview_text(
+        Path(_source_path)
+    )
+    identity = extract_lsr_source_identity(
+        source_text=source_text,
+        source_name=source_name,
+    )
     progress("model_decisions", 0, len(decisions))
     trace = await asyncio.to_thread(
         build_lsr_trace_from_visible_rows,
         decisions,
         pricebook=pricebook,
-        name=str(args.get("question") or "Локальный сметный расчёт"),
+        name=identity["title"],
     )
     render_meta = {
-        "source": str(args.get("_source_name") or ""),
+        "source": source_name,
         "pricebook": pricebook_name,
+        "osnovanie": identity["osnovanie"],
+        "price_level": identity["price_level"],
     }
+    if identity["object"]:
+        render_meta["object"] = identity["object"]
+    if identity["stroika"]:
+        render_meta["stroika"] = identity["stroika"]
     if pricebook is not None:
-        render_meta.update(
-            {
-                "subject": str(getattr(pricebook, "region", "") or "Не указан"),
-                "price_level": str(
-                    getattr(pricebook, "quarter", "") or pricebook_name
-                ),
-            }
-        )
+        render_meta["subject"] = str(getattr(pricebook, "region", "") or "Не указан")
     await asyncio.to_thread(
         render_lsr_xlsx,
         trace,
         output_path,
-        title=str(args.get("question") or "Локальный сметный расчёт"),
+        title=identity["title"],
         meta=render_meta,
     )
     progress("model_decisions", len(decisions), len(decisions))
 
-    bindings = list(trace.get("row_bindings") or [])
-    missing = [
-        f"row:{binding.get('row')}:{binding.get('status') or 'unresolved'}"
-        for binding in bindings
-        if str(binding.get("status") or "") != "bound"
-    ]
-    bound_rows = int((trace.get("summary") or {}).get("bound_rows") or 0)
+    missing = collect_lsr_workbook_gaps(trace)
     return {
         "file_path": output_path,
         "source_rows": len(decisions),
         "pricebook": pricebook_name,
         "pricing_status": str((trace.get("summary") or {}).get("result_status") or ""),
+        "norms_status": str((trace.get("summary") or {}).get("norms_status") or ""),
         "missing": missing,
-        "blockers": ([] if bound_rows else ["NO_BOUND_LSR_ROWS"]),
+        # A zero-priced result is still a useful audit workbook. Unresolved
+        # rows and their reasons remain in ``missing`` and the rendered trace.
+        "blockers": [],
     }

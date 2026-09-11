@@ -269,7 +269,8 @@ def write_deploy_stamp(*, dev_root: Path | None = None, runtime_root: Path | Non
     dev = Path(dev_root) if dev_root else _code_root()
     rt = Path(runtime_root) if runtime_root else _RUNTIME_ROOT
     if not deployed_commit:
-        deployed_commit = _git(["rev-parse", "--short", "HEAD"], dev) or "unknown"
+        # Acceptance receipts bind artifacts to an immutable full source id.
+        deployed_commit = _git(["rev-parse", "HEAD"], dev) or "unknown"
         deployed_branch = deployed_branch or _git(["rev-parse", "--abbrev-ref", "HEAD"], dev) or "unknown"
     bundle: dict[str, str] = {}
     for rel in DEPLOY_BUNDLE_FILES:

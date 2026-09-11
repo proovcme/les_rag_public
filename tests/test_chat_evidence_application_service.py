@@ -252,7 +252,7 @@ def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
         ]
         query_hits.append((f"работа {query_index}", hits))
 
-    groups, chunks = service.build_model_rag_evidence_groups(
+    groups, chunks, omitted_refs = service.build_model_rag_evidence_groups(
         query_hits,
         max_chars=70_000,
         hits_per_query=4,
@@ -266,6 +266,7 @@ def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
     assert "ГЭСН30-00-000-04" in rendered
     assert "ГЭСН30-00-000-05" not in rendered
     assert len(rendered) <= 70_000
+    assert omitted_refs == []
 
 
 def test_model_rag_source_map_preserves_typed_locator_and_evidence_handle():
@@ -298,7 +299,6 @@ def test_model_rag_result_preserves_all_rows_and_domain_fields_unchanged():
             "unit": "шт.",
             "quantity": index,
             "norm_code": f"ГЭСНм00-00-000-{index:02d}",
-            "evidence_refs": [f"Источник {index}"],
         }
         for index in range(1, 31)
     ]
@@ -395,7 +395,7 @@ def test_model_rag_packaging_requires_complete_rows_and_real_matching_evidence()
     )
 
     assert "duplicate_source_row:1" in errors
-    assert "missing_source_row:2" in errors
+    assert "missing_source_row:2" not in errors
     assert "unknown_evidence_ref:Q9.H9" in errors
     assert "norm_code_not_in_referenced_evidence:1" in errors
 
@@ -415,7 +415,7 @@ def test_model_rag_result_does_not_infer_rows_from_prose():
     assert service.parse_model_rag_result(answer) is None
 
 
-def test_model_rag_result_reads_english_field_table_with_short_dividers():
+def test_model_rag_result_rejects_ambiguous_short_dividers():
     answer = """**Инженерный вердикт:** цены не найдены, строки всё равно ниже.
 
 | № | source_row | section | title | unit | quantity | norm_code | analogue | coverage | coefficient | evidence_refs |
@@ -426,15 +426,10 @@ def test_model_rag_result_reads_english_field_table_with_short_dividers():
 
     parsed = service.parse_model_rag_result(answer)
 
-    assert parsed is not None
-    assert [row["title"] for row in parsed[1]] == ["Светильник", "Бра"]
-    assert [row.get("norm_code") for row in parsed[1]] == ["ГЭСНм08-03-609-02", None]
-    assert parsed[1][0]["quantity"] == 25
-    assert parsed[1][0]["source_row"] == 1
-    assert parsed[1][0]["evidence_refs"] == ["Q1.H2"]
+    assert parsed is None
 
 
-def test_model_rag_result_reads_installation_norm_header_with_norm_code_hint():
+def test_model_rag_result_rejects_noncontract_norm_header():
     answer = """### Раздел 1. Осветительная аппаратура
 | № | Наименование работ (из ВОР) | Ед. изм. | Кол-во | Норматив монтажа (norm_code) | Аналог/Примечание | Coverage (покрытие) | Evidence_refs |
 |---|---|---|---|---|---|---|---|
@@ -443,23 +438,10 @@ def test_model_rag_result_reads_installation_norm_header_with_norm_code_hint():
 
     parsed = service.parse_model_rag_result(answer)
 
-    assert parsed is not None
-    assert parsed[1] == [
-        {
-            "source_row": 1,
-            "section": "Раздел 1. Осветительная аппаратура",
-            "title": "Светильник светодиодный",
-            "unit": "шт.",
-            "quantity": 25,
-            "norm_code": "ГЭСНм08-03-609-02",
-            "analogue": "Прямое соответствие",
-            "coverage": "Частичное",
-            "evidence_refs": ["Q1.H2"],
-        }
-    ]
+    assert parsed is None
 
 
-def test_model_rag_result_reads_vor_spec_table_without_norm_headers():
+def test_model_rag_result_does_not_treat_vor_spec_as_lsr_decisions():
     answer = """
 ### 1. Осветительная аппаратура
 
@@ -468,17 +450,10 @@ def test_model_rag_result_reads_vor_spec_table_without_norm_headers():
 | Светильник светодиодный накладной, IP65, 30 Вт | шт. | 25 | Спецификация, поз. 1.1 | Подтверждено |
 """
     parsed = service.parse_model_rag_result(answer)
-    assert parsed is not None
-    _, rows = parsed
-    assert rows[0]["title"].startswith("Светильник")
-    assert rows[0]["unit"] == "шт."
-    assert rows[0]["quantity"] == 25
-    assert rows[0]["section"].startswith("1.")
-    assert rows[0]["note"] == "Спецификация, поз. 1.1"
-    assert "norm_code" not in rows[0]
+    assert parsed is None
 
 
-def test_model_rag_result_reads_source_and_note_columns_together():
+def test_model_rag_result_does_not_treat_source_note_table_as_lsr_decisions():
     answer = """
 ### 1. Осветительная аппаратура
 
@@ -487,13 +462,7 @@ def test_model_rag_result_reads_source_and_note_columns_together():
 | Светильник светодиодный накладной, IP65, 30 Вт | шт. | 25 | [Источник 1] | Позиция 1.1 |
 """
     parsed = service.parse_model_rag_result(answer)
-    assert parsed is not None
-    _, rows = parsed
-    assert rows[0]["title"].startswith("Светильник")
-    assert rows[0]["quantity"] == 25
-    assert rows[0]["section"].startswith("1.")
-    assert rows[0]["note"] == "[Источник 1]; Позиция 1.1"
-    assert "norm_code" not in rows[0]
+    assert parsed is None
 
 
 def test_model_rag_result_reads_explicit_multiline_labelled_blocks():
@@ -2640,9 +2609,12 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "прокладка контрольного кабеля",
         ]
         assert "Собери ЛСР" not in rag_queries
-        assert workbook_executor_calls[-1]["args"]["decisions"] == exact_decisions
+        packaged = workbook_executor_calls[-1]["args"]["decisions"]
+        assert len(packaged) == 1
+        for field, value in exact_decisions[0].items():
+            assert packaged[0].get(field) == value
         assert workbook_executor_calls[-1]["tool"] == "build_lsr_workbook"
-        assert active_transport.revisions == ["conn:active:r3"] * 2
+        assert active_transport.revisions[:2] == ["conn:active:r3"] * 2
         assert active_transport.requests[0].tools == ()
         assert active_transport.requests[1].tools == ()
         assert "Строка 1: монтаж шкафа управления — 2 шт." in str(
@@ -2664,7 +2636,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert "по всем фактическим строкам" in first_messages
         assert "сохраняй язык и профессиональную терминологию исходных строк" in first_messages
         assert "не переводи и не транслитерируй" in first_messages
-        assert "Код не подтверждает и не меняет твой выбор" in final_messages
+        assert "Код не выбирает норму и не меняет ячейки" in final_messages
         assert history_rows[0]["retrieval_trace"]["status"] == "model_driven"
         assert history_rows[0]["retrieval_trace"]["reason"] == (
             "awaiting_model_authored_query"
@@ -2680,7 +2652,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert manifest["cited_ids"] == ["Q1.H1"]
         assert history_rows[0]["retrieval_trace"]["source_map"] == result["source_map"]
         assert "rounds" not in tool_loop
-        assert "review" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
+        assert "norm_quality_gate" in history_rows[0]["retrieval_trace"]
         assert "confirm" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
         return
     if inactive_workbook:

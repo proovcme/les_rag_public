@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.32 LSR conflict preservation and PDF row integrity:** исчерпание повторного поиска больше
+> не превращает отклонённый моделью шифр из `CONFLICT` в ложный `MISSING`.
+> PDF-ведомости получают точные `PDF!Rn` source locators из распознанной
+> Markdown-таблицы, поэтому карточки норм не могут подменить строки исходного ВОР.
+> Нейтральный verifier проверяет применимость, масштабные единицы совместимы,
+> а XLSX выпускается как рабочий partial-аудит даже при нуле строк в деньгах.
+> Точки: `lsr_norm_quality_gate_service`, `chat_evidence_application_service`,
+> `lsr_workbook_adapter_service`. Статус док↔код: ✅.
+
 > **0.30.59 local-Qwen result parse candidate:** reader принимает короткий
 > markdown-divider `:--`, заголовок «Норматив монтажа (norm_code)», явные
 > спецификационные таблицы без `norm_code` и секционные `###` кроме `Строка N`.

@@ -135,6 +135,79 @@ def test_smeta_activation_publishes_alias_and_active_manifest_together(tmp_path)
     assert runtime_payload == payload
 
 
+def test_smeta_activation_archives_physical_alias_blocker(tmp_path, monkeypatch):
+    class Client:
+        def __init__(self):
+            self.aliases = {}
+            self.collections = {"les_smeta_norm_cards", "smeta_v4"}
+            self.deleted = []
+            self.recovery = None
+
+        def collection_exists(self, name):
+            return name in self.collections
+
+        def count(self, _target, *, count_filter=None, exact=True):
+            assert exact is True
+            return SimpleNamespace(count=12)
+
+        def get_aliases(self):
+            return SimpleNamespace(
+                aliases=[
+                    SimpleNamespace(alias_name=alias, collection_name=target)
+                    for alias, target in self.aliases.items()
+                ]
+            )
+
+        def create_snapshot(self, collection, wait):
+            assert (collection, wait) == ("les_smeta_norm_cards", True)
+            return SimpleNamespace(name="legacy.snapshot")
+
+        def recover_snapshot(self, collection, **kwargs):
+            self.recovery = (collection, kwargs)
+            self.collections.add(collection)
+            return True
+
+        def delete_collection(self, name):
+            self.deleted.append(name)
+            self.collections.discard(name)
+
+        def update_collection_aliases(self, _operations):
+            self.aliases["les_smeta_norm_cards"] = "smeta_v4"
+            return True
+
+    source = tmp_path / "smeta_v4.manifest.json"
+    active = tmp_path / "les_smeta_norm_rag_manifest.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema": "smeta_norm_rag_manifest_v2",
+                "collection": "smeta_v4",
+                "status": "passed",
+                "expected_points": 12,
+                "point_embedding_fingerprint": "fp",
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = Client()
+
+    activate(
+        client=client,
+        alias="les_smeta_norm_cards",
+        target="smeta_v4",
+        report={"expected_points": 12},
+        manifest_source=source,
+        manifest_destinations=[active],
+        archive_physical_alias_as="les_smeta_norm_cards_legacy_v2",
+        qdrant_url="http://127.0.0.1:6333",
+    )
+
+    assert client.deleted == ["les_smeta_norm_cards"]
+    assert client.recovery[0] == "les_smeta_norm_cards_legacy_v2"
+    assert client.aliases == {"les_smeta_norm_cards": "smeta_v4"}
+    assert json.loads(active.read_text(encoding="utf-8"))["physical_generation"] == "smeta_v4"
+
+
 def test_release_activation_rolls_back_sqlite_when_alias_postcheck_fails(tmp_path):
     class Client:
         def __init__(self):

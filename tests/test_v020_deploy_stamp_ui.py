@@ -33,6 +33,17 @@ def test_deploy_stamp_loaded(monkeypatch):
         d = vs.deploy_stamp()
         assert d["status"] == "ok" and d["deployed_commit"] == "abc123"
 
+
+def test_deploy_stamp_defaults_to_full_source_commit(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        rt = Path(td)
+        full = "a" * 40
+        monkeypatch.setattr(vs, "_RUNTIME_ROOT", rt)
+        monkeypatch.setattr(vs, "_git", lambda args, _cwd: full if args == ["rev-parse", "HEAD"] else "branch")
+        monkeypatch.setattr(vs, "DEPLOY_BUNDLE_FILES", ())
+        vs.write_deploy_stamp(dev_root=rt, runtime_root=rt)
+        assert vs.deploy_stamp()["deployed_commit"] == full
+
 def test_deploy_stamp_hash_match(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         rt = Path(td); (rt / "proxy/routers").mkdir(parents=True)

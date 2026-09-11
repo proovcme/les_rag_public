@@ -22,6 +22,11 @@
 
 ## Что входит в текущий LES
 
+- LSR quality gate: нейтральная проверка карточки, сохранение последнего
+  `CONFLICT` после исчерпания поиска, отдельный честный `MISSING`, store-card
+  и PDF Markdown source catalog с устойчивыми локаторами и точным work-row count;
+  verify и выпуск доступного partial-XLSX при нуле подтверждённых строк.
+
 - Evidence/chat: scope `none | selected | all`, evidence packet, context governor,
   typed citations/source navigation, immutable model-visible evidence manifest,
   explicit source-only capability, research tools и отсутствие кодового final вместо модели.

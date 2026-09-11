@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -14,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_make_smeta_base_publishes_through_generation_coordinator():
+    if shutil.which("make") is None:
+        pytest.skip("make is unavailable; Windows gate runs the target commands directly")
     completed = subprocess.run(
         ["make", "-n", "smeta-base"],
         cwd=ROOT,

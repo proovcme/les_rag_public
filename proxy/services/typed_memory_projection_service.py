@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Literal, Mapping, Sequence
 
@@ -38,6 +38,7 @@ class MemoryLimits:
     max_notes: int = 5
     max_advisory_items: int = 5
     max_payload_chars: int = 700
+    max_note_payload_chars: int | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class MemoryProjection:
     omitted: int
     cursor: str
     context_role: str = "advisory_state"
+    omitted_item_ids: tuple[str, ...] = ()
 
     def as_context_candidates(self) -> tuple[ContextCandidate, ...]:
         checkpoint_kinds = {
@@ -123,6 +125,16 @@ def _memory_cursor(session_id: str, items: Sequence[MemoryItem]) -> str:
     return f"memory:{session_id or 'anonymous'}:{digest}"
 
 
+def resolve_session_memory_scope(session_id: str, project_id: int | None) -> tuple[int | None, bool]:
+    """Read workspace ownership without modifying the request's evidence scope."""
+    from proxy.services.chat_session_service import get_session
+
+    session = get_session(session_id) if session_id else None
+    if session and session.get("registered"):
+        return session.get("project_id"), True
+    return project_id or None, False
+
+
 def project_memory_from_records(
     *,
     session_id: str,
@@ -134,8 +146,10 @@ def project_memory_from_records(
     traces: Sequence[Mapping[str, Any]],
     advisory_items: Sequence[Mapping[str, Any]],
     limits: MemoryLimits,
+    prioritize_notes: bool = False,
 ) -> MemoryProjection:
     items: list[MemoryItem] = []
+    omitted_notes: list[MemoryItem] = []
     payload_limit = limits.max_payload_chars
 
     if chat_profile:
@@ -203,20 +217,27 @@ def project_memory_from_records(
         ))
 
     allowed_projects = {0, int(project_id or 0)}
-    for note in list(notes)[:max(0, limits.max_notes)]:
+    eligible_notes = [note for note in notes
+                      if int(note.get("project_id") or 0) in allowed_projects
+                      and bool(note.get("enabled", True))]
+    for note_index, note in enumerate(eligible_notes):
         note_project = int(note.get("project_id") or 0)
-        if note_project not in allowed_projects:
-            continue
-        items.append(MemoryItem(
+        payload = {"text": str(note.get("text") or ""), "source": "operator_note"}
+        item = MemoryItem(
             item_id=f"note:{note.get('id')}",
             kind=MemoryItemKind.ADVISORY_FACT,
-            payload=_bounded_payload(
-                {"text": str(note.get("text") or ""), "source": "operator_note"},
-                payload_limit,
-            ),
+            payload=payload,
             revision_ref=None,
-            project_id=note_project or project_id,
-        ))
+            project_id=note_project or None,
+        )
+        # A clipped operator instruction could reverse its meaning. Omit the
+        # entire note and retain its stable ID for inspection instead.
+        if (note_index >= max(0, limits.max_notes)
+                or len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+                > (limits.max_note_payload_chars if limits.max_note_payload_chars is not None else payload_limit)):
+            omitted_notes.append(item)
+        else:
+            items.append(item)
 
     for index, advisory in enumerate(list(advisory_items)[:max(0, limits.max_advisory_items)]):
         advisory_project = int(advisory.get("project_id") or project_id or 0)
@@ -231,14 +252,19 @@ def project_memory_from_records(
         ))
 
     max_items = max(0, int(limits.max_items))
+    if prioritize_notes:
+        # Active workspace calls consume explicit notes; unused dataset locators
+        # must not exhaust their preparation limit before the Governor sees them.
+        items.sort(key=lambda item: not item.item_id.startswith("note:"))
     included = tuple(items[:max_items])
-    omitted_items = tuple(items[max_items:])
+    omitted_items = tuple(items[max_items:]) + tuple(omitted_notes)
     return MemoryProjection(
         session_id=session_id,
         project_id=project_id,
         items=included,
         omitted=len(omitted_items),
         cursor=_memory_cursor(session_id, omitted_items) if omitted_items else "",
+        omitted_item_ids=tuple(item.item_id for item in omitted_items),
     )
 
 
@@ -250,18 +276,27 @@ def project_memory(
     limits: MemoryLimits,
 ) -> MemoryProjection:
     """Adapt existing stores without copying prompt dumps into memory."""
+    project_id, registered = resolve_session_memory_scope(session_id, project_id)
+    if registered:
+        # The workspace editor permits 2000 text characters. Keep that record
+        # whole; the Governor still decides whether the entire note fits.
+        limits = replace(limits, max_notes=24, max_items=24, max_note_payload_chars=2500)
     return project_memory_from_records(
         session_id=session_id,
         project_id=project_id,
         dataset_ids=dataset_ids,
         chat_profile=chat_memory_projection_record(session_id),
         dialogue=session_memory_items(session_id, max_turns=limits.max_dialogue_turns),
-        notes=project_note_items(limit=limits.max_notes, project_id=project_id),
+        notes=project_note_items(
+            limit=limits.max_notes, project_id=project_id,
+            **({"explicit_only": True} if registered else {}),
+        ),
         traces=session_recent_retrieval_traces(session_id, max_turns=limits.max_dialogue_turns),
         advisory_items=(
             project_advisory_items(int(project_id), limit=limits.max_advisory_items)
-            if project_id
+            if project_id and not registered
             else []
         ),
         limits=limits,
+        prioritize_notes=registered,
     )

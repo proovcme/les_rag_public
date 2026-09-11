@@ -13,6 +13,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field, replace
+from itertools import combinations
 from pathlib import Path
 from backend.runtime_paths import mutable_path
 from typing import Any, Callable, Mapping, Sequence
@@ -35,6 +36,17 @@ from proxy.services.canonical_route_service import (
     canonical_route_trace_payload,
     one_model_decision_from_calls,
     resolve_canonical_route,
+)
+from proxy.services.attachment_source_catalog_service import (
+    AttachmentSourceCatalog,
+    catalog_sheet_pack_lines,
+    catalog_sheet_work_locators,
+    catalog_work_sheet_names,
+    compare_model_row_to_catalog,
+    coverage_errors,
+    load_catalog_from_attachment_id,
+    locators_missing_from_text,
+    sheet_coverage_from_missing,
 )
 from proxy.services.canonical_promotion_service import resolve_promoted_route
 from proxy.services.candidate_acceptance_service import execution_mode_for_candidate_acceptance
@@ -82,6 +94,35 @@ from proxy.services.saferag_service import (
 )
 from proxy.services.table_query_service import maybe_answer_table_query
 from proxy.services.memory_port import get_memory_port
+from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+from proxy.services.lsr_norm_quality_gate_service import (
+    LsrResearchRoundResult,
+    MAX_RESEARCH_ROUNDS_PER_LOCATOR,
+    apply_verifier_table,
+    aggregate_norms_status,
+    build_blind_review_evidence_items,
+    invented_source_row,
+    lsr_coefficient_instruction,
+    lsr_format_retry_instruction,
+    lsr_research_query_instruction,
+    lsr_research_result_evidence,
+    lsr_result_table_instruction,
+    lsr_verifier_format_retry_instruction,
+    lsr_verifier_instruction,
+    mark_research_exhausted,
+    merge_format_retry_rows,
+    merge_quality_gated_rows,
+    prepare_selection_row,
+    rejected_codes_clause,
+    row_is_quality_terminal,
+    row_needs_research,
+    run_coefficient_review,
+    run_lsr_norm_quality_loop,
+    terminal_source_row_keys,
+    verifier_generation_tokens,
+    verifier_packets,
+    verifier_table_covers_packet,
+)
 from proxy.services.llm_transport_profile_service import (
     assistant_delta_text,
     resolve_transport_execution_profile,
@@ -141,7 +182,11 @@ from proxy.services.model_research_tool_service import (
 from proxy.services.source_locator_service import evidence_counts, source_map_item
 from proxy.services.chat_evidence_manifest_service import build_evidence_manifest
 from proxy.services.chat_capability_scope_service import filter_profile_tools
-from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
+from proxy.services.typed_memory_projection_service import (
+    MemoryLimits,
+    project_memory,
+    resolve_session_memory_scope,
+)
 from proxy.services.web_research_config_service import (
     WebResearchConfig,
     capture_web_research_config,
@@ -374,7 +419,7 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         source = value if isinstance(value, dict) else {}
         return {field: source[field] for field in fields if field in source}
 
-    safe = selected(result, ("schema", "tool", "status", "code"))
+    safe = selected(result, ("schema", "tool", "status", "code", "pricing_status", "norms_status"))
     if safe.get("status") in {"complete", "partial"}:
         for field in ("missing", "blockers"):
             values = result.get(field)
@@ -454,6 +499,11 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
             "checkpoint_id": str(checkpoint.get("checkpoint_id") or ""),
         },
         "checkpoint": dict(checkpoint),
+        "workbook_status": str(result.get("status") or ""),
+        "pricing_status": str(result.get("pricing_status") or ""),
+        "norms_status": str(result.get("norms_status") or ""),
+        "missing": list(result.get("missing") or []),
+        "blockers": list(result.get("blockers") or []),
     }
 
 
@@ -475,6 +525,19 @@ def _text_context_objects(prefix: str, text: str) -> tuple[ContextObject, ...]:
     return _context_objects(
         prefix,
         [part.strip() for part in str(text or "").split("\n\n") if part.strip()],
+    )
+
+
+def workspace_note_objects(
+    candidates: Sequence[ContextCandidate], *, registered: bool,
+) -> tuple[ContextObject, ...]:
+    """Explicit workspace notes remain optional advisory context, never evidence."""
+    if not registered:
+        return ()
+    return tuple(
+        item for candidate in candidates
+        if candidate.kind == ContextKind.WORKING_MEMORY
+        for item in candidate.objects if item.object_id.startswith("note:")
     )
 
 
@@ -524,6 +587,7 @@ def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, An
             "kind": section.kind.value,
             "items": len(section.objects),
             "tokens": section.token_count,
+            "object_ids": list(section.object_ids),
         }
         if section.kind in visible_kinds:
             item["objects"] = [
@@ -636,6 +700,42 @@ def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configur
     return max(1, configured) if iterative else 1
 
 
+TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE = "tabular_attachment_estimator_path_v1"
+_TABULAR_ESTIMATOR_TOOLS = ("search_sources", "read_source", "build_lsr_workbook")
+_TABULAR_LSR_VOLUME_INSTRUCTION = (
+    "Пустые колонки Материал/Работа/Итого во вложенной ведомости — это объёмы, "
+    "не запрет собирать таблицу строк. Не отказывайся из‑за пустых цен и не проси "
+    "прайс вместо таблицы. Цену считает код только после независимой проверки шифра. "
+    "В таблице нужны source_row, title, unit, quantity, norm_code, norm_status, "
+    "action_match, object_match, evidence_refs Qx.Hy."
+)
+_MODEL_RAG_QUERY_INSTRUCTION = (
+    "Прочитай приложенный материал целиком. Сформулируй поисковые "
+    "запросы к выбранным датасетам, необходимые для подбора evidence "
+    "по всем фактическим строкам исходного материала. Число запросов "
+    "определяешь ты; фиксированного лимита нет. В запросах сохраняй язык "
+    "и профессиональную терминологию исходных строк; не переводи и не "
+    "транслитерируй их. Сейчас не выбирай нормы "
+    "и не отвечай по существу — верни только сами поисковые запросы, "
+    "каждый с новой строки. Без обращения к собеседнику, без описания "
+    "плана и без ожидания подтверждения."
+)
+_MODEL_RAG_QUERY_REPAIR_INSTRUCTION = (
+    "Предыдущий ответ не содержал поисковых строк. Верни только поисковые "
+    "запросы к датасетам, каждый с новой строки. Без обращения, плана и "
+    "подтверждения. Нормы пока не выбирай."
+)
+_MODEL_RAG_QUERY_VOLUME_HINT = (
+    "Пустые ценовые колонки исходника не ищи. Запросы — по работам и "
+    "измерителям строк, не по прайсу."
+)
+_SHEET_PASS_WORK_LOCATOR_THRESHOLD = 24
+_ROW_PACKET_MIN = 8
+_ROW_PACKET_TARGET = 10
+_ROW_PACKET_MAX = 12
+_ROW_PACKET_MAX_ATTEMPTS = 2
+
+
 def profile_uses_model_driven_retrieval(
     profile_snapshot: dict[str, Any] | None,
 ) -> bool:
@@ -650,13 +750,394 @@ def profile_uses_model_driven_retrieval(
     )
 
 
+def profile_uses_tabular_estimator_path(
+    profile_snapshot: dict[str, Any] | None,
+) -> bool:
+    """True when this turn overlays estimator evidence because of a table file."""
+
+    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
+    bridges = snapshot.get("effective_capability_bridges") or []
+    return bool(snapshot.get("tabular_estimator_path")) or (
+        TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE in bridges
+        if isinstance(bridges, list)
+        else False
+    )
+
+
 def profile_uses_smeta_norm_retrieval(
     profile_snapshot: dict[str, Any] | None,
 ) -> bool:
-    """Route only the estimator workflow to the configured normative-card index."""
+    """Route estimator and tabular-attachment turns to the normative-card index."""
 
     snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
-    return str(snapshot.get("mode") or "").strip().casefold() == "estimator"
+    return (
+        str(snapshot.get("mode") or "").strip().casefold() == "estimator"
+        or profile_uses_tabular_estimator_path(snapshot)
+    )
+
+
+def attachment_enables_tabular_estimator_path(
+    source_catalog: AttachmentSourceCatalog | None,
+) -> bool:
+    """A loaded sheet catalog is the only signal; the question text is not."""
+
+    return source_catalog is not None and bool(source_catalog.rows)
+
+
+def overlay_tabular_estimator_snapshot(
+    profile_snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Enable model-authored RAG and LSR packaging for this turn only.
+
+    Saved UI mode and the immutable profile revision are not rewritten. The
+    overlay is the table file, not a keyword in the question.
+    """
+
+    snapshot = dict(profile_snapshot or {})
+    rag_policy = dict(snapshot.get("rag_policy") or {})
+    rag_policy["model_authored_initial_query"] = True
+    modules = [
+        str(item) for item in (rag_policy.get("system_datasets") or []) if str(item)
+    ]
+    if "smeta" not in modules:
+        modules.append("smeta")
+    rag_policy["system_datasets"] = modules
+    snapshot["rag_policy"] = rag_policy
+    tools = [str(name) for name in (snapshot.get("tools") or []) if str(name).strip()]
+    for name in _TABULAR_ESTIMATOR_TOOLS:
+        if name not in tools:
+            tools.append(name)
+    snapshot["tools"] = tools
+    bridges = [
+        str(item)
+        for item in (snapshot.get("effective_capability_bridges") or [])
+        if str(item)
+    ]
+    if TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE not in bridges:
+        bridges.append(TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE)
+    snapshot["effective_capability_bridges"] = bridges
+    snapshot["tabular_estimator_path"] = True
+    return snapshot
+
+
+def bind_tabular_estimator_profile(
+    profile_snapshot: dict[str, Any] | None,
+    *,
+    attachment_id: str = "",
+    source_catalog: AttachmentSourceCatalog | None = None,
+) -> tuple[dict[str, Any], AttachmentSourceCatalog | None, bool]:
+    """Load the attachment catalog and overlay estimator evidence for this request."""
+
+    catalog = source_catalog
+    if catalog is None:
+        catalog = load_catalog_from_attachment_id(str(attachment_id or ""))
+    snapshot = dict(profile_snapshot or {})
+    if not attachment_enables_tabular_estimator_path(catalog):
+        return snapshot, catalog, False
+    return overlay_tabular_estimator_snapshot(snapshot), catalog, True
+
+
+def model_rag_query_instruction(profile_snapshot: dict[str, Any] | None) -> str:
+    """Search-query call contract; empty VOR prices are not a price-list search."""
+
+    parts = [_MODEL_RAG_QUERY_INSTRUCTION]
+    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
+    if (
+        str(snapshot.get("mode") or "").strip().casefold() == "estimator"
+        or profile_uses_tabular_estimator_path(snapshot)
+    ):
+        parts.append(_MODEL_RAG_QUERY_VOLUME_HINT)
+    return "\n\n".join(parts)
+
+
+def sheet_pass_should_run(
+    catalog: AttachmentSourceCatalog | None,
+    *,
+    tabular_estimator_bound: bool,
+    model_driven: bool,
+) -> bool:
+    """Continue sheet-by-sheet when one model shot cannot hold the whole VOR."""
+
+    if not tabular_estimator_bound or not model_driven or catalog is None:
+        return False
+    names = catalog_work_sheet_names(catalog)
+    if not names:
+        return False
+    return (
+        len(names) > 1
+        or len(catalog.work_locators()) > _SHEET_PASS_WORK_LOCATOR_THRESHOLD
+    )
+
+
+def sheet_pass_query_instruction(
+    profile_snapshot: dict[str, Any] | None,
+    *,
+    sheet: str,
+    sheet_index: int,
+    sheet_count: int,
+    research_round: int = 0,
+) -> str:
+    extra = ""
+    if research_round > 0:
+        extra = "\n" + lsr_research_query_instruction(research_round)
+    return (
+        model_rag_query_instruction(profile_snapshot)
+        + f"\nСейчас только лист «{sheet}» ({sheet_index}/{sheet_count}). "
+        "Другие листы манифеста будут отдельными шагами; не составляй запросы по ним."
+        + extra
+    )
+
+
+def sheet_pass_question_tail(
+    question: str,
+    *,
+    sheet: str,
+    sheet_index: int,
+    sheet_count: int,
+    remaining_work: Sequence[str] | None = None,
+) -> str:
+    remaining = [str(item).strip() for item in (remaining_work or ()) if str(item).strip()]
+    remainder = ""
+    if remaining:
+        preview = ", ".join(remaining[:40])
+        extra = f" и ещё {len(remaining) - 40}" if len(remaining) > 40 else ""
+        remainder = f" Остались только строки: {preview}{extra}."
+    sheet_clause = (
+        f"Вопрос: {question}\n\n"
+        "/no_think\n"
+        "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
+        "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
+        f"\nСейчас только лист «{sheet}» ({sheet_index}/{sheet_count}). "
+        "Дай таблицу по всем строкам ЭТОГО листа исходного ВОР. "
+        "Не обрабатывай другие листы манифеста. "
+    )
+    remaining_clause = (
+        remainder
+        + " Ответ должен вместить все строки текущего листа: без вводного обзора "
+        "и итоговых рекомендаций, кратко по одной строке ВОР."
+    )
+    return lsr_result_table_instruction(
+        sheet_clause=sheet_clause,
+        remaining_clause=remaining_clause,
+    )
+
+
+def cited_source_row_keys(
+    rows: Sequence[Mapping[str, Any]],
+    catalog: AttachmentSourceCatalog | None = None,
+) -> set[str]:
+    keys: set[str] = set()
+    for row in rows:
+        raw = row.get("source_row")
+        if raw in (None, ""):
+            continue
+        keys.add(str(raw).strip())
+        if catalog is not None:
+            found = catalog.lookup(raw)
+            if found is not None:
+                keys.add(found.locator)
+    return keys
+
+
+def merge_model_rag_rows(
+    existing: Sequence[Mapping[str, Any]],
+    incoming: Sequence[Mapping[str, Any]],
+    catalog: AttachmentSourceCatalog | None = None,
+) -> list[dict[str, Any]]:
+    """First accepted decision for a source_row wins. Code does not rewrite cells."""
+
+    merged = [dict(row) for row in existing if isinstance(row, Mapping)]
+    seen = cited_source_row_keys(merged, catalog)
+    for row in incoming:
+        if not isinstance(row, Mapping):
+            continue
+        payload = dict(row)
+        raw = payload.get("source_row")
+        if raw in (None, ""):
+            continue
+        aliases = {str(raw).strip()}
+        if catalog is not None:
+            found = catalog.lookup(raw)
+            if found is not None:
+                aliases.add(found.locator)
+        if aliases & seen:
+            continue
+        seen.update(aliases)
+        merged.append(payload)
+    return merged
+
+
+def sheet_pass_keep_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    sheet: str,
+    catalog: AttachmentSourceCatalog,
+    errors: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Keep this sheet's rows that passed per-pass Qx.Hy/quantity checks."""
+
+    wanted = str(sheet or "").strip()
+    on_sheet: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        payload = dict(row)
+        catalog_row = catalog.lookup(payload.get("source_row"))
+        if catalog_row is not None:
+            if catalog_row.sheet != wanted:
+                continue
+        else:
+            loc = str(payload.get("source_row") or "").strip()
+            if "!" in loc and loc.split("!", 1)[0] != wanted:
+                continue
+        on_sheet.append(payload)
+    work_count = sum(1 for row in on_sheet if model_rag_row_kind(row) == "work")
+    blocking = blocking_model_rag_result_errors(errors, work_row_count=work_count)
+    kept: list[dict[str, Any]] = []
+    for row in on_sheet:
+        if model_rag_row_kind(row) == "work" and _sheet_pass_row_blocked(row, blocking):
+            continue
+        kept.append(row)
+    return kept
+
+
+def _sheet_pass_row_blocked(row: Mapping[str, Any], blocking_errors: Sequence[str]) -> bool:
+    key = str(row.get("source_row") or "").strip()
+    refs = {
+        str(item or "").strip().upper()
+        for item in (row.get("evidence_refs") or [])
+        if str(item or "").strip()
+    }
+    for error in blocking_errors:
+        text = str(error)
+        if text == "invalid_source_row":
+            continue
+        if ":" not in text:
+            continue
+        prefix, rest = text.split(":", 1)
+        rest = rest.strip()
+        if prefix in {
+            "missing_evidence_ref",
+            "source_quantity_mismatch",
+            "duplicate_source_row",
+        } and rest == key:
+            return True
+        if prefix == "unknown_evidence_ref" and rest.upper() in refs:
+            return True
+    return False
+
+
+def remaining_sheet_work_locators(
+    catalog: AttachmentSourceCatalog,
+    sheet: str,
+    cited: Sequence[str],
+) -> list[str]:
+    known = {str(item).strip() for item in cited if str(item).strip()}
+    return [
+        locator
+        for locator in catalog_sheet_work_locators(catalog, sheet)
+        if locator not in known
+    ]
+
+
+def adaptive_row_packet(
+    remaining: Sequence[str],
+    *,
+    generation_reserve_tokens: int,
+) -> list[str]:
+    """Bound one model result by row count and the available output budget.
+
+    This is technical orchestration only: order and row content come unchanged
+    from the exact catalog.  The model still owns queries and every decision.
+    """
+
+    locators = [str(item).strip() for item in remaining if str(item).strip()]
+    if not locators:
+        return []
+    reserve = max(1, int(generation_reserve_tokens or 0))
+    # A compact model-authored row normally needs roughly 100-140 tokens.
+    # Keep the initial 8-12 range measurable instead of hard-coding one model.
+    budget_rows = reserve // 120
+    size = min(_ROW_PACKET_MAX, max(_ROW_PACKET_MIN, budget_rows or _ROW_PACKET_TARGET))
+    return locators[: min(size, len(locators))]
+
+
+def row_packet_id(
+    catalog: AttachmentSourceCatalog,
+    *,
+    sheet: str,
+    locators: Sequence[str],
+) -> str:
+    payload = "\x1f".join(
+        [catalog.source_file_id or catalog.original_name, str(sheet), *map(str, locators)]
+    )
+    return "packet_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def bind_row_evidence_ids(
+    rows: Sequence[Mapping[str, Any]],
+    evidence_chunks: Sequence[Any],
+) -> list[dict[str, Any]]:
+    alias_to_global: dict[str, str] = {}
+    for chunk in evidence_chunks:
+        meta = getattr(chunk, "meta", {}) or {}
+        alias = str(meta.get("model_evidence_ref") or "").strip().upper()
+        global_id = str(meta.get("global_evidence_id") or "").strip()
+        if alias and global_id and alias not in alias_to_global:
+            alias_to_global[alias] = global_id
+    bound: list[dict[str, Any]] = []
+    for row in rows:
+        payload = dict(row)
+        current = payload.get("evidence_bindings")
+        merged = {
+            str(alias).strip().upper(): str(global_id).strip()
+            for alias, global_id in (current.items() if isinstance(current, Mapping) else ())
+            if str(alias).strip() and str(global_id).strip()
+        }
+        for ref in payload.get("evidence_refs") or ():
+            alias = str(ref).strip().upper()
+            global_id = alias_to_global.get(alias, "")
+            if alias and global_id and alias not in merged:
+                merged[alias] = global_id
+        payload["evidence_bindings"] = merged
+        bound.append(payload)
+    return bound
+
+
+def durable_evidence_record(chunk: _ModelRagEvidenceChunk) -> dict[str, Any]:
+    return {
+        "global_evidence_id": str(chunk.meta.get("global_evidence_id") or ""),
+        "model_evidence_ref": str(chunk.meta.get("model_evidence_ref") or ""),
+        "content": chunk.content,
+        "doc_id": chunk.doc_id,
+        "doc_name": chunk.doc_name,
+        "score": chunk.score,
+        "meta": dict(chunk.meta),
+    }
+
+
+def evidence_chunk_from_record(record: Mapping[str, Any]) -> _ModelRagEvidenceChunk:
+    meta = dict(record.get("meta") or {}) if isinstance(record.get("meta"), Mapping) else {}
+    for key in ("global_evidence_id", "model_evidence_ref"):
+        if record.get(key) not in (None, ""):
+            meta[key] = record[key]
+    return _ModelRagEvidenceChunk(
+        content=str(record.get("content") or ""),
+        doc_id=str(record.get("doc_id") or ""),
+        doc_name=str(record.get("doc_name") or ""),
+        score=float(record.get("score") or 0.0),
+        meta=meta,
+    )
+
+
+def sheet_pass_progress_label(
+    sheet: str,
+    *,
+    sheet_index: int,
+    sheet_count: int,
+    stage: str,
+) -> str:
+    return f"Лист «{sheet}» ({sheet_index}/{sheet_count}): {stage}"
 
 
 def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
@@ -678,15 +1159,52 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "unit": str(item.get("unit") or "").strip(),
             "norm_code": str(item.get("norm_code") or "").strip(),
         }
-        for field_name in ("analogue", "coverage", "coefficient", "evidence_refs"):
+        for field_name in (
+            "analogue",
+            "coverage",
+            "coefficient",
+            "evidence_refs",
+            "norm_status",
+            "action_match",
+            "object_match",
+            "_quality_gate",
+            "quality_message",
+        ):
             if field_name in item:
                 row[field_name] = item[field_name]
         compact.append(row)
     return compact
 
 
-def parse_model_rag_queries(raw: str) -> list[str]:
-    """Return the model-authored plain-text query lines without presentation wrappers."""
+_NARRATIVE_QUERY_PREFIXES = (
+    "слушай ",
+    "слушайте ",
+    "коллега,",
+    "коллега ",
+    "что я делаю",
+    "я сейчас ",
+    "я делаю ",
+    "жду подтверждения",
+    "вот список",
+    "сейчас сформирую",
+    "это все запросы",
+)
+_NARRATIVE_QUERY_EXACT = {
+    "ок",
+    "хорошо",
+    "понял",
+    "готово",
+    "сейчас",
+    "коллега",
+}
+_TABULAR_TRUNCATION_MARK = "[Табличный контекст усечён"
+_PASTE_TRUNCATION_MARK = "[Исходник усечён"
+_MIN_MODEL_RAG_EVIDENCE_BODY_CHARS = 400
+_LENGTH_FINISH_REASONS = {"length", "max_tokens", "length_truncated"}
+
+
+def _unwrap_model_rag_query_lines(raw: str) -> list[str]:
+    """Strip fences and explicit wrappers; do not invent replacement queries."""
 
     plain_lines = [line.strip() for line in str(raw or "").splitlines()]
     fence_indexes = [
@@ -717,7 +1235,6 @@ def parse_model_rag_queries(raw: str) -> list[str]:
         ):
             explicitly_wrapped.append(remainder[1:-1].strip())
     raw_queries = explicitly_wrapped or visible_lines
-
     queries: list[str] = []
     for item in raw_queries:
         if not isinstance(item, str):
@@ -728,11 +1245,68 @@ def parse_model_rag_queries(raw: str) -> list[str]:
     return queries
 
 
+def is_model_rag_search_query_line(line: str) -> bool:
+    """Reject conversational preamble; keep the remaining model-authored search lines."""
+
+    folded = " ".join(str(line or "").split()).casefold()
+    if not folded:
+        return False
+    if folded in _NARRATIVE_QUERY_EXACT:
+        return False
+    return not any(folded.startswith(prefix) for prefix in _NARRATIVE_QUERY_PREFIXES)
+
+
+def classify_model_rag_query_lines(raw: str) -> tuple[list[str], list[str]]:
+    """Split unwrapped lines into executable queries and rejected narrative."""
+
+    accepted: list[str] = []
+    rejected: list[str] = []
+    for query in _unwrap_model_rag_query_lines(raw):
+        if is_model_rag_search_query_line(query):
+            accepted.append(query)
+        else:
+            rejected.append(query)
+    return accepted, rejected
+
+
+def parse_model_rag_queries(raw: str) -> list[str]:
+    """Return the model-authored search lines without presentation wrappers or narrative."""
+
+    accepted, _rejected = classify_model_rag_query_lines(raw)
+    return accepted
+
+
+_MODEL_EVIDENCE_REF = re.compile(r"^Q(\d+)\.H(\d+)$", re.IGNORECASE)
+
+
+def extract_model_evidence_refs(value: Any) -> list[str]:
+    """Keep only real Qn.Hm handles. Prose notes are not evidence."""
+
+    if isinstance(value, (list, tuple)) and not isinstance(value, (str, bytes)):
+        texts = [str(item or "") for item in value]
+    else:
+        texts = [str(value or "")]
+    found: list[str] = []
+    for text in texts:
+        separated = text.replace("<br>", " ").replace("<br/>", " ")
+        for marker in "[](),;":
+            separated = separated.replace(marker, " ")
+        for token in separated.split():
+            candidate = token.strip(".*_`:").upper()
+            if _MODEL_EVIDENCE_REF.fullmatch(candidate):
+                found.append(candidate)
+    return list(dict.fromkeys(found))
+
+
+def unresolved_evidence_placeholder(value: Any) -> bool:
+    marker = " ".join(str(value or "").casefold().replace("ё", "е").split())
+    return "qx.hy" in marker or "отсутствует в выдаче" in marker
+
+
 def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     """Decode only an unambiguous table; preserve the authored answer and cell values."""
 
-    lsr_fields = {"title", "unit", "norm_code"}
-    vor_fields = {"title", "unit", "quantity"}
+    required_fields = {"title", "unit", "norm_code"}
     header_fields = {
         "source_row": "source_row",
         "№": "source_row",
@@ -741,78 +1315,81 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "section": "section",
         "раздел": "section",
         "title": "title",
+        "title (наименование)": "title",
+        "title (описание оборудования из комментариев)": "title",
         "наименование": "title",
         "наименование работ": "title",
         "наименование работ (из вор)": "title",
-        "наименование и техническая характеристика": "title",
+        "наименование работы": "title",
         "unit": "unit",
         "ед. изм.": "unit",
         "ед. изм": "unit",
+        "ед изм": "unit",
+        "ед": "unit",
+        "единица": "unit",
         "quantity": "quantity",
         "кол-во": "quantity",
-        "кол-во (из источника)": "quantity",
+        "кол.": "quantity",
+        "кол": "quantity",
         "количество": "quantity",
-        "количество (подтверждено)": "quantity",
         "norm_code": "norm_code",
+        "norm_code (выбранная норма)": "norm_code",
+        "norm_code (возможная норма монтажа)": "norm_code",
         "norm_code (шифр)": "norm_code",
-        "норматив монтажа (norm_code)": "norm_code",
         "нормативная база (шифр нормы)": "norm_code",
         "нормативная база (norm code)": "norm_code",
         "нормативный код (гэсн/ер)": "norm_code",
+        "шифр нормы": "norm_code",
+        "шифр": "norm_code",
+        "выбранная норма": "norm_code",
+        "код нормы": "norm_code",
+        "гэсн": "norm_code",
+        "позиция": "source_row",
+        "строка": "source_row",
+        "locator": "source_row",
+        "код строки": "source_row",
         "analogue": "analogue",
         "analogue / coverage": "analogue",
+        "analogue / coverage (обоснование/аналог)": "analogue",
+        "analogue / coverage (обоснование)": "analogue",
         "аналог/обоснование": "analogue",
-        "аналог/примечание": "analogue",
         "обоснование выбора и аналог": "analogue",
         "coverage": "coverage",
         "coverage (соответствие)": "coverage",
-        "coverage (покрытие)": "coverage",
         "примечание инженера": "coverage",
         "примечание": "coverage_fallback",
         "примечания к составу работ": "coverage",
         "примечания к выбору": "coverage",
-        "источник данных": "source",
-        "чертёж": "chertezh",
-        "чертеж": "chertezh",
-        "ссылка на чертёж": "chertezh",
+        "norm_status": "norm_status",
+        "статус нормы": "norm_status",
+        "verdict": "norm_status",
+        "action_match": "action_match",
+        "object_match": "object_match",
+        "condition_match": "condition_match",
+        "unit_compatible": "unit_compatible",
+        "composition_covers": "composition_covers",
+        "extra_ops": "extra_ops",
+        "missing_ops": "missing_ops",
+        "contradictions": "contradictions",
         "coefficient": "coefficient",
         "coefficient (кэф.)": "coefficient",
         "коэфф.": "coefficient",
+        "coefficient_applies_to": "coefficient_applies_to",
+        "norm_components": "norm_components",
         "evidence_refs": "evidence_refs",
+        "evidence_refs (источник)": "evidence_refs",
     }
-
-    def row_has_required(names: Any) -> bool:
-        present = set(names)
-        return lsr_fields.issubset(present) or vor_fields.issubset(present)
 
     def field_name(value: str) -> str:
         normalized = " ".join(value.replace("**", "").strip().split()).casefold()
-        exact = header_fields.get(normalized, "")
-        if exact:
-            return exact
-        if "norm_code" in normalized or normalized.startswith("норматив монтажа"):
-            return "norm_code"
-        if normalized.startswith("наименование"):
-            return "title"
-        if normalized.startswith("ед. изм"):
-            return "unit"
-        if normalized.startswith("кол-во") or normalized.startswith("количество"):
-            return "quantity"
-        if normalized.startswith("источник"):
-            return "source"
-        if normalized.startswith("черт"):
-            return "chertezh"
-        if normalized.startswith("аналог"):
-            return "analogue"
-        if normalized.startswith("coverage"):
-            return "coverage"
-        return ""
+        return header_fields.get(normalized, "")
 
     def cells(line: str) -> list[str]:
         stripped = line.strip()
-        if not stripped.startswith("|") or not stripped.endswith("|"):
+        if not stripped.startswith("|"):
             return []
-        return [item.strip() for item in stripped[1:-1].split("|")]
+        inner = stripped[1:-1] if stripped.endswith("|") else stripped[1:]
+        return [item.strip() for item in inner.split("|")]
 
     def number(value: str) -> int | float | None:
         normalized = value.replace("\u00a0", "").replace(" ", "").replace(",", ".")
@@ -824,27 +1401,129 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             return None
         return int(parsed) if parsed.is_integer() else parsed
 
+    def source_row_identity(value: str) -> int | str | None:
+        authored = value.strip()
+        if not authored:
+            return None
+        parsed = number(authored)
+        return parsed if isinstance(parsed, int) else authored
+
+    def absence_marker(value: str) -> bool:
+        marker = value.strip().strip("*_` ").strip()
+        if len(marker) >= 2 and (marker[0], marker[-1]) in {
+            ("(", ")"),
+            ("[", "]"),
+        }:
+            marker = marker[1:-1].strip()
+        return marker.casefold() in {
+            "—",
+            "-",
+            "–",
+            "−",
+            "нет",
+            "н/д",
+            "n/a",
+            "na",
+        }
+
     def divider_cell(value: str) -> bool:
         candidate = value.strip()
         if candidate.startswith(":"):
             candidate = candidate[1:]
         if candidate.endswith(":"):
             candidate = candidate[:-1]
-        return len(candidate) >= 2 and set(candidate) == {"-"}
+        return len(candidate) >= 3 and set(candidate) == {"-"}
 
     def evidence_refs(value: str) -> list[str]:
-        separated = value.replace("<br>", " ").replace("<br/>", " ")
-        for marker in "[](),;":
-            separated = separated.replace(marker, " ")
-        found: list[str] = []
-        for token in separated.split():
-            candidate = token.strip(".*_`:").upper()
-            if not candidate.startswith("Q") or ".H" not in candidate:
-                continue
-            left, right = candidate[1:].split(".H", 1)
-            if left.isdigit() and right.isdigit():
-                found.append(candidate)
-        return list(dict.fromkeys(found))
+        return extract_model_evidence_refs(value)
+
+    def applies_to_token(value: str) -> bool:
+        folded = " ".join(value.casefold().replace("ё", "е").split())
+        return folded in {
+            "",
+            "labor",
+            "machine",
+            "labor_and_machine",
+            "озп",
+            "эм",
+            "озп и эм",
+        } or absence_marker(value)
+
+    def aligned_row_fits(values: list[str]) -> bool:
+        if len(values) != len(mapped_header):
+            return False
+        by = {
+            name: values[index]
+            for index, name in enumerate(mapped_header)
+            if name
+        }
+        quantity = by.get("quantity", "")
+        if quantity and not absence_marker(quantity) and number(quantity) is None:
+            return False
+        # Alignment preserves model text, including unresolved source labels.
+        # Evidence validation is a separate step and must not erase work rows.
+        applies = by.get("coefficient_applies_to", "")
+        if applies and not applies_to_token(applies):
+            return False
+        return True
+
+    def align_row_values(values: list[str]) -> list[str] | None:
+        if len(values) < len(header):
+            return values + [""] * (len(header) - len(values))
+        if len(values) == len(header):
+            return values
+        extra = len(values) - len(header)
+        if extra > 3:
+            return None
+        coeff_at = next(
+            (index for index, name in enumerate(mapped_header) if name == "coefficient"),
+            -1,
+        )
+        if (
+            extra == 1
+            and "contradictions" not in mapped_header
+            and 0 <= coeff_at < len(values)
+            and absence_marker(values[coeff_at])
+        ):
+            trial = values[:coeff_at] + values[coeff_at + 1 :]
+            if aligned_row_fits(trial):
+                return trial
+        if (
+            extra == 1
+            and "contradictions" not in mapped_header
+            and 0 <= coeff_at < len(values) - 3
+            and evidence_refs(values[-1])
+            and applies_to_token(values[-2])
+            and number(values[-3]) is not None
+            and number(values[coeff_at]) is None
+            and not absence_marker(values[coeff_at])
+        ):
+            trial = values[:coeff_at] + values[coeff_at + 1 :]
+            if aligned_row_fits(trial):
+                return trial
+        trimmed = list(values)
+        while len(trimmed) > len(header) and trimmed and (
+            not trimmed[-1].strip() or absence_marker(trimmed[-1])
+        ):
+            if evidence_refs(trimmed[-1]):
+                break
+            trimmed = trimmed[:-1]
+        if len(trimmed) == len(header) and aligned_row_fits(trimmed):
+            return trimmed
+        drop_at = [
+            index
+            for index, item in enumerate(values)
+            if index >= 6 and absence_marker(item)
+        ]
+        matched: list[list[str]] = []
+        for combo in combinations(drop_at, extra):
+            skip = set(combo)
+            trial = [item for index, item in enumerate(values) if index not in skip]
+            if aligned_row_fits(trial):
+                matched.append(trial)
+                if len(matched) > 1:
+                    return None
+        return matched[0] if matched else None
 
     lines = str(raw or "").splitlines()
     table_rows: list[dict[str, Any]] = []
@@ -852,43 +1531,34 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     header_index = 0
     while header_index < len(lines):
         stripped_line = lines[header_index].strip()
-        if stripped_line.startswith("### "):
-            heading_rest = stripped_line[4:].strip()
-            if not heading_rest.casefold().startswith("строка "):
-                current_section = heading_rest
-                header_index += 1
-                continue
+        if stripped_line.startswith("### ") and stripped_line[4:].casefold().startswith(
+            "раздел "
+        ):
+            current_section = stripped_line[4:].strip()
+            header_index += 1
+            continue
         header = cells(lines[header_index])
         mapped_header = [field_name(item) for item in header]
+        # A display ordinal is not a second source locator when the model
+        # explicitly supplies source_row. Keep the explicit identity verbatim.
+        normalized_header = [
+            " ".join(item.replace("**", "").strip().split()).casefold()
+            for item in header
+        ]
+        if "source_row" in normalized_header:
+            mapped_header = [
+                "" if label in {"№", "№ п/п", "№ пп"} else field
+                for label, field in zip(normalized_header, mapped_header, strict=True)
+            ]
         if "coverage_fallback" in mapped_header:
-            fallback_name = "" if "coverage" in mapped_header else (
-                "note" if "norm_code" not in mapped_header else "coverage"
-            )
+            fallback_name = "" if "coverage" in mapped_header else "coverage"
             mapped_header = [
                 fallback_name if item == "coverage_fallback" else item
                 for item in mapped_header
             ]
-        seen_fields: dict[str, int] = {}
-        for index, name in enumerate(mapped_header):
-            if not name:
-                continue
-            previous = seen_fields.get(name)
-            if previous is None:
-                seen_fields[name] = index
-                continue
-            previous_label = " ".join(header[previous].replace("**", "").strip().split()).casefold()
-            current_label = " ".join(header[index].replace("**", "").strip().split()).casefold()
-            keep_current = name == "source_row" and (
-                current_label.startswith("№") and not previous_label.startswith("№")
-            )
-            if keep_current:
-                mapped_header[previous] = ""
-                seen_fields[name] = index
-            else:
-                mapped_header[index] = ""
         if (
             not header
-            or not row_has_required(mapped_header)
+            or not required_fields.issubset(set(mapped_header))
             or len([item for item in mapped_header if item])
             != len(set(item for item in mapped_header if item))
         ):
@@ -897,6 +1567,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         if header_index + 1 >= len(lines):
             break
         divider = cells(lines[header_index + 1])
+        while len(divider) > len(header) and divider and divider_cell(divider[-1]):
+            divider = divider[:-1]
         if len(divider) != len(header) or not all(divider_cell(item) for item in divider):
             header_index += 1
             continue
@@ -906,10 +1578,11 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             values = cells(lines[row_index])
             if not values:
                 break
-            if len(values) < len(header):
-                values = values + [""] * (len(header) - len(values))
-            elif len(values) > len(header):
-                return None
+            if len(values) != len(header):
+                values = align_row_values(values) or []
+                if len(values) != len(header):
+                    row_index += 1
+                    continue
             visible_values = [value.replace("**", "").strip() for value in values]
             if visible_values[0].casefold().startswith("раздел") and not any(
                 visible_values[1:]
@@ -927,15 +1600,13 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 if not value:
                     continue
                 if name == "source_row":
-                    parsed_source_row = number(value)
-                    if isinstance(parsed_source_row, int):
-                        row[name] = parsed_source_row
-                    continue
+                    parsed_source_row = source_row_identity(value)
+                    if parsed_source_row is None:
+                        return None
+                    row[name] = parsed_source_row
                 elif name in {"quantity", "coefficient"}:
                     numeric_value = value.strip()
-                    if numeric_value.casefold() in {
-                        "—", "-", "–", "−", "нет", "н/д", "n/a", "na",
-                    }:
+                    if absence_marker(numeric_value):
                         continue
                     parsed_number: int | float | None = None
                     if name == "coefficient" and "/" in numeric_value:
@@ -954,9 +1625,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                     row[name] = parsed_number
                 elif name == "evidence_refs":
                     refs = evidence_refs(value)
-                    if not refs:
-                        separated = value.replace(";", ",")
-                        refs = [item.strip() for item in separated.split(",") if item.strip()]
+                    if not refs and unresolved_evidence_placeholder(value):
+                        refs = [value.strip()]
                     if refs:
                         row[name] = refs
                 elif name:
@@ -965,12 +1635,6 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             if embedded_refs and not row.get("evidence_refs"):
                 row["evidence_refs"] = embedded_refs
             if row:
-                source_text = str(row.pop("source", "") or "").strip()
-                note_text = str(row.get("note") or "").strip()
-                if source_text and note_text:
-                    row["note"] = f"{source_text}; {note_text}"
-                elif source_text:
-                    row["note"] = source_text
                 if table_section and not row.get("section"):
                     row["section"] = table_section
                 table_rows.append(row)
@@ -986,13 +1650,20 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "unit": "unit",
         "quantity": "quantity",
         "norm_code": "norm_code",
-        "normcode": "norm_code",
         "analogue": "analogue",
         "coverage": "coverage",
+        "norm_status": "norm_status",
+        "action_match": "action_match",
+        "object_match": "object_match",
+        "condition_match": "condition_match",
+        "unit_compatible": "unit_compatible",
+        "composition_covers": "composition_covers",
+        "extra_ops": "extra_ops",
+        "missing_ops": "missing_ops",
+        "contradictions": "contradictions",
         "coefficient": "coefficient",
+        "coefficient_applies_to": "coefficient_applies_to",
         "evidence_refs": "evidence_refs",
-        "чертёж": "chertezh",
-        "чертеж": "chertezh",
     }
     block_rows: list[dict[str, Any]] = []
     current_block: dict[str, Any] | None = None
@@ -1002,9 +1673,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         nonlocal current_block, invalid_block
         if current_block is None:
             return
-        if not row_has_required(current_block) or not isinstance(
-            current_block.get("source_row"), int
-        ):
+        if not required_fields.issubset(current_block) or current_block.get(
+            "source_row"
+        ) in (None, ""):
             invalid_block = True
         else:
             block_rows.append(current_block)
@@ -1043,9 +1714,11 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 is_block_heading = False
         if is_block_heading:
             flush_block()
-            current_block = {"source_row": int(heading_row_token)}
-            if explicit_heading_row is not None:
-                current_block["source_row"] = explicit_heading_row
+            current_block = (
+                {"source_row": explicit_heading_row}
+                if explicit_heading_row is not None
+                else {}
+            )
             continue
         if current_block is None:
             continue
@@ -1058,10 +1731,11 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         if not key or not clean:
             continue
         if key == "source_row":
-            parsed_source_row = number(clean)
-            if isinstance(parsed_source_row, int):
-                current_block[key] = parsed_source_row
-            continue
+            parsed_source_row = source_row_identity(clean)
+            if parsed_source_row is None:
+                invalid_block = True
+                continue
+            current_block[key] = parsed_source_row
         elif key in {"quantity", "coefficient"}:
             if clean.casefold() in {
                 "—", "-", "–", "−", "нет", "н/д", "n/a", "na",
@@ -1096,13 +1770,12 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "quantity": "quantity",
         "norm_code": "norm_code",
         "шифр нормы": "norm_code",
-        "чертёж": "chertezh",
-        "чертеж": "chertezh",
         "аналог": "analogue",
         "обоснование": "coverage",
         "coverage": "coverage",
         "коэффициент": "coefficient",
         "coefficient": "coefficient",
+        "coefficient_applies_to": "coefficient_applies_to",
         "evidence": "evidence_refs",
         "evidence_refs": "evidence_refs",
     }
@@ -1150,7 +1823,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                     row[key] = refs
             else:
                 row[key] = clean
-        if not row_has_required(row):
+        if not required_fields.issubset(row):
             return None
         labelled_rows.append(row)
     if labelled_rows:
@@ -1174,14 +1847,17 @@ def build_model_rag_evidence_groups(
     *,
     max_chars: int,
     hits_per_query: int,
-) -> tuple[list[str], list[_ModelRagEvidenceChunk]]:
-    """Render the profile-owned hit count without letting early queries crowd out later ones."""
+    min_body_chars: int = _MIN_MODEL_RAG_EVIDENCE_BODY_CHARS,
+    evidence_namespace: str = "",
+    query_offset: int = 0,
+) -> tuple[list[str], list[_ModelRagEvidenceChunk], list[str]]:
+    """Keep query headers; omit cards rather than shred every body below min_body_chars."""
 
     prepared: list[tuple[int, str, list[tuple[int, Any, str, str]]]] = []
     source_index = 0
     fixed_chars = 0
     segment_count = 0
-    for query_index, (raw_query, raw_hits) in enumerate(query_hits, 1):
+    for query_index, (raw_query, raw_hits) in enumerate(query_hits, max(0, query_offset) + 1):
         query = str(raw_query or "").strip()
         query_header = f"[Поисковый запрос Q{query_index}] {query}"
         hits: list[tuple[int, Any, str, str]] = []
@@ -1214,6 +1890,31 @@ def build_model_rag_evidence_groups(
         else:
             high = cap - 1
     body_cap = low
+    min_body = max(0, int(min_body_chars))
+    omit_mode = bool(bodies) and body_cap < min_body
+
+    included_caps: dict[tuple[int, int], int] = {}
+    omitted_refs: list[str] = []
+    if omit_mode:
+        used = 0
+        max_rank = max((len(hits) for _qi, _qh, hits in prepared), default=0)
+        for rank in range(1, max_rank + 1):
+            for query_index, _query_header, hits in prepared:
+                match = next((item for item in hits if item[0] == rank), None)
+                if match is None:
+                    continue
+                hit_index, _hit, _source_header, body = match
+                ref = f"Q{query_index}.H{hit_index}"
+                full = len(body)
+                if used + full <= body_budget:
+                    included_caps[(query_index, hit_index)] = full
+                    used += full
+                    continue
+                if min_body and full > min_body and used + min_body <= body_budget:
+                    included_caps[(query_index, hit_index)] = min_body
+                    used += min_body
+                    continue
+                omitted_refs.append(ref)
 
     groups: list[str] = []
     chunks: list[_ModelRagEvidenceChunk] = []
@@ -1221,21 +1922,41 @@ def build_model_rag_evidence_groups(
     for query_index, query_header, hits in prepared:
         group_parts = [query_header]
         for hit_index, hit, source_header, body in hits:
-            source_index += 1
+            if omit_mode and (query_index, hit_index) not in included_caps:
+                continue
+            visible_cap = (
+                included_caps[(query_index, hit_index)] if omit_mode else body_cap
+            )
             visible_body = body
-            if len(visible_body) > body_cap:
+            if len(visible_body) > visible_cap:
                 visible_body = (
-                    visible_body[: max(0, body_cap - 1)].rstrip() + "…"
-                    if body_cap
+                    visible_body[: max(0, visible_cap - 1)].rstrip() + "…"
+                    if visible_cap
                     else ""
                 )
+            source_index += 1
             group_parts.append(f"{source_header}:\n{visible_body}")
             meta = dict(getattr(hit, "meta", {}) or {})
+            alias = f"Q{query_index}.H{hit_index}"
+            identity_payload = "\x1f".join(
+                (
+                    str(evidence_namespace or "ordinary"),
+                    alias,
+                    str(getattr(hit, "doc_id", "") or ""),
+                    str(meta.get("source_ref") or meta.get("chunk_id") or ""),
+                    hashlib.sha256(visible_body.encode("utf-8")).hexdigest(),
+                )
+            )
             meta.update(
                 {
                     "model_query_index": query_index,
                     "model_hit_index": hit_index,
-                    "model_evidence_ref": f"Q{query_index}.H{hit_index}",
+                    "model_evidence_ref": alias,
+                    "global_evidence_id": (
+                        "evidence_"
+                        + hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()[:32]
+                    ),
+                    "evidence_namespace": str(evidence_namespace or "ordinary"),
                     "model_source_index": source_index,
                 }
             )
@@ -1249,11 +1970,304 @@ def build_model_rag_evidence_groups(
                 )
             )
         groups.append("\n\n".join(group_parts))
-    return groups, chunks
+    return groups, chunks, omitted_refs
 
 
 def _model_rag_source_map(chunks: Sequence[_ModelRagEvidenceChunk]) -> list[dict[str, Any]]:
     return [source_map_item(chunk, index=index) for index, chunk in enumerate(chunks, 1)]
+
+
+def _explicit_absence_value(value: Any) -> bool:
+    if value is None:
+        return True
+    marker = str(value).strip().strip("*_` ").strip()
+    if len(marker) >= 2 and (marker[0], marker[-1]) in {
+        ("(", ")"),
+        ("[", "]"),
+    }:
+        marker = marker[1:-1].strip()
+    return marker.casefold() in {
+        "",
+        "—",
+        "-",
+        "–",
+        "−",
+        "нет",
+        "н/д",
+        "n/a",
+        "na",
+        "none",
+        "группировка",
+        "заголовок",
+    }
+
+
+def model_rag_row_kind(row: Mapping[str, Any]) -> str:
+    """Classify a parsed row without rewriting model cells."""
+
+    unit_absent = _explicit_absence_value(row.get("unit"))
+    quantity_absent = row.get("quantity") is None or _explicit_absence_value(
+        row.get("quantity")
+    )
+    norm_absent = _explicit_absence_value(row.get("norm_code"))
+    if unit_absent and quantity_absent and norm_absent:
+        return "section_header"
+    coverage = " ".join(
+        str(row.get(name) or "") for name in ("analogue", "coverage", "note")
+    )
+    if norm_absent and "MISSING" in coverage.upper():
+        return "missing"
+    return "work"
+
+
+def llm_usage_finish_reason(usage: Mapping[str, Any] | None) -> str:
+    payload = usage if isinstance(usage, Mapping) else {}
+    return str(payload.get("finish_reason") or payload.get("done_reason") or "").strip()
+
+
+def finish_reason_is_length(reason: str) -> bool:
+    return str(reason or "").strip().casefold() in _LENGTH_FINISH_REASONS
+
+
+def packet_evidence_text(packet: ContextPacket) -> str:
+    return "\n".join(
+        obj.render()
+        for section in packet.sections
+        if section.kind is ContextKind.EVIDENCE
+        for obj in section.objects
+    )
+
+
+def usage_with_finish_reason(
+    usage: Mapping[str, Any] | None,
+    finish_reason: str,
+) -> dict[str, Any]:
+    payload = dict(usage or {})
+    reason = str(finish_reason or "").strip()
+    if reason:
+        payload["finish_reason"] = reason
+    return payload
+
+
+def attachment_context_is_truncated(text: str) -> bool:
+    raw = str(text or "")
+    return _TABULAR_TRUNCATION_MARK in raw or _PASTE_TRUNCATION_MARK in raw
+
+
+def parse_attachment_sheet_coverage(text: str) -> dict[str, list[str]]:
+    included: list[str] = []
+    omitted: list[str] = []
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Переданы листы:"):
+            rest = stripped.split(":", 1)[1].strip()
+            if rest and rest.casefold() != "нет":
+                included = [item.strip() for item in rest.split(",") if item.strip()]
+        elif stripped.startswith("Не переданы листы:"):
+            rest = stripped.split(":", 1)[1].strip()
+            if rest:
+                omitted = [item.strip() for item in rest.split(",") if item.strip()]
+    return {"included": included, "omitted": omitted}
+
+
+def model_rag_answer_is_truncated(raw: str) -> bool:
+    lines = [line.rstrip() for line in str(raw or "").splitlines() if line.strip()]
+    if not lines:
+        return False
+    last = lines[-1]
+    return last.startswith("|") and not last.endswith("|")
+
+
+def _lsr_packaging_reasons(
+    *,
+    errors: Sequence[str],
+    attachment_truncated: bool = False,
+    included_sheets: Sequence[str] = (),
+    omitted_sheets: Sequence[str] = (),
+    rejected_queries: int = 0,
+    omitted_evidence: int = 0,
+) -> list[str]:
+    reasons: list[str] = []
+    if attachment_truncated or omitted_sheets:
+        included = ", ".join(included_sheets) if included_sheets else "часть листов"
+        omitted = ", ".join(omitted_sheets) if omitted_sheets else "остальные листы"
+        reasons.append(f"исходник усечён (переданы: {included}; не переданы: {omitted})")
+    if "answer_truncated" in errors:
+        reasons.append("ответ модели оборван")
+    incomplete = [
+        error
+        for error in errors
+        if str(error).startswith("source_incomplete:")
+    ]
+    if incomplete or "source_incomplete" in errors:
+        reasons.append("модели не переданы все строки исходника")
+    qty_mismatch = [
+        error.split(":", 1)[1]
+        for error in errors
+        if str(error).startswith("source_quantity_mismatch:")
+    ]
+    if qty_mismatch:
+        preview = ", ".join(qty_mismatch[:5])
+        extra = f" и ещё {len(qty_mismatch) - 5}" if len(qty_mismatch) > 5 else ""
+        reasons.append(f"количество не совпадает с исходником у {preview}{extra}")
+    missing_refs = [
+        error.split(":", 1)[1]
+        for error in errors
+        if str(error).startswith("missing_evidence_ref:")
+    ]
+    if missing_refs:
+        preview = ", ".join(missing_refs[:5])
+        extra = f" и ещё {len(missing_refs) - 5}" if len(missing_refs) > 5 else ""
+        reasons.append(f"нет evidence_ref у строк {preview}{extra}")
+    skipped_prefixes = (
+        "missing_evidence_ref:",
+        "norm_code_not_in_referenced_evidence:",
+        "source_quantity_mismatch:",
+        "source_incomplete:",
+        "source_coverage_incomplete:",
+        "source_row_not_in_catalog:",
+        "source_unit_mismatch:",
+    )
+    other = [
+        str(error)
+        for error in errors
+        if error not in {"attachment_truncated", "answer_truncated"}
+        and not any(str(error).startswith(prefix) for prefix in skipped_prefixes)
+    ]
+    if other:
+        reasons.append(", ".join(other[:6]))
+    if rejected_queries:
+        reasons.append(f"отброшены повествовательные query-строки: {rejected_queries}")
+    if omitted_evidence:
+        reasons.append(f"не поместились полные карточки: {omitted_evidence}")
+    coverage = [
+        error.split(":", 1)[1]
+        for error in errors
+        if str(error).startswith("source_coverage_incomplete:")
+    ]
+    if coverage:
+        reasons.append(f"покрытие исходника {coverage[0]}")
+    return reasons or ["структурная проверка не пройдена"]
+
+
+def format_lsr_not_created_notice(
+    *,
+    errors: Sequence[str],
+    row_count: int,
+    attachment_truncated: bool = False,
+    included_sheets: Sequence[str] = (),
+    omitted_sheets: Sequence[str] = (),
+    rejected_queries: int = 0,
+    omitted_evidence: int = 0,
+) -> str:
+    """Operator-visible reason that a workbook was not published."""
+
+    reasons = _lsr_packaging_reasons(
+        errors=errors,
+        attachment_truncated=attachment_truncated,
+        included_sheets=included_sheets,
+        omitted_sheets=omitted_sheets,
+        rejected_queries=rejected_queries,
+        omitted_evidence=omitted_evidence,
+    )
+    return (
+        f"ЛСР не создана: {'; '.join(reasons)}. "
+        f"Строк в ответе модели: {row_count}."
+    )
+
+
+def format_lsr_partial_notice(
+    *,
+    errors: Sequence[str],
+    row_count: int,
+    attachment_truncated: bool = False,
+    included_sheets: Sequence[str] = (),
+    omitted_sheets: Sequence[str] = (),
+    rejected_queries: int = 0,
+    omitted_evidence: int = 0,
+) -> str:
+    """Visible reason that a workbook was published from an incomplete source/answer."""
+
+    reasons = _lsr_packaging_reasons(
+        errors=errors,
+        attachment_truncated=attachment_truncated,
+        included_sheets=included_sheets,
+        omitted_sheets=omitted_sheets,
+        rejected_queries=rejected_queries,
+        omitted_evidence=omitted_evidence,
+    )
+    return (
+        f"ЛСР собрана частично: {'; '.join(reasons)}. "
+        f"В расчёт вошли {row_count} строк ответа модели; полный файл по всем "
+        "листам исходника не утверждается."
+    )
+
+
+def format_lsr_unstructured_notice() -> str:
+    """Visible reason when the model answer is not an LSR row table."""
+
+    return (
+        "ЛСР не создана: ответ не разобран как таблица строк "
+        "(нужны колонки наименования, единицы и шифра)."
+    )
+
+
+def format_lsr_packaged_notice(
+    *,
+    filename: str = "",
+    status: str = "",
+    pricing_status: str = "",
+    norms_status: str = "",
+    missing: Sequence[str] = (),
+    blockers: Sequence[str] = (),
+) -> str:
+    """Visible packaging outcome next to the workbook link."""
+
+    missing_items = [str(item).strip() for item in missing if str(item).strip()]
+    blocker_items = [str(item).strip() for item in blockers if str(item).strip()]
+    unbound = [item for item in missing_items if item.startswith("row:")]
+    unpriced = [item for item in missing_items if item.startswith("price_missing:")]
+    other = [
+        item for item in missing_items if item not in unbound and item not in unpriced
+    ]
+    file_bit = f" Файл: {filename}." if filename else ""
+    incomplete = bool(
+        unbound
+        or unpriced
+        or other
+        or blocker_items
+        or status == "partial"
+        or pricing_status in {"priced_partial", "norm_selection_required"}
+        or (norms_status and norms_status != "norms_verified")
+    )
+    if not incomplete:
+        return f"ЛСР собрана.{file_bit}".strip()
+    status_bits = [item for item in (pricing_status, norms_status, status) if item]
+    unique_bits = list(dict.fromkeys(status_bits))
+    parts = [
+        f"ЛСР собрана частично ({', '.join(unique_bits) or 'partial'}).{file_bit}".strip()
+    ]
+    if norms_status == "norms_unverified":
+        parts.append("Нормы не прошли независимую проверку применимости.")
+    elif norms_status == "norms_partial":
+        parts.append("Часть норм не подтверждена отдельной проверкой.")
+    if unbound:
+        shown = ", ".join(unbound[:12])
+        if len(unbound) > 12:
+            shown += "…"
+        parts.append(f"Не вошли в расчёт: {shown}.")
+    if unpriced:
+        names = [item.split(":", 1)[-1] for item in unpriced[:8]]
+        shown = ", ".join(names)
+        if len(unpriced) > 8:
+            shown += "…"
+        parts.append(f"Нет цены: {shown}.")
+    if blocker_items:
+        parts.append("Блокеры: " + ", ".join(blocker_items[:6]) + ".")
+    if other:
+        parts.append("Замечания: " + ", ".join(other[:6]) + ".")
+    parts.append("Файл не для согласования.")
+    return " ".join(parts)
 
 
 def validate_model_rag_result_structure(
@@ -1261,38 +2275,52 @@ def validate_model_rag_result_structure(
     evidence_chunks: Sequence[Any],
     *,
     expected_source_rows: int,
+    attachment_truncated: bool = False,
+    answer_truncated: bool = False,
+    source_catalog: AttachmentSourceCatalog | None = None,
+    source_incomplete_locators: Sequence[str] = (),
+    finish_reason: str = "",
+    validate_evidence_refs: bool = True,
 ) -> list[str]:
     """Validate references before packaging without changing model decisions."""
 
     errors: list[str] = []
-    observed: list[int] = []
+    if attachment_truncated:
+        errors.append("attachment_truncated")
+    if answer_truncated or finish_reason_is_length(finish_reason):
+        errors.append("answer_truncated")
+    if source_incomplete_locators:
+        errors.append(
+            "source_incomplete:"
+            + ",".join(list(source_incomplete_locators)[:8])
+        )
+    observed_keys: set[tuple[str, str]] = set()
     for row in rows:
         source_row = row.get("source_row")
-        if not isinstance(source_row, int) or source_row <= 0:
+        is_positive_int = (
+            isinstance(source_row, int)
+            and not isinstance(source_row, bool)
+            and source_row > 0
+        )
+        is_authored_label = isinstance(source_row, str) and bool(source_row.strip())
+        if not is_positive_int and not is_authored_label:
             errors.append("invalid_source_row")
             continue
-        observed.append(source_row)
-    observed_set = set(observed)
-    for source_row in sorted(observed_set):
-        if observed.count(source_row) > 1:
+        source_key = (type(source_row).__name__, str(source_row))
+        if source_key in observed_keys:
             errors.append(f"duplicate_source_row:{source_row}")
-    if expected_source_rows > 0:
-        expected = set(range(1, expected_source_rows + 1))
-        errors.extend(
-            f"missing_source_row:{source_row}"
-            for source_row in sorted(expected - observed_set)
-        )
-        errors.extend(
-            f"unexpected_source_row:{source_row}"
-            for source_row in sorted(observed_set - expected)
-        )
+        observed_keys.add(source_key)
 
     evidence_by_ref: dict[str, dict[str, Any]] = {}
+    evidence_by_global_id: dict[str, dict[str, Any]] = {}
     for chunk in evidence_chunks:
         meta = dict(getattr(chunk, "meta", {}) or {})
         evidence_ref = str(meta.get("model_evidence_ref") or "").strip().upper()
         if evidence_ref:
             evidence_by_ref[evidence_ref] = meta
+        global_id = str(meta.get("global_evidence_id") or "").strip()
+        if global_id:
+            evidence_by_global_id[global_id] = meta
 
     def code_identity(value: Any) -> str:
         return "".join(
@@ -1302,25 +2330,96 @@ def validate_model_rag_result_structure(
         )
 
     for row in rows:
+        if model_rag_row_kind(row) != "work":
+            continue
         source_row = row.get("source_row")
-        refs = [
-            str(item or "").strip().upper()
-            for item in (row.get("evidence_refs") or [])
-            if str(item or "").strip()
-        ]
+        if source_catalog is not None:
+            errors.extend(compare_model_row_to_catalog(row, source_catalog))
+        if not validate_evidence_refs:
+            continue
+        refs = extract_model_evidence_refs(row.get("evidence_refs"))
         if not refs:
             errors.append(f"missing_evidence_ref:{source_row}")
             continue
-        unknown_refs = [ref for ref in refs if ref not in evidence_by_ref]
+        raw_bindings = row.get("evidence_bindings")
+        bindings = (
+            {
+                str(alias).strip().upper(): str(global_id).strip()
+                for alias, global_id in raw_bindings.items()
+                if str(alias).strip() and str(global_id).strip()
+            }
+            if isinstance(raw_bindings, Mapping)
+            else {}
+        )
+        if bindings:
+            unknown_refs: list[str] = []
+            referenced_meta: list[dict[str, Any]] = []
+            for ref in refs:
+                global_id = bindings.get(ref, "")
+                if global_id and global_id in evidence_by_global_id:
+                    referenced_meta.append(evidence_by_global_id[global_id])
+                    continue
+                if not global_id and ref in evidence_by_ref:
+                    referenced_meta.append(evidence_by_ref[ref])
+                    continue
+                unknown_refs.append(ref)
+        else:
+            unknown_refs = [ref for ref in refs if ref not in evidence_by_ref]
+            referenced_meta = [
+                evidence_by_ref[ref] for ref in refs if ref in evidence_by_ref
+            ]
         errors.extend(f"unknown_evidence_ref:{ref}" for ref in unknown_refs)
-        selected_code = code_identity(row.get("norm_code"))
+        selected_code = (
+            ""
+            if _explicit_absence_value(row.get("norm_code"))
+            else code_identity(row.get("norm_code"))
+        )
         if selected_code and not any(
-            code_identity(evidence_by_ref[ref].get("norm_code")) == selected_code
-            for ref in refs
-            if ref in evidence_by_ref
+            (
+                (evidence_code := code_identity(meta.get("norm_code")))
+                and evidence_code in selected_code
+            )
+            for meta in referenced_meta
         ):
             errors.append(f"norm_code_not_in_referenced_evidence:{source_row}")
+    if source_catalog is not None:
+        errors.extend(coverage_errors(rows, source_catalog))
     return list(dict.fromkeys(errors))
+
+
+def blocking_model_rag_result_errors(
+    errors: Sequence[str],
+    *,
+    work_row_count: int = 0,
+) -> list[str]:
+    """Keep evidence-code disagreement visible without withholding the model draft.
+
+    Governor omissions and a cut-off last table line do not drop already parsed
+    work rows. A missing or unknown Qx.Hy on one work row stays visible and
+    unpriced; it does not withhold the workbook when other work rows exist.
+    Quantity mismatch still blocks the file.
+    """
+
+    advisory_prefixes = (
+        "norm_code_not_in_referenced_evidence:",
+        "source_row_not_in_catalog:",
+        "source_coverage_incomplete:",
+        "source_unit_mismatch:",
+        "source_incomplete:",
+    )
+    if int(work_row_count or 0) > 0:
+        advisory_prefixes = (
+            *advisory_prefixes,
+            "missing_evidence_ref:",
+            "unknown_evidence_ref:",
+        )
+    advisory_exact = {"answer_truncated"} if int(work_row_count or 0) > 0 else set()
+    return [
+        error
+        for error in errors
+        if not str(error).startswith(advisory_prefixes)
+        and str(error) not in advisory_exact
+    ]
 
 
 def model_rag_search_tool_schema() -> list[dict[str, Any]]:
@@ -1372,12 +2471,38 @@ def _bounded_source_blocks(text: str, *, max_chars: int = 700) -> list[str]:
 
 
 def selector_evidence_payload(
-    *, attachment_context: str, rendered_context: str,
+    *,
+    attachment_context: str,
+    rendered_context: str,
+    source_catalog: AttachmentSourceCatalog | None = None,
+    sheet: str = "",
+    remaining_work: Sequence[str] | None = None,
 ) -> list[Any]:
     """Return model evidence as independently packable, ordered source blocks."""
 
     payload: list[Any] = []
-    if str(attachment_context or "").strip():
+    if source_catalog is not None and source_catalog.rows:
+        payload.append(source_catalog.manifest_text())
+        wanted_sheet = str(sheet or "").strip()
+        if wanted_sheet:
+            names = catalog_work_sheet_names(source_catalog) or [
+                name for name, _count in source_catalog.sheets
+            ]
+            index = names.index(wanted_sheet) + 1 if wanted_sheet in names else 1
+            payload.append(
+                f"Текущий шаг: лист «{wanted_sheet}» ({index}/{len(names) or 1}). "
+                "Другие листы манифеста будут отдельными шагами; не отказывайся из‑за них."
+            )
+            payload.extend(
+                catalog_sheet_pack_lines(
+                    source_catalog,
+                    wanted_sheet,
+                    remaining_work=remaining_work,
+                )
+            )
+        else:
+            payload.extend(source_catalog.interleaved_row_lines())
+    elif str(attachment_context or "").strip():
         payload.append("Текст явно прикреплённого пользователем файла:")
         payload.extend(_bounded_source_blocks(attachment_context))
     payload.append("Материалы из найденных документов:")
@@ -1426,6 +2551,11 @@ def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bo
             "Ссылки оформляй номерами из заголовков [Источник N]; навигационные карты помогают "
             "выбрать файл, но сами по себе не подтверждают факт."
         )
+    if (
+        str(snapshot.get("mode") or "").strip().casefold() == "estimator"
+        or profile_uses_tabular_estimator_path(snapshot)
+    ):
+        parts.append(_TABULAR_LSR_VOLUME_INSTRUCTION)
     return "\n\n".join(parts)
 
 
@@ -1729,19 +2859,37 @@ async def _execute_chat_evidence_application(
     table_result=None
 ):
     _dataset_ids = tuple(str(item) for item in (_dataset_ids or ()) if str(item))
+    profile_snapshot, source_catalog, tabular_estimator_bound = bind_tabular_estimator_profile(
+        profile_snapshot,
+        attachment_id=str(getattr(req, "attachment_id", "") or ""),
+    )
     document_grounding_enabled = bool(
         (scope_resolution or {}).get("document_grounding_enabled", _dataset_ids)
     )
+    if tabular_estimator_bound:
+        document_grounding_enabled = True
+        from proxy.services.chat_profile_service import resolve_profile_system_dataset_ids
+
+        _dataset_ids = tuple(
+            resolve_profile_system_dataset_ids(
+                profile_snapshot,
+                current_dataset_ids=_dataset_ids,
+            )
+        )
     if document_grounding_enabled:
         use_semantic_cache = False
     # Ordinary chat is model-owned: validators may not judge, retry, rewrite,
     # suppress, or relabel the model's engineering conclusion.
     use_validation = False
     memory_project_id = 0
+    workspace_memory_registered = False
     project_memory_advisory = ""
     try:
-        memory_project_id = int(getattr(req, "project_id", 0) or 0)
-        if memory_project_id > 0:
+        memory_project_id, workspace_memory_registered = resolve_session_memory_scope(
+            str(req.session_id or ""), int(getattr(req, "project_id", 0) or 0) or None,
+        )
+        memory_project_id = int(memory_project_id or 0)
+        if memory_project_id > 0 and not workspace_memory_registered:
             project_memory_advisory = get_memory_port().recall_project_advisory(
                 memory_project_id, str(req.question or "")
             )
@@ -2136,30 +3284,6 @@ async def _execute_chat_evidence_application(
             }
     state.chat_metrics["cache_miss"] = state.chat_metrics.get("cache_miss", 0) + 1
 
-    table_result = maybe_answer_table_query(
-        req.question,
-        chunks,
-        storage_root=mutable_path("./storage/datasets"),
-    )
-    if table_result:
-        return _table_query_response(
-            state=state,
-            question=req.question,
-            table_result=table_result,
-            chunks=chunks,
-            t_search=t_search,
-            session_id=req.session_id,
-            requested_dataset_filter=req.dataset_filter,
-            effective_dataset_filter=effective_dataset_filter,
-            resolved_dataset_ids=_dataset_ids,
-            resolved_dataset_names=resolved_dataset_names,
-            dataset_name_by_id=dataset_name_by_id,
-            query_route_payload=query_route_payload,
-            retrieval_trace=retrieval_trace,
-            cache_marker=cache_marker,
-            use_validation=use_validation,
-        )
-
     if not chunks:
         retrieval_trace["empty_retrieval"] = {
             "schema": "empty_retrieval_model_first_v1",
@@ -2185,30 +3309,6 @@ async def _execute_chat_evidence_application(
         "will_be_cloud": will_be_cloud,
         "context_radius": context_radius,
     }
-    expanded_table_chunks = [*chunks, *context_windows.chunks]
-    table_result = maybe_answer_table_query(
-        req.question,
-        expanded_table_chunks,
-        storage_root=mutable_path("./storage/datasets"),
-    )
-    if table_result:
-        return _table_query_response(
-            state=state,
-            question=req.question,
-            table_result=table_result,
-            chunks=expanded_table_chunks,
-            t_search=t_search,
-            session_id=req.session_id,
-            requested_dataset_filter=req.dataset_filter,
-            effective_dataset_filter=effective_dataset_filter,
-            resolved_dataset_ids=_dataset_ids,
-            resolved_dataset_names=resolved_dataset_names,
-            dataset_name_by_id=dataset_name_by_id,
-            query_route_payload=query_route_payload,
-            retrieval_trace=retrieval_trace,
-            cache_marker=cache_marker,
-            use_validation=use_validation,
-        )
     # ПЕРФ: валидатор теперь аддитивный/быстрый (rules+coreml fail-open) — ему НЕ нужен второй
     # дорогой проход expand_context_windows (это удваивало context-фазу, 2.7-5.7с на сложных).
     # Переиспользуем контекст ответа: те же чанки, валидатор проверяет ответ по ним.
@@ -2353,6 +3453,10 @@ async def _execute_chat_evidence_application(
             "items": len(typed_memory.items),
             "omitted": typed_memory.omitted,
             "cursor": typed_memory.cursor,
+            "project_id": typed_memory.project_id,
+            "registered_session": workspace_memory_registered,
+            "item_ids": [item.item_id for item in typed_memory.items],
+            "omitted_item_ids": list(typed_memory.omitted_item_ids),
         }
     except Exception as memory_error:  # noqa: BLE001 - memory is advisory, never an answer blocker
         logger.warning("[TYPED_MEMORY] projection skipped: %s", type(memory_error).__name__)
@@ -2516,13 +3620,44 @@ async def _execute_chat_evidence_application(
         include_metadata=True,
     )
     attachment_context = str(getattr(req, "attachment_context", "") or "").strip()
+    source_incomplete_locators: list[str] = []
+    answer_finish_reason = ""
     model_driven_retrieval = profile_uses_model_driven_retrieval(profile_snapshot)
+    sheet_pass_active = sheet_pass_should_run(
+        source_catalog,
+        tabular_estimator_bound=tabular_estimator_bound,
+        model_driven=model_driven_retrieval,
+    )
+    comparative_variant = str(
+        getattr(req, "comparative_acceptance_variant", "") or ""
+    ).upper()
+    if comparative_variant == "B0_DIRECT":
+        sheet_pass_active = False
+    if comparative_variant:
+        retrieval_trace["comparative_acceptance"] = {
+            "variant": comparative_variant,
+            "sheet_packet_harness": comparative_variant == "B1_CANDIDATE",
+            "model_owned_query_rag_result": True,
+        }
+    sheet_pass_names = (
+        catalog_work_sheet_names(source_catalog)
+        if sheet_pass_active and source_catalog is not None
+        else []
+    )
+    sheet_pass_first = sheet_pass_names[0] if sheet_pass_names else ""
 
     selector_evidence = selector_evidence_payload(
         attachment_context=attachment_context,
         rendered_context=initial_selector_context(
             context,
             model_authored_initial_query=model_driven_retrieval,
+        ),
+        source_catalog=source_catalog,
+        sheet=sheet_pass_first,
+        remaining_work=(
+            catalog_sheet_work_locators(source_catalog, sheet_pass_first)
+            if sheet_pass_first and source_catalog is not None
+            else None
         ),
     )
     selector_source_map = answer_source_map
@@ -2617,7 +3752,10 @@ async def _execute_chat_evidence_application(
                             )
                         return (
                             model_text,
-                            dict(active_model_result.response.usage),
+                            usage_with_finish_reason(
+                                dict(active_model_result.response.usage),
+                                active_model_result.response.finish_reason,
+                            ),
                         )
                     if getattr(runtime, "uses_native_chat", False):
                         # #1b: нативный /api/chat think:false → чистый ответ без CoT-дампа
@@ -2637,6 +3775,7 @@ async def _execute_chat_evidence_application(
                             sbody["stream_options"] = {"include_usage": True}
                         acc: list[str] = []
                         usage_d: dict = {}
+                        stream_finish = ""
                         async with client.stream("POST", runtime.chat_url, headers=hdrs, json=sbody) as sresp:
                             sresp.raise_for_status()
                             async for line in sresp.aiter_lines():
@@ -2655,15 +3794,23 @@ async def _execute_chat_evidence_application(
                                 if piece:
                                     acc.append(piece)
                                     await token_sink({"event": "token", "data": piece})
+                                if choices:
+                                    stream_finish = str(
+                                        choices[0].get("finish_reason") or stream_finish
+                                    )
                                 if chunk.get("usage"):
                                     usage_d = chunk["usage"]
-                        return "".join(acc), usage_d
+                        return "".join(acc), usage_with_finish_reason(usage_d, stream_finish)
                     r = await client.post(runtime.chat_url, headers=hdrs, json={**_body, "model": model})
                     r.raise_for_status()
                     rj = r.json()
+                    choice = (rj.get("choices") or [{}])[0]
                     return (
-                        _assistant_text(rj.get("choices", [{}])[0].get("message", {})),
-                        rj.get("usage", {}) or {},
+                        _assistant_text(choice.get("message", {})),
+                        usage_with_finish_reason(
+                            rj.get("usage", {}) or {},
+                            str(choice.get("finish_reason") or ""),
+                        ),
                     )
 
                 async def _post_cloud_fallback(
@@ -2705,7 +3852,12 @@ async def _execute_chat_evidence_application(
                 workbook_chat_meta: dict[str, Any] = {}
                 tool_context = ""
                 model_rag_query_hits: list[tuple[str, Sequence[Any]]] = []
+                rejected_model_queries: list[str] = []
+                omitted_evidence_refs: list[str] = []
                 model_rag_evidence_groups: list[str] = []
+                sheet_pass_done = False
+                sheet_pass_rows: list[dict[str, Any]] = []
+                research_cancelled = False
                 visual_tool_requested = any(
                     marker in str(req.question or "").casefold().replace("ё", "е")
                     for marker in ("посмотри глазами", "посмотри чертеж", "посмотри схему", "что видно на лист", "что изображено на лист")
@@ -2770,56 +3922,77 @@ async def _execute_chat_evidence_application(
                     retrieval_trace["route_comparison"]["candidate_acceptance"] = True
                 canonical_shadow_recorded = False
                 tool_loop_enabled = bool(profile_tools)
-                if model_driven_retrieval and tool_loop_enabled:
+                query_headers: dict[str, str] = {}
+                model_research_tools = None
+                retrieval_limits = effective_retrieval_policy(profile_snapshot)
+                if model_driven_retrieval and tool_loop_enabled and not sheet_pass_active:
                     retrieval_limits = effective_retrieval_policy(profile_snapshot)
                     query_headers = {}
                     if llm_runtime.api_key:
                         query_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
-                    query_messages, query_packet = govern_inference_messages(
-                        preset=execution_preset,
-                        profile_prefix=(
-                            profile_system_prompt(profile_snapshot, strict=False)
-                            + "\n\nПрочитай приложенный материал целиком. Сформулируй поисковые "
-                            "запросы к выбранным датасетам, необходимые для подбора evidence "
-                            "по всем фактическим строкам исходного материала. Число запросов "
-                            "определяешь ты; фиксированного лимита нет. В запросах сохраняй язык "
-                            "и профессиональную терминологию исходных строк; не переводи и не "
-                            "транслитерируй их. Сейчас не выбирай нормы "
-                            "и не отвечай по существу — верни только сами поисковые запросы, "
-                            "каждый с новой строки."
+                    query_instructions = [
+                        model_rag_query_instruction(profile_snapshot),
+                        (
+                            model_rag_query_instruction(profile_snapshot)
+                            + "\n\n"
+                            + _MODEL_RAG_QUERY_REPAIR_INSTRUCTION
                         ),
-                        request_payload={
-                            "question": str(req.question or ""),
-                            "dataset_ids": [str(item) for item in _dataset_ids],
-                        },
-                        checkpoint=(),
-                        working_memory=(),
-                        evidence=selector_evidence,
-                        source_map=selector_source_map,
-                        tool_exchange=(),
-                    )
-                    retrieval_trace["context_governor"]["calls"].append(
-                        context_packet_trace(query_packet, purpose="model_rag_queries")
-                    )
-                    query_body = {
-                        "messages": query_messages,
-                        "stream": False,
-                        "temperature": 0,
-                        "max_tokens": max(
-                            256,
-                            _env_int("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", 1600),
-                        ),
-                    }
-                    t_query_model = time.time()
-                    query_text, query_usage = await _post_llm(
-                        llm_runtime,
-                        llm_model,
-                        query_headers,
-                        query_body,
-                        allow_stream=False,
-                    )
-                    t_llm += time.time() - t_query_model
-                    model_queries = parse_model_rag_queries(query_text)
+                    ]
+                    model_queries = []
+                    rejected_model_queries = []
+                    for query_attempt, query_instruction in enumerate(query_instructions, start=1):
+                        query_messages, query_packet = govern_inference_messages(
+                            preset=execution_preset,
+                            profile_prefix=(
+                                profile_system_prompt(profile_snapshot, strict=False)
+                                + "\n\n"
+                                + query_instruction
+                            ),
+                            request_payload={
+                                "question": str(req.question or ""),
+                                "dataset_ids": [str(item) for item in _dataset_ids],
+                            },
+                            checkpoint=(),
+                            working_memory=workspace_note_objects(
+                                memory_candidates, registered=workspace_memory_registered,
+                            ),
+                            evidence=selector_evidence,
+                            source_map=selector_source_map,
+                            tool_exchange=(),
+                        )
+                        retrieval_trace["context_governor"]["calls"].append(
+                            context_packet_trace(
+                                query_packet,
+                                purpose=(
+                                    "model_rag_queries"
+                                    if query_attempt == 1
+                                    else "model_rag_query_repair"
+                                ),
+                            )
+                        )
+                        query_body = {
+                            "messages": query_messages,
+                            "stream": False,
+                            "temperature": 0,
+                            "max_tokens": max(
+                                256,
+                                _env_int("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", 1600),
+                            ),
+                        }
+                        t_query_model = time.time()
+                        query_text, query_usage = await _post_llm(
+                            llm_runtime,
+                            llm_model,
+                            query_headers,
+                            query_body,
+                            allow_stream=False,
+                        )
+                        t_llm += time.time() - t_query_model
+                        model_queries, rejected_model_queries = classify_model_rag_query_lines(
+                            query_text
+                        )
+                        if model_queries:
+                            break
                     if not model_queries:
                         raise HTTPException(
                             status_code=503,
@@ -2888,6 +4061,7 @@ async def _execute_chat_evidence_application(
                     (
                         model_rag_evidence_groups,
                         model_evidence_chunks,
+                        omitted_evidence_refs,
                     ) = build_model_rag_evidence_groups(
                         model_rag_query_hits,
                         max_chars=context_chars_limit,
@@ -2926,6 +4100,53 @@ async def _execute_chat_evidence_application(
                         "hits_per_query": [
                             len(hits) for _query, hits in model_rag_query_hits
                         ],
+                        "rejected_queries": rejected_model_queries,
+                        "omitted_evidence_refs": omitted_evidence_refs,
+                    }
+                elif model_driven_retrieval and tool_loop_enabled and sheet_pass_active:
+                    retrieval_limits = effective_retrieval_policy(profile_snapshot)
+                    query_headers = {}
+                    if llm_runtime.api_key:
+                        query_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
+
+                    async def _no_model_rag_fallback(_tool_name: str, _args: dict[str, Any]):
+                        raise RuntimeError("MODEL_RAG_ONLY_SUPPORTS_SEARCH_SOURCES")
+
+                    model_research_tools = ModelResearchToolService(
+                        retrieve=retrieve_chat_chunks,
+                        frozen_dataset_ids=tuple(
+                            str(item) for item in _dataset_ids if str(item)
+                        ),
+                        retrieval_kwargs={
+                            "rag_backend": rag_backend,
+                            "reranker_enabled": _reranker_on,
+                            "reranker_available": state.reranker_available,
+                            "reranker_cls": state.reranker_cls,
+                            "mlx_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+                            "logger": logger,
+                            "llm_semaphore": state.llm_semaphore,
+                            "return_trace": True,
+                            "doc_filter": None,
+                            "scope_source": str(
+                                (scope_resolution or {}).get("scope_source") or "unspecified"
+                            ),
+                            "scope_error_code": str(
+                                (scope_resolution or {}).get("error_code") or ""
+                            ),
+                        },
+                        fallback=_no_model_rag_fallback,
+                        smeta_norm_retrieve=(
+                            retrieve_smeta_norm_cards
+                            if profile_uses_smeta_norm_retrieval(profile_snapshot)
+                            else None
+                        ),
+                        **retrieval_limits,
+                    )
+                    retrieval_trace["tool_loop"] = {
+                        "schema": "les_model_rag_sheet_pass_v1",
+                        "enabled": True,
+                        "model_owns_queries": True,
+                        "passes": [],
                     }
                 elif tool_loop_enabled:
                     retrieval_limits = effective_retrieval_policy(profile_snapshot)
@@ -3256,6 +4477,7 @@ async def _execute_chat_evidence_application(
                                         selector_evidence = selector_evidence_payload(
                                             attachment_context=attachment_context,
                                             rendered_context=context,
+                                            source_catalog=source_catalog,
                                         )
                                         selector_source_map = answer_source_map
                                 selected_calls.append(call)
@@ -3396,8 +4618,748 @@ async def _execute_chat_evidence_application(
                             "model_rag_complete_answer",
                         ),
                     )
+                if (
+                    sheet_pass_active
+                    and model_driven_retrieval
+                    and tool_loop_enabled
+                    and source_catalog is not None
+                    and sheet_pass_names
+                ):
+                    async def _emit_sheet_progress(
+                        label: str,
+                        *,
+                        completed: int,
+                        total: int,
+                    ) -> None:
+                        if token_sink is None:
+                            return
+                        await token_sink(
+                            {
+                                "event": "tool_progress",
+                                "data": {
+                                    "label": label,
+                                    "completed": completed,
+                                    "total": total,
+                                    **(
+                                        {
+                                            "workbook_research_job_id": str(
+                                                research_job.get("job_id") or ""
+                                            )
+                                        }
+                                        if research_job is not None
+                                        else {}
+                                    ),
+                                },
+                            }
+                        )
+
+                    async def _sheet_pass_llm(chat_body):
+                        nonlocal llm_model
+                        if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
+                            text, usage = await _post_llm(
+                                llm_runtime,
+                                llm_model,
+                                (
+                                    {"Authorization": f"Bearer {llm_runtime.api_key}"}
+                                    if llm_runtime.api_key
+                                    else {}
+                                ),
+                                chat_body,
+                                allow_stream=False,
+                            )
+                            if active_model_result is not None:
+                                llm_model = active_model_result.connection.model_id
+                            return text, usage
+                        if is_cloud_provider(llm_runtime.provider):
+                            text, usage, llm_model = await _post_cloud_fallback(
+                                llm_runtime,
+                                (
+                                    {"Authorization": f"Bearer {llm_runtime.api_key}"}
+                                    if llm_runtime.api_key
+                                    else {}
+                                ),
+                                chat_body,
+                                allow_stream=False,
+                            )
+                            return text, usage
+                        return await _post_llm(
+                            llm_runtime,
+                            llm_model,
+                            (
+                                {"Authorization": f"Bearer {llm_runtime.api_key}"}
+                                if llm_runtime.api_key
+                                else {}
+                            ),
+                            chat_body,
+                            allow_stream=False,
+                        )
+
+                    sheet_sys_msg = sys_normal + (
+                        f" {answer_form.instruction}" if answer_form.instruction else ""
+                    )
+                    if req.output_directive and req.output_directive.strip():
+                        sheet_sys_msg += " " + req.output_directive.strip()
+                    research_job_service: WorkbookResearchJobService | None = None
+                    research_job: dict[str, Any] | None = None
+                    attachment_id = str(getattr(req, "attachment_id", "") or "")
+                    if attachment_id and source_catalog.source_file_sha256:
+                        try:
+                            research_job_service = WorkbookResearchJobService()
+                            research_identity = research_job_service.identity(
+                                session_id=str(req.session_id or ""),
+                                attachment_id=attachment_id,
+                                source_sha256=source_catalog.source_file_sha256,
+                                dataset_ids=[str(item) for item in _dataset_ids],
+                                profile_revision_id=str(
+                                    (profile_snapshot or {}).get("revision_id") or ""
+                                ),
+                                model_identity=str(
+                                    getattr(
+                                        getattr(active_model_result, "connection", None),
+                                        "model_id",
+                                        "",
+                                    )
+                                    or llm_model
+                                ),
+                                question=str(req.question or ""),
+                            )
+                            research_job = research_job_service.begin_or_resume(
+                                research_identity
+                            )
+                        except Exception as job_error:  # noqa: BLE001 - durability degrades visibly
+                            logger.exception(
+                                "[WORKBOOK_RESEARCH] durable checkpoint unavailable: %s",
+                                type(job_error).__name__,
+                            )
+                            retrieval_trace["workbook_research_job"] = {
+                                "schema": "les.workbook-research-job.v1",
+                                "status": "durability_unavailable",
+                                "error_type": type(job_error).__name__,
+                            }
+                            research_job_service = None
+                            research_job = None
+                    accumulated_rows: list[dict[str, Any]] = [
+                        dict(item)
+                        for item in ((research_job or {}).get("accepted_rows") or ())
+                        if isinstance(item, Mapping)
+                    ]
+                    sheet_pass_evidence_chunks: list[_ModelRagEvidenceChunk] = [
+                        evidence_chunk_from_record(item)
+                        for item in ((research_job or {}).get("evidence") or ())
+                        if isinstance(item, Mapping)
+                    ]
+                    answer_parts: list[str] = []
+                    any_sheet_queries = False
+                    last_finish = ""
+                    last_truncated = False
+                    pass_rejected: list[str] = []
+                    pass_omitted: list[str] = list(
+                        (research_job or {}).get("omitted") or ()
+                    )
+                    research_cancelled = False
+                    sheet_count = len(sheet_pass_names)
+                    for sheet_index, sheet_name in enumerate(sheet_pass_names, start=1):
+                        if (
+                            research_job_service is not None
+                            and research_job is not None
+                            and research_job_service.should_cancel(research_job["job_id"])
+                        ):
+                            research_cancelled = True
+                            break
+                        remaining = remaining_sheet_work_locators(
+                            source_catalog,
+                            sheet_name,
+                            terminal_source_row_keys(accumulated_rows, source_catalog),
+                        )
+                        exhausted_locators: set[str] = set()
+                        packet_attempts: dict[tuple[str, ...], int] = {}
+                        locator_research_round: dict[str, int] = {}
+                        inner = 0
+                        while remaining:
+                            if (
+                                research_job_service is not None
+                                and research_job is not None
+                                and research_job_service.should_cancel(
+                                    research_job["job_id"]
+                                )
+                            ):
+                                research_cancelled = True
+                                break
+                            packet = adaptive_row_packet(
+                                remaining,
+                                generation_reserve_tokens=(
+                                    answer_execution_preset.generation_reserve_tokens
+                                ),
+                            )
+                            if not packet:
+                                break
+                            fingerprint = tuple(packet)
+                            packet_attempts[fingerprint] = packet_attempts.get(fingerprint, 0) + 1
+                            inner += 1
+                            cited_before = terminal_source_row_keys(
+                                accumulated_rows, source_catalog
+                            )
+                            await _emit_sheet_progress(
+                                sheet_pass_progress_label(
+                                    sheet_name,
+                                    sheet_index=sheet_index,
+                                    sheet_count=sheet_count,
+                                    stage="поиск норм",
+                                ),
+                                completed=sheet_index - 1,
+                                total=sheet_count,
+                            )
+                            pass_evidence = selector_evidence_payload(
+                                attachment_context=attachment_context,
+                                rendered_context="",
+                                source_catalog=source_catalog,
+                                sheet=sheet_name,
+                                remaining_work=packet,
+                            )
+                            selector_evidence = pass_evidence
+                            query_text = ""
+                            model_queries = []
+                            rejected_now: list[str] = []
+                            packet_round = max(
+                                (locator_research_round.get(str(item), 0) for item in packet),
+                                default=0,
+                            )
+                            query_instructions = [
+                                sheet_pass_query_instruction(
+                                    profile_snapshot,
+                                    sheet=sheet_name,
+                                    sheet_index=sheet_index,
+                                    sheet_count=sheet_count,
+                                    research_round=packet_round,
+                                ),
+                                (
+                                    sheet_pass_query_instruction(
+                                        profile_snapshot,
+                                        sheet=sheet_name,
+                                        sheet_index=sheet_index,
+                                        sheet_count=sheet_count,
+                                        research_round=packet_round,
+                                    )
+                                    + "\n\n"
+                                    + _MODEL_RAG_QUERY_REPAIR_INSTRUCTION
+                                ),
+                            ]
+                            try:
+                                for query_attempt, query_instruction in enumerate(
+                                    query_instructions, start=1
+                                ):
+                                    query_messages, query_packet = govern_inference_messages(
+                                        preset=execution_preset,
+                                        profile_prefix=(
+                                            profile_system_prompt(
+                                                profile_snapshot, strict=False
+                                            )
+                                            + "\n\n"
+                                            + query_instruction
+                                        ),
+                                        request_payload={
+                                            "question": str(req.question or ""),
+                                            "dataset_ids": [
+                                                str(item) for item in _dataset_ids
+                                            ],
+                                        },
+                                        checkpoint=(),
+                                        working_memory=workspace_note_objects(
+                                            memory_candidates,
+                                            registered=workspace_memory_registered,
+                                        ),
+                                        evidence=pass_evidence,
+                                        source_map=selector_source_map,
+                                        tool_exchange=(),
+                                    )
+                                    retrieval_trace["context_governor"]["calls"].append(
+                                        context_packet_trace(
+                                            query_packet,
+                                            purpose=(
+                                                "model_rag_sheet_queries"
+                                                if query_attempt == 1
+                                                else "model_rag_sheet_query_repair"
+                                            ),
+                                        )
+                                    )
+                                    query_body = {
+                                        "messages": query_messages,
+                                        "stream": False,
+                                        "temperature": 0,
+                                        "max_tokens": max(
+                                            256,
+                                            _env_int(
+                                                "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS",
+                                                1600,
+                                            ),
+                                        ),
+                                    }
+                                    t_query_model = time.time()
+                                    query_text, query_usage = await _post_llm(
+                                        llm_runtime,
+                                        llm_model,
+                                        query_headers,
+                                        query_body,
+                                        allow_stream=False,
+                                    )
+                                    t_llm += time.time() - t_query_model
+                                    model_queries, rejected_now = (
+                                        classify_model_rag_query_lines(query_text)
+                                    )
+                                    if model_queries:
+                                        break
+                            except ContextRequiredSectionOverflow as context_error:
+                                logger.warning(
+                                    "[SHEET_PASS] query overflow sheet=%s: %s",
+                                    sheet_name,
+                                    context_error.code,
+                                )
+                                break
+                            pass_rejected.extend(rejected_now)
+                            if not model_queries:
+                                break
+                            any_sheet_queries = True
+                            pass_hits: list[tuple[str, Sequence[Any]]] = []
+                            pass_tools: list[dict[str, Any]] = []
+                            search_blocked = False
+                            for query in model_queries:
+                                research_result = await model_research_tools.execute(
+                                    {"tool": "search_sources", "args": {"q": query}}
+                                )
+                                pass_tools.append(research_result.payload)
+                                if str(research_result.payload.get("status") or "") != "ok":
+                                    search_blocked = True
+                                    break
+                                pass_hits.append(
+                                    (
+                                        query,
+                                        tuple(research_result.chunks)[
+                                            : retrieval_limits["model_evidence_k"]
+                                        ],
+                                    )
+                                )
+                            if search_blocked:
+                                logger.warning(
+                                    "[SHEET_PASS] search incomplete sheet=%s",
+                                    sheet_name,
+                                )
+                                break
+                            tool_results_for_model = pass_tools
+                            model_rag_query_hits = pass_hits
+                            await _emit_sheet_progress(
+                                sheet_pass_progress_label(
+                                    sheet_name,
+                                    sheet_index=sheet_index,
+                                    sheet_count=sheet_count,
+                                    stage="таблица строк",
+                                ),
+                                completed=sheet_index - 1,
+                                total=sheet_count,
+                            )
+                            question_tail = sheet_pass_question_tail(
+                                str(req.question or ""),
+                                sheet=sheet_name,
+                                sheet_index=sheet_index,
+                                sheet_count=sheet_count,
+                                remaining_work=packet,
+                            )
+                            _, fixed_packet = govern_inference_messages(
+                                preset=answer_execution_preset,
+                                profile_prefix=sheet_sys_msg,
+                                request_payload=question_tail,
+                                checkpoint=(),
+                                working_memory=(),
+                                evidence=pass_evidence,
+                                source_map=(),
+                                tool_exchange=(),
+                                dialogue=(),
+                            )
+                            remaining_group_tokens = max(
+                                0,
+                                fixed_packet.input_budget_tokens
+                                - fixed_packet.included_tokens
+                                - len(pass_hits)
+                                - 2,
+                            )
+                            (
+                                model_rag_evidence_groups,
+                                model_evidence_chunks,
+                                omitted_now,
+                            ) = build_model_rag_evidence_groups(
+                                pass_hits,
+                                max_chars=min(
+                                    context_chars_limit,
+                                    remaining_group_tokens * 2,
+                                ),
+                                hits_per_query=retrieval_limits["model_evidence_k"],
+                                evidence_namespace=row_packet_id(
+                                    source_catalog,
+                                    sheet=sheet_name,
+                                    locators=packet,
+                                ),
+                            )
+                            sheet_pass_evidence_chunks.extend(model_evidence_chunks)
+                            pass_omitted.extend(omitted_now)
+                            context = "\n\n".join(model_rag_evidence_groups)
+                            answer_source_map = _model_rag_source_map(
+                                model_evidence_chunks
+                            )
+                            selector_source_map = answer_source_map
+                            model_rag_evidence_packet = build_retrieval_evidence_packet(
+                                question=req.question,
+                                chunks=model_evidence_chunks,
+                                retrieval_trace=retrieval_trace,
+                                navigation=evidence_navigation,
+                                deterministic_evidence=deterministic_evidence,
+                            )
+                            final_evidence_packet = model_rag_evidence_packet.to_dict(
+                                max_chars=context_chars_limit,
+                                include_metadata=True,
+                            )
+                            answer_evidence = [
+                                *pass_evidence,
+                                *model_rag_evidence_groups,
+                            ]
+                            try:
+                                messages, answer_packet = govern_inference_messages(
+                                    preset=answer_execution_preset,
+                                    profile_prefix=sheet_sys_msg,
+                                    request_payload=question_tail,
+                                    checkpoint=(),
+                                    working_memory=workspace_note_objects(
+                                        memory_candidates,
+                                        registered=workspace_memory_registered,
+                                    ),
+                                    evidence=answer_evidence,
+                                    source_map=(),
+                                    tool_exchange=[],
+                                    dialogue=[session_block] if session_block else [],
+                                )
+                            except ContextRequiredSectionOverflow as context_error:
+                                logger.warning(
+                                    "[SHEET_PASS] answer overflow sheet=%s: %s",
+                                    sheet_name,
+                                    context_error.code,
+                                )
+                                break
+                            retrieval_trace["context_governor"]["calls"].append(
+                                context_packet_trace(
+                                    answer_packet, purpose="sheet_pass_answer"
+                                )
+                            )
+                            source_incomplete_locators = locators_missing_from_text(
+                                source_catalog,
+                                packet_evidence_text(answer_packet),
+                                locators=packet,
+                            )
+                            generation_budget = (
+                                answer_execution_preset.generation_reserve_tokens
+                            )
+                            chat_body = {
+                                "messages": messages,
+                                "stream": False,
+                                "temperature": profile_temperature(
+                                    profile_snapshot,
+                                    fallback=_env_float("CHAT_TEMPERATURE", 0.2),
+                                ),
+                                "max_tokens": generation_budget,
+                            }
+                            t_llm_call = time.time()
+                            pass_answer, usage = await _sheet_pass_llm(chat_body)
+                            t_llm += time.time() - t_llm_call
+                            if not pass_answer:
+                                break
+                            tokens = int(tokens or 0) + int(
+                                usage.get("completion_tokens") or 0
+                            )
+                            last_finish = llm_usage_finish_reason(usage)
+                            last_truncated = (
+                                finish_reason_is_length(last_finish)
+                                or model_rag_answer_is_truncated(pass_answer)
+                            )
+                            parsed_pass = parse_model_rag_result(pass_answer)
+                            pass_rows: list[dict[str, Any]] = []
+                            if parsed_pass is not None:
+                                _visible, pass_rows = parsed_pass
+                            pass_rows = bind_row_evidence_ids(
+                                pass_rows, model_evidence_chunks
+                            )
+                            pass_errors = validate_model_rag_result_structure(
+                                pass_rows,
+                                model_evidence_chunks,
+                                expected_source_rows=len(packet),
+                                source_catalog=source_catalog,
+                                source_incomplete_locators=source_incomplete_locators,
+                                finish_reason=last_finish,
+                                answer_truncated=last_truncated,
+                            )
+                            kept = sheet_pass_keep_rows(
+                                pass_rows,
+                                sheet=sheet_name,
+                                catalog=source_catalog,
+                                errors=pass_errors,
+                            )
+                            if kept:
+                                prepared_kept = [prepare_selection_row(item) for item in kept]
+                                try:
+                                    await _emit_sheet_progress(
+                                        sheet_pass_progress_label(
+                                            sheet_name,
+                                            sheet_index=sheet_index,
+                                            sheet_count=sheet_count,
+                                            stage="проверка норм",
+                                        ),
+                                        completed=sheet_index - 1,
+                                        total=sheet_count,
+                                    )
+                                    verified_kept: list[dict[str, Any]] = []
+                                    for packet_rows in verifier_packets(prepared_kept):
+                                        verify_items = build_blind_review_evidence_items(
+                                            packet_rows,
+                                            model_evidence_chunks,
+                                        )
+                                        verify_messages, verify_packet = govern_inference_messages(
+                                            preset=answer_execution_preset,
+                                            profile_prefix=lsr_verifier_instruction(),
+                                            request_payload="Проверь применимость выбранных норм к строкам ВОР.",
+                                            checkpoint=(),
+                                            working_memory=(),
+                                            evidence=verify_items,
+                                            source_map=(),
+                                            tool_exchange=(),
+                                            dialogue=(),
+                                        )
+                                        retrieval_trace["context_governor"]["calls"].append(
+                                            context_packet_trace(
+                                                verify_packet, purpose="lsr_norm_verifier"
+                                            )
+                                        )
+                                        packet_tokens = verifier_generation_tokens(
+                                            len(packet_rows),
+                                            answer_execution_preset.generation_reserve_tokens,
+                                        )
+                                        verify_answer, verify_usage = await _sheet_pass_llm(
+                                            {
+                                                "messages": verify_messages,
+                                                "stream": False,
+                                                "temperature": 0,
+                                                "max_tokens": packet_tokens,
+                                            }
+                                        )
+                                        if not verifier_table_covers_packet(
+                                            verify_answer or "", packet_rows
+                                        ):
+                                            retry_answer, retry_usage = await _sheet_pass_llm(
+                                                {
+                                                    "messages": verify_messages,
+                                                    "stream": False,
+                                                    "temperature": 0,
+                                                    "max_tokens": packet_tokens,
+                                                }
+                                            )
+                                            if verifier_table_covers_packet(
+                                                retry_answer or "", packet_rows
+                                            ):
+                                                verify_answer = retry_answer
+                                                verify_usage = retry_usage
+                                        tokens = int(tokens or 0) + int(
+                                            (verify_usage or {}).get("completion_tokens") or 0
+                                        )
+                                        verified_kept.extend(
+                                            apply_verifier_table(
+                                                packet_rows, verify_answer or ""
+                                            )
+                                        )
+                                    kept = verified_kept
+                                except Exception:
+                                    logger.exception(
+                                        "[SHEET_PASS] norm verifier skipped sheet=%s",
+                                        sheet_name,
+                                    )
+                                    kept = [
+                                        {
+                                            **item,
+                                            "norm_status": "NEEDS_RESEARCH",
+                                            "_quality_gate": "research",
+                                        }
+                                        for item in prepared_kept
+                                    ]
+                                verified_kept: list[dict[str, Any]] = []
+                                for item in kept:
+                                    loc = str(item.get("source_row") or "").strip()
+                                    if row_needs_research(item):
+                                        locator_research_round[loc] = (
+                                            locator_research_round.get(loc, 0) + 1
+                                        )
+                                        if (
+                                            locator_research_round[loc]
+                                            >= MAX_RESEARCH_ROUNDS_PER_LOCATOR
+                                        ):
+                                            verified_kept.append(mark_research_exhausted(item))
+                                            continue
+                                    verified_kept.append(item)
+                                kept = verified_kept
+                            terminal_before = terminal_source_row_keys(
+                                accumulated_rows, source_catalog
+                            )
+                            accumulated_rows = merge_quality_gated_rows(
+                                accumulated_rows,
+                                kept,
+                                source_catalog,
+                            )
+                            if pass_answer:
+                                answer_parts.append(pass_answer)
+                            retrieval_trace["tool_loop"]["passes"].append(
+                                {
+                                    "sheet": sheet_name,
+                                    "sheet_index": sheet_index,
+                                    "inner": inner,
+                                    "packet_id": row_packet_id(
+                                        source_catalog,
+                                        sheet=sheet_name,
+                                        locators=packet,
+                                    ),
+                                    "packet_locators": list(packet),
+                                    "packet_attempt": packet_attempts[fingerprint],
+                                    "queries": model_queries,
+                                    "kept_rows": len(kept),
+                                    "finish_reason": last_finish,
+                                    "truncated": last_truncated,
+                                }
+                            )
+                            remaining = remaining_sheet_work_locators(
+                                source_catalog,
+                                sheet_name,
+                                terminal_source_row_keys(
+                                    accumulated_rows, source_catalog
+                                ),
+                            )
+                            remaining = [
+                                locator
+                                for locator in remaining
+                                if locator not in exhausted_locators
+                            ]
+                            cited_after = terminal_source_row_keys(
+                                accumulated_rows, source_catalog
+                            )
+                            made_progress = bool(cited_after - cited_before)
+                            if not made_progress:
+                                if (
+                                    packet_attempts[fingerprint]
+                                    >= _ROW_PACKET_MAX_ATTEMPTS
+                                ):
+                                    exhausted_locators.update(packet)
+                                    missing_stubs = [
+                                        mark_research_exhausted(
+                                            {
+                                                "source_row": locator,
+                                                "title": locator,
+                                                "norm_status": "NEEDS_RESEARCH",
+                                            }
+                                        )
+                                        for locator in packet
+                                        if locator not in cited_after
+                                    ]
+                                    if missing_stubs:
+                                        accumulated_rows = merge_quality_gated_rows(
+                                            accumulated_rows,
+                                            missing_stubs,
+                                            source_catalog,
+                                        )
+                                    pass_omitted.extend(
+                                        f"source_row:{locator}" for locator in packet
+                                    )
+                                    remaining = [
+                                        locator
+                                        for locator in remaining
+                                        if locator not in exhausted_locators
+                                    ]
+                            if (
+                                research_job_service is not None
+                                and research_job is not None
+                            ):
+                                research_job = research_job_service.record_packet(
+                                    research_job["job_id"],
+                                    sheet=sheet_name,
+                                    packet_locators=packet,
+                                    accepted_rows=[
+                                        {
+                                            **dict(row),
+                                            "row_classification": str(
+                                                getattr(
+                                                    source_catalog.lookup(
+                                                        row.get("source_row")
+                                                    ),
+                                                    "row_classification",
+                                                    "",
+                                                )
+                                            ),
+                                        }
+                                        for row in kept
+                                    ],
+                                    evidence=[
+                                        durable_evidence_record(chunk)
+                                        for chunk in model_evidence_chunks
+                                    ],
+                                    omitted=pass_omitted,
+                                )
+                            if not made_progress:
+                                continue
+                            if not remaining:
+                                break
+                    if not any_sheet_queries and not accumulated_rows and not research_cancelled:
+                        raise HTTPException(
+                            status_code=503,
+                            detail="MODEL_RAG_QUERY_LIST_EMPTY",
+                        )
+                    if research_job_service is not None and research_job is not None:
+                        research_job = research_job_service.finish(
+                            research_job["job_id"],
+                            status="cancelled" if research_cancelled else "complete",
+                            phase="packets" if research_cancelled else "research_complete",
+                        )
+                        retrieval_trace["workbook_research_job"] = {
+                            "schema": "les.workbook-research-job.v1",
+                            "job_id": research_job["job_id"],
+                            "status": research_job["status"],
+                            "phase": research_job["phase"],
+                            "resumable": research_job["status"] != "complete",
+                            "accepted_rows": len(research_job["accepted_rows"]),
+                            "omitted": len(research_job["omitted"]),
+                        }
+                    await _emit_sheet_progress(
+                        "Сборка ЛСР по листам",
+                        completed=sheet_count,
+                        total=sheet_count,
+                    )
+                    sheet_pass_done = True
+                    sheet_pass_rows = accumulated_rows
+                    model_evidence_chunks = sheet_pass_evidence_chunks
+                    answer = "\n\n".join(part.strip() for part in answer_parts if part.strip())
+                    answer_finish_reason = last_finish
+                    rejected_model_queries = pass_rejected
+                    omitted_evidence_refs = pass_omitted
+                    crag_status = "MODEL_OUTPUT"
+                    cited_all = cited_source_row_keys(accumulated_rows, source_catalog)
+                    source_incomplete_locators = [
+                        locator
+                        for locator in source_catalog.work_locators()
+                        if locator not in cited_all
+                    ]
+                    retrieval_trace["tool_loop"]["sheet_count"] = sheet_count
+                    retrieval_trace["tool_loop"]["accumulated_rows"] = len(
+                        accumulated_rows
+                    )
+                    logger.info(
+                        "[SHEET_PASS] sheets=%s rows=%s truncated=%s missing=%s",
+                        sheet_count,
+                        len(accumulated_rows),
+                        last_truncated,
+                        len(source_incomplete_locators),
+                    )
                 max_attempts = 1 if model_driven_retrieval else 2
-                for attempt in range(1, max_attempts + 1):
+                if not sheet_pass_done:
+                  for attempt in range(1, max_attempts + 1):
                     if attempt == 2:
                         # Ретрай не выбрасывает найденные источники: повторная генерация получает
                         # весь уже собранный evidence packet, а не новый кодовый shortlist.
@@ -3476,20 +5438,17 @@ async def _execute_chat_evidence_application(
                         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
                     )
                     if model_driven_retrieval:
-                        question_tail += (
-                            "\nДай итоговый ответ обычным текстом по всем строкам исходного ВОР. Для каждой "
-                            "строки явно укажи source_row, section, title, unit, quantity, выбранный тобой "
-                            "norm_code, analogue, coverage, coefficient и evidence_refs Qx.Hy. Не добавляй "
-                            "status и не ограничивай количество строк. Если выбираешь карточку как норму "
-                            "или инженерный аналог, укажи её точный шифр в norm_code; оставляй его пустым "
-                            "только если не выбрана ни одна карточка. Для каждой строки обязательно укажи "
-                            "точную evidence_refs Qx.Hy выбранной карточки; не сокращай её до Qx. Не выводи "
-                            "JSON. Код не подтверждает и не меняет твой выбор. Ответ должен вместить все "
-                            "строки: без вводного обзора и итоговых рекомендаций, кратко по одной строке ВОР."
+                        question_tail = lsr_result_table_instruction(
+                            sheet_clause=question_tail + "\n",
+                            remaining_clause=(
+                                " Ответ должен вместить все строки: без вводного обзора "
+                                "и итоговых рекомендаций, кратко по одной строке ВОР."
+                            ),
                         )
                         fixed_model_rag_evidence = selector_evidence_payload(
                             attachment_context=attachment_context,
                             rendered_context="",
+                            source_catalog=source_catalog,
                         )
                         _, fixed_packet = govern_inference_messages(
                             preset=answer_execution_preset,
@@ -3522,6 +5481,7 @@ async def _execute_chat_evidence_application(
                         (
                             model_rag_evidence_groups,
                             model_evidence_chunks,
+                            omitted_evidence_refs,
                         ) = build_model_rag_evidence_groups(
                             model_rag_query_hits,
                             max_chars=min(
@@ -3552,6 +5512,8 @@ async def _execute_chat_evidence_application(
                                 for index in range(1, len(model_rag_evidence_groups) + 1)
                             ],
                             "rendered_chars": len(context),
+                            "omitted_evidence_refs": omitted_evidence_refs,
+                            "min_body_chars": _MIN_MODEL_RAG_EVIDENCE_BODY_CHARS,
                         }
                     answer_checkpoint = tuple(
                         item
@@ -3585,7 +5547,9 @@ async def _execute_chat_evidence_application(
                         )
                     if model_driven_retrieval:
                         answer_checkpoint = ()
-                        answer_working_memory = ()
+                        answer_working_memory = workspace_note_objects(
+                            memory_candidates, registered=workspace_memory_registered,
+                        )
                     answer_tool_exchange = (
                         []
                         if model_driven_retrieval
@@ -3634,6 +5598,11 @@ async def _execute_chat_evidence_application(
                     retrieval_trace["context_governor"]["calls"].append(
                         context_packet_trace(answer_packet, purpose="answer")
                     )
+                    if source_catalog is not None:
+                        source_incomplete_locators = locators_missing_from_text(
+                            source_catalog,
+                            packet_evidence_text(answer_packet),
+                        )
                     user_prompt = next(
                         (message["content"] for message in messages if message["role"] == "user"),
                         "",
@@ -3825,6 +5794,7 @@ async def _execute_chat_evidence_application(
                             continue
                         raise ValueError(f"Пустой ответ LLM (stream={token_sink is not None})")
                     tokens = usage.get("completion_tokens", 0)
+                    answer_finish_reason = llm_usage_finish_reason(usage)
                     # W3.3: учёт расходов облака (токены → $). Локальные вызовы не считаем.
                     if is_cloud_provider(llm_runtime.provider):
                         _record_cloud_cost(state, llm_model, usage)
@@ -3841,36 +5811,536 @@ async def _execute_chat_evidence_application(
                     break
 
                 if model_driven_retrieval:
-                    parsed_model_result = parse_model_rag_result(answer)
+                    if sheet_pass_done:
+                        parsed_model_result = (
+                            (answer, sheet_pass_rows) if sheet_pass_rows else None
+                        )
+                    else:
+                        parsed_model_result = parse_model_rag_result(answer)
+                        expected_format_locators = (
+                            list(source_catalog.work_locators())
+                            if source_catalog is not None
+                            else []
+                        )
+                        first_rows = (
+                            parsed_model_result[1] if parsed_model_result is not None else []
+                        )
+                        first_keys = {
+                            str(item.get("source_row") or "").strip()
+                            for item in first_rows
+                            if str(item.get("source_row") or "").strip()
+                        }
+                        need_format_retry = parsed_model_result is None or any(
+                            invented_source_row(key) for key in first_keys
+                        ) or (
+                            bool(expected_format_locators)
+                            and first_keys != set(expected_format_locators)
+                        )
+                        if need_format_retry:
+                            retry_messages, retry_packet = govern_inference_messages(
+                                preset=answer_execution_preset,
+                                profile_prefix=lsr_format_retry_instruction(),
+                                request_payload={
+                                    "expected_locators": expected_format_locators
+                                    or sorted(first_keys),
+                                },
+                                checkpoint=(),
+                                working_memory=(),
+                                evidence=[answer],
+                                source_map=(),
+                                tool_exchange=(),
+                                dialogue=(),
+                            )
+                            retrieval_trace["context_governor"]["calls"].append(
+                                context_packet_trace(
+                                    retry_packet, purpose="lsr_format_retry"
+                                )
+                            )
+                            retry_text, retry_usage = await _post_llm(
+                                llm_runtime,
+                                llm_model,
+                                query_headers,
+                                {
+                                    "messages": retry_messages,
+                                    "stream": False,
+                                    "temperature": 0,
+                                    "max_tokens": answer_execution_preset.generation_reserve_tokens,
+                                },
+                                allow_stream=False,
+                            )
+                            tokens = int(tokens or 0) + int(
+                                (retry_usage or {}).get("completion_tokens") or 0
+                            )
+                            retry_parsed = parse_model_rag_result(retry_text or "")
+                            if parsed_model_result is None:
+                                parsed_model_result = retry_parsed
+                                if retry_parsed is not None:
+                                    answer = retry_parsed[0]
+                            elif retry_parsed is not None:
+                                parsed_model_result = (
+                                    parsed_model_result[0],
+                                    merge_format_retry_rows(
+                                        first_rows,
+                                        retry_parsed[1],
+                                        expected_format_locators or None,
+                                    ),
+                                )
+                            retrieval_trace["format_retry"] = {
+                                "needed": True,
+                                "recovered": parsed_model_result is not None,
+                            }
                     model_result_rows: list[dict[str, Any]] = []
                     model_result_errors: list[str] = []
+                    model_result_blocking_errors: list[str] = []
                     if parsed_model_result is not None:
                         answer, model_result_rows = parsed_model_result
+                        if model_driven_retrieval and model_result_rows:
+                            async def _verify_quality_rows(rows_to_check, previous_response=None):
+                                evidence_items = build_blind_review_evidence_items(
+                                    rows_to_check, model_evidence_chunks
+                                )
+                                messages, packet = govern_inference_messages(
+                                    preset=answer_execution_preset,
+                                    profile_prefix=lsr_verifier_instruction(),
+                                    request_payload={
+                                        "task": "Проверь применимость выбранных норм к строкам ВОР.",
+                                        **({
+                                            "format_repair": lsr_verifier_format_retry_instruction(),
+                                            "previous_response": previous_response,
+                                        } if previous_response is not None else {}),
+                                    },
+                                    checkpoint=(),
+                                    working_memory=(),
+                                    evidence=evidence_items,
+                                    source_map=(),
+                                    tool_exchange=(),
+                                    dialogue=(),
+                                )
+                                retrieval_trace["context_governor"]["calls"].append(
+                                    context_packet_trace(
+                                        packet, purpose="lsr_norm_verifier"
+                                    )
+                                )
+                                if packet.omissions and len(rows_to_check) > 1:
+                                    midpoint = len(rows_to_check) // 2
+                                    left = await _verify_quality_rows(rows_to_check[:midpoint], previous_response)
+                                    right = await _verify_quality_rows(rows_to_check[midpoint:], previous_response)
+                                    return left + "\n\n" + right
+                                if packet.omissions:
+                                    raise ValueError("LSR_VERIFIER_EVIDENCE_INCOMPLETE")
+                                text, usage = await _post_llm(
+                                    llm_runtime,
+                                    llm_model,
+                                    query_headers,
+                                    {
+                                        "messages": messages,
+                                        "stream": False,
+                                        "temperature": 0,
+                                        "max_tokens": verifier_generation_tokens(
+                                            len(rows_to_check),
+                                            answer_execution_preset.generation_reserve_tokens,
+                                        ),
+                                    },
+                                    allow_stream=False,
+                                )
+                                tokens_now = int((usage or {}).get("completion_tokens") or 0)
+                                nonlocal tokens
+                                tokens = int(tokens or 0) + tokens_now
+                                retrieval_trace.setdefault("norm_quality_model_calls", []).append({
+                                    "stage": "verify_format_repair" if previous_response is not None else "verify",
+                                    "locators": [item.get("source_row") for item in rows_to_check],
+                                    "finish_reason": llm_usage_finish_reason(usage),
+                                    "completion_tokens": tokens_now,
+                                    "response": str(text or "")[:32000],
+                                    "response_truncated": len(str(text or "")) > 32000,
+                                })
+                                return text or ""
+
+                            async def _repair_quality_rows(rows_to_check, previous_response):
+                                return await _verify_quality_rows(rows_to_check, previous_response)
+
+                            async def _research_quality_rows(rows_to_check, round_index):
+                                nonlocal model_evidence_chunks
+                                # Bound work by row packets, never by dropping evidence.
+                                if len(rows_to_check) > 3:
+                                    partials = []
+                                    for offset in range(0, len(rows_to_check), 3):
+                                        partials.append(await _research_quality_rows(rows_to_check[offset:offset + 3], round_index))
+                                    return LsrResearchRoundResult(
+                                        rows=[row for part in partials for row in part.rows],
+                                        queries=tuple(q for part in partials for q in part.queries),
+                                        hit_ids=tuple(i for part in partials for i in part.hit_ids),
+                                        card_ids=tuple(i for part in partials for i in part.card_ids),
+                                    )
+                                locators = [
+                                    str(item.get("source_row") or "").strip()
+                                    for item in rows_to_check
+                                    if str(item.get("source_row") or "").strip()
+                                ]
+                                if model_research_tools is None:
+                                    return LsrResearchRoundResult(rows=list(rows_to_check))
+                                query_messages, query_packet = govern_inference_messages(
+                                    preset=execution_preset,
+                                    profile_prefix=(
+                                        profile_system_prompt(
+                                            profile_snapshot, strict=False
+                                        )
+                                        + "\n\n"
+                                        + lsr_research_query_instruction(
+                                            round_index, rows_to_check
+                                        )
+                                    ),
+                                    request_payload={
+                                        "question": str(req.question or ""),
+                                        "unresolved": locators,
+                                        "rows": [
+                                            {
+                                                "source_row": item.get("source_row"),
+                                                "title": item.get("title"),
+                                                "unit": item.get("unit"),
+                                                "rejected_norm_codes": list(
+                                                    item.get("_rejected_codes") or []
+                                                ),
+                                            }
+                                            for item in rows_to_check
+                                        ],
+                                    },
+                                    checkpoint=(),
+                                    working_memory=(),
+                                    evidence=selector_evidence,
+                                    source_map=(),
+                                    tool_exchange=(),
+                                )
+                                retrieval_trace["context_governor"]["calls"].append(
+                                    context_packet_trace(
+                                        query_packet,
+                                        purpose="lsr_norm_research_queries",
+                                    )
+                                )
+                                query_text, _query_usage = await _post_llm(
+                                    llm_runtime,
+                                    llm_model,
+                                    query_headers,
+                                    {
+                                        "messages": query_messages,
+                                        "stream": False,
+                                        "temperature": 0,
+                                        "max_tokens": 1600,
+                                    },
+                                    allow_stream=False,
+                                )
+                                queries, _rejected = classify_model_rag_query_lines(
+                                    query_text
+                                )
+                                hits: list[tuple[str, Sequence[Any]]] = []
+                                hit_ids: list[str] = []
+                                card_ids: list[str] = []
+                                for query in queries:
+                                    research_result = await model_research_tools.execute(
+                                        {"tool": "search_sources", "args": {"q": query}}
+                                    )
+                                    chunk_tuple = tuple(research_result.chunks)[
+                                        : retrieval_limits["model_evidence_k"]
+                                    ]
+                                    hits.append((query, chunk_tuple))
+                                    for chunk in chunk_tuple:
+                                        hit_ids.append(
+                                            str(
+                                                getattr(chunk, "doc_id", "")
+                                                or getattr(chunk, "doc_name", "")
+                                            )
+                                        )
+                                        meta = dict(getattr(chunk, "meta", {}) or {})
+                                        if meta.get("norm_code"):
+                                            card_ids.append(str(meta["norm_code"]))
+                                if not hits:
+                                    return LsrResearchRoundResult(
+                                        rows=list(rows_to_check),
+                                        queries=tuple(queries),
+                                    )
+                                groups, chunks, _omitted = build_model_rag_evidence_groups(
+                                    hits,
+                                    max_chars=context_chars_limit,
+                                    hits_per_query=retrieval_limits["model_evidence_k"],
+                                    query_offset=max((int((getattr(chunk, "meta", {}) or {}).get("model_query_index") or 0) for chunk in model_evidence_chunks), default=0),
+                                )
+                                model_evidence_chunks.extend(list(chunks))
+                                result_tail = lsr_result_table_instruction(
+                                    sheet_clause="Повторный подбор только для неподтверждённых строк.\n",
+                                    remaining_clause=" Остались строки: "
+                                    + ", ".join(locators[:40])
+                                    + rejected_codes_clause(rows_to_check),
+                                )
+                                messages, packet = govern_inference_messages(
+                                    preset=answer_execution_preset,
+                                    profile_prefix=profile_system_prompt(
+                                        profile_snapshot, strict=False
+                                    ),
+                                    request_payload={
+                                        "task": result_tail,
+                                        "question": str(req.question or ""),
+                                        "rows": [dict(item) for item in rows_to_check],
+                                    },
+                                    checkpoint=(),
+                                    working_memory=(),
+                                    evidence=lsr_research_result_evidence(
+                                        rows_to_check, groups
+                                    ),
+                                    source_map=(),
+                                    tool_exchange=(),
+                                )
+                                retrieval_trace["context_governor"]["calls"].append(
+                                    context_packet_trace(
+                                        packet, purpose="lsr_norm_research_result"
+                                    )
+                                )
+                                text, _usage = await _post_llm(
+                                    llm_runtime,
+                                    llm_model,
+                                    query_headers,
+                                    {
+                                        "messages": messages,
+                                        "stream": False,
+                                        "temperature": profile_temperature(
+                                            profile_snapshot, fallback=0.2
+                                        ),
+                                        "max_tokens": (
+                                            answer_execution_preset.generation_reserve_tokens
+                                        ),
+                                    },
+                                    allow_stream=False,
+                                )
+                                parsed = parse_model_rag_result(text or "")
+                                new_rows = parsed[1] if parsed else list(rows_to_check)
+                                new_rows = bind_row_evidence_ids(new_rows, chunks)
+                                new_rows = bind_row_evidence_ids(
+                                    new_rows, model_evidence_chunks
+                                )
+                                return LsrResearchRoundResult(
+                                    rows=new_rows,
+                                    queries=tuple(queries),
+                                    hit_ids=tuple(hit_ids),
+                                    card_ids=tuple(card_ids),
+                                )
+
+                            async def _review_coefficients(rows_to_check):
+                                evidence_items = [
+                                    "\n".join(
+                                        [
+                                            f"## source_row={item.get('source_row')}",
+                                            f"ВОР: {item.get('title') or ''}",
+                                            f"Шифр: {item.get('norm_code') or ''}",
+                                            f"Коэффициент: {item.get('coefficient')}",
+                                            f"applies_to: {item.get('coefficient_applies_to') or ''}",
+                                        ]
+                                    )
+                                    for item in rows_to_check
+                                ]
+                                messages, packet = govern_inference_messages(
+                                    preset=answer_execution_preset,
+                                    profile_prefix=lsr_coefficient_instruction(),
+                                    request_payload="Проверь только коэффициенты указанных строк.",
+                                    checkpoint=(),
+                                    working_memory=(),
+                                    evidence=evidence_items,
+                                    source_map=(),
+                                    tool_exchange=(),
+                                    dialogue=(),
+                                )
+                                retrieval_trace["context_governor"]["calls"].append(
+                                    context_packet_trace(
+                                        packet, purpose="lsr_coefficient_review"
+                                    )
+                                )
+                                text, usage = await _post_llm(
+                                    llm_runtime,
+                                    llm_model,
+                                    query_headers,
+                                    {
+                                        "messages": messages,
+                                        "stream": False,
+                                        "temperature": 0,
+                                        "max_tokens": verifier_generation_tokens(
+                                            len(rows_to_check),
+                                            answer_execution_preset.generation_reserve_tokens,
+                                        ),
+                                    },
+                                    allow_stream=False,
+                                )
+                                tokens_now = int((usage or {}).get("completion_tokens") or 0)
+                                nonlocal tokens
+                                tokens = int(tokens or 0) + tokens_now
+                                return text or ""
+
+                            try:
+                                if sheet_pass_done:
+                                    leftover = [
+                                        row
+                                        for row in model_result_rows
+                                        if not row_is_quality_terminal(row)
+                                    ]
+                                    if leftover:
+                                        model_result_rows = merge_quality_gated_rows(
+                                            model_result_rows,
+                                            [
+                                                mark_research_exhausted(row)
+                                                for row in leftover
+                                            ],
+                                            source_catalog,
+                                        )
+                                    retrieval_trace["norm_quality_gate"] = {
+                                        "schema": "les.lsr-norm-quality-gate.v1",
+                                        "norms_status": aggregate_norms_status(
+                                            model_result_rows
+                                        ),
+                                        "events": [{"stage": "sheet_pass_terminal"}],
+                                    }
+                                else:
+                                    gate = await run_lsr_norm_quality_loop(
+                                    model_result_rows,
+                                        verify=_verify_quality_rows,
+                                        repair_verification=_repair_quality_rows,
+                                        research=_research_quality_rows,
+                                        evidence_chunks=model_evidence_chunks,
+                                        source_locators=(
+                                            source_catalog.work_locators()
+                                            if source_catalog is not None
+                                            else None
+                                        ),
+                                    )
+                                    model_result_rows = bind_row_evidence_ids(
+                                        gate.rows, model_evidence_chunks
+                                    )
+                                    model_result_rows, coef_events = await run_coefficient_review(
+                                        model_result_rows,
+                                        review=_review_coefficients,
+                                    )
+                                    retrieval_trace["norm_quality_gate"] = {
+                                        "schema": "les.lsr-norm-quality-gate.v1",
+                                        "norms_status": gate.norms_status,
+                                        "events": [*gate.events, *coef_events],
+                                    }
+                            except Exception:
+                                logger.exception(
+                                    "[LSR_QUALITY] gate failed; rows stay unverified"
+                                )
+                                model_result_rows = [
+                                    prepare_selection_row(row)
+                                    for row in model_result_rows
+                                ]
+                                retrieval_trace["norm_quality_gate"] = {
+                                    "schema": "les.lsr-norm-quality-gate.v1",
+                                    "status": "error",
+                                    "norms_status": "norms_unverified",
+                                }
                         from proxy.services.smeta_chat_adapter_service import (
                             _smeta_source_row_count,
                         )
 
+                        if source_catalog is not None:
+                            sheet_coverage = sheet_coverage_from_missing(
+                                source_catalog,
+                                source_incomplete_locators,
+                            )
+                            # Catalog is complete on disk. Omitted Governor rows
+                            # are recorded, but they do not count as a silent cut.
+                            attachment_truncated = False
+                        else:
+                            attachment_truncated = attachment_context_is_truncated(
+                                attachment_context
+                            )
+                            sheet_coverage = parse_attachment_sheet_coverage(
+                                attachment_context
+                            )
+                        retrieval_trace["attachment_integrity"] = {
+                            "truncated": bool(source_incomplete_locators)
+                            if source_catalog is not None
+                            else attachment_truncated,
+                            "included_sheets": sheet_coverage["included"],
+                            "omitted_sheets": sheet_coverage["omitted"],
+                            "catalog_rows": (
+                                len(source_catalog.rows) if source_catalog is not None else 0
+                            ),
+                            "omitted_source_count": len(source_incomplete_locators),
+                            "omitted_source_locators": list(source_incomplete_locators[:40]),
+                            "finish_reason": answer_finish_reason,
+                            "sheet_pass": sheet_pass_done,
+                        }
+                        model_result_rows = bind_row_evidence_ids(
+                            model_result_rows, model_evidence_chunks
+                        )
                         model_result_errors = validate_model_rag_result_structure(
                             model_result_rows,
                             model_evidence_chunks,
                             expected_source_rows=_smeta_source_row_count(
                                 attachment_context
                             ),
+                            attachment_truncated=attachment_truncated,
+                            answer_truncated=model_rag_answer_is_truncated(answer),
+                            source_catalog=source_catalog,
+                            source_incomplete_locators=source_incomplete_locators,
+                            finish_reason=answer_finish_reason,
+                            validate_evidence_refs=True,
                         )
-                        if model_result_errors:
+                        if research_cancelled:
+                            model_result_errors.append("workbook_research_cancelled")
+                        work_row_count = sum(
+                            1
+                            for row in model_result_rows
+                            if model_rag_row_kind(row) == "work"
+                        )
+                        model_result_blocking_errors = blocking_model_rag_result_errors(
+                            model_result_errors,
+                            work_row_count=work_row_count,
+                        )
+                        notice_kwargs = {
+                            "errors": model_result_errors,
+                            "row_count": len(model_result_rows),
+                            "attachment_truncated": bool(
+                                attachment_truncated or sheet_coverage["omitted"]
+                            ),
+                            "included_sheets": sheet_coverage["included"],
+                            "omitted_sheets": sheet_coverage["omitted"],
+                            "rejected_queries": len(rejected_model_queries),
+                            "omitted_evidence": len(omitted_evidence_refs),
+                        }
+                        if model_result_blocking_errors:
+                            notice = format_lsr_not_created_notice(**notice_kwargs)
+                            if notice not in answer:
+                                answer = f"{answer.rstrip()}\n\n{notice}"
                             retrieval_trace["model_result"] = {
                                 "schema": "les_model_rag_result_v1",
                                 "status": "structural_error",
                                 "row_count": len(model_result_rows),
                                 "packaged": False,
                                 "errors": model_result_errors,
+                                "notice": notice,
+                            }
+                        elif model_result_errors or sheet_coverage["omitted"]:
+                            notice = format_lsr_partial_notice(**notice_kwargs)
+                            if notice not in answer:
+                                answer = f"{answer.rstrip()}\n\n{notice}"
+                            retrieval_trace["model_result"] = {
+                                "schema": "les_model_rag_result_v1",
+                                "status": "accepted_with_integrity_warning",
+                                "row_count": len(model_result_rows),
+                                "packaged": False,
+                                "warnings": model_result_errors,
+                                "notice": notice,
                             }
                     else:
+                        notice = format_lsr_unstructured_notice()
+                        if notice not in answer:
+                            answer = f"{answer.rstrip()}\n\n{notice}"
                         retrieval_trace["model_result"] = {
                             "schema": "les_model_rag_result_v1",
                             "status": "unstructured",
                             "packaged": False,
+                            "notice": notice,
                         }
+                    result_meta = retrieval_trace.get("model_result")
+                    if isinstance(result_meta, dict):
+                        result_meta["finish_reason"] = answer_finish_reason
                     if token_sink is not None:
                         await token_sink({"event": "reset", "data": ""})
                         if answer:
@@ -3884,7 +6354,7 @@ async def _execute_chat_evidence_application(
                     if (
                         parsed_model_result is not None
                         and model_result_rows
-                        and not model_result_errors
+                        and not model_result_blocking_errors
                         and attachment_id
                         and packaging_tools
                         and workbook_tool_executor is not None
@@ -3983,11 +6453,49 @@ async def _execute_chat_evidence_application(
                                     artifact_meta.setdefault(
                                         "filename", workbook_files[0]["filename"]
                                     )
+                        packaging_warnings = list(model_result_errors or [])
+                        packaged_notice = ""
+                        if workbook_chat_meta:
+                            harvested_missing = [
+                                str(item)
+                                for item in (workbook_chat_meta.get("missing") or [])
+                                if str(item).strip()
+                            ]
+                            harvested_blockers = [
+                                str(item)
+                                for item in (workbook_chat_meta.get("blockers") or [])
+                                if str(item).strip()
+                            ]
+                            packaged_notice = format_lsr_packaged_notice(
+                                filename=(
+                                    workbook_files[0]["filename"] if workbook_files else ""
+                                ),
+                                status=str(workbook_chat_meta.get("workbook_status") or ""),
+                                pricing_status=str(
+                                    workbook_chat_meta.get("pricing_status") or ""
+                                ),
+                                norms_status=str(
+                                    workbook_chat_meta.get("norms_status") or ""
+                                ),
+                                missing=harvested_missing,
+                                blockers=harvested_blockers,
+                            )
+                            packaging_warnings.extend(harvested_missing)
+                            packaging_warnings.extend(harvested_blockers)
+                            if packaged_notice and packaged_notice not in answer:
+                                answer = f"{answer.rstrip()}\n\n{packaged_notice}"
+                                if token_sink is not None:
+                                    await token_sink({"event": "reset", "data": ""})
+                                    await token_sink({"event": "token", "data": answer})
                         retrieval_trace["model_result"] = {
                             "schema": "les_model_rag_result_v1",
                             "status": "accepted_unchanged",
                             "row_count": len(model_result_rows),
+                            "packaged": bool(workbook_files),
                             "packaging": packaging_trace,
+                            "warnings": packaging_warnings,
+                            "notice": packaged_notice,
+                            "finish_reason": answer_finish_reason,
                         }
 
                 try:
@@ -4244,18 +6752,19 @@ async def _execute_chat_evidence_application(
                         for item in evidence_sources
                         if isinstance(item, dict) and item.get("is_evidence")
                     ]
-                    get_memory_port().enqueue_rag_turn(
-                        memory_project_id,
-                        {
-                            "question": str(req.question or ""),
-                            "answer": answer,
-                            "crag_status": crag_status,
-                            "query_route": query_route_payload,
-                            "evidence_refs": memory_refs,
-                            "retrieval_fingerprint": focused_fingerprint,
-                            "cache_hit": False,
-                        },
-                    )
+                    if not workspace_memory_registered:
+                        get_memory_port().enqueue_rag_turn(
+                            memory_project_id,
+                            {
+                                "question": str(req.question or ""),
+                                "answer": answer,
+                                "crag_status": crag_status,
+                                "query_route": query_route_payload,
+                                "evidence_refs": memory_refs,
+                                "retrieval_fingerprint": focused_fingerprint,
+                                "cache_hit": False,
+                            },
+                        )
                 except Exception as memory_error:  # queue pressure cannot fail chat
                     logger.warning("[MEMORY] grounded turn enqueue skipped: %s", memory_error)
 

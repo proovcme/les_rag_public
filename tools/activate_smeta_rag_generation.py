@@ -16,6 +16,7 @@ from tools.activate_qdrant_generation import (
     _restore_file,
     _write_json_atomic,
     alias_manifest,
+    archive_physical_collection,
     has_physical_alias_blocker,
 )
 
@@ -98,6 +99,9 @@ def activate(
     manifest_source: Path,
     manifest_destinations: list[Path],
     post_activate: Callable[[], None] | None = None,
+    archive_physical_alias_as: str = "",
+    qdrant_url: str = "http://127.0.0.1:6333",
+    drop_empty_alias_placeholder: bool = False,
 ) -> None:
     if not manifest_destinations:
         raise ValueError("at least one active manifest destination is required")
@@ -113,13 +117,29 @@ def activate(
         item.alias_name: item.collection_name
         for item in client.get_aliases().aliases
     }
+    previous_target = existing.get(alias)
     if has_physical_alias_blocker(
         client,
         alias=alias,
         target=target,
         existing_aliases=existing,
     ):
-        raise ValueError(f"stable alias is blocked by a physical collection: {alias}")
+        placeholder_points = int(client.count(alias, exact=True).count)
+        if placeholder_points and archive_physical_alias_as:
+            if archive_physical_alias_as == target:
+                raise ValueError("legacy archive cannot be the activation target")
+            archive_physical_collection(
+                client,
+                source=alias,
+                archive=archive_physical_alias_as,
+                qdrant_url=qdrant_url,
+            )
+            previous_target = archive_physical_alias_as
+            client.delete_collection(alias)
+        elif placeholder_points or not drop_empty_alias_placeholder:
+            raise ValueError(f"stable alias is blocked by a physical collection: {alias}")
+        else:
+            client.delete_collection(alias)
     operations: list[models.AliasOperations] = []
     if alias in existing:
         operations.append(
@@ -135,7 +155,6 @@ def activate(
             )
         )
     )
-    previous_target = existing.get(alias)
     previous_manifests = {
         path: path.read_bytes() if path.exists() else None
         for path in manifest_destinations
@@ -253,11 +272,21 @@ def main() -> int:
         help="active manifest destination; repeat for each runtime sharing the alias",
     )
     parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
+    parser.add_argument(
+        "--archive-physical-alias-as",
+        default="",
+        help="clone a non-empty legacy physical alias blocker before alias activation",
+    )
+    parser.add_argument(
+        "--drop-empty-alias-placeholder",
+        action="store_true",
+        help="delete a zero-point collection that blocks creation of the stable alias",
+    )
     args = parser.parse_args()
     report = read_smeta_ready_report(args.readiness_report, args.target)
     client = QdrantClient(
         url=args.qdrant_url,
-        timeout=60.0,
+        timeout=600.0,
         check_compatibility=False,
     )
     try:
@@ -268,6 +297,9 @@ def main() -> int:
             report=report,
             manifest_source=args.manifest_source,
             manifest_destinations=args.manifest_destination,
+            archive_physical_alias_as=args.archive_physical_alias_as,
+            qdrant_url=args.qdrant_url,
+            drop_empty_alias_placeholder=args.drop_empty_alias_placeholder,
         )
     finally:
         client.close()

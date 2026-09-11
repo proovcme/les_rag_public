@@ -181,13 +181,71 @@ async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monk
     )
 
     assert captured["rows"] == decisions
-    assert captured["kwargs"]["name"] == "Собери ЛСР"
+    assert captured["kwargs"]["name"] == "source"
     assert captured["kwargs"]["pricebook"] is system_pricebook
     assert result["source_rows"] == 1
     assert result["pricebook"] == "sankt-peterburg_2kv2026"
     assert result["missing"] == []
     assert result["blockers"] == []
     assert result["file_path"].exists()
+
+
+@pytest.mark.asyncio
+async def test_thin_lsr_adapter_publishes_zero_bound_rows_as_reviewable_workbook(
+    tmp_path, monkeypatch
+):
+    decisions = [{
+        "source_row": 15,
+        "title": "Монтаж блока аварийного питания",
+        "unit": "шт",
+        "quantity": 1,
+        "norm_code": "ГЭСНм10-02-016-06",
+        "norm_status": "CONFLICT",
+        "_quality_gate": "rejected",
+        "_research_exhausted": True,
+        "quality_message": "стратегии поиска исчерпаны; конфликт применимости",
+    }]
+
+    def calculate(rows, **_kwargs):
+        assert rows == decisions
+        return {
+            "schema": "rim_lsr_v1",
+            "sections": [],
+            "summary": {
+                "input_rows": 1,
+                "bound_rows": 0,
+                "result_status": "norm_selection_required",
+            },
+            "row_bindings": [{"row": 15, "status": "quality_conflict"}],
+        }
+
+    def render(_trace, output_path, **_kwargs):
+        _source_workbook(output_path)
+        return output_path
+
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.build_lsr_trace_from_visible_rows",
+        calculate,
+    )
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.render_lsr_xlsx",
+        render,
+    )
+    monkeypatch.setattr(
+        "proxy.services.fgis_price_service.resolve_pricebook_path", lambda _book=None: None
+    )
+
+    result = await build_lsr_workbook_from_decisions(
+        tmp_path / "source.xlsx",
+        {"decisions": decisions, "question": "Собери ЛСР"},
+        tmp_path / "result.xlsx",
+        lambda *_args: None,
+    )
+
+    assert result["file_path"].exists()
+    assert result["pricing_status"] == "norm_selection_required"
+    assert result["blockers"] == []
+    assert result["missing"] == ["row:15:quality_conflict"]
 
 
 def test_workbook_boundary_does_not_import_old_document_workflow():
