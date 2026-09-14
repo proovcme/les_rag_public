@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.33 terminal model result and resumable packaging:** активная ЛСР снова
+> следует принятому ADR-15: модель формулирует запросы, видит RAG и её первый
+> полный итог без последующего verifier/research/coefficient-loop передаётся в
+> детерминированный расчёт и XLSX. Дополнительная модельная проверка доступна
+> только в изолированном `QUALITY_DIAGNOSTIC`. Техническая упаковка имеет один
+> идемпотентный повтор по той же checkpoint и тем же решениям; при постоянном
+> сбое видны код, checkpoint и сохранённые строки вместо общего сообщения.
+> Точки: `proxy/services/{chat_evidence_application,lsr_norm_quality_gate}_service.py`,
+> `tests/{test_chat_evidence_application_service,test_lsr_norm_quality_research_reopen}.py`.
+> Статус док↔код: ✅; Windows live acceptance pending.
+
 > **0.31.32 LSR conflict preservation and PDF row integrity:** исчерпание повторного поиска больше
 > не превращает отклонённый моделью шифр из `CONFLICT` в ложный `MISSING`.
 > PDF-ведомости получают точные `PDF!Rn` source locators из распознанной

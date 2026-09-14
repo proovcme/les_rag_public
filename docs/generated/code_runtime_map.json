@@ -2823,7 +2823,8 @@
     },
     {
       "inbound": [
-        "proxy/services/chat_evidence_application_service.py"
+        "proxy/services/chat_evidence_application_service.py",
+        "tests/test_attachment_source_catalog_service.py"
       ],
       "lines": 692,
       "module": "proxy.services.attachment_source_catalog_service",
@@ -3049,7 +3050,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 6806,
+      "lines": 6899,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4684,7 +4685,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_lsr_norm_quality_research_reopen.py"
       ],
-      "lines": 1913,
+      "lines": 1915,
       "module": "proxy.services.lsr_norm_quality_gate_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8891,6 +8892,17 @@
     },
     {
       "inbound": [],
+      "lines": 33,
+      "module": "tests.test_attachment_source_catalog_service",
+      "outbound": [
+        "proxy/services/attachment_source_catalog_service.py"
+      ],
+      "path": "tests/test_attachment_source_catalog_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 59,
       "module": "tests.test_backup_runtime_scripts",
       "outbound": [],
@@ -9171,7 +9183,7 @@
     },
     {
       "inbound": [],
-      "lines": 2828,
+      "lines": 2887,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10744,7 +10756,7 @@
     },
     {
       "inbound": [],
-      "lines": 811,
+      "lines": 808,
       "module": "tests.test_live_workbook_acceptance_contract",
       "outbound": [
         "proxy/routers/artifacts.py",
@@ -10814,7 +10826,7 @@
     },
     {
       "inbound": [],
-      "lines": 366,
+      "lines": 374,
       "module": "tests.test_lsr_norm_quality_research_reopen",
       "outbound": [
         "proxy/services/lsr_norm_quality_gate_service.py"
@@ -15395,7 +15407,7 @@
         "proxy/services/canonical_promotion_service.py",
         "tests/test_live_workbook_acceptance_contract.py"
       ],
-      "lines": 698,
+      "lines": 696,
       "module": "tools.live_workbook_acceptance",
       "outbound": [
         "tools/__init__.py"
@@ -18640,9 +18652,9 @@
     "product_reachable": 354,
     "registered_api_routes": 332,
     "runtime_support": 11,
-    "test_or_tool_only": 630,
-    "tracked_python_files": 996,
-    "tracked_python_lines": 319086
+    "test_or_tool_only": 631,
+    "tracked_python_files": 997,
+    "tracked_python_lines": 319276
   },
   "warnings": []
 }

@@ -211,6 +211,14 @@ def test_verifier_instruction_is_neutral_and_normalizes_scaled_units() -> None:
     assert "м² и 100 м2" in instruction
 
 
+def test_result_instruction_separates_missing_norm_from_missing_price() -> None:
+    from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
+
+    instruction = lsr_result_table_instruction()
+    assert "MISSING означает, что norm_code не выбран" in instruction
+    assert "Отсутствие цены здесь не оценивай" in instruction
+
+
 def test_store_code_variants_insert_colon_for_same_family() -> None:
     variants = store_code_variants("`ГЭСНм10-02-016-06`")
     assert "ГЭСНм:10-02-016-06" in variants

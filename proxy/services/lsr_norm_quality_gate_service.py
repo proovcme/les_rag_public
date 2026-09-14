@@ -1550,6 +1550,8 @@ def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: st
         "norm_status — только закрытый токен: EXACT, ANALOGUE_CANDIDATE, NEEDS_RESEARCH, "
         "MISSING или CONFLICT. Не пиши EXACT_VERIFIED и ANALOGUE_VERIFIED: это статус "
         "отдельной проверки, а не твоего первого ответа. "
+        "MISSING означает, что norm_code не выбран. Отсутствие цены здесь не оценивай: "
+        "если norm_code заполнен, не используй MISSING только из-за отсутствующей цены. "
         "action_match/object_match/condition_match/unit_compatible/composition_covers — "
         "только yes/no/unknown. Пояснения вроде «подходит по сути» можно писать в extra_ops, "
         "но они не включают строку в расчёт. Не выводи JSON и не ограничивай число строк. "

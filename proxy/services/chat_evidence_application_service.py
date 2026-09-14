@@ -507,6 +507,41 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
     }
 
 
+async def execute_workbook_with_bounded_retry(
+    executor,
+    call: dict[str, Any],
+    request_context: dict[str, Any],
+    progress_sink,
+    *,
+    max_attempts: int = 2,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Retry only the idempotent packaging step, preserving model decisions."""
+
+    traces: list[dict[str, Any]] = []
+    safe_payload: dict[str, Any] = {}
+    for attempt in range(1, max(1, int(max_attempts)) + 1):
+        payload = await executor(call, request_context, progress_sink)
+        safe_payload = safe_workbook_history_projection(payload)
+        checkpoint = (
+            dict(safe_payload.get("checkpoint") or {})
+            if isinstance(safe_payload.get("checkpoint"), dict)
+            else {}
+        )
+        trace = {
+            "tool": str(call.get("tool") or ""),
+            "attempt": attempt,
+            "status": str(safe_payload.get("status") or "empty"),
+            "code": str(safe_payload.get("code") or ""),
+        }
+        if checkpoint.get("checkpoint_id"):
+            trace["checkpoint_id"] = str(checkpoint["checkpoint_id"])
+            trace["resumed"] = bool(checkpoint.get("resumed"))
+        traces.append(trace)
+        if safe_payload.get("status") != "failed":
+            break
+    return safe_payload, traces
+
+
 def _context_objects(
     prefix: str,
     values: Sequence[Any],
@@ -5830,11 +5865,17 @@ async def _execute_chat_evidence_application(
                             for item in first_rows
                             if str(item.get("source_row") or "").strip()
                         }
-                        need_format_retry = parsed_model_result is None or any(
-                            invented_source_row(key) for key in first_keys
-                        ) or (
-                            bool(expected_format_locators)
-                            and first_keys != set(expected_format_locators)
+                        # The ordinary active path has one terminal professional
+                        # model result (ADR-15).  A format-repair call is useful for
+                        # isolated diagnostics, but may not silently replace that
+                        # result in the user's workbook path.
+                        need_format_retry = comparative_variant == "QUALITY_DIAGNOSTIC" and (
+                            parsed_model_result is None
+                            or any(invented_source_row(key) for key in first_keys)
+                            or (
+                                bool(expected_format_locators)
+                                and first_keys != set(expected_format_locators)
+                            )
                         )
                         if need_format_retry:
                             retry_messages, retry_packet = govern_inference_messages(
@@ -5894,7 +5935,13 @@ async def _execute_chat_evidence_application(
                     model_result_blocking_errors: list[str] = []
                     if parsed_model_result is not None:
                         answer, model_result_rows = parsed_model_result
-                        if model_driven_retrieval and model_result_rows:
+                        # The model's first complete result is the terminal professional
+                        # decision in the active estimator path (ADR-15).  The historical
+                        # verifier/research loop remains available only for an explicit
+                        # isolated diagnostic run; it must never rewrite or block the
+                        # ordinary user workbook.
+                        quality_diagnostic = comparative_variant == "QUALITY_DIAGNOSTIC"
+                        if model_driven_retrieval and model_result_rows and quality_diagnostic:
                             async def _verify_quality_rows(rows_to_check, previous_response=None):
                                 evidence_items = build_blind_review_evidence_items(
                                     rows_to_check, model_evidence_chunks
@@ -6233,6 +6280,13 @@ async def _execute_chat_evidence_application(
                                     "status": "error",
                                     "norms_status": "norms_unverified",
                                 }
+                        elif model_driven_retrieval and model_result_rows:
+                            retrieval_trace["norm_quality_gate"] = {
+                                "schema": "les.lsr-norm-quality-gate.v1",
+                                "status": "not_run",
+                                "reason": "terminal_model_result_preserved",
+                                "norms_status": "model_authored",
+                            }
                         from proxy.services.smeta_chat_adapter_service import (
                             _smeta_source_row_count,
                         )
@@ -6365,6 +6419,7 @@ async def _execute_chat_evidence_application(
                                 await token_sink({"event": "tool_progress", "data": event})
 
                         packaging_trace: list[dict[str, Any]] = []
+                        packaging_failures: list[dict[str, Any]] = []
                         workbook_files: list[dict[str, str]] = []
                         for packaging_tool in packaging_tools:
                             workbook_call = {
@@ -6375,37 +6430,43 @@ async def _execute_chat_evidence_application(
                                     "decisions": model_result_rows,
                                 },
                             }
+                            execution_context = {
+                                "session_id": str(req.session_id or ""),
+                                "question": str(req.question or ""),
+                                "dataset_ids": [str(item) for item in _dataset_ids],
+                                "project_id": getattr(req, "project_id", None),
+                                "attachment_id": attachment_id,
+                                "profile_revision_id": str(
+                                    (profile_snapshot or {}).get("revision_id") or ""
+                                ),
+                                "model_identity": str(
+                                    getattr(
+                                        getattr(active_model_result, "connection", None),
+                                        "model_id",
+                                        "",
+                                    )
+                                    or llm_model
+                                ),
+                                "model_preset": execution_preset.preset_id,
+                            }
                             try:
-                                workbook_payload = await workbook_tool_executor(
-                                    workbook_call,
-                                    {
-                                        "session_id": str(req.session_id or ""),
-                                        "question": str(req.question or ""),
-                                        "dataset_ids": [str(item) for item in _dataset_ids],
-                                        "project_id": getattr(req, "project_id", None),
-                                        "attachment_id": attachment_id,
-                                        "profile_revision_id": str(
-                                            (profile_snapshot or {}).get("revision_id") or ""
-                                        ),
-                                        "model_identity": str(
-                                            getattr(
-                                                getattr(active_model_result, "connection", None),
-                                                "model_id",
-                                                "",
-                                            )
-                                            or llm_model
-                                        ),
-                                        "model_preset": execution_preset.preset_id,
-                                    },
-                                    workbook_progress,
+                                # One bounded retry is safe here: the workbook tool
+                                # is idempotent and resumes the same persisted
+                                # checkpoint.  No model or professional decision is
+                                # called again.
+                                safe_payload, attempt_traces = (
+                                    await execute_workbook_with_bounded_retry(
+                                        workbook_tool_executor,
+                                        workbook_call,
+                                        execution_context,
+                                        workbook_progress,
+                                    )
                                 )
-                                safe_payload = safe_workbook_history_projection(workbook_payload)
+                                packaging_trace.extend(attempt_traces)
+                                if safe_payload.get("status") == "failed":
+                                    packaging_failures.append(dict(safe_payload))
+                                    continue
                                 harvested = harvest_workbook_tool_result(safe_payload)
-                                packaging_trace.append({
-                                    "tool": packaging_tool,
-                                    "status": str(safe_payload.get("status") or "empty"),
-                                    "code": str(safe_payload.get("code") or ""),
-                                })
                                 if not harvested:
                                     continue
                                 artifact = (
@@ -6439,8 +6500,13 @@ async def _execute_chat_evidence_application(
                                 )
                                 packaging_trace.append({
                                     "tool": packaging_tool,
+                                    "attempt": 1,
                                     "status": "error",
                                     "error_type": type(packaging_error).__name__,
+                                })
+                                packaging_failures.append({
+                                    "status": "error",
+                                    "code": type(packaging_error).__name__,
                                 })
                         if workbook_chat_meta:
                             artifact_meta = workbook_chat_meta.get("artifact")
@@ -6487,12 +6553,39 @@ async def _execute_chat_evidence_application(
                                 if token_sink is not None:
                                     await token_sink({"event": "reset", "data": ""})
                                     await token_sink({"event": "token", "data": answer})
+                        elif packaging_failures:
+                            failure = packaging_failures[-1]
+                            failure_checkpoint = (
+                                failure.get("checkpoint")
+                                if isinstance(failure.get("checkpoint"), dict)
+                                else {}
+                            )
+                            checkpoint_id = str(
+                                failure_checkpoint.get("checkpoint_id") or ""
+                            )
+                            checkpoint_bit = (
+                                f" Контрольная точка: {checkpoint_id}."
+                                if checkpoint_id
+                                else ""
+                            )
+                            packaged_notice = (
+                                "ЛСР не создана: техническая ошибка упаковки "
+                                f"({str(failure.get('code') or 'WORKBOOK_GENERATION_FAILED')})."
+                                f"{checkpoint_bit} Строки решения модели сохранены в истории; "
+                                "нормы повторно не пересматриваются."
+                            )
+                            if packaged_notice not in answer:
+                                answer = f"{answer.rstrip()}\n\n{packaged_notice}"
+                                if token_sink is not None:
+                                    await token_sink({"event": "reset", "data": ""})
+                                    await token_sink({"event": "token", "data": answer})
                         retrieval_trace["model_result"] = {
                             "schema": "les_model_rag_result_v1",
                             "status": "accepted_unchanged",
                             "row_count": len(model_result_rows),
                             "packaged": bool(workbook_files),
                             "packaging": packaging_trace,
+                            "decision_rows": compact_estimator_draft_rows(model_result_rows),
                             "warnings": packaging_warnings,
                             "notice": packaged_notice,
                             "finish_reason": answer_finish_reason,

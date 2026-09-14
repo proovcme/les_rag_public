@@ -970,6 +970,59 @@ def test_workbook_harvest_rejects_artifact_without_bound_attachment_checkpoint_l
     assert harvested == {}
 
 
+@pytest.mark.asyncio
+async def test_workbook_packaging_retries_same_decisions_and_checkpoint_only_once():
+    calls = []
+
+    async def executor(call, context, progress):
+        calls.append((call, context, progress))
+        attempt = len(calls)
+        return {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": "build_lsr_workbook",
+            "status": "failed" if attempt == 1 else "complete",
+            "code": "WORKBOOK_GENERATION_FAILED" if attempt == 1 else "",
+            "checkpoint": {
+                "checkpoint_id": "cp-stable",
+                "status": "failed" if attempt == 1 else "complete",
+                "resumed": attempt == 2,
+            },
+        }
+
+    call = {
+        "tool": "build_lsr_workbook",
+        "args": {"decisions": [{"source_row": 1, "norm_code": "ГЭСН-1"}]},
+    }
+    payload, traces = await service.execute_workbook_with_bounded_retry(
+        executor,
+        call,
+        {"session_id": "s1"},
+        None,
+    )
+
+    assert len(calls) == 2
+    assert calls[0][0] is call and calls[1][0] is call
+    assert payload["status"] == "complete"
+    assert traces == [
+        {
+            "tool": "build_lsr_workbook",
+            "attempt": 1,
+            "status": "failed",
+            "code": "WORKBOOK_GENERATION_FAILED",
+            "checkpoint_id": "cp-stable",
+            "resumed": False,
+        },
+        {
+            "tool": "build_lsr_workbook",
+            "attempt": 2,
+            "status": "complete",
+            "code": "",
+            "checkpoint_id": "cp-stable",
+            "resumed": True,
+        },
+    ]
+
+
 def test_workbook_history_projection_redacts_failures_paths_and_unbounded_results():
     raw = {
         "schema": "les.workbook_tool_result.v1",
@@ -2652,7 +2705,13 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert manifest["cited_ids"] == ["Q1.H1"]
         assert history_rows[0]["retrieval_trace"]["source_map"] == result["source_map"]
         assert "rounds" not in tool_loop
-        assert "norm_quality_gate" in history_rows[0]["retrieval_trace"]
+        assert len(active_transport.requests) == 2
+        assert history_rows[0]["retrieval_trace"]["norm_quality_gate"] == {
+            "schema": "les.lsr-norm-quality-gate.v1",
+            "status": "not_run",
+            "reason": "terminal_model_result_preserved",
+            "norms_status": "model_authored",
+        }
         assert "confirm" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
         return
     if inactive_workbook:

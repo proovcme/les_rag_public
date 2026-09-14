@@ -22,6 +22,11 @@
 
 ## Что входит в текущий LES
 
+- Terminal LSR path: регрессия фиксирует ровно два вызова 9B-класса
+  (model-authored queries и terminal result), отсутствие post-model quality
+  loop в обычном запросе, неизменную передачу решений в workbook adapter и
+  один идемпотентный packaging retry по той же checkpoint.
+
 - LSR quality gate: нейтральная проверка карточки, сохранение последнего
   `CONFLICT` после исчерпания поиска, отдельный честный `MISSING`, store-card
   и PDF Markdown source catalog с устойчивыми локаторами и точным work-row count;

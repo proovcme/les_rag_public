@@ -4,20 +4,29 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-09-12)
+## Текущее состояние (2026-09-14)
 
 ```
-версия продукта (SemVer):  0.31.32
-номер сборки:              738
-версия Tauri/NSIS:         5.1.738
+версия продукта (SemVer):  0.31.33
+номер сборки:              739
+версия Tauri/NSIS:         5.1.739
 ветка разработки:          fix/local-qwen-result-parse
-dev implementation:       0.31.32 PDF/XLSX LSR integrity; live accepted
-задеплоено на рантайм:     local LES 0.31.32 / build 738 / candidate branch HEAD
+dev implementation:       0.31.33 terminal model result; gates/live pending
+задеплоено на рантайм:     local LES 0.31.32 / build 738 (previous accepted)
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      local LES 0.31.32 / build 738; aligned; live PDF accepted
+рантайм /api/version:      local LES 0.31.32 / build 738; build 739 pending
 ```
+
+> **0.31.33 / build 739 terminal-result recovery candidate:** обычная ЛСР
+> снова исполняет замороженный ADR-15 путь: query модели → RAG → terminal result
+> той же модели → структурная проверка → расчёт/XLSX. Post-model verifier,
+> research reopen, format repair и coefficient review не переписывают рабочий
+> результат; они оставлены только в `QUALITY_DIAGNOSTIC`. Workbook packaging
+> получает один ограниченный идемпотентный retry по той же checkpoint и тем же
+> строкам. Постоянная техническая ошибка показывает код/checkpoint и сохраняет
+> строки решения в истории. Offline gates и Windows live acceptance pending.
 
 > **0.31.32 / build 738 LSR conflict-preservation candidate:** восстановлен
 > фактический build-737 runtime overlay в ветке. Исчерпанный поиск сохраняет
