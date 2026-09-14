@@ -7,17 +7,25 @@
 ## Текущее состояние (2026-09-14)
 
 ```
-версия продукта (SemVer):  0.31.33
-номер сборки:              739
-версия Tauri/NSIS:         5.1.739
+версия продукта (SemVer):  0.31.34
+номер сборки:              740
+версия Tauri/NSIS:         5.1.740
 ветка разработки:          fix/local-qwen-result-parse
-dev implementation:       0.31.33 terminal model result; gates/live pending
-задеплоено на рантайм:     local LES 0.31.32 / build 738 (previous accepted)
+dev implementation:       0.31.34 PDF locator integrity; live repeat pending
+задеплоено на рантайм:     local LES 0.31.33 / build 739; live structural failure recorded
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      local LES 0.31.32 / build 738; build 739 pending
+рантайм /api/version:      local LES 0.31.33 / build 739; build 740 pending
 ```
+
+> **0.31.34 / build 740 PDF locator-integrity candidate:** первый production
+> live после build 739 подтвердил terminal-result path и вернул 19 строк, но
+> Qwen поместила первую работу следующего раздела в locator строки-раздела
+> `PDF!R20`, затем сдвинула ещё четыре locator и пропустила `PDF!R25`.
+> Детерминированная проверка корректно не выпустила неверно сопоставленный XLSX.
+> Prompt теперь требует сохранять пропуски locator и копировать
+> locator/title/unit/quantity из одной исходной строки. Повторный live pending.
 
 > **0.31.33 / build 739 terminal-result recovery candidate:** обычная ЛСР
 > снова исполняет замороженный ADR-15 путь: query модели → RAG → terminal result

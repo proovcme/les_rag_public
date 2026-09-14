@@ -219,6 +219,15 @@ def test_result_instruction_separates_missing_norm_from_missing_price() -> None:
     assert "Отсутствие цены здесь не оценивай" in instruction
 
 
+def test_result_instruction_preserves_gapped_pdf_locators() -> None:
+    from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
+
+    instruction = lsr_result_table_instruction()
+    assert "строки-раздела" in instruction
+    assert "locator работ могут идти с пропусками" in instruction
+    assert "не сдвигай следующие работы" in instruction
+
+
 def test_store_code_variants_insert_colon_for_same_family() -> None:
     variants = store_code_variants("`ГЭСНм10-02-016-06`")
     assert "ГЭСНм:10-02-016-06" in variants

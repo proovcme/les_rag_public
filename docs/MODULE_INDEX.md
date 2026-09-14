@@ -1,5 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.34 PDF locator integrity:** terminal-result prompt требует копировать
+> locator/title/unit/quantity из одной строки source catalog и сохранять
+> пропуски locator, созданные строками-разделами PDF. Это предотвращает сдвиг
+> всех последующих работ на locator раздела и остаётся модельным исправлением
+> собственного структурного ответа. Статус док↔код: ✅; live repeat pending.
+
 > **0.31.33 terminal model result and resumable packaging:** активная ЛСР снова
 > следует принятому ADR-15: модель формулирует запросы, видит RAG и её первый
 > полный итог без последующего verifier/research/coefficient-loop передаётся в
