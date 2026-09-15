@@ -37,9 +37,11 @@
   (`test_sovushka_chat`). Покрытие исходника,
   нормы и цены — `test_lsr_source_coverage_service`,
   `test_lsr_result_readiness_service`; UI уточнения/подтверждения без модели —
-  `test_sovushka_chat`. Контракт упаковки принимает operator `confirmed_data`
+  `test_sovushka_chat`.   Контракт упаковки принимает operator `confirmed_data`
   (`test_workbook_tool_service`, `test_workbook_tool_contracts`,
-  `test_chat_evidence_application_service`). Единый sheet-pass для малого и большого каталога —
+  `test_chat_evidence_application_service`). Overflow workbook result
+  остаётся у оператора (`test_chat_lsr_executor_keeps_overflow_workbook_for_operator`).
+  Единый sheet-pass для малого и большого каталога —
   `test_chat_evidence_application_service`. Конверсия единиц только с источником
   и без угадывания габарита из названия — `test_rim_lsr_trace_service`.
 

@@ -1463,6 +1463,96 @@ async def test_chat_lsr_executor_repack_without_progress_sink(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_chat_lsr_executor_keeps_overflow_workbook_for_operator(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from proxy.services.tool_contract_service import ResultBudget
+    from proxy.services import workbook_tool_service as workbook_tools
+
+    monkeypatch.chdir(tmp_path)
+    attachment_root = tmp_path / "attachments"
+    monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attachment_root))
+    source = tmp_path / "source.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["Наименование", "Ед. изм.", "Количество"])
+    workbook.active.append(["Кабель", "м", 10])
+    workbook.save(source)
+    workbook.close()
+    attachment = preserve_read_attachment(
+        source,
+        attachment_id="read_123456abcdef",
+        original_name="source.xlsx",
+        root=attachment_root,
+    )
+    decisions = [{
+        "source_row": "СКС!R2",
+        "title": "Кабель",
+        "unit": "м",
+        "quantity": 10,
+        "norm_code": "10-06-024-01",
+        "coverage": "x" * 400,
+    }]
+    monkeypatch.setattr(
+        workbook_tools,
+        "BUILD_LSR_WORKBOOK",
+        replace(
+            workbook_tools.BUILD_LSR_WORKBOOK,
+            result_budget=ResultBudget(max_chars=80, max_items=1),
+        ),
+    )
+
+    def calculate(rows, **kwargs):
+        return {
+            "schema": "rim_lsr_v1",
+            "sections": [],
+            "summary": {"input_rows": 1, "bound_rows": 1, "flags": []},
+            "row_bindings": [{"row": "СКС!R2", "status": "bound"}],
+        }
+
+    def render(_trace, output_path, **_kwargs):
+        book = openpyxl.Workbook()
+        book.active.append(["ЛСР"])
+        book.save(output_path)
+        book.close()
+        return output_path
+
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.build_lsr_trace_from_visible_rows",
+        calculate,
+    )
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.render_lsr_xlsx",
+        render,
+    )
+
+    result = await chat._execute_chat_workbook_tool(
+        {
+            "call_id": "call-lsr-overflow",
+            "tool": "build_lsr_workbook",
+            "args": {
+                "attachment_id": attachment["attachment_id"],
+                "decisions": decisions,
+            },
+        },
+        {
+            "session_id": "session-overflow",
+            "question": "Собери ЛСР",
+            "attachment_id": attachment["attachment_id"],
+            "dataset_ids": [],
+            "project_id": None,
+            "profile_revision_id": "profile-1",
+            "model_identity": "qwen-local",
+            "model_preset": "qwen-9b",
+        },
+        None,
+    )
+
+    assert result.get("execution", {}).get("status") == "overflow"
+    assert result["status"] == "complete"
+    assert result["artifact"]["download_url"]
+
+
+@pytest.mark.asyncio
 async def test_chat_workbook_executor_rejects_model_dataset_outside_chat_scope(
     tmp_path, monkeypatch
 ):

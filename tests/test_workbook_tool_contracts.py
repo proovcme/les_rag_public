@@ -18,6 +18,8 @@ def test_only_canonical_workbook_names_are_registered():
         assert contract.effect.value == "draft"
         assert contract.idempotency.value == "required"
         assert contract.result_schema == "les.workbook_tool_result.v1"
+        assert contract.result_budget.max_chars >= 500_000
+        assert contract.result_budget.max_items >= 20_000
 
 
 def test_installing_contracts_does_not_activate_profile_revision(tmp_path):

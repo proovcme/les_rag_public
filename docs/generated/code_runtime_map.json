@@ -1649,7 +1649,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4512,
+      "lines": 4519,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -7332,6 +7332,7 @@
         "proxy/routers/chat.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/tool_harness_service.py",
+        "tests/test_chat_evidence_application_service.py",
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
@@ -9232,7 +9233,7 @@
     },
     {
       "inbound": [],
-      "lines": 3296,
+      "lines": 3386,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -9248,7 +9249,8 @@
         "proxy/services/tool_harness_service.py",
         "proxy/services/tool_registry_service.py",
         "proxy/services/trusted_executor_service.py",
-        "proxy/services/web_research_config_service.py"
+        "proxy/services/web_research_config_service.py",
+        "proxy/services/workbook_tool_service.py"
       ],
       "path": "tests/test_chat_evidence_application_service.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -14134,7 +14136,7 @@
     },
     {
       "inbound": [],
-      "lines": 94,
+      "lines": 96,
       "module": "tests.test_workbook_tool_contracts",
       "outbound": [
         "proxy/services/chat_profile_service.py",
@@ -18762,7 +18764,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 634,
     "tracked_python_files": 1002,
-    "tracked_python_lines": 323403
+    "tracked_python_lines": 323502
   },
   "warnings": []
 }

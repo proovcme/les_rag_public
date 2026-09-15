@@ -84,7 +84,7 @@ def _contract(
         effect=EffectClass.DRAFT, scopes=("chat_attachment", "dataset"),
         timeout_seconds=900, retry=RetryPolicy.IDEMPOTENCY_KEY,
         idempotency=IdempotencyPolicy.REQUIRED,
-        result_budget=ResultBudget(max_chars=12_000, max_items=200),
+        result_budget=ResultBudget(max_chars=500_000, max_items=20_000),
         model_owned_fields=model_owned_fields,
         provenance="artifact_revision_required",
         tags=("workbook", "immutable_revision", "execution_context_required"),

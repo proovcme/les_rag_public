@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.42 workbook overflow:** `_execute_chat_workbook_tool` при
+> `TOOL_RESULT_BUDGET_EXCEEDED` поднимает полный stored result; budget
+> workbook 500k/20k, иначе 74 строки №124 давали empty harvest.
+
 > **0.31.41 pause + B0_DIRECT:** `WorkbookResearchJobService.should_cancel`
 > смотрит статус `paused`/`cancelled`, иначе `pause()` обнуляет флаг и
 > sheet-pass продолжает пакеты. `ChatRequest.comparative_acceptance_variant`

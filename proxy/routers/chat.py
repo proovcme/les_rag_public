@@ -1245,7 +1245,14 @@ async def _execute_chat_workbook_tool(
     if pending_progress:
         await asyncio.gather(*pending_progress, return_exceptions=True)
     result = envelope.to_dict()["result"]
-    if envelope.status not in {"ok", "overflow"}:
+    if envelope.status == "overflow" and envelope.cursor:
+        stored = executor.resolve_cursor(
+            envelope.cursor,
+            actor_id=str(request_context.get("session_id") or "ordinary-chat"),
+        )
+        if isinstance(stored, dict):
+            result = stored
+    elif envelope.status != "ok":
         result = {
             "schema": "les.workbook_tool_result.v1",
             "tool": tool_name,

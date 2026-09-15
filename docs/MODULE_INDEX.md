@@ -1,5 +1,8 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.42 workbook overflow:** упаковка LSR не прячет XLSX, если результат
+> больше model-prompt budget. Cursor overflow отдаёт полный artifact оператору.
+
 > **0.31.41 pause actually stops:** `should_cancel` истинен при `paused`, а не
 > только пока `cancel_requested=1`. `POST /api/workbook-research/{id}/pause`
 > больше не отпускает живой цикл сразу после сброса флага. `ChatRequest`

@@ -7,17 +7,23 @@
 ## Текущее состояние (2026-09-15)
 
 ```
-версия продукта (SemVer):  0.31.41
-номер сборки:              747
-версия Tauri/NSIS:         5.1.747
+версия продукта (SemVer):  0.31.42
+номер сборки:              748
+версия Tauri/NSIS:         5.1.748
 ветка разработки:          fix/local-qwen-result-parse
-dev implementation:       0.31.41 pause stops in-flight packets; B0_DIRECT request field
-задеплоено на рантайм:     overlay pending 747; confirm /api/version deployed_commit
+dev implementation:       0.31.42 keep overflow XLSX visible to operator
+задеплоено на рантайм:     overlay pending 748
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      process may still be previous until LES restart after overlay
+рантайм /api/version:      confirm after overlay restart
 ```
+
+> **0.31.42 / build 748 workbook overflow:** 74 сохранённых строк №124 собирали
+> XLSX, но harvest был empty: TrustedExecutor резал результат 12k. Chat
+> executor забирает stored overflow result; budget workbook 500k/20k.
+> `СКС!R12` ещё remaining. Live BAP+СКС 9B/`B0_DIRECT` и exact installer
+> **не закрыты**.
 
 > **0.31.41 / build 747 pause + B0_DIRECT:** `pause()` сбрасывал
 > `cancel_requested`, и живой sheet-pass №124 продолжал пакеты после «паузы».
