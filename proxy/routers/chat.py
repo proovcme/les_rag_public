@@ -457,6 +457,7 @@ class ChatRequest(BaseModel):
     profile_revision_id: Optional[str] = None
     apply_profile_revision: bool = False
     candidate_acceptance: bool = False  # root-admin only; isolated pre-promotion execution
+    comparative_acceptance_variant: Optional[str] = None  # B0_DIRECT | B1_CANDIDATE; live gate only
     attachment_context: Optional[str] = None  # текст файла из скрепки (read-mode), без индексации
     attachment_id: Optional[str] = None  # server-owned read_<id>; клиентский путь не принимается
     target_file: Optional[str] = None  # точный file_name из MetaDB documents (для клика по реестру/узкого RAG)
@@ -517,6 +518,18 @@ class ChatRequest(BaseModel):
         value = v.strip().casefold()
         if value not in {"short", "standard", "detailed", "maximum"}:
             raise ValueError("Некорректная длина ответа")
+        return value
+
+    @field_validator("comparative_acceptance_variant")
+    @classmethod
+    def comparative_acceptance_variant_values(cls, v):
+        if v is None:
+            return None
+        value = str(v).strip().upper()
+        if not value:
+            return None
+        if value not in {"B0_DIRECT", "B1_CANDIDATE"}:
+            raise ValueError("Некорректный вариант сравнительной приёмки")
         return value
 
     @field_validator("target_files")

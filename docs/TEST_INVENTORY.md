@@ -31,7 +31,10 @@
   (`test_workbook_tool_service`, `test_rim_lsr_trace_service`,
   `test_chat_evidence_application_service`). Durable packet checkpoint
   (`test_workbook_research_job_service`) переживает pause/resume без повторного
-  поиска кэшированных запросов и точечное reopen locator. Покрытие исходника,
+  поиска кэшированных запросов: `should_cancel` остаётся истинным после `pause()`,
+  иначе живой цикл продолжает пакеты. Точечное reopen locator сохраняет чужие
+  решения. `ChatRequest.comparative_acceptance_variant` принимает `B0_DIRECT`
+  (`test_sovushka_chat`). Покрытие исходника,
   нормы и цены — `test_lsr_source_coverage_service`,
   `test_lsr_result_readiness_service`; UI уточнения/подтверждения без модели —
   `test_sovushka_chat`. Контракт упаковки принимает operator `confirmed_data`

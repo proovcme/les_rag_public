@@ -7,17 +7,23 @@
 ## Текущее состояние (2026-09-15)
 
 ```
-версия продукта (SemVer):  0.31.40
-номер сборки:              746
-версия Tauri/NSIS:         5.1.746
+версия продукта (SemVer):  0.31.41
+номер сборки:              747
+версия Tauri/NSIS:         5.1.747
 ветка разработки:          fix/local-qwen-result-parse
-dev implementation:       0.31.40 packaging accepts operator confirmed_data
-задеплоено на рантайм:     overlay pending after 746; confirm /api/version before live tests
+dev implementation:       0.31.41 pause stops in-flight packets; B0_DIRECT request field
+задеплоено на рантайм:     overlay pending 747; confirm /api/version deployed_commit
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
 рантайм /api/version:      process may still be previous until LES restart after overlay
 ```
+
+> **0.31.41 / build 747 pause + B0_DIRECT:** `pause()` сбрасывал
+> `cancel_requested`, и живой sheet-pass №124 продолжал пакеты после «паузы».
+> `should_cancel` теперь истинен при статусе `paused`. Для живого baseline
+> `ChatRequest` принимает `comparative_acceptance_variant=B0_DIRECT`. Live
+> серия п.6 и exact Windows candidate **не закрыты**.
 
 > **0.31.40 / build 746 packaging confirmed_data:** чат и `repack-lsr` передают
 > operator overlay в `build_lsr_workbook`. Контракт с `additionalProperties:

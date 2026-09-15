@@ -1649,7 +1649,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4499,
+      "lines": 4512,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -4726,7 +4726,8 @@
       "inbound": [
         "proxy/services/lsr_result_readiness_service.py",
         "proxy/services/rim_lsr_trace_service.py",
-        "proxy/services/workbook_research_job_service.py"
+        "proxy/services/workbook_research_job_service.py",
+        "tests/test_lsr_source_coverage_service.py"
       ],
       "lines": 240,
       "module": "proxy.services.lsr_source_coverage_service",
@@ -7314,7 +7315,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 627,
+      "lines": 630,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -10908,6 +10909,17 @@
     },
     {
       "inbound": [],
+      "lines": 49,
+      "module": "tests.test_lsr_source_coverage_service",
+      "outbound": [
+        "proxy/services/lsr_source_coverage_service.py"
+      ],
+      "path": "tests/test_lsr_source_coverage_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 281,
       "module": "tests.test_mac_update",
       "outbound": [
@@ -13307,7 +13319,7 @@
     },
     {
       "inbound": [],
-      "lines": 1163,
+      "lines": 1173,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -14111,7 +14123,7 @@
     },
     {
       "inbound": [],
-      "lines": 94,
+      "lines": 108,
       "module": "tests.test_workbook_research_job_service",
       "outbound": [
         "proxy/services/workbook_research_job_service.py"
@@ -18748,9 +18760,9 @@
     "product_reachable": 356,
     "registered_api_routes": 336,
     "runtime_support": 11,
-    "test_or_tool_only": 633,
-    "tracked_python_files": 1001,
-    "tracked_python_lines": 323314
+    "test_or_tool_only": 634,
+    "tracked_python_files": 1002,
+    "tracked_python_lines": 323403
   },
   "warnings": []
 }

@@ -509,7 +509,10 @@ class WorkbookResearchJobService:
         return self.get(job_id)
 
     def should_cancel(self, job_id: str) -> bool:
-        return bool(self.get(job_id).get("cancel_requested"))
+        job = self.get(job_id)
+        if bool(job.get("cancel_requested")):
+            return True
+        return str(job.get("status") or "") in {"paused", "cancelled"}
 
     def finish(self, job_id: str, *, status: str, phase: str = "complete") -> dict[str, Any]:
         if status == "cancelled":

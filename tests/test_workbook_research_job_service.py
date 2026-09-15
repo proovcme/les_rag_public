@@ -85,6 +85,20 @@ def test_complete_job_is_not_reopened(tmp_path) -> None:
     assert again["resumable"] is False
 
 
+def test_pause_keeps_should_cancel_true_until_resume(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.request_cancel(job["job_id"])
+    assert service.should_cancel(job["job_id"]) is True
+    paused = service.pause(job["job_id"], remaining=["СКС!R3"])
+    assert paused["status"] == "paused"
+    assert paused["cancel_requested"] is False
+    assert service.should_cancel(job["job_id"]) is True
+    resumed = service.begin_or_resume(_identity(service))
+    assert resumed["status"] == "running"
+    assert service.should_cancel(job["job_id"]) is False
+
+
 def test_legacy_cancelled_finish_becomes_resumable_pause(tmp_path) -> None:
     service = WorkbookResearchJobService(tmp_path / "meta.db")
     job = service.begin_or_resume(_identity(service))

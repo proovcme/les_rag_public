@@ -165,6 +165,16 @@ def test_chat_request_accepts_explicit_selected_sources_only_capability():
     assert ChatRequest(question="q").selected_sources_only is None
 
 
+def test_chat_request_accepts_comparative_acceptance_variant():
+    assert ChatRequest(question="q").comparative_acceptance_variant is None
+    assert (
+        ChatRequest(question="q", comparative_acceptance_variant="b0_direct").comparative_acceptance_variant
+        == "B0_DIRECT"
+    )
+    with pytest.raises(Exception, match="сравнительной приёмки"):
+        ChatRequest(question="q", comparative_acceptance_variant="other")
+
+
 def test_ai_plain_markdown_is_rendered_as_markdown_widget():
     source = inspect.getsource(chat_page.build_chat)
 

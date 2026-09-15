@@ -1,5 +1,10 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.41 pause + B0_DIRECT:** `WorkbookResearchJobService.should_cancel`
+> смотрит статус `paused`/`cancelled`, иначе `pause()` обнуляет флаг и
+> sheet-pass продолжает пакеты. `ChatRequest.comparative_acceptance_variant`
+> включает прямой baseline без packet harness.
+
 > **0.31.40 packaging overlay:** `build_lsr_workbook` принимает `confirmed_data`
 > в том же контракте, через который чат и `POST /api/chat/repack-lsr` собирают
 > XLSX. Overlay применяется до расчёта и не меняет шифр модели.
