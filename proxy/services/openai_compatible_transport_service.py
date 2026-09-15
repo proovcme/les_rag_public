@@ -11,7 +11,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from proxy.services.llm_transport_profile_service import assistant_delta_text
+from proxy.services.llm_transport_profile_service import (
+    apply_transport_options,
+    assistant_delta_text,
+    provider_is_local,
+)
 from proxy.services.model_connection_contracts import CapabilityName, CapabilityState
 from proxy.services.model_connection_resolver_service import ResolvedModelConnection
 from proxy.services.model_connection_security_service import (
@@ -20,6 +24,9 @@ from proxy.services.model_connection_security_service import (
     validate_connected_peer,
 )
 from proxy.services.model_secret_service import EnvironmentSecretStore, ModelSecretError
+
+
+CHAT_RESPONSE_BODY_LIMIT = 512 * 1024
 
 
 class ModelTransportError(RuntimeError):
@@ -170,6 +177,8 @@ class OpenAICompatibleTransport:
             body["response_format"] = dict(request.response_format)
         if stream:
             body["stream"] = True
+        if provider_is_local(connection.extension_type):
+            return apply_transport_options(body, connection.extension_type)
         return body
 
     @staticmethod

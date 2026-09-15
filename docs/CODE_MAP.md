@@ -1,5 +1,42 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.40 packaging overlay:** `build_lsr_workbook` принимает `confirmed_data`
+> в том же контракте, через который чат и `POST /api/chat/repack-lsr` собирают
+> XLSX. Overlay применяется до расчёта и не меняет шифр модели.
+
+> **0.31.39 source coverage:** один sheet-pass для малых и больших исходников;
+> роли `work/material/equipment/resource/unresolved`; ресурсы связаны по
+> `work_row`; исходное количество отдельно от расчётного; конверсия только с
+> `conversion_source`. Готовность: покрытие / нормы / цены / файл.
+> `POST /api/chat/patch-lsr-rows` уточняет строки или вносит подтверждённые
+> данные без модели. Имя XLSX не берёт пользовательский запрос.
+
+> **0.31.38 packet = BAP:** sheet-pass больше не вызывает verifier и не
+> переписывает строки при исчерпании. `cited_source_row_keys` считает строку
+> обработанной по решению модели; leftover-запросы и кэш RAG пишутся в
+> `workbook_research_jobs`. Остановка ставит `paused`; тот же вопрос
+> продолжает remaining без повторного поиска. `POST /api/chat/repack-lsr`
+> пересобирает XLSX без модели. UI показывает файл/нормы/цены отдельно.
+
+> **0.31.37 query-header packets:** `build_model_rag_evidence_groups` больше
+> не бросает `MODEL_RAG_EVIDENCE_BUDGET_TOO_SMALL_FOR_ALL_QUERY_HEADERS`.
+> `select_model_rag_query_hits_for_budget` оставляет целые leftover-запросы
+> для следующего технического пакета sheet-pass; карточки по-прежнему omit.
+
+> **0.31.36 FreeToken observed KV + thinking-off:**
+> `model_capability_service` для `extension_type=freetoken` пишет
+> `observed_context_tokens` из `/v1/cache/status` или `/v1/models`.
+> `openai_compatible_transport_service` применяет `enable_thinking=false`
+> через `provider_is_local(extension_type)` без веток по имени движка.
+> Chat complete использует `CHAT_RESPONSE_BODY_LIMIT=512KiB`; probe остаётся
+> на 32 KiB. Extended 35B по-прежнему требует identity `qwen`+`35b` и
+> наблюдаемый KV ≥ 16384.
+
+> **0.31.35 ADR-15 money unlock:** `positions_from_visible_lsr_rows` принимает
+> явный шифр модели (`EXACT`/`ANALOGUE`) без независимого quality overlay.
+> Неизвестный шифр, конфликт единиц и model `MISSING`/`CONFLICT` не попадают в
+> деньги. `pricing_block_reason` больше не вызывается из workbook adapter.
+
 > **0.30.59 local-Qwen markdown reader:** `parse_model_rag_result` принимает
 > divider из двух дефисов, заголовок монтажа с подсказкой `norm_code` и явные
 > таблицы title/unit/quantity без нормы. Секция может быть любым `###`, кроме
@@ -62,7 +99,10 @@
 > каждый запрос через `ModelResearchToolService`: estimator использует effective
 > dedicated сметную RRF collection, прочие профили — `retrieve_chat_chunks` в
 > замороженном dataset scope. Затем та же модель получает вложение и общий
-> evidence packet и возвращает `answer + rows`. Только после завершённого model
+> evidence packet и возвращает `answer + rows`. Если заголовки всех `Qn` не
+> влезают в остаток окна, sheet-pass показывает влезающий префикс и продолжает
+> leftover-запросы следующим техническим пакетом; однопроходный путь честно
+> omits. Только после завершённого model
 > result `build_lsr_workbook` получает строки дословно и рассчитывает/рендерит
 > XLSX. В активном пути нет selector/workbook loop, `status`, confirm/review или
 > лимита количества строк. Ошибка упаковки не меняет ответ и не возвращает
@@ -366,9 +406,12 @@
   `desktop/tauri/src-tauri/src/lib.rs` — bounded availability probes и запуск LES core без записи
   provider/model; `installers/windows/app/bootstrap.ps1` — verified bundled Python/uv, exact lock,
   offline dependency cache и capability warnings без скрытых установок/скачиваний.
-- **FreeToken local transport (0.27.70, 0.27.75–0.27.77):** `proxy/services/llm_transport_profile_service.py`
+- **FreeToken local transport (0.27.70, 0.27.75–0.27.77, 0.31.36):** `proxy/services/llm_transport_profile_service.py`
   добавляет `enable_thinking=false`, capacity-derived prompt-fit и единый parser
   `content|reasoning|reasoning_content` для внешнего loopback runtime;
+  bound chat в `openai_compatible_transport_service.py` применяет тот же thinking-off
+  по `extension_type`, а `model_capability_service.py` наблюдает физический KV
+  FreeToken (`/v1/cache/status`, запасной `/v1/models`) чтобы выбрать `qwen-35b-extended`;
   `routers/chat.py` и `agent_router_service.py` используют `FREETOKEN_BASE_URL/MODEL`, а
   `installers/windows/start-light.ps1` не запускает второй LLM engine и оставляет query embeddings
   на Ollama `bge-m3`; `freetoken_cache_profile_service.py` согласует physical KV
@@ -557,7 +600,7 @@ projection под тем же alias; при rollback старый FTS восст
 контракт только к dense query, а `RetrievalTrace.query_embedding` и runtime config делают
 режим воспроизводимым. Переключение требует A/B retrieval gate, но не reindex.
 
-**Запрос:** `POST /api/chat` → `routers/chat.py` разрешает scope/profile → `chat_evidence_application_service` ведёт общий evidence-flow: native-RRF retrieval → evidence packet/context governor → model-selected runtime-available tools → тот же model final → sources/trace/history. Отдельный `smeta_chat_application_service` текущим чатом не вызывается и остаётся старым RIM/benchmark bridge. Workbook VOR исполняется специальной чатовой границей; LSR получает явные решения той же модели, связывает выбранные шифры с exact-карточками, считает trace и рендерит XLSX без отдельного model loop.
+**Запрос:** `POST /api/chat` → `routers/chat.py` разрешает scope/profile → `chat_evidence_application_service` ведёт общий evidence-flow: native-RRF retrieval → evidence packet/context governor → model-selected runtime-available tools → тот же model final → sources/trace/history. Пакетный sheet-pass сохраняет терминальные решения, пишет checkpoint в `workbook_research_jobs` и не вызывает обязательный verifier. `POST /api/chat/repack-lsr` пересобирает XLSX без модели. Отдельный `smeta_chat_application_service` текущим чатом не вызывается и остаётся старым RIM/benchmark bridge. Workbook VOR исполняется специальной чатовой границей; LSR получает явные решения той же модели, связывает выбранные шифры с exact-карточками, считает trace и рендерит XLSX без отдельного model loop.
 
 **Индексация:** upload → route/convert → parser-specific nodes → единый final sanitation/token-budget gate → embedding по совместимому `index-contract` → Qdrant + lexical projection + MetaDB. Parser-specific chunking улучшает границы, но не может обойти фактический лимит tokenizer. Raw CAD/BIM остаётся вне текстового RAG и сначала переводится в canonical JSON/JSONL projection.
 

@@ -74,8 +74,10 @@ def test_scope_resolution_stays_in_trace_without_code_authored_clarification():
 def test_empty_retrieval_no_generic_code_no_data_final():
     from proxy.services import chat_evidence_application_service
     src = inspect.getsource(chat_evidence_application_service._execute_chat_evidence_application)
+    helpers = inspect.getsource(chat_evidence_application_service.stamp_empty_retrieval)
     assert 'if not chunks and target_file_ref' not in src
-    assert "empty_retrieval_model_first_v1" in src
+    assert "stamp_empty_retrieval(" in src
+    assert "empty_retrieval_model_first_v1" in helpers
 
 
 # ── регрессия ─────────────────────────────────────────────────────────────────────────────

@@ -23,6 +23,12 @@ _QUESTION_LIKE_TITLES = {
     "локальный сметный расчёт",
     "локальный сметный расчет",
 }
+_PRICE_SOURCE_LABEL = {
+    "needs_kac": "КАЦ или выбранная ценовая книга",
+    "needs_labor_rate": "ставка ОЗП",
+    "needs_machinist_rate": "ставка ЗПМ",
+    "needs_fgis_price": "цена эксплуатации машины ФГИС ЦС",
+}
 _QUARTER_RE = re.compile(
     r"(?i)(?P<num>[1-4])\s*(?:квартал|кв\.?)\s*(?P<year>20\d{2})"
 )
@@ -46,6 +52,17 @@ def _clean_identity_value(value: str) -> str:
     return text.strip(" .;:-")
 
 
+def is_question_like_title(value: str) -> bool:
+    cleaned = _clean_identity_value(value).casefold()
+    if cleaned in _QUESTION_LIKE_TITLES:
+        return True
+    sanitized = re.sub(r"[^\w\-]+", "_", cleaned, flags=re.UNICODE).strip("._").casefold()
+    return sanitized in {
+        re.sub(r"[^\w\-]+", "_", item, flags=re.UNICODE).strip("._")
+        for item in _QUESTION_LIKE_TITLES
+    }
+
+
 def extract_lsr_source_identity(
     *,
     source_text: str = "",
@@ -63,8 +80,10 @@ def extract_lsr_source_identity(
             if cleaned:
                 fields[key] = cleaned
     title = fields.get("title") or stem
-    if _clean_identity_value(title).casefold() in _QUESTION_LIKE_TITLES:
+    if is_question_like_title(title):
         title = stem
+    if is_question_like_title(title):
+        title = ""
     title = title or "Локальный сметный расчёт"
     quarter = _QUARTER_RE.search(str(source_text or ""))
     price_level = (
@@ -112,7 +131,7 @@ def collect_lsr_workbook_gaps(trace: Mapping[str, Any]) -> list[str]:
     for binding in trace.get("row_bindings") or []:
         if not isinstance(binding, Mapping):
             continue
-        if str(binding.get("status") or "") == "bound":
+        if str(binding.get("status") or "") in {"bound", "resource_linked"}:
             continue
         gaps.append(
             f"row:{binding.get('row')}:{binding.get('status') or 'unresolved'}"
@@ -128,6 +147,46 @@ def collect_lsr_workbook_gaps(trace: Mapping[str, Any]) -> list[str]:
                 text = str(reason)
                 if text.startswith("price_missing:"):
                     gaps.append(text)
+    return gaps
+
+
+def collect_lsr_price_gaps(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Price holes with resource, quantity, and the required source. Not zeros."""
+
+    gaps: list[dict[str, Any]] = []
+    for section in trace.get("sections") or []:
+        if not isinstance(section, Mapping):
+            continue
+        for position in section.get("positions") or []:
+            if not isinstance(position, Mapping):
+                continue
+            for row in position.get("rows") or []:
+                if not isinstance(row, Mapping):
+                    continue
+                meta = row.get("meta") if isinstance(row.get("meta"), Mapping) else {}
+                action = str(meta.get("price_action") or "").strip()
+                if not action:
+                    continue
+                columns = row.get("columns") if isinstance(row.get("columns"), Mapping) else {}
+                code = str(columns.get(2) or "")
+                name = str(row.get("name") or columns.get(3) or code or "ресурс")
+                quantity = columns.get(7)
+                required = _PRICE_SOURCE_LABEL.get(action, "подтверждённая цена")
+                gaps.append(
+                    {
+                        "resource": name if name != code else (code or name),
+                        "code": code,
+                        "quantity": quantity,
+                        "price_action": action,
+                        "required_source": required,
+                        "action": (
+                            f"Задайте цену для {name}"
+                            + (f" ({code})" if code and code != name else "")
+                            + (f", количество {quantity}" if quantity not in (None, "") else "")
+                            + f". Источник: {required}. Отсутствие цены не отменяет норму."
+                        ),
+                    }
+                )
     return gaps
 
 
@@ -160,14 +219,17 @@ async def build_lsr_workbook_from_decisions(
         source_name=source_name,
     )
     progress("model_decisions", 0, len(decisions))
+    overlays = args.get("confirmed_data") if isinstance(args.get("confirmed_data"), Mapping) else None
     trace = await asyncio.to_thread(
         build_lsr_trace_from_visible_rows,
         decisions,
         pricebook=pricebook,
         name=identity["title"],
+        confirmed_data=overlays,
     )
+    source_label = "" if is_question_like_title(Path(source_name).stem) else source_name
     render_meta = {
-        "source": source_name,
+        "source": source_label,
         "pricebook": pricebook_name,
         "osnovanie": identity["osnovanie"],
         "price_level": identity["price_level"],
@@ -195,6 +257,7 @@ async def build_lsr_workbook_from_decisions(
         "pricing_status": str((trace.get("summary") or {}).get("result_status") or ""),
         "norms_status": str((trace.get("summary") or {}).get("norms_status") or ""),
         "missing": missing,
+        "price_gaps": collect_lsr_price_gaps(trace),
         # A zero-priced result is still a useful audit workbook. Unresolved
         # rows and their reasons remain in ``missing`` and the rendered trace.
         "blockers": [],

@@ -900,7 +900,12 @@ def aggregate_norms_status(rows: Sequence[Mapping[str, Any]]) -> str:
 
 
 def pricing_block_reason(row: Mapping[str, Any] | None) -> tuple[bool, str, str]:
-    """True when the row must not become a priced position."""
+    """True when a QUALITY_DIAGNOSTIC row must not become a priced position.
+
+    The active ADR-15 workbook adapter must not call this. Terminal model
+    ciphers are priced by exact lookup; this overlay exists only for the
+    isolated verifier loop.
+    """
 
     payload = row if isinstance(row, Mapping) else {}
     if len(parse_norm_components(payload.get("norm_components"))) >= 2:
@@ -1543,10 +1548,21 @@ def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: st
     return (
         f"{sheet_clause}"
         "Дай итоговый ответ Markdown-таблицей по указанным строкам исходного ВОР. Для каждой "
-        "строки явно укажи source_row, section, title, unit, quantity, выбранный тобой "
-        "norm_code, norm_status, action_match, object_match, condition_match, "
+        "строки явно укажи source_row, row_role, work_row, supply_kind, section, title, unit, "
+        "quantity, calc_quantity, conversion_factor, conversion_source, выбранный тобой "
+        "norm_code, norm_status, open_gap, action_match, object_match, condition_match, "
         "unit_compatible, composition_covers, extra_ops, missing_ops, coefficient, "
         "coefficient_applies_to (labor, machine или labor_and_machine) и evidence_refs Qx.Hy. "
+        "row_role только: work, material, equipment, resource или unresolved. "
+        "work — самостоятельная работа с нормой или обоснованным аналогом; material/equipment — "
+        "отдельная стоимость поставки; resource — ресурс конкретной работы; unresolved — "
+        "нерешённая позиция с конкретным open_gap. Связывай resource/material/equipment "
+        "через work_row (устойчивый locator строки работы), не через шифр нормы: одинаковый "
+        "шифр может встречаться несколько раз. supply_kind: install, supply или both. "
+        "Монтаж и поставку учитывай раздельно, без двойного учёта материалов нормы. "
+        "quantity — исходное количество; не подменяй его расчётным. Фасовку, длину секции и "
+        "массу на метр пиши только в conversion_factor/calc_quantity вместе с conversion_source; "
+        "не смешивай их с coefficient условий производства. Код пропущенные значения не угадывает. "
         "norm_status — только закрытый токен: EXACT, ANALOGUE_CANDIDATE, NEEDS_RESEARCH, "
         "MISSING или CONFLICT. Не пиши EXACT_VERIFIED и ANALOGUE_VERIFIED: это статус "
         "отдельной проверки, а не твоего первого ответа. "

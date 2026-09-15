@@ -1,5 +1,41 @@
 # Chat profiles
 
+## Build 744: пакетный путь = правило БАП
+
+Обычный sheet-pass больше не запускает обязательный verifier и не ставит
+кодовые заглушки `MISSING`/`CONFLICT` при исчерпании попыток. Первое принятое
+решение модели по locator остаётся; оставшиеся строки живут в checkpoint.
+`empty_retrieval` не ставится, пока модель ещё должна сформулировать запросы,
+а фактические LLM/search вызовы пишутся в `actual_model_calls`. Остановка
+пакетов — `paused`; повтор того же вопроса продолжает remaining и берёт кэш
+поиска. `POST /api/chat/repack-lsr` и кнопка «Пересобрать файл» не вызывают
+модель. В результате отдельно: готовность файла, полнота норм, полнота цен,
+каждому пробелу — конкретное действие.
+
+Ограниченная приёмка BAP+СКС 9B/35B, прямой baseline `B0_DIRECT`, проверка
+сметчиком, stop→resume и установка точного Windows-кандидата **ещё не
+проводились**. Это условие передачи сборки, не доказательство этого билда.
+
+## Build 743: пакет заголовков запросов
+
+Число строк ведомости по-прежнему режет sheet-pass и `adaptive_row_packet`.
+Отдельно режется налог заголовков `Qn`/`Qn.Hm`: если они не влезают в остаток
+окна, код не поднимает `INTERNAL_CHAT_ERROR`. Влезающий префикс идёт в ответ,
+остаток запросов на sheet-pass — следующий технический пакет без нового
+поиска; однопроходный путь честно пишет `omitted_evidence_refs`. Нормы и
+текст запросов код не меняет.
+
+## Build 742: наблюдаемый KV FreeToken
+
+Пресет `qwen-35b-extended` по-прежнему требует распознанную 35B и **наблюдаемый**
+KV, а не одно поле `requested_context_tokens`. Для `extension_type=freetoken`
+capability probe записывает `observed_context_tokens` из
+`GET /v1/cache/status` (`geometry.num_pages` или верхний `num_pages`); если
+статус кэша недоступен, берётся `context_length` совпавшего id в
+`GET /v1/models`. Отсутствие этих ответов не валит probe и оставляет
+заводской 9B. Bound OpenAI transport на том же подключении отправляет
+`chat_template_kwargs.enable_thinking=false`.
+
 ## Build 740: пропуски locator в PDF
 
 PDF source catalog присваивает locator и строкам-разделам. Поэтому номера работ
@@ -170,6 +206,7 @@ Retrieval policy также принадлежит effective profile: `candidate
 
 - неизвестная модель или неподтверждённая ёмкость получает `qwen-9b-restrictive`;
 - `qwen-35b-extended` доступен только при распознанной 35B и наблюдаемом KV;
+- для FreeToken наблюдаемый KV берётся из cache status / models, не из requested window;
 - reasoning по умолчанию выключен;
 - разрешение пресета не меняет `legacy`/`shadow`/`active` и не перезапускает backend;
 - `/api/version` и GUI-first runtime registry показывают только безопасные
@@ -178,5 +215,6 @@ Retrieval policy также принадлежит effective profile: `candidate
   model/context можно менять только через пользовательскую копию профиля,
   safety и наблюдаемая ёмкость напрямую не редактируются.
 
-Точки входа: `proxy/services/model_execution_preset_service.py` и
+Точки входа: `proxy/services/model_execution_preset_service.py`,
+`proxy/services/model_capability_service.py` и
 `proxy/services/llm_transport_profile_service.py`.

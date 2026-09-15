@@ -48,9 +48,11 @@ VOR-адаптер переносит исходные строки, едини�
 без группировки и подстановки нулей; пустые unit/quantity выходят как `missing`.
 LSR запускается через явно переданный тонкий application-adapter: модель сама
 выбирает строки и шифры по RAG/tool evidence и передаёт их как `decisions`.
-Adapter связывает решения с exact-карточками, считает trace и рендерит XLSX;
+Adapter связывает решения с exact-карточками, применяет operator `confirmed_data`
+(цена/конверсия/единицы) до расчёта, считает trace и рендерит XLSX;
 он не импортирует старый document workflow и не создаёт второй model loop.
-Аргументы модели не могут передать готовые цены, суммы или рассчитанные строки. Публичный результат содержит
+Аргументы модели не могут передать готовые цены, суммы или рассчитанные строки;
+operator overlay не является model-owned field и не меняет шифр. Публичный результат содержит
 artifact/revision metadata, SHA, progress, missing/blockers и download URL, но
 не filesystem path.
 

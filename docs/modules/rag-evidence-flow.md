@@ -16,10 +16,25 @@ planner/model-review шага и JSON-протокола между модель
    точные дубли фрагментов и ограничивает число фрагментов одного физического
    документа, затем передаёт модели `model_evidence_k` результатов.
 3. Для model-authored запросов каждая группа сохраняется независимо как
-   `Qx.Hy`; ранние запросы не могут вытеснить поздние.
+   `Qx.Hy`; ранние запросы не могут вытеснить поздние. Если заголовки всех
+   `Q`/`H` не влезают в остаток окна, код не падает: влезающий префикс
+   показывается, остаток запросов на sheet-pass идёт следующим техническим
+   пакетом без нового поиска, а в одном выстреле честно попадает в
+   `omitted_evidence_refs`. Карточки по-прежнему omit, а не shred.
    Транспорт принимает обычные строки. Кавычки и явно написанная самой моделью
    оболочка `search_sources("…")` снимаются только синтаксически; вступительная
    проза при наличии таких строк не превращается в дополнительный запрос.
+   Пакетный sheet-pass — тот же порядок, что у малого исходника: модель
+   формулирует запросы, получает источники, принимает решения, код считает.
+   Порог «маленький/большой документ» не выбирает другой контур. Первое
+   принятое решение модели по строке сохраняется, обязательный verifier
+   и кодовые заглушки при исчерпании попыток не запускаются. Кэш запросов и
+   незакрытые locators живут в `workbook_research_jobs`; повтор поиска
+   обработанного не выполняется, повтор упаковки XLSX — без модели.
+   Оператор может уточнить выбранные locator или внести подтверждённые
+   данные (`conversion_factor`/`conversion_source`) без смены шифра.
+   Упаковка XLSX принимает то же `confirmed_data` в контракте
+   `build_lsr_workbook`; поле доходит до расчёта, а не отвергается schema.
 4. Фактически показанные модели chunks образуют immutable evidence manifest.
    Следующая реплика получает компактный индекс использованного evidence и тот
    же frozen scope, но не повторные полные тела фрагментов.
@@ -69,6 +84,9 @@ planner/model-review шага и JSON-протокола между модель
 - `proxy/services/retrieval_service.py`
 - `proxy/services/model_research_tool_service.py`
 - `proxy/services/chat_evidence_application_service.py`
+- `proxy/services/lsr_source_coverage_service.py`
+- `proxy/services/lsr_result_readiness_service.py`
+- `proxy/services/workbook_research_job_service.py`
 - `proxy/services/chat_evidence_manifest_service.py`
 - `proxy/services/chat_capability_scope_service.py`
 - `proxy/services/source_locator_service.py`

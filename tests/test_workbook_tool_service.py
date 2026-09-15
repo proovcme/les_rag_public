@@ -19,6 +19,7 @@ from proxy.services.workbook_tool_service import (
     workbook_download_filename,
 )
 from proxy.services.lsr_workbook_adapter_service import build_lsr_workbook_from_decisions
+from proxy.services.rim_lsr_trace_service import positions_from_visible_lsr_rows
 from proxy.services.structured_extract import validate as validate_json_schema
 
 
@@ -52,6 +53,116 @@ def test_lsr_contract_accepts_unbound_rows_and_has_no_fixed_row_limit():
     )
 
     assert errors == []
+
+
+def test_lsr_contract_accepts_operator_confirmed_data_before_calc():
+    payload = {
+        "attachment_id": "read_123456abcdef",
+        "question": "Собери ЛСР",
+        "decisions": [
+            {
+                "source_row": "СКС!R2",
+                "title": "Кабель",
+                "unit": "м",
+                "quantity": 10,
+                "norm_code": "10-06-024-01",
+            }
+        ],
+        "confirmed_data": {
+            "СКС!R2": {
+                "confirmed_price": 125.5,
+                "price_source": "КАЦ",
+            }
+        },
+    }
+
+    assert validate_json_schema(payload, BUILD_LSR_WORKBOOK.input_schema) == []
+    assert validate_json_schema(
+        {**payload, "confirmed_data": {}},
+        BUILD_LSR_WORKBOOK.input_schema,
+    ) == []
+    assert validate_json_schema(
+        {**payload, "unknown_field": 1},
+        BUILD_LSR_WORKBOOK.input_schema,
+    )
+
+
+def test_terminal_model_status_binds_selected_norm_without_quality_overlay(monkeypatch):
+    def _lookup(code):
+        if code == "ГЭСНм99-00-000-00":
+            return None
+        return {"code": code, "unit": "100 шт", "resources": []}
+
+    monkeypatch.setattr(
+        "proxy.services.rim_lsr_trace_service.gesn_service.get_norm",
+        _lookup,
+    )
+
+    result = positions_from_visible_lsr_rows([
+        {
+            "source_row": "PDF!R21",
+            "title": "Монтаж БАП",
+            "unit": "шт.",
+            "quantity": 16,
+            "norm_code": "ГЭСНм10-02-016-06",
+            "norm_status": "EXACT",
+            "coefficient": 1,
+            "coefficient_applies_to": "labor_and_machine",
+            "evidence_refs": ["Q6.H1"],
+        },
+        {
+            "source_row": "PDF!R22",
+            "title": "Строка без выбранной нормы",
+            "unit": "м",
+            "quantity": 160,
+            "norm_code": "ГЭСНм10-07-059-01",
+            "norm_status": "MISSING",
+        },
+        {
+            "source_row": "PDF!R23",
+            "title": "Аналог с явным шифром",
+            "unit": "шт.",
+            "quantity": 100,
+            "norm_code": "ГЭСНм10-02-016-07",
+            "norm_status": "ANALOGUE",
+        },
+        {
+            "source_row": "PDF!R24",
+            "title": "Неизвестный шифр",
+            "unit": "шт.",
+            "quantity": 1,
+            "norm_code": "ГЭСНм99-00-000-00",
+            "norm_status": "EXACT",
+        },
+        {
+            "source_row": "PDF!R25",
+            "title": "Конфликт единиц",
+            "unit": "м2",
+            "quantity": 10,
+            "norm_code": "ГЭСНм10-02-016-06",
+            "norm_status": "EXACT",
+        },
+    ])
+
+    statuses = [item["status"] for item in result["row_bindings"]]
+    assert statuses == [
+        "bound",
+        "missing_norm",
+        "bound",
+        "norm_not_found",
+        "needs_input",
+    ]
+    conflict = result["row_bindings"][4]
+    assert conflict["code"] == "ГЭСНм10-02-016-06"
+    assert conflict["source_quantity"] == 10
+    assert [item["code"] for item in result["positions"]] == [
+        "ГЭСНм10-02-016-06",
+        "ГЭСНм10-02-016-07",
+    ]
+    assert result["positions"][0]["qty"] == 0.16
+    assert result["row_bindings"][0]["quality_gate"] == "not_run"
+    assert result["row_bindings"][0]["norm_status"] == "EXACT"
+    assert result["row_bindings"][2]["norm_status"] == "ANALOGUE_CANDIDATE"
 
 
 def _context(tmp_path: Path, *, key: str = "key-1", decision: str = "decision-1",
@@ -173,9 +284,14 @@ async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monk
         lambda _path: system_pricebook,
     )
 
+    overlays = {"PDF!R2": {"confirmed_price": 88.0, "price_source": "КАЦ"}}
     result = await build_lsr_workbook_from_decisions(
         tmp_path / "source.xlsx",
-        {"decisions": decisions, "question": "Собери ЛСР"},
+        {
+            "decisions": decisions,
+            "question": "Собери ЛСР",
+            "confirmed_data": overlays,
+        },
         tmp_path / "result.xlsx",
         lambda *_args: None,
     )
@@ -183,6 +299,7 @@ async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monk
     assert captured["rows"] == decisions
     assert captured["kwargs"]["name"] == "source"
     assert captured["kwargs"]["pricebook"] is system_pricebook
+    assert captured["kwargs"]["confirmed_data"] == overlays
     assert result["source_rows"] == 1
     assert result["pricebook"] == "sankt-peterburg_2kv2026"
     assert result["missing"] == []
@@ -391,6 +508,11 @@ def test_workbook_download_filename_uses_kind_source_and_date():
         artifact_kind="vor_workbook",
         when=when,
     ) == "VOR_2026-09-01_2147.xlsx"
+    assert workbook_download_filename(
+        artifact_kind="lsr_workbook",
+        source_name="Собери ЛСР.xlsx",
+        when=when,
+    ) == "LSR_2026-09-01_2147.xlsx"
 
 
 @pytest.mark.asyncio

@@ -95,10 +95,12 @@ from proxy.services.saferag_service import (
 from proxy.services.table_query_service import maybe_answer_table_query
 from proxy.services.memory_port import get_memory_port
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+from proxy.services.lsr_result_readiness_service import (
+    build_lsr_result_readiness,
+    format_lsr_readiness_notice,
+)
 from proxy.services.lsr_norm_quality_gate_service import (
     LsrResearchRoundResult,
-    MAX_RESEARCH_ROUNDS_PER_LOCATOR,
-    apply_verifier_table,
     aggregate_norms_status,
     build_blind_review_evidence_items,
     invented_source_row,
@@ -115,13 +117,9 @@ from proxy.services.lsr_norm_quality_gate_service import (
     prepare_selection_row,
     rejected_codes_clause,
     row_is_quality_terminal,
-    row_needs_research,
     run_coefficient_review,
     run_lsr_norm_quality_loop,
-    terminal_source_row_keys,
     verifier_generation_tokens,
-    verifier_packets,
-    verifier_table_covers_packet,
 )
 from proxy.services.llm_transport_profile_service import (
     assistant_delta_text,
@@ -503,6 +501,7 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         "pricing_status": str(result.get("pricing_status") or ""),
         "norms_status": str(result.get("norms_status") or ""),
         "missing": list(result.get("missing") or []),
+        "price_gaps": list(result.get("price_gaps") or []),
         "blockers": list(result.get("blockers") or []),
     }
 
@@ -740,9 +739,12 @@ _TABULAR_ESTIMATOR_TOOLS = ("search_sources", "read_source", "build_lsr_workbook
 _TABULAR_LSR_VOLUME_INSTRUCTION = (
     "Пустые колонки Материал/Работа/Итого во вложенной ведомости — это объёмы, "
     "не запрет собирать таблицу строк. Не отказывайся из‑за пустых цен и не проси "
-    "прайс вместо таблицы. Цену считает код только после независимой проверки шифра. "
-    "В таблице нужны source_row, title, unit, quantity, norm_code, norm_status, "
-    "action_match, object_match, evidence_refs Qx.Hy."
+    "прайс вместо таблицы. Цену считает код только после выбранной нормы. "
+    "В таблице нужны source_row, row_role, work_row, supply_kind, title, unit, "
+    "quantity, calc_quantity, conversion_factor, conversion_source, norm_code, "
+    "norm_status, open_gap, action_match, object_match, evidence_refs Qx.Hy. "
+    "quantity — исходное количество; расчётное не подменяет его. Перевод единиц "
+    "только с conversion_source. Отсутствие цены не делает строку MISSING."
 )
 _MODEL_RAG_QUERY_INSTRUCTION = (
     "Прочитай приложенный материал целиком. Сформулируй поисковые "
@@ -764,7 +766,6 @@ _MODEL_RAG_QUERY_VOLUME_HINT = (
     "Пустые ценовые колонки исходника не ищи. Запросы — по работам и "
     "измерителям строк, не по прайсу."
 )
-_SHEET_PASS_WORK_LOCATOR_THRESHOLD = 24
 _ROW_PACKET_MIN = 8
 _ROW_PACKET_TARGET = 10
 _ROW_PACKET_MAX = 12
@@ -891,17 +892,14 @@ def sheet_pass_should_run(
     tabular_estimator_bound: bool,
     model_driven: bool,
 ) -> bool:
-    """Continue sheet-by-sheet when one model shot cannot hold the whole VOR."""
+    """Same packet order for small and large tabular sources: queries → sources → decisions."""
 
     if not tabular_estimator_bound or not model_driven or catalog is None:
         return False
     names = catalog_work_sheet_names(catalog)
     if not names:
         return False
-    return (
-        len(names) > 1
-        or len(catalog.work_locators()) > _SHEET_PASS_WORK_LOCATOR_THRESHOLD
-    )
+    return bool(catalog.work_locators())
 
 
 def sheet_pass_query_instruction(
@@ -1000,6 +998,146 @@ def merge_model_rag_rows(
         seen.update(aliases)
         merged.append(payload)
     return merged
+
+
+ACTUAL_MODEL_CALLS_SCHEMA = "les.actual_model_calls.v1"
+
+
+def ensure_actual_model_calls(trace: dict[str, Any] | None) -> dict[str, Any]:
+    payload = trace if isinstance(trace, dict) else {}
+    bucket = payload.get("actual_model_calls")
+    if not isinstance(bucket, dict):
+        bucket = {
+            "schema": ACTUAL_MODEL_CALLS_SCHEMA,
+            "calls": [],
+            "search_executions": 0,
+            "search_cache_hits": 0,
+            "search_hits": 0,
+        }
+        payload["actual_model_calls"] = bucket
+    bucket.setdefault("calls", [])
+    bucket.setdefault("search_executions", 0)
+    bucket.setdefault("search_cache_hits", 0)
+    bucket.setdefault("search_hits", 0)
+    return bucket
+
+
+def append_actual_model_call(
+    trace: dict[str, Any] | None,
+    *,
+    purpose: str,
+    finish_reason: str = "",
+    completion_tokens: int = 0,
+) -> None:
+    bucket = ensure_actual_model_calls(trace)
+    bucket["calls"].append(
+        {
+            "purpose": str(purpose or ""),
+            "finish_reason": str(finish_reason or ""),
+            "completion_tokens": int(completion_tokens or 0),
+        }
+    )
+
+
+def append_actual_search(
+    trace: dict[str, Any] | None,
+    *,
+    cached: bool,
+    hit_count: int,
+) -> None:
+    bucket = ensure_actual_model_calls(trace)
+    if cached:
+        bucket["search_cache_hits"] = int(bucket.get("search_cache_hits") or 0) + 1
+    else:
+        bucket["search_executions"] = int(bucket.get("search_executions") or 0) + 1
+    bucket["search_hits"] = int(bucket.get("search_hits") or 0) + int(hit_count or 0)
+
+
+def durable_research_hit(hit: Any) -> dict[str, Any]:
+    if isinstance(hit, Mapping):
+        meta = hit.get("meta") if isinstance(hit.get("meta"), Mapping) else {}
+        return {
+            "content": str(hit.get("content") or ""),
+            "doc_id": str(hit.get("doc_id") or ""),
+            "doc_name": str(hit.get("doc_name") or ""),
+            "score": float(hit.get("score") or 0.0),
+            "meta": dict(meta),
+        }
+    meta = getattr(hit, "meta", {}) or {}
+    return {
+        "content": str(getattr(hit, "content", "") or ""),
+        "doc_id": str(getattr(hit, "doc_id", "") or ""),
+        "doc_name": str(getattr(hit, "doc_name", "") or ""),
+        "score": float(getattr(hit, "score", 0.0) or 0.0),
+        "meta": dict(meta) if isinstance(meta, Mapping) else {},
+    }
+
+
+def research_hit_from_record(record: Mapping[str, Any]) -> _ModelRagEvidenceChunk:
+    meta = dict(record.get("meta") or {}) if isinstance(record.get("meta"), Mapping) else {}
+    return _ModelRagEvidenceChunk(
+        content=str(record.get("content") or ""),
+        doc_id=str(record.get("doc_id") or ""),
+        doc_name=str(record.get("doc_name") or ""),
+        score=float(record.get("score") or 0.0),
+        meta=meta,
+    )
+
+
+def restore_query_hits_from_cache(
+    queries: Sequence[str],
+    cache: Mapping[str, Any],
+) -> list[tuple[str, Sequence[Any]]]:
+    restored: list[tuple[str, Sequence[Any]]] = []
+    for query in queries:
+        key = str(query or "").strip()
+        records = cache.get(key) if isinstance(cache, Mapping) else None
+        if not key or not isinstance(records, list):
+            continue
+        hits = tuple(
+            research_hit_from_record(item)
+            for item in records
+            if isinstance(item, Mapping)
+        )
+        restored.append((key, hits))
+    return restored
+
+
+def stamp_empty_retrieval(
+    trace: dict[str, Any],
+    *,
+    model_driven: bool,
+    chunks: Sequence[Any],
+) -> None:
+    """Do not label an awaiting model-authored search as empty retrieval."""
+
+    if chunks or model_driven:
+        trace.pop("empty_retrieval", None)
+        return
+    trace["empty_retrieval"] = {
+        "schema": "empty_retrieval_model_first_v1",
+        "model_final_allowed": True,
+        "note": "No retrieved chunks; continue to model with memory/navigation instead of code NO_DATA final.",
+    }
+
+
+def finalize_actual_retrieval_emptiness(
+    trace: dict[str, Any],
+    *,
+    evidence_count: int,
+    searches_executed: int,
+    search_hits: int,
+) -> None:
+    if int(evidence_count or 0) > 0 or int(search_hits or 0) > 0:
+        trace.pop("empty_retrieval", None)
+        return
+    if int(searches_executed or 0) <= 0:
+        return
+    trace["empty_retrieval"] = {
+        "schema": "empty_retrieval_model_first_v1",
+        "model_final_allowed": True,
+        "note": "model-authored searches returned no chunks",
+    }
 
 
 def sheet_pass_keep_rows(
@@ -1204,6 +1342,15 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "object_match",
             "_quality_gate",
             "quality_message",
+            "row_role",
+            "work_row",
+            "supply_kind",
+            "open_gap",
+            "conversion_factor",
+            "conversion_source",
+            "calc_quantity",
+            "confirmed_price",
+            "price_source",
         ):
             if field_name in item:
                 row[field_name] = item[field_name]
@@ -1342,6 +1489,13 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     """Decode only an unambiguous table; preserve the authored answer and cell values."""
 
     required_fields = {"title", "unit", "norm_code"}
+    numeric_fields = {
+        "quantity",
+        "coefficient",
+        "conversion_factor",
+        "calc_quantity",
+        "confirmed_price",
+    }
     header_fields = {
         "source_row": "source_row",
         "№": "source_row",
@@ -1367,6 +1521,25 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "кол.": "quantity",
         "кол": "quantity",
         "количество": "quantity",
+        "row_role": "row_role",
+        "роль": "row_role",
+        "роль строки": "row_role",
+        "work_row": "work_row",
+        "строка работы": "work_row",
+        "supply_kind": "supply_kind",
+        "вид поставки": "supply_kind",
+        "open_gap": "open_gap",
+        "открытый вопрос": "open_gap",
+        "conversion_factor": "conversion_factor",
+        "коэффициент перевода": "conversion_factor",
+        "conversion_source": "conversion_source",
+        "источник перевода": "conversion_source",
+        "calc_quantity": "calc_quantity",
+        "расчётное количество": "calc_quantity",
+        "confirmed_price": "confirmed_price",
+        "подтверждённая цена": "confirmed_price",
+        "price_source": "price_source",
+        "источник цены": "price_source",
         "norm_code": "norm_code",
         "norm_code (выбранная норма)": "norm_code",
         "norm_code (возможная норма монтажа)": "norm_code",
@@ -1639,7 +1812,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                     if parsed_source_row is None:
                         return None
                     row[name] = parsed_source_row
-                elif name in {"quantity", "coefficient"}:
+                elif name in numeric_fields:
                     numeric_value = value.strip()
                     if absence_marker(numeric_value):
                         continue
@@ -1684,6 +1857,16 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "title": "title",
         "unit": "unit",
         "quantity": "quantity",
+        "row_role": "row_role",
+        "work_row": "work_row",
+        "supply_kind": "supply_kind",
+        "open_gap": "open_gap",
+        "открытый вопрос": "open_gap",
+        "conversion_factor": "conversion_factor",
+        "conversion_source": "conversion_source",
+        "calc_quantity": "calc_quantity",
+        "confirmed_price": "confirmed_price",
+        "price_source": "price_source",
         "norm_code": "norm_code",
         "analogue": "analogue",
         "coverage": "coverage",
@@ -1771,7 +1954,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 invalid_block = True
                 continue
             current_block[key] = parsed_source_row
-        elif key in {"quantity", "coefficient"}:
+        elif key in numeric_fields:
             if clean.casefold() in {
                 "—", "-", "–", "−", "нет", "н/д", "n/a", "na",
             }:
@@ -1803,6 +1986,16 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "количество": "quantity",
         "кол-во": "quantity",
         "quantity": "quantity",
+        "row_role": "row_role",
+        "work_row": "work_row",
+        "supply_kind": "supply_kind",
+        "open_gap": "open_gap",
+        "открытый вопрос": "open_gap",
+        "conversion_factor": "conversion_factor",
+        "conversion_source": "conversion_source",
+        "calc_quantity": "calc_quantity",
+        "confirmed_price": "confirmed_price",
+        "price_source": "price_source",
         "norm_code": "norm_code",
         "шифр нормы": "norm_code",
         "аналог": "analogue",
@@ -1847,7 +2040,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             clean = value.strip()
             if not key or not clean:
                 continue
-            if key in {"quantity", "coefficient"}:
+            if key in numeric_fields:
                 parsed_number = number(clean)
                 if parsed_number is None:
                     return None
@@ -1877,6 +2070,143 @@ class _ModelRagEvidenceChunk:
     meta: dict[str, Any]
 
 
+def model_rag_group_char_budget(
+    *,
+    context_chars_limit: int,
+    remaining_group_tokens: int,
+) -> int:
+    """Char ceiling for Q/H headers: leftover tokens at 2 chars/token, capped by context."""
+
+    remaining_chars = max(0, int(remaining_group_tokens)) * 2
+    limit = max(0, int(context_chars_limit))
+    if not remaining_chars:
+        return 0
+    if not limit:
+        return remaining_chars
+    return min(limit, remaining_chars)
+
+
+def _model_rag_capped_hits(raw_hits: Sequence[Any], hits_per_query: int) -> list[Any]:
+    return list(raw_hits)[: max(1, int(hits_per_query))]
+
+
+def _model_rag_query_header(query_index: int, query: str) -> str:
+    return f"[Поисковый запрос Q{query_index}] {str(query or '').strip()}"
+
+
+def _model_rag_source_header(query_index: int, hit_index: int, hit: Any) -> str:
+    doc_name = str(getattr(hit, "doc_name", "") or "")
+    score = float(getattr(hit, "score", 0.0) or 0.0)
+    return f"[Q{query_index}.H{hit_index} | {doc_name} | score={score:.4f}]"
+
+
+def model_rag_evidence_header_chars(
+    query_hits: Sequence[tuple[str, Sequence[Any]]],
+    *,
+    hits_per_query: int,
+    query_offset: int = 0,
+) -> int:
+    """Character tax of query and hit headers, matching grouped evidence layout."""
+
+    fixed_chars = 0
+    segment_count = 0
+    cap = max(1, int(hits_per_query))
+    for query_index, (raw_query, raw_hits) in enumerate(
+        query_hits, max(0, query_offset) + 1
+    ):
+        fixed_chars += len(_model_rag_query_header(query_index, str(raw_query or "")))
+        segment_count += 1
+        for hit_index, hit in enumerate(list(raw_hits)[:cap], 1):
+            fixed_chars += len(_model_rag_source_header(query_index, hit_index, hit)) + 2
+            segment_count += 1
+    return fixed_chars + max(0, segment_count - 1) * 2
+
+
+def model_rag_query_hit_refs(
+    query_hits: Sequence[tuple[str, Sequence[Any]]],
+    *,
+    hits_per_query: int,
+    query_offset: int = 0,
+) -> list[str]:
+    """Stable Q/H ids for queries that stay intact for a later packet or honest omit."""
+
+    refs: list[str] = []
+    cap = max(1, int(hits_per_query))
+    for query_index, (_query, raw_hits) in enumerate(
+        query_hits, max(0, query_offset) + 1
+    ):
+        refs.append(f"Q{query_index}")
+        for hit_index, _hit in enumerate(list(raw_hits)[:cap], 1):
+            refs.append(f"Q{query_index}.H{hit_index}")
+    return refs
+
+
+def select_model_rag_query_hits_for_budget(
+    query_hits: Sequence[tuple[str, Sequence[Any]]],
+    *,
+    max_chars: int,
+    hits_per_query: int,
+    query_offset: int = 0,
+) -> tuple[
+    list[tuple[str, Sequence[Any]]],
+    list[tuple[str, Sequence[Any]]],
+    list[str],
+]:
+    """Prefix whose headers fit; leftover queries stay whole for the next packet.
+
+    Technical orchestration only: query text and hit order are unchanged. If even
+    the first query's hit headers exceed the budget, keep the query identity and
+    drop trailing hit headers of that query. An empty budget omits this packet
+    rather than raising.
+    """
+
+    items = [
+        (str(query or "").strip(), tuple(_model_rag_capped_hits(hits, hits_per_query)))
+        for query, hits in query_hits
+    ]
+    if not items:
+        return [], [], []
+    if max_chars <= 0:
+        return [], items, []
+
+    taken = 0
+    for count in range(1, len(items) + 1):
+        tax = model_rag_evidence_header_chars(
+            items[:count],
+            hits_per_query=hits_per_query,
+            query_offset=query_offset,
+        )
+        if tax <= max_chars:
+            taken = count
+            continue
+        break
+    if taken:
+        return items[:taken], items[taken:], []
+
+    query, hits = items[0]
+    query_index = max(0, query_offset) + 1
+    kept_hits = list(hits)
+    omitted_refs: list[str] = []
+    while kept_hits:
+        trial = [(query, tuple(kept_hits))]
+        if (
+            model_rag_evidence_header_chars(
+                trial,
+                hits_per_query=hits_per_query,
+                query_offset=query_offset,
+            )
+            <= max_chars
+        ):
+            break
+        kept_hits.pop()
+        omitted_refs.append(f"Q{query_index}.H{len(kept_hits) + 1}")
+    if not kept_hits:
+        omitted_refs = [
+            f"Q{query_index}.H{hit_index}" for hit_index in range(1, len(hits) + 1)
+        ]
+    return [(query, tuple(kept_hits))], items[1:], omitted_refs
+
+
 def build_model_rag_evidence_groups(
     query_hits: Sequence[tuple[str, Sequence[Any]]],
     *,
@@ -1886,25 +2216,40 @@ def build_model_rag_evidence_groups(
     evidence_namespace: str = "",
     query_offset: int = 0,
 ) -> tuple[list[str], list[_ModelRagEvidenceChunk], list[str]]:
-    """Keep query headers; omit cards rather than shred every body below min_body_chars."""
+    """Keep query headers; omit leftover queries and cards rather than crash."""
+
+    included, leftover, omitted_refs = select_model_rag_query_hits_for_budget(
+        query_hits,
+        max_chars=max_chars,
+        hits_per_query=hits_per_query,
+        query_offset=query_offset,
+    )
+    omitted_refs = list(omitted_refs)
+    omitted_refs.extend(
+        model_rag_query_hit_refs(
+            leftover,
+            hits_per_query=hits_per_query,
+            query_offset=query_offset + len(included),
+        )
+    )
+    if not included:
+        return [], [], omitted_refs
 
     prepared: list[tuple[int, str, list[tuple[int, Any, str, str]]]] = []
     source_index = 0
     fixed_chars = 0
     segment_count = 0
-    for query_index, (raw_query, raw_hits) in enumerate(query_hits, max(0, query_offset) + 1):
+    for query_index, (raw_query, raw_hits) in enumerate(
+        included, max(0, query_offset) + 1
+    ):
         query = str(raw_query or "").strip()
-        query_header = f"[Поисковый запрос Q{query_index}] {query}"
+        query_header = _model_rag_query_header(query_index, query)
         hits: list[tuple[int, Any, str, str]] = []
         fixed_chars += len(query_header)
         segment_count += 1
-        for hit_index, hit in enumerate(list(raw_hits)[: max(1, int(hits_per_query))], 1):
+        for hit_index, hit in enumerate(list(raw_hits), 1):
             source_index += 1
-            doc_name = str(getattr(hit, "doc_name", "") or "")
-            score = float(getattr(hit, "score", 0.0) or 0.0)
-            source_header = (
-                f"[Q{query_index}.H{hit_index} | {doc_name} | score={score:.4f}]"
-            )
+            source_header = _model_rag_source_header(query_index, hit_index, hit)
             body = str(getattr(hit, "content", "") or "").strip()
             hits.append((hit_index, hit, source_header, body))
             fixed_chars += len(source_header) + 2
@@ -1912,11 +2257,9 @@ def build_model_rag_evidence_groups(
         prepared.append((query_index, query_header, hits))
 
     fixed_chars += max(0, segment_count - 1) * 2
-    if fixed_chars > max_chars:
-        raise ValueError("MODEL_RAG_EVIDENCE_BUDGET_TOO_SMALL_FOR_ALL_QUERY_HEADERS")
 
     bodies = [body for _qi, _qh, hits in prepared for _hi, _hit, _sh, body in hits]
-    body_budget = max_chars - fixed_chars
+    body_budget = max(0, int(max_chars) - fixed_chars)
     low, high = 0, max((len(body) for body in bodies), default=0)
     while low < high:
         cap = (low + high + 1) // 2
@@ -1929,7 +2272,6 @@ def build_model_rag_evidence_groups(
     omit_mode = bool(bodies) and body_cap < min_body
 
     included_caps: dict[tuple[int, int], int] = {}
-    omitted_refs: list[str] = []
     if omit_mode:
         used = 0
         max_rank = max((len(hits) for _qi, _qh, hits in prepared), default=0)
@@ -2255,8 +2597,12 @@ def format_lsr_packaged_notice(
     norms_status: str = "",
     missing: Sequence[str] = (),
     blockers: Sequence[str] = (),
+    readiness: Mapping[str, Any] | None = None,
 ) -> str:
     """Visible packaging outcome next to the workbook link."""
+
+    if isinstance(readiness, Mapping) and readiness.get("dimensions"):
+        return format_lsr_readiness_notice(readiness, filename=filename)
 
     missing_items = [str(item).strip() for item in missing if str(item).strip()]
     blocker_items = [str(item).strip() for item in blockers if str(item).strip()]
@@ -2277,32 +2623,19 @@ def format_lsr_packaged_notice(
     )
     if not incomplete:
         return f"ЛСР собрана.{file_bit}".strip()
-    status_bits = [item for item in (pricing_status, norms_status, status) if item]
-    unique_bits = list(dict.fromkeys(status_bits))
-    parts = [
-        f"ЛСР собрана частично ({', '.join(unique_bits) or 'partial'}).{file_bit}".strip()
-    ]
-    if norms_status == "norms_unverified":
-        parts.append("Нормы не прошли независимую проверку применимости.")
-    elif norms_status == "norms_partial":
-        parts.append("Часть норм не подтверждена отдельной проверкой.")
-    if unbound:
-        shown = ", ".join(unbound[:12])
-        if len(unbound) > 12:
-            shown += "…"
-        parts.append(f"Не вошли в расчёт: {shown}.")
-    if unpriced:
-        names = [item.split(":", 1)[-1] for item in unpriced[:8]]
-        shown = ", ".join(names)
-        if len(unpriced) > 8:
-            shown += "…"
-        parts.append(f"Нет цены: {shown}.")
+    fallback = build_lsr_result_readiness(
+        packaged=True,
+        packaging_failed=False,
+        rows=(),
+        missing=missing_items,
+        pricing_status=pricing_status,
+    )
+    notice = format_lsr_readiness_notice(fallback, filename=filename)
     if blocker_items:
-        parts.append("Блокеры: " + ", ".join(blocker_items[:6]) + ".")
+        notice += " Блокеры: " + ", ".join(blocker_items[:6]) + "."
     if other:
-        parts.append("Замечания: " + ", ".join(other[:6]) + ".")
-    parts.append("Файл не для согласования.")
-    return " ".join(parts)
+        notice += " Замечания: " + ", ".join(other[:6]) + "."
+    return notice
 
 
 def validate_model_rag_result_structure(
@@ -2448,7 +2781,7 @@ def blocking_model_rag_result_errors(
             "missing_evidence_ref:",
             "unknown_evidence_ref:",
         )
-    advisory_exact = {"answer_truncated"} if int(work_row_count or 0) > 0 else set()
+    advisory_exact = {"answer_truncated", "workbook_research_cancelled"} if int(work_row_count or 0) > 0 else {"workbook_research_cancelled"}
     return [
         error
         for error in errors
@@ -3319,12 +3652,11 @@ async def _execute_chat_evidence_application(
             }
     state.chat_metrics["cache_miss"] = state.chat_metrics.get("cache_miss", 0) + 1
 
-    if not chunks:
-        retrieval_trace["empty_retrieval"] = {
-            "schema": "empty_retrieval_model_first_v1",
-            "model_final_allowed": True,
-            "note": "No retrieved chunks; continue to model with memory/navigation instead of code NO_DATA final.",
-        }
+    stamp_empty_retrieval(
+        retrieval_trace,
+        model_driven=profile_uses_model_driven_retrieval(profile_snapshot),
+        chunks=chunks,
+    )
 
     t_ctx_start = time.time()
     context_windows = expand_context_windows(
@@ -4688,7 +5020,7 @@ async def _execute_chat_evidence_application(
                             }
                         )
 
-                    async def _sheet_pass_llm(chat_body):
+                    async def _sheet_pass_llm(chat_body, *, purpose: str = "sheet_pass_answer"):
                         nonlocal llm_model
                         if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
                             text, usage = await _post_llm(
@@ -4704,8 +5036,7 @@ async def _execute_chat_evidence_application(
                             )
                             if active_model_result is not None:
                                 llm_model = active_model_result.connection.model_id
-                            return text, usage
-                        if is_cloud_provider(llm_runtime.provider):
+                        elif is_cloud_provider(llm_runtime.provider):
                             text, usage, llm_model = await _post_cloud_fallback(
                                 llm_runtime,
                                 (
@@ -4716,18 +5047,27 @@ async def _execute_chat_evidence_application(
                                 chat_body,
                                 allow_stream=False,
                             )
-                            return text, usage
-                        return await _post_llm(
-                            llm_runtime,
-                            llm_model,
-                            (
-                                {"Authorization": f"Bearer {llm_runtime.api_key}"}
-                                if llm_runtime.api_key
-                                else {}
+                        else:
+                            text, usage = await _post_llm(
+                                llm_runtime,
+                                llm_model,
+                                (
+                                    {"Authorization": f"Bearer {llm_runtime.api_key}"}
+                                    if llm_runtime.api_key
+                                    else {}
+                                ),
+                                chat_body,
+                                allow_stream=False,
+                            )
+                        append_actual_model_call(
+                            retrieval_trace,
+                            purpose=purpose,
+                            finish_reason=llm_usage_finish_reason(usage),
+                            completion_tokens=int(
+                                (usage or {}).get("completion_tokens") or 0
                             ),
-                            chat_body,
-                            allow_stream=False,
                         )
+                        return text, usage
 
                     sheet_sys_msg = sys_normal + (
                         f" {answer_form.instruction}" if answer_form.instruction else ""
@@ -4792,8 +5132,27 @@ async def _execute_chat_evidence_application(
                         (research_job or {}).get("omitted") or ()
                     )
                     research_cancelled = False
+                    sheet_query_cache: dict[str, list[dict[str, Any]]] = {
+                        str(key): [
+                            dict(item)
+                            for item in (value or [])
+                            if isinstance(item, Mapping)
+                        ]
+                        for key, value in (
+                            ((research_job or {}).get("query_cache") or {})
+                            if isinstance((research_job or {}).get("query_cache"), dict)
+                            else {}
+                        ).items()
+                        if str(key).strip()
+                    }
+                    stored_held = (
+                        (research_job or {}).get("held_packet")
+                        if isinstance((research_job or {}).get("held_packet"), dict)
+                        else {}
+                    )
                     sheet_count = len(sheet_pass_names)
-                    for sheet_index, sheet_name in enumerate(sheet_pass_names, start=1):
+                    try:
+                      for sheet_index, sheet_name in enumerate(sheet_pass_names, start=1):
                         if (
                             research_job_service is not None
                             and research_job is not None
@@ -4804,12 +5163,32 @@ async def _execute_chat_evidence_application(
                         remaining = remaining_sheet_work_locators(
                             source_catalog,
                             sheet_name,
-                            terminal_source_row_keys(accumulated_rows, source_catalog),
+                            cited_source_row_keys(accumulated_rows, source_catalog),
                         )
                         exhausted_locators: set[str] = set()
                         packet_attempts: dict[tuple[str, ...], int] = {}
                         locator_research_round: dict[str, int] = {}
                         inner = 0
+                        deferred_query_hits: list[tuple[str, Sequence[Any]]] = []
+                        held_packet: list[str] = []
+                        if (
+                            str(stored_held.get("sheet") or "") == sheet_name
+                            and stored_held.get("queries")
+                        ):
+                            held_packet = [
+                                locator
+                                for locator in (stored_held.get("locators") or [])
+                                if locator in remaining
+                            ]
+                            deferred_query_hits = restore_query_hits_from_cache(
+                                [
+                                    str(item)
+                                    for item in (stored_held.get("queries") or [])
+                                    if str(item).strip()
+                                ],
+                                sheet_query_cache,
+                            )
+                            stored_held = {}
                         while remaining:
                             if (
                                 research_job_service is not None
@@ -4820,167 +5199,249 @@ async def _execute_chat_evidence_application(
                             ):
                                 research_cancelled = True
                                 break
-                            packet = adaptive_row_packet(
-                                remaining,
-                                generation_reserve_tokens=(
-                                    answer_execution_preset.generation_reserve_tokens
-                                ),
-                            )
-                            if not packet:
-                                break
-                            fingerprint = tuple(packet)
-                            packet_attempts[fingerprint] = packet_attempts.get(fingerprint, 0) + 1
-                            inner += 1
-                            cited_before = terminal_source_row_keys(
-                                accumulated_rows, source_catalog
-                            )
-                            await _emit_sheet_progress(
-                                sheet_pass_progress_label(
-                                    sheet_name,
-                                    sheet_index=sheet_index,
-                                    sheet_count=sheet_count,
-                                    stage="поиск норм",
-                                ),
-                                completed=sheet_index - 1,
-                                total=sheet_count,
-                            )
-                            pass_evidence = selector_evidence_payload(
-                                attachment_context=attachment_context,
-                                rendered_context="",
-                                source_catalog=source_catalog,
-                                sheet=sheet_name,
-                                remaining_work=packet,
-                            )
-                            selector_evidence = pass_evidence
-                            query_text = ""
-                            model_queries = []
-                            rejected_now: list[str] = []
-                            packet_round = max(
-                                (locator_research_round.get(str(item), 0) for item in packet),
-                                default=0,
-                            )
-                            query_instructions = [
-                                sheet_pass_query_instruction(
-                                    profile_snapshot,
+                            reuse_hits = list(deferred_query_hits)
+                            deferred_query_hits = []
+                            if reuse_hits:
+                                packet = [
+                                    locator
+                                    for locator in held_packet
+                                    if locator in remaining
+                                ]
+                                if not packet:
+                                    pass_omitted.extend(
+                                        model_rag_query_hit_refs(
+                                            reuse_hits,
+                                            hits_per_query=retrieval_limits[
+                                                "model_evidence_k"
+                                            ],
+                                            query_offset=0,
+                                        )
+                                    )
+                                    held_packet = []
+                                    continue
+                                fingerprint = tuple(packet)
+                                packet_attempts.setdefault(fingerprint, 1)
+                                inner += 1
+                                cited_before = cited_source_row_keys(
+                                    accumulated_rows, source_catalog
+                                )
+                                pass_evidence = selector_evidence_payload(
+                                    attachment_context=attachment_context,
+                                    rendered_context="",
+                                    source_catalog=source_catalog,
                                     sheet=sheet_name,
-                                    sheet_index=sheet_index,
-                                    sheet_count=sheet_count,
-                                    research_round=packet_round,
-                                ),
-                                (
+                                    remaining_work=packet,
+                                )
+                                selector_evidence = pass_evidence
+                                pass_hits = reuse_hits
+                                model_rag_query_hits = pass_hits
+                                model_queries = [
+                                    query for query, _hits in pass_hits
+                                ]
+                                any_sheet_queries = True
+                            else:
+                                held_packet = []
+                                packet = adaptive_row_packet(
+                                    remaining,
+                                    generation_reserve_tokens=(
+                                        answer_execution_preset.generation_reserve_tokens
+                                    ),
+                                )
+                                if not packet:
+                                    break
+                                fingerprint = tuple(packet)
+                                packet_attempts[fingerprint] = packet_attempts.get(fingerprint, 0) + 1
+                                inner += 1
+                                cited_before = cited_source_row_keys(
+                                    accumulated_rows, source_catalog
+                                )
+                                await _emit_sheet_progress(
+                                    sheet_pass_progress_label(
+                                        sheet_name,
+                                        sheet_index=sheet_index,
+                                        sheet_count=sheet_count,
+                                        stage="поиск норм",
+                                    ),
+                                    completed=sheet_index - 1,
+                                    total=sheet_count,
+                                )
+                                pass_evidence = selector_evidence_payload(
+                                    attachment_context=attachment_context,
+                                    rendered_context="",
+                                    source_catalog=source_catalog,
+                                    sheet=sheet_name,
+                                    remaining_work=packet,
+                                )
+                                selector_evidence = pass_evidence
+                                query_text = ""
+                                model_queries = []
+                                rejected_now: list[str] = []
+                                packet_round = max(
+                                    (locator_research_round.get(str(item), 0) for item in packet),
+                                    default=0,
+                                )
+                                query_instructions = [
                                     sheet_pass_query_instruction(
                                         profile_snapshot,
                                         sheet=sheet_name,
                                         sheet_index=sheet_index,
                                         sheet_count=sheet_count,
                                         research_round=packet_round,
-                                    )
-                                    + "\n\n"
-                                    + _MODEL_RAG_QUERY_REPAIR_INSTRUCTION
-                                ),
-                            ]
-                            try:
-                                for query_attempt, query_instruction in enumerate(
-                                    query_instructions, start=1
-                                ):
-                                    query_messages, query_packet = govern_inference_messages(
-                                        preset=execution_preset,
-                                        profile_prefix=(
-                                            profile_system_prompt(
-                                                profile_snapshot, strict=False
+                                    ),
+                                    (
+                                        sheet_pass_query_instruction(
+                                            profile_snapshot,
+                                            sheet=sheet_name,
+                                            sheet_index=sheet_index,
+                                            sheet_count=sheet_count,
+                                            research_round=packet_round,
+                                        )
+                                        + "\n\n"
+                                        + _MODEL_RAG_QUERY_REPAIR_INSTRUCTION
+                                    ),
+                                ]
+                                try:
+                                    for query_attempt, query_instruction in enumerate(
+                                        query_instructions, start=1
+                                    ):
+                                        query_messages, query_packet = govern_inference_messages(
+                                            preset=execution_preset,
+                                            profile_prefix=(
+                                                profile_system_prompt(
+                                                    profile_snapshot, strict=False
+                                                )
+                                                + "\n\n"
+                                                + query_instruction
+                                            ),
+                                            request_payload={
+                                                "question": str(req.question or ""),
+                                                "dataset_ids": [
+                                                    str(item) for item in _dataset_ids
+                                                ],
+                                            },
+                                            checkpoint=(),
+                                            working_memory=workspace_note_objects(
+                                                memory_candidates,
+                                                registered=workspace_memory_registered,
+                                            ),
+                                            evidence=pass_evidence,
+                                            source_map=selector_source_map,
+                                            tool_exchange=(),
+                                        )
+                                        retrieval_trace["context_governor"]["calls"].append(
+                                            context_packet_trace(
+                                                query_packet,
+                                                purpose=(
+                                                    "model_rag_sheet_queries"
+                                                    if query_attempt == 1
+                                                    else "model_rag_sheet_query_repair"
+                                                ),
                                             )
-                                            + "\n\n"
-                                            + query_instruction
-                                        ),
-                                        request_payload={
-                                            "question": str(req.question or ""),
-                                            "dataset_ids": [
-                                                str(item) for item in _dataset_ids
-                                            ],
-                                        },
-                                        checkpoint=(),
-                                        working_memory=workspace_note_objects(
-                                            memory_candidates,
-                                            registered=workspace_memory_registered,
-                                        ),
-                                        evidence=pass_evidence,
-                                        source_map=selector_source_map,
-                                        tool_exchange=(),
-                                    )
-                                    retrieval_trace["context_governor"]["calls"].append(
-                                        context_packet_trace(
-                                            query_packet,
+                                        )
+                                        query_body = {
+                                            "messages": query_messages,
+                                            "stream": False,
+                                            "temperature": 0,
+                                            "max_tokens": max(
+                                                256,
+                                                _env_int(
+                                                    "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS",
+                                                    1600,
+                                                ),
+                                            ),
+                                        }
+                                        t_query_model = time.time()
+                                        query_text, query_usage = await _sheet_pass_llm(
+                                            query_body,
                                             purpose=(
                                                 "model_rag_sheet_queries"
                                                 if query_attempt == 1
                                                 else "model_rag_sheet_query_repair"
                                             ),
                                         )
+                                        t_llm += time.time() - t_query_model
+                                        model_queries, rejected_now = (
+                                            classify_model_rag_query_lines(query_text)
+                                        )
+                                        if model_queries:
+                                            break
+                                except ContextRequiredSectionOverflow as context_error:
+                                    logger.warning(
+                                        "[SHEET_PASS] query overflow sheet=%s: %s",
+                                        sheet_name,
+                                        context_error.code,
                                     )
-                                    query_body = {
-                                        "messages": query_messages,
-                                        "stream": False,
-                                        "temperature": 0,
-                                        "max_tokens": max(
-                                            256,
-                                            _env_int(
-                                                "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS",
-                                                1600,
-                                            ),
-                                        ),
-                                    }
-                                    t_query_model = time.time()
-                                    query_text, query_usage = await _post_llm(
-                                        llm_runtime,
-                                        llm_model,
-                                        query_headers,
-                                        query_body,
-                                        allow_stream=False,
-                                    )
-                                    t_llm += time.time() - t_query_model
-                                    model_queries, rejected_now = (
-                                        classify_model_rag_query_lines(query_text)
-                                    )
-                                    if model_queries:
-                                        break
-                            except ContextRequiredSectionOverflow as context_error:
-                                logger.warning(
-                                    "[SHEET_PASS] query overflow sheet=%s: %s",
-                                    sheet_name,
-                                    context_error.code,
-                                )
-                                break
-                            pass_rejected.extend(rejected_now)
-                            if not model_queries:
-                                break
-                            any_sheet_queries = True
-                            pass_hits: list[tuple[str, Sequence[Any]]] = []
-                            pass_tools: list[dict[str, Any]] = []
-                            search_blocked = False
-                            for query in model_queries:
-                                research_result = await model_research_tools.execute(
-                                    {"tool": "search_sources", "args": {"q": query}}
-                                )
-                                pass_tools.append(research_result.payload)
-                                if str(research_result.payload.get("status") or "") != "ok":
-                                    search_blocked = True
                                     break
-                                pass_hits.append(
-                                    (
-                                        query,
-                                        tuple(research_result.chunks)[
-                                            : retrieval_limits["model_evidence_k"]
-                                        ],
+                                pass_rejected.extend(rejected_now)
+                                if not model_queries:
+                                    break
+                                any_sheet_queries = True
+                                pass_hits: list[tuple[str, Sequence[Any]]] = []
+                                pass_tools: list[dict[str, Any]] = []
+                                search_blocked = False
+                                cache_updates: dict[str, list[dict[str, Any]]] = {}
+                                for query in model_queries:
+                                    cached_hits = restore_query_hits_from_cache(
+                                        [query], sheet_query_cache
                                     )
-                                )
-                            if search_blocked:
-                                logger.warning(
-                                    "[SHEET_PASS] search incomplete sheet=%s",
-                                    sheet_name,
-                                )
-                                break
-                            tool_results_for_model = pass_tools
-                            model_rag_query_hits = pass_hits
+                                    if cached_hits:
+                                        hits = cached_hits[0][1]
+                                        pass_hits.append((query, hits))
+                                        pass_tools.append(
+                                            {
+                                                "schema": "les_tool_result_v1",
+                                                "tool": "search_sources",
+                                                "status": "ok",
+                                                "result": {
+                                                    "count": len(hits),
+                                                    "cached": True,
+                                                },
+                                            }
+                                        )
+                                        append_actual_search(
+                                            retrieval_trace,
+                                            cached=True,
+                                            hit_count=len(hits),
+                                        )
+                                        continue
+                                    research_result = await model_research_tools.execute(
+                                        {"tool": "search_sources", "args": {"q": query}}
+                                    )
+                                    pass_tools.append(research_result.payload)
+                                    if str(research_result.payload.get("status") or "") != "ok":
+                                        search_blocked = True
+                                        break
+                                    hits = tuple(research_result.chunks)[
+                                        : retrieval_limits["model_evidence_k"]
+                                    ]
+                                    pass_hits.append((query, hits))
+                                    records = [durable_research_hit(item) for item in hits]
+                                    sheet_query_cache[str(query)] = records
+                                    cache_updates[str(query)] = records
+                                    append_actual_search(
+                                        retrieval_trace,
+                                        cached=False,
+                                        hit_count=len(hits),
+                                    )
+                                if search_blocked:
+                                    logger.warning(
+                                        "[SHEET_PASS] search incomplete sheet=%s",
+                                        sheet_name,
+                                    )
+                                    break
+                                if (
+                                    cache_updates
+                                    and research_job_service is not None
+                                    and research_job is not None
+                                ):
+                                    research_job = research_job_service.record_search_cache(
+                                        research_job["job_id"],
+                                        cache_updates,
+                                    )
+                                tool_results_for_model = pass_tools
+                                model_rag_query_hits = pass_hits
+                            leftover_query_hits: list[tuple[str, Sequence[Any]]] = []
+                            included_hits: list[tuple[str, Sequence[Any]]] = []
                             await _emit_sheet_progress(
                                 sheet_pass_progress_label(
                                     sheet_name,
@@ -5016,23 +5477,61 @@ async def _execute_chat_evidence_application(
                                 - len(pass_hits)
                                 - 2,
                             )
-                            (
-                                model_rag_evidence_groups,
-                                model_evidence_chunks,
-                                omitted_now,
-                            ) = build_model_rag_evidence_groups(
-                                pass_hits,
-                                max_chars=min(
-                                    context_chars_limit,
-                                    remaining_group_tokens * 2,
-                                ),
-                                hits_per_query=retrieval_limits["model_evidence_k"],
-                                evidence_namespace=row_packet_id(
-                                    source_catalog,
-                                    sheet=sheet_name,
-                                    locators=packet,
-                                ),
+                            group_max_chars = model_rag_group_char_budget(
+                                context_chars_limit=context_chars_limit,
+                                remaining_group_tokens=remaining_group_tokens,
                             )
+                            logger.warning(
+                                "[MODEL_RAG_BUDGET] sheet=%s queries=%s hits=%s "
+                                "input_budget=%s included=%s remaining_group_tokens=%s "
+                                "context_chars_limit=%s group_max_chars=%s",
+                                sheet_name,
+                                len(pass_hits),
+                                sum(len(hits) for _query, hits in pass_hits),
+                                fixed_packet.input_budget_tokens,
+                                fixed_packet.included_tokens,
+                                remaining_group_tokens,
+                                context_chars_limit,
+                                group_max_chars,
+                            )
+                            included_hits, leftover_query_hits, trim_omitted = (
+                                select_model_rag_query_hits_for_budget(
+                                    pass_hits,
+                                    max_chars=group_max_chars,
+                                    hits_per_query=retrieval_limits["model_evidence_k"],
+                                    query_offset=0,
+                                )
+                            )
+                            pass_omitted.extend(trim_omitted)
+                            if not included_hits:
+                                pass_omitted.extend(
+                                    model_rag_query_hit_refs(
+                                        leftover_query_hits,
+                                        hits_per_query=retrieval_limits[
+                                            "model_evidence_k"
+                                        ],
+                                        query_offset=0,
+                                    )
+                                )
+                                leftover_query_hits = []
+                                model_rag_evidence_groups = []
+                                model_evidence_chunks = []
+                                omitted_now: list[str] = []
+                            else:
+                                (
+                                    model_rag_evidence_groups,
+                                    model_evidence_chunks,
+                                    omitted_now,
+                                ) = build_model_rag_evidence_groups(
+                                    included_hits,
+                                    max_chars=group_max_chars,
+                                    hits_per_query=retrieval_limits["model_evidence_k"],
+                                    evidence_namespace=row_packet_id(
+                                        source_catalog,
+                                        sheet=sheet_name,
+                                        locators=packet,
+                                    ),
+                                )
                             sheet_pass_evidence_chunks.extend(model_evidence_chunks)
                             pass_omitted.extend(omitted_now)
                             context = "\n\n".join(model_rag_evidence_groups)
@@ -5134,110 +5633,7 @@ async def _execute_chat_evidence_application(
                                 catalog=source_catalog,
                                 errors=pass_errors,
                             )
-                            if kept:
-                                prepared_kept = [prepare_selection_row(item) for item in kept]
-                                try:
-                                    await _emit_sheet_progress(
-                                        sheet_pass_progress_label(
-                                            sheet_name,
-                                            sheet_index=sheet_index,
-                                            sheet_count=sheet_count,
-                                            stage="проверка норм",
-                                        ),
-                                        completed=sheet_index - 1,
-                                        total=sheet_count,
-                                    )
-                                    verified_kept: list[dict[str, Any]] = []
-                                    for packet_rows in verifier_packets(prepared_kept):
-                                        verify_items = build_blind_review_evidence_items(
-                                            packet_rows,
-                                            model_evidence_chunks,
-                                        )
-                                        verify_messages, verify_packet = govern_inference_messages(
-                                            preset=answer_execution_preset,
-                                            profile_prefix=lsr_verifier_instruction(),
-                                            request_payload="Проверь применимость выбранных норм к строкам ВОР.",
-                                            checkpoint=(),
-                                            working_memory=(),
-                                            evidence=verify_items,
-                                            source_map=(),
-                                            tool_exchange=(),
-                                            dialogue=(),
-                                        )
-                                        retrieval_trace["context_governor"]["calls"].append(
-                                            context_packet_trace(
-                                                verify_packet, purpose="lsr_norm_verifier"
-                                            )
-                                        )
-                                        packet_tokens = verifier_generation_tokens(
-                                            len(packet_rows),
-                                            answer_execution_preset.generation_reserve_tokens,
-                                        )
-                                        verify_answer, verify_usage = await _sheet_pass_llm(
-                                            {
-                                                "messages": verify_messages,
-                                                "stream": False,
-                                                "temperature": 0,
-                                                "max_tokens": packet_tokens,
-                                            }
-                                        )
-                                        if not verifier_table_covers_packet(
-                                            verify_answer or "", packet_rows
-                                        ):
-                                            retry_answer, retry_usage = await _sheet_pass_llm(
-                                                {
-                                                    "messages": verify_messages,
-                                                    "stream": False,
-                                                    "temperature": 0,
-                                                    "max_tokens": packet_tokens,
-                                                }
-                                            )
-                                            if verifier_table_covers_packet(
-                                                retry_answer or "", packet_rows
-                                            ):
-                                                verify_answer = retry_answer
-                                                verify_usage = retry_usage
-                                        tokens = int(tokens or 0) + int(
-                                            (verify_usage or {}).get("completion_tokens") or 0
-                                        )
-                                        verified_kept.extend(
-                                            apply_verifier_table(
-                                                packet_rows, verify_answer or ""
-                                            )
-                                        )
-                                    kept = verified_kept
-                                except Exception:
-                                    logger.exception(
-                                        "[SHEET_PASS] norm verifier skipped sheet=%s",
-                                        sheet_name,
-                                    )
-                                    kept = [
-                                        {
-                                            **item,
-                                            "norm_status": "NEEDS_RESEARCH",
-                                            "_quality_gate": "research",
-                                        }
-                                        for item in prepared_kept
-                                    ]
-                                verified_kept: list[dict[str, Any]] = []
-                                for item in kept:
-                                    loc = str(item.get("source_row") or "").strip()
-                                    if row_needs_research(item):
-                                        locator_research_round[loc] = (
-                                            locator_research_round.get(loc, 0) + 1
-                                        )
-                                        if (
-                                            locator_research_round[loc]
-                                            >= MAX_RESEARCH_ROUNDS_PER_LOCATOR
-                                        ):
-                                            verified_kept.append(mark_research_exhausted(item))
-                                            continue
-                                    verified_kept.append(item)
-                                kept = verified_kept
-                            terminal_before = terminal_source_row_keys(
-                                accumulated_rows, source_catalog
-                            )
-                            accumulated_rows = merge_quality_gated_rows(
+                            accumulated_rows = merge_model_rag_rows(
                                 accumulated_rows,
                                 kept,
                                 source_catalog,
@@ -5257,6 +5653,8 @@ async def _execute_chat_evidence_application(
                                     "packet_locators": list(packet),
                                     "packet_attempt": packet_attempts[fingerprint],
                                     "queries": model_queries,
+                                    "shown_queries": len(included_hits),
+                                    "leftover_queries": len(leftover_query_hits),
                                     "kept_rows": len(kept),
                                     "finish_reason": last_finish,
                                     "truncated": last_truncated,
@@ -5265,7 +5663,7 @@ async def _execute_chat_evidence_application(
                             remaining = remaining_sheet_work_locators(
                                 source_catalog,
                                 sheet_name,
-                                terminal_source_row_keys(
+                                cited_source_row_keys(
                                     accumulated_rows, source_catalog
                                 ),
                             )
@@ -5274,41 +5672,77 @@ async def _execute_chat_evidence_application(
                                 for locator in remaining
                                 if locator not in exhausted_locators
                             ]
-                            cited_after = terminal_source_row_keys(
+                            still_in_packet = [
+                                locator
+                                for locator in packet
+                                if locator in remaining
+                            ]
+                            defer_query_packet = bool(
+                                leftover_query_hits and still_in_packet
+                            )
+                            if defer_query_packet:
+                                deferred_query_hits = leftover_query_hits
+                                held_packet = still_in_packet
+                                logger.warning(
+                                    "[SHEET_PASS] defer leftover query headers "
+                                    "sheet=%s shown=%s leftover=%s remaining_rows=%s",
+                                    sheet_name,
+                                    len(included_hits),
+                                    len(leftover_query_hits),
+                                    len(still_in_packet),
+                                )
+                            elif leftover_query_hits:
+                                pass_omitted.extend(
+                                    model_rag_query_hit_refs(
+                                        leftover_query_hits,
+                                        hits_per_query=retrieval_limits[
+                                            "model_evidence_k"
+                                        ],
+                                        query_offset=len(included_hits),
+                                    )
+                                )
+                                held_packet = []
+                            cited_after = cited_source_row_keys(
                                 accumulated_rows, source_catalog
                             )
                             made_progress = bool(cited_after - cited_before)
-                            if not made_progress:
+                            if not made_progress and not defer_query_packet:
                                 if (
                                     packet_attempts[fingerprint]
                                     >= _ROW_PACKET_MAX_ATTEMPTS
                                 ):
                                     exhausted_locators.update(packet)
-                                    missing_stubs = [
-                                        mark_research_exhausted(
-                                            {
-                                                "source_row": locator,
-                                                "title": locator,
-                                                "norm_status": "NEEDS_RESEARCH",
-                                            }
-                                        )
-                                        for locator in packet
-                                        if locator not in cited_after
-                                    ]
-                                    if missing_stubs:
-                                        accumulated_rows = merge_quality_gated_rows(
-                                            accumulated_rows,
-                                            missing_stubs,
-                                            source_catalog,
-                                        )
-                                    pass_omitted.extend(
-                                        f"source_row:{locator}" for locator in packet
-                                    )
                                     remaining = [
                                         locator
                                         for locator in remaining
                                         if locator not in exhausted_locators
                                     ]
+                            held_payload = (
+                                {
+                                    "sheet": sheet_name,
+                                    "locators": list(still_in_packet),
+                                    "queries": [
+                                        str(query)
+                                        for query, _hits in leftover_query_hits
+                                        if str(query).strip()
+                                    ],
+                                }
+                                if defer_query_packet
+                                else {}
+                            )
+                            if leftover_query_hits and research_job_service is not None and research_job is not None:
+                                leftover_cache = {
+                                    str(query): [durable_research_hit(item) for item in hits]
+                                    for query, hits in leftover_query_hits
+                                    if str(query).strip()
+                                }
+                                if leftover_cache:
+                                    for query, records in leftover_cache.items():
+                                        sheet_query_cache[query] = records
+                                    research_job = research_job_service.record_search_cache(
+                                        research_job["job_id"],
+                                        leftover_cache,
+                                    )
                             if (
                                 research_job_service is not None
                                 and research_job is not None
@@ -5337,30 +5771,54 @@ async def _execute_chat_evidence_application(
                                         for chunk in model_evidence_chunks
                                     ],
                                     omitted=pass_omitted,
+                                    remaining=remaining,
+                                    held_packet=held_payload,
                                 )
+                            if defer_query_packet:
+                                continue
                             if not made_progress:
                                 continue
                             if not remaining:
                                 break
+                    except asyncio.CancelledError:
+                        logger.warning("[SHEET_PASS] cancelled; preserving accepted packets")
+                        research_cancelled = True
                     if not any_sheet_queries and not accumulated_rows and not research_cancelled:
                         raise HTTPException(
                             status_code=503,
                             detail="MODEL_RAG_QUERY_LIST_EMPTY",
                         )
+                    unfinished_locators = [
+                        locator
+                        for locator in source_catalog.work_locators()
+                        if locator
+                        not in cited_source_row_keys(accumulated_rows, source_catalog)
+                    ]
                     if research_job_service is not None and research_job is not None:
-                        research_job = research_job_service.finish(
-                            research_job["job_id"],
-                            status="cancelled" if research_cancelled else "complete",
-                            phase="packets" if research_cancelled else "research_complete",
-                        )
+                        if research_cancelled or unfinished_locators:
+                            research_job = research_job_service.pause(
+                                research_job["job_id"],
+                                remaining=unfinished_locators,
+                                phase="packets",
+                            )
+                        else:
+                            research_job = research_job_service.finish(
+                                research_job["job_id"],
+                                status="complete",
+                                phase="research_complete",
+                            )
                         retrieval_trace["workbook_research_job"] = {
                             "schema": "les.workbook-research-job.v1",
                             "job_id": research_job["job_id"],
                             "status": research_job["status"],
                             "phase": research_job["phase"],
-                            "resumable": research_job["status"] != "complete",
+                            "resumable": bool(research_job.get("resumable")),
                             "accepted_rows": len(research_job["accepted_rows"]),
                             "omitted": len(research_job["omitted"]),
+                            "remaining": len(research_job.get("remaining") or []),
+                            "remaining_locators": list(research_job.get("remaining") or [])[:80],
+                            "cached_queries": len(research_job.get("query_cache") or {}),
+                            "operator_overrides": dict(research_job.get("operator_overrides") or {}),
                         }
                     await _emit_sheet_progress(
                         "Сборка ЛСР по листам",
@@ -5505,13 +5963,18 @@ async def _execute_chat_evidence_application(
                         )
                         logger.warning(
                             "[MODEL_RAG_BUDGET] queries=%s hits=%s input_budget=%s "
-                            "included=%s remaining_group_tokens=%s context_chars_limit=%s",
+                            "included=%s remaining_group_tokens=%s context_chars_limit=%s "
+                            "group_max_chars=%s",
                             len(model_rag_query_hits),
                             sum(len(hits) for _query, hits in model_rag_query_hits),
                             fixed_packet.input_budget_tokens,
                             fixed_packet.included_tokens,
                             remaining_group_tokens,
                             context_chars_limit,
+                            model_rag_group_char_budget(
+                                context_chars_limit=context_chars_limit,
+                                remaining_group_tokens=remaining_group_tokens,
+                            ),
                         )
                         (
                             model_rag_evidence_groups,
@@ -5519,9 +5982,9 @@ async def _execute_chat_evidence_application(
                             omitted_evidence_refs,
                         ) = build_model_rag_evidence_groups(
                             model_rag_query_hits,
-                            max_chars=min(
-                                context_chars_limit,
-                                remaining_group_tokens * 2,
+                            max_chars=model_rag_group_char_budget(
+                                context_chars_limit=context_chars_limit,
+                                remaining_group_tokens=remaining_group_tokens,
                             ),
                             hits_per_query=retrieval_limits["model_evidence_k"],
                         )
@@ -6428,6 +6891,12 @@ async def _execute_chat_evidence_application(
                                     "attachment_id": attachment_id,
                                     "question": str(req.question or ""),
                                     "decisions": model_result_rows,
+                                    "confirmed_data": dict(
+                                        (
+                                            retrieval_trace.get("workbook_research_job") or {}
+                                        ).get("operator_overrides")
+                                        or {}
+                                    ),
                                 },
                             }
                             execution_context = {
@@ -6521,6 +6990,59 @@ async def _execute_chat_evidence_application(
                                     )
                         packaging_warnings = list(model_result_errors or [])
                         packaged_notice = ""
+                        job_meta = (
+                            retrieval_trace.get("workbook_research_job")
+                            if isinstance(retrieval_trace.get("workbook_research_job"), dict)
+                            else {}
+                        )
+                        remaining_locators = list(
+                            job_meta.get("remaining_locators")
+                            or source_incomplete_locators
+                            or []
+                        )
+                        lsr_readiness = build_lsr_result_readiness(
+                            packaged=bool(workbook_files),
+                            packaging_failed=bool(packaging_failures) and not workbook_files,
+                            packaging_code=str(
+                                (packaging_failures[-1] or {}).get("code")
+                                if packaging_failures
+                                else ""
+                            ),
+                            rows=model_result_rows,
+                            missing=list(workbook_chat_meta.get("missing") or [])
+                            if workbook_chat_meta
+                            else [],
+                            pricing_status=str(
+                                (workbook_chat_meta or {}).get("pricing_status") or ""
+                            ),
+                            paused=str(job_meta.get("status") or "") == "paused"
+                            or "workbook_research_cancelled" in model_result_errors,
+                            remaining_locators=remaining_locators,
+                            catalog_work_count=(
+                                len(source_catalog.work_locators())
+                                if source_catalog is not None
+                                else 0
+                            ),
+                            catalog_locators=(
+                                list(source_catalog.work_locators())
+                                if source_catalog is not None
+                                else []
+                            ),
+                            price_gaps=list(
+                                (workbook_chat_meta or {}).get("price_gaps") or []
+                            ),
+                        )
+                        retrieval_trace["result_readiness"] = lsr_readiness
+                        if isinstance(workbook_chat_meta, dict):
+                            artifact_meta = workbook_chat_meta.get("artifact")
+                            if isinstance(artifact_meta, dict):
+                                artifact_meta["result_readiness"] = lsr_readiness
+                                artifact_meta["resume"] = {
+                                    "job_id": str(job_meta.get("job_id") or ""),
+                                    "question": str(req.question or ""),
+                                    "attachment_id": attachment_id,
+                                    "session_id": str(req.session_id or ""),
+                                }
                         if workbook_chat_meta:
                             harvested_missing = [
                                 str(item)
@@ -6545,6 +7067,7 @@ async def _execute_chat_evidence_application(
                                 ),
                                 missing=harvested_missing,
                                 blockers=harvested_blockers,
+                                readiness=lsr_readiness,
                             )
                             packaging_warnings.extend(harvested_missing)
                             packaging_warnings.extend(harvested_blockers)
@@ -6635,6 +7158,13 @@ async def _execute_chat_evidence_application(
                     "wall_total": round(wall_total, 3),
                 }
                 retrieval_trace["latency_phases"] = phases
+                calls_bucket = ensure_actual_model_calls(retrieval_trace)
+                finalize_actual_retrieval_emptiness(
+                    retrieval_trace,
+                    evidence_count=len(model_evidence_chunks or []),
+                    searches_executed=int(calls_bucket.get("search_executions") or 0),
+                    search_hits=int(calls_bucket.get("search_hits") or 0),
+                )
                 retrieval_trace["source_map_count"] = len(answer_source_map)
                 tool_candidate_counts = []
                 for tool_result in tool_results_for_model:

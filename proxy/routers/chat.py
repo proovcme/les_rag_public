@@ -30,7 +30,15 @@ from proxy.services.chat_evidence_application_service import (
     EvidenceRequestContext,
     EvidenceRuntimeDeps,
     ResponseBoundary,
+    execute_workbook_with_bounded_retry,
+    harvest_workbook_tool_result,
     run_chat_evidence_application,
+    compact_estimator_draft_rows,
+)
+from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
+from proxy.services.workbook_research_job_service import (
+    WorkbookResearchJobError,
+    WorkbookResearchJobService,
 )
 from proxy.services.answer_contract_service import decorate_payload, scenario_for_request
 from proxy.services.class_router_service import build_class_suggestions
@@ -53,6 +61,7 @@ from proxy.services.model_connection_resolver_service import (
 )
 from proxy.services.model_secret_service import EnvironmentSecretStore
 from proxy.services.openai_compatible_transport_service import (
+    CHAT_RESPONSE_BODY_LIMIT,
     InferenceRequest,
     InferenceResponse,
     OpenAICompatibleTransport,
@@ -186,6 +195,188 @@ class SmetaMappingLockRequest(BaseModel):
         if len(cleaned) > 1000:
             raise ValueError("Комментарий проверки слишком длинный")
         return cleaned
+
+
+class LsrRepackRequest(BaseModel):
+    session_id: str
+    job_id: str = ""
+    attachment_id: str = ""
+    question: str = ""
+    decisions: list[dict[str, Any]] = []
+    confirmed_data: dict[str, dict[str, Any]] = {}
+    dataset_ids: list[str] = []
+    profile_revision_id: str = ""
+    model_identity: str = ""
+
+
+class LsrPatchRequest(BaseModel):
+    session_id: str
+    job_id: str = ""
+    attachment_id: str = ""
+    question: str = ""
+    confirmed_data: dict[str, dict[str, Any]] = {}
+    reopen_locators: list[str] = []
+    replace_rows: list[dict[str, Any]] = []
+    dataset_ids: list[str] = []
+    profile_revision_id: str = ""
+    model_identity: str = ""
+    repack: bool = True
+
+
+@router.post("/workbook-research/{job_id}/pause")
+async def pause_workbook_research(job_id: str, _user=Depends(require_user)):
+    """Stop packet work without discarding accepted rows, sources, or cache."""
+
+    try:
+        job = WorkbookResearchJobService().request_cancel(job_id)
+        if str(job.get("status") or "") not in {"complete", "failed"}:
+            job = WorkbookResearchJobService().pause(
+                job_id, remaining=job.get("remaining")
+            )
+    except WorkbookResearchJobError as error:
+        raise HTTPException(404, str(error)) from error
+    return job
+
+
+@router.get("/workbook-research/{job_id}")
+async def get_workbook_research(job_id: str, _user=Depends(require_user)):
+    try:
+        return WorkbookResearchJobService().get(job_id)
+    except WorkbookResearchJobError as error:
+        raise HTTPException(404, str(error)) from error
+
+
+@router.post("/chat/repack-lsr")
+async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_user)):
+    """Rebuild XLSX from saved model decisions. Does not call the model."""
+
+    decisions = [dict(item) for item in req.decisions if isinstance(item, dict)]
+    attachment_id = str(req.attachment_id or "").strip()
+    job_id = str(req.job_id or "").strip()
+    remaining: list[str] = []
+    overlays: dict[str, dict[str, Any]] = {}
+    if job_id:
+        try:
+            job = WorkbookResearchJobService().get(job_id)
+        except WorkbookResearchJobError as error:
+            raise HTTPException(404, str(error)) from error
+        if not decisions:
+            decisions = [
+                dict(item)
+                for item in (job.get("accepted_rows") or [])
+                if isinstance(item, dict)
+            ]
+        identity = job.get("identity") if isinstance(job.get("identity"), dict) else {}
+        attachment_id = attachment_id or str(identity.get("attachment_id") or "").strip()
+        remaining = [
+            str(item) for item in (job.get("remaining") or []) if str(item).strip()
+        ]
+        stored = job.get("operator_overrides") if isinstance(job.get("operator_overrides"), dict) else {}
+        overlays.update(
+            {
+                str(key): dict(value)
+                for key, value in stored.items()
+                if isinstance(value, dict)
+            }
+        )
+    overlays.update(
+        {
+            str(key): dict(value)
+            for key, value in (req.confirmed_data or {}).items()
+            if isinstance(value, dict)
+        }
+    )
+    if not attachment_id:
+        raise HTTPException(400, "attachment_id is required")
+    if not decisions:
+        raise HTTPException(400, "saved model decisions are required")
+    payload, traces = await execute_workbook_with_bounded_retry(
+        _execute_chat_workbook_tool,
+        {
+            "tool": "build_lsr_workbook",
+            "args": {
+                "attachment_id": attachment_id,
+                "question": str(req.question or ""),
+                "decisions": decisions,
+                "confirmed_data": overlays,
+            },
+        },
+        {
+            "session_id": str(req.session_id or ""),
+            "question": str(req.question or ""),
+            "dataset_ids": list(req.dataset_ids or []),
+            "project_id": None,
+            "attachment_id": attachment_id,
+            "profile_revision_id": str(req.profile_revision_id or ""),
+            "model_identity": str(req.model_identity or "unknown"),
+            "model_preset": "",
+        },
+        None,
+    )
+    harvested = harvest_workbook_tool_result(payload)
+    artifact = harvested.get("artifact") if isinstance(harvested.get("artifact"), dict) else {}
+    if isinstance(artifact, dict):
+        artifact["draft_rows"] = compact_estimator_draft_rows(decisions)
+        readiness = build_lsr_result_readiness(
+            packaged=bool(artifact.get("download_url")),
+            packaging_failed=str(payload.get("status") or "") == "failed",
+            packaging_code=str(payload.get("code") or ""),
+            rows=decisions,
+            missing=list(harvested.get("missing") or []),
+            pricing_status=str(harvested.get("pricing_status") or ""),
+            remaining_locators=remaining,
+            price_gaps=list(harvested.get("price_gaps") or []),
+        )
+        artifact["result_readiness"] = readiness
+        harvested["artifact"] = artifact
+    return {
+        "schema": "les.lsr-repack.v1",
+        "model_called": False,
+        "packaging": traces,
+        "result": payload,
+        "harvested": harvested,
+    }
+
+
+@router.post("/chat/patch-lsr-rows")
+async def patch_lsr_rows(req: LsrPatchRequest, _user=Depends(require_user)):
+    """Apply operator-confirmed fields or reopen selected locators. Does not choose norms."""
+
+    job_id = str(req.job_id or "").strip()
+    if not job_id:
+        raise HTTPException(400, "job_id is required")
+    service = WorkbookResearchJobService()
+    try:
+        job = service.get(job_id)
+    except WorkbookResearchJobError as error:
+        raise HTTPException(404, str(error)) from error
+    if req.replace_rows:
+        job = service.replace_accepted_rows(job_id, req.replace_rows)
+    if req.reopen_locators:
+        job = service.reopen_locators(job_id, req.reopen_locators)
+    if req.confirmed_data:
+        job = service.record_overrides(job_id, req.confirmed_data)
+    packed: dict[str, Any] | None = None
+    if req.repack and not req.reopen_locators:
+        packed = await repack_lsr_without_model(
+            LsrRepackRequest(
+                session_id=req.session_id,
+                job_id=job_id,
+                attachment_id=req.attachment_id,
+                question=req.question,
+                confirmed_data=req.confirmed_data,
+                dataset_ids=req.dataset_ids,
+                profile_revision_id=req.profile_revision_id,
+                model_identity=req.model_identity,
+            ),
+            _user,
+        )
+    return {
+        "schema": "les.lsr-patch.v1",
+        "model_called": False,
+        "job": job,
+        "repack": packed,
+    }
 
 
 @router.post("/smeta-mappings/{revision_id}/lock")
@@ -686,6 +877,7 @@ def _bound_model_chat_runner(client: httpx.AsyncClient) -> BoundModelChatRunner:
             client=client,
             secret_store=secret_store,
             timeout=model_connection_timeout(),
+            response_body_limit=CHAT_RESPONSE_BODY_LIMIT,
         ),
     )
 
@@ -972,6 +1164,8 @@ async def _execute_chat_workbook_tool(
     pending_progress: list[asyncio.Task] = []
 
     def emit_progress(event: dict[str, Any]) -> None:
+        if progress_sink is None:
+            return
         phase = str(event.get("phase") or "rows")
         label = (
             "Собираю строки ВОР"
@@ -4287,6 +4481,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             client=client,
             secret_store=secret_store,
             timeout=model_connection_timeout(),
+            response_body_limit=CHAT_RESPONSE_BODY_LIMIT,
         ),
         workbook_tool_executor=_execute_chat_workbook_tool,
     )

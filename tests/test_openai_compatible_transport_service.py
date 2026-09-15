@@ -22,6 +22,7 @@ from proxy.services.model_execution_preset_service import (
 )
 from proxy.services.model_secret_service import EnvironmentSecretStore
 from proxy.services.openai_compatible_transport_service import (
+    CHAT_RESPONSE_BODY_LIMIT,
     InferenceRequest,
     ModelTransportError,
     OpenAICompatibleTransport,
@@ -37,6 +38,7 @@ def _resolved(
     secret_ref: str | None = None,
     max_output_field: str = "max_tokens",
     chat_protocol: str | None = None,
+    extension_type: str | None = None,
 ) -> ResolvedModelConnection:
     observations = tuple(
         CapabilityObservation(
@@ -81,7 +83,7 @@ def _resolved(
         locality=ConnectionLocality.LOOPBACK,
         requested_context_tokens=8192,
         secret_ref=secret_ref,
-        extension_type=None,
+        extension_type=extension_type,
         capability_snapshot=snapshot,
         endpoint=endpoint,
         effective_preset=resolve_execution_preset(
@@ -131,6 +133,7 @@ async def test_transport_behavior_does_not_depend_on_display_name(tmp_path, disp
     assert result.text == "Готово"
     assert result.model_id == "observed-model-1"
     assert requests[0].url.path.endswith("/v1/chat/completions")
+    assert "chat_template_kwargs" not in json.loads(requests[0].content)
 
 
 @pytest.mark.asyncio
@@ -447,6 +450,71 @@ async def test_redirects_and_oversized_error_bodies_fail_closed(tmp_path, status
             )
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_extension_complete_disables_thinking(tmp_path):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            },
+        )
+
+    transport, client = _transport(tmp_path, handler)
+    try:
+        await transport.complete(
+            _resolved(extension_type="freetoken"),
+            InferenceRequest(
+                messages=({"role": "user", "content": "test"},),
+                max_output_tokens=64,
+            ),
+        )
+    finally:
+        await client.aclose()
+
+    assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+@pytest.mark.asyncio
+async def test_non_local_extension_complete_does_not_add_thinking_kwargs(tmp_path):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            },
+        )
+
+    transport, client = _transport(tmp_path, handler)
+    try:
+        await transport.complete(
+            _resolved(extension_type="ollama"),
+            InferenceRequest(
+                messages=({"role": "user", "content": "test"},),
+                max_output_tokens=64,
+            ),
+        )
+    finally:
+        await client.aclose()
+
+    assert "chat_template_kwargs" not in captured["body"]
+
+
+def test_chat_complete_body_limit_is_wider_than_probe_default() -> None:
+    assert CHAT_RESPONSE_BODY_LIMIT == 512 * 1024
+    default_limit = inspect.signature(OpenAICompatibleTransport.__init__).parameters[
+        "response_body_limit"
+    ].default
+    assert default_limit == 32_768
+    assert CHAT_RESPONSE_BODY_LIMIT > default_limit
 
 
 def test_transport_source_has_no_engine_name_branches() -> None:

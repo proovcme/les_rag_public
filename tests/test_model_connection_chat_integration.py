@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,7 @@ from proxy.services.canonical_route_service import (
 from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
 from proxy.services.model_connection_resolver_service import ModelConnectionResolutionError
 from proxy.services.openai_compatible_transport_service import (
+    CHAT_RESPONSE_BODY_LIMIT,
     InferenceRequest,
     InferenceResponse,
     ModelTransportError,
@@ -162,6 +164,9 @@ def test_assigned_model_timeout_matches_full_chat_window(monkeypatch) -> None:
 
     monkeypatch.setenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "420")
     assert chat.model_connection_timeout() == 420.0
+    runner_source = inspect.getsource(chat._bound_model_chat_runner)
+    assert "CHAT_RESPONSE_BODY_LIMIT" in runner_source
+    assert CHAT_RESPONSE_BODY_LIMIT == 512 * 1024
 
 
 @pytest.mark.asyncio

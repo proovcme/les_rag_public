@@ -4,20 +4,74 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-09-14)
+## Текущее состояние (2026-09-15)
 
 ```
-версия продукта (SemVer):  0.31.34
-номер сборки:              740
-версия Tauri/NSIS:         5.1.740
+версия продукта (SemVer):  0.31.40
+номер сборки:              746
+версия Tauri/NSIS:         5.1.746
 ветка разработки:          fix/local-qwen-result-parse
-dev implementation:       0.31.34 PDF locator integrity; live repeat pending
-задеплоено на рантайм:     local LES 0.31.33 / build 739; live structural failure recorded
+dev implementation:       0.31.40 packaging accepts operator confirmed_data
+задеплоено на рантайм:     overlay pending after 746; confirm /api/version before live tests
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      local LES 0.31.33 / build 739; build 740 pending
+рантайм /api/version:      process may still be previous until LES restart after overlay
 ```
+
+> **0.31.40 / build 746 packaging confirmed_data:** чат и `repack-lsr` передают
+> operator overlay в `build_lsr_workbook`. Контракт с `additionalProperties:
+> false` это поле отвергал → `TOOL_SCHEMA_INVALID` на №124 (20 сохранённых
+> строк, файл не создан). Schema принимает `confirmed_data`; overlay идёт в
+> расчёт до lookup/рендера и не меняет шифр. `repack-lsr` без stream
+> `progress_sink` больше не вызывает `None`. Повтор модели эту ошибку не
+> лечит. Live серия п.6 и exact Windows candidate **не закрыты**.
+
+> **0.31.39 / build 745 source coverage + one route:** малый и большой исходник
+> идут одним порядком. Строки получают роль, ресурсы связываются по `work_row`,
+> исходное количество не подменяется расчётным, конверсия только с источником.
+> Покрытие / нормы / цены / файл разделены; техническая готовность файла ≠
+> полнота сметы. Уточнение locator и подтверждённые данные не вызывают модель
+> и не меняют чужие шифры. Отсутствие цены не обнуляет норму. Live серия п.6
+> (БАП+СКС 9B/35B, baseline `B0_DIRECT`, проверка сметчиком, stop/resume, exact
+> Windows candidate) **не закрыта** — передача заказчику только после неё.
+> 35B решением проблемы не объявляется.
+
+> **0.31.38 / build 744 packet = BAP + resume + three-way readiness:** пакетный
+> маршрут больше не переписывает решения модели verifier’ом и не подставляет
+> строки при исчерпании попыток. Checkpoint хранит пакеты, evidence и кэш
+> запросов; остановка оставляет `paused`, продолжение не ищет уже принятое.
+> Повтор упаковки — без модели. Оператор видит отдельно файл / нормы / цены и
+> конкретное действие, включая кнопки в чате. Live приёмка BAP+СКС 9B/35B,
+> baseline, stop→resume и exact Windows candidate **не закрыты** — передача
+> сборки только после них.
+
+> **0.31.37 / build 743 query-header packets:** живой СКС #122 на 35B после
+> ~18 мин поиска упал `INTERNAL_CHAT_ERROR`: заголовки всех model-authored
+> `Qn` не влезли в `remaining_group_tokens × 2`, а fail-closed ValueError
+> не ловился. Универсальность по числу строк (sheet-pass, пакет 8–12) уже
+> была; теперь тот же принцип для налога заголовков запросов. Код не
+> подменяет нормы и не выкидывает идентичность `Q` молча: leftover идёт
+> следующим техническим пакетом или в `omitted_evidence_refs`.
+
+> **0.31.36 / build 742 FreeToken observed KV + thinking-off:** живой чат #120
+> на bound FreeToken 35B NVFP4 получил RAG (66 карточек), но оборвался
+> `finish_reason=length` на 1199 токенах: ACTIVE probe не видел физический KV,
+> поэтому остался `qwen-9b-restrictive` (generation reserve 1200), а thinking
+> ушёл в `message.content`. Probe теперь читает `/v1/cache/status` (запасной
+> `/v1/models`), bound transport шлёт `enable_thinking=false`, complete()
+> принимает 512 KiB. Extended preset по-прежнему только при identity 35B и
+> наблюдаемом KV ≥ 16384. Live overlay 2026-09-14: `/api/version` 0.31.36/742,
+> answer `Qwen3.6-35B-A3B-NVFP4`, `preset_id=qwen-35b-extended`,
+> `input_token_limit=28001`. Один повторный BAP PDF ещё не гонялся.
+
+> **0.31.35 / build 741 ADR-15 adapter money unlock:** live build 740 собрал
+> XLSX 13 843 байта за 58,7 с (19/19 строк, checkpoint complete), но денежная
+> часть осталась нулевой: `positions_from_visible_lsr_rows` всё ещё звал
+> `pricing_block_reason`, который без независимого verifier возвращает
+> `norms_unverified`. Активный путь больше не вызывает этот замок. Явный шифр
+> модели идёт в exact lookup и расчёт; неизвестный код, единицы и отсутствие
+> цены остаются missing. Live money acceptance pending.
 
 > **0.31.34 / build 740 PDF locator-integrity candidate:** первый production
 > live после build 739 подтвердил terminal-result path и вернул 19 строк, но

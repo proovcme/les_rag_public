@@ -7,12 +7,22 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from proxy.services.estimate_math_service import parse_ru_number
 from proxy.services import gesn_service, nr_sp_service
+from proxy.services.lsr_source_coverage_service import (
+    apply_confirmed_data,
+    inferred_row_role,
+    locators_with_separate_supply,
+    work_row_key,
+)
+from proxy.services.lsr_norm_quality_gate_service import (
+    canonicalize_norm_status,
+)
 
 
 def _f(value: Any) -> float:
@@ -133,28 +143,207 @@ def _first_value(row: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _piece_area_m2_from_visible_row(row: dict[str, Any]) -> float | None:
-    text = " ".join(
-        str(_first_value(row, key) or "")
-        for key in ("title", "name", "work", "наименование", "работа", "description")
-    )
-    text = text.replace(",", ".").lower()
-    match = re.search(r"(\d+(?:\.\d+)?)\s*[xх×]\s*(\d+(?:\.\d+)?)\s*(мм|mm|см|cm|м|m)?", text)
-    if not match:
-        return None
-    left = float(match.group(1))
-    right = float(match.group(2))
-    unit = (match.group(3) or "мм").lower()
-    if unit in {"мм", "mm"}:
-        scale = 0.001
-    elif unit in {"см", "cm"}:
-        scale = 0.01
+_SIMPLE_COEFF_EXPR_RE = re.compile(
+    r"^\s*([+-]?\d+(?:[.,]\d+)?)\s*([*/])\s*([+-]?\d+(?:[.,]\d+)?)\s*$"
+)
+_SCALAR_COEFF_RE = re.compile(r"^[+-]?\d+(?:[.,]\d+)?$")
+_COEFFICIENT_APPLY_ALIASES = {
+    "labor": "labor",
+    "ozp": "labor",
+    "machine": "machine",
+    "em": "machine",
+    "machinist": "machine",
+    "labor_and_machine": "labor_and_machine",
+    "labor_machine": "labor_and_machine",
+    "ozp_em": "labor_and_machine",
+}
+
+
+def _normalize_evidence_refs(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
     else:
-        scale = 1.0
-    area = left * scale * right * scale
-    if area <= 0:
+        return []
+    refs: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if text:
+            refs.append(text)
+    return refs
+
+
+def _canonical_coefficient_applies_to(value: Any) -> tuple[str | None, str]:
+    if value in (None, ""):
+        return None, ""
+    authored = str(value).strip()
+    if not authored:
+        return None, ""
+    key = authored.casefold().replace("-", "_").replace("+", "_").replace(" ", "_")
+    while "__" in key:
+        key = key.replace("__", "_")
+    return _COEFFICIENT_APPLY_ALIASES.get(key), authored
+
+
+def _parse_coefficient_number(value: Any) -> tuple[float | None, str]:
+    """Parse a model coefficient without inventing professional meaning.
+
+    A lone number or an unambiguous ``a * b`` / ``a / b`` of two numbers is
+    numeric. Any other expression stays unparsed so calculation cannot silently
+    drop it or treat a fragment as the whole value.
+    """
+    if value in (None, ""):
+        return None, "absent"
+    if isinstance(value, bool):
+        return None, "unparsed"
+    if isinstance(value, int | float):
+        number = float(value)
+        return (number, "numeric") if math.isfinite(number) else (None, "unparsed")
+    text = str(value).strip()
+    if not text:
+        return None, "absent"
+    compact = text.replace("\xa0", "").replace(" ", "")
+    if _SCALAR_COEFF_RE.fullmatch(compact):
+        number = float(compact.replace(",", "."))
+        return (number, "numeric") if math.isfinite(number) else (None, "unparsed")
+    match = _SIMPLE_COEFF_EXPR_RE.fullmatch(text)
+    if match:
+        left = float(match.group(1).replace(",", "."))
+        right = float(match.group(3).replace(",", "."))
+        if match.group(2) == "/" and right == 0:
+            return None, "unparsed"
+        number = left * right if match.group(2) == "*" else left / right
+        return (number, "numeric") if math.isfinite(number) else (None, "unparsed")
+    return None, "unparsed"
+
+
+def _is_identity_coefficient(number: float | None) -> bool:
+    return number is not None and abs(number - 1.0) < 1e-12
+
+
+def _optional_numeric_field(row: dict[str, Any], *keys: str) -> float | None:
+    raw = _first_value(row, *keys)
+    number, status = _parse_coefficient_number(raw)
+    return number if status == "numeric" else None
+
+
+def _model_coefficient_fields(row: dict[str, Any]) -> dict[str, Any]:
+    """Carry model coefficient/evidence into a bound LSR position.
+
+    Money is changed only when the model named the application kind explicitly.
+    """
+    out: dict[str, Any] = {}
+    refs = _normalize_evidence_refs(_first_value(row, "evidence_refs", "source_refs"))
+    if refs:
+        out["evidence_refs"] = refs
+    raw_coeff = row.get("coefficient")
+    if raw_coeff not in (None, ""):
+        out["coefficient"] = raw_coeff
+    applies_token, applies_authored = _canonical_coefficient_applies_to(
+        _first_value(row, "coefficient_applies_to")
+    )
+    if applies_authored:
+        out["coefficient_applies_to"] = applies_token or applies_authored
+
+    explicit_ozp = _optional_numeric_field(row, "k_ozp")
+    explicit_em = _optional_numeric_field(row, "k_em")
+    number, parse_status = _parse_coefficient_number(raw_coeff)
+
+    if explicit_ozp is not None or explicit_em is not None:
+        out["coefficient_application"] = "applied"
+        out["k_ozp"] = 1.0 if explicit_ozp is None else explicit_ozp
+        out["k_em"] = 1.0 if explicit_em is None else explicit_em
+        if number is not None:
+            out["coefficient_value"] = number
+        if refs:
+            out["coefficient_basis"] = ", ".join(refs)
+        return out
+
+    if applies_authored and applies_token is None:
+        out["coefficient_application"] = "unrecognized"
+        return out
+    if parse_status == "unparsed":
+        out["coefficient_application"] = "unparsed"
+        return out
+    if number is None or _is_identity_coefficient(number):
+        if applies_token and number is None:
+            out["coefficient_application"] = "missing"
+        return out
+
+    out["coefficient_value"] = number
+    if applies_token is None:
+        out["coefficient_application"] = "missing"
+        return out
+
+    out["coefficient_application"] = "applied"
+    out["coefficient_applies_to"] = applies_token
+    if applies_token == "labor":
+        out["k_ozp"] = number
+        out["k_em"] = 1.0
+    elif applies_token == "machine":
+        out["k_ozp"] = 1.0
+        out["k_em"] = number
+    else:
+        out["k_ozp"] = number
+        out["k_em"] = number
+    if refs:
+        out["coefficient_basis"] = ", ".join(refs)
+    return out
+
+
+def _resolve_position_coefficients(
+    position: dict[str, Any],
+    *,
+    k_ozp: float,
+    k_em: float,
+    coefficient_basis: str,
+) -> tuple[float, float, str, dict[str, Any]]:
+    resolved_ozp = k_ozp
+    resolved_em = k_em
+    if "k_ozp" in position and position.get("k_ozp") not in (None, ""):
+        resolved_ozp = _f(position.get("k_ozp"))
+    if "k_em" in position and position.get("k_em") not in (None, ""):
+        resolved_em = _f(position.get("k_em"))
+    refs = _normalize_evidence_refs(position.get("evidence_refs"))
+    basis = str(position.get("coefficient_basis") or coefficient_basis or "").strip()
+    if not basis and refs:
+        basis = ", ".join(refs)
+    return resolved_ozp, resolved_em, basis, {
+        "application": str(position.get("coefficient_application") or ""),
+        "authored": position.get("coefficient"),
+        "applies_to": position.get("coefficient_applies_to"),
+        "refs": refs,
+    }
+
+
+def _cited_conversion(row: Mapping[str, Any], source_qty: float) -> tuple[float, dict[str, Any]] | None:
+    """Packaging, section length and mass-per-meter only with an explicit source."""
+
+    source = str(
+        row.get("conversion_source")
+        or row.get("quantity_source")
+        or ""
+    ).strip()
+    if not source:
         return None
-    return area
+    calc = parse_ru_number(row.get("calc_quantity"))
+    factor = parse_ru_number(row.get("conversion_factor"))
+    if calc is not None:
+        return float(calc), {
+            "status": "cited_calc_quantity",
+            "conversion_source": source,
+            "calc_quantity": float(calc),
+        }
+    if factor is None:
+        return None
+    return round(float(source_qty) * float(factor), 9), {
+        "status": "cited_conversion_factor",
+        "conversion_source": source,
+        "conversion_factor": float(factor),
+    }
 
 
 @dataclass(frozen=True)
@@ -306,7 +495,17 @@ def build_position_trace(
     """
     kac_lookup = {_norm_name(k): _f(v) for k, v in (kac_map or {}).items()}
     work_qty = _f(position.get("qty")) or 0.0
+    k_ozp, k_em, coefficient_basis, coeff_meta = _resolve_position_coefficients(
+        position,
+        k_ozp=k_ozp,
+        k_em=k_em,
+        coefficient_basis=coefficient_basis,
+    )
     norm, resources = _position_resources(position)
+    if position.get("exclude_gesn_materials"):
+        resources = [
+            item for item in resources if str(item.get("kind") or "") != "material"
+        ]
     from proxy.services import fsem_machinist_service as fsem
 
     if pricebook is not None:
@@ -337,6 +536,28 @@ def build_position_trace(
     if position.get("code") and norm is None and not position.get("resources"):
         flags.append(f"норма ГЭСН не найдена: {position.get('code')}")
         completeness_reasons.append("norm_missing")
+    application = str(coeff_meta.get("application") or "")
+    authored_coeff = coeff_meta.get("authored")
+    if application == "unparsed":
+        flags.append(f"коэффициент модели не разобран: {authored_coeff}")
+        completeness_reasons.append("coefficient_unparsed")
+    elif application == "unrecognized":
+        flags.append(
+            "коэффициент модели не применён: область применения "
+            f"{coeff_meta.get('applies_to')!r} не из labor/machine/labor_and_machine"
+        )
+        completeness_reasons.append("coefficient_application_unrecognized")
+    elif application == "missing":
+        flags.append("коэффициент модели не применён: область применения не указана")
+        completeness_reasons.append("coefficient_application_missing")
+    elif application == "applied" and (k_ozp != 1.0 or k_em != 1.0) and not coefficient_basis:
+        flags.append("числовой коэффициент модели без evidence_refs/основания")
+        completeness_reasons.append("coefficient_source_missing")
+    if position.get("source_coefficient_overlap"):
+        flags.append(
+            "исходный объём уже содержит коэффициент; модель дополнительно задала k "
+            "к ОЗП/ЭМ. Количество не умножается повторно, но есть риск двойного применения"
+        )
 
     review_was_required = "resource_review_status" in position
     resource_review_status = str(position.get("resource_review_status") or "not_required_raw_trace")
@@ -374,13 +595,33 @@ def build_position_trace(
         code=work_code,
         rule_id=str(position.get("nr_sp_rule_id") or "") or None,
     )
-    nr_pct = _f(position.get("nr_pct") if position.get("nr_pct") not in (None, "") else (norm or {}).get("nr_pct", nr_sp["nr_pct"]))
-    sp_pct = _f(position.get("sp_pct") if position.get("sp_pct") not in (None, "") else (norm or {}).get("sp_pct", nr_sp["sp_pct"]))
-    if (
-        not str(nr_sp.get("status") or "").startswith("resolved")
-        and position.get("nr_pct") in (None, "")
-        and position.get("sp_pct") in (None, "")
-    ):
+    authored_nr = position.get("nr_pct") if position.get("nr_pct") not in (None, "") else None
+    authored_sp = position.get("sp_pct") if position.get("sp_pct") not in (None, "") else None
+    if authored_nr is not None:
+        nr_pct: float | None = _f(authored_nr)
+        nr_ready = True
+    elif str(nr_sp.get("status") or "").startswith("resolved") and nr_sp.get("nr_pct") not in (None, ""):
+        nr_pct = _f(nr_sp.get("nr_pct"))
+        nr_ready = True
+    elif (norm or {}).get("nr_pct") not in (None, ""):
+        nr_pct = _f((norm or {}).get("nr_pct"))
+        nr_ready = True
+    else:
+        nr_pct = None
+        nr_ready = False
+    if authored_sp is not None:
+        sp_pct: float | None = _f(authored_sp)
+        sp_ready = True
+    elif str(nr_sp.get("status") or "").startswith("resolved") and nr_sp.get("sp_pct") not in (None, ""):
+        sp_pct = _f(nr_sp.get("sp_pct"))
+        sp_ready = True
+    elif (norm or {}).get("sp_pct") not in (None, ""):
+        sp_pct = _f((norm or {}).get("sp_pct"))
+        sp_ready = True
+    else:
+        sp_pct = None
+        sp_ready = False
+    if not nr_ready or not sp_ready:
         flags.append("НР/СП не разрешены по виду работ: нужен нормативный источник/явный выбор")
         completeness_reasons.append("nr_sp_unresolved")
 
@@ -394,7 +635,7 @@ def build_position_trace(
         per_unit = _f(res.get("per_unit"))
         total_qty = round(per_unit * coeff * work_qty, 6)
         price = _resolve_price_trace(res, pricebook=pricebook, kac_map=kac_lookup)
-        cost = 0.0 if price.price is None else round(total_qty * price.price, 2)
+        cost = None if price.price is None else round(total_qty * price.price, 2)
         if price.price is None:
             action_label = {
                 "needs_kac": "нужен КАЦ",
@@ -407,7 +648,8 @@ def build_position_trace(
         if kind not in detail_rows:
             flags.append(f"неизвестный вид ресурса: {kind!r}")
             continue
-        sums[kind] = round(sums[kind] + cost, 2)
+        if cost is not None:
+            sums[kind] = round(sums[kind] + cost, 2)
         qty_sums[kind] = round(qty_sums[kind] + total_qty, 6)
         detail_rows[kind].append(
             _row(
@@ -443,9 +685,13 @@ def build_position_trace(
     mat = sums["material"]
     direct = round(ozp + em + mat, 2)
     fot = round(ozp + zpm, 2)
-    nr = round(fot * nr_pct / 100, 2)
-    sp = round(fot * sp_pct / 100, 2)
-    total = round(direct + nr + sp, 2)
+    nr = round(fot * nr_pct / 100, 2) if nr_pct is not None else None
+    sp = round(fot * sp_pct / 100, 2) if sp_pct is not None else None
+    total = direct
+    if nr is not None:
+        total = round(total + nr, 2)
+    if sp is not None:
+        total = round(total + sp, 2)
     full_amount = total if not completeness_reasons else None
     position_total_label = "Всего по позиции" if full_amount is not None else "Известная стоимость позиции"
 
@@ -461,17 +707,66 @@ def build_position_trace(
                 "is_analog": bool(position.get("is_analog")),
                 "analog_limitations": list(position.get("analog_limitations") or []),
                 "binding_reason": position.get("binding_reason") or "",
+                "analogue": position.get("analogue") or "",
+                "coverage": position.get("coverage") or "",
+                "quantity_trace": position.get("quantity_trace") or {},
+                "row_role": position.get("row_role") or "",
+                "work_row": position.get("work_row") or "",
+                "source_quantity": position.get("source_quantity"),
+                "source_unit": position.get("source_unit") or "",
+                "evidence_refs": list(
+                    dict.fromkeys(
+                        list(coeff_meta.get("refs") or [])
+                        + list(position.get("evidence_refs") or [])
+                    )
+                ),
             },
         ),
     ]
-    if k_ozp != 1.0 or k_em != 1.0:
+    show_coeff_row = (
+        k_ozp != 1.0
+        or k_em != 1.0
+        or application in {"missing", "unparsed", "unrecognized"}
+        or (
+            authored_coeff not in (None, "")
+            and not (
+                isinstance(authored_coeff, int | float)
+                and not isinstance(authored_coeff, bool)
+                and float(authored_coeff) == 1.0
+            )
+            and str(authored_coeff).strip() not in {"1", "1.0", "1,0"}
+        )
+    )
+    if show_coeff_row:
+        if application == "unparsed":
+            label = f"Коэффициент модели не разобран: {authored_coeff}"
+        elif application in {"missing", "unrecognized"}:
+            label = f"Коэффициент модели не применён: {authored_coeff}"
+        else:
+            label = coefficient_basis or "Повышающие коэффициенты"
+        coeff_columns: dict[int, Any] = {3: label, 6: 1}
+        if (
+            application in {"missing", "unrecognized"}
+            and isinstance(authored_coeff, int | float)
+            and not isinstance(authored_coeff, bool)
+        ):
+            coeff_columns[6] = authored_coeff
+        coeff_meta_row: dict[str, Any] = {"k_ozp": k_ozp, "k_em": k_em}
+        if authored_coeff not in (None, ""):
+            coeff_meta_row["coefficient"] = authored_coeff
+        if coeff_meta.get("applies_to"):
+            coeff_meta_row["coefficient_applies_to"] = coeff_meta.get("applies_to")
+        if application:
+            coeff_meta_row["coefficient_application"] = application
+        if coeff_meta.get("refs"):
+            coeff_meta_row["evidence_refs"] = list(coeff_meta.get("refs") or [])
         rows.append(
             _row(
                 "coefficient",
-                coefficient_basis or "Повышающие коэффициенты",
-                columns={3: coefficient_basis or "Повышающие коэффициенты", 6: 1},
+                label,
+                columns=coeff_columns,
                 source="coefficient",
-                meta={"k_ozp": k_ozp, "k_em": k_em},
+                meta=coeff_meta_row,
             )
         )
 
@@ -487,8 +782,18 @@ def build_position_trace(
             *detail_rows["material"],
             _row("direct_total", "Итого прямые затраты", columns={3: "Итого прямые затраты", 12: direct}),
             _row("fot", "ФОТ", columns={3: "ФОТ", 12: fot}),
-            _row("nr", "НР", columns={3: "НР", 4: "%", 5: nr_pct, 7: nr_pct, 12: nr}, source="Пр/812"),
-            _row("sp", "СП", columns={3: "СП", 4: "%", 5: sp_pct, 7: sp_pct, 12: sp}, source="Пр/774"),
+            _row(
+                "nr",
+                "НР",
+                columns={3: "НР", 4: "%", 5: nr_pct, 7: nr_pct, 12: nr},
+                source="Пр/812" if nr_ready else "нужен норматив",
+            ),
+            _row(
+                "sp",
+                "СП",
+                columns={3: "СП", 4: "%", 5: sp_pct, 7: sp_pct, 12: sp},
+                source="Пр/774" if sp_ready else "нужен норматив",
+            ),
             _row(
                 "position_total",
                 position_total_label,
@@ -573,13 +878,24 @@ def build_lsr_trace(
             trace["source_row"] = pos.get("source_row")
         if pos.get("source_refs") is not None:
             trace["source_refs"] = list(pos.get("source_refs") or [])
+        if pos.get("evidence_refs") is not None:
+            trace["evidence_refs"] = list(pos.get("evidence_refs") or [])
+        if pos.get("coefficient") not in (None, ""):
+            trace["coefficient"] = pos.get("coefficient")
+        if pos.get("coefficient_applies_to"):
+            trace["coefficient_applies_to"] = pos.get("coefficient_applies_to")
+        if pos.get("coefficient_application"):
+            trace["coefficient_application"] = pos.get("coefficient_application")
         entry = by_section.get(sec_name)
         if entry is None:
             entry = {"section": sec_name, "positions": [], "total": 0.0}
             by_section[sec_name] = entry
             sections.append(entry)
         entry["positions"].append(trace)
-        entry["total"] = round(entry["total"] + _f(trace["summary"]["total"]), 2)
+        entry["total"] = round(
+            entry["total"] + _f(trace["summary"].get("known_amount", trace["summary"]["total"])),
+            2,
+        )
 
     money_keys = ("ozp", "zpm", "machine", "em", "mat", "direct", "fot", "nr", "sp", "total")
     summary: dict[str, Any] = {k: 0.0 for k in money_keys}
@@ -592,7 +908,10 @@ def build_lsr_trace(
         for trace in entry["positions"]:
             s = trace["summary"]
             for k in money_keys:
-                summary[k] = round(summary[k] + _f(s.get(k)), 2)
+                value = s.get(k)
+                if value is None:
+                    continue
+                summary[k] = round(summary[k] + _f(value), 2)
             summary["labor_qty"] = round(summary["labor_qty"] + _f(s.get("labor_qty")), 6)
             summary["machinist_qty"] = round(summary["machinist_qty"] + _f(s.get("machinist_qty")), 6)
             flags.extend(s.get("flags") or [])
@@ -613,9 +932,81 @@ def build_lsr_trace(
     return {"name": name or "", "sections": sections, "summary": summary}
 
 
+_NEGATIVE_COVERAGE_EXACT = {
+    "нет",
+    "н/д",
+    "n/a",
+    "na",
+    "none",
+    "нет соответствия",
+    "не соответствует",
+}
+_NEGATIVE_COVERAGE_PHRASES = (
+    "норма не соответствует",
+    "нет прямого аналога",
+    "нет подходящего аналога",
+    "отсутствует аналог",
+    "не соответствует норме",
+    "не является аналогом",
+)
+
+
+def _coverage_marker_text(value: Any) -> str:
+    marker = str(value or "").strip().strip("*_` ").strip()
+    if len(marker) >= 2 and (marker[0], marker[-1]) in {("(", ")"), ("[", "]")}:
+        marker = marker[1:-1].strip()
+    marker = marker.strip(".,;:").strip()
+    return " ".join(marker.casefold().replace("ё", "е").split())
+
+
+def model_row_rejects_selected_norm(row: Mapping[str, Any] | None) -> tuple[bool, str]:
+    """True when the model itself refused the selected card.
+
+    Code does not judge montage vs dismantling. It only honors an explicit
+    authored coverage/analogue refusal and leaves the row visible as MISSING.
+    """
+    payload = row if isinstance(row, Mapping) else {}
+    for key in ("coverage", "analogue", "note"):
+        marker = _coverage_marker_text(payload.get(key))
+        if not marker:
+            continue
+        if marker in _NEGATIVE_COVERAGE_EXACT:
+            return True, f"модель отклонила норму: {key}={marker}"
+        for phrase in _NEGATIVE_COVERAGE_PHRASES:
+            if phrase in marker:
+                return True, f"модель отклонила норму: {key} содержит «{phrase}»"
+    return False, ""
+
+
 def _code_from_visible_row(row: dict[str, Any]) -> str:
     explicit = _first_value(row, "code", "norm_code", "basis", "justification", "обоснование")
     return _extract_norm_code(explicit)
+
+
+_SOURCE_COEFFICIENT_HINT = re.compile(
+    r"(?i)коэфф|с\s+к(?:оэф)?\s*[=:]|×\s*1[.,]\d|x\s*1[.,]\d|[*×x]\s*1[.,]5"
+)
+
+
+def _visible_row_quantity_already_includes_coefficient(
+    row: Mapping[str, Any],
+    *,
+    title: str,
+    raw_qty_text: str,
+) -> bool:
+    blob = " ".join(
+        str(value)
+        for value in (
+            raw_qty_text,
+            title,
+            row.get("note"),
+            row.get("coverage"),
+            row.get("comment"),
+            row.get("remark"),
+        )
+        if value not in (None, "")
+    )
+    return bool(_SOURCE_COEFFICIENT_HINT.search(blob))
 
 
 def _quantity_from_visible_row(row: dict[str, Any]) -> tuple[float | None, str, str]:
@@ -637,146 +1028,361 @@ def _quantity_from_visible_row(row: dict[str, Any]) -> tuple[float | None, str, 
 
 
 def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, Any] | None) -> tuple[float | None, dict[str, Any]]:
-    """Convert a visible physical quantity into the norm quantity.
-
-    The model/user owns the row and norm binding. Code only converts units after
-    that binding: e.g. 61 м2 with a norm unit 100 м2 becomes 0.61.
-    """
+    """Keep source quantity; calculate only with GESN scale or a cited conversion."""
     raw_qty, source_unit, raw_qty_text = _quantity_from_visible_row(row)
+    base_trace = {
+        "source_quantity": raw_qty if raw_qty is not None else raw_qty_text,
+        "source_unit": source_unit,
+    }
     if raw_qty is None:
         return None, {
+            **base_trace,
             "status": "missing_quantity",
-            "source_quantity": raw_qty_text,
-            "source_unit": source_unit,
-            "message": "нет количества для расчёта строки",
+            "message": "нет исходного количества для расчёта строки",
         }
     if norm is None:
         return float(raw_qty), {
+            **base_trace,
             "status": "norm_not_found",
-            "source_quantity": raw_qty,
-            "source_unit": source_unit,
             "norm_unit": "",
+            "norm_quantity": float(raw_qty),
             "formula": str(raw_qty),
         }
 
     norm_unit = str(norm.get("unit") or "")
-    factor, norm_base_unit = _norm_unit_factor(norm_unit)
-    if not source_unit:
-        return float(raw_qty), {
-            "status": "assumed_norm_quantity",
-            "source_quantity": raw_qty,
-            "source_unit": "",
+    scale, norm_base_unit = _norm_unit_factor(norm_unit)
+    cited = _cited_conversion(row, float(raw_qty))
+    physical = float(raw_qty)
+    extra: dict[str, Any] = {}
+    if cited is not None:
+        physical, extra = cited
+    elif not source_unit:
+        return None, {
+            **base_trace,
+            "status": "needs_input",
             "norm_unit": norm_unit,
-            "formula": f"{raw_qty} норм.-ед.",
-            "message": "единица строки не указана; количество принято как количество нормы",
-        }
-    if _same_unit_text(source_unit, norm_unit):
-        return float(raw_qty), {
-            "status": "direct_norm_quantity",
-            "source_quantity": raw_qty,
-            "source_unit": source_unit,
-            "norm_unit": norm_unit,
-            "formula": f"{raw_qty} {source_unit}",
+            "message": "единица исходной строки не указана; код её не угадывает",
         }
 
-    source_base_unit = _canon_unit(source_unit)
-    if source_base_unit == "шт" and norm_base_unit == "м2":
-        area_m2 = _piece_area_m2_from_visible_row(row)
-        if area_m2 is not None:
-            converted = round(float(raw_qty) * area_m2, 9)
-            norm_qty = round(converted / factor, 9)
-            return norm_qty, {
-                "status": "piece_area_conversion",
-                "source_quantity": raw_qty,
-                "source_unit": source_unit,
+    source_base_unit = _canon_unit(source_unit) if source_unit else norm_base_unit
+    if cited is None and source_base_unit != norm_base_unit:
+        si = _unit_conversion_factor(source_base_unit, norm_base_unit)
+        if si is None:
+            return None, {
+                **base_trace,
+                "status": "needs_input",
                 "norm_unit": norm_unit,
-                "formula": f"{raw_qty} {source_unit} × {area_m2:g} м2/шт / {factor:g} = {norm_qty}",
+                "message": (
+                    f"перевод {source_unit!r} → {norm_unit!r} нужен с conversion_factor "
+                    "и conversion_source; код не извлекает фасовку или габарит из названия"
+                ),
             }
-    conv = _unit_conversion_factor(source_base_unit, norm_base_unit)
-    if conv is None:
-        return None, {
-            "status": "unit_conflict",
-            "source_quantity": raw_qty,
-            "source_unit": source_unit,
-            "norm_unit": norm_unit,
-            "message": f"единица строки {source_unit!r} не переводится в измеритель нормы {norm_unit!r}",
-        }
-    converted = round(float(raw_qty) * conv, 9)
-    norm_qty = round(converted / factor, 9)
+        physical = round(float(raw_qty) * si, 9)
+        extra = {"status": "unit_conversion", "si_factor": si}
+
+    norm_qty = round(float(physical) / float(scale or 1.0), 9)
+    status = str(extra.get("status") or "")
+    if not status:
+        status = (
+            "direct_norm_quantity"
+            if _same_unit_text(source_unit, norm_unit)
+            else ("unit_conversion" if scale != 1.0 else "direct_from_row")
+        )
+    formula = f"{raw_qty} {source_unit}".strip()
+    if extra.get("conversion_factor") is not None:
+        formula = (
+            f"{raw_qty} {source_unit} × {extra['conversion_factor']:g} "
+            f"/ {scale:g} = {norm_qty} ({extra.get('conversion_source')})"
+        )
+    elif extra.get("calc_quantity") is not None:
+        formula = (
+            f"calc_quantity {extra['calc_quantity']:g} / {scale:g} = {norm_qty} "
+            f"({extra.get('conversion_source')})"
+        )
+    elif extra.get("si_factor") not in (None, 1.0) or scale != 1.0:
+        formula = (
+            f"{raw_qty} {source_unit} × {extra.get('si_factor', 1):g} "
+            f"/ {scale:g} = {norm_qty}"
+        )
     return norm_qty, {
-        "status": "unit_conversion" if conv != 1.0 or factor != 1.0 else "direct_from_row",
-        "source_quantity": raw_qty,
-        "source_unit": source_unit,
+        **base_trace,
+        **extra,
+        "status": status,
         "norm_unit": norm_unit,
-        "formula": f"{raw_qty} {source_unit} × {conv:g} / {factor:g} = {norm_qty}",
+        "norm_quantity": norm_qty,
+        "formula": formula,
     }
+
+
+def _with_visible_identity(
+    binding: dict[str, Any],
+    *,
+    title: str,
+    source_qty: Any,
+    source_unit: str,
+) -> dict[str, Any]:
+    """Keep the operator-visible VOR line on every bind/skip record."""
+
+    if title:
+        binding.setdefault("name", title)
+        binding.setdefault("title", title)
+    if source_qty is not None:
+        binding.setdefault("source_quantity", source_qty)
+    if source_unit:
+        binding.setdefault("source_unit", source_unit)
+    return binding
 
 
 def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Bind already visible/selected LSR rows to trace positions.
 
-    This function does not search or select norms. It only accepts rows that
-    already contain a norm code, converts their quantities to the norm unit and
-    returns skipped rows as explicit bindings for the model/user to fix.
+    This function does not search or select norms and does not require an
+    independent EXACT_VERIFIED overlay. An explicit model cipher goes to exact
+    lookup and quantity conversion. MISSING/NEEDS_RESEARCH/CONFLICT, unknown
+    codes, and unit failures stay unbound so price gaps remain visible.
     """
     positions: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
+    supply_parents = locators_with_separate_supply(rows)
     for idx, row in enumerate(rows or [], 1):
         model_source_row = row.get("source_row")
         source_row = (
             model_source_row
-            if isinstance(model_source_row, int) and not isinstance(model_source_row, bool) and model_source_row > 0
+            if (
+                isinstance(model_source_row, int)
+                and not isinstance(model_source_row, bool)
+                and model_source_row > 0
+            )
+            or (isinstance(model_source_row, str) and bool(model_source_row.strip()))
             else idx
         )
         code = _code_from_visible_row(row)
+        title = str(_first_value(row, "title", "name", "work", "наименование", "работа") or "")
+        source_qty, source_unit, raw_qty_text = _quantity_from_visible_row(row)
+        model_status = (
+            canonicalize_norm_status(row.get("norm_status"))
+            if row.get("norm_status") not in (None, "")
+            else ""
+        )
+        role = inferred_row_role(row)
+        parent = work_row_key(row)
+        if role == "resource":
+            binding = {
+                "row": source_row,
+                "status": "resource_linked",
+                "row_role": role,
+                "work_row": parent,
+                "message": "ресурс отнесён к работе по locator, не по шифру",
+                "source_row": row,
+            }
+            if code:
+                binding["code"] = code
+            bindings.append(
+                _with_visible_identity(
+                    binding, title=title, source_qty=source_qty, source_unit=source_unit
+                )
+            )
+            continue
+        if role in {"material", "equipment"} and not code:
+            price = parse_ru_number(row.get("confirmed_price"))
+            resource = {
+                "kind": "material",
+                "name": title,
+                "code": str(row.get("resource_code") or ""),
+                "unit": source_unit,
+                "per_unit": 1,
+            }
+            if price is not None:
+                resource["price"] = price
+                resource["price_source_ref"] = str(row.get("price_source") or "operator")
+            position = {
+                "code": "",
+                "qty": float(source_qty or 1),
+                "name": title,
+                "unit": source_unit,
+                "section": str(_first_value(row, "section", "раздел") or "").strip() or "Без раздела",
+                "source_row": source_row,
+                "work_row": parent,
+                "row_role": role,
+                "supply_kind": str(row.get("supply_kind") or "supply"),
+                "resources": [resource],
+                "nr_pct": 0,
+                "sp_pct": 0,
+                "source_quantity": source_qty,
+                "source_unit": source_unit,
+            }
+            positions.append(position)
+            bindings.append(
+                _with_visible_identity(
+                    {
+                        "row": source_row,
+                        "status": "bound",
+                        "row_role": role,
+                        "work_row": parent,
+                        "source_row": row,
+                        "position": {k: v for k, v in position.items() if k != "source_row"},
+                    },
+                    title=title,
+                    source_qty=source_qty,
+                    source_unit=source_unit,
+                )
+            )
+            continue
+        if model_status in {"MISSING", "NEEDS_RESEARCH", "CONFLICT"} or role == "unresolved":
+            status = {
+                "MISSING": "missing_norm",
+                "NEEDS_RESEARCH": "needs_research",
+                "CONFLICT": "quality_conflict",
+            }.get(model_status, "unresolved")
+            message = str(
+                row.get("open_gap") or row.get("open_question")
+                or row.get("quality_message")
+                or f"модель оставила строку в статусе {model_status or role}"
+            )
+            binding = {
+                "row": source_row,
+                "status": status,
+                "row_role": role,
+                "message": message,
+                "coverage_reason": message,
+                "norm_status": model_status,
+                "quality_gate": str(row.get("_quality_gate") or ""),
+                "source_row": row,
+            }
+            if code:
+                binding["code"] = code
+            if source_qty is not None:
+                binding["source_quantity"] = source_qty
+            if source_unit:
+                binding["source_unit"] = source_unit
+            bindings.append(
+                _with_visible_identity(
+                    binding, title=title, source_qty=source_qty, source_unit=source_unit
+                )
+            )
+            continue
         if not code:
-            bindings.append({
+            binding = {
                 "row": source_row,
                 "status": "norm_selection_required",
                 "message": "в строке нет шифра нормы",
                 "source_row": row,
-            })
+            }
+            if source_qty is not None:
+                binding["source_quantity"] = source_qty
+            if source_unit:
+                binding["source_unit"] = source_unit
+            bindings.append(
+                _with_visible_identity(
+                    binding, title=title, source_qty=source_qty, source_unit=source_unit
+                )
+            )
             continue
         norm = gesn_service.get_norm(code)
         if norm is None:
-            bindings.append({
+            binding = {
                 "row": source_row,
                 "code": code,
                 "status": "norm_not_found",
                 "message": "шифр нормы не найден в нормативной базе",
                 "source_row": row,
-            })
+            }
+            if source_qty is not None:
+                binding["source_quantity"] = source_qty
+            if source_unit:
+                binding["source_unit"] = source_unit
+            bindings.append(
+                _with_visible_identity(
+                    binding, title=title, source_qty=source_qty, source_unit=source_unit
+                )
+            )
             continue
         norm_qty, qty_trace = _norm_qty_from_visible_row(row, code, norm)
         if norm_qty is None:
-            bindings.append({
+            binding = {
                 "row": source_row,
                 "code": code,
                 "status": qty_trace.get("status") or "needs_input",
                 "quantity_trace": qty_trace,
                 "source_row": row,
-            })
+            }
+            if source_qty is not None:
+                binding["source_quantity"] = source_qty
+            if source_unit:
+                binding["source_unit"] = source_unit
+            bindings.append(
+                _with_visible_identity(
+                    binding, title=title, source_qty=source_qty, source_unit=source_unit
+                )
+            )
             continue
-        title = str(_first_value(row, "title", "name", "work", "наименование", "работа") or "")
         position = {
             "code": code,
             "qty": norm_qty,
             "section": str(_first_value(row, "section", "раздел") or "").strip() or "Без раздела",
             "source_row": source_row,
             "quantity_trace": qty_trace,
+            "source_quantity": source_qty,
+            "source_unit": source_unit,
+            "norm_quantity": norm_qty,
         }
         if title:
             position["name"] = title
         if norm and norm.get("unit"):
             position["unit"] = norm.get("unit")
+        position["row_role"] = role
+        position["work_row"] = parent or str(source_row)
+        if str(source_row) in supply_parents or parent in supply_parents:
+            position["exclude_gesn_materials"] = True
+        analogue = str(_first_value(row, "analogue", "coverage") or "").strip()
+        if analogue:
+            position["analogue"] = analogue
+            position["coverage"] = analogue
+        refs = row.get("evidence_refs")
+        if refs:
+            position["evidence_refs"] = list(refs) if isinstance(refs, list) else [refs]
+        position.update(_model_coefficient_fields(row))
+        if (
+            position.get("coefficient_application") == "applied"
+            and (
+                float(position.get("k_ozp") or 1.0) != 1.0
+                or float(position.get("k_em") or 1.0) != 1.0
+            )
+            and _visible_row_quantity_already_includes_coefficient(
+                row,
+                title=title,
+                raw_qty_text=raw_qty_text,
+            )
+        ):
+            position["source_coefficient_overlap"] = True
         positions.append(position)
-        bindings.append({
+        binding: dict[str, Any] = {
             "row": source_row,
             "code": code,
             "status": "bound",
             "quantity_trace": qty_trace,
             "position": {k: v for k, v in position.items() if k != "source_row"},
-        })
+        }
+        for key in (
+            "coefficient",
+            "coefficient_value",
+            "coefficient_applies_to",
+            "coefficient_application",
+            "evidence_refs",
+            "source_quantity",
+            "source_unit",
+            "norm_quantity",
+            "source_coefficient_overlap",
+        ):
+            if key in position:
+                binding[key] = position[key]
+        binding["norm_status"] = model_status or "MODEL_SELECTED"
+        binding["quality_gate"] = str(row.get("_quality_gate") or "not_run")
+        bindings.append(
+            _with_visible_identity(
+                binding, title=title, source_qty=source_qty, source_unit=source_unit
+            )
+        )
     return {"positions": positions, "row_bindings": bindings}
 
 
@@ -789,9 +1395,11 @@ def build_lsr_trace_from_visible_rows(
     k_em: float = 1.0,
     coefficient_basis: str = "",
     name: str = "",
+    confirmed_data: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Visible/BOR/LSR rows with selected norm codes -> priced_partial/final RIM trace."""
-    bound = positions_from_visible_lsr_rows(rows)
+    visible = apply_confirmed_data(rows, confirmed_data)
+    bound = positions_from_visible_lsr_rows(visible)
     lsr = build_lsr_trace(
         bound["positions"],
         pricebook=pricebook,
@@ -801,15 +1409,25 @@ def build_lsr_trace_from_visible_rows(
         coefficient_basis=coefficient_basis,
         name=name,
     )
+    closed = {"bound", "resource_linked"}
     binding_flags = [
         f"строка {b.get('row')}: {b.get('message') or b.get('status')}"
         for b in bound["row_bindings"]
-        if b.get("status") != "bound"
+        if b.get("status") not in closed
     ]
     summary = lsr.setdefault("summary", {})
     summary["input_rows"] = len(rows or [])
     summary["bound_rows"] = len(bound["positions"])
     summary["unbound_rows"] = max(0, len(rows or []) - len(bound["positions"]))
+    open_bindings = [
+        item for item in bound["row_bindings"] if item.get("status") not in closed
+    ]
+    if bound["positions"] and not open_bindings:
+        summary["norms_status"] = "model_norms_selected"
+    elif bound["positions"]:
+        summary["norms_status"] = "model_norms_partial"
+    else:
+        summary["norms_status"] = "norm_selection_required"
     if binding_flags:
         summary["flags"] = list(summary.get("flags") or []) + binding_flags
     if not bound["positions"]:

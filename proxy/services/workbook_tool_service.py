@@ -49,6 +49,10 @@ _VOR_INPUT_SCHEMA = {
 }
 
 _LSR_DECISION_SCHEMA = {"type": "object"}
+_LSR_CONFIRMED_DATA_SCHEMA = {
+    "type": "object",
+    "additionalProperties": {"type": "object"},
+}
 
 _LSR_INPUT_SCHEMA = {
     "type": "object",
@@ -61,6 +65,7 @@ _LSR_INPUT_SCHEMA = {
             "minItems": 1,
             "items": _LSR_DECISION_SCHEMA,
         },
+        "confirmed_data": _LSR_CONFIRMED_DATA_SCHEMA,
     },
 }
 
@@ -110,8 +115,14 @@ def workbook_download_filename(
     stamp = (when or datetime.now()).strftime("%Y-%m-%d_%H%M")
     prefix = "VOR" if str(artifact_kind) == "vor_workbook" else "LSR"
     stem = Path(str(source_name or "")).stem
+    from proxy.services.lsr_workbook_adapter_service import is_question_like_title
+
+    if is_question_like_title(stem):
+        stem = ""
     stem = re.sub(r"[^\w\-]+", "_", stem, flags=re.UNICODE).strip("._")
     stem = re.sub(r"_+", "_", stem)[:48]
+    if is_question_like_title(stem.replace("_", " ")):
+        stem = ""
     name = f"{prefix}_{stem}_{stamp}.xlsx" if stem else f"{prefix}_{stamp}.xlsx"
     return name.replace('"', "").replace("/", "_").replace("\\", "_")
 
@@ -212,6 +223,15 @@ def _normalized_args(args: Mapping[str, Any], *, allowed_args: set[str]) -> dict
     ))
     if "decisions" in allowed_args:
         normalized["decisions"] = [dict(item) for item in (normalized.get("decisions") or [])]
+    if "confirmed_data" in allowed_args:
+        overlays = normalized.get("confirmed_data")
+        payload: dict[str, dict[str, Any]] = {}
+        if isinstance(overlays, Mapping):
+            for key, value in overlays.items():
+                locator = str(key or "").strip()
+                if locator and isinstance(value, Mapping):
+                    payload[locator] = dict(value)
+        normalized["confirmed_data"] = payload
     return normalized
 
 
@@ -430,13 +450,20 @@ async def _build_workbook(
             parent_revision_id=normalized["parent_revision_id"],
         ))
         completed = ctx.checkpoints.complete(checkpoint.checkpoint_id, revision.revision_id)
-        return {**_result_from_revision(
-            revision=revision,
-            checkpoint=completed,
-            attachment_meta=attachment_meta,
-            source_rows=int(generated.get("source_rows") or 0),
-            resumed=checkpoint.status != "running" or checkpoint.phase != "started",
-        ), "tool": tool_name}
+        payload = {
+            **_result_from_revision(
+                revision=revision,
+                checkpoint=completed,
+                attachment_meta=attachment_meta,
+                source_rows=int(generated.get("source_rows") or 0),
+                resumed=checkpoint.status != "running" or checkpoint.phase != "started",
+            ),
+            "tool": tool_name,
+        }
+        for key in ("pricing_status", "norms_status", "price_gaps"):
+            if generated.get(key) not in (None, "", [], ()):
+                payload[key] = generated[key]
+        return payload
     except Exception as error:
         failed = ctx.checkpoints.record_status(
             checkpoint.checkpoint_id,

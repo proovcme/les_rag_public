@@ -1,5 +1,17 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-14 — Build 740 XLSX без денег из-за старого EXACT_VERIFIED замка
+
+- **Симптом:** ADR-15 terminal-result path собрал XLSX за 58,7 с (19/19 строк,
+  checkpoint complete, ~13 843 байта), но денежная часть осталась нулевой.
+- **Причина:** независимый verifier больше не запускается, а
+  `positions_from_visible_lsr_rows` всё ещё вызывал `pricing_block_reason`.
+  Без `_quality_gate=verified` + `EXACT_VERIFIED` каждая строка получала
+  `norms_unverified` и не попадала в расчёт.
+- **Исправление:** adapter больше не вызывает этот замок. Явный шифр модели
+  идёт в exact lookup; `MISSING`/`CONFLICT`, неизвестный код, единицы и
+  отсутствие цены остаются отдельными gaps. Live money acceptance pending.
+
 ## 2026-09-01 — Windows runtime потерял динамический FGIS supervisor
 
 - **Симптом:** build 678 прошёл оба installed bootstrap, API/UI, process hygiene

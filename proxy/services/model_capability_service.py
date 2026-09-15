@@ -57,6 +57,8 @@ def _probe_request(
         "max_tokens": 1,
         "temperature": 0,
     }
+    if str(connection.extension_type or "").strip().casefold() == "freetoken":
+        chat_body["chat_template_kwargs"] = {"enable_thinking": False}
     if capability is CapabilityName.MODELS:
         return "GET", join_openai_path(endpoint, "/models"), None
     if capability is CapabilityName.CHAT_COMPLETIONS:
@@ -148,6 +150,56 @@ def _native_api_url(endpoint: ValidatedEndpoint, operation: str) -> str:
 
 def _native_chat_url(endpoint: ValidatedEndpoint) -> str:
     return _native_api_url(endpoint, "chat")
+
+
+def _positive_context_tokens(value: object) -> int | None:
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _observed_freetoken_kv(payload: object) -> int | None:
+    """Read FreeToken physical KV pages without retaining model text."""
+
+    if not isinstance(payload, Mapping):
+        return None
+    geometry = payload.get("geometry")
+    sources = []
+    if isinstance(geometry, Mapping):
+        sources.append(geometry.get("num_pages"))
+    sources.append(payload.get("num_pages"))
+    for candidate in sources:
+        parsed = _positive_context_tokens(candidate)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _observed_openai_model_context(payload: object, model_id: str) -> int | None:
+    """Read a generic OpenAI-compatible context_length for one model id."""
+
+    if not isinstance(payload, Mapping):
+        return None
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        return None
+    wanted = str(model_id or "").strip()
+    fallback = None
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        parsed = _positive_context_tokens(
+            row.get("context_length", row.get("max_model_len"))
+        )
+        if parsed is None:
+            continue
+        if str(row.get("id") or "").strip() == wanted:
+            return parsed
+        if fallback is None:
+            fallback = parsed
+    return fallback
 
 
 def _observed_context_tokens(payload: object) -> int | None:
@@ -353,6 +405,69 @@ class CapabilityProbe:
                             )
                 except (httpx.HTTPError, OSError, TypeError, ValueError):
                     pass
+
+        if str(connection.extension_type or "").strip().casefold() == "freetoken":
+            observed_context = None
+            try:
+                async with self.client.stream(
+                    "GET",
+                    join_openai_path(endpoint, "/cache/status"),
+                    headers=headers,
+                    follow_redirects=False,
+                ) as response:
+                    self.peer_verifier(response, endpoint)
+                    cache_chunks: list[bytes] = []
+                    cache_size = 0
+                    async for chunk in response.aiter_bytes():
+                        cache_size += len(chunk)
+                        if cache_size > self.response_body_limit:
+                            cache_chunks = []
+                            break
+                        cache_chunks.append(chunk)
+                    cache_payload = (
+                        httpx.Response(
+                            status_code=response.status_code,
+                            content=b"".join(cache_chunks),
+                        ).json()
+                        if 200 <= response.status_code < 300 and cache_chunks
+                        else None
+                    )
+                    observed_context = _observed_freetoken_kv(cache_payload)
+            except (httpx.HTTPError, OSError, TypeError, ValueError):
+                observed_context = None
+            if observed_context is None:
+                try:
+                    async with self.client.stream(
+                        "GET",
+                        join_openai_path(endpoint, "/models"),
+                        headers=headers,
+                        follow_redirects=False,
+                    ) as response:
+                        self.peer_verifier(response, endpoint)
+                        model_chunks: list[bytes] = []
+                        model_size = 0
+                        async for chunk in response.aiter_bytes():
+                            model_size += len(chunk)
+                            if model_size > self.response_body_limit:
+                                model_chunks = []
+                                break
+                            model_chunks.append(chunk)
+                        models_payload = (
+                            httpx.Response(
+                                status_code=response.status_code,
+                                content=b"".join(model_chunks),
+                            ).json()
+                            if 200 <= response.status_code < 300 and model_chunks
+                            else None
+                        )
+                        observed_context = _observed_openai_model_context(
+                            models_payload,
+                            connection.model_id,
+                        )
+                except (httpx.HTTPError, OSError, TypeError, ValueError):
+                    observed_context = None
+            if observed_context is not None:
+                transport_options["observed_context_tokens"] = str(observed_context)
 
         return CapabilitySnapshot(
             snapshot_id=f"cap:{uuid4().hex}",

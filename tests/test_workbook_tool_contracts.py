@@ -53,8 +53,14 @@ def test_workbook_contracts_accept_plain_model_rows_without_a_domain_schema():
     decisions_schema = lsr_schema["properties"]["decisions"]
     assert decisions_schema["items"] == {"type": "object"}
     assert "maxItems" not in decisions_schema
+    assert lsr_schema["properties"]["confirmed_data"] == {
+        "type": "object",
+        "additionalProperties": {"type": "object"},
+    }
+    assert "confirmed_data" not in lsr_schema.get("required", [])
     assert vor_schema["properties"]["decisions"]["items"] == {"type": "object"}
     assert "decisions" not in vor_schema.get("required", [])
+    assert "confirmed_data" not in vor_schema.get("properties", {})
 
 
 def test_chat_workbook_capabilities_come_from_the_executor_manifest():

@@ -24,8 +24,21 @@
 
 - Terminal LSR path: регрессия фиксирует ровно два вызова 9B-класса
   (model-authored queries и terminal result), отсутствие post-model quality
-  loop в обычном запросе, неизменную передачу решений в workbook adapter и
-  один идемпотентный packaging retry по той же checkpoint.
+  loop в обычном запросе **включая sheet-pass**, неизменную передачу решений в
+  workbook adapter и один идемпотентный packaging retry по той же checkpoint.
+  Adapter принимает явный шифр `EXACT`/`ANALOGUE` без `EXACT_VERIFIED`;
+  неизвестный код, единицы и model `MISSING` остаются unbound
+  (`test_workbook_tool_service`, `test_rim_lsr_trace_service`,
+  `test_chat_evidence_application_service`). Durable packet checkpoint
+  (`test_workbook_research_job_service`) переживает pause/resume без повторного
+  поиска кэшированных запросов и точечное reopen locator. Покрытие исходника,
+  нормы и цены — `test_lsr_source_coverage_service`,
+  `test_lsr_result_readiness_service`; UI уточнения/подтверждения без модели —
+  `test_sovushka_chat`. Контракт упаковки принимает operator `confirmed_data`
+  (`test_workbook_tool_service`, `test_workbook_tool_contracts`,
+  `test_chat_evidence_application_service`). Единый sheet-pass для малого и большого каталога —
+  `test_chat_evidence_application_service`. Конверсия единиц только с источником
+  и без угадывания габарита из названия — `test_rim_lsr_trace_service`.
 
 - LSR quality gate: нейтральная проверка карточки, сохранение последнего
   `CONFLICT` после исчерпания поиска, отдельный честный `MISSING`, store-card
@@ -41,6 +54,8 @@
   Reader принимает короткий markdown-divider, заголовок монтажа с `norm_code` и
   явные спецификационные таблицы без нормы; stream keepalive и PENDING-history
   покрыты `test_chat_stream_w51` / `test_chat_history_router`.
+  Заголовки model-authored `Qn`, которые не влезают в остаток окна, не роняют
+  чат: регрессия фиксирует split/omit вместо `MODEL_RAG_EVIDENCE_BUDGET_TOO_SMALL_FOR_ALL_QUERY_HEADERS`.
 - RAG: contract-versioned named `dense + bm25_sparse`, native RRF, rerank,
   profile-owned overfetch/diversity/evidence limits, hierarchy/parent expansion,
   dimensional readiness, ready-generation guard для ColBERT и dataset integrity.
@@ -55,7 +70,8 @@
   подтверждает, что живые source adapters используют самостоятельный document classifier,
   а не выключенный Unified Harness.
 - Models: connection registry, secrets boundary, capability resolution,
-  OpenAI-compatible transport и одинаковый governed path для 9B/35B.
+  OpenAI-compatible transport, наблюдаемый KV FreeToken (`/v1/cache/status`)
+  и одинаковый governed path для 9B/35B.
 - UI: общий UIKit, WCAG AA, документы, чат, источники, model connections и
   отсутствие скрытого автоматического scope.
 - Runtime/release: Windows process ownership, persistent-state boundary,

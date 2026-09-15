@@ -323,6 +323,7 @@ def test_chat_ui_can_stop_only_the_active_answer_stream():
     assert '"Остановить диалог"' in source
     assert "def _stop_active_dialog()" in source
     assert 'task.cancel()' in source
+    assert 'api_post(f"/api/workbook-research/{job_id}/pause"' in source
     assert "except asyncio.CancelledError:" in source
     assert "Диалог остановлен пользователем." in source
     assert 'stop_dialog_btn.set_visibility(True)' in source
@@ -354,6 +355,52 @@ def test_chat_ui_consumes_tool_progress_and_canonical_artifact_download():
         "filename": "LSR_demo.xlsx",
     })[0]["download_url"] == "/api/artifacts/rev-1/download"
     assert 'retry.get("attachment_id")' in helper
+
+
+def test_chat_ui_splits_lsr_readiness_and_rebuilds_without_model():
+    source = inspect.getsource(chat_page.build_chat)
+    spec = chat_page.lsr_readiness_card_spec({
+        "dimensions": {
+            "file": {"ready": False, "action": "Пересоберите файл без модели."},
+            "coverage": {
+                "complete": False,
+                "gap_count": 1,
+                "action": "Закройте покрытие исходника.",
+                "gaps": [{"locator": "СКС!R3", "action": "Укажите роль строки СКС!R3."}],
+            },
+            "norms": {
+                "complete": False,
+                "gap_count": 1,
+                "action": "Продолжите незакрытые строки.",
+                "gaps": [{"locator": "СКС!R3", "action": "Модель должна выбрать норму для строки СКС!R3."}],
+            },
+            "prices": {"complete": False, "gap_count": 1, "action": "Задайте цены."},
+        },
+        "actions": [
+            {"id": "repack", "label": "Пересобрать файл"},
+            {"id": "resume", "label": "Продолжить незакрытые строки"},
+            {"id": "refine", "label": "Уточнить выбранные строки"},
+            {"id": "enter_data", "label": "Внести подтверждённые данные"},
+        ],
+        "continue_action": "Источники сохранены.",
+        "technical_complete": False,
+        "estimate_complete": False,
+    })
+
+    assert spec["file_tone"] == "error"
+    assert spec["coverage_tone"] == "warn"
+    assert spec["norms_tone"] == "warn"
+    assert spec["prices_tone"] == "warn"
+    assert "/api/chat/repack-lsr" in source
+    assert "/api/chat/patch-lsr-rows" in source
+    assert "Пересобрать файл" in source
+    assert "Продолжить незакрытые строки" in source
+    assert "Уточнить выбранные строки" in source
+    assert "Внести подтверждённые данные" in source
+    assert "status_badge(spec[\"file_label\"]" in source
+    assert "status_badge(spec[\"coverage_label\"]" in source
+    assert "text_field(" in source
+    assert "result_readiness" in source
 
 
 def test_chat_ui_mode_guidance_is_compact_and_input_focused():

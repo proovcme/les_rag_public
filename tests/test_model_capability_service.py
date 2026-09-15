@@ -324,3 +324,100 @@ async def test_probe_rejects_empty_request_set() -> None:
         )
         with pytest.raises(CapabilityProbeError, match="CAPABILITY_REQUEST_EMPTY"):
             await probe.probe(_connection(), requested=set())
+
+
+@pytest.mark.asyncio
+async def test_freetoken_probe_records_observed_kv_from_cache_status() -> None:
+    requests: list[tuple[str, str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        requests.append((request.method, request.url.path, body))
+        if request.url.path == "/v1/cache/status":
+            return httpx.Response(
+                200,
+                json={"geometry": {"num_pages": 28001}, "num_pages": 28001},
+            )
+        if request.url.path == "/v1/chat/completions":
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "qwen-test"}]})
+        return httpx.Response(404, json={"error": "missing"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await CapabilityProbe(
+            client=client,
+            resolver=lambda _host, _port: ("127.0.0.1",),
+            peer_verifier=_peer_ok,
+            clock=lambda: NOW,
+        ).probe(
+            _connection(extension_type="freetoken"),
+            requested={CapabilityName.CHAT_COMPLETIONS},
+        )
+
+    assert snapshot.transport_options["observed_context_tokens"] == "28001"
+    chat = next(item for item in requests if item[1] == "/v1/chat/completions")
+    assert chat[2]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert any(item[1] == "/v1/cache/status" for item in requests)
+    assert not any(item[1] == "/v1/models" for item in requests)
+
+
+@pytest.mark.asyncio
+async def test_freetoken_probe_falls_back_to_models_context_when_cache_absent() -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/v1/models":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "qwen-test",
+                            "context_length": 28001,
+                        },
+                        {"id": "other", "context_length": 8192},
+                    ]
+                },
+            )
+        if request.url.path == "/v1/cache/status":
+            return httpx.Response(404, json={"error": "missing"})
+        return httpx.Response(200, json={"data": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await CapabilityProbe(
+            client=client,
+            resolver=lambda _host, _port: ("127.0.0.1",),
+            peer_verifier=_peer_ok,
+            clock=lambda: NOW,
+        ).probe(
+            _connection(extension_type="freetoken"),
+            requested={CapabilityName.MODELS},
+        )
+
+    assert snapshot.state(CapabilityName.MODELS) is CapabilityState.SUPPORTED
+    assert snapshot.transport_options["observed_context_tokens"] == "28001"
+    assert requests.count("/v1/cache/status") == 1
+    assert requests.count("/v1/models") == 2
+
+
+@pytest.mark.asyncio
+async def test_non_freetoken_probe_does_not_fetch_cache_status() -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(200, json={"data": [{"id": "qwen-test"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await CapabilityProbe(
+            client=client,
+            resolver=lambda _host, _port: ("127.0.0.1",),
+            peer_verifier=_peer_ok,
+            clock=lambda: NOW,
+        ).probe(_connection(), requested={CapabilityName.MODELS})
+
+    assert snapshot.transport_options == {"max_output_field": "max_tokens"}
+    assert requests == ["/v1/models"]
+    assert "observed_context_tokens" not in snapshot.transport_options

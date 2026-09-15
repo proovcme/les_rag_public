@@ -32,7 +32,7 @@ from sovushka.state import (
     refresh_samovar,
     state,
 )
-from sovushka.uikit import action_button, select_field
+from sovushka.uikit import action_button, panel, section_heading, select_field, status_badge, text_field
 
 
 async def _copy_text(text: str) -> None:
@@ -264,6 +264,60 @@ def artifact_workbook_files(artifact: Any) -> list[dict[str, str]]:
             "artifact_kind": kind,
         })
     return files
+
+
+def lsr_readiness_card_spec(readiness: Any) -> dict[str, Any]:
+    """Project coverage / norms / prices status for the files panel."""
+
+    payload = readiness if isinstance(readiness, dict) else {}
+    dimensions = payload.get("dimensions") if isinstance(payload.get("dimensions"), dict) else {}
+    file_dim = dimensions.get("file") if isinstance(dimensions.get("file"), dict) else {}
+    coverage_dim = dimensions.get("coverage") if isinstance(dimensions.get("coverage"), dict) else {}
+    norms_dim = dimensions.get("norms") if isinstance(dimensions.get("norms"), dict) else {}
+    prices_dim = dimensions.get("prices") if isinstance(dimensions.get("prices"), dict) else {}
+    actions = [
+        dict(item)
+        for item in (payload.get("actions") or [])
+        if isinstance(item, dict) and str(item.get("id") or "")
+    ]
+    price_gaps = [
+        dict(item)
+        for item in (prices_dim.get("gaps") or [])[:8]
+        if isinstance(item, dict)
+    ]
+    return {
+        "file_label": "Файл готов" if file_dim.get("ready") else "Файл не готов",
+        "file_tone": "ok" if file_dim.get("ready") else "error",
+        "file_action": str(file_dim.get("action") or ""),
+        "coverage_label": (
+            "Покрытие полное"
+            if coverage_dim.get("complete")
+            else f"Покрытие: пробелов {int(coverage_dim.get('gap_count') or 0)}"
+        ),
+        "coverage_tone": "ok" if coverage_dim.get("complete") else "warn",
+        "coverage_action": str(coverage_dim.get("action") or ""),
+        "norms_label": (
+            "Нормы полные" if norms_dim.get("complete") else f"Нормы: пробелов {int(norms_dim.get('gap_count') or 0)}"
+        ),
+        "norms_tone": "ok" if norms_dim.get("complete") else "warn",
+        "norms_action": str(norms_dim.get("action") or ""),
+        "prices_label": (
+            "Цены полные" if prices_dim.get("complete") else f"Цены: пробелов {int(prices_dim.get('gap_count') or 0)}"
+        ),
+        "prices_tone": "ok" if prices_dim.get("complete") else "warn",
+        "prices_action": str(prices_dim.get("action") or ""),
+        "continue_action": str(payload.get("continue_action") or ""),
+        "technical_complete": bool(payload.get("technical_complete")),
+        "estimate_complete": bool(payload.get("estimate_complete")),
+        "actions": actions,
+        "gaps": [
+            dict(item)
+            for item in list(coverage_dim.get("gaps") or [])[:4]
+            + list(norms_dim.get("gaps") or [])[:4]
+            if isinstance(item, dict)
+        ],
+        "price_gaps": price_gaps,
+    }
 
 
 def format_chat_request_clock(requested_at: Any, *, tz: TzInfo | None = None) -> str:
@@ -3523,6 +3577,225 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 )
         dialog.open()
 
+    async def _repack_lsr_from_ui(resume: dict, artifact: dict) -> None:
+        payload = {
+            "session_id": str(state.get("session_id") or resume.get("session_id") or ""),
+            "job_id": str(resume.get("job_id") or ""),
+            "attachment_id": str(
+                resume.get("attachment_id") or attach_state.get("id") or ""
+            ),
+            "question": str(resume.get("question") or ""),
+            "decisions": list(artifact.get("draft_rows") or []),
+        }
+        result = await api_post("/api/chat/repack-lsr", payload)
+        if not isinstance(result, dict) or result.get("model_called") is not False:
+            ui.notify(last_api_error_text("Не удалось пересобрать файл без модели"), type="negative")
+            return
+        harvested = result.get("harvested") if isinstance(result.get("harvested"), dict) else {}
+        _register_artifact_downloads({"artifact": harvested.get("artifact") or {}})
+        ui.notify("Файл пересобран без модели. Решения не пересматривались.", type="positive")
+
+    async def _resume_lsr_packets(resume: dict) -> None:
+        question = str(resume.get("question") or "").strip()
+        if not question:
+            ui.notify("Нет сохранённого запроса для продолжения", type="warning")
+            return
+        attachment_id = str(resume.get("attachment_id") or "").strip()
+        if attachment_id:
+            pending = {
+                "id": attachment_id,
+                "name": str(attach_state.get("name") or "сохранённый исходник"),
+                "mode": "read",
+                "text": str(attach_state.get("text") or ""),
+                "chars": int(attach_state.get("chars") or 0),
+                "rows": int(attach_state.get("rows") or 0),
+                "truncated": bool(attach_state.get("truncated")),
+                "dataset_name": str(attach_state.get("dataset_name") or ""),
+            }
+            attach_state.update(pending)
+            title, detail, _chat_msg = _attachment_visible_text(pending)
+            attach_title.set_text(title)
+            attach_chip.set_text(detail)
+            attach_strip.set_visibility(True)
+        chat_input.value = question
+        chat_input.update()
+        await send_chat()
+
+    async def _refine_lsr_rows(resume: dict, locators_text: str) -> None:
+        locators = [
+            item.strip()
+            for item in str(locators_text or "").replace(";", ",").split(",")
+            if item.strip()
+        ]
+        if not locators:
+            ui.notify("Укажите locator строк для уточнения", type="warning")
+            return
+        job_id = str(resume.get("job_id") or "").strip()
+        if not job_id:
+            ui.notify("Нет сохранённого задания для уточнения строк", type="warning")
+            return
+        result = await api_post(
+            "/api/chat/patch-lsr-rows",
+            {
+                "session_id": str(state.get("session_id") or resume.get("session_id") or ""),
+                "job_id": job_id,
+                "attachment_id": str(resume.get("attachment_id") or attach_state.get("id") or ""),
+                "question": str(resume.get("question") or ""),
+                "reopen_locators": locators,
+                "repack": False,
+            },
+        )
+        if not isinstance(result, dict) or result.get("model_called") is not False:
+            ui.notify(last_api_error_text("Не удалось открыть строки для уточнения"), type="negative")
+            return
+        ui.notify("Строки открыты. Остальные решения сохранены.", type="positive")
+        await _resume_lsr_packets(resume)
+
+    async def _confirm_lsr_data(
+        resume: dict,
+        artifact: dict,
+        locator: str,
+        factor: str,
+        source: str,
+    ) -> None:
+        key = str(locator or "").strip()
+        if not key:
+            ui.notify("Укажите locator строки", type="warning")
+            return
+        patch: dict[str, Any] = {}
+        if str(factor or "").strip():
+            patch["conversion_factor"] = str(factor).strip()
+        if str(source or "").strip():
+            patch["conversion_source"] = str(source).strip()
+        if not patch:
+            ui.notify("Укажите подтверждённый коэффициент и источник", type="warning")
+            return
+        job_id = str(resume.get("job_id") or "").strip()
+        if not job_id:
+            ui.notify("Нет сохранённого задания для подтверждённых данных", type="warning")
+            return
+        result = await api_post(
+            "/api/chat/patch-lsr-rows",
+            {
+                "session_id": str(state.get("session_id") or resume.get("session_id") or ""),
+                "job_id": job_id,
+                "attachment_id": str(resume.get("attachment_id") or attach_state.get("id") or ""),
+                "question": str(resume.get("question") or ""),
+                "confirmed_data": {key: patch},
+                "repack": True,
+            },
+        )
+        if not isinstance(result, dict) or result.get("model_called") is not False:
+            ui.notify(last_api_error_text("Не удалось сохранить подтверждённые данные"), type="negative")
+            return
+        packed = result.get("repack") if isinstance(result.get("repack"), dict) else {}
+        harvested = packed.get("harvested") if isinstance(packed.get("harvested"), dict) else {}
+        if harvested.get("artifact"):
+            _register_artifact_downloads({"artifact": harvested.get("artifact") or {}})
+        ui.notify("Подтверждённые данные внесены без вызова модели.", type="positive")
+
+    def _render_lsr_readiness_card(spec: dict, resume: dict, artifact: dict) -> None:
+        files_artifacts_panel.set_visibility(True)
+        with files_artifacts_panel:
+            with panel(variant="raised", classes="sov-lsr-readiness"):
+                detail = (
+                    "Технический файл готов"
+                    if spec.get("technical_complete")
+                    else "Технический файл не готов"
+                )
+                if spec.get("estimate_complete"):
+                    detail += "; смета полная"
+                else:
+                    detail += "; покрытие, нормы и цены считаются отдельно"
+                section_heading("Готовность ЛСР", detail)
+                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                    status_badge(spec["file_label"], spec["file_tone"])
+                    status_badge(spec["coverage_label"], spec["coverage_tone"])
+                    status_badge(spec["norms_label"], spec["norms_tone"])
+                    status_badge(spec["prices_label"], spec["prices_tone"])
+                for text in (
+                    spec.get("file_action"),
+                    spec.get("coverage_action"),
+                    spec.get("norms_action"),
+                    spec.get("prices_action"),
+                    spec.get("continue_action"),
+                ):
+                    if text:
+                        ui.label(str(text)).classes("sov-ui-section-detail")
+                for gap in list(spec.get("gaps") or []) + list(spec.get("price_gaps") or []):
+                    action = str(gap.get("action") or "").strip()
+                    if action:
+                        ui.label(action).classes("sov-ui-section-detail")
+                refine_field = text_field(
+                    label="Строки для уточнения",
+                    placeholder="СКС!R3, СКС!R5",
+                    classes="w-full",
+                )
+                confirm_locator = text_field(
+                    label="Locator",
+                    placeholder="СКС!R3",
+                    classes="w-full",
+                )
+                confirm_factor = text_field(
+                    label="Коэффициент перевода",
+                    placeholder="12",
+                    classes="w-full",
+                )
+                confirm_source = text_field(
+                    label="Источник перевода",
+                    placeholder="упаковка 12 шт",
+                    classes="w-full",
+                )
+                with ui.row().classes("w-full gap-2 flex-wrap"):
+                    for item in spec.get("actions") or []:
+                        kind = str(item.get("id") or "")
+                        if kind == "repack":
+                            action_button(
+                                str(item.get("label") or "Пересобрать файл"),
+                                icon="o_replay",
+                                on_click=lambda r=dict(resume), a=dict(artifact): asyncio.create_task(
+                                    _repack_lsr_from_ui(r, a)
+                                ),
+                                variant="secondary",
+                                compact=True,
+                            )
+                        elif kind == "resume":
+                            action_button(
+                                str(item.get("label") or "Продолжить незакрытые строки"),
+                                icon="o_play_arrow",
+                                on_click=lambda r=dict(resume): asyncio.create_task(
+                                    _resume_lsr_packets(r)
+                                ),
+                                variant="primary",
+                                compact=True,
+                            )
+                        elif kind == "refine":
+                            action_button(
+                                str(item.get("label") or "Уточнить выбранные строки"),
+                                icon="o_edit",
+                                on_click=lambda r=dict(resume), field=refine_field: asyncio.create_task(
+                                    _refine_lsr_rows(r, str(field.value or ""))
+                                ),
+                                variant="secondary",
+                                compact=True,
+                            )
+                        elif kind == "enter_data":
+                            action_button(
+                                str(item.get("label") or "Внести подтверждённые данные"),
+                                icon="o_check",
+                                on_click=lambda r=dict(resume), a=dict(artifact), loc=confirm_locator, fac=confirm_factor, src=confirm_source: asyncio.create_task(
+                                    _confirm_lsr_data(
+                                        r,
+                                        a,
+                                        str(loc.value or ""),
+                                        str(fac.value or ""),
+                                        str(src.value or ""),
+                                    )
+                                ),
+                                variant="secondary",
+                                compact=True,
+                            )
+
     def _register_artifact_downloads(meta: dict | None) -> None:
         artifact = (meta or {}).get("artifact") if isinstance(meta, dict) else {}
         if not isinstance(artifact, dict):
@@ -3531,6 +3804,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _register_file_artifact(
                 item["filename"], item["download_url"], "xlsx"
             )
+        readiness = artifact.get("result_readiness")
+        if not isinstance(readiness, dict):
+            trace = (meta or {}).get("retrieval_trace") if isinstance(meta, dict) else {}
+            readiness = trace.get("result_readiness") if isinstance(trace, dict) else {}
+        resume = artifact.get("resume") if isinstance(artifact.get("resume"), dict) else {}
+        spec = lsr_readiness_card_spec(readiness)
+        if spec["file_action"] or spec["actions"]:
+            _last_estimator_resume.update(resume)
+            _render_lsr_readiness_card(spec, resume, artifact)
         downloads = artifact.get("downloads") or {}
         if not isinstance(downloads, dict):
             return
@@ -4030,6 +4312,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     _sending = {"v": False}
     _active_send_task: dict[str, asyncio.Task | None] = {"task": None}
+    _active_research_job_id = {"v": ""}
+    _last_estimator_resume: dict[str, Any] = {}
     _resource_blocked = {"v": False, "reason": ""}
 
     def _indexing_summary(data: dict) -> str:
@@ -4088,8 +4372,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             ui.notify("Сейчас нет активного ответа", type="info")
             return
         add_log("[ЧАТ] Пользователь остановил текущий ответ")
+        job_id = str(_active_research_job_id["v"] or "").strip()
+        if job_id:
+            asyncio.create_task(api_post(f"/api/workbook-research/{job_id}/pause", {}))
         task.cancel()
-        ui.notify("Останавливаю текущий ответ…", type="info")
+        ui.notify("Останавливаю текущий ответ. Сохранённые пакеты можно продолжить.", type="info")
 
     async def _do_verify(question: str):
         """Верификация объёмов: распознать скан и открыть спец-артефакт сверки.
@@ -4482,6 +4769,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             elif event == "tool_progress":
                 stream_state["got_progress"] = True
                 if isinstance(payload, dict):
+                    job_id = str(payload.get("workbook_research_job_id") or "").strip()
+                    if job_id:
+                        _active_research_job_id["v"] = job_id
                     label = str(payload.get("label") or "Собираю файл").strip()
                     completed_rows = payload.get("completed")
                     total_rows = payload.get("total")

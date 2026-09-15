@@ -269,6 +269,112 @@ def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
     assert omitted_refs == []
 
 
+def _query_hits_with_long_headers(query_count: int, *, title: str):
+    hits = [
+        SimpleNamespace(
+            content="Шифр: ГЭСН01-01-001-01 " + "состав " * 40,
+            doc_id="doc-1",
+            doc_name="smeta_norm_cards.v1",
+            score=0.9,
+            meta={"dataset_id": "smeta"},
+        )
+        for _ in range(6)
+    ]
+    return [(title, hits) for _ in range(query_count)]
+
+
+def test_model_rag_evidence_splits_query_headers_instead_of_raising():
+    query_hits = _query_hits_with_long_headers(
+        20,
+        title="Hyperline TTR-4281-DD-RAL7035 шкаф напольный 19-дюймовый 42U разобранный",
+    )
+    header_tax = service.model_rag_evidence_header_chars(
+        query_hits[:3],
+        hits_per_query=6,
+    )
+    included, leftover, trim_omitted = service.select_model_rag_query_hits_for_budget(
+        query_hits,
+        max_chars=header_tax,
+        hits_per_query=6,
+    )
+
+    assert trim_omitted == []
+    assert len(included) == 3
+    assert len(leftover) == 17
+    assert leftover[0][0] == query_hits[3][0]
+
+    groups, chunks, omitted_refs = service.build_model_rag_evidence_groups(
+        query_hits,
+        max_chars=header_tax,
+        hits_per_query=6,
+    )
+
+    assert len(groups) == 3
+    assert "[Поисковый запрос Q1]" in groups[0]
+    assert "[Поисковый запрос Q3]" in groups[2]
+    assert "[Поисковый запрос Q4]" not in "\n\n".join(groups)
+    assert "Q4" in omitted_refs
+    assert "Q4.H1" in omitted_refs
+
+    prefix_groups, _prefix_chunks, prefix_omitted = service.build_model_rag_evidence_groups(
+        included,
+        max_chars=header_tax,
+        hits_per_query=6,
+    )
+    assert len(prefix_groups) == 3
+    assert all(not ref.startswith("Q4") for ref in prefix_omitted)
+
+
+def test_model_rag_evidence_keeps_query_identity_when_even_one_header_is_tight():
+    query_hits = _query_hits_with_long_headers(
+        2,
+        title="кабель витая пара категория 6a экран F/UTP",
+    )
+    one_query_tax = service.model_rag_evidence_header_chars(
+        query_hits[:1],
+        hits_per_query=6,
+    )
+    groups, chunks, omitted_refs = service.build_model_rag_evidence_groups(
+        query_hits,
+        max_chars=max(1, one_query_tax // 4),
+        hits_per_query=6,
+    )
+
+    assert groups
+    assert groups[0].startswith("[Поисковый запрос Q1]")
+    assert "Q2" in omitted_refs
+    assert all(not item.startswith("[Поисковый запрос Q2]") for item in groups)
+
+
+def test_model_rag_evidence_empty_budget_omits_queries_without_raising():
+    query_hits = _query_hits_with_long_headers(4, title="шкаф 42U")
+    groups, chunks, omitted_refs = service.build_model_rag_evidence_groups(
+        query_hits,
+        max_chars=0,
+        hits_per_query=6,
+    )
+
+    assert groups == []
+    assert chunks == []
+    assert omitted_refs[0] == "Q1"
+    assert "Q4.H6" in omitted_refs
+
+
+def test_model_rag_group_char_budget_matches_governor_two_chars_per_token():
+    assert service.model_rag_group_char_budget(
+        context_chars_limit=120000,
+        remaining_group_tokens=2000,
+    ) == 4000
+    assert service.model_rag_group_char_budget(
+        context_chars_limit=1000,
+        remaining_group_tokens=2000,
+    ) == 1000
+    assert service.model_rag_group_char_budget(
+        context_chars_limit=120000,
+        remaining_group_tokens=0,
+    ) == 0
+
+
 def test_model_rag_source_map_preserves_typed_locator_and_evidence_handle():
     chunk = service._ModelRagEvidenceChunk(
         content="Шифр и состав работы",
@@ -1198,6 +1304,165 @@ async def test_chat_lsr_executor_runs_thin_model_decision_adapter(tmp_path, monk
 
 
 @pytest.mark.asyncio
+async def test_chat_lsr_executor_accepts_operator_confirmed_data(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    attachment_root = tmp_path / "attachments"
+    monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attachment_root))
+    source = tmp_path / "source.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["Наименование", "Ед. изм.", "Количество"])
+    workbook.active.append(["Кабель", "м", 10])
+    workbook.save(source)
+    workbook.close()
+    attachment = preserve_read_attachment(
+        source,
+        attachment_id="read_123456abcdef",
+        original_name="source.xlsx",
+        root=attachment_root,
+    )
+    decisions = [{
+        "source_row": "СКС!R2",
+        "title": "Кабель",
+        "unit": "м",
+        "quantity": 10,
+        "norm_code": "10-06-024-01",
+    }]
+    overlays = {"СКС!R2": {"confirmed_price": 125.5, "price_source": "КАЦ"}}
+    captured = {}
+
+    def calculate(rows, **kwargs):
+        captured["rows"] = rows
+        captured["kwargs"] = kwargs
+        return {
+            "schema": "rim_lsr_v1",
+            "sections": [],
+            "summary": {"input_rows": 1, "bound_rows": 1, "flags": []},
+            "row_bindings": [{"row": "СКС!R2", "status": "bound"}],
+        }
+
+    def render(_trace, output_path, **_kwargs):
+        workbook = openpyxl.Workbook()
+        workbook.active.append(["ЛСР"])
+        workbook.save(output_path)
+        workbook.close()
+        return output_path
+
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.build_lsr_trace_from_visible_rows",
+        calculate,
+    )
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.render_lsr_xlsx",
+        render,
+    )
+
+    result = await chat._execute_chat_workbook_tool(
+        {
+            "call_id": "call-lsr-confirmed",
+            "tool": "build_lsr_workbook",
+            "args": {
+                "attachment_id": attachment["attachment_id"],
+                "question": "Собери ЛСР",
+                "decisions": decisions,
+                "confirmed_data": overlays,
+            },
+        },
+        {
+            "session_id": "session-1",
+            "question": "Собери ЛСР",
+            "attachment_id": attachment["attachment_id"],
+            "dataset_ids": [],
+            "project_id": None,
+            "profile_revision_id": "profile-1",
+            "model_identity": "qwen-local",
+            "model_preset": "qwen-9b",
+        },
+        lambda _event: asyncio.sleep(0),
+    )
+
+    assert result.get("code") != "TOOL_SCHEMA_INVALID"
+    assert result["status"] == "complete"
+    assert captured["rows"] == decisions
+    assert captured["kwargs"]["confirmed_data"] == overlays
+
+
+@pytest.mark.asyncio
+async def test_chat_lsr_executor_repack_without_progress_sink(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    attachment_root = tmp_path / "attachments"
+    monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attachment_root))
+    source = tmp_path / "source.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["Наименование", "Ед. изм.", "Количество"])
+    workbook.active.append(["Кабель", "м", 10])
+    workbook.save(source)
+    workbook.close()
+    attachment = preserve_read_attachment(
+        source,
+        attachment_id="read_123456abcdef",
+        original_name="source.xlsx",
+        root=attachment_root,
+    )
+    decisions = [{
+        "source_row": "СКС!R2",
+        "title": "Кабель",
+        "unit": "м",
+        "quantity": 10,
+        "norm_code": "10-06-024-01",
+    }]
+
+    def calculate(rows, **kwargs):
+        return {
+            "schema": "rim_lsr_v1",
+            "sections": [],
+            "summary": {"input_rows": 1, "bound_rows": 1, "flags": []},
+            "row_bindings": [{"row": "СКС!R2", "status": "bound"}],
+        }
+
+    def render(_trace, output_path, **_kwargs):
+        workbook = openpyxl.Workbook()
+        workbook.active.append(["ЛСР"])
+        workbook.save(output_path)
+        workbook.close()
+        return output_path
+
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.build_lsr_trace_from_visible_rows",
+        calculate,
+    )
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.render_lsr_xlsx",
+        render,
+    )
+
+    result = await chat._execute_chat_workbook_tool(
+        {
+            "call_id": "call-lsr-repack",
+            "tool": "build_lsr_workbook",
+            "args": {
+                "attachment_id": attachment["attachment_id"],
+                "decisions": decisions,
+                "confirmed_data": {},
+            },
+        },
+        {
+            "session_id": "session-1",
+            "question": "Собери ЛСР",
+            "attachment_id": attachment["attachment_id"],
+            "dataset_ids": [],
+            "project_id": None,
+            "profile_revision_id": "profile-1",
+            "model_identity": "qwen-local",
+            "model_preset": "qwen-9b",
+        },
+        None,
+    )
+
+    assert result.get("code") != "WORKBOOK_GENERATION_FAILED"
+    assert result["status"] == "complete"
+
+
+@pytest.mark.asyncio
 async def test_chat_workbook_executor_rejects_model_dataset_outside_chat_scope(
     tmp_path, monkeypatch
 ):
@@ -1603,10 +1868,14 @@ def test_grounded_application_never_uses_answer_cache_or_code_no_data_final() ->
 
     assert "if document_grounding_enabled:" in source
     assert "use_semantic_cache = False" in source
-    assert '"empty_retrieval_model_first_v1"' in source
+    assert "stamp_empty_retrieval(" in source
     assert "empty_scoped_retrieval_no_data_v1" not in source
     assert "if not chunks and effective_dataset_filter:" not in source
     assert "if not chunks and target_file_ref" not in source
+    helpers = inspect.getsource(service.stamp_empty_retrieval) + inspect.getsource(
+        service.finalize_actual_retrieval_emptiness
+    )
+    assert '"empty_retrieval_model_first_v1"' in helpers
 
 
 def test_plain_ai_scope_removes_only_document_evidence_tools() -> None:
@@ -2881,6 +3150,146 @@ def test_workbook_projection_keeps_bounded_conflict_diagnostics():
     assert safe["status"] == "partial"
     assert safe["missing"] == ["row:2:unit_conflict"]
     assert safe["blockers"] == []
+
+
+from proxy.services.attachment_source_catalog_service import (
+    AttachmentSourceCatalog,
+    CatalogRow,
+)
+from proxy.services.chat_evidence_application_service import sheet_pass_should_run
+
+
+def _work_catalog(count: int) -> AttachmentSourceCatalog:
+    rows = tuple(
+        CatalogRow(
+            locator=f"S!R{index}",
+            sheet="S",
+            excel_row=index,
+            values=("работа", "шт", "1"),
+            line=f"S!R{index} | работа | шт | 1",
+            numbers=(1.0,),
+            row_classification="work",
+        )
+        for index in range(2, 2 + count)
+    )
+    return AttachmentSourceCatalog(
+        original_name="demo.xlsx",
+        sheets=(("S", count),),
+        rows=rows,
+    )
+
+
+def test_sheet_pass_runs_for_small_and_large_tabular_catalogs() -> None:
+    small = _work_catalog(9)
+    large = _work_catalog(35)
+    assert sheet_pass_should_run(small, tabular_estimator_bound=True, model_driven=True) is True
+    assert sheet_pass_should_run(large, tabular_estimator_bound=True, model_driven=True) is True
+    assert sheet_pass_should_run(small, tabular_estimator_bound=True, model_driven=False) is False
+
+
+def test_model_rag_result_reads_row_role_and_cited_conversion() -> None:
+    answer = (
+        "| source_row | row_role | work_row | title | unit | quantity | conversion_factor | conversion_source | open_gap | norm_code |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| СКС!R2 | work | СКС!R2 | Монтаж | упак | 2 | 12 | упаковка 12 шт |  | 10-06-024-01 |\n"
+        "| СКС!R3 | resource | СКС!R2 | Кабель | м | 40 |  |  |  |  |\n"
+    )
+    parsed = service.parse_model_rag_result(answer)
+    assert parsed is not None
+    _text, rows = parsed
+    assert rows[0]["row_role"] == "work"
+    assert rows[0]["conversion_factor"] == 12
+    assert rows[0]["conversion_source"] == "упаковка 12 шт"
+    assert rows[1]["row_role"] == "resource"
+    assert rows[1]["work_row"] == "СКС!R2"
+    assert "open_gap" not in rows[0] or not rows[0].get("open_gap")
+
+
+def test_sheet_pass_source_keeps_model_rows_and_does_not_rewrite() -> None:
+    source = inspect.getsource(service._execute_chat_evidence_application)
+    start = source.index("async def _sheet_pass_llm")
+    end = source.index("sheet_pass_done = True")
+    loop = source[start:end]
+    assert "apply_verifier_table" not in loop
+    assert "lsr_verifier_instruction()" not in loop
+    assert "mark_research_exhausted" not in loop
+    assert "merge_model_rag_rows" in loop
+    assert "cited_source_row_keys" in loop
+    assert "record_search_cache" in loop
+    assert "research_job_service.pause" in loop
+
+
+def test_empty_retrieval_is_not_stamped_while_awaiting_model_queries() -> None:
+    trace: dict = {}
+    service.stamp_empty_retrieval(trace, model_driven=True, chunks=[])
+    assert "empty_retrieval" not in trace
+    service.stamp_empty_retrieval(trace, model_driven=False, chunks=[])
+    assert trace["empty_retrieval"]["schema"] == "empty_retrieval_model_first_v1"
+    service.finalize_actual_retrieval_emptiness(
+        trace,
+        evidence_count=4,
+        searches_executed=2,
+        search_hits=4,
+    )
+    assert "empty_retrieval" not in trace
+
+
+def test_actual_model_and_search_calls_are_recorded() -> None:
+    trace: dict = {}
+    service.append_actual_model_call(
+        trace,
+        purpose="model_rag_sheet_queries",
+        finish_reason="stop",
+        completion_tokens=12,
+    )
+    service.append_actual_search(trace, cached=False, hit_count=6)
+    service.append_actual_search(trace, cached=True, hit_count=6)
+    bucket = trace["actual_model_calls"]
+    assert bucket["schema"] == service.ACTUAL_MODEL_CALLS_SCHEMA
+    assert bucket["calls"][0]["purpose"] == "model_rag_sheet_queries"
+    assert bucket["search_executions"] == 1
+    assert bucket["search_cache_hits"] == 1
+    assert bucket["search_hits"] == 12
+
+
+def test_packaged_notice_uses_three_readiness_dimensions() -> None:
+    notice = service.format_lsr_packaged_notice(
+        filename="LSR.xlsx",
+        status="partial",
+        pricing_status="priced_partial",
+        norms_status="model_authored",
+        missing=["price_missing:10-01-001-01"],
+        readiness=service.build_lsr_result_readiness(
+            packaged=True,
+            rows=[{"source_row": "СКС!R2", "norm_code": "", "norm_status": "MISSING"}],
+            missing=["price_missing:10-01-001-01"],
+            pricing_status="priced_partial",
+        ),
+    )
+    assert "независимую проверку" not in notice
+    assert "Файл:" in notice
+    assert "Нормы:" in notice
+    assert "Цены:" in notice
+
+
+def test_restore_query_hits_from_cache_skips_search_payload() -> None:
+    hits = service.restore_query_hits_from_cache(
+        ["монтаж шкафа", "нет в кэше"],
+        {
+            "монтаж шкафа": [
+                {
+                    "content": "карточка",
+                    "doc_id": "c1",
+                    "doc_name": "ФСНБ",
+                    "score": 0.9,
+                    "meta": {"norm_code": "10-01-001-01"},
+                }
+            ]
+        },
+    )
+    assert len(hits) == 1
+    assert hits[0][0] == "монтаж шкафа"
+    assert hits[0][1][0].content == "карточка"
 
 
 async def _async_value(value):

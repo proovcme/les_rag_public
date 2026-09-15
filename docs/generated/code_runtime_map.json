@@ -1099,6 +1099,8 @@
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/lsr_assembly_service.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
+        "proxy/services/lsr_result_readiness_service.py",
+        "proxy/services/lsr_source_coverage_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/mail_push_service.py",
         "proxy/services/mail_query_service.py",
@@ -1647,7 +1649,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4304,
+      "lines": 4499,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -1685,6 +1687,7 @@
         "proxy/services/les_md_service.py",
         "proxy/services/lexical_index_service.py",
         "proxy/services/llm_transport_profile_service.py",
+        "proxy/services/lsr_result_readiness_service.py",
         "proxy/services/memory_port.py",
         "proxy/services/memory_service.py",
         "proxy/services/model_capability_service.py",
@@ -1716,6 +1719,7 @@
         "proxy/services/tool_registry_service.py",
         "proxy/services/trusted_executor_service.py",
         "proxy/services/version_service.py",
+        "proxy/services/workbook_research_job_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
         "proxy/smeta_core/document_workflow.py",
@@ -2526,6 +2530,8 @@
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/lsr_assembly_service.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
+        "proxy/services/lsr_result_readiness_service.py",
+        "proxy/services/lsr_source_coverage_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/mail_push_service.py",
         "proxy/services/mail_query_service.py",
@@ -2824,7 +2830,8 @@
     {
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
-        "tests/test_attachment_source_catalog_service.py"
+        "tests/test_attachment_source_catalog_service.py",
+        "tests/test_chat_evidence_application_service.py"
       ],
       "lines": 692,
       "module": "proxy.services.attachment_source_catalog_service",
@@ -3050,7 +3057,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 6899,
+      "lines": 7429,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3074,6 +3081,7 @@
         "proxy/services/lexical_index_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
+        "proxy/services/lsr_result_readiness_service.py",
         "proxy/services/memory_port.py",
         "proxy/services/model_connection_contracts.py",
         "proxy/services/model_execution_preset_service.py",
@@ -4683,9 +4691,10 @@
     {
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
         "tests/test_lsr_norm_quality_research_reopen.py"
       ],
-      "lines": 1915,
+      "lines": 1935,
       "module": "proxy.services.lsr_norm_quality_gate_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4698,10 +4707,43 @@
     },
     {
       "inbound": [
+        "proxy/routers/chat.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "tests/test_lsr_result_readiness_service.py"
+      ],
+      "lines": 441,
+      "module": "proxy.services.lsr_result_readiness_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py",
+        "proxy/services/lsr_source_coverage_service.py"
+      ],
+      "path": "proxy/services/lsr_result_readiness_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/services/lsr_result_readiness_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
+        "proxy/services/workbook_research_job_service.py"
+      ],
+      "lines": 240,
+      "module": "proxy.services.lsr_source_coverage_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/lsr_source_coverage_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
         "proxy/services/workbook_tool_service.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 201,
+      "lines": 264,
       "module": "proxy.services.lsr_workbook_adapter_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4919,7 +4961,7 @@
         "proxy/services/model_connection_resolver_service.py",
         "tests/test_model_capability_service.py"
       ],
-      "lines": 395,
+      "lines": 510,
       "module": "proxy.services.model_capability_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5296,7 +5338,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 517,
+      "lines": 526,
       "module": "proxy.services.openai_compatible_transport_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6089,9 +6131,10 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_rim_session_xlsx.py",
         "tests/test_rim_trace_xlsx.py",
-        "tests/test_smeta_core.py"
+        "tests/test_smeta_core.py",
+        "tests/test_workbook_tool_service.py"
       ],
-      "lines": 822,
+      "lines": 1440,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6099,6 +6142,8 @@
         "proxy/services/estimate_math_service.py",
         "proxy/services/fsem_machinist_service.py",
         "proxy/services/gesn_service.py",
+        "proxy/services/lsr_norm_quality_gate_service.py",
+        "proxy/services/lsr_source_coverage_service.py",
         "proxy/services/nr_sp_service.py",
         "proxy/smeta_core/integrity.py",
         "proxy/smeta_core/resource_normalizer.py"
@@ -7265,14 +7310,17 @@
     },
     {
       "inbound": [
-        "proxy/services/chat_evidence_application_service.py"
+        "proxy/routers/chat.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 323,
+      "lines": 627,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/config.py",
-        "proxy/services/__init__.py"
+        "proxy/services/__init__.py",
+        "proxy/services/lsr_source_coverage_service.py"
       ],
       "path": "proxy/services/workbook_research_job_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -7286,7 +7334,7 @@
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 478,
+      "lines": 505,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8157,7 +8205,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 5038,
+      "lines": 5328,
       "module": "sovushka.pages.chat",
       "outbound": [
         "proxy/services/kot_service.py",
@@ -9183,10 +9231,11 @@
     },
     {
       "inbound": [],
-      "lines": 2887,
+      "lines": 3296,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
+        "proxy/services/attachment_source_catalog_service.py",
         "proxy/services/canonical_route_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/chat_evidence_application_service.py",
@@ -10826,12 +10875,23 @@
     },
     {
       "inbound": [],
-      "lines": 374,
+      "lines": 387,
       "module": "tests.test_lsr_norm_quality_research_reopen",
       "outbound": [
         "proxy/services/lsr_norm_quality_gate_service.py"
       ],
       "path": "tests/test_lsr_norm_quality_research_reopen.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 68,
+      "module": "tests.test_lsr_result_readiness_service",
+      "outbound": [
+        "proxy/services/lsr_result_readiness_service.py"
+      ],
+      "path": "tests/test_lsr_result_readiness_service.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -11059,7 +11119,7 @@
     },
     {
       "inbound": [],
-      "lines": 326,
+      "lines": 423,
       "module": "tests.test_model_capability_service",
       "outbound": [
         "proxy/services/model_capability_service.py",
@@ -11072,7 +11132,7 @@
     },
     {
       "inbound": [],
-      "lines": 318,
+      "lines": 323,
       "module": "tests.test_model_connection_chat_integration",
       "outbound": [
         "proxy/routers/chat.py",
@@ -11425,7 +11485,7 @@
     },
     {
       "inbound": [],
-      "lines": 454,
+      "lines": 522,
       "module": "tests.test_openai_compatible_transport_service",
       "outbound": [
         "proxy/services/model_connection_contracts.py",
@@ -12438,7 +12498,7 @@
     },
     {
       "inbound": [],
-      "lines": 394,
+      "lines": 649,
       "module": "tests.test_rim_lsr_trace_service",
       "outbound": [
         "proxy/services/gesn_service.py",
@@ -12698,7 +12758,7 @@
     },
     {
       "inbound": [],
-      "lines": 129,
+      "lines": 131,
       "module": "tests.test_scope_clarification_v22",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13247,7 +13307,7 @@
     },
     {
       "inbound": [],
-      "lines": 1116,
+      "lines": 1163,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -14051,7 +14111,18 @@
     },
     {
       "inbound": [],
-      "lines": 88,
+      "lines": 94,
+      "module": "tests.test_workbook_research_job_service",
+      "outbound": [
+        "proxy/services/workbook_research_job_service.py"
+      ],
+      "path": "tests/test_workbook_research_job_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 94,
       "module": "tests.test_workbook_tool_contracts",
       "outbound": [
         "proxy/services/chat_profile_service.py",
@@ -14064,12 +14135,13 @@
     },
     {
       "inbound": [],
-      "lines": 432,
+      "lines": 554,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
         "proxy/services/artifact_revision_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
         "proxy/services/structured_extract.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py"
@@ -16827,6 +16899,18 @@
       "source": "proxy/routers/chat_history.py"
     },
     {
+      "handler": "patch_lsr_rows",
+      "method": "POST",
+      "path": "/api/chat/patch-lsr-rows",
+      "source": "proxy/routers/chat.py"
+    },
+    {
+      "handler": "repack_lsr_without_model",
+      "method": "POST",
+      "path": "/api/chat/repack-lsr",
+      "source": "proxy/routers/chat.py"
+    },
+    {
       "handler": "get_chat_sessions",
       "method": "GET",
       "path": "/api/chat/sessions",
@@ -18603,6 +18687,18 @@
       "source": "proxy/routers/runtime.py"
     },
     {
+      "handler": "get_workbook_research",
+      "method": "GET",
+      "path": "/api/workbook-research/{job_id}",
+      "source": "proxy/routers/chat.py"
+    },
+    {
+      "handler": "pause_workbook_research",
+      "method": "POST",
+      "path": "/api/workbook-research/{job_id}/pause",
+      "source": "proxy/routers/chat.py"
+    },
+    {
       "handler": "chat_completions",
       "method": "POST",
       "path": "/v1/chat/completions",
@@ -18649,12 +18745,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 354,
-    "registered_api_routes": 332,
+    "product_reachable": 356,
+    "registered_api_routes": 336,
     "runtime_support": 11,
-    "test_or_tool_only": 631,
-    "tracked_python_files": 997,
-    "tracked_python_lines": 319276
+    "test_or_tool_only": 633,
+    "tracked_python_files": 1001,
+    "tracked_python_lines": 323314
   },
   "warnings": []
 }

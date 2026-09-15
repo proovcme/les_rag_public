@@ -217,6 +217,10 @@ def test_result_instruction_separates_missing_norm_from_missing_price() -> None:
     instruction = lsr_result_table_instruction()
     assert "MISSING означает, что norm_code не выбран" in instruction
     assert "Отсутствие цены здесь не оценивай" in instruction
+    assert "row_role" in instruction
+    assert "work_row" in instruction
+    assert "conversion_source" in instruction
+    assert "open_gap" in instruction
 
 
 def test_result_instruction_preserves_gapped_pdf_locators() -> None:

@@ -47,7 +47,21 @@ def test_rim_trace_from_gesn_seed_reproduces_gold_position():
     assert rows["sp"]["source"] == "Пр/774"
 
 
-def test_visible_rows_accept_colon_prefixed_norm_codes():
+def test_visible_rows_accept_colon_prefixed_norm_codes(monkeypatch):
+    from proxy.services import gesn_service
+
+    monkeypatch.setattr(
+        gesn_service,
+        "get_norm",
+        lambda *_args, **_kwargs: {
+            "code": "ГЭСНм08-03-575-01",
+            "name": "Монтаж прибора или аппарата",
+            "unit": "шт",
+            "resources": [],
+            "nr_pct": 0,
+            "sp_pct": 0,
+        },
+    )
     trace = build_lsr_trace_from_visible_rows([
         {
             "basis": "ГЭСНм:08-03-575-01",
@@ -63,7 +77,32 @@ def test_visible_rows_accept_colon_prefixed_norm_codes():
     assert trace["sections"][0]["positions"][0]["code"] == "ГЭСНм08-03-575-01"
 
 
-def test_visible_rows_accept_engineering_count_unit_aliases():
+def test_visible_rows_accept_engineering_count_unit_aliases(monkeypatch):
+    from proxy.services import gesn_service
+
+    catalog = {
+        "ГЭСНм08-03-575-01": {
+            "code": "ГЭСНм08-03-575-01",
+            "name": "Установка электротехнического аппарата",
+            "unit": "шт",
+            "resources": [],
+            "nr_pct": 0,
+            "sp_pct": 0,
+        },
+        "ГЭСН17-01-010-01": {
+            "code": "ГЭСН17-01-010-01",
+            "name": "Установка ревизионных люков",
+            "unit": "100 шт",
+            "resources": [],
+            "nr_pct": 0,
+            "sp_pct": 0,
+        },
+    }
+    monkeypatch.setattr(
+        gesn_service,
+        "get_norm",
+        lambda code, *args, **kwargs: catalog.get(str(code or "")),
+    )
     trace = build_lsr_trace_from_visible_rows([
         {
             "basis": "ГЭСНм:08-03-575-01",
@@ -87,27 +126,51 @@ def test_visible_rows_accept_engineering_count_unit_aliases():
     assert trace["sections"][0]["positions"][1]["code"] == "ГЭСН17-01-010-01"
 
 
-def test_visible_rows_convert_piece_dimensions_to_area_norm_qty():
-    trace = build_lsr_trace_from_visible_rows([
+def test_visible_rows_convert_piece_dimensions_to_area_norm_qty(monkeypatch):
+    from proxy.services import gesn_service
+
+    monkeypatch.setattr(
+        gesn_service,
+        "get_norm",
+        lambda *_args, **_kwargs: {
+            "code": "ГЭСН15-01-052-01",
+            "name": "Разработка проема",
+            "unit": "100 м2",
+            "resources": [],
+            "nr_pct": 0,
+            "sp_pct": 0,
+        },
+    )
+    guessed = build_lsr_trace_from_visible_rows([
         {
+            "source_row": "PDF!R2",
             "basis": "ГЭСН:15-01-052-01",
             "title": "Разработка проема 400х400 мм",
             "unit": "шт",
             "quantity": 10,
-        },
-        {
-            "basis": "ГЭСН:15-01-059-01",
-            "title": "Монтаж ревизионного лючка 400х400 мм скрытого типа",
-            "unit": "шт",
-            "quantity": 10,
+            "row_role": "work",
         },
     ])
+    binding = guessed["row_bindings"][0]
+    assert binding["status"] == "needs_input"
+    assert binding["code"] == "ГЭСН15-01-052-01"
+    assert binding["quantity_trace"]["source_quantity"] == 10.0
 
-    assert trace["summary"]["bound_rows"] == 2
-    assert trace["row_bindings"][0]["position"]["qty"] == 0.1
-    assert trace["row_bindings"][1]["position"]["qty"] == 0.016
-    assert trace["row_bindings"][0]["quantity_trace"]["status"] == "unit_conversion"
-    assert trace["row_bindings"][1]["quantity_trace"]["status"] == "piece_area_conversion"
+    cited = build_lsr_trace_from_visible_rows([
+        {
+            "source_row": "PDF!R2",
+            "basis": "ГЭСН:15-01-052-01",
+            "title": "Разработка проема 400х400 мм",
+            "unit": "шт",
+            "quantity": 10,
+            "conversion_factor": 0.16,
+            "conversion_source": "400×400 мм = 0,16 м2",
+            "row_role": "work",
+        },
+    ])
+    assert cited["row_bindings"][0]["status"] == "bound"
+    assert cited["row_bindings"][0]["position"]["qty"] == 0.016
+    assert cited["row_bindings"][0]["quantity_trace"]["status"] == "cited_conversion_factor"
 
 
 def test_rim_trace_applies_resource_coefficients_by_kind():
@@ -354,6 +417,28 @@ def test_lsr_trace_from_visible_rows_builds_priced_trace_from_selected_norms():
     assert lsr["sections"][0]["section"] == "Кровля"
 
 
+def test_terminal_exact_status_prices_without_independent_verifier():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "basis": "ГЭСН 12-01-034-02",
+                "title": "Устройство обрешетки",
+                "quantity": "61",
+                "unit": "м2",
+                "section": "Кровля",
+                "norm_status": "EXACT",
+            }
+        ],
+        name="Видимые строки",
+    )
+
+    assert lsr["summary"]["result_status"] == "priced_final"
+    assert lsr["summary"]["norms_status"] == "model_norms_selected"
+    assert lsr["summary"]["total"] == 11813.04
+    assert lsr["row_bindings"][0]["status"] == "bound"
+    assert lsr["row_bindings"][0]["quality_gate"] == "not_run"
+
+
 def test_lsr_trace_from_visible_rows_keeps_unbound_rows_out_of_priced_final():
     lsr = build_lsr_trace_from_visible_rows(
         [
@@ -365,7 +450,7 @@ def test_lsr_trace_from_visible_rows_keeps_unbound_rows_out_of_priced_final():
     assert lsr["summary"]["result_status"] == "priced_partial"
     assert lsr["summary"]["bound_rows"] == 1
     assert lsr["summary"]["unbound_rows"] == 1
-    assert lsr["row_bindings"][1]["status"] == "norm_selection_required"
+    assert lsr["row_bindings"][1]["status"] == "unresolved"
 
 
 def test_unbound_lsr_placeholder_uses_blank_missing_price_not_zero():
@@ -392,3 +477,173 @@ def test_lsr_trace_from_visible_rows_does_not_bind_unknown_norm_code():
     assert lsr["summary"]["bound_rows"] == 0
     assert lsr["summary"]["unbound_rows"] == 1
     assert lsr["row_bindings"][0]["status"] == "norm_not_found"
+
+
+def test_cited_packaging_converts_to_piece_norm_qty(monkeypatch):
+    from proxy.services import gesn_service
+
+    monkeypatch.setattr(
+        gesn_service,
+        "get_norm",
+        lambda *_args, **_kwargs: {
+            "code": "ГЭСНм08-03-575-01",
+            "name": "Монтаж аппарата",
+            "unit": "шт",
+            "resources": [],
+            "nr_pct": 0,
+            "sp_pct": 0,
+        },
+    )
+    bound = positions_from_visible_lsr_rows([
+        {
+            "source_row": "СКС!R2",
+            "basis": "ГЭСНм:08-03-575-01",
+            "title": "Монтаж аппарата",
+            "unit": "упак",
+            "quantity": 2,
+            "conversion_factor": 12,
+            "conversion_source": "упаковка 12 шт",
+            "row_role": "work",
+        }
+    ])
+
+    assert bound["row_bindings"][0]["status"] == "bound"
+    assert bound["positions"][0]["qty"] == 24
+    assert bound["row_bindings"][0]["quantity_trace"]["source_quantity"] == 2.0
+    assert bound["row_bindings"][0]["quantity_trace"]["status"] == "cited_conversion_factor"
+
+
+def test_cited_mass_per_meter_converts_length_to_ton_norm(monkeypatch):
+    from proxy.services import gesn_service
+
+    monkeypatch.setattr(
+        gesn_service,
+        "get_norm",
+        lambda *_args, **_kwargs: {
+            "code": "ГЭСНм08-02-409-09",
+            "name": "Прокладка кабеля",
+            "unit": "т",
+            "resources": [],
+            "nr_pct": 0,
+            "sp_pct": 0,
+        },
+    )
+    without_source = positions_from_visible_lsr_rows([
+        {
+            "source_row": "СКС!R4",
+            "basis": "ГЭСНм08-02-409-09",
+            "title": "Кабель",
+            "unit": "м",
+            "quantity": 100,
+            "row_role": "work",
+        }
+    ])
+    assert without_source["row_bindings"][0]["status"] == "needs_input"
+    assert without_source["row_bindings"][0]["code"] == "ГЭСНм08-02-409-09"
+
+    cited = positions_from_visible_lsr_rows([
+        {
+            "source_row": "СКС!R4",
+            "basis": "ГЭСНм08-02-409-09",
+            "title": "Кабель",
+            "unit": "м",
+            "quantity": 100,
+            "conversion_factor": 0.001,
+            "conversion_source": "0,001 т/м по спецификации",
+            "row_role": "work",
+        }
+    ])
+    assert cited["row_bindings"][0]["status"] == "bound"
+    assert cited["positions"][0]["qty"] == 0.1
+
+
+def test_confirmed_overlay_fixes_one_row_without_rewriting_others():
+    rows = [
+        {
+            "source_row": "A!R2",
+            "basis": "ГЭСН 12-01-034-02",
+            "title": "Обрешетка",
+            "quantity": "61",
+            "unit": "м2",
+            "row_role": "work",
+        },
+        {
+            "source_row": "A!R3",
+            "basis": "ГЭСН 12-01-034-02",
+            "title": "Обрешетка повтор",
+            "quantity": "61",
+            "unit": "м2",
+            "row_role": "work",
+        },
+    ]
+    lsr = build_lsr_trace_from_visible_rows(
+        rows,
+        confirmed_data={
+            "A!R3": {
+                "calc_quantity": 100,
+                "conversion_source": "оператор: 100 м2",
+            }
+        },
+    )
+    by_row = {str(item["row"]): item for item in lsr["row_bindings"]}
+    assert by_row["A!R2"]["position"]["qty"] == 0.61
+    assert by_row["A!R3"]["position"]["qty"] == 1.0
+    assert by_row["A!R2"]["code"] == CODE
+    assert by_row["A!R3"]["code"] == CODE
+
+
+def test_supply_row_excludes_gesn_materials_and_keeps_work_link(monkeypatch):
+    from proxy.services import gesn_service
+
+    monkeypatch.setattr(
+        gesn_service,
+        "get_norm",
+        lambda *_args, **_kwargs: {
+            "code": "ГЭСНм08-03-575-01",
+            "name": "Монтаж",
+            "unit": "шт",
+            "resources": [
+                {"kind": "labor", "name": "Монтажник", "unit": "чел.-ч", "per_unit": 1, "price": 100},
+                {"kind": "material", "name": "Аппарат из нормы", "unit": "шт", "per_unit": 1, "price": 50},
+            ],
+            "nr_pct": 0,
+            "sp_pct": 0,
+        },
+    )
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "source_row": "СКС!R2",
+                "basis": "ГЭСНм08-03-575-01",
+                "title": "Монтаж шкафа",
+                "unit": "шт",
+                "quantity": 1,
+                "row_role": "work",
+                "nr_pct": 0,
+                "sp_pct": 0,
+            },
+            {
+                "source_row": "СКС!R3",
+                "title": "Шкаф поставка",
+                "unit": "шт",
+                "quantity": 1,
+                "row_role": "material",
+                "work_row": "СКС!R2",
+                "supply_kind": "supply",
+                "confirmed_price": 1000,
+                "price_source": "счёт",
+            },
+        ]
+    )
+    work = next(
+        position
+        for section in lsr["sections"]
+        for position in section["positions"]
+        if position.get("source_row") == "СКС!R2"
+    )
+    assert not [row for row in work["rows"] if row.get("type") == "resource_material"]
+    resource = next(
+        item for item in lsr["row_bindings"] if item.get("row") == "СКС!R3"
+    )
+    assert resource["status"] == "bound"
+    assert resource["work_row"] == "СКС!R2"
