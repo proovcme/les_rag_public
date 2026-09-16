@@ -1220,7 +1220,7 @@ def structurally_complete_source_keys(rows, catalog):
     keys = cited_source_row_keys(rows, catalog)
     coverage = build_source_coverage(catalog_locators=catalog.work_locators(), rows=rows)
     invalid = {item["locator"] for item in coverage["gaps"]}
-    return [key for key in keys if key not in invalid]
+    return keys - invalid
 
 
 def adaptive_row_packet(

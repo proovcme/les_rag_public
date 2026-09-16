@@ -1,5 +1,8 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.44 / 750:** structural source completion preserves the set contract
+> used by packet progress; live-found regression covered in packet integrity tests.
+
 > **0.31.43 / 749:** packet budget leaves header space and permits 1–3 rows
 > on small output budgets. `structurally_complete_source_keys` keeps broken
 > source links pending; `sheet_pass_keep_rows` excludes unknown locators from

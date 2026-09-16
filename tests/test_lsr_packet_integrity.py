@@ -24,5 +24,7 @@ def test_broken_links_remain_pending_without_changing_model_norm():
         {'source_row': 'S!R1', 'row_role': 'work', 'work_row': 'R1', 'norm_code': 'MISSING'},
         {'source_row': 'S!R2', 'row_role': 'resource', 'work_row': 'Other!R9'},
     ]
-    assert structurally_complete_source_keys(rows, catalog) == ['S!R1']
+    complete = structurally_complete_source_keys(rows, catalog)
+    assert complete == {'S!R1'}
+    assert complete - structurally_complete_source_keys([], catalog) == {'S!R1'}
     assert rows[0]['norm_code'] == 'MISSING'

@@ -6,6 +6,11 @@
 
 ## Текущее состояние (2026-09-16)
 
+**0.31.44 / 750:** live acceptance of 749 caught a progress-set regression
+(`list - list`) before operator testing. Complete source keys now preserve
+the set contract; `test_lsr_packet_integrity` exercises the exact difference
+operation. Build 749 is not an accepted candidate. No model decisions changed.
+
 Candidate 2026-09-16: **0.31.43 / build 749**. Low-output-budget packets,
 relative source links, unknown-locator rejection and structural continuation.
 The live FreeToken cache reports 8275 token pages; restrictive preset is
@@ -14,12 +19,12 @@ remains rollback. Live acceptance and installer status are recorded separately;
 this candidate is not a public release.
 
 ```
-версия продукта (SemVer):  0.31.43
-номер сборки:              749
-версия Tauri/NSIS:         5.1.749
+версия продукта (SemVer):  0.31.44
+номер сборки:              750
+версия Tauri/NSIS:         5.1.750
 ветка разработки:          fix/local-qwen-result-parse
-dev implementation:       0.31.43 capacity-sized packets and source integrity
-задеплоено на рантайм:     overlay pending 749
+dev implementation:       0.31.44 packet progress set contract
+задеплоено на рантайм:     overlay pending 750
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
