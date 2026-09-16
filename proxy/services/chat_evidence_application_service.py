@@ -1160,9 +1160,9 @@ def sheet_pass_keep_rows(
             if catalog_row.sheet != wanted:
                 continue
         else:
-            loc = str(payload.get("source_row") or "").strip()
-            if "!" in loc and loc.split("!", 1)[0] != wanted:
-                continue
+            # Keep the raw answer in history, but a partial/unknown locator
+            # cannot become an accepted source decision or a workbook row.
+            continue
         on_sheet.append(payload)
     work_count = sum(1 for row in on_sheet if model_rag_row_kind(row) == "work")
     blocking = blocking_model_rag_result_errors(errors, work_row_count=work_count)
@@ -1213,6 +1213,16 @@ def remaining_sheet_work_locators(
     ]
 
 
+def structurally_complete_source_keys(rows, catalog):
+    """Only complete source records finish a packet; norms remain model-owned."""
+    from proxy.services.lsr_source_coverage_service import build_source_coverage
+
+    keys = cited_source_row_keys(rows, catalog)
+    coverage = build_source_coverage(catalog_locators=catalog.work_locators(), rows=rows)
+    invalid = {item["locator"] for item in coverage["gaps"]}
+    return [key for key in keys if key not in invalid]
+
+
 def adaptive_row_packet(
     remaining: Sequence[str],
     *,
@@ -1228,10 +1238,11 @@ def adaptive_row_packet(
     if not locators:
         return []
     reserve = max(1, int(generation_reserve_tokens or 0))
-    # A compact model-authored row normally needs roughly 100-140 tokens.
-    # Keep the initial 8-12 range measurable instead of hard-coding one model.
-    budget_rows = reserve // 120
-    size = min(_ROW_PACKET_MAX, max(_ROW_PACKET_MIN, budget_rows or _ROW_PACKET_TARGET))
+    # Leave room for table headers and prose, then budget complete decision
+    # rows including roles, links and provenance. Low-capacity backends must
+    # be allowed packets smaller than eight rows.
+    budget_rows = max(1, (reserve - 400) // 250)
+    size = min(_ROW_PACKET_MAX, budget_rows)
     return locators[: min(size, len(locators))]
 
 
@@ -5163,7 +5174,7 @@ async def _execute_chat_evidence_application(
                         remaining = remaining_sheet_work_locators(
                             source_catalog,
                             sheet_name,
-                            cited_source_row_keys(accumulated_rows, source_catalog),
+                            structurally_complete_source_keys(accumulated_rows, source_catalog),
                         )
                         exhausted_locators: set[str] = set()
                         packet_attempts: dict[tuple[str, ...], int] = {}
@@ -5222,7 +5233,7 @@ async def _execute_chat_evidence_application(
                                 fingerprint = tuple(packet)
                                 packet_attempts.setdefault(fingerprint, 1)
                                 inner += 1
-                                cited_before = cited_source_row_keys(
+                                cited_before = structurally_complete_source_keys(
                                     accumulated_rows, source_catalog
                                 )
                                 pass_evidence = selector_evidence_payload(
@@ -5252,7 +5263,7 @@ async def _execute_chat_evidence_application(
                                 fingerprint = tuple(packet)
                                 packet_attempts[fingerprint] = packet_attempts.get(fingerprint, 0) + 1
                                 inner += 1
-                                cited_before = cited_source_row_keys(
+                                cited_before = structurally_complete_source_keys(
                                     accumulated_rows, source_catalog
                                 )
                                 await _emit_sheet_progress(
@@ -5663,7 +5674,7 @@ async def _execute_chat_evidence_application(
                             remaining = remaining_sheet_work_locators(
                                 source_catalog,
                                 sheet_name,
-                                cited_source_row_keys(
+                                structurally_complete_source_keys(
                                     accumulated_rows, source_catalog
                                 ),
                             )
@@ -5702,7 +5713,7 @@ async def _execute_chat_evidence_application(
                                     )
                                 )
                                 held_packet = []
-                            cited_after = cited_source_row_keys(
+                            cited_after = structurally_complete_source_keys(
                                 accumulated_rows, source_catalog
                             )
                             made_progress = bool(cited_after - cited_before)
@@ -5792,7 +5803,7 @@ async def _execute_chat_evidence_application(
                         locator
                         for locator in source_catalog.work_locators()
                         if locator
-                        not in cited_source_row_keys(accumulated_rows, source_catalog)
+                        not in structurally_complete_source_keys(accumulated_rows, source_catalog)
                     ]
                     if research_job_service is not None and research_job is not None:
                         if research_cancelled or unfinished_locators:

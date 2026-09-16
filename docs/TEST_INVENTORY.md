@@ -1,5 +1,10 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+`tests/test_lsr_packet_integrity.py`: low output budgets, invalid source
+fragments and resumption of broken links without changing model norms.
+`tests/test_lsr_source_coverage_service.py`: relative work-row coordinates
+remain scoped to the source sheet and preserve explicit cross-sheet links.
+
 > **Статус: актуально.** Источник команд — `Makefile`; состав конкретных наборов
 > задают его именованные переменные. Исторические счётчики и описание прежних
 > поколений тестов перенесены в

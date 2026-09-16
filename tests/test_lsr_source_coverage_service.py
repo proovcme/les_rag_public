@@ -2,7 +2,17 @@ from proxy.services.lsr_source_coverage_service import (
     apply_confirmed_data,
     build_source_coverage,
     inferred_row_role,
+    work_row_key,
 )
+
+
+def test_relative_work_link_is_scoped_to_its_source_sheet():
+    row = {"source_row": "Sheet two!R4", "row_role": "work", "work_row": "R4"}
+    assert work_row_key(row) == "Sheet two!R4"
+    assert row["work_row"] == "R4"
+    assert build_source_coverage(catalog_locators=["Sheet two!R4"], rows=[row])["complete"]
+    assert work_row_key({**row, "work_row": "Other!R4"}) == "Other!R4"
+    assert work_row_key({**row, "work_row": "10-01-001-01"}) == "10-01-001-01"
 
 
 def test_coverage_requires_every_locator_and_work_row_link() -> None:

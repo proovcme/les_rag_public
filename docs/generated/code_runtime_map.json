@@ -3053,11 +3053,12 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_profile_runtime.py",
         "tests/test_live_workbook_acceptance_contract.py",
+        "tests/test_lsr_packet_integrity.py",
         "tests/test_notebook_study_chat_policy.py",
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 7429,
+      "lines": 7440,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3082,6 +3083,7 @@
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
         "proxy/services/lsr_result_readiness_service.py",
+        "proxy/services/lsr_source_coverage_service.py",
         "proxy/services/memory_port.py",
         "proxy/services/model_connection_contracts.py",
         "proxy/services/model_execution_preset_service.py",
@@ -4724,12 +4726,13 @@
     },
     {
       "inbound": [
+        "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_result_readiness_service.py",
         "proxy/services/rim_lsr_trace_service.py",
         "proxy/services/workbook_research_job_service.py",
         "tests/test_lsr_source_coverage_service.py"
       ],
-      "lines": 240,
+      "lines": 245,
       "module": "proxy.services.lsr_source_coverage_service",
       "outbound": [
         "proxy/__init__.py",
@@ -10889,6 +10892,17 @@
     },
     {
       "inbound": [],
+      "lines": 28,
+      "module": "tests.test_lsr_packet_integrity",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py"
+      ],
+      "path": "tests/test_lsr_packet_integrity.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 68,
       "module": "tests.test_lsr_result_readiness_service",
       "outbound": [
@@ -10911,7 +10925,7 @@
     },
     {
       "inbound": [],
-      "lines": 49,
+      "lines": 59,
       "module": "tests.test_lsr_source_coverage_service",
       "outbound": [
         "proxy/services/lsr_source_coverage_service.py"
@@ -18762,9 +18776,9 @@
     "product_reachable": 356,
     "registered_api_routes": 336,
     "runtime_support": 11,
-    "test_or_tool_only": 634,
-    "tracked_python_files": 1002,
-    "tracked_python_lines": 323502
+    "test_or_tool_only": 635,
+    "tracked_python_files": 1003,
+    "tracked_python_lines": 323556
   },
   "warnings": []
 }

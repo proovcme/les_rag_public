@@ -3304,7 +3304,7 @@ def test_sheet_pass_source_keeps_model_rows_and_does_not_rewrite() -> None:
     assert "lsr_verifier_instruction()" not in loop
     assert "mark_research_exhausted" not in loop
     assert "merge_model_rag_rows" in loop
-    assert "cited_source_row_keys" in loop
+    assert "structurally_complete_source_keys" in loop
     assert "record_search_cache" in loop
     assert "research_job_service.pause" in loop
 

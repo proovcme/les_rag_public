@@ -1,5 +1,13 @@
 # Алгоритм: движок сборки ЛСР (позиция → ресурсы → цены → НР/СП → Всего)
 
+Build 749: relative `work_row=R4` resolves against the source sheet, never
+against a norm code or an arbitrary sheet. Unknown source locators remain
+in the raw answer, but are not accepted workbook decisions. Packet sizes
+reserve 400 output tokens for headers/prose and 250 per decision row;
+structural coverage gaps remain pending for continuation. This does not
+verify, replace or choose model norms. FreeToken capacity remains observed,
+not increased from the model name alone.
+
 Связывает кирпичи сметного ценообразования в сборку **позиция-к-позиции**. 0 LLM (ADR-11).
 Финальная веха ценообразования: всё построенное сходится в один конвейер.
 

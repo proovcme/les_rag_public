@@ -1,5 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.43 / 749:** packet budget leaves header space and permits 1–3 rows
+> on small output budgets. `structurally_complete_source_keys` keeps broken
+> source links pending; `sheet_pass_keep_rows` excludes unknown locators from
+> accepted decisions while preserving raw model text. `work_row_key` resolves
+> relative R coordinates on their source sheet. Tests: `test_lsr_packet_integrity.py`.
+
 > **0.31.42 workbook overflow:** упаковка LSR не прячет XLSX, если результат
 > больше model-prompt budget. Cursor overflow отдаёт полный artifact оператору.
 

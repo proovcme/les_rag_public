@@ -78,6 +78,11 @@ def inferred_row_role(row: Mapping[str, Any]) -> str:
 def work_row_key(row: Mapping[str, Any]) -> str:
     parent = _text(row.get("work_row"))
     if parent:
+        # A bare row coordinate is relative to the source sheet, as in Excel.
+        # Never resolve across sheets or interpret a norm code as a coordinate.
+        source = _locator(row)
+        if "!" in source and parent.startswith("R") and parent[1:].isdigit():
+            return source.rsplit("!", 1)[0] + "!" + parent
         return parent
     role = inferred_row_role(row)
     if role == "work":
