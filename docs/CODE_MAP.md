@@ -1,5 +1,49 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.53 overnight SSE:** `chat_stream` detaches the already-created runner
+> immediately after a client drop and keeps a strong process-local reference.
+> The closed response neither cancels the estimate nor waits for it. UI treats
+> progress-without-final as server-side continue and polls PENDING history;
+> `claim_or_join_sheet_pass` serializes a second Continue. A proxy process
+> restart still stops process-local work.
+
+> **0.31.51 resume looks like resume:** continue bubble is not the original
+> «Собери ЛСР»; sheet-pass progress is accepted/work rows (`23/75`, leftover
+> count) with `eta_completed` for this session; ETA can seed from
+> `prior_elapsed_seconds` captured before resume bumps `updated_at`.
+> `_resume_lsr_packets` forces estimator. Live SKS/9B/`B0_DIRECT`/installer
+> remain transfer gates.
+
+> **0.31.50 resume slot:** LSR continue/repack/confirm toasts use the chat
+> widget slot; workbook files register before the draft aside. Live SKS/9B/
+> `B0_DIRECT`/installer remain transfer gates, not this build's proof.
+
+> **0.31.49 chat ETA + artifacts slot:** toast after a live LSR enters a known
+> widget so NiceGUI has a slot; remaining-time line uses completed/total.
+> Live SKS/9B/`B0_DIRECT`/installer remain transfer gates, not this build's proof.
+
+> **0.31.48 setup + queue wait:** `start_from_setup` is idempotent; wizard
+> polls faster while bootstrap is running and re-enables after 2 minutes.
+> `LES_MODEL_QUEUE_WAIT_SEC` (default 1800) is the generation-slot wait,
+> visible in the runtime registry. Live SKS/9B/`B0_DIRECT`/installer remain
+> transfer gates, not this build's proof.
+
+> **0.31.47 artifacts current file:** `sovushka/pages/chat.py` rebuilds the
+> files panel newest-workbook-first, keeps one LSR readiness card, and
+> scrolls the aside so buttons and «Готовность ЛСР» stay reachable.
+> Operator fields use Russian help, not SKS placeholders.
+
+> **0.31.46 empty search continues:** sheet-pass treats `search_sources`
+> `status=missing` (zero hits) as empty evidence, not a packet abort. Remaining
+> queries and the terminal row table still run; norms are not invented.
+> `model_search_result_blocks_packet` stops only on infrastructure
+> `blocked`/`error`.
+
+> **0.31.45 FreeToken KV ceiling:** default window is factory 35B `35000`.
+> `freetoken_cache_profile_service.max_feasible_kv` clamps rebuild so MoE min
+> and 128 MiB safety survive. ACTIVE chat probes live pages and does not
+> rebuild mid-generation; extended 35B still needs observed KV ≥ 16384.
+
 > **0.31.42 workbook overflow:** `_execute_chat_workbook_tool` при
 > `TOOL_RESULT_BUDGET_EXCEEDED` поднимает полный stored result; budget
 > workbook 500k/20k, иначе 74 строки №124 давали empty harvest.
@@ -107,8 +151,10 @@
 > возвращает все собственные `queries`; application без переписывания выполняет
 > каждый запрос через `ModelResearchToolService`: estimator использует effective
 > dedicated сметную RRF collection, прочие профили — `retrieve_chat_chunks` в
-> замороженном dataset scope. Затем та же модель получает вложение и общий
-> evidence packet и возвращает `answer + rows`. Если заголовки всех `Qn` не
+> замороженном dataset scope. Нулевые hits (`status=missing`) остаются пустой
+> группой; sheet-pass не рвёт пакет до таблицы строк. Затем та же модель
+> получает вложение и общий evidence packet и возвращает `answer + rows`. Если
+> заголовки всех `Qn` не
 > влезают в остаток окна, sheet-pass показывает влезающий префикс и продолжает
 > leftover-запросы следующим техническим пакетом; однопроходный путь честно
 > omits. Только после завершённого model
@@ -424,7 +470,8 @@
   `routers/chat.py` и `agent_router_service.py` используют `FREETOKEN_BASE_URL/MODEL`, а
   `installers/windows/start-light.ps1` не запускает второй LLM engine и оставляет query embeddings
   на Ollama `bge-m3`; `freetoken_cache_profile_service.py` согласует physical KV
-  с GUI-owned context. Локальный cross-encoder по умолчанию выключен. Все факторы видны через runtime registry Совушки.
+  с GUI-owned context, ужимает запрос до `max_feasible_kv` и по умолчанию держит
+  заводские 35000 токенов 35B. Локальный cross-encoder по умолчанию выключен. Все факторы видны через runtime registry Совушки.
 - **Sovushka UI system:** `sovushka/uikit/{tokens,components,states}.py` —
   токены, семь общих NiceGUI-примитивов, состояния и единая icon-column;
   `docs/modules/sovushka-uikit.md` — component registry и миграционный
@@ -708,7 +755,8 @@ projection под тем же alias; при rollback старый FTS восст
   пока `bootstrap.state=running`; отсутствие внешнего answer/embedding engine или Qdrant отображается
   как capability warning. `installers/windows/start-light.ps1` запрещает сетевой tokenizer lookup;
   `tools/build_tauri_app.py` встраивает exact deploy stamp, проверенные portable Python/uv и offline
-  cache точного `uv.lock`; release-builder автоматически переиспользует content-addressed cache,
+  cache точного `uv.lock`; готовый NSIS копируется из `CARGO_TARGET_DIR`, если он задан;
+  release-builder автоматически переиспользует content-addressed cache,
   а bootstrap распаковывает его bundled Python. `windows_{prepare_update,patch_release}.ps1` вместе
   с `windows-installer-hooks.nsh` создают уникальные install/state roots каждого smoke, поэтому
   ACL или частичный state прошлого запуска не влияют на следующий.

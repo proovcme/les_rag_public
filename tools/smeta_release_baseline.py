@@ -16,6 +16,7 @@ import shutil
 import sqlite3
 import tempfile
 import zipfile
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -280,7 +281,7 @@ def verify_archive(archive: Path) -> dict[str, Any]:
                         size += len(block)
                 if digest.hexdigest() != item.get("sha256") or size != int(item.get("bytes") or -1):
                     raise BaselineError(f"smeta baseline archive entry is corrupt: {relative}")
-    except (zipfile.BadZipFile, KeyError, json.JSONDecodeError) as exc:
+    except (zipfile.BadZipFile, zlib.error, KeyError, json.JSONDecodeError) as exc:
         raise BaselineError(f"invalid smeta baseline archive: {exc}") from exc
     minimum_norms = int(manifest.get("minimum_norms") or 0)
     minimum_fsem_rows = int(manifest.get("minimum_fsem_rows") or 0)

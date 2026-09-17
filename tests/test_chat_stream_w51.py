@@ -249,11 +249,89 @@ async def test_chat_stream_finishes_runner_after_client_iterator_closes(monkeypa
 
     close_task = asyncio.create_task(iterator.aclose())
     await asyncio.sleep(0)
-    assert close_task.done() is False
+    assert close_task.done() is True
     assert state["cancelled"] is False
 
     release.set()
     await close_task
+    for _ in range(40):
+        if state["completed"]:
+            break
+        await asyncio.sleep(0.05)
+    assert state["completed"] is True
+    assert state["cancelled"] is False
+
+
+def test_chat_stream_disconnect_shields_runner():
+    src = inspect.getsource(chat_router.chat_stream)
+    helper = inspect.getsource(chat_router.detach_chat_runner_after_disconnect)
+    assert "detach_chat_runner_after_disconnect" in src
+    assert "_remember_detached_chat_runner(task)" in helper
+    assert "await " not in helper
+    assert "asyncio.gather(task, return_exceptions=True)" not in src
+
+
+@pytest.mark.asyncio
+async def test_detached_chat_runner_survives_consumer_cancel():
+    started = asyncio.Event()
+    cancelled = False
+
+    async def runner():
+        nonlocal cancelled
+        started.set()
+        try:
+            await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
+    task = asyncio.create_task(runner())
+    await started.wait()
+
+    chat_router.detach_chat_runner_after_disconnect(task)
+    await asyncio.sleep(0.05)
+    assert cancelled is False
+    await task
+    assert cancelled is False
+    assert task.cancelled() is False
+
+
+@pytest.mark.asyncio
+async def test_sse_request_cancel_does_not_cancel_chat_runner(monkeypatch):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    state = {"completed": False, "cancelled": False}
+
+    async def slow_final(req, token_sink=None):
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            state["cancelled"] = True
+            raise
+        state["completed"] = True
+        return {"answer": "Смета готова", "crag_status": "VERIFIED", "sources": []}
+
+    monkeypatch.setattr(chat_router, "_run_chat", slow_final)
+    response = await chat_stream(ChatRequest(question="Собери смету"), _user=None)
+
+    async def consume():
+        async for _chunk in response.body_iterator:
+            pass
+
+    consumer = asyncio.create_task(consume())
+    await started.wait()
+    await asyncio.sleep(0)
+    consumer.cancel()
+    await asyncio.gather(consumer, return_exceptions=True)
+    await asyncio.sleep(0.05)
+    assert state["cancelled"] is False
+    assert state["completed"] is False
+    release.set()
+    for _ in range(40):
+        if state["completed"]:
+            break
+        await asyncio.sleep(0.05)
     assert state["completed"] is True
     assert state["cancelled"] is False
 

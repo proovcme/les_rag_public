@@ -1649,7 +1649,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4519,
+      "lines": 4542,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -2263,7 +2263,7 @@
         "tests/test_smeta_agent_runners.py",
         "tests/test_web_research_settings.py"
       ],
-      "lines": 585,
+      "lines": 591,
       "module": "proxy.routers.settings",
       "outbound": [
         "proxy/__init__.py",
@@ -3058,7 +3058,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 7440,
+      "lines": 7624,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4126,9 +4126,11 @@
       "inbound": [
         "proxy/routers/settings.py",
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/llm_transport_profile_service.py",
+        "sovushka/components/header.py",
         "tests/test_freetoken_provider.py"
       ],
-      "lines": 110,
+      "lines": 240,
       "module": "proxy.services.freetoken_cache_profile_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4650,12 +4652,13 @@
         "tests/test_freetoken_provider.py",
         "tests/test_llm_transport_profile_service.py"
       ],
-      "lines": 302,
+      "lines": 306,
       "module": "proxy.services.llm_transport_profile_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/services/__init__.py",
         "proxy/services/context_governor_service.py",
+        "proxy/services/freetoken_cache_profile_service.py",
         "proxy/services/model_execution_preset_service.py"
       ],
       "path": "proxy/services/llm_transport_profile_service.py",
@@ -6281,7 +6284,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_runtime_admission.py"
       ],
-      "lines": 538,
+      "lines": 553,
       "module": "proxy.services.runtime_admission",
       "outbound": [
         "proxy/__init__.py",
@@ -6298,7 +6301,7 @@
         "tests/test_candidate_acceptance_service.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 398,
+      "lines": 407,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -6316,10 +6319,11 @@
         "proxy/routers/jobs.py",
         "proxy/routers/mail.py",
         "proxy/routers/runtime.py",
+        "sovushka/pages/chat.py",
         "tests/test_indexing_eta.py",
         "tests/test_runtime_dispatcher.py"
       ],
-      "lines": 773,
+      "lines": 779,
       "module": "proxy.services.runtime_dispatcher",
       "outbound": [
         "backend/rag_config.py",
@@ -7318,7 +7322,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 630,
+      "lines": 656,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8111,10 +8115,11 @@
         "tests/test_freetoken_provider.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 932,
+      "lines": 955,
       "module": "sovushka.components.header",
       "outbound": [
         "backend/auth.py",
+        "proxy/services/freetoken_cache_profile_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "sovushka/__init__.py",
         "sovushka/components/__init__.py",
@@ -8210,11 +8215,12 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 5328,
+      "lines": 5862,
       "module": "sovushka.pages.chat",
       "outbound": [
         "proxy/services/kot_service.py",
         "proxy/services/query_router.py",
+        "proxy/services/runtime_dispatcher.py",
         "sovushka/__init__.py",
         "sovushka/answer_render.py",
         "sovushka/components/charts.py",
@@ -8603,7 +8609,7 @@
         "sovushka/uikit/__init__.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 4205,
+      "lines": 4274,
       "module": "sovushka.uikit.tokens",
       "outbound": [
         "sovushka/__init__.py",
@@ -9236,7 +9242,7 @@
     },
     {
       "inbound": [],
-      "lines": 3386,
+      "lines": 3496,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -9359,7 +9365,7 @@
     },
     {
       "inbound": [],
-      "lines": 394,
+      "lines": 472,
       "module": "tests.test_chat_stream_w51",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10488,7 +10494,7 @@
     },
     {
       "inbound": [],
-      "lines": 48,
+      "lines": 50,
       "module": "tests.test_indexing_eta",
       "outbound": [
         "proxy/services/runtime_dispatcher.py"
@@ -12685,7 +12691,7 @@
     },
     {
       "inbound": [],
-      "lines": 434,
+      "lines": 443,
       "module": "tests.test_runtime_admission",
       "outbound": [
         "proxy/services/resource_governor.py",
@@ -12697,7 +12703,7 @@
     },
     {
       "inbound": [],
-      "lines": 308,
+      "lines": 320,
       "module": "tests.test_runtime_config_registry_service",
       "outbound": [
         "proxy/services/runtime_config_registry_service.py"
@@ -13335,7 +13341,7 @@
     },
     {
       "inbound": [],
-      "lines": 1173,
+      "lines": 1348,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13615,7 +13621,7 @@
     },
     {
       "inbound": [],
-      "lines": 578,
+      "lines": 595,
       "module": "tests.test_tauri_desktop",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -14139,7 +14145,7 @@
     },
     {
       "inbound": [],
-      "lines": 108,
+      "lines": 112,
       "module": "tests.test_workbook_research_job_service",
       "outbound": [
         "proxy/services/workbook_research_job_service.py"
@@ -14789,7 +14795,7 @@
         "tools/internal_update.py",
         "tools/multiplatform_release.py"
       ],
-      "lines": 588,
+      "lines": 601,
       "module": "tools.build_tauri_app",
       "outbound": [
         "proxy/services/version_service.py",
@@ -16373,7 +16379,7 @@
         "tools/multiplatform_release.py",
         "tools/patch_release.py"
       ],
-      "lines": 502,
+      "lines": 503,
       "module": "tools.smeta_release_baseline",
       "outbound": [
         "tools/__init__.py"
@@ -18778,7 +18784,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 635,
     "tracked_python_files": 1003,
-    "tracked_python_lines": 323558
+    "tracked_python_lines": 325008
   },
   "warnings": []
 }

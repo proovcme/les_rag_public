@@ -1,5 +1,83 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-17 — Build 759: SSE не владеет жизненным циклом ночной ЛСР
+
+- **Симптом:** после overlay-рестарта / обрыва SSE чат писал красное
+  «Соединение прервано после начала сборки»; sheet-pass получал
+  `CancelledError` и pause. На 300–500 строк ночной прогон утром выглядел
+  как смерть задачи.
+- **Причина:** в 757 `event_source` ждал runner через `asyncio.gather`, поэтому
+  отмена StreamingResponse передавалась в sheet-pass. Кандидат 758 заменил
+  ожидание на `shield`, но обычное закрытие async-итератора могло ждать runner
+  до конца многоминутной сборки.
+- **Исправление:** `detach_chat_runner_after_disconnect` не ждёт task и хранит
+  сильную process-local ссылку до завершения; UI опрашивает PENDING-историю;
+  `claim_or_join_sheet_pass` сериализует повторный Continue. Явный Stop —
+  pause API. Рестарт proxy по-прежнему завершает process-local runner.
+
+## 2026-09-16 — Build 757: continue выглядел как новая сборка, без ETA
+
+- **Симптом:** после «Продолжить незакрытые строки» в чате снова «Собери ЛСР»,
+  статус `Лист «СКС» (1/1): поиск норм · 0/1`, режима Агент, строки
+  «Результат будет готов через» нет.
+- **Причина:** resume подставлял исходный вопрос в `chat_input` и слал
+  `send_chat()`; `tool_progress` нёс `completed=sheet_index-1` при одном
+  листе (всегда `0/1`); `compute_eta` молчит, пока `completed<=0`.
+- **Исправление:** пузырь «Продолжаю незакрытые…», прогресс по принятым
+  строкам, `eta_completed` этой сессии, seed ETA из `prior_elapsed_seconds`
+  до bump `updated_at`, force режима Сметчик.
+
+## 2026-09-16 — Build 756: slot-stack на «Продолжить незакрытые строки»
+
+- **Симптом:** после частичной СКС `LSRCKCotMelnika2026-09-16_1653.xlsx`
+  «Артефакты» показали English NiceGUI slot-stack. Лог:
+  `_resume_lsr_packets` → `ui.notify` в фоновом `create_task`.
+- **Причина:** click-handler запускает resume через `asyncio.create_task`;
+  слот клика уже закрыт, голый `ui.notify` читает пустой slot stack. Toast
+  падал до `send_chat`, а aside затирался текстом исключения.
+- **Исправление:** `_notify` → `notify_in_element(chat_column)` с изоляцией
+  ошибки; XLSX регистрируется до `_show_artifact`.
+
+## 2026-09-16 — Build 755: English slot-stack в «Артефактах» после СКС
+
+- **Симптом:** чат показал частичную ЛСР и `LSRCKCotMelnika2026-09-16_1653.xlsx`,
+  панель «Артефакты» — «The current slot cannot be determined…».
+- **Причина:** `send_chat` — фоновый asyncio-таск; после ответа `ui.notify`
+  «Новый файл…» читает `context.client` без слота. Исключение затирало aside.
+- **Исправление:** toast через `notify_in_element(chat_column)`; сбой панели
+  после успешного ответа не подменяет пузырь; оценка remaining-time по
+  completed/total.
+
+## 2026-09-16 — Build 754: мастер «Подготовка…» и MODEL_QUEUE_TIMEOUT 45 с
+
+- **Симптом:** кнопка запуска оставалась «Подготовка…»; второй чат во время
+  ЛСР падал `MODEL_QUEUE_TIMEOUT` через 45 с.
+- **Причина:** `start_from_setup` отклонял повтор, пока auto-boot держал
+  `LIFECYCLE_IN_FLIGHT`; слот генерации ждали только 45 с на весь sheet-pass.
+- **Исправление:** повтор запуска идемпотентен; опрос 2 с во время boot;
+  `LES_MODEL_QUEUE_WAIT_SEC=1800` в реестре.
+
+## 2026-09-16 — Build 753: новый XLSX после «Продолжить» не виден в артефактах
+
+- **Симптом:** resume собрал `…_1506.xlsx` (19/19), чат показал таблицу 15:03,
+  а панель артефактов осталась на `…_1452.xlsx` и старой карточке с 7 пробелами.
+- **Причина:** файлы дописывались вниз, карточка готовности копилась, aside
+  имел `overflow: hidden`, список файлов не входил в прокрутку.
+- **Исправление:** список файлов пересобирается newest-first («Текущий файл»),
+  одна карточка готовности, общий `sov-artifacts-scroll`, русские подписи полей.
+
+## 2026-09-16 — Build 752: «ЛСР не создана» без таблицы после пустого поиска
+
+- **Симптом:** чат 144 / job `wrj_5ca2c0f7…` вернул notice «ответ не разобран
+  как таблица строк» при `accepted_rows=0`, `missing=19`. Лог:
+  `[SHEET_PASS] search incomplete sheet=PDF`, затем `rows=0`.
+- **Причина:** `search_sources` при нуле hits ставит `status=missing`.
+  Sheet-pass трактовал любой статус ≠ `ok` как abort всего листа и не
+  вызывал модель за таблицей, хотя предыдущие запросы уже дали hits.
+- **Исправление:** `model_search_result_blocks_packet` продолжает пакет
+  на `ok`/`missing`; abort только `blocked`/ошибка RRF. Пустые hits кэшируются.
+  Notice «не таблица» больше не маскирует пустой sheet-pass.
+
 ## 2026-09-14 — Build 740 XLSX без денег из-за старого EXACT_VERIFIED замка
 
 - **Симптом:** ADR-15 terminal-result path собрал XLSX за 58,7 с (19/19 строк,

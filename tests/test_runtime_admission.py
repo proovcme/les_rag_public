@@ -76,6 +76,15 @@ async def test_generation_slot_cancellation_releases_owned_permit():
     assert semaphore._value == 1
 
 
+def test_generation_slot_timeout_default_waits_out_a_live_estimate(monkeypatch):
+    monkeypatch.delenv("LES_MODEL_QUEUE_WAIT_SEC", raising=False)
+    from proxy.services.runtime_admission import generation_slot_timeout_seconds
+
+    assert generation_slot_timeout_seconds() == 1800.0
+    monkeypatch.setenv("LES_MODEL_QUEUE_WAIT_SEC", "90")
+    assert generation_slot_timeout_seconds() == 90.0
+
+
 def test_memory_snapshot_prefers_explicit_free_memory():
     snapshot = memory_snapshot({
         "ram_total": 24.0,

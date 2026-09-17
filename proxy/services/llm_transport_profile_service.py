@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, Mapping
 
+from proxy.services.freetoken_cache_profile_service import DEFAULT_FREETOKEN_CONTEXT_TOKENS
 from proxy.services.model_execution_preset_service import (
     BackendCapacity,
     ModelExecutionPreset,
@@ -167,9 +168,12 @@ def provider_prompt_max_chars(provider: str | None) -> int:
         except ValueError:
             pass
     try:
-        context_tokens = max(2048, int(os.getenv("FREETOKEN_CONTEXT_TOKENS", "8253")))
+        context_tokens = max(
+            2048,
+            int(os.getenv("FREETOKEN_CONTEXT_TOKENS", str(DEFAULT_FREETOKEN_CONTEXT_TOKENS))),
+        )
     except ValueError:
-        context_tokens = 8253
+        context_tokens = DEFAULT_FREETOKEN_CONTEXT_TOKENS
     try:
         reserve_tokens = max(
             256,

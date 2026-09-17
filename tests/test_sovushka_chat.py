@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -32,6 +33,15 @@ from sovushka.pages.chat import (
     artifact_workbook_files,
     format_answer_timing_line,
     format_chat_request_clock,
+    format_job_ready_eta_line,
+    format_lsr_resume_display,
+    format_detached_stream_notice,
+    merge_lsr_resume_payload,
+    history_ai_is_pending,
+    completed_history_chat_payload,
+    follow_detached_chat_history,
+    is_nicegui_slot_error,
+    operator_background_ui_error,
     workbook_chat_filename,
     should_skip_chat_resource_gate,
     _preserved_attachment,
@@ -401,6 +411,7 @@ def test_chat_ui_splits_lsr_readiness_and_rebuilds_without_model():
     assert spec["coverage_tone"] == "warn"
     assert spec["norms_tone"] == "warn"
     assert spec["prices_tone"] == "warn"
+    assert spec["gap_locators"] == ["СКС!R3"]
     assert "/api/chat/repack-lsr" in source
     assert "/api/chat/patch-lsr-rows" in source
     assert "Пересобрать файл" in source
@@ -411,6 +422,170 @@ def test_chat_ui_splits_lsr_readiness_and_rebuilds_without_model():
     assert "status_badge(spec[\"coverage_label\"]" in source
     assert "text_field(" in source
     assert "result_readiness" in source
+    assert "_rebuild_files_artifacts_panel" in source
+    assert "sov-artifacts-scroll" in source
+    assert 'label="Адрес строки"' in source
+    assert "Что осталось закрыть" in source
+
+
+def test_chat_ui_shows_latest_workbook_first_and_explains_lsr_fields():
+    ordered = chat_page.order_chat_file_artifacts({
+        "/old": {"name": "LSR_1452.xlsx", "kind": "xlsx"},
+        "/new": {"name": "LSR_1506.xlsx", "kind": "xlsx"},
+        "/note": {"name": "note.pdf", "kind": "pdf"},
+    })
+    source = inspect.getsource(chat_page.build_chat)
+    tokens = Path("sovushka/uikit/tokens.py").read_text(encoding="utf-8")
+
+    assert [item[1]["name"] for item in ordered] == [
+        "LSR_1506.xlsx",
+        "LSR_1452.xlsx",
+        "note.pdf",
+    ]
+    assert ordered[0][2] == "Текущий файл"
+    assert ordered[1][2] == "Предыдущая ревизия"
+    assert "Новый файл в артефактах" in source
+    assert "Продолжаю незакрытые строки" in source
+    assert "PDF!R18, PDF!R19" in source
+    assert chat_page.LSR_REFINE_FIELD_HELP
+    assert chat_page.LSR_LOCATOR_FIELD_HELP
+    assert "notify_in_element" in source
+    assert "def _notify(" in source
+    assert "format_job_ready_eta_line" in source
+    assert "sov-chat-eta" in source
+    assert "applied_result" in source
+    assert ".sov-artifacts-scroll" in tokens
+    assert ".sov-lsr-field-help" in tokens
+    assert ".sov-file-card--current" in tokens
+    assert ".sov-chat-eta" in tokens
+
+
+def test_chat_ready_eta_and_slot_error_stay_operator_facing():
+    started = datetime(2026, 1, 1, 0, 0, 0)
+    now_ts = (started + timedelta(seconds=100)).timestamp()
+
+    assert format_job_ready_eta_line(
+        started.isoformat(), 0, 20, running=True, now_ts=now_ts
+    ) == ""
+    seeded = format_job_ready_eta_line(
+        started.isoformat(),
+        0,
+        52,
+        running=True,
+        now_ts=now_ts,
+        prior_completed=23,
+        prior_elapsed_seconds=1500,
+    )
+    assert seeded.startswith("Результат будет готов примерно через ~")
+    line = format_job_ready_eta_line(
+        started.isoformat(), 5, 20, running=True, now_ts=now_ts
+    )
+    assert line.startswith("Результат будет готов примерно через ~")
+    assert format_lsr_resume_display(
+        {"remaining_locators": ["СКС!R3"] * 52, "catalog_work_count": 75}
+    ) == (
+        "Продолжаю незакрытые строки: осталось 52, уже принято 23. "
+        "Поиск по принятым решениям не повторяется."
+    )
+    merged = merge_lsr_resume_payload(
+        {"job_id": "wrj_1", "question": "Собери ЛСР"},
+        {"remaining_locators": ["СКС!R4"], "catalog_work_count": 75},
+    )
+    assert merged["remaining_locators"] == ["СКС!R4"]
+    assert merged["catalog_work_count"] == 75
+    assert is_nicegui_slot_error(
+        "The current slot cannot be determined because the slot stack for this task is empty."
+    )
+    assert "Файл собран" in operator_background_ui_error(
+        "The current slot cannot be determined because the slot stack for this task is empty."
+    )
+    assert operator_background_ui_error("disk full") == "disk full"
+    chat_src = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+    resume_src = chat_src.split("async def _resume_lsr_packets", 1)[1].split(
+        "async def _refine_lsr_rows", 1
+    )[0]
+    assert "ui.notify(" not in resume_src
+    assert "_notify(" in resume_src
+    assert "Продолжаю незакрытые строки" in resume_src
+    assert "force_mode=\"estimator\"" in resume_src
+    assert "display_question=" in resume_src
+    assert "await send_chat()" not in resume_src
+    assert "chat_input.value = question" not in resume_src
+    assert "def _notify(" in chat_src
+    assert "except Exception as notify_exc:" in chat_src
+    apply_src = chat_src.split("def _apply_chat_result", 1)[1].split("stream_state =", 1)[0]
+    register_at = apply_src.find("_register_artifact_downloads(meta)")
+    live_at = apply_src.find("_render_smeta_live_rows(final=True)")
+    assert register_at != -1 and live_at != -1 and register_at < live_at
+    assert "Соединение прервано после начала сборки" not in chat_src
+    assert "format_detached_stream_notice" in chat_src
+    assert "follow_detached_chat_history" in chat_src
+    assert "history_ai_is_pending" in chat_src
+
+
+def test_overnight_sse_drop_is_not_a_job_death():
+    notice = format_detached_stream_notice()
+    source = inspect.getsource(chat_page.build_chat)
+
+    assert "сборка на сервере продолжается" in notice
+    assert "Не нажимайте «Продолжить»" in notice
+    assert "format_detached_stream_notice" in source
+    assert "follow_detached_chat_history" in source
+    assert "Соединение прервано после начала сборки" not in source
+    assert history_ai_is_pending({"role": "ai", "crag": "PENDING", "text": ""}) is True
+    assert history_ai_is_pending({
+        "role": "ai",
+        "crag": "UNVALIDATED",
+        "text": "готово",
+    }) is False
+    assert completed_history_chat_payload([
+        {"role": "user", "text": "Собери ЛСР"},
+        {"role": "ai", "crag": "PENDING", "text": ""},
+    ]) is None
+    done = completed_history_chat_payload([
+        {"role": "user", "text": "Собери ЛСР"},
+        {
+            "role": "ai",
+            "text": "ЛСР собрана",
+            "crag": "UNVALIDATED",
+            "meta": {"artifact": {"filename": "LSR.xlsx"}},
+        },
+    ])
+    assert done is not None
+    assert done["answer"] == "ЛСР собрана"
+    assert done["artifact"]["filename"] == "LSR.xlsx"
+
+
+@pytest.mark.asyncio
+async def test_follow_detached_chat_history_waits_out_pending():
+    calls = {"n": 0}
+
+    async def fetch():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return [
+                {"role": "user", "text": "Собери ЛСР"},
+                {"role": "ai", "text": "", "crag": "PENDING"},
+            ]
+        return [
+            {"role": "user", "text": "Собери ЛСР"},
+            {
+                "role": "ai",
+                "text": "ЛСР собрана",
+                "crag": "UNVALIDATED",
+                "meta": {"artifact": {"filename": "LSR.xlsx"}},
+            },
+        ]
+
+    payload = await follow_detached_chat_history(
+        fetch_history=fetch,
+        interval_sec=0,
+        timeout_sec=10,
+    )
+    assert payload is not None
+    assert payload["answer"] == "ЛСР собрана"
+    assert payload["artifact"]["filename"] == "LSR.xlsx"
+    assert calls["n"] == 3
 
 
 def test_chat_ui_mode_guidance_is_compact_and_input_focused():

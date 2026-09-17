@@ -560,7 +560,8 @@ heartbeat, текущий регион/период или сборник/отд
 - `tests/test_smeta_prompt_freedom.py` — отсутствие объектных якорей и скрытого selector.
 - `tests/test_prompt_registry_service.py` — загрузка полного canonical skill и prompt registry.
 - `tests/test_specification_to_bor_contract.py` — model-owned декомпозиция и quantity trace.
-- `tests/test_smeta_release_baseline.py` — SHA/count/integrity, clean provision и запрет overwrite.
+- `tests/test_smeta_release_baseline.py` — SHA/count/integrity, clean provision, запрет overwrite
+  и единый `BaselineError` для повреждённого ZIP, включая ошибку распаковки zlib.
 - `tests/test_installer_windows.py` — baseline в bootstrap и обязательная Windows-smoke проверка.
 - `tools/smeta_document_live_smoke.py` — реальная ВОР, выбранная модель, отключённый fallback и
   обязательный ненулевой XLSX; `--only-row` оставлен для диагностики tool-контракта.

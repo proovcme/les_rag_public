@@ -77,6 +77,21 @@ def chat_swap_relief_free_gb() -> float:
     return _env_float("LES_CHAT_SWAP_RELIEF_FREE_GB", 5.0)
 
 
+def generation_slot_timeout_seconds() -> float:
+    """How long a second chat waits while the model is already generating.
+
+    The slot is held for the whole estimator pass, so a 45s wait aborted the
+    next operator request during a live LSR. Default is 30 minutes and is
+    visible in the runtime registry.
+    """
+
+    raw = os.getenv("LES_MODEL_QUEUE_WAIT_SEC", "1800")
+    try:
+        return max(1.0, float(raw))
+    except (TypeError, ValueError):
+        return 1800.0
+
+
 def chat_block_active_jobs() -> bool:
     return _env_bool("LES_CHAT_BLOCK_ACTIVE_JOBS", True)
 

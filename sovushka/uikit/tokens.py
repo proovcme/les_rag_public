@@ -662,6 +662,68 @@ html {
   backdrop-filter: none;
 }
 
+.sov-app-content .sov-artifacts-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sov-ui-space-3);
+}
+
+.sov-app-content .sov-artifacts-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sov-app-content .sov-artifacts-scroll .sov-artifacts-body {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.sov-file-card--current {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border)) !important;
+}
+
+.sov-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--sov-ui-font-size-meta);
+}
+
+.sov-file-badge {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.3;
+}
+
+.sov-lsr-actions {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-panel);
+  padding-top: var(--sov-ui-space-1);
+  padding-bottom: var(--sov-ui-space-2);
+}
+
+.sov-lsr-field-help {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  font-weight: 400;
+  line-height: 1.45;
+  margin: 0 0 var(--sov-ui-space-2);
+}
+
+.sov-lsr-readiness .sov-ui-section-detail {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .sov-app-content .sov-chat-topbar {
   background: var(--bg-panel);
   border-bottom-color: var(--border);
@@ -1128,6 +1190,13 @@ html {
   font-family: var(--sov-ui-font-prose);
   font-size: var(--sov-ui-font-size-meta);
   line-height: 1.25;
+  margin-top: var(--sov-ui-space-2);
+}
+.sov-chat-eta {
+  color: var(--dim);
+  font-family: var(--sov-ui-font-prose);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.35;
   margin-top: var(--sov-ui-space-2);
 }
 .sov-answer-feedback {

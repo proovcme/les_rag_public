@@ -20,7 +20,10 @@ from proxy.local_model_registry import (
     LOCAL_MLX_MODEL_CHOICES,
 )
 from proxy.services.llm_transport_profile_service import provider_prompt_max_chars
-from proxy.services.freetoken_cache_profile_service import reconcile_freetoken_cache
+from proxy.services.freetoken_cache_profile_service import (
+    DEFAULT_FREETOKEN_CONTEXT_TOKENS,
+    reconcile_freetoken_cache,
+)
 from proxy.services.runtime_config_registry_service import (
     RuntimeConfigRegistryError,
     registry_snapshot,
@@ -295,7 +298,10 @@ def _env_bool(name: str, default: str = "false") -> bool:
 def _provider_settings_payload() -> dict[str, object]:
     active = os.getenv("LES_LLM_PROVIDER", "mlx")
     freetoken_base = os.getenv("FREETOKEN_BASE_URL", "http://127.0.0.1:1919/v1")
-    freetoken_context = int(os.getenv("FREETOKEN_CONTEXT_TOKENS", "8253") or "8253")
+    freetoken_context = int(
+        os.getenv("FREETOKEN_CONTEXT_TOKENS", str(DEFAULT_FREETOKEN_CONTEXT_TOKENS))
+        or DEFAULT_FREETOKEN_CONTEXT_TOKENS
+    )
     cache = (
         reconcile_freetoken_cache(freetoken_base, freetoken_context)
         if active.strip().casefold() == "freetoken"

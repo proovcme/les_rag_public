@@ -14,10 +14,16 @@ from typing import Any, Callable
 
 
 def _fmt_dur(seconds: float) -> str:
-    """Секунды → человекочитаемая длительность («~45с», «~12м», «~1ч 20м»)."""
+    """Секунды → человекочитаемая длительность («~45с», «~12м», «~1ч 20м», «~1д 2ч»)."""
     s = int(max(0, seconds))
     if s < 90:
         return f"~{s}с"
+    if s >= 86400:
+        days = s // 86400
+        hours = (s % 86400) // 3600
+        if hours:
+            return f"~{days}д {hours}ч"
+        return f"~{days}д"
     m = s // 60
     if m < 90:
         return f"~{m}м"

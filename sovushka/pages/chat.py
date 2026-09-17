@@ -193,6 +193,207 @@ CHAT_MODE_GUIDANCE = {
 }
 
 
+def is_nicegui_slot_error(exc: BaseException | str) -> bool:
+    """True when NiceGUI tried to create widgets from a background send/SSE task."""
+
+    text = str(exc)
+    return "slot stack" in text or "current slot cannot be determined" in text
+
+
+def operator_background_ui_error(detail: str) -> str:
+    """Russian operator text; never dump the NiceGUI slot-stack English traceback."""
+
+    if is_nicegui_slot_error(detail):
+        return (
+            "Файл собран, но панель «Артефакты» не обновилась. "
+            "Откройте историю диалога — текущий XLSX там."
+        )
+    return str(detail or "").strip()
+
+
+def format_job_ready_eta_line(
+    started_at: Any,
+    completed: Any,
+    total: Any,
+    *,
+    running: bool = True,
+    now_ts: float | None = None,
+    prior_completed: Any = 0,
+    prior_elapsed_seconds: Any = 0,
+) -> str:
+    """Approximate remaining time from completed/total.
+
+    Empty until the first unit of *this* run finishes, unless a prior packet
+    rate is supplied so resume can show an estimate immediately.
+    """
+
+    from proxy.services.runtime_dispatcher import compute_eta
+
+    try:
+        done = int(completed or 0)
+        all_n = int(total or 0)
+        prior_done = int(prior_completed or 0)
+        prior_elapsed = float(prior_elapsed_seconds or 0)
+    except (TypeError, ValueError):
+        return ""
+    eta = compute_eta(started_at, done, all_n, running=running, now_ts=now_ts)
+    text = str(eta.get("eta_text") or "").strip()
+    if not text and running and done <= 0 and all_n > 0 and prior_done > 0 and prior_elapsed > 0:
+        stamp = now_ts if now_ts is not None else time.time()
+        seeded_start = datetime.fromtimestamp(stamp - prior_elapsed).isoformat(timespec="seconds")
+        eta = compute_eta(
+            seeded_start,
+            prior_done,
+            prior_done + all_n,
+            running=True,
+            now_ts=stamp,
+        )
+        text = str(eta.get("eta_text") or "").strip()
+    if not text:
+        return ""
+    return f"Результат будет готов примерно через {text}"
+
+
+def format_lsr_resume_display(resume: Any) -> str:
+    """User-visible continue line: leftover/accepted counts, not the original prompt."""
+
+    payload = resume if isinstance(resume, dict) else {}
+    remaining = [
+        str(item).strip()
+        for item in (payload.get("remaining_locators") or [])
+        if str(item).strip()
+    ]
+    try:
+        catalog_n = int(payload.get("catalog_work_count") or 0)
+    except (TypeError, ValueError):
+        catalog_n = 0
+    accepted_n = max(0, catalog_n - len(remaining)) if catalog_n else 0
+    bits = ["Продолжаю незакрытые строки"]
+    if remaining:
+        bits.append(f"осталось {len(remaining)}")
+    if accepted_n:
+        bits.append(f"уже принято {accepted_n}")
+    text = bits[0] if len(bits) == 1 else f"{bits[0]}: {', '.join(bits[1:])}"
+    return f"{text}. Поиск по принятым решениям не повторяется."
+
+
+def merge_lsr_resume_payload(resume: Any, readiness: Any = None) -> dict[str, Any]:
+    """Keep continue identity and fill leftover counts from readiness if missing."""
+
+    payload = dict(resume) if isinstance(resume, dict) else {}
+    ready = readiness if isinstance(readiness, dict) else {}
+    remaining = [
+        str(item).strip()
+        for item in (payload.get("remaining_locators") or ready.get("remaining_locators") or [])
+        if str(item).strip()
+    ]
+    try:
+        catalog_n = int(payload.get("catalog_work_count") or ready.get("catalog_work_count") or 0)
+    except (TypeError, ValueError):
+        catalog_n = 0
+    payload["remaining_locators"] = remaining
+    payload["catalog_work_count"] = catalog_n
+    return payload
+
+
+DETACHED_HISTORY_POLL_SEC = 8.0
+DETACHED_HISTORY_TIMEOUT_SEC = 36 * 3600
+
+
+def format_detached_stream_notice() -> str:
+    """Overnight-safe copy when the chat window drops SSE but the job continues."""
+
+    return (
+        "Связь с окном чата пропала, но сборка на сервере продолжается. "
+        "Не нажимайте «Продолжить», пока задача идёт. "
+        "Файл появится в этой сессии, когда сборка закончится — окно можно закрыть и открыть утром."
+    )
+
+
+def history_ai_is_pending(msg: Any) -> bool:
+    if not isinstance(msg, dict):
+        return False
+    role = str(msg.get("role") or "ai").strip().casefold()
+    if role not in {"ai", "assistant"}:
+        return False
+    crag = str(msg.get("crag") or msg.get("crag_status") or "").strip().upper()
+    return crag == "PENDING"
+
+
+def completed_history_chat_payload(messages: Any) -> dict[str, Any] | None:
+    """Latest finished AI history row (text or artifact), skipping PENDING stubs."""
+
+    rows = list(messages) if isinstance(messages, list) else []
+    for msg in reversed(rows):
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role") or "ai").strip().casefold()
+        if role not in {"ai", "assistant"}:
+            continue
+        if history_ai_is_pending(msg):
+            continue
+        text = str(msg.get("text") or msg.get("answer") or "")
+        meta = msg.get("meta") if isinstance(msg.get("meta"), dict) else {}
+        artifact = meta.get("artifact") if isinstance(meta.get("artifact"), dict) else {}
+        if not text.strip() and not artifact:
+            continue
+        return {
+            "answer": text,
+            "sources": msg.get("srcs") or msg.get("sources") or [],
+            "crag_status": msg.get("crag") or msg.get("crag_status") or "",
+            "artifact": artifact,
+            "retrieval_trace": meta.get("retrieval_trace") or {},
+            "history_id": meta.get("history_id") or msg.get("id"),
+            "query_route": meta.get("query_route") or {},
+            "evidence_summary": meta.get("evidence_summary") or {},
+            "unified_trace": meta.get("unified_trace") or meta.get("retrieval_trace") or {},
+            "blocker": meta.get("blocker") or {},
+            "total_status": meta.get("total_status") or "",
+            "source_map": meta.get("source_map") or {},
+            "source_counts": meta.get("source_counts") or {},
+            "clarifying_questions": meta.get("clarifying_questions") or [],
+            "suggested_filters": meta.get("suggested_filters") or [],
+            "class_suggestions": meta.get("class_suggestions") or [],
+            "source_excerpts": meta.get("source_excerpts") or [],
+            "scenario": meta.get("scenario") or {},
+            "answer_contract": meta.get("answer_contract") or {},
+            "answer_contract_check": meta.get("answer_contract_check") or {},
+            "workflow_plan": meta.get("workflow_plan") or {},
+            "project_inventory": meta.get("project_inventory") or {},
+            "versions": meta.get("versions") or {},
+            "cache": meta.get("cache") or "miss",
+            "validation": meta.get("validation") or {"enabled": True},
+        }
+    return None
+
+
+async def follow_detached_chat_history(
+    *,
+    fetch_history: Any,
+    interval_sec: float = DETACHED_HISTORY_POLL_SEC,
+    timeout_sec: float = DETACHED_HISTORY_TIMEOUT_SEC,
+    clock: Any = time.monotonic,
+    sleep: Any = asyncio.sleep,
+) -> dict[str, Any] | None:
+    """Wait until the PENDING history stub is replaced by a finished answer."""
+
+    deadline = float(clock()) + float(timeout_sec)
+    while float(clock()) < deadline:
+        messages = await fetch_history()
+        rows = list(messages or [])
+        if not any(history_ai_is_pending(item) for item in rows):
+            return completed_history_chat_payload(rows)
+        await sleep(interval_sec)
+    return None
+
+
+def notify_in_element(element: Any, message: str, **kwargs: Any) -> None:
+    """Toast from a background chat task: enter a known widget so the slot stack exists."""
+
+    with element:
+        ui.notify(message, **kwargs)
+
+
 def format_chat_duration_sec(value: float | int | None) -> str:
     """Human-readable duration for the answer timing line."""
 
@@ -266,6 +467,57 @@ def artifact_workbook_files(artifact: Any) -> list[dict[str, str]]:
     return files
 
 
+def order_chat_file_artifacts(entries: dict[str, dict]) -> list[tuple[str, dict, str]]:
+    """Newest workbook first so a rebuilt XLSX is visible above older revisions."""
+
+    items = list(entries.items())
+    workbooks = [
+        (url, info) for url, info in items if str(info.get("kind") or "") == "xlsx"
+    ]
+    other = [
+        (url, info) for url, info in items if str(info.get("kind") or "") != "xlsx"
+    ]
+    ordered: list[tuple[str, dict, str]] = []
+    for index, (url, info) in enumerate(reversed(workbooks)):
+        badge = "Текущий файл" if index == 0 else "Предыдущая ревизия"
+        ordered.append((url, info, badge))
+    for url, info in other:
+        ordered.append((url, info, ""))
+    return ordered
+
+
+def _readiness_locators(*groups: Any, limit: int = 16) -> list[str]:
+    seen: list[str] = []
+    for group in groups:
+        for item in group or []:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("locator") or "").strip()
+            if key and key not in seen:
+                seen.append(key)
+            if len(seen) >= limit:
+                return seen
+    return seen
+
+
+LSR_REFINE_FIELD_HELP = (
+    "Какие строки снова отдать модели. Пишите адреса через запятую, как в таблице: "
+    "PDF!R18, PDF!R19. Остальные решения не трогаются."
+)
+LSR_LOCATOR_FIELD_HELP = (
+    "Адрес одной строки, куда вносите число. Это не шифр нормы. "
+    "Пример: PDF!R8 — лист исходника PDF, строка 8."
+)
+LSR_FACTOR_FIELD_HELP = (
+    "Во сколько раз пересчитать количество, если единица исходника не совпадает "
+    "с единицей нормы. Код нормы не меняется."
+)
+LSR_SOURCE_FIELD_HELP = (
+    "Откуда взяли коэффициент: упаковка, паспорт, спецификация. "
+    "Без этой пометки перевод не принимается."
+)
+
+
 def lsr_readiness_card_spec(readiness: Any) -> dict[str, Any]:
     """Project coverage / norms / prices status for the files panel."""
 
@@ -310,6 +562,11 @@ def lsr_readiness_card_spec(readiness: Any) -> dict[str, Any]:
         "technical_complete": bool(payload.get("technical_complete")),
         "estimate_complete": bool(payload.get("estimate_complete")),
         "actions": actions,
+        "gap_locators": _readiness_locators(
+            coverage_dim.get("gaps"),
+            norms_dim.get("gaps"),
+            prices_dim.get("gaps"),
+        ),
         "gaps": [
             dict(item)
             for item in list(coverage_dim.get("gaps") or [])[:4]
@@ -1677,18 +1934,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     icon="o_close",
                     on_click=lambda: _set_artifacts_visible(False),
                 ).props('flat round dense aria-label="Скрыть артефакты"').classes("sov-icon-btn")
-            artifact_panel = ui.column().classes("sov-artifacts-body")
-            with artifact_panel:
-                _html(
-                    '<div class="sov-artifact-empty">'
-                    '<div class="sov-artifact-empty-title">Пока пусто</div>'
-                    '<div class="sov-muted">Структурированные ответы, таблицы, SVG и диаграммы появятся здесь.</div>'
-                    '</div>'
-                )
-            # Готовые ФАЙЛЫ-артефакты (сметы xlsx, документы форм): отдельная панель,
-            # её _render_result не чистит — список накапливается за сессию.
-            files_artifacts_panel = ui.column().classes("sov-files-artifacts")
-            files_artifacts_panel.set_visibility(False)
+            with ui.column().classes("sov-artifacts-scroll w-full"):
+                artifact_panel = ui.column().classes("sov-artifacts-body")
+                with artifact_panel:
+                    _html(
+                        '<div class="sov-artifact-empty">'
+                        '<div class="sov-artifact-empty-title">Пока пусто</div>'
+                        '<div class="sov-muted">Структурированные ответы, таблицы, SVG и диаграммы появятся здесь.</div>'
+                        '</div>'
+                    )
+                # Готовые ФАЙЛЫ-артефакты (сметы xlsx, документы форм): список
+                # пересобирается newest-first; карточка готовности одна на последний пакет.
+                files_artifacts_panel = ui.column().classes("sov-files-artifacts")
+                files_artifacts_panel.set_visibility(False)
 
     with ui.dialog() as advanced_dialog:
         with ui.card().classes("sov-advanced-dialog"):
@@ -3347,6 +3605,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     # ── ФАЙЛЫ-АРТЕФАКТЫ: готовые документы (смета xlsx, формы) в панели «Файлы» ──
     _file_artifacts: dict[str, dict] = {}  # url → {name, kind}
+    _lsr_card_state: dict[str, Any] = {}
+    _smeta_approval_payloads: dict[str, dict] = {}
     _smeta_approval_cards: set[str] = set()
     _smeta_locked_revisions: set[str] = set()
 
@@ -3426,38 +3686,35 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return "xlsx" if ext in ("xlsx", "xls") else ext
         return "file"
 
-    def _register_file_artifact(name: str, url: str, kind: str = "file") -> None:
-        if not url or url in _file_artifacts:
+    def _notify(message: str, **kwargs: Any) -> None:
+        """Toast from a background LSR/chat task: always enter the chat slot."""
+
+        try:
+            notify_in_element(chat_column, message, **kwargs)
+        except Exception as notify_exc:
+            add_log(f"[ЧАТ] toast: {notify_exc}")
+
+    def _register_file_artifact(
+        name: str,
+        url: str,
+        kind: str = "file",
+        *,
+        rebuild: bool = True,
+    ) -> None:
+        if not url:
             return
-        _open_artifacts()
         _file_artifacts[url] = {"name": name, "kind": kind}
-        files_artifacts_panel.set_visibility(True)
-        with files_artifacts_panel:
-            if len(_file_artifacts) == 1:
-                _html('<div class="sov-panel-title" style="margin-top:6px;">Файлы</div>')
-            icon = {"xlsx": "o_table_chart", "csv": "o_grid_on", "docx": "o_description",
-                    "image": "o_image", "pdf": "o_picture_as_pdf"}.get(kind, "o_insert_drive_file")
-            with ui.card().classes("sov-file-card"):
-                with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                    ui.icon(icon).classes("sov-file-icon")
-                    ui.label(name).classes("sov-file-name").style(
-                        "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:.72rem;"
-                    )
-                    ui.button(icon="o_visibility",
-                              on_click=lambda u=url, n=name, k=kind: _preview_file_artifact(u, n, k)
-                              ).props("flat round dense").tooltip("Открыть в панели")
-                    ui.button(icon="o_download",
-                              on_click=lambda u=url, n=name: _download_file_artifact(u, n)
-                              ).props("flat round dense").tooltip("Скачать")
+        if rebuild:
+            _rebuild_files_artifacts_panel()
 
     async def _perform_smeta_lock(approval: dict, accepted_conflict_ids: list[str]) -> None:
         revision_id = str(approval.get("mapping_revision_id") or "").strip()
         if revision_id in _smeta_locked_revisions:
-            ui.notify("Эта ревизия привязки норм уже зафиксирована", type="info")
+            _notify("Эта ревизия привязки норм уже зафиксирована", type="info")
             return
         lock_url = str(approval.get("lock_url") or "").strip()
         if not lock_url:
-            ui.notify("Ревизия привязки норм для фиксации не найдена", type="negative")
+            _notify("Ревизия привязки норм для фиксации не найдена", type="negative")
             return
         result = await api_post(lock_url, {
             "review_note": (
@@ -3467,12 +3724,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "accepted_conflict_ids": accepted_conflict_ids,
         })
         if not isinstance(result, dict) or result.get("status") != "mapping_locked":
-            ui.notify(last_api_error_text("Не удалось зафиксировать привязку норм"), type="negative")
+            _notify(last_api_error_text("Не удалось зафиксировать привязку норм"), type="negative")
             return
         _register_artifact_downloads({"artifact": result.get("artifact") or {}})
         if revision_id:
             _smeta_locked_revisions.add(revision_id)
-        ui.notify("Привязка норм зафиксирована. Проверенная ЛСР пересчитана отдельной ревизией.", type="positive")
+        _notify("Привязка норм зафиксирована. Проверенная ЛСР пересчитана отдельной ревизией.", type="positive")
 
     async def _lock_smeta_mapping(approval: dict) -> None:
         conflicts = list(approval.get("professional_conflicts") or [])
@@ -3589,18 +3846,25 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         }
         result = await api_post("/api/chat/repack-lsr", payload)
         if not isinstance(result, dict) or result.get("model_called") is not False:
-            ui.notify(last_api_error_text("Не удалось пересобрать файл без модели"), type="negative")
+            _notify(last_api_error_text("Не удалось пересобрать файл без модели"), type="negative")
             return
         harvested = result.get("harvested") if isinstance(result.get("harvested"), dict) else {}
         _register_artifact_downloads({"artifact": harvested.get("artifact") or {}})
-        ui.notify("Файл пересобран без модели. Решения не пересматривались.", type="positive")
+        _notify("Файл пересобран без модели. Решения не пересматривались.", type="positive")
 
     async def _resume_lsr_packets(resume: dict) -> None:
-        question = str(resume.get("question") or "").strip()
+        payload = merge_lsr_resume_payload(
+            resume,
+            (_lsr_card_state.get("artifact") or {}).get("result_readiness"),
+        )
+        question = str(payload.get("question") or resume.get("question") or "").strip()
         if not question:
-            ui.notify("Нет сохранённого запроса для продолжения", type="warning")
+            _notify("Нет сохранённого запроса для продолжения", type="warning")
             return
-        attachment_id = str(resume.get("attachment_id") or "").strip()
+        attachment_id = str(payload.get("attachment_id") or resume.get("attachment_id") or "").strip()
+        session_id = str(payload.get("session_id") or resume.get("session_id") or "").strip()
+        if session_id:
+            state["session_id"] = session_id
         if attachment_id:
             pending = {
                 "id": attachment_id,
@@ -3617,9 +3881,23 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             attach_title.set_text(title)
             attach_chip.set_text(detail)
             attach_strip.set_visibility(True)
-        chat_input.value = question
+        elif not attach_state.get("id"):
+            _notify(
+                "Нет исходника для продолжения. Прикрепите файл и нажмите «Продолжить» ещё раз.",
+                type="warning",
+            )
+            return
+        chat_input.value = ""
         chat_input.update()
-        await send_chat()
+        _notify(
+            "Продолжаю незакрытые строки. Поиск по принятым решениям не повторяется.",
+            type="info",
+        )
+        await _do_send(
+            question,
+            display_question=format_lsr_resume_display(payload),
+            force_mode="estimator",
+        )
 
     async def _refine_lsr_rows(resume: dict, locators_text: str) -> None:
         locators = [
@@ -3628,11 +3906,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             if item.strip()
         ]
         if not locators:
-            ui.notify("Укажите locator строк для уточнения", type="warning")
+            _notify("Укажите адреса строк для уточнения", type="warning")
             return
         job_id = str(resume.get("job_id") or "").strip()
         if not job_id:
-            ui.notify("Нет сохранённого задания для уточнения строк", type="warning")
+            _notify("Нет сохранённого задания для уточнения строк", type="warning")
             return
         result = await api_post(
             "/api/chat/patch-lsr-rows",
@@ -3646,9 +3924,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             },
         )
         if not isinstance(result, dict) or result.get("model_called") is not False:
-            ui.notify(last_api_error_text("Не удалось открыть строки для уточнения"), type="negative")
+            _notify(last_api_error_text("Не удалось открыть строки для уточнения"), type="negative")
             return
-        ui.notify("Строки открыты. Остальные решения сохранены.", type="positive")
+        _notify("Строки открыты. Остальные решения сохранены.", type="positive")
         await _resume_lsr_packets(resume)
 
     async def _confirm_lsr_data(
@@ -3660,7 +3938,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     ) -> None:
         key = str(locator or "").strip()
         if not key:
-            ui.notify("Укажите locator строки", type="warning")
+            _notify("Укажите адрес строки", type="warning")
             return
         patch: dict[str, Any] = {}
         if str(factor or "").strip():
@@ -3668,11 +3946,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if str(source or "").strip():
             patch["conversion_source"] = str(source).strip()
         if not patch:
-            ui.notify("Укажите подтверждённый коэффициент и источник", type="warning")
+            _notify("Укажите подтверждённый коэффициент и источник", type="warning")
             return
         job_id = str(resume.get("job_id") or "").strip()
         if not job_id:
-            ui.notify("Нет сохранённого задания для подтверждённых данных", type="warning")
+            _notify("Нет сохранённого задания для подтверждённых данных", type="warning")
             return
         result = await api_post(
             "/api/chat/patch-lsr-rows",
@@ -3686,174 +3964,250 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             },
         )
         if not isinstance(result, dict) or result.get("model_called") is not False:
-            ui.notify(last_api_error_text("Не удалось сохранить подтверждённые данные"), type="negative")
+            _notify(last_api_error_text("Не удалось сохранить подтверждённые данные"), type="negative")
             return
         packed = result.get("repack") if isinstance(result.get("repack"), dict) else {}
         harvested = packed.get("harvested") if isinstance(packed.get("harvested"), dict) else {}
         if harvested.get("artifact"):
             _register_artifact_downloads({"artifact": harvested.get("artifact") or {}})
-        ui.notify("Подтверждённые данные внесены без вызова модели.", type="positive")
+        _notify("Подтверждённые данные внесены без вызова модели.", type="positive")
 
     def _render_lsr_readiness_card(spec: dict, resume: dict, artifact: dict) -> None:
-        files_artifacts_panel.set_visibility(True)
-        with files_artifacts_panel:
-            with panel(variant="raised", classes="sov-lsr-readiness"):
-                detail = (
-                    "Технический файл готов"
-                    if spec.get("technical_complete")
-                    else "Технический файл не готов"
-                )
-                if spec.get("estimate_complete"):
-                    detail += "; смета полная"
-                else:
-                    detail += "; покрытие, нормы и цены считаются отдельно"
-                section_heading("Готовность ЛСР", detail)
-                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-                    status_badge(spec["file_label"], spec["file_tone"])
-                    status_badge(spec["coverage_label"], spec["coverage_tone"])
-                    status_badge(spec["norms_label"], spec["norms_tone"])
-                    status_badge(spec["prices_label"], spec["prices_tone"])
+        with panel(variant="raised", classes="sov-lsr-readiness"):
+            detail = (
+                "Технический файл готов"
+                if spec.get("technical_complete")
+                else "Технический файл не готов"
+            )
+            if spec.get("estimate_complete"):
+                detail += "; смета полная"
+            else:
+                detail += "; покрытие, нормы и цены считаются отдельно"
+            section_heading("Готовность ЛСР", detail)
+            with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                status_badge(spec["file_label"], spec["file_tone"])
+                status_badge(spec["coverage_label"], spec["coverage_tone"])
+                status_badge(spec["norms_label"], spec["norms_tone"])
+                status_badge(spec["prices_label"], spec["prices_tone"])
+            fields: dict[str, Any] = {}
+            with ui.row().classes("w-full gap-2 flex-wrap sov-lsr-actions"):
+                for item in spec.get("actions") or []:
+                    kind = str(item.get("id") or "")
+                    if kind == "repack":
+                        action_button(
+                            str(item.get("label") or "Пересобрать файл"),
+                            icon="o_replay",
+                            on_click=lambda r=dict(resume), a=dict(artifact): asyncio.create_task(
+                                _repack_lsr_from_ui(r, a)
+                            ),
+                            variant="secondary",
+                            compact=True,
+                        )
+                    elif kind == "resume":
+                        action_button(
+                            str(item.get("label") or "Продолжить незакрытые строки"),
+                            icon="o_play_arrow",
+                            on_click=lambda r=dict(resume): asyncio.create_task(
+                                _resume_lsr_packets(r)
+                            ),
+                            variant="primary",
+                            compact=True,
+                        )
+                    elif kind == "refine":
+                        action_button(
+                            str(item.get("label") or "Уточнить выбранные строки"),
+                            icon="o_edit",
+                            on_click=lambda r=dict(resume): asyncio.create_task(
+                                _refine_lsr_rows(r, str(fields["refine"].value or ""))
+                            ),
+                            variant="secondary",
+                            compact=True,
+                        )
+                    elif kind == "enter_data":
+                        action_button(
+                            str(item.get("label") or "Внести подтверждённые данные"),
+                            icon="o_check",
+                            on_click=lambda r=dict(resume), a=dict(artifact): asyncio.create_task(
+                                _confirm_lsr_data(
+                                    r,
+                                    a,
+                                    str(fields["locator"].value or ""),
+                                    str(fields["factor"].value or ""),
+                                    str(fields["source"].value or ""),
+                                )
+                            ),
+                            variant="secondary",
+                            compact=True,
+                        )
+            fields["refine"] = text_field(
+                label="Строки для уточнения",
+                placeholder="PDF!R18, PDF!R19",
+                classes="w-full",
+            )
+            ui.label(LSR_REFINE_FIELD_HELP).classes("sov-lsr-field-help")
+            fields["locator"] = text_field(
+                label="Адрес строки",
+                placeholder="PDF!R8",
+                classes="w-full",
+            )
+            ui.label(LSR_LOCATOR_FIELD_HELP).classes("sov-lsr-field-help")
+            fields["factor"] = text_field(
+                label="Коэффициент перевода",
+                placeholder="12",
+                classes="w-full",
+            )
+            ui.label(LSR_FACTOR_FIELD_HELP).classes("sov-lsr-field-help")
+            fields["source"] = text_field(
+                label="Источник перевода",
+                placeholder="упаковка 12 шт",
+                classes="w-full",
+            )
+            ui.label(LSR_SOURCE_FIELD_HELP).classes("sov-lsr-field-help")
+            remainder = [
+                str(text)
                 for text in (
                     spec.get("file_action"),
                     spec.get("coverage_action"),
                     spec.get("norms_action"),
                     spec.get("prices_action"),
                     spec.get("continue_action"),
-                ):
-                    if text:
-                        ui.label(str(text)).classes("sov-ui-section-detail")
-                for gap in list(spec.get("gaps") or []) + list(spec.get("price_gaps") or []):
-                    action = str(gap.get("action") or "").strip()
-                    if action:
-                        ui.label(action).classes("sov-ui-section-detail")
-                refine_field = text_field(
-                    label="Строки для уточнения",
-                    placeholder="СКС!R3, СКС!R5",
-                    classes="w-full",
                 )
-                confirm_locator = text_field(
-                    label="Locator",
-                    placeholder="СКС!R3",
-                    classes="w-full",
+                if text
+            ]
+            locators = [str(item).strip() for item in (spec.get("gap_locators") or []) if str(item).strip()]
+            if locators:
+                remainder.append("Незакрытые адреса: " + ", ".join(locators))
+            if remainder:
+                with ui.expansion("Что осталось закрыть", value=False).classes("w-full"):
+                    for text in remainder:
+                        ui.label(text).classes("sov-ui-section-detail")
+
+    def _render_smeta_approval_card(approval: dict) -> None:
+        conflicts = list(approval.get("professional_conflicts") or [])
+        with ui.card().classes("sov-smeta-approval"):
+            ui.label("Авточерновик").classes("sov-smeta-approval-badge")
+            ui.label(
+                f"Профессиональные конфликты: {len(conflicts)}" if conflicts
+                else "Межстрочная проверка завершена. Нужна фиксация пользователем."
+            ).classes("sov-muted")
+
+            async def review_smeta_mapping(
+                current_approval: dict = dict(approval),
+            ) -> None:
+                await _lock_smeta_mapping(current_approval)
+
+            button = action_button(
+                "Разобрать замечания" if (conflicts or approval.get("open_items")) else "Проверил — зафиксировать",
+                icon="o_task_alt",
+                on_click=review_smeta_mapping,
+                variant="secondary",
+                compact=True,
+            )
+            if conflicts or approval.get("open_items"):
+                button.tooltip(
+                    "Показать незакрытые строки, уточнить условия или отдельно принять текущую привязку норм"
                 )
-                confirm_factor = text_field(
-                    label="Коэффициент перевода",
-                    placeholder="12",
-                    classes="w-full",
+
+    def _rebuild_files_artifacts_panel() -> None:
+        files_artifacts_panel.clear()
+        has_files = bool(_file_artifacts)
+        has_card = bool(_lsr_card_state.get("spec"))
+        has_approval = bool(_smeta_approval_payloads)
+        if not (has_files or has_card or has_approval):
+            files_artifacts_panel.set_visibility(False)
+            return
+        _open_artifacts()
+        files_artifacts_panel.set_visibility(True)
+        with files_artifacts_panel:
+            if has_files:
+                _html('<div class="sov-panel-title">Файлы</div>')
+                for url, info, badge in order_chat_file_artifacts(_file_artifacts):
+                    name = str(info.get("name") or "file")
+                    kind = str(info.get("kind") or "file")
+                    icon = {
+                        "xlsx": "o_table_chart",
+                        "csv": "o_grid_on",
+                        "docx": "o_description",
+                        "image": "o_image",
+                        "pdf": "o_picture_as_pdf",
+                    }.get(kind, "o_insert_drive_file")
+                    card_classes = "sov-file-card"
+                    if badge == "Текущий файл":
+                        card_classes += " sov-file-card--current"
+                    with ui.card().classes(card_classes):
+                        with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                            ui.icon(icon).classes("sov-file-icon")
+                            ui.label(name).classes("sov-file-name")
+                            ui.button(
+                                icon="o_visibility",
+                                on_click=lambda u=url, n=name, k=kind: _preview_file_artifact(u, n, k),
+                            ).props("flat round dense").tooltip("Открыть в панели")
+                            ui.button(
+                                icon="o_download",
+                                on_click=lambda u=url, n=name: _download_file_artifact(u, n),
+                            ).props("flat round dense").tooltip("Скачать")
+                        if badge:
+                            ui.label(badge).classes("sov-file-badge")
+            if has_card:
+                _render_lsr_readiness_card(
+                    _lsr_card_state["spec"],
+                    dict(_lsr_card_state.get("resume") or {}),
+                    dict(_lsr_card_state.get("artifact") or {}),
                 )
-                confirm_source = text_field(
-                    label="Источник перевода",
-                    placeholder="упаковка 12 шт",
-                    classes="w-full",
-                )
-                with ui.row().classes("w-full gap-2 flex-wrap"):
-                    for item in spec.get("actions") or []:
-                        kind = str(item.get("id") or "")
-                        if kind == "repack":
-                            action_button(
-                                str(item.get("label") or "Пересобрать файл"),
-                                icon="o_replay",
-                                on_click=lambda r=dict(resume), a=dict(artifact): asyncio.create_task(
-                                    _repack_lsr_from_ui(r, a)
-                                ),
-                                variant="secondary",
-                                compact=True,
-                            )
-                        elif kind == "resume":
-                            action_button(
-                                str(item.get("label") or "Продолжить незакрытые строки"),
-                                icon="o_play_arrow",
-                                on_click=lambda r=dict(resume): asyncio.create_task(
-                                    _resume_lsr_packets(r)
-                                ),
-                                variant="primary",
-                                compact=True,
-                            )
-                        elif kind == "refine":
-                            action_button(
-                                str(item.get("label") or "Уточнить выбранные строки"),
-                                icon="o_edit",
-                                on_click=lambda r=dict(resume), field=refine_field: asyncio.create_task(
-                                    _refine_lsr_rows(r, str(field.value or ""))
-                                ),
-                                variant="secondary",
-                                compact=True,
-                            )
-                        elif kind == "enter_data":
-                            action_button(
-                                str(item.get("label") or "Внести подтверждённые данные"),
-                                icon="o_check",
-                                on_click=lambda r=dict(resume), a=dict(artifact), loc=confirm_locator, fac=confirm_factor, src=confirm_source: asyncio.create_task(
-                                    _confirm_lsr_data(
-                                        r,
-                                        a,
-                                        str(loc.value or ""),
-                                        str(fac.value or ""),
-                                        str(src.value or ""),
-                                    )
-                                ),
-                                variant="secondary",
-                                compact=True,
-                            )
+            for approval in _smeta_approval_payloads.values():
+                _render_smeta_approval_card(approval)
 
     def _register_artifact_downloads(meta: dict | None) -> None:
         artifact = (meta or {}).get("artifact") if isinstance(meta, dict) else {}
         if not isinstance(artifact, dict):
             return
+        new_xlsx_names: list[str] = []
         for item in artifact_workbook_files(artifact):
-            _register_file_artifact(
-                item["filename"], item["download_url"], "xlsx"
-            )
+            url = item["download_url"]
+            if url not in _file_artifacts:
+                new_xlsx_names.append(item["filename"])
+            _register_file_artifact(item["filename"], url, "xlsx", rebuild=False)
         readiness = artifact.get("result_readiness")
         if not isinstance(readiness, dict):
             trace = (meta or {}).get("retrieval_trace") if isinstance(meta, dict) else {}
             readiness = trace.get("result_readiness") if isinstance(trace, dict) else {}
-        resume = artifact.get("resume") if isinstance(artifact.get("resume"), dict) else {}
+        resume = merge_lsr_resume_payload(
+            artifact.get("resume") if isinstance(artifact.get("resume"), dict) else {},
+            readiness,
+        )
         spec = lsr_readiness_card_spec(readiness)
         if spec["file_action"] or spec["actions"]:
             _last_estimator_resume.update(resume)
-            _render_lsr_readiness_card(spec, resume, artifact)
+            _lsr_card_state["spec"] = spec
+            _lsr_card_state["resume"] = resume
+            _lsr_card_state["artifact"] = artifact
         downloads = artifact.get("downloads") or {}
-        if not isinstance(downloads, dict):
-            return
         title = str(artifact.get("title") or "Сметный артефакт").strip() or "Сметный артефакт"
         approval = artifact.get("approval") if isinstance(artifact.get("approval"), dict) else {}
         approval_id = str(approval.get("mapping_revision_id") or approval.get("lock_url") or "")
-        if (
-            approval.get("status") == "auto_draft"
-            and approval.get("lock_url")
-            and approval_id not in _smeta_approval_cards
-        ):
+        if approval.get("status") == "auto_draft" and approval.get("lock_url") and approval_id:
+            _smeta_approval_payloads.setdefault(approval_id, dict(approval))
             _smeta_approval_cards.add(approval_id)
-            conflicts = list(approval.get("professional_conflicts") or [])
-            with files_artifacts_panel:
-                with ui.card().classes("sov-smeta-approval"):
-                    ui.label("Авточерновик").classes("sov-smeta-approval-badge")
-                    ui.label(
-                        f"Профессиональные конфликты: {len(conflicts)}" if conflicts
-                        else "Межстрочная проверка завершена. Нужна фиксация пользователем."
-                    ).classes("sov-muted")
-                    async def review_smeta_mapping(
-                        current_approval: dict = dict(approval),
-                    ) -> None:
-                        await _lock_smeta_mapping(current_approval)
-
-                    button = action_button(
-                        "Разобрать замечания" if (conflicts or approval.get("open_items")) else "Проверил — зафиксировать",
-                        icon="o_task_alt",
-                        on_click=review_smeta_mapping,
-                        variant="secondary",
-                        compact=True,
-                    )
-                    if conflicts or approval.get("open_items"):
-                        button.tooltip("Показать незакрытые строки, уточнить условия или отдельно принять текущую привязку норм")
-        for ext, label in (("xlsx", "Excel"), ("csv", "CSV")):
-            url = str(downloads.get(ext) or "").strip()
-            if url:
-                _register_file_artifact(f"{title} · {label}.{ext}", url, ext)
+        if isinstance(downloads, dict):
+            for ext, label in (("xlsx", "Excel"), ("csv", "CSV")):
+                url = str(downloads.get(ext) or "").strip()
+                if not url:
+                    continue
+                name = f"{title} · {label}.{ext}"
+                if url not in _file_artifacts and ext == "xlsx":
+                    new_xlsx_names.append(name)
+                _register_file_artifact(name, url, ext, rebuild=False)
+        if new_xlsx_names:
+            _notify(
+                f"Новый файл в артефактах: {new_xlsx_names[-1]}",
+                type="positive",
+            )
+        _rebuild_files_artifacts_panel()
 
     def _clear_file_artifacts() -> None:
         _file_artifacts.clear()
+        _lsr_card_state.clear()
+        _smeta_approval_payloads.clear()
         _smeta_approval_cards.clear()
         _smeta_locked_revisions.clear()
         files_artifacts_panel.clear()
@@ -4049,7 +4403,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     def _render_ai_placeholder(text: str):
         with ui.element("div").classes("chat-msg-ai typing") as bubble:
             label = ui.label(text).classes("sov-chat-message-text")
-        return bubble, label
+            eta = ui.label("").classes("sov-chat-eta")
+            eta.set_visibility(False)
+        return bubble, label, eta
 
     def _finish_ai_placeholder(
         bubble,
@@ -4095,6 +4451,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 _render_answer_actions(str(text or ""), srcs or [])
             if not error:
                 _render_answer_timing(meta)
+        for child in list(bubble):
+            classes = getattr(child, "_classes", None) or []
+            if "sov-chat-eta" in classes:
+                child.set_visibility(False)
 
     def _render_msg(msg):
         if msg.get("role") == "user":
@@ -4106,6 +4466,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         if msg.get("role") == "system":
             _render_chat_bubble(msg.get("text", ""), "chat-msg-sys")
+            return
+        if history_ai_is_pending(msg):
+            _render_chat_bubble(format_detached_stream_notice(), "chat-msg-ai typing")
             return
         _render_chat_bubble(
             msg.get("text", ""),
@@ -4160,6 +4523,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         from sovushka.state import ensure_session_id, persist_session_id
 
         if _apply_loaded_session():
+            asyncio.create_task(_follow_pending_history_if_needed())
             return
         sid = ensure_session_id()
         hist = await api_get(f"/api/chat/history?session_id={sid}")
@@ -4170,6 +4534,42 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if state["chat_history"]:
             _render_chat_history("Сессия восстановлена.")
             _scroll_chat_to_tail(force=True)
+        asyncio.create_task(_follow_pending_history_if_needed())
+
+    async def _fetch_session_history_messages() -> list:
+        sid = state.get("session_id")
+        if not sid:
+            return []
+        hist = await api_get(f"/api/chat/history?session_id={sid}")
+        if hist is None:
+            return []
+        return list(hist or [])
+
+    _history_follow_lock = {"busy": False}
+
+    async def _follow_pending_history_if_needed() -> None:
+        """After SSE drop or morning reopen, wait for the PENDING stub to finish."""
+
+        if _history_follow_lock["busy"]:
+            return
+        _history_follow_lock["busy"] = True
+        try:
+            first = await _fetch_session_history_messages()
+            if not any(history_ai_is_pending(item) for item in first):
+                return
+            payload = await follow_detached_chat_history(
+                fetch_history=_fetch_session_history_messages
+            )
+            if not payload:
+                return
+            hist = await _fetch_session_history_messages()
+            if hist:
+                state["chat_history"] = hist
+            state["chat_pending"] = None
+            _render_chat_history("Сборка на сервере завершилась. Файл в этой сессии.")
+            _scroll_chat_to_tail(force=True)
+        finally:
+            _history_follow_lock["busy"] = False
 
     asyncio.create_task(_load_history())
 
@@ -4388,7 +4788,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         page = _verify_page(question)
         with chat_column:
             _render_chat_bubble(question, "chat-msg-user")
-            ph, ph_label = _render_ai_placeholder("Распознаю таблицу объёмов…")
+            ph, ph_label, _ph_eta = _render_ai_placeholder("Распознаю таблицу объёмов…")
         _scroll_chat_to_tail(force=True)
         try:
             _render_artifact_loading("verify", question)
@@ -4445,7 +4845,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 with chat_column:
                     _render_chat_bubble(f"⚠️ Верификация упала: {ex}", "chat-msg-ai")
 
-    async def _do_send(question: str):
+    async def _do_send(
+        question: str,
+        *,
+        display_question: str | None = None,
+        force_mode: str | None = None,
+    ):
         if _sending["v"]:
             return
         try:
@@ -4474,6 +4879,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         chat_input.props("disabled")
         stop_dialog_btn.set_visibility(True)
         sent_attachment = dict(attach_state) if attach_state.get("id") else {}
+        if force_mode:
+            _set_mode(force_mode)
+            try:
+                mode_select.value = force_mode
+                mode_select.update()
+            except Exception:
+                pass
         # Авто-GOST: «собери/составь спецификацию …» → формат спеки (ГОСТ 21.110), чтобы
         # артефакт был чистой таблицей по форме, а не прозой. Не липко — селектор вернём.
         _orig_mode = out_mode_val["v"]
@@ -4492,7 +4904,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         _ph_map = {"estimator": "Думаю как сметчик…", "engineer": "Проверяю проект…", "kp": "Готовлю КП…",
                    "agent": "Исследую источники и файлы…",
                    "free": "Думаю вольно…", "search": "Ищу в документах…", "doc_review": "Проверяю по ГОСТ…"}
-        _initial_status = _ph_map.get(out_mode, "Генерирую…")
+        _initial_status = (
+            "Продолжаю незакрытые строки…"
+            if str(display_question or "").startswith("Продолжаю незакрытые")
+            else _ph_map.get(out_mode, "Генерирую…")
+        )
         # рендер ответа: смета теперь проза model+RAG; проверка → таблица; вольный/раг/кп → текст.
         _render_mode = "table" if out_mode == "review" else ("text" if _routing_mode else out_mode)
         payload_question, pasted_context, pasted_suffix = _split_pasted_context_for_payload(
@@ -4501,8 +4917,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             has_attachment=bool(sent_attachment),
         )
         attachment_suffix = _attachment_user_suffix(sent_attachment)
-        question_display = payload_question if pasted_suffix else question
         display_notes = [x for x in (attachment_suffix, pasted_suffix) if x]
+        if display_question:
+            question_display = str(display_question).strip()
+        else:
+            question_display = payload_question if pasted_suffix else question
         if display_notes:
             question_display = f"{question_display}\n\n" + "\n".join(display_notes)
 
@@ -4524,7 +4943,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "chat-msg-user",
                 meta={"requested_at": request_started_at},
             )
-            ai_placeholder, ai_placeholder_label = _render_ai_placeholder(f"{_initial_status} 0с")
+            ai_placeholder, ai_placeholder_label, ai_eta_label = _render_ai_placeholder(f"{_initial_status} 0с")
             smeta_operator_lines: list[str] = []
             smeta_operator_log = None
             smeta_live_rows: dict[str, dict] = {}
@@ -4553,7 +4972,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     if final
                     else f"Готово строк: {ready}. Артефакт обновляется после каждой завершённой строки."
                 )
-                _show_artifact(f"### Черновой подбор норм\n\n{note}\n\n{content}", "markdown")
+                try:
+                    _show_artifact(f"### Черновой подбор норм\n\n{note}\n\n{content}", "markdown")
+                except Exception as live_art_exc:
+                    add_log(f"[СМЕТА] артефакт черновика: {live_art_exc}")
         _scroll_chat_to_tail(force=True)
         add_log(f'[AI] Запрос: "{payload_question[:60]}"')
 
@@ -4602,11 +5024,64 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         _t0 = time.monotonic()
         _stop_tick = {"v": False}
         _status_text = {"v": _initial_status}
+        applied_result = {"v": False}
+        progress_state = {
+            "started_at": request_started_at,
+            "completed": 0,
+            "total": 0,
+            "prior_completed": 0,
+            "prior_elapsed_seconds": 0.0,
+        }
+
+        def _refresh_eta_line() -> None:
+            line = format_job_ready_eta_line(
+                progress_state["started_at"],
+                progress_state["completed"],
+                progress_state["total"],
+                running=not _stop_tick["v"],
+                prior_completed=progress_state.get("prior_completed"),
+                prior_elapsed_seconds=progress_state.get("prior_elapsed_seconds"),
+            )
+            if line:
+                ai_eta_label.set_text(line)
+                ai_eta_label.set_visibility(True)
+            else:
+                ai_eta_label.set_visibility(False)
+            ai_eta_label.update()
+
+        def _note_progress_counts(
+            completed: Any,
+            total: Any,
+            *,
+            prior_completed: Any = None,
+            prior_elapsed_seconds: Any = None,
+        ) -> None:
+            try:
+                done = int(completed)
+                all_n = int(total)
+            except (TypeError, ValueError):
+                return
+            if all_n <= 0:
+                return
+            progress_state["completed"] = done
+            progress_state["total"] = all_n
+            if prior_completed is not None:
+                try:
+                    progress_state["prior_completed"] = int(prior_completed)
+                except (TypeError, ValueError):
+                    pass
+            if prior_elapsed_seconds is not None:
+                try:
+                    progress_state["prior_elapsed_seconds"] = float(prior_elapsed_seconds)
+                except (TypeError, ValueError):
+                    pass
+            _refresh_eta_line()
 
         async def _tick():
             while not _stop_tick["v"]:
                 elapsed = int(time.monotonic() - _t0)
                 ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
+                _refresh_eta_line()
                 await asyncio.sleep(1)
 
         _tick_task = asyncio.create_task(_tick())
@@ -4625,7 +5100,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 if "." not in str(nm).rsplit("/", 1)[-1]:
                     nm = f"{nm}.{fmt}"
                 _register_file_artifact(nm, cmd["download"], _kind_from_name(nm))
-                ui.notify(
+                _notify(
                     f"Документ создан: {cmd.get('title', fid)} ({fmt}) — в панели «Файлы»",
                     type="positive",
                 )
@@ -4640,7 +5115,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 body["session_id"] = sid
             gen = await api_post(f"/api/forms/{fid}/generate", body)
             if not isinstance(gen, dict) or not gen.get("download"):
-                ui.notify(last_api_error_text("Не удалось создать документ"), type="negative")
+                _notify(last_api_error_text("Не удалось создать документ"), type="negative")
                 return
             nm = (
                 gen.get("filename")
@@ -4650,7 +5125,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             if "." not in str(nm).rsplit("/", 1)[-1]:
                 nm = f"{nm}.{fmt}"
             _register_file_artifact(nm, gen["download"], _kind_from_name(nm))
-            ui.notify(f"Документ создан: {cmd.get('title', fid)} ({fmt}) — в панели «Файлы»", type="positive")
+            _notify(f"Документ создан: {cmd.get('title', fid)} ({fmt}) — в панели «Файлы»", type="positive")
 
         def _resend_as_smeta(q: str) -> None:
             """Переключить формат на «Смета» и переспросить тот же вопрос (по клику подсказки)."""
@@ -4708,14 +5183,30 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     work_id = str(row.get("work_id") or "").strip()
                     if work_id:
                         smeta_live_rows[work_id] = {**smeta_live_rows.get(work_id, {}), **row}
-                if final_rows:
-                    _render_smeta_live_rows(final=True)
+            else:
+                final_rows = []
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
-            _register_artifact_downloads(meta)
-            explicit_artifact = _artifact_from_meta(meta)
-            if explicit_artifact and (artifact_shell.visible or _inventory_file_rows_from_meta(meta)):
-                _show_meta_artifact(meta, str(explicit_artifact.get("content") or ""), str(explicit_artifact.get("mode") or "text"), srcs)
+            applied_result["v"] = True
+            try:
+                _register_artifact_downloads(meta)
+                if final_rows:
+                    _render_smeta_live_rows(final=True)
+                explicit_artifact = _artifact_from_meta(meta)
+                if explicit_artifact and (artifact_shell.visible or _inventory_file_rows_from_meta(meta)):
+                    _show_meta_artifact(
+                        meta,
+                        str(explicit_artifact.get("content") or ""),
+                        str(explicit_artifact.get("mode") or "text"),
+                        srcs,
+                    )
+            except Exception as ui_exc:
+                add_log(f"[ЧАТ] панель артефактов: {ui_exc}")
+                try:
+                    _rebuild_files_artifacts_panel()
+                except Exception as rebuild_exc:
+                    add_log(f"[ЧАТ] повтор артефактов: {rebuild_exc}")
+                    _render_artifact_error(operator_background_ui_error(str(ui_exc)))
             # Режим «Смета» выключен, но запрос похож на объектную смету → предложить
             # пересчитать капстоуном (детерминированный расчёт вместо RAG-осколков).
             _route_ch = (d.get("query_route") or {}).get("channel", "")
@@ -4777,6 +5268,25 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     total_rows = payload.get("total")
                     if completed_rows is not None and total_rows is not None:
                         label = f"{label} · {completed_rows}/{total_rows}"
+                        remaining_n = payload.get("remaining")
+                        if remaining_n is not None:
+                            try:
+                                left = int(remaining_n)
+                            except (TypeError, ValueError):
+                                left = 0
+                            if left:
+                                label = f"{label}, осталось {left}"
+                        eta_done = payload.get("eta_completed")
+                        eta_all = payload.get("eta_total")
+                        if eta_done is not None and eta_all is not None:
+                            _note_progress_counts(
+                                eta_done,
+                                eta_all,
+                                prior_completed=payload.get("prior_completed"),
+                                prior_elapsed_seconds=payload.get("prior_elapsed_seconds"),
+                            )
+                        else:
+                            _note_progress_counts(completed_rows, total_rows)
                     _status_text["v"] = label
                 else:
                     _status_text["v"] = str(payload or "Собираю файл")
@@ -4793,7 +5303,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         smeta_live_rows[work_id] = row
                     ready = len(smeta_live_rows)
                     _status_text["v"] = f"Смета: готово {ready} строк"
-                    _render_smeta_live_rows()
+                    try:
+                        _render_smeta_live_rows()
+                    except Exception as live_exc:
+                        add_log(f"[СМЕТА] панель черновика: {live_exc}")
                     elapsed = int(time.monotonic() - _t0)
                     ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                     ai_placeholder_label.update()
@@ -4813,6 +5326,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             detail_bits.append(f"ход {payload.get('turn')}")
                         if payload.get("done") is not None and payload.get("total") is not None:
                             detail_bits.append(f"{payload.get('done')}/{payload.get('total')}")
+                            _note_progress_counts(payload.get("done"), payload.get("total"))
                         if payload.get("model_wait_ms"):
                             detail_bits.append(f"модель {float(payload.get('model_wait_ms')) / 1000:.1f}с")
                         if payload.get("tool_count"):
@@ -4939,10 +5453,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                         _render_artifact_error(message)
                 else:
-                    completed = True
-                    message = "Соединение прервано после начала сборки. Повторите запрос — продолжим с контрольной точки."
-                    _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
-                    _render_artifact_error(message)
+                    message = format_detached_stream_notice()
+                    _finish_ai_placeholder(
+                        ai_placeholder,
+                        ai_placeholder_label,
+                        message,
+                        error=False,
+                    )
+                    try:
+                        ai_placeholder.classes(add="typing")
+                    except Exception:
+                        pass
+                    asyncio.create_task(_follow_pending_history_if_needed())
         except asyncio.CancelledError:
             completed = True
             _finish_ai_placeholder(
@@ -4956,8 +5478,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             add_log("[ЧАТ] Текущий ответ остановлен")
         except Exception as ex:
             completed = True
-            _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, f"Ошибка: {ex}", error=True)
-            _render_artifact_error(str(ex))
+            if applied_result["v"]:
+                add_log(f"[ЧАТ] после ответа: {ex}")
+                try:
+                    _rebuild_files_artifacts_panel()
+                except Exception:
+                    _render_artifact_error(operator_background_ui_error(str(ex)))
+            else:
+                _finish_ai_placeholder(
+                    ai_placeholder,
+                    ai_placeholder_label,
+                    f"Ошибка: {operator_background_ui_error(str(ex))}",
+                    error=True,
+                )
+                _render_artifact_error(operator_background_ui_error(str(ex)))
         finally:
             if completed:
                 state["chat_pending"] = None
@@ -5020,7 +5554,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             )
 
     def _render_artifact_error(detail: str):
-        detail = str(detail or "").strip()
+        detail = operator_background_ui_error(detail)
         if len(detail) > 1200:
             detail = detail[:1200].rstrip() + "…"
         _open_artifacts()

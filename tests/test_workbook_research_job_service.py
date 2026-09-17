@@ -46,6 +46,10 @@ def test_pause_resume_keeps_rows_and_skips_cached_queries(tmp_path) -> None:
     assert resumed["remaining"] == ["СКС!R3"]
     assert resumed["query_cache"]["монтаж шкафа"][0]["content"] == "карточка"
     assert resumed["held_packet"]["queries"] == ["монтаж шкафа"]
+    assert resumed["prior_elapsed_seconds"] >= 0
+    assert WorkbookResearchJobService.elapsed_seconds_between(
+        "2026-09-16 16:53:54", "2026-09-16 17:23:54"
+    ) == 1800.0
 
 
 def test_reopen_selected_locator_keeps_other_decisions(tmp_path) -> None:

@@ -513,16 +513,18 @@ fn show_setup(app: &AppHandle) {
 
 #[tauri::command]
 fn start_from_setup(app: AppHandle) -> Result<(), String> {
-    schedule_boot_and_navigate(app)
-        .then_some(())
-        .ok_or_else(|| "Подготовка ЛЕС уже выполняется".to_string())
+    if ui_ready(&app) {
+        navigate_to_ui(&app);
+        return Ok(());
+    }
+    let _ = schedule_boot_and_navigate(app);
+    Ok(())
 }
 
 #[tauri::command]
 fn retry_setup(app: AppHandle) -> Result<(), String> {
-    schedule_boot_and_navigate(app)
-        .then_some(())
-        .ok_or_else(|| "Подготовка ЛЕС уже выполняется".to_string())
+    let _ = schedule_boot_and_navigate(app);
+    Ok(())
 }
 
 fn show_main(app: &AppHandle) {
@@ -552,21 +554,25 @@ fn wait_for_ui_and_navigate(app: &AppHandle) {
     let deadline = Instant::now() + Duration::from_secs(900);
     while Instant::now() < deadline {
         if ui_ready(app) {
-            if let Some(window) = app.get_webview_window("main") {
-                let (ui_url, _) = runtime_urls(app);
-                match ui_url.parse::<Url>() {
-                    Ok(url) => {
-                        let _ = window.navigate(url);
-                        show_main(app);
-                    }
-                    Err(error) => show_error(app, &error.to_string()),
-                }
-            }
+            navigate_to_ui(app);
             return;
         }
         thread::sleep(Duration::from_secs(1));
     }
     show_setup(app);
+}
+
+fn navigate_to_ui(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let (ui_url, _) = runtime_urls(app);
+        match ui_url.parse::<Url>() {
+            Ok(url) => {
+                let _ = window.navigate(url);
+                show_main(app);
+            }
+            Err(error) => show_error(app, &error.to_string()),
+        }
+    }
 }
 
 fn boot_and_navigate(app: &AppHandle) {

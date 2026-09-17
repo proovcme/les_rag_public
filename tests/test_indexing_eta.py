@@ -12,6 +12,8 @@ def test_fmt_dur_buckets():
     assert _fmt_dur(12 * 60) == "~12м"
     assert _fmt_dur(80 * 60) == "~80м"
     assert _fmt_dur(95 * 60) == "~1ч 35м"
+    assert _fmt_dur(26 * 3600) == "~1д 2ч"
+    assert _fmt_dur(48 * 3600) == "~2д"
 
 
 def test_eta_basic():

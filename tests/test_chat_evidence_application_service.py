@@ -1821,6 +1821,8 @@ def test_general_evidence_execution_is_outside_http_router():
     assert "retrieval_trace = retrieval.payload()" in evidence_source
     assert "build_retrieval_evidence_packet(" in evidence_source
     assert "async with acquire_generation_slot" in evidence_source
+    assert "generation_slot_timeout_seconds()" in evidence_source
+    assert "timeout_seconds=45.0" not in evidence_source
 
 
 def test_evidence_boundary_is_typed_and_does_not_capture_namespaces():
@@ -3246,7 +3248,13 @@ from proxy.services.attachment_source_catalog_service import (
     AttachmentSourceCatalog,
     CatalogRow,
 )
-from proxy.services.chat_evidence_application_service import sheet_pass_should_run
+from proxy.services.chat_evidence_application_service import (
+    claim_or_join_sheet_pass,
+    release_sheet_pass,
+    sheet_pass_progress_counts,
+    sheet_pass_progress_label,
+    sheet_pass_should_run,
+)
 
 
 def _work_catalog(count: int) -> AttachmentSourceCatalog:
@@ -3275,6 +3283,69 @@ def test_sheet_pass_runs_for_small_and_large_tabular_catalogs() -> None:
     assert sheet_pass_should_run(small, tabular_estimator_bound=True, model_driven=True) is True
     assert sheet_pass_should_run(large, tabular_estimator_bound=True, model_driven=True) is True
     assert sheet_pass_should_run(small, tabular_estimator_bound=True, model_driven=False) is False
+
+
+def test_sheet_pass_progress_counts_rows_and_resume_prefix() -> None:
+    assert sheet_pass_progress_label(
+        "СКС", sheet_index=1, sheet_count=1, stage="поиск норм"
+    ) == 'Лист «СКС» (1/1): поиск норм'
+    assert sheet_pass_progress_label(
+        "СКС",
+        sheet_index=1,
+        sheet_count=1,
+        stage="поиск норм",
+        resumed=True,
+    ) == 'Продолжаю: Лист «СКС» (1/1): поиск норм'
+    counts = sheet_pass_progress_counts(
+        accepted_now=23,
+        work_total=75,
+        session_accepted_start=23,
+        prior_elapsed_seconds=1500,
+    )
+    assert counts["completed"] == 23
+    assert counts["total"] == 75
+    assert counts["eta_completed"] == 0
+    assert counts["eta_total"] == 52
+    assert counts["remaining"] == 52
+    assert counts["resumed"] is True
+    assert counts["prior_elapsed_seconds"] == 1500.0
+    source = inspect.getsource(service._execute_chat_evidence_application)
+    loop = source[
+        source.index("async def _emit_row_progress") : source.index("sheet_pass_done = True")
+    ]
+    assert "completed=sheet_index - 1" not in loop
+    assert "sheet_pass_progress_counts" in loop
+    assert "remaining_locators" in source
+    assert "catalog_work_count" in source
+    assert "claim_or_join_sheet_pass" in loop
+    assert "owns_sheet_pass" in loop
+
+
+@pytest.mark.asyncio
+async def test_claim_or_join_sheet_pass_serializes_duplicate_continue() -> None:
+    order: list[str] = []
+    job_id = "job-overnight-1"
+    service._LIVE_SHEET_PASS_GATES.pop(job_id, None)
+
+    async def first() -> None:
+        owns = await claim_or_join_sheet_pass(job_id)
+        assert owns is True
+        order.append("a-start")
+        await asyncio.sleep(0.05)
+        order.append("a-end")
+        release_sheet_pass(job_id)
+
+    async def second() -> None:
+        await asyncio.sleep(0.01)
+        owns = await claim_or_join_sheet_pass(job_id)
+        order.append("b")
+        assert owns is False
+
+    try:
+        await asyncio.gather(first(), second())
+        assert order == ["a-start", "a-end", "b"]
+    finally:
+        release_sheet_pass(job_id)
 
 
 def test_model_rag_result_reads_row_role_and_cited_conversion() -> None:
@@ -3307,6 +3378,45 @@ def test_sheet_pass_source_keeps_model_rows_and_does_not_rewrite() -> None:
     assert "structurally_complete_source_keys" in loop
     assert "record_search_cache" in loop
     assert "research_job_service.pause" in loop
+
+
+def test_sheet_pass_empty_search_is_not_packet_failure() -> None:
+    assert service.model_search_result_blocks_packet({"status": "ok"}) is False
+    assert service.model_search_result_blocks_packet({"status": "missing"}) is False
+    assert service.model_search_result_blocks_packet({"status": "MISSING"}) is False
+    assert service.model_search_result_blocks_packet({"status": "blocked"}) is True
+    assert service.model_search_result_blocks_packet({"status": "error"}) is True
+    assert service.model_search_result_blocks_packet({}) is True
+    assert service.model_search_result_blocks_packet(None) is True
+    source = inspect.getsource(service._execute_chat_evidence_application)
+    loop = source[
+        source.index("search_blocked = False") : source.index("if search_blocked:")
+    ]
+    assert "model_search_result_blocks_packet" in loop
+    assert '!= "ok"' not in loop
+    oneshot = source[
+        source.index("blocked_queries = [") : source.index("if blocked_queries:")
+    ]
+    assert "model_search_result_blocks_packet" in oneshot
+    assert '!= "ok"' not in oneshot
+
+
+def test_restore_empty_search_hits_counts_as_cached() -> None:
+    hits = service.restore_query_hits_from_cache(
+        ["нет карточек"],
+        {"нет карточек": []},
+    )
+    assert hits == [("нет карточек", ())]
+
+
+def test_unstructured_notice_distinguishes_empty_sheet_pass() -> None:
+    parse_miss = service.format_lsr_unstructured_notice()
+    assert "наименования" in parse_miss
+    empty = service.format_lsr_unstructured_notice(sheet_pass_empty=True)
+    assert "таблица строк не получена" in empty
+    assert "наименования" not in empty
+    source = inspect.getsource(service._execute_chat_evidence_application)
+    assert "sheet_pass_empty=bool(sheet_pass_done)" in source
 
 
 def test_empty_retrieval_is_not_stamped_while_awaiting_model_queries() -> None:

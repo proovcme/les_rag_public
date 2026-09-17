@@ -120,6 +120,18 @@ def test_assigned_model_timeout_is_named_and_restart_bound(monkeypatch):
     assert factor["restart_required"] is True
 
 
+def test_model_queue_wait_is_visible_and_applies_to_next_request(monkeypatch):
+    registry.declared_env_defaults.cache_clear()
+    monkeypatch.delenv("LES_MODEL_QUEUE_WAIT_SEC", raising=False)
+
+    factor = registry._factor("LES_MODEL_QUEUE_WAIT_SEC", {})
+
+    assert factor["effective_value"] == "1800"
+    assert factor["label"] == "Ожидание очереди модели, сек"
+    assert factor["mutable"] is True
+    assert factor["restart_required"] is False
+
+
 @pytest.mark.parametrize(
     ("key", "default"),
     [

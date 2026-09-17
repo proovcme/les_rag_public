@@ -491,6 +491,19 @@ def stage_runtime(
     return count
 
 
+def release_bundle_root() -> Path:
+    """Where Tauri writes the NSIS/app bundle after `cargo build`.
+
+    Cursor/CI may redirect artifacts with ``CARGO_TARGET_DIR``. Looking only at
+    ``src-tauri/target`` then fails even though makensis already produced the exe.
+    """
+
+    cargo_target = os.getenv("CARGO_TARGET_DIR", "").strip()
+    if cargo_target:
+        return Path(cargo_target) / "release" / "bundle"
+    return SRC_TAURI / "target" / "release" / "bundle"
+
+
 def set_version(version: str) -> None:
     config_path = SRC_TAURI / "tauri.conf.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -548,7 +561,7 @@ def build(
     env = dict(os.environ)
     env["PATH"] = f"{Path.home() / '.cargo/bin'}:{env.get('PATH', '')}"
     subprocess.run(command, cwd=TAURI_ROOT, env=env, check=True)
-    bundle_root = SRC_TAURI / "target" / "release" / "bundle"
+    bundle_root = release_bundle_root()
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
     if os.sys.platform == "darwin":

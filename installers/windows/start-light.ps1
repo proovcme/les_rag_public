@@ -227,7 +227,7 @@ switch ($Provider) {
   }
   "freetoken" {
     $env:FREETOKEN_BASE_URL = if ($env:FREETOKEN_BASE_URL) { $env:FREETOKEN_BASE_URL } else { "http://127.0.0.1:1919/v1" }
-    $env:FREETOKEN_CONTEXT_TOKENS = if ($env:FREETOKEN_CONTEXT_TOKENS) { $env:FREETOKEN_CONTEXT_TOKENS } else { "8253" }
+    $env:FREETOKEN_CONTEXT_TOKENS = if ($env:FREETOKEN_CONTEXT_TOKENS) { $env:FREETOKEN_CONTEXT_TOKENS } else { "35000" }
     if (-not $env:FREETOKEN_PROMPT_MAX_CHARS) {
         $freeTokenContext = [int]$env:FREETOKEN_CONTEXT_TOKENS
         $freeTokenUsable = [Math]::Max(512, $freeTokenContext - 1200)

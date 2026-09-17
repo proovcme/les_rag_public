@@ -9,6 +9,7 @@ import sys
 from nicegui import app, ui
 
 from backend.auth import logout
+from proxy.services.freetoken_cache_profile_service import DEFAULT_FREETOKEN_CONTEXT_TOKENS
 from proxy.services.llm_transport_profile_service import freetoken_prompt_chars_for_context
 from sovushka.components.charts import _html
 from sovushka.state import api_get, last_api_error_text, proxy_online
@@ -484,20 +485,27 @@ def build_header(
                     ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     with ui.row().classes("w-full gap-2"):
                         set_freetoken_context = ui.number(
-                            "Контекст FreeToken, токены", value=8253, min=1024, step=1
+                            "Контекст FreeToken, токены",
+                            value=DEFAULT_FREETOKEN_CONTEXT_TOKENS,
+                            min=1024,
+                            step=1,
                         ).style("background:var(--bg);color:var(--text);font-family:var(--font);flex:1;")
                         set_freetoken_prompt = ui.number(
                             "Лимит промта, символы",
-                            value=freetoken_prompt_chars_for_context(8253),
+                            value=freetoken_prompt_chars_for_context(
+                                DEFAULT_FREETOKEN_CONTEXT_TOKENS
+                            ),
                             min=1024,
                             step=1,
                         ).style("background:var(--bg);color:var(--text);font-family:var(--font);flex:1;")
 
                         def _sync_freetoken_prompt_budget(event) -> None:
                             try:
-                                context_tokens = int(float(event.value or 8253))
+                                context_tokens = int(
+                                    float(event.value or DEFAULT_FREETOKEN_CONTEXT_TOKENS)
+                                )
                             except (TypeError, ValueError):
-                                context_tokens = 8253
+                                context_tokens = DEFAULT_FREETOKEN_CONTEXT_TOKENS
                             set_freetoken_prompt.set_value(
                                 freetoken_prompt_chars_for_context(context_tokens)
                             )
@@ -603,12 +611,20 @@ def build_header(
                                 freetoken.get("base_url", "http://127.0.0.1:1919/v1")
                             )
                             set_freetoken_model.set_value(freetoken.get("model", ""))
-                            set_freetoken_context.set_value(freetoken.get("context_tokens", 8253))
+                            set_freetoken_context.set_value(
+                                freetoken.get("context_tokens", DEFAULT_FREETOKEN_CONTEXT_TOKENS)
+                            )
                             set_freetoken_prompt.set_value(
                                 freetoken.get(
                                     "prompt_max_chars",
                                     freetoken_prompt_chars_for_context(
-                                        int(freetoken.get("context_tokens", 8253) or 8253)
+                                        int(
+                                            freetoken.get(
+                                                "context_tokens",
+                                                DEFAULT_FREETOKEN_CONTEXT_TOKENS,
+                                            )
+                                            or DEFAULT_FREETOKEN_CONTEXT_TOKENS
+                                        )
                                     ),
                                 )
                             )
@@ -617,8 +633,10 @@ def build_header(
                             desired_kv = cache.get("desired_kv_tokens")
                             cache_status = str(cache.get("status") or "unknown")
                             if effective_kv:
+                                max_kv = cache.get("max_feasible_kv_tokens")
+                                ceiling = f" · потолок {max_kv}" if max_kv else ""
                                 freetoken_cache_label.set_text(
-                                    f"Физический KV: {effective_kv} / {desired_kv} · {cache_status}"
+                                    f"Физический KV: {effective_kv} / {desired_kv}{ceiling} · {cache_status}"
                                 )
                             else:
                                 freetoken_cache_label.set_text(
@@ -808,11 +826,16 @@ def build_header(
                                 "ollama_model": set_ollama_model.value or "",
                                 "freetoken_base_url": set_freetoken_url.value or "",
                                 "freetoken_model": set_freetoken_model.value or "",
-                                "freetoken_context_tokens": int(set_freetoken_context.value or 8253),
+                                "freetoken_context_tokens": int(
+                                    set_freetoken_context.value or DEFAULT_FREETOKEN_CONTEXT_TOKENS
+                                ),
                                 "freetoken_prompt_max_chars": int(
                                     set_freetoken_prompt.value
                                     or freetoken_prompt_chars_for_context(
-                                        int(set_freetoken_context.value or 8253)
+                                        int(
+                                            set_freetoken_context.value
+                                            or DEFAULT_FREETOKEN_CONTEXT_TOKENS
+                                        )
                                     )
                                 ),
                                 "openrouter_base_url": set_openrouter_url.value or "",

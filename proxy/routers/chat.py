@@ -1942,6 +1942,30 @@ def _clause_lookup_response(
 
 
 CHAT_STREAM_KEEPALIVE_SECONDS = 15.0
+_DETACHED_CHAT_RUNNERS: set[asyncio.Task[Any]] = set()
+
+
+def _remember_detached_chat_runner(task: asyncio.Task[Any]) -> None:
+    """Keep a strong ref so a detached overnight runner is not garbage-collected."""
+
+    _DETACHED_CHAT_RUNNERS.add(task)
+    task.add_done_callback(_DETACHED_CHAT_RUNNERS.discard)
+
+
+def detach_chat_runner_after_disconnect(task: asyncio.Task[Any]) -> None:
+    """Detach an in-flight estimate from a closed SSE response.
+
+    The response task must return immediately: awaiting the runner here either
+    blocks iterator shutdown until an overnight estimate finishes or propagates
+    the request cancellation into the estimate.  A strong process-local
+    reference keeps the runner alive; explicit Stop remains the workbook job
+    pause API.
+    """
+
+    if task.done():
+        return
+    logger.info("[CHAT/STREAM] client disconnected; runner continues detached")
+    _remember_detached_chat_runner(task)
 
 
 def _sse_event(event: str, data: Any) -> str:
@@ -2360,10 +2384,9 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
                 yield _sse_event(item["event"], item.get("data", ""))
         finally:
             if not task.done():
-                # Closing the tab must not discard a completed estimate/history
-                # record. Explicit user cancellation remains a separate UI action.
-                logger.info("[CHAT/STREAM] client disconnected; waiting for runner to finish")
-                await asyncio.gather(task, return_exceptions=True)
+                # Closing the tab / uvicorn cancelling the SSE consumer must not
+                # CancelledError sheet-pass. Explicit Stop is a separate pause API.
+                detach_chat_runner_after_disconnect(task)
 
     return StreamingResponse(
         event_source(),

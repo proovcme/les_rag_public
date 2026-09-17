@@ -60,6 +60,7 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert r'Local\LES.Tauri.SingleInstance' in source
     assert "LIFECYCLE_IN_FLIGHT" in source
     assert "compare_exchange(false, true" in source
+    assert "navigate_to_ui" in source
     assert "schedule_boot_and_navigate" in source
     assert 'Command::new("cmd.exe")' not in source
     assert 'Command::new("where.exe")' not in source
@@ -91,8 +92,11 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert 'invoke("start_from_setup")' in script
     assert "model-select" not in script
     assert "&& !preparing" in script
-    assert 'preparing ? "Подготовка…"' in script
+    assert 'preparing && !stale ? "Подготовка…"' in script
     assert "window.setInterval(refresh, 10000)" in script
+    assert "setPoll(preparing && !stale ? 2000 : 10000)" in script
+    assert "120000" in script
+    assert "Подготовка ЛЕС уже выполняется" not in source
     assert '"configured_provider"' in source
     assert '"freetoken"' in source
     assert '"lemonade"' in source
@@ -543,6 +547,19 @@ def test_legacy_macos_builder_delegates_to_tauri():
     source = (ROOT / "tools/build_macos_app.py").read_text(encoding="utf-8")
     assert "from tools.build_tauri_app import build" in source
     assert 'build(version, "app")' in source
+
+
+def test_release_bundle_root_follows_cargo_target_dir(monkeypatch, tmp_path):
+    redirected = tmp_path / "cargo-target"
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(redirected))
+
+    assert build_tauri_app.release_bundle_root() == redirected / "release" / "bundle"
+
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+
+    assert build_tauri_app.release_bundle_root() == (
+        build_tauri_app.SRC_TAURI / "target" / "release" / "bundle"
+    )
 
 
 def test_windows_builder_never_emits_old_shell_exe_on_non_windows():

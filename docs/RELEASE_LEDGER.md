@@ -4,31 +4,94 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-09-16)
+## Текущее состояние (2026-09-17)
+
+**0.31.53 / 759:** final SSE disconnect fix: the response immediately detaches
+the runner instead of awaiting it through `gather` or `shield`. A closed chat
+window cannot cancel sheet-pass and does not hold request shutdown until the
+overnight job finishes. Strong process-local ownership, PENDING→artifact poll,
+and duplicate Continue serialization remain. Candidate; exact installer and
+installed live acceptance pending.
+
+**0.31.52 / 758:** superseded candidate: overnight LSR used a shielded runner, no
+«Соединение прервано» after progress, history poll for PENDING→artifact,
+process-local join so a second Continue does not dual-run packets.
+The shield could keep iterator shutdown waiting for the whole job, so this
+candidate was not shipped.
+
+**0.31.51 / 757:** Continue-unclosed-rows no longer looks like a new LSR.
+The chat bubble says «Продолжаю незакрытые строки», progress is accepted
+rows not `0/1` sheets, and remaining-time seeds from the previous packet
+rate. Overlay needs UI + proxy restart. Not a public release.
+
+**0.31.50 / 756:** «Продолжить незакрытые строки» no longer dies on a
+background `ui.notify` (empty NiceGUI slot). Resume/repack/confirm toasts
+enter the chat widget; the XLSX is registered before the draft aside is
+redrawn. Overlay needs a Sovushka restart. Not a public release.
+
+**0.31.49 / 755:** a finished SKS/LSR no longer dumps the English NiceGUI
+slot-stack error into Artifacts: the new-file toast enters the chat widget
+slot, and a UI failure after a successful answer does not wipe the XLSX.
+While sheet-pass runs, the bubble shows elapsed seconds and a second line
+«Результат будет готов примерно через ~XX». Approximate only; empty until
+the first completed unit. Not a public release.
+
+**0.31.48 / 754:** setup no longer errors «already running» and no longer
+treats a missing bootstrap state as a stuck Prepare screen. Generation-slot
+wait is `LES_MODEL_QUEUE_WAIT_SEC` default 1800s so a second chat survives a
+live LSR. Isolated `dist/LES-Setup.exe` 5.1.754 is staged
+(497 824 839 bytes, SHA-256 `3b9fca0e…e209e3b4`); it is not smoke-installed
+over this machine and is not a public release. Live SKS, 9B/`B0_DIRECT` and
+estimator review remain our proof gates, not a block on handing the candidate
+to the customer for testing.
+
+**0.31.47 / 753:** after resume the new XLSX was already packaged, but the
+artifacts aside clipped it under the previous readiness wall. Files rebuild
+newest-first as «Текущий файл», one readiness card, scrollable aside,
+Russian field help instead of SKS placeholders. Overlay needs a Sovushka
+restart. Live customer transfer is not closed.
+
+**0.31.46 / 752:** sheet-pass no longer treats empty `search_sources`
+(`status=missing`) as a packet abort. One zero-hit query was dropping the
+rest of the searches and skipping the row-table call, so the operator saw
+«ЛСР не создана: ответ не разобран как таблица» with 0 rows. Remaining
+queries and the terminal table still run; norms are not invented. Live
+acceptance of this path is not closed.
+
+**0.31.45 / 751:** FreeToken default context is the factory 35B window
+`35000`, not the historical `8253` pages. Rebuild clamps to
+`max_feasible_kv` so minimum MoE and 128 MiB safety survive; ACTIVE chat
+only reads live pages and still requires observed KV ≥ 16384 for
+`qwen-35b-extended`. Physical GPU max on this machine is far larger and
+is not used: it would steal expert cache and lengthen prefill. Live cache
+raise is recorded after overlay; this is not a public release.
 
 **0.31.44 / 750:** live acceptance of 749 caught a progress-set regression
 (`list - list`) before operator testing. Complete source keys now preserve
 the set contract; `test_lsr_packet_integrity` exercises the exact difference
 operation. Build 749 is not an accepted candidate. No model decisions changed.
 
-Candidate 2026-09-16: **0.31.43 / build 749**. Low-output-budget packets,
-relative source links, unknown-locator rejection and structural continuation.
-The live FreeToken cache reports 8275 token pages; restrictive preset is
-therefore expected, not proof of a wrong model binding. Prior build 748
-remains rollback. Live acceptance and installer status are recorded separately;
-this candidate is not a public release.
+Candidate 2026-09-16: **0.31.51 / build 757**. Continue shows leftover
+rows and ETA instead of a fake rebuild. 756 slot-stack, 755 ETA line and
+754 setup/queue remain. Live SKS/9B/`B0_DIRECT`/estimator/installer are
+not closed. Isolated `dist/LES-Setup.exe` 5.1.754 is staged
+(497 824 839 bytes) but not smoke-installed over production. This
+candidate is not a public release.
 
 ```
-версия продукта (SemVer):  0.31.44
-номер сборки:              750
-версия Tauri/NSIS:         5.1.750
+версия продукта (SemVer):  0.31.51
+номер сборки:              757
+версия Tauri/NSIS:         5.1.757
 ветка разработки:          fix/local-qwen-result-parse
-dev implementation:       0.31.44 packet progress set contract
-задеплоено на рантайм:     overlay pending 750
+dev implementation:       0.31.51 resume progress/ETA
+задеплоено на рантайм:     overlay 757 UI+proxy restarted
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      confirm after overlay restart
+рантайм /api/version:      0.31.51 / 757 after overlay restart
+кандидат установщика:      dist/LES-Setup.exe 497 824 839 байт (сборка 5.1.754),
+                           SHA-256 3b9fca0ea25f0a951f0b85bd7c8e1ab31f067a79c25b25d68804aac6e209e3b4
+                           (isolated smoke not run, not public)
 ```
 
 > **0.31.42 / build 748 workbook overflow:** 74 сохранённых строк №124 собирали

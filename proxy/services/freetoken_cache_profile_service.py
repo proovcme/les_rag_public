@@ -10,6 +10,10 @@ import httpx
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _SAFETY_BYTES = 128 * 1024 * 1024
+# Factory 35B total window. The GPU can often allocate far more pages, but
+# growing past this steals MoE expert cache and lengthens prefill without a
+# larger LES execution envelope. Reconcile still clamps to max_feasible_kv().
+DEFAULT_FREETOKEN_CONTEXT_TOKENS = 35000
 
 
 def _control_url(base_url: str, suffix: str) -> str:
@@ -17,6 +21,68 @@ def _control_url(base_url: str, suffix: str) -> str:
     if root.endswith("/v1"):
         root = root[:-3]
     return f"{root}/v1/cache/{suffix}"
+
+
+def max_feasible_kv(geometry: dict[str, Any], *, min_moe: int | None = None) -> int:
+    """Largest KV pages that still leave at least ``min_moe`` expert-cache slots."""
+    units = geometry.get("unit_bytes") or {}
+    limits = geometry.get("limits") or {}
+    moe_limits = limits.get("moe_experts") or {}
+    kv_limits = limits.get("kv_tokens") or {}
+    budget = int(geometry.get("cache_budget_bytes") or 0)
+    kv_per = int(units.get("kv_per_token") or 0)
+    moe_per = int(units.get("moe_per_expert") or 0)
+    mamba_bytes = int(geometry.get("num_mamba_slots") or 0) * int(
+        units.get("mamba_per_slot") or 0
+    )
+    swa_bytes = int(geometry.get("num_swa_pages") or 0) * int(
+        units.get("swa_per_token") or 0
+    )
+    if budget <= 0 or kv_per <= 0 or moe_per <= 0:
+        raise ValueError("FreeToken cache geometry has no usable memory budget")
+    engine_min = int(moe_limits.get("min") or 0)
+    floor = max(engine_min, int(min_moe) if min_moe is not None else engine_min)
+    available = budget - mamba_bytes - swa_bytes - _SAFETY_BYTES - floor * moe_per
+    pages = max(0, available // kv_per)
+    kv_max = int(kv_limits.get("max") or 0)
+    if kv_max > 0:
+        pages = min(pages, kv_max)
+    kv_min = int(kv_limits.get("min") or 1)
+    if pages < kv_min:
+        raise ValueError("configured KV leaves insufficient memory for minimum MoE cache")
+    return pages
+
+
+def bounded_desired_kv(geometry: dict[str, Any], requested: int) -> int:
+    """Clamp a requested window so rebuild cannot starve the minimum MoE cache."""
+    return min(max(1, int(requested)), max_feasible_kv(geometry))
+
+
+def _cache_report(
+    geometry: dict[str, Any],
+    *,
+    status: str,
+    requested_kv: int,
+    desired_kv: int,
+    effective_kv: int | None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    try:
+        ceiling = max_feasible_kv(geometry)
+    except ValueError:
+        ceiling = None
+    payload: dict[str, object] = {
+        "status": status,
+        "requested_kv_tokens": int(requested_kv),
+        "desired_kv_tokens": int(desired_kv),
+        "effective_kv_tokens": effective_kv,
+        "max_feasible_kv_tokens": ceiling,
+        "moe_cache_size": int(geometry.get("moe_cache_size") or 0),
+        "mamba_slots": int(geometry.get("num_mamba_slots") or 0),
+    }
+    if extra:
+        payload.update(extra)
+    return payload
 
 
 def _feasible_moe(geometry: dict[str, Any], desired_kv: int) -> int:
@@ -40,20 +106,26 @@ def _feasible_moe(geometry: dict[str, Any], desired_kv: int) -> int:
     return max(minimum, (feasible // 25) * 25)
 
 
-def reconcile_freetoken_cache(
+def _loopback_host(base_url: str) -> bool:
+    host = (urlsplit(str(base_url or "")).hostname or "").casefold()
+    return host in _LOOPBACK_HOSTS
+
+
+def probe_freetoken_cache(
     base_url: str,
-    desired_kv: int,
+    desired_kv: int | None = None,
     *,
     client: httpx.Client | None = None,
 ) -> dict[str, object]:
-    """Probe and, when needed, rebuild a loopback FreeToken cache."""
-    desired = max(1, int(desired_kv))
-    host = (urlsplit(str(base_url or "")).hostname or "").casefold()
-    if host not in _LOOPBACK_HOSTS:
+    """Read loopback cache geometry without rebuilding."""
+    requested = max(1, int(desired_kv or DEFAULT_FREETOKEN_CONTEXT_TOKENS))
+    if not _loopback_host(base_url):
         return {
             "status": "unsupported_remote",
-            "desired_kv_tokens": desired,
+            "requested_kv_tokens": requested,
+            "desired_kv_tokens": requested,
             "effective_kv_tokens": None,
+            "max_feasible_kv_tokens": None,
             "reason": "physical cache control is loopback-only",
         }
     owned = client is None
@@ -64,14 +136,63 @@ def reconcile_freetoken_cache(
         payload = response.json()
         geometry = payload.get("geometry") or {}
         effective = int(geometry.get("num_pages") or 0)
+        desired = bounded_desired_kv(geometry, requested)
+        status = "aligned" if effective == desired else "mismatch"
+        return _cache_report(
+            geometry,
+            status=status,
+            requested_kv=requested,
+            desired_kv=desired,
+            effective_kv=effective or None,
+        )
+    except (httpx.HTTPError, ValueError, RuntimeError, TypeError) as exc:
+        return {
+            "status": "degraded",
+            "requested_kv_tokens": requested,
+            "desired_kv_tokens": requested,
+            "effective_kv_tokens": None,
+            "max_feasible_kv_tokens": None,
+            "reason": f"{type(exc).__name__}: {str(exc)[:180]}",
+        }
+    finally:
+        if owned:
+            http.close()
+
+
+def reconcile_freetoken_cache(
+    base_url: str,
+    desired_kv: int,
+    *,
+    client: httpx.Client | None = None,
+) -> dict[str, object]:
+    """Probe and, when needed, rebuild a loopback FreeToken cache."""
+    requested = max(1, int(desired_kv))
+    if not _loopback_host(base_url):
+        return {
+            "status": "unsupported_remote",
+            "requested_kv_tokens": requested,
+            "desired_kv_tokens": requested,
+            "effective_kv_tokens": None,
+            "max_feasible_kv_tokens": None,
+            "reason": "physical cache control is loopback-only",
+        }
+    owned = client is None
+    http = client or httpx.Client(timeout=3.0, trust_env=False)
+    try:
+        response = http.get(_control_url(base_url, "status"))
+        response.raise_for_status()
+        payload = response.json()
+        geometry = payload.get("geometry") or {}
+        effective = int(geometry.get("num_pages") or 0)
+        desired = bounded_desired_kv(geometry, requested)
         if effective == desired:
-            return {
-                "status": "aligned",
-                "desired_kv_tokens": desired,
-                "effective_kv_tokens": effective,
-                "moe_cache_size": int(geometry.get("moe_cache_size") or 0),
-                "mamba_slots": int(geometry.get("num_mamba_slots") or 0),
-            }
+            return _cache_report(
+                geometry,
+                status="aligned",
+                requested_kv=requested,
+                desired_kv=desired,
+                effective_kv=effective,
+            )
         moe = _feasible_moe(geometry, desired)
         rebuild_payload = {
             "moe_cache_size": moe,
@@ -91,18 +212,27 @@ def reconcile_freetoken_cache(
         result = rebuild.json()
         if str(result.get("status") or "").casefold() != "ok":
             raise RuntimeError(str(result.get("error") or "FreeToken cache rebuild failed"))
-        return {
-            "status": "synchronized",
-            "desired_kv_tokens": desired,
-            "effective_kv_tokens": int(result.get("num_pages") or desired),
-            "moe_cache_size": int(result.get("moe_cache_size") or moe),
-            "mamba_slots": int(result.get("mamba_slots") or geometry.get("num_mamba_slots") or 0),
-        }
+        report = _cache_report(
+            geometry,
+            status="synchronized",
+            requested_kv=requested,
+            desired_kv=desired,
+            effective_kv=int(result.get("num_pages") or desired),
+            extra={
+                "moe_cache_size": int(result.get("moe_cache_size") or moe),
+                "mamba_slots": int(
+                    result.get("mamba_slots") or geometry.get("num_mamba_slots") or 0
+                ),
+            },
+        )
+        return report
     except (httpx.HTTPError, ValueError, RuntimeError, TypeError) as exc:
         return {
             "status": "degraded",
-            "desired_kv_tokens": desired,
+            "requested_kv_tokens": requested,
+            "desired_kv_tokens": requested,
             "effective_kv_tokens": None,
+            "max_feasible_kv_tokens": None,
             "reason": f"{type(exc).__name__}: {str(exc)[:180]}",
         }
     finally:

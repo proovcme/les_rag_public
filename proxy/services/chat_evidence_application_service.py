@@ -85,7 +85,11 @@ from proxy.services.project_summary_service import (
 from proxy.services.prompt_registry_service import build_mode_system_prompt
 from proxy.services.chat_profile_service import effective_retrieval_policy
 from proxy.services.retrieval_service import required_reranker_policy, retrieve_chat_chunks
-from proxy.services.runtime_admission import acquire_generation_slot, generation_semaphore
+from proxy.services.runtime_admission import (
+    acquire_generation_slot,
+    generation_semaphore,
+    generation_slot_timeout_seconds,
+)
 from proxy.services.saferag_service import (
     build_validation_context,
     concentrate_sources,
@@ -123,6 +127,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
 )
 from proxy.services.llm_transport_profile_service import (
     assistant_delta_text,
+    resolve_connection_execution_profile,
     resolve_transport_execution_profile,
 )
 
@@ -1103,6 +1108,20 @@ def restore_query_hits_from_cache(
     return restored
 
 
+_MODEL_SEARCH_CONTINUE_STATUSES = frozenset({"ok", "missing"})
+
+
+def model_search_result_blocks_packet(payload: Mapping[str, Any] | None) -> bool:
+    """Abort a packet only on search infrastructure failure.
+
+    Zero hits (`missing`) is a model-visible fact: remaining queries and the
+    terminal row table still run. The model may mark those rows MISSING.
+    """
+
+    status = str((payload or {}).get("status") or "").strip().casefold()
+    return status not in _MODEL_SEARCH_CONTINUE_STATUSES
+
+
 def stamp_empty_retrieval(
     trace: dict[str, Any],
     *,
@@ -1320,8 +1339,65 @@ def sheet_pass_progress_label(
     sheet_index: int,
     sheet_count: int,
     stage: str,
+    resumed: bool = False,
 ) -> str:
-    return f"Лист «{sheet}» ({sheet_index}/{sheet_count}): {stage}"
+    prefix = "Продолжаю: " if resumed else ""
+    return f"{prefix}Лист «{sheet}» ({sheet_index}/{sheet_count}): {stage}"
+
+
+_LIVE_SHEET_PASS_GATES: dict[str, asyncio.Event] = {}
+
+
+async def claim_or_join_sheet_pass(job_id: str) -> bool:
+    """Serialize packet loops on one research job inside this process.
+
+    Returns True when this request owns the loop. A second Continue while the
+    first is still running waits, then returns False so it does not dual-run.
+    """
+
+    key = str(job_id or "").strip()
+    if not key:
+        return True
+    gate = _LIVE_SHEET_PASS_GATES.get(key)
+    if gate is not None:
+        await gate.wait()
+        return False
+    _LIVE_SHEET_PASS_GATES[key] = asyncio.Event()
+    return True
+
+
+def release_sheet_pass(job_id: str) -> None:
+    """Allow the next Continue after this process-local sheet-pass ends."""
+
+    key = str(job_id or "").strip()
+    gate = _LIVE_SHEET_PASS_GATES.pop(key, None)
+    if gate is not None:
+        gate.set()
+
+
+def sheet_pass_progress_counts(
+    *,
+    accepted_now: int,
+    work_total: int,
+    session_accepted_start: int,
+    prior_elapsed_seconds: float = 0.0,
+) -> dict[str, Any]:
+    """Row counters for the sheet-pass bubble: display vs session ETA."""
+
+    total = max(int(work_total or 0), 1)
+    accepted = max(0, int(accepted_now or 0))
+    started = max(0, int(session_accepted_start or 0))
+    remaining_n = max(0, int(work_total or 0) - accepted)
+    return {
+        "completed": accepted,
+        "total": total,
+        "eta_completed": max(0, accepted - started),
+        "eta_total": max(0, int(work_total or 0) - started),
+        "resumed": started > 0,
+        "remaining": remaining_n,
+        "prior_completed": started,
+        "prior_elapsed_seconds": float(prior_elapsed_seconds or 0.0),
+    }
 
 
 def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
@@ -2591,9 +2667,15 @@ def format_lsr_partial_notice(
     )
 
 
-def format_lsr_unstructured_notice() -> str:
+def format_lsr_unstructured_notice(*, sheet_pass_empty: bool = False) -> str:
     """Visible reason when the model answer is not an LSR row table."""
 
+    if sheet_pass_empty:
+        return (
+            "ЛСР не создана: после поиска источников таблица строк не получена. "
+            "Пустой поиск по запросу модели не считается ошибкой формата; "
+            "незакрытые строки исходника остаются в задании."
+        )
     return (
         "ЛСР не создана: ответ не разобран как таблица строк "
         "(нужны колонки наименования, единицы и шифра)."
@@ -3762,29 +3844,44 @@ async def _execute_chat_evidence_application(
     else:
         llm_runtime = configured_runtime
     cache_state: dict[str, Any] = {}
-    if (
-        canonical_execution_mode is not CanonicalRouteMode.ACTIVE
-        and getattr(llm_runtime, "requires_cache_alignment", False)
-    ):
-        from proxy.services.freetoken_cache_profile_service import reconcile_freetoken_cache
-
-        desired_kv = _env_int("FREETOKEN_CONTEXT_TOKENS", 8253)
-        cache_state = await asyncio.to_thread(
+    if getattr(llm_runtime, "requires_cache_alignment", False):
+        from proxy.services.freetoken_cache_profile_service import (
+            DEFAULT_FREETOKEN_CONTEXT_TOKENS,
+            probe_freetoken_cache,
             reconcile_freetoken_cache,
-            llm_runtime.base_url,
-            desired_kv,
         )
-        retrieval_trace["freetoken_cache"] = cache_state
-        if cache_state.get("status") not in {"aligned", "synchronized"}:
-            raise HTTPException(
-                503,
-                "FreeToken KV не синхронизирован: "
-                + str(cache_state.get("reason") or cache_state.get("status")),
+
+        desired_kv = _env_int("FREETOKEN_CONTEXT_TOKENS", DEFAULT_FREETOKEN_CONTEXT_TOKENS)
+        if (
+            resolved_connection is not None
+            and resolved_connection.requested_context_tokens
+        ):
+            desired_kv = int(resolved_connection.requested_context_tokens)
+        if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
+            # Bound chat must not rebuild KV mid-generation. Settings/reconcile
+            # own the rebuild; here we only observe the live pages.
+            cache_state = await asyncio.to_thread(
+                probe_freetoken_cache,
+                llm_runtime.base_url,
+                desired_kv,
             )
+        else:
+            cache_state = await asyncio.to_thread(
+                reconcile_freetoken_cache,
+                llm_runtime.base_url,
+                desired_kv,
+            )
+            if cache_state.get("status") not in {"aligned", "synchronized"}:
+                raise HTTPException(
+                    503,
+                    "FreeToken KV не синхронизирован: "
+                    + str(cache_state.get("reason") or cache_state.get("status")),
+                )
+        retrieval_trace["freetoken_cache"] = cache_state
     observed_context_tokens = None
     observed_context = False
     observed_source = "unavailable"
-    if cache_state.get("status") in {"aligned", "synchronized"}:
+    if cache_state.get("status") in {"aligned", "synchronized", "mismatch"}:
         try:
             observed_context_tokens = int(cache_state.get("effective_kv_tokens") or 0) or None
         except (TypeError, ValueError):
@@ -3801,7 +3898,15 @@ async def _execute_chat_evidence_application(
         operator=model_policy,
     )
     if canonical_execution_mode is CanonicalRouteMode.ACTIVE and resolved_connection is not None:
-        execution_preset = resolved_connection.effective_preset
+        if observed_context_tokens is not None:
+            execution_preset = resolve_connection_execution_profile(
+                model_id=resolved_connection.model_id,
+                requested_context_tokens=resolved_connection.requested_context_tokens,
+                observed_context_tokens=observed_context_tokens,
+                observed_source=observed_source,
+            )
+        else:
+            execution_preset = resolved_connection.effective_preset
     preset_diagnostics = execution_preset.diagnostics(
         requested_input_tokens=cache_state.get("desired_kv_tokens")
     )
@@ -4039,7 +4144,10 @@ async def _execute_chat_evidence_application(
         ),
     )
     selector_source_map = answer_source_map
-    async with acquire_generation_slot(gen_semaphore, timeout_seconds=45.0):
+    async with acquire_generation_slot(
+        gen_semaphore,
+        timeout_seconds=generation_slot_timeout_seconds(),
+    ):
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 answer = ""
@@ -4426,7 +4534,7 @@ async def _execute_chat_evidence_application(
                     blocked_queries = [
                         index
                         for index, payload in enumerate(tool_results_for_model, 1)
-                        if str(payload.get("status") or "") != "ok"
+                        if model_search_result_blocks_packet(payload)
                     ]
                     if blocked_queries:
                         raise HTTPException(
@@ -5008,6 +5116,7 @@ async def _execute_chat_evidence_application(
                         *,
                         completed: int,
                         total: int,
+                        extra: Mapping[str, Any] | None = None,
                     ) -> None:
                         if token_sink is None:
                             return
@@ -5018,6 +5127,7 @@ async def _execute_chat_evidence_application(
                                     "label": label,
                                     "completed": completed,
                                     "total": total,
+                                    **dict(extra or {}),
                                     **(
                                         {
                                             "workbook_research_job_id": str(
@@ -5162,7 +5272,72 @@ async def _execute_chat_evidence_application(
                         else {}
                     )
                     sheet_count = len(sheet_pass_names)
+                    work_total = len(source_catalog.work_locators())
+                    session_accepted_start = len(
+                        structurally_complete_source_keys(
+                            accumulated_rows, source_catalog
+                        )
+                    )
+                    prior_elapsed = float(
+                        (research_job or {}).get("prior_elapsed_seconds") or 0.0
+                    )
+
+                    async def _emit_row_progress(
+                        stage: str, *, sheet: str, index: int
+                    ) -> None:
+                        accepted_now = len(
+                            structurally_complete_source_keys(
+                                accumulated_rows, source_catalog
+                            )
+                        )
+                        counts = sheet_pass_progress_counts(
+                            accepted_now=accepted_now,
+                            work_total=work_total,
+                            session_accepted_start=session_accepted_start,
+                            prior_elapsed_seconds=prior_elapsed,
+                        )
+                        extra = {
+                            key: value
+                            for key, value in counts.items()
+                            if key not in {"completed", "total"}
+                        }
+                        await _emit_sheet_progress(
+                            sheet_pass_progress_label(
+                                sheet,
+                                sheet_index=index,
+                                sheet_count=sheet_count,
+                                stage=stage,
+                                resumed=bool(counts["resumed"]),
+                            ),
+                            completed=int(counts["completed"]),
+                            total=int(counts["total"]),
+                            extra=extra,
+                        )
+
+                    if session_accepted_start > 0 and sheet_pass_names:
+                        await _emit_row_progress(
+                            "поиск норм",
+                            sheet=sheet_pass_names[0],
+                            index=1,
+                        )
+                    owns_sheet_pass = True
+                    live_job_id = str((research_job or {}).get("job_id") or "")
+                    if live_job_id:
+                        owns_sheet_pass = await claim_or_join_sheet_pass(live_job_id)
                     try:
+                      if not owns_sheet_pass:
+                        logger.info(
+                            "[SHEET_PASS] joined live job=%s; skip duplicate packet loop",
+                            live_job_id,
+                        )
+                        if research_job_service is not None and live_job_id:
+                            research_job = research_job_service.get(live_job_id) or research_job
+                        accumulated_rows = [
+                            dict(item)
+                            for item in ((research_job or {}).get("accepted_rows") or ())
+                            if isinstance(item, Mapping)
+                        ]
+                        sheet_pass_names = ()
                       for sheet_index, sheet_name in enumerate(sheet_pass_names, start=1):
                         if (
                             research_job_service is not None
@@ -5266,15 +5441,10 @@ async def _execute_chat_evidence_application(
                                 cited_before = structurally_complete_source_keys(
                                     accumulated_rows, source_catalog
                                 )
-                                await _emit_sheet_progress(
-                                    sheet_pass_progress_label(
-                                        sheet_name,
-                                        sheet_index=sheet_index,
-                                        sheet_count=sheet_count,
-                                        stage="поиск норм",
-                                    ),
-                                    completed=sheet_index - 1,
-                                    total=sheet_count,
+                                await _emit_row_progress(
+                                    "поиск норм",
+                                    sheet=sheet_name,
+                                    index=sheet_index,
                                 )
                                 pass_evidence = selector_evidence_payload(
                                     attachment_context=attachment_context,
@@ -5390,6 +5560,7 @@ async def _execute_chat_evidence_application(
                                 pass_hits: list[tuple[str, Sequence[Any]]] = []
                                 pass_tools: list[dict[str, Any]] = []
                                 search_blocked = False
+                                search_block_status = ""
                                 cache_updates: dict[str, list[dict[str, Any]]] = {}
                                 for query in model_queries:
                                     cached_hits = restore_query_hits_from_cache(
@@ -5402,7 +5573,7 @@ async def _execute_chat_evidence_application(
                                             {
                                                 "schema": "les_tool_result_v1",
                                                 "tool": "search_sources",
-                                                "status": "ok",
+                                                "status": "ok" if hits else "missing",
                                                 "result": {
                                                     "count": len(hits),
                                                     "cached": True,
@@ -5419,8 +5590,13 @@ async def _execute_chat_evidence_application(
                                         {"tool": "search_sources", "args": {"q": query}}
                                     )
                                     pass_tools.append(research_result.payload)
-                                    if str(research_result.payload.get("status") or "") != "ok":
+                                    if model_search_result_blocks_packet(
+                                        research_result.payload
+                                    ):
                                         search_blocked = True
+                                        search_block_status = str(
+                                            research_result.payload.get("status") or ""
+                                        )
                                         break
                                     hits = tuple(research_result.chunks)[
                                         : retrieval_limits["model_evidence_k"]
@@ -5436,8 +5612,9 @@ async def _execute_chat_evidence_application(
                                     )
                                 if search_blocked:
                                     logger.warning(
-                                        "[SHEET_PASS] search incomplete sheet=%s",
+                                        "[SHEET_PASS] search incomplete sheet=%s status=%s",
                                         sheet_name,
+                                        search_block_status,
                                     )
                                     break
                                 if (
@@ -5453,15 +5630,10 @@ async def _execute_chat_evidence_application(
                                 model_rag_query_hits = pass_hits
                             leftover_query_hits: list[tuple[str, Sequence[Any]]] = []
                             included_hits: list[tuple[str, Sequence[Any]]] = []
-                            await _emit_sheet_progress(
-                                sheet_pass_progress_label(
-                                    sheet_name,
-                                    sheet_index=sheet_index,
-                                    sheet_count=sheet_count,
-                                    stage="таблица строк",
-                                ),
-                                completed=sheet_index - 1,
-                                total=sheet_count,
+                            await _emit_row_progress(
+                                "таблица строк",
+                                sheet=sheet_name,
+                                index=sheet_index,
                             )
                             question_tail = sheet_pass_question_tail(
                                 str(req.question or ""),
@@ -5794,6 +5966,9 @@ async def _execute_chat_evidence_application(
                     except asyncio.CancelledError:
                         logger.warning("[SHEET_PASS] cancelled; preserving accepted packets")
                         research_cancelled = True
+                    finally:
+                        if live_job_id and owns_sheet_pass:
+                            release_sheet_pass(live_job_id)
                     if not any_sheet_queries and not accumulated_rows and not research_cancelled:
                         raise HTTPException(
                             status_code=503,
@@ -5806,18 +5981,19 @@ async def _execute_chat_evidence_application(
                         not in structurally_complete_source_keys(accumulated_rows, source_catalog)
                     ]
                     if research_job_service is not None and research_job is not None:
-                        if research_cancelled or unfinished_locators:
-                            research_job = research_job_service.pause(
-                                research_job["job_id"],
-                                remaining=unfinished_locators,
-                                phase="packets",
-                            )
-                        else:
-                            research_job = research_job_service.finish(
-                                research_job["job_id"],
-                                status="complete",
-                                phase="research_complete",
-                            )
+                        if owns_sheet_pass:
+                            if research_cancelled or unfinished_locators:
+                                research_job = research_job_service.pause(
+                                    research_job["job_id"],
+                                    remaining=unfinished_locators,
+                                    phase="packets",
+                                )
+                            else:
+                                research_job = research_job_service.finish(
+                                    research_job["job_id"],
+                                    status="complete",
+                                    phase="research_complete",
+                                )
                         retrieval_trace["workbook_research_job"] = {
                             "schema": "les.workbook-research-job.v1",
                             "job_id": research_job["job_id"],
@@ -5831,10 +6007,10 @@ async def _execute_chat_evidence_application(
                             "cached_queries": len(research_job.get("query_cache") or {}),
                             "operator_overrides": dict(research_job.get("operator_overrides") or {}),
                         }
-                    await _emit_sheet_progress(
-                        "Сборка ЛСР по листам",
-                        completed=sheet_count,
-                        total=sheet_count,
+                    await _emit_row_progress(
+                        "сборка файла",
+                        sheet=sheet_pass_names[-1] if sheet_pass_names else "",
+                        index=max(sheet_count, 1),
                     )
                     sheet_pass_done = True
                     sheet_pass_rows = accumulated_rows
@@ -6857,7 +7033,9 @@ async def _execute_chat_evidence_application(
                                 "notice": notice,
                             }
                     else:
-                        notice = format_lsr_unstructured_notice()
+                        notice = format_lsr_unstructured_notice(
+                            sheet_pass_empty=bool(sheet_pass_done)
+                        )
                         if notice not in answer:
                             answer = f"{answer.rstrip()}\n\n{notice}"
                         retrieval_trace["model_result"] = {
@@ -7053,6 +7231,12 @@ async def _execute_chat_evidence_application(
                                     "question": str(req.question or ""),
                                     "attachment_id": attachment_id,
                                     "session_id": str(req.session_id or ""),
+                                    "remaining_locators": list(
+                                        lsr_readiness.get("remaining_locators") or []
+                                    )[:80],
+                                    "catalog_work_count": int(
+                                        lsr_readiness.get("catalog_work_count") or 0
+                                    ),
                                 }
                         if workbook_chat_meta:
                             harvested_missing = [

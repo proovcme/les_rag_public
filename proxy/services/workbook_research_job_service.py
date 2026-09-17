@@ -5,6 +5,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
@@ -132,6 +133,7 @@ class WorkbookResearchJobService:
     def begin_or_resume(self, identity: WorkbookResearchIdentity) -> dict[str, Any]:
         digest = identity.digest()
         identity_json = json.dumps(identity.__dict__, ensure_ascii=False, sort_keys=True)
+        prior_elapsed = 0.0
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -150,6 +152,9 @@ class WorkbookResearchJobService:
                 job_id = str(row["job_id"])
                 if str(row["identity_json"]) != identity_json:
                     raise WorkbookResearchJobError("identity hash collision")
+                prior_elapsed = self.elapsed_seconds_between(
+                    str(row["created_at"]), str(row["updated_at"])
+                )
                 status = str(row["status"])
                 if status in RESUMABLE_STATUSES:
                     conn.execute(
@@ -164,7 +169,28 @@ class WorkbookResearchJobService:
                         "resumed",
                         {"from_status": status},
                     )
-        return self.get(job_id)
+        job = self.get(job_id)
+        job["prior_elapsed_seconds"] = prior_elapsed
+        return job
+
+    @staticmethod
+    def elapsed_seconds_between(created_at: str, updated_at: str) -> float:
+        """Wall time from SQLite timestamps before resume bumps updated_at."""
+
+        def _parse(value: str) -> datetime | None:
+            text = str(value or "").strip()
+            if not text:
+                return None
+            try:
+                return datetime.fromisoformat(text.replace(" ", "T"))
+            except ValueError:
+                return None
+
+        start = _parse(created_at)
+        end = _parse(updated_at)
+        if start is None or end is None:
+            return 0.0
+        return max(0.0, (end - start).total_seconds())
 
     @staticmethod
     def _append_event(

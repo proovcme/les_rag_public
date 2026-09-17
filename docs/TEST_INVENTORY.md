@@ -42,12 +42,27 @@ remain scoped to the source sheet and preserve explicit cross-sheet links.
   (`test_sovushka_chat`). Покрытие исходника,
   нормы и цены — `test_lsr_source_coverage_service`,
   `test_lsr_result_readiness_service`; UI уточнения/подтверждения без модели —
-  `test_sovushka_chat`.   Контракт упаковки принимает operator `confirmed_data`
+  `test_sovushka_chat`. Панель артефактов показывает новый XLSX сверху и
+  прокручивает карточку готовности (`order_chat_file_artifacts`).
+  Toast нового файла и кнопок ЛСР (resume/repack/confirm) входят в слот
+  чата (`_notify` / `notify_in_element`); оценка
+  remaining-time — `format_job_ready_eta_line` (`test_sovushka_chat`,
+  `test_indexing_eta`). Continue показывает leftover/accepted и seed ETA
+  (`format_lsr_resume_display`, `sheet_pass_progress_counts`).
+  Обрыв SSE после `tool_progress` не отменяет и не задерживает runner (`detach_chat_runner_after_disconnect`,
+  `test_chat_stream_w51`) и не показывает «Соединение прервано»
+  (`format_detached_stream_notice`, `follow_detached_chat_history`);
+  повторный Continue не dual-run (`claim_or_join_sheet_pass`).
+  Очередь модели ждёт `LES_MODEL_QUEUE_WAIT_SEC` (`test_runtime_admission`);
+  мастер запуска идемпотентен; NSIS копируется из `CARGO_TARGET_DIR`
+  (`test_tauri_desktop`). Контракт упаковки принимает operator `confirmed_data`
   (`test_workbook_tool_service`, `test_workbook_tool_contracts`,
   `test_chat_evidence_application_service`). Overflow workbook result
   остаётся у оператора (`test_chat_lsr_executor_keeps_overflow_workbook_for_operator`).
   Единый sheet-pass для малого и большого каталога —
-  `test_chat_evidence_application_service`. Конверсия единиц только с источником
+  `test_chat_evidence_application_service`. Пустой `search_sources`
+  (`missing`) не abort'ит пакет до таблицы строк
+  (`model_search_result_blocks_packet`). Конверсия единиц только с источником
   и без угадывания габарита из названия — `test_rim_lsr_trace_service`.
 
 - LSR quality gate: нейтральная проверка карточки, сохранение последнего
@@ -66,6 +81,8 @@ remain scoped to the source sheet and preserve explicit cross-sheet links.
   покрыты `test_chat_stream_w51` / `test_chat_history_router`.
   Заголовки model-authored `Qn`, которые не влезают в остаток окна, не роняют
   чат: регрессия фиксирует split/omit вместо `MODEL_RAG_EVIDENCE_BUDGET_TOO_SMALL_FOR_ALL_QUERY_HEADERS`.
+  FreeToken KV: default 35000, rebuild clamp к `max_feasible_kv`, ACTIVE только
+  читает live pages (`test_freetoken_cache_profile_service`).
 - RAG: contract-versioned named `dense + bm25_sparse`, native RRF, rerank,
   profile-owned overfetch/diversity/evidence limits, hierarchy/parent expansion,
   dimensional readiness, ready-generation guard для ColBERT и dataset integrity.
