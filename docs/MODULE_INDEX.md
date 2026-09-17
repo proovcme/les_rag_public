@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.54 / 760:** чистая Windows-установка пишет startup-журналы и
+> `windows-light-state.json` прямо в persistent state `LES_WINDOWS_STATE_ROOT/logs`.
+> Создание новых файлов больше не зависит от записи через runtime junction,
+> которая на чистом NSIS-контуре давала `services_start_failed` после запуска
+> процессов. Tests: `tests/test_installer_windows.py`,
+> `tests/test_tauri_desktop.py`; installed smoke обязателен перед передачей.
+
 > **0.31.53 / 759:** ночная ЛСР отвязывается от закрытого SSE без ожидания и
 > без отмены sheet-pass; strong reference сохраняет runner до завершения.
 > Пузырь не пишет «Соединение прервано», PENDING-история дожидается файла,

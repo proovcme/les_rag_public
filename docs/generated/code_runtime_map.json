@@ -4128,6 +4128,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "sovushka/components/header.py",
+        "tests/test_freetoken_cache_profile_service.py",
         "tests/test_freetoken_provider.py"
       ],
       "lines": 240,
@@ -10276,6 +10277,17 @@
     },
     {
       "inbound": [],
+      "lines": 89,
+      "module": "tests.test_freetoken_cache_profile_service",
+      "outbound": [
+        "proxy/services/freetoken_cache_profile_service.py"
+      ],
+      "path": "tests/test_freetoken_cache_profile_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 235,
       "module": "tests.test_freetoken_provider",
       "outbound": [
@@ -10562,7 +10574,7 @@
     },
     {
       "inbound": [],
-      "lines": 615,
+      "lines": 618,
       "module": "tests.test_installer_windows",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -18782,9 +18794,9 @@
     "product_reachable": 356,
     "registered_api_routes": 336,
     "runtime_support": 11,
-    "test_or_tool_only": 635,
-    "tracked_python_files": 1003,
-    "tracked_python_lines": 325008
+    "test_or_tool_only": 636,
+    "tracked_python_files": 1004,
+    "tracked_python_lines": 325100
   },
   "warnings": []
 }

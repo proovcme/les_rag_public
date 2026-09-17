@@ -48,6 +48,9 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
    один controlled rebuild. Все последующие `uv run` используют `--no-sync`.
    Вложенные служебные каталоги создаются по разрешённому target persistent-state junction:
    Python под `%LOCALAPPDATA%\Programs` не выполняет `mkdir` через mount point.
+   Startup-журналы и `windows-light-state.json` создаются напрямую в
+   `%LOCALAPPDATA%\LES\logs`; runtime junction `runtime\logs` служит для
+   совместимого чтения уже созданных файлов и не является путём записи.
 2. Immutable ФСНБ baseline проверяется; его недоступность отражается degraded status, но не
    превращает отсутствие внешнего компонента в повреждение Python.
 3. Docker/Qdrant и answer/embedding providers определяются как optional capabilities.

@@ -4,6 +4,9 @@
 fragments and resumption of broken links without changing model norms.
 `tests/test_lsr_source_coverage_service.py`: relative work-row coordinates
 remain scoped to the source sheet and preserve explicit cross-sheet links.
+`tests/test_installer_windows.py`: startup logs and `windows-light-state.json`
+use the direct persistent-state path on a clean Windows install; runtime
+junctions remain compatibility readers, not the creation path.
 
 > **Статус: актуально.** Источник команд — `Makefile`; состав конкретных наборов
 > задают его именованные переменные. Исторические счётчики и описание прежних

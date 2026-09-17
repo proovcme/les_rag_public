@@ -6,6 +6,12 @@
 
 ## Текущее состояние (2026-09-17)
 
+**0.31.54 / 760:** clean-install startup repair. `start-light.ps1` writes
+logs and `windows-light-state.json` directly to the persistent state root;
+the runtime junction is no longer used to create files. This closes the
+`services_start_failed` found by isolated installer smoke for 759. Candidate;
+exact installer and repeated isolated installed smoke are required before handoff.
+
 **0.31.53 / 759:** final SSE disconnect fix: the response immediately detaches
 the runner instead of awaiting it through `gather` or `shield`. A closed chat
 window cannot cancel sheet-pass and does not hold request shutdown until the
@@ -71,27 +77,24 @@ raise is recorded after overlay; this is not a public release.
 the set contract; `test_lsr_packet_integrity` exercises the exact difference
 operation. Build 749 is not an accepted candidate. No model decisions changed.
 
-Candidate 2026-09-16: **0.31.51 / build 757**. Continue shows leftover
-rows and ETA instead of a fake rebuild. 756 slot-stack, 755 ETA line and
-754 setup/queue remain. Live SKS/9B/`B0_DIRECT`/estimator/installer are
-not closed. Isolated `dist/LES-Setup.exe` 5.1.754 is staged
-(497 824 839 bytes) but not smoke-installed over production. This
-candidate is not a public release.
+Candidate 2026-09-17: **0.31.54 / build 760**. Long LSR sheet-pass survives
+an SSE disconnect and is recovered through PENDING history; clean install
+writes runtime state directly to persistent logs. Exact installer and repeated
+isolated installed smoke remain the release gate. This candidate is not a
+public release.
 
 ```
-версия продукта (SemVer):  0.31.51
-номер сборки:              757
-версия Tauri/NSIS:         5.1.757
+версия продукта (SemVer):  0.31.54
+номер сборки:              760
+версия Tauri/NSIS:         5.1.760
 ветка разработки:          fix/local-qwen-result-parse
-dev implementation:       0.31.51 resume progress/ETA
-задеплоено на рантайм:     overlay 757 UI+proxy restarted
+dev implementation:       0.31.54 resumable LSR + clean-install startup repair
+задеплоено на рантайм:     0.31.53 / 759 aligned; 760 candidate pending
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      0.31.51 / 757 after overlay restart
-кандидат установщика:      dist/LES-Setup.exe 497 824 839 байт (сборка 5.1.754),
-                           SHA-256 3b9fca0ea25f0a951f0b85bd7c8e1ab31f067a79c25b25d68804aac6e209e3b4
-                           (isolated smoke not run, not public)
+рантайм /api/version:      0.31.53 / 759 aligned
+кандидат установщика:      5.1.760 pending exact build + isolated smoke
 ```
 
 > **0.31.42 / build 748 workbook overflow:** 74 сохранённых строк №124 собирали

@@ -46,6 +46,7 @@ if ($StateRoot) {
   $env:LES_ENV_PATH = if ($env:LES_ENV_PATH) { $env:LES_ENV_PATH } else { Join-Path $StateRoot ".env" }
   $env:UV_PROJECT_ENVIRONMENT = if ($env:UV_PROJECT_ENVIRONMENT) { $env:UV_PROJECT_ENVIRONMENT } else { Join-Path $StateRoot ".venv" }
 }
+$LogRoot = if ($StateRoot) { Join-Path $StateRoot "logs" } else { Join-Path $Root "logs" }
 
 function Get-LesDotEnvValue([string]$Key) {
   $envPath = if ($env:LES_ENV_PATH) { $env:LES_ENV_PATH } else { Join-Path $Root ".env" }
@@ -186,7 +187,7 @@ $env:SPECKLE_ENABLED = "false"
 $env:LES_RUNTIME_MODE = $Mode
 $env:PROXY_URL = if ($Mode -eq "ui") { $BackendUrl } else { "http://127.0.0.1:$ProxyPort" }
 $env:CORS_ALLOWED_ORIGINS = "http://127.0.0.1:$ProxyPort,http://127.0.0.1:$UiPort,http://localhost:$ProxyPort,http://localhost:$UiPort"
-New-Item -ItemType Directory -Force -Path (Join-Path $Root "logs") | Out-Null
+New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
 
 function Set-LesOllamaEmbeddings {
   $env:OLLAMA_BASE_URL = if ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL } else { "http://127.0.0.1:11434" }
@@ -254,8 +255,8 @@ if (($Mode -ne "ui") -and ($Provider -eq "lemonade")) {
     $env:MLX_URL = "http://127.0.0.1:$LemonadeHostPort"
   }
   $lemonadeHostArgs = @("lemonade_host.py")
-  $lemonadeHostOut = Join-Path $Root "logs\windows-light-lemonade-host.out.log"
-  $lemonadeHostErr = Join-Path $Root "logs\windows-light-lemonade-host.err.log"
+  $lemonadeHostOut = Join-Path $LogRoot "windows-light-lemonade-host.out.log"
+  $lemonadeHostErr = Join-Path $LogRoot "windows-light-lemonade-host.err.log"
   $lemonadeHost = Start-LesPythonProcess -PythonArgs $lemonadeHostArgs -StdOut $lemonadeHostOut -StdErr $lemonadeHostErr
   $lemonadeHealth = Wait-LesHttp "http://127.0.0.1:$LemonadeHostPort/api/health" 25
   if ($null -eq $lemonadeHealth) {
@@ -267,8 +268,8 @@ $proxy = $null
 $proxyErr = $null
 if ($Mode -ne "ui") {
   $proxyArgs = @("-m", "uvicorn", "proxy_server:app", "--host", "127.0.0.1", "--port", "$ProxyPort")
-  $proxyOut = Join-Path $Root "logs\windows-light-proxy.out.log"
-  $proxyErr = Join-Path $Root "logs\windows-light-proxy.err.log"
+  $proxyOut = Join-Path $LogRoot "windows-light-proxy.out.log"
+  $proxyErr = Join-Path $LogRoot "windows-light-proxy.err.log"
   $proxy = Start-LesPythonProcess -PythonArgs $proxyArgs -StdOut $proxyOut -StdErr $proxyErr
 }
 
@@ -276,8 +277,8 @@ $ui = $null
 if ($Mode -ne "backend") {
   $env:SOVUSHKA_UI_PORT = "$UiPort"
   $uiArgs = @("sovushka_ng.py")
-  $uiOut = Join-Path $Root "logs\windows-light-ui.out.log"
-  $uiErr = Join-Path $Root "logs\windows-light-ui.err.log"
+  $uiOut = Join-Path $LogRoot "windows-light-ui.out.log"
+  $uiErr = Join-Path $LogRoot "windows-light-ui.err.log"
   $ui = Start-LesPythonProcess -PythonArgs $uiArgs -StdOut $uiOut -StdErr $uiErr
 }
 
@@ -319,6 +320,6 @@ $payload = [pscustomobject]@{
   python_executable = $LesPython
 }
 
-$statePath = Join-Path $Root "logs\windows-light-state.json"
+$statePath = Join-Path $LogRoot "windows-light-state.json"
 $payload | ConvertTo-Json -Depth 8 | Set-Content -Path $statePath -Encoding utf8
 $payload | ConvertTo-Json -Depth 8

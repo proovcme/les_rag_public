@@ -407,6 +407,9 @@ def test_windows_tauri_uses_update_safe_persistent_state():
     assert "$env:UV_PROJECT_ENVIRONMENT" in bootstrap
     assert 'Get-Content $env:LES_ENV_PATH' in bootstrap
     assert 'state_root = if ($StateRoot)' in start
+    assert '$LogRoot = if ($StateRoot) { Join-Path $StateRoot "logs" }' in start
+    assert '$statePath = Join-Path $LogRoot "windows-light-state.json"' in start
+    assert 'Join-Path $Root "logs\\windows-light-state.json"' not in start
     assert '@(".codex_tmp", "tmp")' in state
     assert "Refusing to remove temporary reparse point" in state
     assert "function Grant-LesWindowsStateAccess" in state
