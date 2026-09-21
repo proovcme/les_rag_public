@@ -1709,3 +1709,30 @@ def test_dataset_and_chat_profile_operator_summaries_are_human_readable():
     assert any("Табличный сигнал" in line for line in ds_lines)
     assert "Ходов: 4" in chat_lines[0]
     assert any("нет PDF проекта" in line for line in chat_lines)
+
+
+def test_workbook_job_is_stalled_requires_running_and_old_checkpoint():
+    now_ts = datetime(2026, 9, 21, 21, 0, tzinfo=timezone.utc).timestamp()
+    fresh = {"job_status": "running", "updated_at": "2026-09-21 20:51:15"}
+    assert not chat_page.workbook_job_is_stalled(fresh, now_ts=now_ts, threshold_sec=1200)
+    stale = {"job_status": "running", "updated_at": "2026-09-21 20:21:15"}
+    assert chat_page.workbook_job_is_stalled(stale, now_ts=now_ts, threshold_sec=1200)
+    done = {"job_status": "complete", "updated_at": "2026-09-21 18:00:00"}
+    assert not chat_page.workbook_job_is_stalled(done, now_ts=now_ts, threshold_sec=1200)
+    assert not chat_page.workbook_job_is_stalled({"job_status": "running"}, now_ts=now_ts)
+
+
+def test_lsr_resume_payload_from_job_matches_durable_identity():
+    job = {
+        "identity": {
+            "session_id": "sess-1",
+            "attachment_id": "read_8f574357c416",
+            "dataset_ids": ["d1", "d2"],
+        }
+    }
+    payload = chat_page.lsr_resume_payload_from_job(job, question="  Собери ЛСР  ")
+    assert payload["question"] == "Собери ЛСР"
+    assert payload["session_id"] == "sess-1"
+    assert payload["attachment_id"] == "read_8f574357c416"
+    assert payload["dataset_ids"] == ["d1", "d2"]
+    assert payload["mode"] == "estimator"

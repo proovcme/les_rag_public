@@ -571,6 +571,66 @@ def format_workbook_session_sys_notice(pending: Any = None) -> str:
     return "Сессия загружена из истории."
 
 
+def workbook_job_is_stalled(
+    pending: Any = None,
+    *,
+    now_ts: float | None = None,
+    threshold_sec: float | None = None,
+) -> bool:
+    """Running job whose durable checkpoint stopped advancing for longer than
+    any bounded model/tool window — the executor is gone (restart or crash)."""
+
+    if not workbook_assembly_is_running(pending):
+        return False
+    payload = pending if isinstance(pending, dict) else {}
+    updated = str(payload.get("updated_at") or "").strip()
+    if not updated:
+        return False
+    try:
+        limit = float(
+            threshold_sec
+            if threshold_sec is not None
+            else os.getenv("LES_LSR_STALLED_RESUME_SEC", "1200")
+        )
+    except (TypeError, ValueError):
+        limit = 1200.0
+    try:
+        stamp = datetime.fromisoformat(updated.replace(" ", "T"))
+    except ValueError:
+        return False
+    if stamp.tzinfo is None:
+        # SQLite CURRENT_TIMESTAMP — UTC без маркера зоны.
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    now = (
+        datetime.fromtimestamp(now_ts, tz=timezone.utc)
+        if now_ts is not None
+        else datetime.now(timezone.utc)
+    )
+    return (now - stamp).total_seconds() >= max(60.0, limit)
+
+
+def lsr_resume_payload_from_job(job: Any, *, question: str) -> dict[str, Any]:
+    """Chat payload that re-dispatches a durable workbook-research job: сервер
+    узнаёт identity и продолжает с закэшированных пакетов/решений."""
+
+    data = job if isinstance(job, dict) else {}
+    identity = data.get("identity") if isinstance(data.get("identity"), dict) else {}
+    payload: dict[str, Any] = {
+        "question": str(question or "").strip(),
+        "session_id": str(identity.get("session_id") or ""),
+        "mode": "estimator",
+        "response_length": "standard",
+        "selected_sources_only": False,
+    }
+    dataset_ids = [str(item) for item in (identity.get("dataset_ids") or []) if str(item)]
+    if dataset_ids:
+        payload["dataset_ids"] = dataset_ids
+    attachment_id = str(identity.get("attachment_id") or "")
+    if attachment_id:
+        payload["attachment_id"] = attachment_id
+    return payload
+
+
 def _elapsed_seconds_from_stamp(stamp: Any, now_ts: float | None = None) -> float:
     raw = str(stamp or "").strip()
     if not raw:
@@ -2436,6 +2496,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             aria_label="Отправить",
                             classes="sov-send-btn",
                         )
+                    with ui.row().classes("sov-lsr-stalled-row w-full items-center gap-2") as lsr_stalled_row:
+                        lsr_stalled_row.set_visibility(False)
+                        ui.label("Сборка остановилась: сервер не обновляет чекпоинт.").classes(
+                            "sov-lsr-stalled-hint"
+                        )
+                        action_button(
+                            "Продолжить",
+                            icon="o_play_arrow",
+                            on_click=lambda: asyncio.create_task(_resume_stalled_lsr()),
+                            variant="primary",
+                            compact=True,
+                            classes="sov-lsr-stalled-resume",
+                        ).tooltip("Возобновить сборку с сохранённого кэша пакетов")
 
         # Резиновый layout: разделитель между чатом и артефактами (таскать по ширине).
         artifact_divider = ui.element("div").classes("sov-resize-divider")
@@ -4413,6 +4486,46 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             force_mode="estimator",
         )
 
+    async def _resume_stalled_lsr() -> None:
+        """Повторная диспатч застывшей сборки: сервер подхватывает
+        durable job по identity и продолжает без повторного поиска."""
+
+        if _sending["v"]:
+            _notify("Дождитесь окончания текущего ответа", type="warning")
+            return
+        pending = dict(state.get("chat_pending") or {})
+        job_id = str(pending.get("job_id") or "")
+        job = await api_get(f"/api/workbook-research/{job_id}") if job_id else None
+        if not isinstance(job, dict) or not job.get("job_id"):
+            _notify("Нет сохранённой сборки для продолжения", type="warning")
+            return
+        last_send = state.get("last_chat_send") or {}
+        payload = dict(last_send.get("payload") or {})
+        if not payload:
+            question = next(
+                (
+                    str(row.get("text") or "").strip()
+                    for row in reversed(list(state.get("chat_history") or []))
+                    if isinstance(row, dict) and row.get("role") == "user"
+                ),
+                "",
+            )
+            payload = lsr_resume_payload_from_job(job, question=question)
+        if not str(payload.get("question") or "").strip():
+            _notify("Не найден исходный запрос — отправьте задачу заново", type="warning")
+            return
+        lsr_stalled_row.set_visibility(False)
+        _notify("Возобновляю сборку; поиск по принятым решениям не повторяется.", type="info")
+        asyncio.create_task(_follow_resume_stream(payload))
+
+    async def _follow_resume_stream(payload: dict) -> None:
+        landed = await api_post_stream(
+            "/api/chat/stream", payload, lambda _event, _data: None
+        )
+        if not landed:
+            _notify("Соединение оборвалось — сборка продолжается на сервере", type="warning")
+        await _follow_pending_history_if_needed()
+
     async def _refine_lsr_rows(resume: dict, locators_text: str) -> None:
         locators = [
             item.strip()
@@ -4930,6 +5043,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             payload = {}
         notice = format_workbook_assembly_notice(payload)
         running = workbook_assembly_is_running(payload)
+        stalled = running and workbook_job_is_stalled(payload)
+        if stalled:
+            notice = str(notice).replace(
+                "Не нажимайте «Продолжить», пока задача идёт.",
+                "Чекпоинт не обновляется — нажмите «Продолжить» под полем ввода.",
+            )
+        try:
+            lsr_stalled_row.set_visibility(bool(stalled) and not _sending["v"])
+        except Exception:
+            pass
         eta_line = format_job_ready_eta_line(
             payload.get("started_at") or payload.get("created_at"),
             payload.get("accepted"),
@@ -5679,6 +5802,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             payload["attachment_context"] = (
                 f"{existing_ctx}\n\n{pasted_context}" if existing_ctx else pasted_context
             )[:20000]
+        state["last_chat_send"] = {
+            "question": str(payload.get("question") or question),
+            "payload": dict(payload),
+        }
+        try:
+            lsr_stalled_row.set_visibility(False)
+        except Exception:
+            pass
         _t0 = time.monotonic()
         _stop_tick = {"v": False}
         _status_text = {"v": _initial_status}
