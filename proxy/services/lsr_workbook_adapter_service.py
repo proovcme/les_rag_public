@@ -190,6 +190,41 @@ def collect_lsr_price_gaps(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
     return gaps
 
 
+def _attach_catalog_facts(
+    decisions: list[dict[str, Any]], attachment_id: str
+) -> None:
+    """Stamp raw source cells/numbers so the calculator can reject silent changes.
+
+    Source data is kept separately from the authored row; nothing is rewritten.
+    A missing attachment or catalog keeps the legacy calculation path.
+    """
+
+    if not attachment_id or not decisions:
+        return
+    try:
+        from proxy.services.attachment_source_catalog_service import (
+            load_catalog_from_attachment_id,
+            quantity_candidates,
+        )
+
+        catalog = load_catalog_from_attachment_id(attachment_id)
+    except Exception:  # noqa: BLE001 - catalog absence cannot break a rebuild
+        catalog = None
+    if catalog is None:
+        return
+    for item in decisions:
+        try:
+            cat_row = catalog.lookup(item.get("source_row"))
+        except Exception:  # noqa: BLE001
+            continue
+        if cat_row is None:
+            continue
+        item["_catalog_source_values"] = [str(value) for value in cat_row.values]
+        item["_catalog_source_numbers"] = [
+            float(value) for value in quantity_candidates(cat_row)
+        ]
+
+
 async def build_lsr_workbook_from_decisions(
     _source_path: Path,
     args: Mapping[str, Any],
@@ -198,6 +233,7 @@ async def build_lsr_workbook_from_decisions(
 ) -> Mapping[str, Any]:
     """Calculate and render the model's explicit LSR row decisions."""
     decisions = [dict(item) for item in (args.get("decisions") or [])]
+    _attach_catalog_facts(decisions, str(args.get("attachment_id") or "").strip())
     requested_pricebook = str(
         args.get("pricebook") or args.get("pricebook_id") or ""
     ).strip()

@@ -57,7 +57,7 @@ and a fresh `JobService` creates its SQLite file directly under state `data`.
   `test_chat_evidence_application_service`). Durable packet checkpoint
   (`test_workbook_research_job_service`) переживает pause/resume без повторного
   поиска кэшированных запросов: `should_cancel` остаётся истинным после `pause()`,
-  иначе живой цикл продолжает пакеты. Точечное reopen locator сохраняет чужие
+  иначе живой цикл продолжает пакеты. Этап Б: расчёт отказывается от позиции, если авторство модели по количеству/единице расходится с каталогом исходника без явного основания пересчёта — строка остаётся видимой как `unconfirmed_quantity` и не попадает ни в одну сумму; материал без количества больше не получает молча qty=1 (`test_rim_lsr_trace_service`). Точечное reopen locator сохраняет чужие
   решения. Этап А: `operation_id` устойчив через pause/resume/пересборку,
   несколько разных операций на одном локаторе не склеиваются, повтор того же
   решения не дублирует позицию, уточнение дописывает ревизию в

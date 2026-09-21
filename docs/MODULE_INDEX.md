@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.72 / 778 stage B:** the workbook adapter stamps raw source cells/numbers
+> (`_catalog_source_*`) from the server-owned attachment catalog; the calculator
+> refuses an authored unit/quantity change that has no cited conversion basis —
+> the row stays visible as `unconfirmed_quantity` with field/source/authored/needed
+> data and produces no position (absent from every sum); materials without a
+> quantity no longer silently become qty=1. Code: `lsr_workbook_adapter_service.py`,
+> `rim_lsr_trace_service.py`; tests: `test_rim_lsr_trace_service.py` (+6),
+> `test_chat_evidence_application_service` adapter contract. Live СКС replay:
+> R47/R48/R49/R50 (30/210/18/162 м→шт) and R12 (990→12) left the confirmed sums.
+
 > **0.31.71 / 777 stage A:** durable workbook decisions carry a stable
 > `operation_id` (uuid; legacy rows get a deterministic `op_leg_` content mapping,
 > never merged by title). Explicit refinements append to

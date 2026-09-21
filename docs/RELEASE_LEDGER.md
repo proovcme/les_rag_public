@@ -1,5 +1,27 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**0.31.72 / 778 stage B (22.09):** source quantity/unit became the calculation
+boundary. Reproduced on the live СКС job: source 30/210/18/162 м.п. were authored
+back as the same count of шт. with cipher ГЭСН21-03-004-02, `source_unit_mismatch`
+was emitted by the catalog compare but the calculation bound and priced those rows
+anyway (57 bound rows included them). Now `build_lsr_workbook_from_decisions`
+stamps the raw catalog cells/numbers onto decision copies (`_catalog_source_values`,
+`_catalog_source_numbers`) without rewriting any model cell, and
+`positions_from_visible_lsr_rows` refuses an authored unit/quantity change that
+lacks an explicit recalculation basis (`conversion_factor`/`calc_quantity` with
+`conversion_source`): the row keeps a visible `unconfirmed_quantity` binding with
+the exact field, source value, received value and needed clarification, produces no
+position, and contributes to no sum; correctly-authored rows keep calculating
+unchanged. Materials without a quantity are reported `missing_quantity` instead of
+the old silent qty=1; zero stays distinguishable from missing. Legacy rows without
+a stamped catalog keep the previous path (repack of old artifacts cannot crash).
+Live replay after the fix: СКС!R47-R50 and R12 excluded, bound rows 57→52, result
+stays priced_partial. Tests: `test_rim_lsr_trace_service` 34 (6 new stage-B),
+`test_workbook_tool_service`+`test_lsr_source_coverage_service`+
+`test_chat_evidence_application_service` 170 green, readiness/packet/UI subset
+119 green; the thin-adapter contract test now compares model cells with technical
+`_catalog_source_*` fields stripped.
+
 **0.31.71 / 777 stage A (22.09):** operation identity and decision revisions in the
 durable job store. Every accepted decision gets an immutable `operation_id`; legacy
 stored rows migrate through a deterministic content mapping (`op_leg_…`), so an

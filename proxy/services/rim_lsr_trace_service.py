@@ -23,6 +23,10 @@ from proxy.services.lsr_source_coverage_service import (
 from proxy.services.lsr_norm_quality_gate_service import (
     canonicalize_norm_status,
 )
+from proxy.services.attachment_source_catalog_service import (
+    normalize_unit,
+    quantities_close,
+)
 
 
 def _f(value: Any) -> float:
@@ -1035,6 +1039,76 @@ def _quantity_from_visible_row(row: dict[str, Any]) -> tuple[float | None, str, 
     return qty, unit, str(raw_qty or "")
 
 
+_GAP_UNCONFIRMED_BASIS = (
+    "нужно основание пересчёта: conversion_factor или calc_quantity "
+    "вместе с conversion_source (фасовка, длина секции, масса, коэффициент)"
+)
+
+
+def _unconfirmed_source_change(
+    row: Mapping[str, Any],
+    *,
+    source_qty: float | None,
+    source_unit: str,
+) -> dict[str, Any] | None:
+    """True when the authored quantity/unit silently changed against the source.
+
+    The catalog facts (``_catalog_source_*``) are stamped by the workbook
+    adapter from the server-owned attachment. A declared conversion basis is
+    an explicit recalculation ground; its arithmetic is still verified later
+    in :func:`_norm_qty_from_visible_row`. Code never fixes the model here:
+    it reports field, source value, received value, and the needed input.
+    """
+
+    values = row.get("_catalog_source_values")
+    numbers = row.get("_catalog_source_numbers")
+    if not isinstance(values, list) and not isinstance(numbers, list):
+        return None
+    basis = str(
+        row.get("conversion_source") or row.get("quantity_source") or ""
+    ).strip()
+    if basis and (
+        parse_ru_number(row.get("calc_quantity")) is not None
+        or parse_ru_number(row.get("conversion_factor")) is not None
+    ):
+        return None
+    unit_norm = normalize_unit(source_unit)
+    if unit_norm not in {"", "-", "—", "–"} and isinstance(values, list) and values:
+        cell_units = {normalize_unit(item) for item in values}
+        joined = normalize_unit(" ".join(str(item) for item in values))
+        if unit_norm not in cell_units and unit_norm not in joined:
+            return {
+                "field": "unit",
+                "source_value": " / ".join(
+                    dict.fromkeys(str(item).strip() for item in values if str(item).strip())
+                )[:160],
+                "authored_value": source_unit,
+                "needed": _GAP_UNCONFIRMED_BASIS,
+                "message": (
+                    f"единица «{source_unit}» не встречается в исходной строке; "
+                    "изменение единицы без основания пересчёта не рассчитывается"
+                ),
+            }
+    if (
+        isinstance(numbers, list)
+        and numbers
+        and source_qty is not None
+        and not any(quantities_close(float(source_qty), float(item)) for item in numbers)
+    ):
+        return {
+            "field": "quantity",
+            "source_value": ", ".join(f"{item:g}" for item in numbers[:8]),
+            "authored_value": source_qty,
+            "needed": _GAP_UNCONFIRMED_BASIS,
+            "message": (
+                f"количество {source_qty:g} не совпадает с исходником "
+                f"({', '.join(f'{item:g}' for item in numbers[:3])}); "
+                "изменение количества без основания пересчёта не рассчитывается"
+            ),
+        }
+    return None
+
+
 def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, Any] | None) -> tuple[float | None, dict[str, Any]]:
     """Keep source quantity; calculate only with GESN scale or a cited conversion."""
     raw_qty, source_unit, raw_qty_text = _quantity_from_visible_row(row)
@@ -1207,6 +1281,27 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 )
             )
             continue
+        gap = _unconfirmed_source_change(
+            row, source_qty=source_qty, source_unit=source_unit
+        )
+        if gap is not None:
+            bindings.append(
+                _with_visible_identity(
+                    {
+                        "row": source_row,
+                        "status": "unconfirmed_quantity",
+                        "row_role": role,
+                        "work_row": parent,
+                        "message": gap["message"],
+                        "quantity_gap": gap,
+                        "source_row": row,
+                    },
+                    title=title,
+                    source_qty=source_qty,
+                    source_unit=source_unit,
+                )
+            )
+            continue
         if role in {"material", "equipment"} and not code:
             price = _num(row.get("confirmed_price"))
             if price is not None and not math.isfinite(price):
@@ -1221,9 +1316,29 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             if price is not None:
                 resource["price"] = price
                 resource["price_source_ref"] = str(row.get("price_source") or "operator")
+            if source_qty is None:
+                bindings.append(
+                    _with_visible_identity(
+                        {
+                            "row": source_row,
+                            "status": "missing_quantity",
+                            "row_role": role,
+                            "work_row": parent,
+                            "message": (
+                                "материал без количества: код не подставляет 1, "
+                                "нужно исходное количество из строки"
+                            ),
+                            "source_row": row,
+                        },
+                        title=title,
+                        source_qty=source_qty,
+                        source_unit=source_unit,
+                    )
+                )
+                continue
             position = {
                 "code": "",
-                "qty": float(source_qty or 1),
+                "qty": float(source_qty),
                 "name": title,
                 "unit": source_unit,
                 "section": str(_first_value(row, "section", "раздел") or "").strip() or "Без раздела",

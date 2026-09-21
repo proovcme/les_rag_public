@@ -731,3 +731,149 @@ def test_supply_row_excludes_gesn_materials_and_keeps_work_link(monkeypatch):
     )
     assert resource["status"] == "bound"
     assert resource["work_row"] == "СКС!R2"
+
+
+# --- Stage Б: source quantity/unit are the calculation boundary ----------------
+
+
+def _tray_source_stamp():
+    # Факты исходника для СКС!R47: 30 м.п. лотка.
+    return {
+        "_catalog_source_values": [
+            "1025",
+            "Лестничный перфорированный кабельный лоток, длина секции 3000 мм",
+            "Ostec",
+            "м.п",
+            "30",
+        ],
+        "_catalog_source_numbers": [30.0],
+    }
+
+
+def test_unconfirmed_unit_change_stays_visible_but_uncalculated():
+    good = {
+        "source_row": "СКС!R2",
+        "row_role": "work",
+        "title": "Монтаж шкафа",
+        "norm_code": CODE,
+        "quantity": 61,
+        "unit": "м2",
+    }
+    bad = {
+        "source_row": "СКС!R47",
+        "row_role": "work",
+        "title": "Монтаж лотка",
+        "norm_code": CODE,
+        "quantity": 30,
+        "unit": "шт.",
+        **_tray_source_stamp(),
+    }
+    alone = build_lsr_trace_from_visible_rows([good])
+    combined = build_lsr_trace_from_visible_rows([good, bad])
+    assert combined["summary"]["total"] == alone["summary"]["total"] > 0
+    gap = next(b for b in combined["row_bindings"] if b["row"] == "СКС!R47")
+    assert gap["status"] == "unconfirmed_quantity"
+    payload = gap["quantity_gap"]
+    assert payload["field"] == "unit"
+    assert payload["authored_value"] == "шт."
+    assert "м.п" in payload["source_value"]
+    assert "conversion" in payload["needed"]
+    # The row stays visible in the source echo and produces no position.
+    assert gap["source_row"]["unit"] == "шт."
+    assert "СКС!R47" not in {
+        str(p.get("source_row"))
+        for s in combined["sections"]
+        for p in s["positions"]
+    }
+
+
+def test_cited_conversion_basis_allows_the_same_row_to_calculate():
+    bad = {
+        "source_row": "СКС!R47",
+        "row_role": "work",
+        "title": "Монтаж лотка",
+        "norm_code": CODE,
+        "quantity": 30,
+        "unit": "шт.",
+        **_tray_source_stamp(),
+    }
+    before = build_lsr_trace_from_visible_rows([bad])
+    assert before["summary"]["bound_rows"] == 0
+    fixed = dict(bad)
+    fixed.update({"calc_quantity": 30, "conversion_source": "длина секции 3 м из исходника"})
+    after = build_lsr_trace_from_visible_rows([fixed])
+    assert after["summary"]["bound_rows"] == 1
+    binding = next(b for b in after["row_bindings"] if b["row"] == "СКС!R47")
+    assert binding["status"] == "bound"
+
+
+def test_unconfirmed_quantity_change_blocks_material_but_matching_passes():
+    stamp = {
+        "_catalog_source_values": ["990", "Шкаф напольный 42U", "шт", "12"],
+        "_catalog_source_numbers": [990.0],
+    }
+    changed = {
+        "source_row": "СКС!R12",
+        "row_role": "material",
+        "title": "Шкаф",
+        "quantity": 12,
+        "unit": "шт",
+        **stamp,
+    }
+    trace = build_lsr_trace_from_visible_rows([changed])
+    assert trace["summary"]["bound_rows"] == 0
+    binding = trace["row_bindings"][0]
+    assert binding["status"] == "unconfirmed_quantity"
+    assert binding["quantity_gap"]["field"] == "quantity"
+    same = dict(changed, quantity=990)
+    ok = build_lsr_trace_from_visible_rows([same])
+    assert ok["summary"]["bound_rows"] == 1
+
+
+def test_zero_quantity_is_not_missing_and_no_implicit_one():
+    material_no_qty = {"source_row": "СКС!R20", "row_role": "material", "title": "Лоток", "unit": "м.п."}
+    trace = build_lsr_trace_from_visible_rows([material_no_qty])
+    assert trace["summary"]["bound_rows"] == 0
+    assert trace["row_bindings"][0]["status"] == "missing_quantity"
+    zero = {"source_row": "СКС!R21", "row_role": "material", "title": "Заглушка", "unit": "шт", "quantity": 0}
+    zero_trace = build_lsr_trace_from_visible_rows([zero])
+    assert zero_trace["summary"]["bound_rows"] == 1
+
+
+def test_placeholder_unit_is_not_gated_against_source():
+    row = {
+        "source_row": "СКС!R4",
+        "row_role": "unresolved",
+        "title": "Раздел",
+        "quantity": None,
+        "unit": "-",
+        "norm_status": "MISSING",
+        "_catalog_source_values": ["982", 'Раздел 6.21 "СКС"'],
+        "_catalog_source_numbers": [982.0],
+    }
+    trace = build_lsr_trace_from_visible_rows([row])
+    assert trace["row_bindings"][0]["status"] == "missing_norm"
+
+
+def test_adapter_stamps_catalog_facts_without_rewriting_model_cells(monkeypatch):
+    from proxy.services import attachment_source_catalog_service as catalog_module
+    from proxy.services import lsr_workbook_adapter_service as adapter_module
+
+    class _CatRow:
+        values = ("м.п", "30")
+        numbers = (30.0,)
+        excel_row = 47
+
+    class _Cat:
+        def lookup(self, _key):
+            return _CatRow()
+
+    monkeypatch.setattr(
+        catalog_module, "load_catalog_from_attachment_id", lambda _aid: _Cat()
+    )
+    decisions = [{"source_row": "СКС!R47", "unit": "шт.", "quantity": 30}]
+    snapshot = dict(decisions[0])
+    adapter_module._attach_catalog_facts(decisions, "read_x")
+    assert decisions[0]["unit"] == snapshot["unit"]
+    assert decisions[0]["_catalog_source_values"] == ["м.п", "30"]
+    assert decisions[0]["_catalog_source_numbers"] == [30.0]

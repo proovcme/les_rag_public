@@ -1361,7 +1361,12 @@ async def test_chat_lsr_executor_runs_thin_model_decision_adapter(tmp_path, monk
     }]
 
     def calculate(rows, **_kwargs):
-        assert rows == decisions
+        # The adapter may stamp technical catalog facts, never rewrite model cells.
+        stripped = [
+            {k: v for k, v in item.items() if not str(k).startswith("_catalog_source")}
+            for item in rows
+        ]
+        assert stripped == decisions
         return {
             "schema": "rim_lsr_v1",
             "sections": [],
