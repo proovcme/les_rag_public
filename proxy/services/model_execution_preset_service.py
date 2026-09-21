@@ -101,15 +101,19 @@ _FACTORY_35B = ModelExecutionPreset(
 # Below this observed window the larger shortlist/batch/parallel-read envelope
 # is not coherent after fixed generation and safety reserves. A 35B identity
 # therefore keeps the 9B-compatible execution contract on small KV windows.
-_MIN_EXTENDED_35B_CONTEXT_TOKENS = 16384
-_MIN_EXTENDED_GENERATION_CONTEXT_TOKENS = 16384
+MIN_EXTENDED_35B_CONTEXT_TOKENS = 16384
+_MIN_EXTENDED_GENERATION_CONTEXT_TOKENS = MIN_EXTENDED_35B_CONTEXT_TOKENS
 _EXTENDED_GENERATION_RESERVE_TOKENS = 4096
 _PROVEN_RESTRICTIVE_CONTEXT_TOKENS = 32768
 
 
-def _is_qwen_35b(model_id: str) -> bool:
+def is_qwen_35b(model_id: str) -> bool:
     normalized = "".join(str(model_id or "").lower().split())
     return "qwen" in normalized and "35b" in normalized
+
+
+def _is_qwen_35b(model_id: str) -> bool:
+    return is_qwen_35b(model_id)
 
 
 def _positive_int(value: Any) -> int | None:
@@ -160,8 +164,8 @@ def resolve_execution_preset(
     )
     extended_35b_available = bool(
         has_observed_capacity
-        and _is_qwen_35b(capacity.model_id)
-        and int(capacity.context_tokens or 0) >= _MIN_EXTENDED_35B_CONTEXT_TOKENS
+        and is_qwen_35b(capacity.model_id)
+        and int(capacity.context_tokens or 0) >= MIN_EXTENDED_35B_CONTEXT_TOKENS
     )
     factory = _FACTORY_35B if extended_35b_available else _FACTORY_9B
     source_chain: list[str] = ["workflow_invariants"]

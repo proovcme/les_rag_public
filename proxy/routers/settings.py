@@ -19,11 +19,16 @@ from proxy.local_model_registry import (
     DEFAULT_LOCAL_MLX_MODEL,
     LOCAL_MLX_MODEL_CHOICES,
 )
-from proxy.services.llm_transport_profile_service import provider_prompt_max_chars
 from proxy.services.freetoken_cache_profile_service import (
     DEFAULT_FREETOKEN_CONTEXT_TOKENS,
-    reconcile_freetoken_cache,
+    desired_kv_for_answer_model,
+    probe_freetoken_cache,
 )
+from proxy.services.llm_transport_profile_service import (
+    freetoken_prompt_chars_for_context,
+    provider_prompt_max_chars,
+)
+from proxy.services.model_execution_preset_service import is_qwen_35b
 from proxy.services.runtime_config_registry_service import (
     RuntimeConfigRegistryError,
     registry_snapshot,
@@ -295,15 +300,34 @@ def _env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _freetoken_model_id() -> str:
+    return (
+        os.getenv("FREETOKEN_MODEL", "").strip()
+        or os.getenv("LLM_MODEL", "").strip()
+    )
+
+
+def _lifted_freetoken_context_tokens(requested: int | None = None) -> int:
+    if requested is None:
+        try:
+            requested = int(
+                os.getenv(
+                    "FREETOKEN_CONTEXT_TOKENS",
+                    str(DEFAULT_FREETOKEN_CONTEXT_TOKENS),
+                )
+                or DEFAULT_FREETOKEN_CONTEXT_TOKENS
+            )
+        except ValueError:
+            requested = DEFAULT_FREETOKEN_CONTEXT_TOKENS
+    return desired_kv_for_answer_model(_freetoken_model_id(), requested)
+
+
 def _provider_settings_payload() -> dict[str, object]:
     active = os.getenv("LES_LLM_PROVIDER", "mlx")
     freetoken_base = os.getenv("FREETOKEN_BASE_URL", "http://127.0.0.1:1919/v1")
-    freetoken_context = int(
-        os.getenv("FREETOKEN_CONTEXT_TOKENS", str(DEFAULT_FREETOKEN_CONTEXT_TOKENS))
-        or DEFAULT_FREETOKEN_CONTEXT_TOKENS
-    )
+    freetoken_context = _lifted_freetoken_context_tokens()
     cache = (
-        reconcile_freetoken_cache(freetoken_base, freetoken_context)
+        probe_freetoken_cache(freetoken_base, freetoken_context)
         if active.strip().casefold() == "freetoken"
         else {
             "status": "inactive",
@@ -446,6 +470,36 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
             if value is not None and value <= 0:
                 raise HTTPException(400, f"{env_key} должен быть положительным")
             updates[env_key] = "" if value is None else str(value)
+
+    model_id = (
+        updates.get("FREETOKEN_MODEL")
+        or os.getenv("FREETOKEN_MODEL", "")
+        or os.getenv("LLM_MODEL", "")
+    )
+    if updates.get("FREETOKEN_CONTEXT_TOKENS"):
+        updates["FREETOKEN_CONTEXT_TOKENS"] = str(
+            desired_kv_for_answer_model(model_id, int(updates["FREETOKEN_CONTEXT_TOKENS"]))
+        )
+    if is_qwen_35b(model_id):
+        if updates.get("FREETOKEN_CONTEXT_TOKENS"):
+            raw_ctx = int(updates["FREETOKEN_CONTEXT_TOKENS"])
+        else:
+            try:
+                raw_ctx = int(
+                    os.getenv(
+                        "FREETOKEN_CONTEXT_TOKENS",
+                        str(DEFAULT_FREETOKEN_CONTEXT_TOKENS),
+                    )
+                    or DEFAULT_FREETOKEN_CONTEXT_TOKENS
+                )
+            except ValueError:
+                raw_ctx = DEFAULT_FREETOKEN_CONTEXT_TOKENS
+        context_tokens = desired_kv_for_answer_model(model_id, raw_ctx)
+        prompt_floor = freetoken_prompt_chars_for_context(context_tokens)
+        if updates.get("FREETOKEN_PROMPT_MAX_CHARS"):
+            asked_prompt = int(updates["FREETOKEN_PROMPT_MAX_CHARS"])
+            if asked_prompt < prompt_floor:
+                updates["FREETOKEN_PROMPT_MAX_CHARS"] = str(prompt_floor)
 
     if "openrouter_api_key" in fields and req.openrouter_api_key:
         updates["OPENROUTER_API_KEY"] = req.openrouter_api_key.strip()

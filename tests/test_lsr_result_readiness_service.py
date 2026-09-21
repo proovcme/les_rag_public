@@ -66,3 +66,17 @@ def test_complete_result_has_no_operator_gap_actions() -> None:
     assert readiness["estimate_complete"] is True
     assert readiness["actions"] == []
     assert format_lsr_readiness_notice(readiness, filename="LSR.xlsx") == "ЛСР собрана. Файл: LSR.xlsx."
+
+
+def test_saved_material_does_not_disappear_from_resume_readiness():
+    locators = [f"A!R{i}" for i in range(1, 102)]
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[{"source_row": key, "row_role": "material", "work_row": key} for key in locators],
+        remaining_locators=locators,
+        catalog_locators=locators,
+        paused=True,
+    )
+    assert readiness["remaining_locators"] == locators
+    assert readiness["estimate_complete"] is False
+    assert readiness["technical_complete"] is True

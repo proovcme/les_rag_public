@@ -168,9 +168,9 @@ def collect_lsr_price_gaps(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
                 if not action:
                     continue
                 columns = row.get("columns") if isinstance(row.get("columns"), Mapping) else {}
-                code = str(columns.get(2) or "")
-                name = str(row.get("name") or columns.get(3) or code or "ресурс")
-                quantity = columns.get(7)
+                code = str(columns.get(2, columns.get("2")) or "")
+                name = str(row.get("name") or columns.get(3, columns.get("3")) or code or "ресурс")
+                quantity = columns.get(7, columns.get("7"))
                 required = _PRICE_SOURCE_LABEL.get(action, "подтверждённая цена")
                 gaps.append(
                     {

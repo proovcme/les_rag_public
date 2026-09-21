@@ -1,5 +1,48 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.70 / 776 pack+lookup:** job and coverage keep work+material on one
+> locator; a named `NEEDS_RESEARCH` cipher is calculated when the card exists
+> and stays analogue (`priced_partial`). Overlay parquet fills missing GESN
+> keys only. Code does not invent a cipher.
+
+> **0.31.65 FreeToken 35B:** ACTIVE chat rebuilds KV once at turn start when
+> live pages are below 16384; Settings GET uses the same 35B lift so a legacy
+> `8253` env cannot shrink the factory 35000 window. Packet loops do not rebuild.
+
+> **0.31.63 reconnect progress:** a paused first pass is not a live
+> assembly. The bubble says the draft is in Files and the model is idle;
+> follow stops instead of polling a paused job forever.
+
+> **0.31.62 reconnect progress:** UTC job timestamps must not crash
+> `compute_eta`; otherwise the in-progress bubble never paints.
+
+> **0.31.61 reconnect progress:** History open hydrates the running
+> workbook job. A session without a PENDING stub still gets the local
+> in-progress bubble.
+
+> **0.31.60 reconnect progress:** N/M uses catalog work count (max
+> remaining_total), not accepted_all + leftover. Leftover RAG queries of the
+> current packet are visible. SQLite timestamps are UTC.
+
+> **0.31.59 reconnect progress:** closed-row count uses accepted source rows
+> when work-role is empty (SKS materials). Elapsed text is «с начала задачи».
+
+> **0.31.58 reconnect progress:** an older «ЛСР не создана» in the same
+> session is not treated as completion of the current overnight PENDING turn.
+> Follow keeps polling the checkpoint and does not wipe N/M after a one-frame
+> flash.
+
+> **0.31.57 reconnect progress:** after SSE drop the chat polls the durable
+> workbook-research checkpoint (`GET /api/workbook-research/{id}` plus SQLite
+> fallback) and paints live `N/M`, leftover, stage and ETA. Counts no longer
+> live only in the closed stream. Proxy process is still not restarted for an
+> overnight job.
+
+> **0.31.56 chat reconnect:** overnight LSR keeps one in-progress bubble
+> (`format_in_progress_assembly_notice`); PENDING history suppresses the extra
+> `chat_pending` line; last packet counts survive reconnect; NiceGUI
+> `reconnect_timeout=43200`. Proxy detach from 759 is unchanged.
+
 > **0.31.53 overnight SSE:** `chat_stream` detaches the already-created runner
 > immediately after a client drop and keeps a strong process-local reference.
 > The closed response neither cancels the estimate nor waits for it. UI treats
@@ -469,9 +512,11 @@
   FreeToken (`/v1/cache/status`, запасной `/v1/models`) чтобы выбрать `qwen-35b-extended`;
   `routers/chat.py` и `agent_router_service.py` используют `FREETOKEN_BASE_URL/MODEL`, а
   `installers/windows/start-light.ps1` не запускает второй LLM engine и оставляет query embeddings
-  на Ollama `bge-m3`; `freetoken_cache_profile_service.py` согласует physical KV
+  на Ollama `bge-m3`;   `freetoken_cache_profile_service.py` согласует physical KV
   с GUI-owned context, ужимает запрос до `max_feasible_kv` и по умолчанию держит
-  заводские 35000 токенов 35B. Локальный cross-encoder по умолчанию выключен. Все факторы видны через runtime registry Совушки.
+  заводские 35000 токенов 35B. Для распознанной 35B устаревшее окно <16384
+  поднимается до 35000; ACTIVE чат пересобирает loopback KV один раз в начале
+  HTTP-хода, пакеты этого не делают. Локальный cross-encoder по умолчанию выключен. Все факторы видны через runtime registry Совушки.
 - **Sovushka UI system:** `sovushka/uikit/{tokens,components,states}.py` —
   токены, семь общих NiceGUI-примитивов, состояния и единая icon-column;
   `docs/modules/sovushka-uikit.md` — component registry и миграционный

@@ -1,5 +1,150 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-21 — Resume 164: очередь 19/19, файл 4/21, шифры не считались
+
+Job `accepted_rows` first-won per locator, so materials vanished on resume.
+Coverage last-write hid the work sibling and then the material. Named
+`NEEDS_RESEARCH` ciphers existed in `les_smeta_base` (12/12 on BAP) but
+`positions_from_visible_lsr_rows` skipped lookup. **Closed in 776:** durable
+merge and coverage are per `(locator, role)`; named research ciphers are
+priced as analogues; overlay parquet can fill missing GESNm10 cards.
+
+Build 775 also requires an explicit code/norm_code cell to contain only a
+code (formatting and colon prefixes are accepted). It never extracts a rejected
+norm from shifted explanatory prose. Original cell text remains in the binding.
+
+
+## 2026-09-21 — Live 162: 24 labels / 23 divider cells erased tables
+
+Installed 774 accepted only 12 materials. Most tables had 24 labelled columns
+but 23 decorative separators and were rejected wholesale. Candidate 775 reads
+143 authored rows across attempts (88 after existing role/locator merge),
+including 11 work rows. These works have missing/unresolved selections or
+malformed cell alignment: restoring rows does not establish a priced estimate.
+History 161 replay reads 84 merged decisions. Both produce audit workbooks;
+neither is customer acceptance. New pass diagnostics retain parsed row count
+and structural errors.
+
+
+## 2026-09-21 — Live 161: material+work на одном локаторе выжигали шифры
+
+Full SKS on installed 773: XLSX PRICED_PARTIAL with 4 materials, no money.
+Packet R27–R38 authored install works with GESN, but `duplicate_source_row`
+treated material+work as one locator collision and `sheet_pass_keep_rows`
+dropped the works. **Closed in 774:** duplicate/merge key is (locator, role);
+authored `row_role` drives kind; title `|` surplus folds into the title cell.
+
+## 2026-09-21 — Live 159/160: одна нечисловая ячейка теряет всю таблицу
+
+Same 35B/r3, physical KV 35000, three SKS positions. B0_DIRECT (159) refuses
+after 24 model-authored search lines including prose; B1 (160) authors six rows
+but accepts zero. Offline replay of the actual response: five rows parse, the
+sixth contains `conversion_factor=305 м * 120 шт`; `parse_model_rag_result`
+returns None for the entire table on that field. **Closed in 773:** preserve
+authored numeric text; per-row `needs_input`; do not evaluate expressions or
+choose a replacement norm. A subsequent length-truncated pass remains a
+separate operational risk.
+
+## 2026-09-21 — Build 772 candidate: cache target и конкурентная перестройка
+
+History 158 использует bound FreeToken 35B при legacy Ollama/9B: проверка
+`requires_cache_alignment` старого runtime пропускала фактический движок.
+ACTIVE теперь выбирает target по extension answer connection. Чтение Settings
+не перестраивает KV; chat cache preparation использует generation admission и
+удерживает permit до завершения worker при отмене. Проверка конкурентности
+покрывает стандартный локальный слот (LLM_CONCURRENCY=1); внешние клиенты не
+координируются этим семафором. Live ВОР/ЛСР и installed acceptance ещё не пройдены.
+
+## 2026-09-18 — Build 771: 35B ушла в 9B-envelope из‑за KV 8214
+
+- **Симптом:** overnight СКС (история 157) шла 2ч44м / 142 прохода на
+  `Qwen3.6-35B-A3B-NVFP4`, но effective preset был `qwen-9b-restrictive`,
+  8214 in / 1200 out, пакеты по 3 строки.
+- **Причина:** ACTIVE чат только читал live `num_pages`; исторические
+  `FREETOKEN_CONTEXT_TOKENS=8253` и Settings GET могли ещё и сжать окно.
+  Наблюдаемый KV < 16384 держит 9B-limits даже при 35B identity.
+- **Исправление:** lift <16384 → 35000 для 35B; rebuild один раз в начале
+  HTTP-хода; Settings не реконсилирует 8253 поверх живых 35000.
+
+## 2026-09-17 — Build 769: пауза первого прохода выглядела как живая сборка
+
+- **Симптом:** очередь 75 work-локаторов дошла до 0, появился XLSX, job
+  `paused` с 48 пробелами покрытия, а пузырь писал «27/75, осталось 48,
+  готово через ~4ч».
+- **Причина:** pause кладёт в `remaining` незакрытое покрытие; follow
+  считал любой найденный job живым (`bool(job)`), а N/M = 75 − новый
+  remaining. История 17:01 с одной цитатой не была рассчитанной сметой.
+- **Исправление:** paused → «первый проход закончен, сборка не идёт»;
+  follow останавливается; `list_open` видит paused той же сессии.
+
+## 2026-09-17 — Build 768: пузырь прогресса падал на UTC
+
+- **Симптом:** после 767 в чате нет typing-пузыря; в UI log
+  `TypeError: can't subtract offset-naive and offset-aware datetimes`.
+- **Причина:** pending `created_at` стал `+00:00`, overlay не включал
+  `compute_eta`, отрисовка истории обрывалась.
+- **Исправление:** aware/naive в `compute_eta`; ETA не роняет пузырь;
+  overlay `runtime_dispatcher.py`.
+
+## 2026-09-17 — Build 767: из Истории пропал пузырь сборки
+
+- **Симптом:** сессия 17:01 открывается, видны старый ответ 16:39 и вопрос,
+  живого «Сборка продолжается» нет.
+- **Причина:** «Открыть» из Истории подставлял messages и не читал
+  `workbook_research_jobs`. После detach в истории нет PENDING-заглушки.
+- **Исправление:** hydrate checkpoint по session_id и локальный typing-пузырь.
+
+## 2026-09-17 — Build 766: 75 строк стали 65
+
+- **Симптом:** после 0/30 пузырь показал 35/65. Пользователь видел пропажу
+  10 строк из исходных 75, а N/M не двигался.
+- **Причина:** 765 сложил 35 accepted (материал/оборудование) с 30 leftover
+  **work**-локаторами. Это разные множества. 75 = каталог work+ambiguous;
+  remaining всё ещё R48–R77 (30); 10 локаторов ушли из очереди без accepted.
+- **Исправление:** знаменатель = max `remaining_total` из events (75).
+  Числитель = 75 − remaining. В пузыре видны leftover-запросы текущего
+  пакета (R48–R50, десятки query headers), иначе поиск выглядит как простой.
+
+## 2026-09-17 — Build 765: пузырь 0/30 при 35 закрытых строках СКС
+
+- **Симптом:** «Сборка продолжается: 0/30, осталось 30, идёт 4ч 25м».
+- **Причина:** reconnect считал только `row_role=work`; на СКС закрыты
+  material/equipment. «Идёт» читалось как ETA, хотя это wall-clock с 14:01.
+- **Исправление:** closed = work-role, иначе все accepted source-строки
+  (35/65 leftover 30). Текст «с начала задачи». GPU idle — поиск через
+  bge-m3; 35B жива на FreeToken :1919, не в Ollama `/api/ps`.
+
+## 2026-09-17 — Build 764: прогресс моргнул и вернулся «счётчик появится»
+
+- **Симптом:** на секунду видны N/M, затем снова «Счётчик строк появится
+  после первого принятого пакета».
+- **Причина:** `completed_history_chat_payload` брал предыдущий ответ
+  («ЛСР не создана» в 16:39) как финал текущего PENDING; follow стирал
+  `chat_pending` и перерисовывал пустой пузырь.
+- **Исправление:** завершение только у ответа текущего хода (после последнего
+  user); пока job `running` или есть PENDING, счётчики не сбрасываются.
+
+## 2026-09-17 — Build 763: реконнект без N/M и без «готово через»
+
+- **Симптом:** после обновления Совушки пузырь только «Сборка продолжается.
+  Не нажимайте Продолжить…». Живые 24/75 и оценка времени пропали.
+- **Причина:** `tool_progress` шёл только в SSE. После рестарта UI
+  `chat_pending` пустой, follow опрашивал лишь PENDING-историю без checkpoint.
+- **Исправление:** follow читает `workbook_research_jobs` (`list_active` /
+  GET by id, SQLite fallback без рестарта proxy) и перерисовывает N/M, этап
+  и ETA каждые 8 с.
+
+## 2026-09-17 — Build 762: «Связь с окном чата пропала» + «Запрос выполняется»
+
+- **Симптом:** после реконнекта два пузыря: «Связь с окном чата пропала…» и
+  «Запрос выполняется: Собери ЛСР…». Оператор видит обрыв связи, хотя
+  сборка на сервере идёт.
+- **Причина:** PENDING-строка истории рендерилась как connection-notice, а
+  `chat_pending` добавлял второй typing-пузырь с исходным вопросом.
+- **Исправление:** один текст «Сборка продолжается» с последним 24/75;
+  `should_render_local_chat_pending` не дублирует PENDING; reconnect_timeout
+  12 ч; CancelledError без кнопки Стоп не пишет «остановлен пользователем».
+
 ## 2026-09-17 — Build 759: SSE не владеет жизненным циклом ночной ЛСР
 
 - **Симптом:** после overlay-рестарта / обрыва SSE чат писал красное

@@ -161,7 +161,6 @@ def build_lsr_result_readiness(
     work_rows = [dict(row) for row in rows if isinstance(row, Mapping) and _locator(row)]
     remaining = [_text(item) for item in remaining_locators if _text(item)]
     cited = {_locator(row) for row in work_rows}
-    remaining = [item for item in remaining if item not in cited]
     wanted = [_text(item) for item in catalog_locators if _text(item)]
     if not wanted:
         wanted = list(dict.fromkeys([_locator(row) for row in work_rows] + remaining))
@@ -170,6 +169,11 @@ def build_lsr_result_readiness(
         rows=work_rows,
         remaining_locators=remaining,
     )
+    incomplete = set(coverage["incomplete_locators"])
+    remaining = list(dict.fromkeys(
+        [item for item in remaining if item not in cited or item in incomplete]
+        + coverage["incomplete_locators"]
+    ))
     norm_gaps: list[dict[str, str]] = []
     for row in work_rows:
         kind = classify_norm_gap(row)
@@ -196,7 +200,7 @@ def build_lsr_result_readiness(
         norm_gaps.append(
             {
                 "locator": locator,
-                "kind": "unprocessed",
+                "kind": "structure_incomplete" if locator in cited else "unprocessed",
                 "action": (
                     f"Продолжите незакрытую строку {locator}. "
                     "Повторный поиск уже обработанных строк не выполняется."
@@ -368,7 +372,7 @@ def build_lsr_result_readiness(
     return {
         "schema": SCHEMA,
         "paused": bool(paused),
-        "remaining_locators": remaining[:80],
+        "remaining_locators": remaining,
         "catalog_work_count": int(catalog_work_count or len(wanted) or 0),
         "row_count": len(work_rows),
         "technical_complete": technical_complete,

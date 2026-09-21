@@ -36,13 +36,27 @@ from sovushka.pages.chat import (
     format_job_ready_eta_line,
     format_lsr_resume_display,
     format_detached_stream_notice,
+    format_in_progress_assembly_notice,
+    format_paused_assembly_notice,
+    format_workbook_assembly_notice,
+    format_workbook_session_sys_notice,
+    format_workbook_phase_label,
     merge_lsr_resume_payload,
+    merge_chat_pending_progress,
     history_ai_is_pending,
+    history_row_is_in_progress,
     completed_history_chat_payload,
     follow_detached_chat_history,
+    fetch_active_workbook_research,
+    hydrate_chat_pending_from_workbook,
+    read_active_workbook_research,
+    should_render_local_chat_pending,
     is_nicegui_slot_error,
     operator_background_ui_error,
+    workbook_assembly_is_paused,
+    workbook_assembly_is_running,
     workbook_chat_filename,
+    workbook_job_to_pending_progress,
     should_skip_chat_resource_gate,
     _preserved_attachment,
 )
@@ -517,31 +531,98 @@ def test_chat_ready_eta_and_slot_error_stay_operator_facing():
     register_at = apply_src.find("_register_artifact_downloads(meta)")
     live_at = apply_src.find("_render_smeta_live_rows(final=True)")
     assert register_at != -1 and live_at != -1 and register_at < live_at
-    assert "Соединение прервано после начала сборки" not in chat_src
+    notice_src = inspect.getsource(format_in_progress_assembly_notice)
+    send_src = inspect.getsource(chat_page.build_chat)
+    assert "Соединение прервано после начала сборки" not in notice_src
+    assert "Соединение прервано после начала сборки" not in send_src
     assert "format_detached_stream_notice" in chat_src
+    assert "format_in_progress_assembly_notice" in chat_src
+    assert "should_render_local_chat_pending" in chat_src
     assert "follow_detached_chat_history" in chat_src
     assert "history_ai_is_pending" in chat_src
+    assert "Связь с окном чата пропала" not in notice_src
+    assert "Связь с окном чата пропала" not in send_src
+    assert "Запрос выполняется:" not in send_src
 
 
 def test_overnight_sse_drop_is_not_a_job_death():
-    notice = format_detached_stream_notice()
+    notice = format_in_progress_assembly_notice()
     source = inspect.getsource(chat_page.build_chat)
 
-    assert "сборка на сервере продолжается" in notice
+    assert notice.startswith("Сборка продолжается")
     assert "Не нажимайте «Продолжить»" in notice
-    assert "format_detached_stream_notice" in source
-    assert "follow_detached_chat_history" in source
+    assert "Связь с окном чата пропала" not in notice
+    assert "format_in_progress_assembly_notice" in source
+    assert "should_render_local_chat_pending" in source
     assert "Соединение прервано после начала сборки" not in source
+    assert "Запрос выполняется:" not in source
     assert history_ai_is_pending({"role": "ai", "crag": "PENDING", "text": ""}) is True
     assert history_ai_is_pending({
         "role": "ai",
         "crag": "UNVALIDATED",
         "text": "готово",
     }) is False
-    assert completed_history_chat_payload([
+    pending_history = [
         {"role": "user", "text": "Собери ЛСР"},
         {"role": "ai", "crag": "PENDING", "text": ""},
-    ]) is None
+    ]
+    assert completed_history_chat_payload(pending_history) is None
+    assert should_render_local_chat_pending(
+        pending_history,
+        {"question": "Собери ЛСР"},
+    ) is False
+    assert should_render_local_chat_pending(
+        [{"role": "user", "text": "Собери ЛСР"}],
+        {"question": "Собери ЛСР"},
+    ) is True
+    assert should_render_local_chat_pending(
+        [
+            {"role": "ai", "text": "Связь с окном чата пропала, но сборка на сервере продолжается.", "crag": ""},
+        ],
+        {"question": "Собери ЛСР"},
+    ) is False
+    assert history_row_is_in_progress({
+        "role": "ai",
+        "text": "Запрос выполняется: Собери ЛСР, Санкт-Петербург",
+        "crag": "",
+    }) is True
+    merged = merge_chat_pending_progress(
+        {"question": "Собери ЛСР"},
+        {
+            "workbook_research_job_id": "job-1",
+            "completed": 24,
+            "total": 75,
+            "remaining": 51,
+            "label": "поиск норм",
+        },
+    )
+    counted = format_in_progress_assembly_notice(merged)
+    assert "24/75" in counted
+    assert "осталось 51" in counted
+    started = datetime(2026, 9, 17, 17, 0, 0)
+    now_ts = (started + timedelta(seconds=3600)).timestamp()
+    live = format_in_progress_assembly_notice(
+        {
+            "accepted": 24,
+            "total": 75,
+            "remaining": 51,
+            "phase": "packets",
+            "sheet": "СКС",
+            "created_at": started.isoformat(sep=" ", timespec="seconds"),
+            "started_at": started.isoformat(sep=" ", timespec="seconds"),
+            "job_status": "running",
+        },
+        now_ts=now_ts,
+    )
+    assert "24/75" in live
+    assert "осталось 51" in live
+    assert "лист «СКС»: поиск норм" in live
+    assert "с начала задачи 1ч 0м" in live
+    assert "Результат будет готов примерно через" in live
+    assert format_workbook_phase_label("packets", "СКС") == "лист «СКС»: поиск норм"
+    assert "fetch_active_workbook_research" in source
+    assert "workbook_job_to_pending_progress" in source
+    assert "_paint_in_progress_bubble" in source
     done = completed_history_chat_payload([
         {"role": "user", "text": "Собери ЛСР"},
         {
@@ -554,6 +635,28 @@ def test_overnight_sse_drop_is_not_a_job_death():
     assert done is not None
     assert done["answer"] == "ЛСР собрана"
     assert done["artifact"]["filename"] == "LSR.xlsx"
+    assert completed_history_chat_payload([
+        {
+            "role": "ai",
+            "text": "ЛСР не создана: после поиска источников таблица строк не получена.",
+            "crag": "UNVALIDATED",
+        },
+        {"role": "user", "text": "Собери ЛСР, Санкт-Петербург, цены 3 квартал 2026"},
+        {"role": "ai", "text": "", "crag": "PENDING"},
+    ]) is None
+    assert completed_history_chat_payload([
+        {
+            "role": "ai",
+            "text": "ЛСР не создана: после поиска источников таблица строк не получена.",
+            "crag": "UNVALIDATED",
+        },
+        {"role": "user", "text": "Собери ЛСР, Санкт-Петербург, цены 3 квартал 2026"},
+    ]) is None
+    assert "hydrate_chat_pending_from_workbook" in source
+    assert "_hydrate_running_workbook_progress" in source
+    ng = Path("sovushka_ng.py").read_text(encoding="utf-8")
+    assert "reconnect_timeout=43200" in ng
+    assert format_detached_stream_notice() == format_in_progress_assembly_notice()
 
 
 @pytest.mark.asyncio
@@ -586,6 +689,266 @@ async def test_follow_detached_chat_history_waits_out_pending():
     assert payload["answer"] == "ЛСР собрана"
     assert payload["artifact"]["filename"] == "LSR.xlsx"
     assert calls["n"] == 3
+
+    polls = {"n": 0}
+
+    async def fetch_pending_only():
+        return [
+            {"role": "user", "text": "Собери ЛСР"},
+            {"role": "ai", "text": "", "crag": "PENDING"},
+        ]
+
+    async def on_poll(_rows):
+        polls["n"] += 1
+        return polls["n"] < 2
+
+    still_pending = await follow_detached_chat_history(
+        fetch_history=fetch_pending_only,
+        on_poll=on_poll,
+        interval_sec=0,
+        timeout_sec=10,
+        clock=lambda: 0 if polls["n"] < 3 else 100,
+    )
+    assert still_pending is None
+    assert polls["n"] >= 1
+
+    stale_calls = {"n": 0}
+
+    async def fetch_old_answer_then_file():
+        stale_calls["n"] += 1
+        older = {
+            "role": "ai",
+            "text": "ЛСР не создана: после поиска источников таблица строк не получена.",
+            "crag": "UNVALIDATED",
+        }
+        user = {"role": "user", "text": "Собери ЛСР, Санкт-Петербург"}
+        if stale_calls["n"] < 3:
+            return [older, user, {"role": "ai", "text": "", "crag": "PENDING"}]
+        return [
+            older,
+            user,
+            {
+                "role": "ai",
+                "text": "ЛСР собрана",
+                "crag": "UNVALIDATED",
+                "meta": {"artifact": {"filename": "LSR.xlsx"}},
+            },
+        ]
+
+    async def job_still_running(_rows):
+        return stale_calls["n"] < 3
+
+    recovered = await follow_detached_chat_history(
+        fetch_history=fetch_old_answer_then_file,
+        on_poll=job_still_running,
+        interval_sec=0,
+        timeout_sec=10,
+    )
+    assert recovered is not None
+    assert recovered["answer"] == "ЛСР собрана"
+    assert stale_calls["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_history_open_restores_running_workbook_bubble():
+    async def fetch_job(*, session_id="", job_id=""):
+        assert session_id == "session-live"
+        assert job_id == ""
+        return {
+            "job_id": "wrj_sks",
+            "status": "running",
+            "phase": "packets",
+            "sheet": "СКС",
+            "created_at": "2026-09-17 14:01:20",
+            "accepted_rows": [{"source_row": "СКС!R6", "row_role": "material"}],
+            "remaining": [f"СКС!R{n}" for n in range(48, 78)],
+            "work_total": 75,
+            "status_dimensions": {"remaining": 30, "work_total": 75},
+            "held_packet": {
+                "locators": ["СКС!R48", "СКС!R49", "СКС!R50"],
+                "queries": ["q1", "q2"],
+            },
+        }
+
+    pending = await hydrate_chat_pending_from_workbook(
+        session_id="session-live",
+        pending={"job_id": "wrj_other"},
+        fetch_job=fetch_job,
+        ignore_prior_job_id=True,
+    )
+    assert pending is not None
+    assert pending["job_id"] == "wrj_sks"
+    assert pending["total"] == 75
+    assert pending["remaining"] == 30
+    history = [
+        {
+            "role": "ai",
+            "text": "ЛСР не создана: после поиска источников таблица строк не получена.",
+            "crag": "UNVALIDATED",
+        },
+        {"role": "user", "text": "Собери ЛСР, Санкт-Петербург, цены 3 квартал 2026"},
+    ]
+    assert should_render_local_chat_pending(history, pending) is True
+    notice = format_in_progress_assembly_notice(pending)
+    assert "45/75" in notice
+    assert "пакет 3 строк" in notice
+
+
+@pytest.mark.asyncio
+async def test_reconnect_progress_uses_workbook_checkpoint(tmp_path):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    identity = service.identity(
+        session_id="session-live",
+        attachment_id="read_123456abcdef",
+        source_sha256="a" * 64,
+        dataset_ids=["smeta"],
+        profile_revision_id="factory",
+        model_identity="qwen-35b",
+        question="Собери ЛСР",
+    )
+    job = service.begin_or_resume(identity)
+    service.record_packet(
+        job["job_id"],
+        sheet="СКС",
+        packet_locators=["СКС!R2"],
+        accepted_rows=[
+            {"source_row": "СКС!R2", "norm_code": "10-01-001-01", "row_role": "work"},
+        ],
+        evidence=[],
+        remaining=["СКС!R3", "СКС!R4"],
+    )
+    live = read_active_workbook_research(
+        session_id="session-live",
+        service=service,
+    )
+    assert live is not None
+    pending = workbook_job_to_pending_progress(live)
+    assert pending["accepted"] == 1
+    assert pending["total"] == 3
+    assert pending["remaining"] == 2
+    assert pending["job_id"] == job["job_id"]
+    notice = format_in_progress_assembly_notice(pending)
+    assert "1/3" in notice
+    assert "осталось 2" in notice
+    assert "поиск норм" in notice
+    sks_roles = workbook_job_to_pending_progress(
+        {
+            "job_id": "wrj_sks",
+            "status": "running",
+            "phase": "packets",
+            "sheet": "СКС",
+            "accepted_rows": [
+                {"source_row": "СКС!R6", "row_role": "equipment"},
+                {"source_row": "СКС!R7", "row_role": "material"},
+            ]
+            + [{"source_row": f"СКС!R{n}", "row_role": "material"} for n in range(8, 41)],
+            "remaining": [f"СКС!R{n}" for n in range(48, 78)],
+            "status_dimensions": {"remaining": 30, "work_total": 75},
+            "work_total": 75,
+            "packet_locators": ["СКС!R48", "СКС!R49", "СКС!R50"],
+            "held_packet": {
+                "locators": ["СКС!R48", "СКС!R49", "СКС!R50"],
+                "queries": [f"q{n}" for n in range(85)],
+            },
+        }
+    )
+    assert sks_roles["accepted"] == 45
+    assert sks_roles["remaining"] == 30
+    assert sks_roles["total"] == 75
+    assert sks_roles["held_queries"] == 85
+    assert sks_roles["packet_size"] == 3
+    sks_notice = format_in_progress_assembly_notice(sks_roles)
+    assert "0/30" not in sks_notice
+    assert "35/65" not in sks_notice
+    assert "45/75" in sks_notice
+    assert "ещё 85 запросов" in sks_notice
+    utc_job = workbook_job_to_pending_progress(
+        {
+            "job_id": "wrj_utc",
+            "created_at": "2026-09-17 14:01:20",
+            "remaining": ["СКС!R48"],
+            "work_total": 75,
+            "status_dimensions": {"remaining": 1},
+        }
+    )
+    utc_start = datetime(2026, 9, 17, 14, 1, 20, tzinfo=timezone.utc)
+    utc_notice = format_in_progress_assembly_notice(
+        utc_job,
+        now_ts=(utc_start + timedelta(minutes=110)).timestamp(),
+    )
+    assert "1ч 50м" in utc_notice
+    assert "4ч" not in utc_notice
+    live_notice = format_in_progress_assembly_notice(
+        {
+            "accepted": 45,
+            "total": 75,
+            "remaining": 30,
+            "phase": "packets",
+            "sheet": "СКС",
+            "created_at": "2026-09-17 14:01:20+00:00",
+            "started_at": "2026-09-17 14:01:20+00:00",
+            "job_status": "running",
+            "packet_size": 3,
+            "held_queries": 16,
+        }
+    )
+    assert "45/75" in live_notice
+    assert "ещё 16 запросов" in live_notice
+    paused_job = workbook_job_to_pending_progress(
+        {
+            "job_id": "wrj_sks",
+            "status": "paused",
+            "phase": "packets",
+            "sheet": "СКС",
+            "accepted_rows": [
+                {"source_row": f"СКС!R{n}", "row_role": "material"} for n in range(6, 71)
+            ],
+            "remaining": [
+                "СКС!R3", "СКС!R4", "СКС!R5", "СКС!R12", "СКС!R13", "СКС!R14",
+            ] + [f"СКС!R{n}" for n in range(18, 60)],
+            "work_total": 75,
+            "status_dimensions": {"remaining": 48, "work_total": 75},
+        }
+    )
+    assert paused_job["accepted"] == 27
+    assert paused_job["remaining"] == 48
+    assert paused_job["total"] == 75
+    assert workbook_assembly_is_running(paused_job) is False
+    assert workbook_assembly_is_paused(paused_job) is True
+    paused_notice = format_workbook_assembly_notice(paused_job)
+    assert paused_notice == format_paused_assembly_notice(paused_job)
+    assert "Сборка продолжается" not in paused_notice
+    assert "27/75" not in paused_notice
+    assert "Результат будет готов" not in paused_notice
+    assert "не идёт" in paused_notice
+    assert "48 из 75" in paused_notice
+    assert "черновик" in paused_notice
+    assert format_workbook_session_sys_notice(paused_job) == (
+        "Первый проход закончен. Сборка сейчас не идёт."
+    )
+    chat_src = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+    assert "format_paused_assembly_notice" in chat_src
+    assert "list_open(" in chat_src
+    follow_src = chat_src.split("async def _follow_pending_history_if_needed", 1)[1].split(
+        "asyncio.create_task(_load_history())", 1
+    )[0]
+    assert "if job_paused:" in follow_src
+    assert "bool(job):" not in follow_src.split("async def _poll_workbook_progress", 1)[1][:900]
+
+    async def getter(path: str):
+        if path.startswith("/api/workbook-research-active"):
+            return {"jobs": [live], "count": 1}
+        if path.endswith(job["job_id"]):
+            return live
+        return None
+
+    fetched = await fetch_active_workbook_research(
+        session_id="session-live",
+        getter=getter,
+    )
+    assert fetched["job_id"] == job["job_id"]
 
 
 def test_chat_ui_mode_guidance_is_compact_and_input_focused():

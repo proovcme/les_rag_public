@@ -1,11 +1,93 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.70 / 776:** durable job merge and source coverage are per
+> `(locator, role)`; named `NEEDS_RESEARCH` goes to exact lookup without
+> becoming `priced_final`; FGIS overlay fills missing calc cards.
+> Code: `workbook_research_job_service.py`, `lsr_source_coverage_service.py`,
+> `rim_lsr_trace_service.py`, `gesn_service.py`. Tests: job, coverage, RIM,
+> gesn overlay. Live installer acceptance still pending.
+
+> Build 775 candidate: decorative Markdown divider width no longer drops tables;
+> per-pass parsed_rows/kept_rows/row_errors expose acceptance losses.
+> Module: core/chat-evidence; doc: [chat-profiles](modules/chat-profiles.md).
+> Live customer acceptance remains pending.
+
+
+> **0.31.68 / 774 candidate:** material+work on the same locator are distinct
+> decisions; markdown title pipes no longer drop the row. Code:
+> `chat_evidence_application_service.py`; tests: chat-evidence + packet integrity;
+> doc: [chat-profiles](modules/chat-profiles.md). Live full-SKS hand-off pending.
+>
+> **0.31.67 / 773 candidate:** model-result reader preserves malformed numeric
+> cells without dropping the table; RIM calculation exposes a per-row numeric gap.
+> Code: `chat_evidence_application_service.py`, `rim_lsr_trace_service.py`;
+> tests: corresponding service suites; doc: [chat-profiles](modules/chat-profiles.md).
+>
+> **0.31.66 / 772 source candidate:** Settings only probes FreeToken cache;
+> chat cache preparation acquires the generation permit and retains it until
+> the worker finishes even after cancellation. Module doc: [chat-profiles](modules/chat-profiles.md).
+> Live comparative acceptance and installed candidate acceptance remain pending.
+>
+> **0.31.65 / 771 candidate:** ACTIVE chat rebuilds FreeToken KV once at turn
+> start when 35B is still on a legacy <16384 window; Settings uses the same
+> lift so GET cannot shrink the factory 35000 envelope. Packet loops do not
+> rebuild. Code: `freetoken_cache_profile_service.py`,
+> `chat_evidence_application_service.py`, `settings.py`. Tests:
+> `test_freetoken_cache_profile_service.py`. Live SKS/B0_DIRECT pending.
+
+> **0.31.64 / 770 candidate:** resource parent must resolve to a model-authored
+> `work` decision; self-linked materials and links to other materials no longer
+> close packets. All incomplete locators survive the 80-item display limit.
+> `lsr_result_readiness_service.py` keeps saved but incomplete rows resumable.
+> Estimator instruction explains specification-to-work derivation without
+> assigning a norm per product. Code: `lsr_source_coverage_service.py`,
+> `chat_evidence_application_service.py`; tests: source coverage + packet integrity.
+> Live model/harness comparison and installed acceptance are pending.
+
+> **0.31.63 / 769:** после паузы первого прохода пузырь больше не пишет
+> «Сборка продолжается» и ETA. Tests: `tests/test_sovushka_chat.py`,
+> `tests/test_workbook_research_job_service.py`.
+
+> **0.31.62 / 768:** пузырь не падает на UTC `created_at` (`compute_eta`
+> aware/naive). Tests: `tests/test_sovushka_chat.py`, `tests/test_indexing_eta.py`.
+
+> **0.31.61 / 767:** открытие «выполняется» из Истории снова рисует пузырь
+> сборки (hydrate checkpoint по session_id). Tests: `tests/test_sovushka_chat.py`.
+
+> **0.31.60 / 766:** пузырь держит знаменатель 75 work-локаторов; 35/65
+> была ошибка сложения materials+leftover. Tests: `tests/test_sovushka_chat.py`.
+
+> **0.31.59 / 765:** пузырь реконнекта считает закрытые source-строки, а не
+> только `row_role=work`; SKS 35/65 leftover 30, не 0/30. Tests:
+> `tests/test_sovushka_chat.py`.
+
+> **0.31.58 / 764:** follow не принимает старый ответ в сессии за завершение
+> текущей ночной PENDING-сборки и не стирает N/M после первого кадра.
+> Tests: `tests/test_sovushka_chat.py`.
+
+> **0.31.57 / 763:** после обрыва SSE пузырь читает checkpoint sheet-pass
+> (`list_active` / `GET /api/workbook-research-active`) и показывает текущие
+> N/M, этап листа и «готово через». Tests: `tests/test_sovushka_chat.py`,
+> `tests/test_workbook_research_job_service.py`.
+
+> **0.31.56 / 762:** реконнект чата больше не показывает «Связь с окном
+> пропала» и второй пузырь «Запрос выполняется». Один статус «Сборка
+> продолжается» с последним 24/75; NiceGUI держит сокет 12 ч. Tests:
+> `tests/test_sovushka_chat.py`.
+
+> **0.31.55 / 761:** clean Windows runtime resolves core `data` and RAG
+> MetaDB paths directly under `LES_WINDOWS_STATE_ROOT`. Proxy startup can create
+> `les_meta.db` without writing through `runtime/data` junction; repository/dev
+> paths stay unchanged. Tests: `tests/test_runtime_paths.py`,
+> `tests/test_rag_config.py`; exact installed smoke is the release gate.
+
 > **0.31.54 / 760:** чистая Windows-установка пишет startup-журналы и
 > `windows-light-state.json` прямо в persistent state `LES_WINDOWS_STATE_ROOT/logs`.
 > Создание новых файлов больше не зависит от записи через runtime junction,
 > которая на чистом NSIS-контуре давала `services_start_failed` после запуска
-> процессов. Tests: `tests/test_installer_windows.py`,
-> `tests/test_tauri_desktop.py`; installed smoke обязателен перед передачей.
+> процессов. 760 superseded: installed smoke затем выявил тот же junction-only
+> дефект для новой MetaDB. Tests: `tests/test_installer_windows.py`,
+> `tests/test_tauri_desktop.py`.
 
 > **0.31.53 / 759:** ночная ЛСР отвязывается от закрытого SSE без ожидания и
 > без отмены sheet-pass; strong reference сохраняет runner до завершения.
@@ -902,7 +984,7 @@ trace, а ресурсное действие — явный `basis_ref`. Это
 | smeta/mechanics | предметная карта ВОР/РИМ/ГЭСН/ФГИС/КАЦ и границы model↔code; верхняя PDF→ЛСР схема актуализирована, нижние direct/harness-слои требуют сжатия после удаления legacy маршрутов | `proxy/smeta_core`, `chat.py`, `smeta_user_message_service`, legacy `estimate_harness_service`, `quantity_trace_service`, `lsr_assembly_service` | [SMETA_MECHANICS.md](SMETA_MECHANICS.md) | 🟡 |
 | smeta/system-dataset | `SMETA_NORMS_Index` публикует каждую trusted SQLite-норму как обычную RAG-карточку в общей named dense+bm25_sparse коллекции и доступен через явный dataset scope; `SMETA_SERVICE_Index` остаётся служебной навигацией. Отдельный smeta-turn для чтения норм не требуется | `system_dataset_service`, `tools/publish_smeta_norm_dataset.py`, `qdrant_adapter.MetaDB`, `retrieval_service`; datasets `SMETA_NORMS_Index`, `SMETA_SERVICE_Index`, `SMETA_RU_NORM_*` | [CODE_MAP.md](CODE_MAP.md) | ✅ |
 | smeta (поток) | объём ВОР → … → ВСЕГО; сметные lookup/calculation tools без финального visible-answer из кода | `smeta_chat_service`, `deterministic_policy_service` | [ALGO-smeta.md](ALGO-smeta.md) | ✅ |
-| smeta/lsr | сборка позиции→Всего→свод; РИМ-трасса (графы 2-12); XLSX форма **ЛСР РИМ**. ADR-15 adapter берёт явный шифр модели в exact lookup без независимого `EXACT_VERIFIED`; роли строк и `work_row`; исходное количество отдельно от расчётного; конверсия только с источником; `MISSING`/единицы/цена остаются gaps, отсутствие цены не уничтожает норму | `lsr_assembly_service`, `rim_lsr_trace_service`, `rim_trace_xlsx_service`, `lsr_workbook_adapter_service`, `lsr_source_coverage_service`, `fsem_machinist_service`; `POST /api/lsr/{assemble,rim-trace,lsr-trace}[/export]`; MCP `les_lsr_assemble` | [ALGO-lsr-assembly.md](ALGO-lsr-assembly.md) | ✅ |
+| smeta/lsr | сборка позиции→Всего→свод; РИМ-трасса (графы 2-12); XLSX форма **ЛСР РИМ**. ADR-15 adapter берёт явный шифр модели в exact lookup без независимого `EXACT_VERIFIED`; роли строк и `work_row`; исходное количество отдельно от расчётного; конверсия только с источником; `MISSING`/единицы/цена остаются gaps; названный `NEEDS_RESEARCH` считается как аналог и не делает `priced_final`; отсутствие цены не уничтожает норму | `lsr_assembly_service`, `rim_lsr_trace_service`, `rim_trace_xlsx_service`, `lsr_workbook_adapter_service`, `lsr_source_coverage_service`, `fsem_machinist_service`; `POST /api/lsr/{assemble,rim-trace,lsr-trace}[/export]`; MCP `les_lsr_assemble` | [ALGO-lsr-assembly.md](ALGO-lsr-assembly.md) | ✅ |
 | smeta/gesn | норма ГЭСН → ресурсы (расход×объём); canonical typed SQLite, raw/unified только source/staging. Обновление строит SQLite+manifest/integrity и exact-SHA dense+sparse RAG как sibling-generation; только после live readiness одна транзакция переключает файлы и Qdrant alias, а rollback возвращает прежнюю пару. Startup reconciliation проверяет реальный alias, активирует сохранённую exact-SHA generation либо запускает фоновую sibling-сборку; readiness остаётся read-only и показывает рассогласование в GUI. Windows clean install получает immutable source/base/FSEM payload и default regional pricebook с SHA/schema/count gates; существующий state не перезаписывается | `gesn_service`, `gesn_update_service`, `proxy/services/{smeta_generation_reconciliation,rag_readiness}_service.py`, `tools/{gesn_update_from_fgis,gesn_unify_base,build_smeta_structured_base,smeta_generation_coordinator,rebuild_active_smeta_rag,activate_smeta_rag_generation,smeta_release_baseline}.py`; `config/domain/smeta_base_active.json`; Make `smeta-base*`; Windows bootstrap/release smoke | [ALGO-gesn.md](ALGO-gesn.md) · [modules/smeta-core.md](modules/smeta-core.md) | ✅ |
 | smeta/fgis | цена ресурса по коду из «Сплит-формы» ФГИС ЦС; единый операторский updater получает публичный каталог, последнюю книгу каждой ценовой зоны и полный ГЭСН pipeline; UI показывает job status, heartbeat, текущий регион/сборник и ETA; visible-книги управляются `pricebook_manifest.json` | `fgis_price_service`, `fgis_update_service`, `process_status`, `tools/{fgis_full_update,gesn_update_from_fgis,gesn_bulk_import}.py`; `/api/service-sources/fgis/update[/status]`; `sovushka/pages/instrumenty.py`; MCP `les_price_lookup` | [ALGO-fgis-price.md](ALGO-fgis-price.md) | ✅ |
 | smeta/artifact | оформление сметных таблиц в отдельный Markdown-artifact и выгрузку XLSX/CSV: извлекает уже написанные моделью ВОР/стоимость/развилки, считает видимые суммы, делает `lsr_rim_display_form_v1` отдельным способом выдачи сметного артефакта, добавляет Markdown/XLSX ЛСР РИМ в 12-графной форме Приложения №3/421-пр и отдельные источники, а исходные таблицы оставляет расшифровкой; живой чат копит terminal-строки по мере готовности, а на финале сверяет таблицу с авторитетным `rim_trace`, поэтому строки без отдельного stream-события не исчезают; внутренние фазы/ошибки и resource-guard локализуются только на UI-границе; на stage `norm_candidates` строит рабочую таблицу `ВОР ↔ кандидаты ГЭСН` из executed `search_norm` trace и отдаёт её даже при пустом финальном LLM-тексте, а следующий ход “деньги по ним” считает по candidates текущего/предыдущего trace; если построен проверенный `lsr_rim_trace_form_v1`, visible answer показывает именно расчётную РИМ-ЛСР с ценами/книгой/статусом, без конкурирующей модельной placeholder-таблицы; legacy compact только через `LES_SMETA_COMPACT_CHAT_TABLES=1`; не выбирает работы, нормы или ставки | `smeta_artifact_service`, `chat.py` payload `artifact`, `sovushka/pages/chat.py`, `/api/smeta-artifacts/download` | [SMETA_MECHANICS.md](SMETA_MECHANICS.md) | ✅ |

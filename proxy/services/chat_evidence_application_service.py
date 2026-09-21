@@ -745,11 +745,21 @@ _TABULAR_LSR_VOLUME_INSTRUCTION = (
     "Пустые колонки Материал/Работа/Итого во вложенной ведомости — это объёмы, "
     "не запрет собирать таблицу строк. Не отказывайся из‑за пустых цен и не проси "
     "прайс вместо таблицы. Цену считает код только после выбранной нормы. "
-    "В таблице нужны source_row, row_role, work_row, supply_kind, title, unit, "
-    "quantity, calc_quantity, conversion_factor, conversion_source, norm_code, "
-    "norm_status, open_gap, action_match, object_match, evidence_refs Qx.Hy. "
+    "В таблице нужны source_row, row_role, work_row, title, unit, quantity, norm_code, "
+    "norm_status, open_gap, evidence_refs Qx.Hy. Поля supply_kind, calc_quantity, "
+    "conversion_factor, conversion_source добавляй только когда применяются. "
     "quantity — исходное количество; расчётное не подменяет его. Перевод единиц "
     "только с conversion_source. Отсутствие цены не делает строку MISSING."
+    " Если исходник — спецификация изделий, самостоятельно определи по задаче "
+    "и источникам необходимые монтажные работы, их объёмы и нормы; название "
+    "изделия не заменяет работу. Работу можно обосновать исходным source_row, "
+    "даже если монтаж не записан отдельной строкой исходника. Не назначай "
+    "отдельную работу каждому изделию автоматически: учитывай состав нормы "
+    "и избегай двойного учёта. work_row ресурса ссылается на source_row "
+    "реально возвращённой работы с row_role=work, а не на шифр или материал. "
+    "Выбранный по карточке шифр и Qx.Hy перенеси в norm_code и evidence_refs "
+    "итоговой строки; упоминания только в пояснении недостаточно. Если "
+    "работу нельзя определить, верни unresolved с конкретным open_gap."
 )
 _MODEL_RAG_QUERY_INSTRUCTION = (
     "Прочитай приложенный материал целиком. Сформулируй поисковые "
@@ -977,15 +987,43 @@ def cited_source_row_keys(
     return keys
 
 
+def _source_locator_aliases(
+    raw: Any,
+    catalog: AttachmentSourceCatalog | None = None,
+) -> set[str]:
+    aliases = {str(raw).strip()} if raw not in (None, "") else set()
+    if catalog is not None and raw not in (None, ""):
+        found = catalog.lookup(raw)
+        if found is not None:
+            aliases.add(found.locator)
+    return {item for item in aliases if item}
+
+
+def _decision_role_key(row: Mapping[str, Any]) -> str:
+    """Stable role for merge/duplicate identity. Prefer authored row_role."""
+
+    from proxy.services.lsr_source_coverage_service import inferred_row_role
+
+    return inferred_row_role(row) or "work"
+
+
 def merge_model_rag_rows(
     existing: Sequence[Mapping[str, Any]],
     incoming: Sequence[Mapping[str, Any]],
     catalog: AttachmentSourceCatalog | None = None,
 ) -> list[dict[str, Any]]:
-    """First accepted decision for a source_row wins. Code does not rewrite cells."""
+    """First accepted decision per (source_row, role) wins. Code does not rewrite cells.
+
+    A specification line may legally carry both material and install-work rows on
+    the same locator; those are different decisions, not duplicates.
+    """
 
     merged = [dict(row) for row in existing if isinstance(row, Mapping)]
-    seen = cited_source_row_keys(merged, catalog)
+    seen: set[tuple[str, str]] = set()
+    for row in merged:
+        role = _decision_role_key(row)
+        for alias in _source_locator_aliases(row.get("source_row"), catalog):
+            seen.add((alias, role))
     for row in incoming:
         if not isinstance(row, Mapping):
             continue
@@ -993,14 +1031,12 @@ def merge_model_rag_rows(
         raw = payload.get("source_row")
         if raw in (None, ""):
             continue
-        aliases = {str(raw).strip()}
-        if catalog is not None:
-            found = catalog.lookup(raw)
-            if found is not None:
-                aliases.add(found.locator)
-        if aliases & seen:
+        role = _decision_role_key(payload)
+        aliases = _source_locator_aliases(raw, catalog)
+        if any((alias, role) in seen for alias in aliases):
             continue
-        seen.update(aliases)
+        for alias in aliases:
+            seen.add((alias, role))
         merged.append(payload)
     return merged
 
@@ -1238,7 +1274,7 @@ def structurally_complete_source_keys(rows, catalog):
 
     keys = cited_source_row_keys(rows, catalog)
     coverage = build_source_coverage(catalog_locators=catalog.work_locators(), rows=rows)
-    invalid = {item["locator"] for item in coverage["gaps"]}
+    invalid = set(coverage["incomplete_locators"])
     return keys - invalid
 
 
@@ -1768,6 +1804,21 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         if len(values) == len(header):
             return values
         extra = len(values) - len(header)
+        title_at = next(
+            (index for index, name in enumerate(mapped_header) if name == "title"),
+            -1,
+        )
+        # Product titles often contain "|" (Hyperline dims). Fold surplus cells
+        # back into the title column instead of discarding the whole row.
+        if title_at >= 0 and extra >= 1:
+            title_end = title_at + 1 + extra
+            if title_end <= len(values):
+                merged_title = " | ".join(
+                    item for item in values[title_at:title_end] if str(item).strip()
+                )
+                trial = values[:title_at] + [merged_title] + values[title_end:]
+                if len(trial) == len(header) and aligned_row_fits(trial):
+                    return trial
         if extra > 3:
             return None
         coeff_at = next(
@@ -1864,7 +1915,10 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         divider = cells(lines[header_index + 1])
         while len(divider) > len(header) and divider and divider_cell(divider[-1]):
             divider = divider[:-1]
-        if len(divider) != len(header) or not all(divider_cell(item) for item in divider):
+        # Divider cells are presentation, not the schema. Models sometimes emit
+        # one fewer separator than labelled columns; the header still provides
+        # the unambiguous mapping for every actual row.
+        if not divider or not all(divider_cell(item) for item in divider):
             header_index += 1
             continue
         table_section = current_section
@@ -1897,7 +1951,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 if name == "source_row":
                     parsed_source_row = source_row_identity(value)
                     if parsed_source_row is None:
-                        return None
+                        # One broken locator must not erase the rest of the table.
+                        row.clear()
+                        break
                     row[name] = parsed_source_row
                 elif name in numeric_fields:
                     numeric_value = value.strip()
@@ -1913,10 +1969,10 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                     else:
                         parsed_number = number(numeric_value)
                     if parsed_number is None:
-                        if name == "coefficient":
-                            row[name] = value
-                            continue
-                        return None
+                        # Preserve the authored cell. Numeric validation belongs
+                        # to calculation; one bad cell must not erase other rows.
+                        row[name] = value
+                        continue
                     row[name] = parsed_number
                 elif name == "evidence_refs":
                     refs = evidence_refs(value)
@@ -2051,7 +2107,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 first_token = clean.split(maxsplit=1)[0].rstrip(".,;")
                 parsed_number = number(first_token)
             if parsed_number is None:
-                invalid_block = True
+                current_block[key] = clean
                 continue
             current_block[key] = parsed_number
         elif key == "evidence_refs":
@@ -2130,7 +2186,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             if key in numeric_fields:
                 parsed_number = number(clean)
                 if parsed_number is None:
-                    return None
+                    row[key] = clean
+                    continue
                 row[key] = parsed_number
             elif key == "evidence_refs":
                 refs = evidence_refs(clean)
@@ -2467,7 +2524,19 @@ def _explicit_absence_value(value: Any) -> bool:
 
 
 def model_rag_row_kind(row: Mapping[str, Any]) -> str:
-    """Classify a parsed row without rewriting model cells."""
+    """Classify a parsed row without rewriting model cells.
+
+    Authored ``row_role`` wins when present so material/equipment decisions are
+    not treated as install works for evidence/duplicate gates.
+    """
+
+    from proxy.services.lsr_source_coverage_service import canonicalize_row_role
+
+    explicit = canonicalize_row_role(row.get("row_role"))
+    if explicit in {"material", "equipment", "resource", "unresolved"}:
+        return explicit
+    if explicit == "work":
+        return "work"
 
     unit_absent = _explicit_absence_value(row.get("unit"))
     quantity_absent = row.get("quantity") is None or _explicit_absence_value(
@@ -2755,7 +2824,7 @@ def validate_model_rag_result_structure(
             "source_incomplete:"
             + ",".join(list(source_incomplete_locators)[:8])
         )
-    observed_keys: set[tuple[str, str]] = set()
+    observed_keys: set[tuple[str, str, str]] = set()
     for row in rows:
         source_row = row.get("source_row")
         is_positive_int = (
@@ -2767,7 +2836,13 @@ def validate_model_rag_result_structure(
         if not is_positive_int and not is_authored_label:
             errors.append("invalid_source_row")
             continue
-        source_key = (type(source_row).__name__, str(source_row))
+        # Same locator may carry material + install work. Duplicate only the
+        # same role twice; mixed roles are the specification→work pattern.
+        source_key = (
+            type(source_row).__name__,
+            str(source_row),
+            _decision_role_key(row),
+        )
         if source_key in observed_keys:
             errors.append(f"duplicate_source_row:{source_row}")
         observed_keys.add(source_key)
@@ -3843,33 +3918,77 @@ async def _execute_chat_evidence_application(
         llm_runtime = _mlx_runtime()
     else:
         llm_runtime = configured_runtime
+    from proxy.services.freetoken_cache_profile_service import cache_alignment_target
+
+    active_connection = (
+        resolved_connection if canonical_execution_mode is CanonicalRouteMode.ACTIVE else None
+    )
+    gen_semaphore = (
+        state.llm_semaphore
+        if active_connection is not None and active_connection.locality is not ConnectionLocality.REMOTE
+        else generation_semaphore(state.llm_semaphore)
+    )
+    cache_target = cache_alignment_target(llm_runtime, active_connection=active_connection)
     cache_state: dict[str, Any] = {}
-    if getattr(llm_runtime, "requires_cache_alignment", False):
+    if cache_target is not None:
+        cache_base_url, cache_model = cache_target
         from proxy.services.freetoken_cache_profile_service import (
             DEFAULT_FREETOKEN_CONTEXT_TOKENS,
-            probe_freetoken_cache,
+            admitted_cache_call,
+            align_freetoken_cache_for_turn,
+            desired_kv_for_answer_model,
             reconcile_freetoken_cache,
         )
+        from proxy.services.model_execution_preset_service import (
+            MIN_EXTENDED_35B_CONTEXT_TOKENS,
+            is_qwen_35b,
+        )
 
-        desired_kv = _env_int("FREETOKEN_CONTEXT_TOKENS", DEFAULT_FREETOKEN_CONTEXT_TOKENS)
+        desired_kv = desired_kv_for_answer_model(
+            cache_model,
+            _env_int("FREETOKEN_CONTEXT_TOKENS", DEFAULT_FREETOKEN_CONTEXT_TOKENS),
+        )
         if (
             resolved_connection is not None
             and resolved_connection.requested_context_tokens
         ):
-            desired_kv = int(resolved_connection.requested_context_tokens)
-        if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
-            # Bound chat must not rebuild KV mid-generation. Settings/reconcile
-            # own the rebuild; here we only observe the live pages.
-            cache_state = await asyncio.to_thread(
-                probe_freetoken_cache,
-                llm_runtime.base_url,
-                desired_kv,
+            desired_kv = desired_kv_for_answer_model(
+                cache_model,
+                int(resolved_connection.requested_context_tokens),
             )
+        if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
+            # Rebuild once at HTTP-turn start if 35B is still on a legacy 8k
+            # window. Packet loops must not call this; mid-generation rebuild
+            # is still forbidden.
+            cache_state = await admitted_cache_call(
+                align_freetoken_cache_for_turn,
+                cache_base_url,
+                semaphore=gen_semaphore,
+                timeout_seconds=generation_slot_timeout_seconds(),
+                model_id=cache_model,
+                requested_kv=desired_kv,
+                allow_rebuild=True,
+            )
+            try:
+                live_kv = int(cache_state.get("effective_kv_tokens") or 0)
+            except (TypeError, ValueError):
+                live_kv = 0
+            if is_qwen_35b(cache_model) and (
+                cache_state.get("status") not in {"aligned", "synchronized"}
+                or live_kv < MIN_EXTENDED_35B_CONTEXT_TOKENS
+            ):
+                raise HTTPException(
+                    503,
+                    "FreeToken KV не готов для 35B: "
+                    + str(cache_state.get("reason") or cache_state.get("status")),
+                )
         else:
-            cache_state = await asyncio.to_thread(
+            cache_state = await admitted_cache_call(
                 reconcile_freetoken_cache,
-                llm_runtime.base_url,
+                cache_base_url,
                 desired_kv,
+                semaphore=gen_semaphore,
+                timeout_seconds=generation_slot_timeout_seconds(),
             )
             if cache_state.get("status") not in {"aligned", "synchronized"}:
                 raise HTTPException(
@@ -4020,7 +4139,6 @@ async def _execute_chat_evidence_application(
         retrieval_trace["class_suggestions"] = [s["class"] for s in class_suggestions]
 
     # Облако не держит локальный Metal-слот: отдельный пул (LES_CLOUD_LLM_CONCURRENCY).
-    gen_semaphore = generation_semaphore(state.llm_semaphore)
 
     t_gen_start = time.time()
     t_llm = 0.0  # W0.1: чистое время LLM-вызовов (включая загрузку модели на стороне MLX)
@@ -5839,6 +5957,8 @@ async def _execute_chat_evidence_application(
                                     "shown_queries": len(included_hits),
                                     "leftover_queries": len(leftover_query_hits),
                                     "kept_rows": len(kept),
+                                    "parsed_rows": len(pass_rows),
+                                    "row_errors": list(pass_errors),
                                     "finish_reason": last_finish,
                                     "truncated": last_truncated,
                                 }

@@ -13,6 +13,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from backend.runtime_paths import mutable_path
+
 
 load_dotenv(
     Path(os.getenv("LES_ENV_PATH", str(Path(__file__).resolve().parents[1] / ".env"))).expanduser(),
@@ -137,8 +139,11 @@ def rag_meta_db_path() -> str:
         return os.environ["RAG_META_DB_PATH"]
     profile = embed_profile()
     if profile.name == "legacy":
-        return "./data/les_meta.db"
-    return f"./data/les_meta_{profile.name}.db"
+        relative = "data/les_meta.db"
+    else:
+        relative = f"data/les_meta_{profile.name}.db"
+    path = mutable_path(relative)
+    return str(path) if os.getenv("LES_WINDOWS_STATE_ROOT", "").strip() else f"./{path.as_posix()}"
 
 
 def rag_vector_size() -> int:

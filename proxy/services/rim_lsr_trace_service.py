@@ -979,6 +979,12 @@ def model_row_rejects_selected_norm(row: Mapping[str, Any] | None) -> tuple[bool
 
 
 def _code_from_visible_row(row: dict[str, Any]) -> str:
+    # An explicit code cell is not prose. A shifted explanation may mention a
+    # rejected norm; extracting its first code would manufacture a selection.
+    for key in ("code", "norm_code"):
+        if row.get(key) not in (None, ""):
+            value = str(row[key]).strip().strip("`* ")
+            return _extract_norm_code(value) if _NORM_REF_RE.fullmatch(value) else ""
     explicit = _first_value(row, "code", "norm_code", "basis", "justification", "обоснование")
     return _extract_norm_code(explicit)
 
@@ -1022,7 +1028,9 @@ def _quantity_from_visible_row(row: dict[str, Any]) -> tuple[float | None, str, 
         "объем",
         "объём",
     )
-    qty = parse_ru_number(raw_qty)
+    qty = _num(raw_qty)
+    if qty is not None and not math.isfinite(qty):
+        qty = None
     unit = str(_first_value(row, "unit", "ед", "ед.", "единица", "единица измерения") or "").strip()
     return qty, unit, str(raw_qty or "")
 
@@ -1034,6 +1042,21 @@ def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, A
         "source_quantity": raw_qty if raw_qty is not None else raw_qty_text,
         "source_unit": source_unit,
     }
+    for field in ("conversion_factor", "calc_quantity"):
+        authored = row.get(field)
+        if authored is None or str(authored).strip().casefold() in {
+            "", "-", "—", "–", "−", "нет", "н/д", "n/a", "na",
+        }:
+            continue
+        parsed = _num(authored)
+        if parsed is None or not math.isfinite(parsed):
+            return None, {
+                **base_trace,
+                "status": "needs_input",
+                "invalid_field": field,
+                "authored_value": authored,
+                "message": f"Поле {field} содержит не число: {authored}. Укажите числовое значение; исходный текст сохранён.",
+            }
     if raw_qty is None:
         return None, {
             **base_trace,
@@ -1138,8 +1161,9 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
 
     This function does not search or select norms and does not require an
     independent EXACT_VERIFIED overlay. An explicit model cipher goes to exact
-    lookup and quantity conversion. MISSING/NEEDS_RESEARCH/CONFLICT, unknown
-    codes, and unit failures stay unbound so price gaps remain visible.
+    lookup and quantity conversion. MISSING/CONFLICT, unknown codes, and unit
+    failures stay unbound. A named NEEDS_RESEARCH cipher is calculated when the
+    card exists, stays marked as analogue, and never becomes priced_final.
     """
     positions: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
@@ -1184,7 +1208,9 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             )
             continue
         if role in {"material", "equipment"} and not code:
-            price = parse_ru_number(row.get("confirmed_price"))
+            price = _num(row.get("confirmed_price"))
+            if price is not None and not math.isfinite(price):
+                price = None
             resource = {
                 "kind": "material",
                 "name": title,
@@ -1228,7 +1254,12 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 )
             )
             continue
-        if model_status in {"MISSING", "NEEDS_RESEARCH", "CONFLICT"} or role == "unresolved":
+        named_research = model_status == "NEEDS_RESEARCH" and bool(code)
+        if (
+            model_status in {"MISSING", "CONFLICT"}
+            or role == "unresolved"
+            or (model_status == "NEEDS_RESEARCH" and not named_research)
+        ):
             status = {
                 "MISSING": "missing_norm",
                 "NEEDS_RESEARCH": "needs_research",
@@ -1378,6 +1409,17 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 binding[key] = position[key]
         binding["norm_status"] = model_status or "MODEL_SELECTED"
         binding["quality_gate"] = str(row.get("_quality_gate") or "not_run")
+        if model_status == "NEEDS_RESEARCH":
+            reason = str(
+                row.get("open_gap")
+                or row.get("open_question")
+                or row.get("quality_message")
+                or "модель оставила шифр как аналог / NEEDS_RESEARCH"
+            )
+            binding["selection_kind"] = binding.get("selection_kind") or "analogue"
+            binding["coverage_reason"] = reason
+            binding["message"] = reason
+            position.setdefault("analogue", reason)
         bindings.append(
             _with_visible_identity(
                 binding, title=title, source_qty=source_qty, source_unit=source_unit
@@ -1422,7 +1464,13 @@ def build_lsr_trace_from_visible_rows(
     open_bindings = [
         item for item in bound["row_bindings"] if item.get("status") not in closed
     ]
-    if bound["positions"] and not open_bindings:
+    research_priced = [
+        item
+        for item in bound["row_bindings"]
+        if item.get("status") == "bound"
+        and canonicalize_norm_status(item.get("norm_status")) == "NEEDS_RESEARCH"
+    ]
+    if bound["positions"] and not open_bindings and not research_priced:
         summary["norms_status"] = "model_norms_selected"
     elif bound["positions"]:
         summary["norms_status"] = "model_norms_partial"
@@ -1430,6 +1478,12 @@ def build_lsr_trace_from_visible_rows(
         summary["norms_status"] = "norm_selection_required"
     if binding_flags:
         summary["flags"] = list(summary.get("flags") or []) + binding_flags
+    if research_priced:
+        summary["flags"] = list(summary.get("flags") or []) + [
+            f"строка {item.get('row')}: analog {item.get('code') or ''} "
+            "посчитан, статус NEEDS_RESEARCH сохранён".strip()
+            for item in research_priced
+        ]
     if not bound["positions"]:
         summary["result_status"] = "norm_selection_required"
     elif summary.get("flags"):

@@ -20,8 +20,10 @@
    - **Canonical machine base** `data/smeta_base/les_smeta_base.sqlite`: одна структурированная
      SQLite-база с таблицами `norms` и `resources`. Ключ нормы:
      `norm_key=<base_type>:<bare_code>`. `ГЭСН:38-01-001-01` и `ГЭСНм:38-01-001-01` — разные нормы;
-     bare-код при multi-family collision не раскрывается strict lookup. При совпадении кода
-     **семя побеждает** (эталон точен).
+     bare-код при multi-family collision не раскрывается strict lookup. Overlay
+     `data/gesn_base/gesn2022_overlay.parquet` (`tools/gesn_fgis_overlay_import.py`)
+     закрывает только отсутствующие ключи, не выбирает работу и не затирает SQLite.
+     При совпадении кода **семя побеждает** (эталон точен).
    `data/gesn_base/gesn2022_unified.parquet` теперь source/staging слой, а не runtime-facing база:
    он собирается из raw ФГИС/ручных импортов через `tools/gesn_unify_base.py`, затем очищается и
    раскладывается в staging SQLite через `tools/build_smeta_structured_base.py`, а активная пара

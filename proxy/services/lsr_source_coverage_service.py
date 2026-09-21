@@ -139,7 +139,7 @@ def build_source_coverage(
 
     wanted = [_text(item) for item in catalog_locators if _text(item)]
     remaining = [_text(item) for item in remaining_locators if _text(item)]
-    by_locator: dict[str, dict[str, Any]] = {}
+    by_locator: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         if not isinstance(row, Mapping):
             continue
@@ -147,20 +147,28 @@ def build_source_coverage(
         if not locator:
             continue
         role = inferred_row_role(row)
-        by_locator[locator] = {
-            "locator": locator,
-            "role": role,
-            "work_row": work_row_key(row),
-            "supply_kind": canonicalize_supply_kind(row.get("supply_kind")),
-            "open_gap": _text(row.get("open_gap") or row.get("open_question")),
-            "role_specified": bool(canonicalize_row_role(row.get("row_role"))),
-        }
+        by_locator.setdefault(locator, []).append(
+            {
+                "locator": locator,
+                "role": role,
+                "work_row": work_row_key(row),
+                "supply_kind": canonicalize_supply_kind(row.get("supply_kind")),
+                "open_gap": _text(row.get("open_gap") or row.get("open_question")),
+                "role_specified": bool(canonicalize_row_role(row.get("row_role"))),
+            }
+        )
+
+    def _primary_record(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        for record in records:
+            if record.get("role") == "work":
+                return dict(record)
+        return dict(records[0])
 
     gaps: list[dict[str, str]] = []
     accounted = 0
     for locator in wanted:
-        record = by_locator.get(locator)
-        if record is None:
+        records = by_locator.get(locator)
+        if not records:
             if locator in remaining:
                 gaps.append(
                     {
@@ -185,7 +193,7 @@ def build_source_coverage(
                 )
             continue
         accounted += 1
-        if not record["role_specified"]:
+        if not any(record["role_specified"] for record in records):
             gaps.append(
                 {
                     "locator": locator,
@@ -196,42 +204,65 @@ def build_source_coverage(
                     ),
                 }
             )
-        if record["role"] == "unresolved" and not record["open_gap"]:
-            gaps.append(
-                {
-                    "locator": locator,
-                    "kind": "open_gap",
-                    "action": f"Сформулируйте конкретный вопрос по строке {locator}.",
-                }
-            )
-        if record["role"] in {"resource", "material", "equipment"} and not record["work_row"]:
-            gaps.append(
-                {
-                    "locator": locator,
-                    "kind": "missing_work_row",
-                    "action": (
-                        f"Свяжите строку {locator} с locator работы через work_row, "
-                        "не через шифр нормы."
-                    ),
-                }
-            )
+        for record in records:
+            if record["role"] == "unresolved" and not record["open_gap"]:
+                gaps.append(
+                    {
+                        "locator": locator,
+                        "kind": "open_gap",
+                        "action": f"Сформулируйте конкретный вопрос по строке {locator}.",
+                    }
+                )
+            if record["role"] in {"resource", "material", "equipment"} and not record["work_row"]:
+                gaps.append(
+                    {
+                        "locator": locator,
+                        "kind": "missing_work_row",
+                        "action": (
+                            f"Свяжите строку {locator} с locator работы через work_row, "
+                            "не через шифр нормы."
+                        ),
+                    }
+                )
 
     orphan_parents = []
     known = set(wanted) | set(by_locator)
-    for locator, record in by_locator.items():
-        parent = record.get("work_row") or ""
-        if parent and parent not in known and parent not in {record["locator"]}:
-            orphan_parents.append(parent)
-            gaps.append(
-                {
-                    "locator": locator,
-                    "kind": "lost_work_link",
-                    "action": (
-                        f"Строка {locator} ссылается на работу {parent}, которой нет "
-                        "среди исходных строк."
-                    ),
-                }
-            )
+    work_locators = {
+        locator
+        for locator, records in by_locator.items()
+        if any(record["role"] == "work" for record in records)
+    }
+    for locator, records in by_locator.items():
+        for record in records:
+            parent = record.get("work_row") or ""
+            if parent and parent not in known and parent not in {record["locator"]}:
+                orphan_parents.append(parent)
+                gaps.append(
+                    {
+                        "locator": locator,
+                        "kind": "lost_work_link",
+                        "action": (
+                            f"Строка {locator} ссылается на работу {parent}, которой нет "
+                            "среди исходных строк."
+                        ),
+                    }
+                )
+            elif (
+                parent
+                and record["role"] in {"resource", "material", "equipment"}
+                and parent not in work_locators
+            ):
+                gaps.append(
+                    {
+                        "locator": locator,
+                        "kind": "parent_not_work",
+                        "action": (
+                            f"Ссылка строки {locator} ведёт на {parent}, но там нет "
+                            "решения с ролью work. Модель должна связать ресурс с "
+                            "работой или явно указать, каких данных не хватает."
+                        ),
+                    }
+                )
 
     return {
         "schema": SCHEMA,
@@ -240,6 +271,9 @@ def build_source_coverage(
         "accounted": accounted,
         "gap_count": len(gaps),
         "gaps": gaps[:80],
-        "roles": [by_locator[item] for item in wanted if item in by_locator],
+        "incomplete_locators": list(dict.fromkeys(item["locator"] for item in gaps)),
+        "roles": [
+            _primary_record(by_locator[item]) for item in wanted if item in by_locator
+        ],
         "supply_parents": sorted(locators_with_separate_supply(rows)),
     }

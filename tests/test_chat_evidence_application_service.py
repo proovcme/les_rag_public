@@ -506,6 +506,97 @@ def test_model_rag_packaging_requires_complete_rows_and_real_matching_evidence()
     assert "norm_code_not_in_referenced_evidence:1" in errors
 
 
+def test_material_and_work_same_locator_are_not_duplicate_decisions():
+    evidence = [
+        SimpleNamespace(
+            meta={"model_evidence_ref": "Q1.H1", "norm_code": "ГЭСНм10-06-001-01"}
+        ),
+    ]
+    rows = [
+        {
+            "source_row": "СКС!R28",
+            "row_role": "material",
+            "work_row": "СКС!R28",
+            "title": "Кабель",
+            "unit": "м",
+            "quantity": 400,
+            "norm_code": "-",
+            "evidence_refs": ["Q1.H1"],
+        },
+        {
+            "source_row": "СКС!R28",
+            "row_role": "work",
+            "work_row": "СКС!R28",
+            "title": "Прокладка кабеля",
+            "unit": "м",
+            "quantity": 400,
+            "norm_code": "ГЭСНм10-06-001-01",
+            "evidence_refs": ["Q1.H1"],
+        },
+    ]
+    errors = service.validate_model_rag_result_structure(
+        rows,
+        evidence,
+        expected_source_rows=1,
+    )
+    assert "duplicate_source_row:СКС!R28" not in errors
+    assert service.model_rag_row_kind(rows[0]) == "material"
+    assert service.model_rag_row_kind(rows[1]) == "work"
+
+    catalog = SimpleNamespace(
+        lookup=lambda key: SimpleNamespace(sheet="СКС")
+        if str(key).startswith("СКС!")
+        else None
+    )
+    kept = service.sheet_pass_keep_rows(
+        rows, sheet="СКС", catalog=catalog, errors=errors
+    )
+    assert len(kept) == 2
+    assert {row["row_role"] for row in kept} == {"material", "work"}
+
+    merged = service.merge_model_rag_rows([], rows)
+    assert len(merged) == 2
+    # First-wins per role: second material for same locator is ignored.
+    again = service.merge_model_rag_rows(
+        merged,
+        [{**rows[0], "title": "другой материал"}],
+    )
+    assert len(again) == 2
+    assert again[0]["title"] == "Кабель"
+
+
+def test_markdown_title_with_pipe_still_parses_row():
+    answer = (
+        "| source_row | row_role | title | unit | quantity | norm_code | evidence_refs |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| СКС!R6 | material | Шкаф 19\" | 800x1000 | Hyperline | шт. | 2 | - | Q1.H1 |\n"
+        "| СКС!R6 | work | Монтаж шкафа | шт. | 2 | ГЭСНм10-01-055-01 | Q1.H1 |\n"
+    )
+    parsed = service.parse_model_rag_result(answer)
+    assert parsed is not None
+    _md, rows = parsed
+    assert len(rows) >= 2
+    roles = {str(row.get("row_role")) for row in rows}
+    assert "material" in roles and "work" in roles
+    work = next(row for row in rows if row.get("row_role") == "work")
+    assert work.get("norm_code") == "ГЭСНм10-01-055-01"
+
+
+@pytest.mark.parametrize("separator_count", [1, 6, 7, 8])
+def test_model_rag_table_separator_width_does_not_drop_decisions(separator_count):
+    header = "| source_row | row_role | title | unit | quantity | norm_code | evidence_refs |\n"
+    body = (
+        "| Sheet!R6 | material | Cabinet | pcs | 2 | - | Q1.H1 |\n"
+        "| Sheet!R6 | work | Install cabinet | pcs | 2 | CODE-01 | Q1.H1 |\n"
+    )
+    expected = service.parse_model_rag_result(header + "|" + "---|" * 7 + "\n" + body)
+    actual = service.parse_model_rag_result(header + "|" + "---|" * separator_count + "\n" + body)
+    assert actual is not None and expected is not None
+    assert actual[1] == expected[1]
+    assert len(actual[1]) == 2
+    assert actual[1][1]["norm_code"] == "CODE-01"
+
+
 def test_model_rag_result_does_not_infer_rows_from_prose():
     answer = """### Раздел 1. Демонтажные работы ЭОМ
 **Строка 1: Защитное укрытие пленкой, 116 м².**
@@ -897,6 +988,23 @@ def test_model_rag_result_accepts_maxim_explicit_headers_and_missing_numbers():
             },
         ],
     )
+
+
+@pytest.mark.parametrize("field", ["quantity", "calc_quantity", "conversion_factor", "confirmed_price"])
+def test_model_rag_result_preserves_invalid_numeric_cell_without_losing_other_rows(field):
+    header = ["source_row", "title", "unit", "norm_code", field]
+    answer = "\n".join([
+        "| " + " | ".join(header) + " |",
+        "|---|---|---|---|---|",
+        "| R1 | First work | m | NORM-1 | 2 |",
+        "| R2 | Second work | m | NORM-2 | 305 m * 120 pcs |",
+        "| R3 | Third work | m | NORM-3 | 4 |",
+    ])
+    visible, rows = service.parse_model_rag_result(answer)
+    assert visible == answer
+    assert [row["source_row"] for row in rows] == ["R1", "R2", "R3"]
+    assert [row[field] for row in rows] == [2, "305 m * 120 pcs", 4]
+    assert [row["norm_code"] for row in rows] == ["NORM-1", "NORM-2", "NORM-3"]
 
 
 def test_model_rag_result_preserves_non_numeric_coefficient_text_unchanged():

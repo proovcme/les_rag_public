@@ -246,6 +246,20 @@ async def get_workbook_research(job_id: str, _user=Depends(require_user)):
         raise HTTPException(404, str(error)) from error
 
 
+@router.get("/workbook-research-active")
+async def list_active_workbook_research(
+    session_id: Annotated[str, Query()] = "",
+    _user=Depends(require_user),
+):
+    """Current LSR/VOR sheet-pass jobs for reconnect progress, without SSE."""
+
+    jobs = WorkbookResearchJobService().list_active(
+        session_id=str(session_id or ""),
+        limit=20,
+    )
+    return {"count": len(jobs), "jobs": jobs}
+
+
 @router.post("/chat/repack-lsr")
 async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_user)):
     """Rebuild XLSX from saved model decisions. Does not call the model."""

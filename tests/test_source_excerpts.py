@@ -78,6 +78,7 @@ def test_context_budget_does_not_drop_sources_for_local_model(monkeypatch):
 
 
 def test_context_budget_bounds_freetoken_evidence_and_windows(monkeypatch):
+    monkeypatch.setenv("FREETOKEN_MODEL", "qwen3.5:9b")
     monkeypatch.setenv("FREETOKEN_CONTEXT_TOKENS", "8253")
     monkeypatch.delenv("FREETOKEN_PROMPT_MAX_CHARS", raising=False)
     monkeypatch.delenv("FREETOKEN_PROMPT_CHARS_PER_TOKEN", raising=False)

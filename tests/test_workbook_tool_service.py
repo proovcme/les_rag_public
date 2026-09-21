@@ -19,6 +19,17 @@ from proxy.services.workbook_tool_service import (
     workbook_download_filename,
 )
 from proxy.services.lsr_workbook_adapter_service import build_lsr_workbook_from_decisions
+
+
+def test_price_gaps_retain_resource_identity_from_serialized_trace_columns():
+    from proxy.services.lsr_workbook_adapter_service import collect_lsr_price_gaps
+    trace = {"sections": [{"positions": [{"rows": [{
+        "columns": {"2": "RESOURCE-1", "3": "Cable", "7": 0},
+        "meta": {"price_action": "needs_kac"},
+    }]}]}]}
+    gap, = collect_lsr_price_gaps(trace)
+    assert (gap["code"], gap["resource"], gap["quantity"]) == ("RESOURCE-1", "Cable", 0)
+    assert "Cable" in gap["action"] and "RESOURCE-1" in gap["action"]
 from proxy.services.rim_lsr_trace_service import positions_from_visible_lsr_rows
 from proxy.services.structured_extract import validate as validate_json_schema
 

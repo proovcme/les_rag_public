@@ -103,6 +103,98 @@ def test_pause_keeps_should_cancel_true_until_resume(tmp_path) -> None:
     assert service.should_cancel(job["job_id"]) is False
 
 
+def test_list_active_prefers_session_then_newest_running(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    first = service.begin_or_resume(_identity(service))
+    service.record_packet(
+        first["job_id"],
+        sheet="СКС",
+        packet_locators=["СКС!R2"],
+        accepted_rows=[{"source_row": "СКС!R2", "norm_code": "10-01-001-01", "row_role": "work"}],
+        evidence=[],
+        remaining=["СКС!R3"],
+    )
+    other = service.begin_or_resume(
+        service.identity(
+            session_id="session-2",
+            attachment_id="read_123456abcdef",
+            source_sha256="b" * 64,
+            dataset_ids=["smeta"],
+            profile_revision_id="factory",
+            model_identity="qwen-35b",
+            question="Собери ЛСР",
+        )
+    )
+    matched = service.list_active(session_id="session-1")
+    assert matched[0]["job_id"] == first["job_id"]
+    other_match = service.list_active(session_id="session-2")
+    assert other_match[0]["job_id"] == other["job_id"]
+    unknown = service.list_active(session_id="missing")
+    assert unknown[0]["job_id"] in {first["job_id"], other["job_id"]}
+
+
+def test_list_open_returns_paused_when_session_has_no_running(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.record_packet(
+        job["job_id"],
+        sheet="СКС",
+        packet_locators=["СКС!R75"],
+        accepted_rows=[{"source_row": "СКС!R6", "row_role": "material"}],
+        evidence=[],
+        remaining=[],
+    )
+    paused = service.pause(
+        job["job_id"],
+        remaining=["СКС!R3", "СКС!R4"],
+        phase="packets",
+    )
+    assert paused["status"] == "paused"
+    assert service.list_active(session_id="session-1") == []
+    opened = service.list_open(session_id="session-1")
+    assert opened[0]["job_id"] == job["job_id"]
+    assert opened[0]["status"] == "paused"
+    assert opened[0]["remaining"] == ["СКС!R3", "СКС!R4"]
+
+
+def test_record_packet_keeps_material_and_work_on_same_locator(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.record_packet(
+        job["job_id"],
+        sheet="PDF",
+        packet_locators=["PDF!R9"],
+        accepted_rows=[
+            {
+                "source_row": "PDF!R9",
+                "row_role": "work",
+                "norm_code": "ГЭСН17-01-010-02",
+                "norm_status": "NEEDS_RESEARCH",
+            }
+        ],
+        evidence=[],
+        remaining=[],
+    )
+    service.record_packet(
+        job["job_id"],
+        sheet="PDF",
+        packet_locators=["PDF!R9"],
+        accepted_rows=[
+            {
+                "source_row": "PDF!R9",
+                "row_role": "material",
+                "title": "Люк ревизионный",
+                "norm_status": "MISSING",
+            }
+        ],
+        evidence=[],
+        remaining=[],
+    )
+    stored = service.get(job["job_id"])["accepted_rows"]
+    roles = {(row["source_row"], row["row_role"]) for row in stored}
+    assert roles == {("PDF!R9", "work"), ("PDF!R9", "material")}
+
+
 def test_legacy_cancelled_finish_becomes_resumable_pause(tmp_path) -> None:
     service = WorkbookResearchJobService(tmp_path / "meta.db")
     job = service.begin_or_resume(_identity(service))

@@ -57,3 +57,52 @@ def test_unresolved_row_needs_an_open_gap() -> None:
     kinds = {item["kind"] for item in coverage["gaps"]}
     assert "open_gap" in kinds
     assert coverage["complete"] is False
+
+
+def test_resource_parent_must_be_an_actual_work_decision():
+    rows = [
+        {"source_row": "A!R2", "row_role": "material", "work_row": "R2"},
+        {"source_row": "A!R3", "row_role": "equipment", "work_row": "R2"},
+        {"source_row": "A!R4", "row_role": "resource", "work_row": "R5"},
+    ]
+    coverage = build_source_coverage(
+        catalog_locators=["A!R2", "A!R3", "A!R4", "A!R5"], rows=rows,
+    )
+    assert {g["locator"] for g in coverage["gaps"] if g["kind"] == "parent_not_work"} == {
+        "A!R2", "A!R3", "A!R4",
+    }
+    assert rows[0]["row_role"] == "material"
+    assert rows[0]["work_row"] == "R2"
+
+
+def test_material_and_work_on_same_locator_are_structurally_complete():
+    coverage = build_source_coverage(
+        catalog_locators=["PDF!R9"],
+        rows=[
+            {
+                "source_row": "PDF!R9",
+                "row_role": "work",
+                "norm_code": "ГЭСН17-01-010-02",
+            },
+            {
+                "source_row": "PDF!R9",
+                "row_role": "material",
+                "work_row": "R9",
+                "title": "Люк ревизионный",
+            },
+        ],
+    )
+    assert coverage["complete"] is True
+    assert coverage["gap_count"] == 0
+    assert coverage["roles"][0]["role"] == "work"
+
+
+def test_coverage_keeps_all_incomplete_locators_beyond_display_limit():
+    locators = [f"A!R{i}" for i in range(1, 102)]
+    coverage = build_source_coverage(
+        catalog_locators=locators,
+        rows=[{"source_row": key, "row_role": "material", "work_row": key} for key in locators],
+    )
+    assert coverage["gap_count"] == 101
+    assert len(coverage["gaps"]) == 80
+    assert set(coverage["incomplete_locators"]) == set(locators)

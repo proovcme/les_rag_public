@@ -161,6 +161,7 @@ def test_settings_ui_exposes_the_effective_freetoken_runtime():
 
 
 def test_freetoken_prompt_limit_reserves_generation_context(monkeypatch):
+    monkeypatch.setenv("FREETOKEN_MODEL", "qwen3.5:9b")
     monkeypatch.setenv("FREETOKEN_CONTEXT_TOKENS", "8253")
     monkeypatch.delenv("FREETOKEN_PROMPT_MAX_CHARS", raising=False)
     monkeypatch.delenv("FREETOKEN_PROMPT_CHARS_PER_TOKEN", raising=False)
@@ -169,6 +170,15 @@ def test_freetoken_prompt_limit_reserves_generation_context(monkeypatch):
 
     monkeypatch.setenv("FREETOKEN_PROMPT_MAX_CHARS", "7000")
     assert provider_prompt_max_chars("freetoken") == 7000
+
+
+def test_35b_legacy_prompt_ceiling_lifts_to_factory_window(monkeypatch):
+    monkeypatch.setenv("FREETOKEN_MODEL", "Qwen3.6-35B-A3B-NVFP4")
+    monkeypatch.setenv("FREETOKEN_CONTEXT_TOKENS", "8253")
+    monkeypatch.setenv("FREETOKEN_PROMPT_MAX_CHARS", "8816")
+    monkeypatch.delenv("FREETOKEN_PROMPT_CHARS_PER_TOKEN", raising=False)
+
+    assert provider_prompt_max_chars("freetoken") == 67600
 
 
 def test_freetoken_prompt_budget_derives_from_operator_context_window():
@@ -180,6 +190,7 @@ def test_freetoken_prompt_budget_derives_from_operator_context_window():
 
 
 def test_freetoken_default_prompt_fit_keeps_multi_document_evidence(monkeypatch):
+    monkeypatch.setenv("FREETOKEN_MODEL", "qwen3.5:9b")
     monkeypatch.setenv("FREETOKEN_CONTEXT_TOKENS", "8253")
     monkeypatch.delenv("FREETOKEN_PROMPT_MAX_CHARS", raising=False)
     monkeypatch.delenv("FREETOKEN_PROMPT_CHARS_PER_TOKEN", raising=False)

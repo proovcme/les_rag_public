@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -48,10 +48,18 @@ def compute_eta(started_at: Any, completed: Any, total: Any, *, running: bool = 
     if not running or not started_at or done_i <= 0 or total_i <= 0 or done_i >= total_i:
         return out
     try:
-        started = datetime.fromisoformat(str(started_at))
+        started = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return out
-    now = datetime.fromtimestamp(now_ts) if now_ts is not None else datetime.now()
+    if started.tzinfo is not None:
+        started = started.astimezone(timezone.utc)
+        now = (
+            datetime.fromtimestamp(now_ts, tz=timezone.utc)
+            if now_ts is not None
+            else datetime.now(timezone.utc)
+        )
+    else:
+        now = datetime.fromtimestamp(now_ts) if now_ts is not None else datetime.now()
     elapsed = (now - started).total_seconds()
     if elapsed <= 0:
         return out

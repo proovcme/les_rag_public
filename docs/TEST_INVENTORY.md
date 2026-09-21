@@ -1,5 +1,20 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 775: table divider width regression preserves both material and work
+rows at one locator for short/equal/long dividers; existing invalid-divider
+and invalid-numeric-cell protections remain covered in
+`tests/test_chat_evidence_application_service.py`.
+
+
+Build 772: `tests/test_freetoken_cache_profile_service.py` covers ACTIVE engine
+selection independent of legacy provider, generation admission and cancellation
+while a rebuild worker still runs. Settings reads use the non-mutating probe in
+`tests/test_proxy_routers.py`. These do not replace live workbook acceptance.
+
+`tests/test_lsr_source_coverage_service.py` and `tests/test_lsr_packet_integrity.py`:
+material self-links, links to non-work decisions and all unresolved locators in
+sources larger than the 80-item display limit remain open without rewriting rows.
+
 `tests/test_lsr_packet_integrity.py`: low output budgets, invalid source
 fragments and resumption of broken links without changing model norms.
 `tests/test_lsr_source_coverage_service.py`: relative work-row coordinates
@@ -7,6 +22,8 @@ remain scoped to the source sheet and preserve explicit cross-sheet links.
 `tests/test_installer_windows.py`: startup logs and `windows-light-state.json`
 use the direct persistent-state path on a clean Windows install; runtime
 junctions remain compatibility readers, not the creation path.
+`tests/test_runtime_paths.py`: clean Windows state owns proxy/RAG MetaDB paths
+and a fresh `JobService` creates its SQLite file directly under state `data`.
 
 > **Статус: актуально.** Источник команд — `Makefile`; состав конкретных наборов
 > задают его именованные переменные. Исторические счётчики и описание прежних
@@ -50,11 +67,19 @@ junctions remain compatibility readers, not the creation path.
   Toast нового файла и кнопок ЛСР (resume/repack/confirm) входят в слот
   чата (`_notify` / `notify_in_element`); оценка
   remaining-time — `format_job_ready_eta_line` (`test_sovushka_chat`,
-  `test_indexing_eta`). Continue показывает leftover/accepted и seed ETA
+  `test_indexing_eta`). Reconnect closed-count uses accepted source rows
+  when work-role is empty (`workbook_job_to_pending_progress`). N/M uses
+  catalog work count, not accepted_all+leftover (`45/75` not `35/65`).
+  History open hydrates a running job without a PENDING stub
+  (`hydrate_chat_pending_from_workbook`). A paused first pass is not live
+  assembly (`format_paused_assembly_notice`, `list_open`). Continue показывает leftover/accepted и seed ETA
   (`format_lsr_resume_display`, `sheet_pass_progress_counts`).
   Обрыв SSE после `tool_progress` не отменяет и не задерживает runner (`detach_chat_runner_after_disconnect`,
   `test_chat_stream_w51`) и не показывает «Соединение прервано»
   (`format_detached_stream_notice`, `follow_detached_chat_history`);
+  реконнект не дублирует PENDING (`should_render_local_chat_pending`,
+  `format_in_progress_assembly_notice`); live N/M и ETA после обрыва SSE
+  читаются из checkpoint (`list_active`, `workbook_job_to_pending_progress`);
   повторный Continue не dual-run (`claim_or_join_sheet_pass`).
   Очередь модели ждёт `LES_MODEL_QUEUE_WAIT_SEC` (`test_runtime_admission`);
   мастер запуска идемпотентен; NSIS копируется из `CARGO_TARGET_DIR`
@@ -84,8 +109,9 @@ junctions remain compatibility readers, not the creation path.
   покрыты `test_chat_stream_w51` / `test_chat_history_router`.
   Заголовки model-authored `Qn`, которые не влезают в остаток окна, не роняют
   чат: регрессия фиксирует split/omit вместо `MODEL_RAG_EVIDENCE_BUDGET_TOO_SMALL_FOR_ALL_QUERY_HEADERS`.
-  FreeToken KV: default 35000, rebuild clamp к `max_feasible_kv`, ACTIVE только
-  читает live pages (`test_freetoken_cache_profile_service`).
+  FreeToken KV: default 35000, 35B lift from legacy <16384, rebuild clamp к
+  `max_feasible_kv`, ACTIVE выравнивает KV в начале хода
+  (`test_freetoken_cache_profile_service`).
 - RAG: contract-versioned named `dense + bm25_sparse`, native RRF, rerank,
   profile-owned overfetch/diversity/evidence limits, hierarchy/parent expansion,
   dimensional readiness, ready-generation guard для ColBERT и dataset integrity.

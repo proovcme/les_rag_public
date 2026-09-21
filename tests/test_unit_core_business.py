@@ -192,10 +192,10 @@ def test_candidate_shortlist_formatting():
 def test_profile_resolver_success_modes():
     """Success scenarios for key profile routing modes."""
     prof_smeta = resolve(mode="smeta", question="составь смету")
-    assert prof_smeta.profile_id == "estimate_harness"
+    assert prof_smeta.profile_id == "estimator"
 
     prof_review = resolve(mode="review", question="проверь документацию")
-    assert prof_review.profile_id == "normcontrol"
+    assert prof_review.profile_id == "engineer"
 
 
 def test_profile_resolver_fallback_on_unknown():

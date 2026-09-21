@@ -13,6 +13,34 @@ from proxy.services.rim_lsr_trace_service import (
 CODE = "ГЭСН12-01-034-02"
 
 
+def test_invalid_conversion_does_not_fall_back_to_pricing_otherwise_valid_quantity():
+    from proxy.services.rim_lsr_trace_service import _norm_qty_from_visible_row
+
+    for field in ("conversion_factor", "calc_quantity"):
+        row = {"quantity": 120, "unit": "м", "calc_quantity": 36600,
+               "conversion_factor": 305, "conversion_source": "СКС!R17"}
+        row[field] = "305 м * 120 шт"
+        quantity, trace = _norm_qty_from_visible_row(row, CODE, {"unit": "100 м"})
+        assert quantity is None
+        assert trace["status"] == "needs_input"
+        assert trace["invalid_field"] == field
+        assert trace["authored_value"] == row[field]
+
+
+def test_bad_numeric_row_preserves_good_row_calculation_and_gap():
+    valid = {"source_row": "R1", "row_role": "work", "title": "First",
+             "norm_code": CODE, "quantity": 61, "unit": "м2"}
+    invalid = {**valid, "source_row": "R2", "conversion_factor": "305 м * 120 шт"}
+    good = build_lsr_trace_from_visible_rows([valid])
+    combined = build_lsr_trace_from_visible_rows([valid, invalid])
+    assert combined["summary"]["total"] == good["summary"]["total"] > 0
+    assert len(combined["row_bindings"]) == 2
+    gap = combined["row_bindings"][1]
+    assert gap["status"] == "needs_input"
+    assert gap["source_row"] == invalid
+    assert gap["quantity_trace"]["invalid_field"] == "conversion_factor"
+
+
 def _rows_by_type(trace):
     return {row["type"]: row for row in trace["rows"]}
 
@@ -417,6 +445,49 @@ def test_lsr_trace_from_visible_rows_builds_priced_trace_from_selected_norms():
     assert lsr["sections"][0]["section"] == "Кровля"
 
 
+def test_named_needs_research_cipher_is_priced_but_not_final():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "source_row": "PDF!R18",
+                "row_role": "work",
+                "basis": "ГЭСН 12-01-034-02",
+                "title": "Устройство обрешетки",
+                "quantity": "61",
+                "unit": "м2",
+                "norm_status": "NEEDS_RESEARCH",
+                "quality_message": "аналог, требуется ревизия",
+            }
+        ],
+        name="Видимые строки",
+    )
+
+    assert lsr["summary"]["result_status"] == "priced_partial"
+    assert lsr["summary"]["norms_status"] == "model_norms_partial"
+    assert lsr["summary"]["bound_rows"] == 1
+    assert lsr["summary"]["total"] == 11813.04
+    assert lsr["row_bindings"][0]["status"] == "bound"
+    assert lsr["row_bindings"][0]["norm_status"] == "NEEDS_RESEARCH"
+    assert lsr["row_bindings"][0]["selection_kind"] == "analogue"
+
+
+def test_needs_research_without_code_stays_unbound():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "source_row": "PDF!R21",
+                "row_role": "work",
+                "title": "Монтаж БАП",
+                "quantity": "1",
+                "unit": "шт",
+                "norm_status": "NEEDS_RESEARCH",
+            }
+        ]
+    )
+    assert lsr["summary"]["bound_rows"] == 0
+    assert lsr["row_bindings"][0]["status"] == "needs_research"
+
+
 def test_terminal_exact_status_prices_without_independent_verifier():
     lsr = build_lsr_trace_from_visible_rows(
         [
@@ -477,6 +548,19 @@ def test_lsr_trace_from_visible_rows_does_not_bind_unknown_norm_code():
     assert lsr["summary"]["bound_rows"] == 0
     assert lsr["summary"]["unbound_rows"] == 1
     assert lsr["row_bindings"][0]["status"] == "norm_not_found"
+
+
+def test_explicit_norm_cell_does_not_select_code_from_rejected_prose():
+    row = {
+        "source_row": "Sheet!R34", "row_role": "work",
+        "title": "Install tray", "unit": "м2", "quantity": 61,
+        "norm_code": "Not suitable: ГЭСН12-01-034-02. Find another norm.",
+        "norm_status": "yes",
+    }
+    trace = build_lsr_trace_from_visible_rows([row])
+    assert trace["summary"]["bound_rows"] == 0
+    assert trace["row_bindings"][0]["status"] == "norm_selection_required"
+    assert trace["row_bindings"][0]["source_row"]["norm_code"] == row["norm_code"]
 
 
 def test_cited_packaging_converts_to_piece_norm_qty(monkeypatch):

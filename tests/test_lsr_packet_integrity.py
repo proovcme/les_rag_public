@@ -28,3 +28,17 @@ def test_broken_links_remain_pending_without_changing_model_norm():
     assert complete == {'S!R1'}
     assert complete - structurally_complete_source_keys([], catalog) == {'S!R1'}
     assert rows[0]['norm_code'] == 'MISSING'
+
+
+def test_material_self_links_never_close_packets_including_large_sources():
+    locators = [f'S!R{i}' for i in range(1, 102)]
+    catalog = SimpleNamespace(work_locators=lambda: locators, lookup=lambda key: None)
+    rows = [
+        {'source_row': key, 'row_role': 'material', 'work_row': key}
+        for key in locators
+    ]
+    assert structurally_complete_source_keys(rows, catalog) == set()
+    # The model may resolve the relation in a later result; code only checks it.
+    rows[0] = {'source_row': 'S!R1', 'row_role': 'work', 'norm_code': 'MISSING'}
+    rows[1]['work_row'] = 'R1'
+    assert structurally_complete_source_keys(rows, catalog) == {'S!R1', 'S!R2'}

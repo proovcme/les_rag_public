@@ -1,7 +1,7 @@
 """ETA индексации — чистые функции оценки времени (числа считает код, не LLM)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from proxy.services.runtime_dispatcher import _fmt_dur, compute_eta
 
@@ -48,3 +48,12 @@ def test_eta_zero_progress_no_divide():
 def test_eta_bad_inputs_safe():
     assert compute_eta(None, None, None)["percent"] is None
     assert compute_eta("not-a-date", 5, 10, running=True)["eta_seconds"] is None
+
+
+def test_eta_aware_started_at_does_not_crash():
+    started = datetime(2026, 9, 17, 14, 1, 20, tzinfo=timezone.utc)
+    now_ts = (started + timedelta(minutes=110)).timestamp()
+    eta = compute_eta(started.isoformat(sep=" ", timespec="seconds"), 45, 75, running=True, now_ts=now_ts)
+    assert eta["percent"] == 60.0
+    assert eta["eta_seconds"] is not None
+    assert eta["eta_text"]

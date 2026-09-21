@@ -20,12 +20,12 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1004 |
-| Строк Python | 325100 |
+| Строк Python | 327318 |
 | PRODUCT_REACHABLE | 356 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 636 |
 | DORMANT_CANDIDATE | 1 |
-| Зарегистрированных API-маршрутов | 336 |
+| Зарегистрированных API-маршрутов | 337 |
 | Ошибок разбора | 0 |
 
 ## Крупнейшие продуктовые модули
@@ -33,10 +33,10 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| proxy/services/chat_evidence_application_service.py | 7624 | 8 |
-| sovushka/pages/chat.py | 5862 | 6 |
+| proxy/services/chat_evidence_application_service.py | 7744 | 8 |
+| sovushka/pages/chat.py | 6547 | 6 |
+| proxy/routers/chat.py | 4556 | 40 |
 | backend/qdrant_adapter.py | 4552 | 29 |
-| proxy/routers/chat.py | 4542 | 40 |
 | sovushka/uikit/tokens.py | 4274 | 2 |
 | sovushka/pages/documents.py | 3927 | 3 |
 | proxy/routers/datasets.py | 3776 | 16 |
@@ -46,14 +46,14 @@
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2044 | 4 |
-| proxy/services/lsr_norm_quality_gate_service.py | 1935 | 3 |
+| proxy/services/lsr_norm_quality_gate_service.py | 1941 | 3 |
 | proxy/smeta_core/norm_browser.py | 1659 | 13 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | sovushka/pages/diag.py | 1602 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
+| proxy/services/rim_lsr_trace_service.py | 1494 | 10 |
 | proxy/routers/mail.py | 1476 | 3 |
-| proxy/services/rim_lsr_trace_service.py | 1440 | 10 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 12 |

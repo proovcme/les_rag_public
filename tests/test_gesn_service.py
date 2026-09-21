@@ -38,6 +38,39 @@ def test_assemble_from_code_reproduces_etalon():
     assert r["total"] == 11896.35
 
 
+def test_overlay_fills_missing_norm_without_replacing_seed(tmp_path, monkeypatch):
+    import pandas as pd
+    from proxy.services import gesn_service
+
+    overlay = tmp_path / "gesn2022_overlay.parquet"
+    pd.DataFrame(
+        [
+            {
+                "norm_code": "10-99-001-01",
+                "base_type": "ГЭСНм",
+                "norm_key": "ГЭСНм:10-99-001-01",
+                "norm_name": "Overlay only",
+                "norm_unit": "шт",
+                "kind": "labor",
+                "per_unit": 1.0,
+                "resource_name": "Рабочие",
+                "resource_unit": "чел.-ч",
+            }
+        ]
+    ).to_parquet(overlay)
+    monkeypatch.setattr(gesn_service, "DEFAULT_OVERLAY_PATH", overlay)
+    gesn_service.load_overlay_norms.cache_clear()
+    gesn_service.load_base_norms.cache_clear()
+    try:
+        filled = gesn_service.get_norm("ГЭСНм10-99-001-01")
+        assert filled is not None
+        assert filled["name"] == "Overlay only"
+        assert gesn_service.get_norm(CODE)["unit"] == "100 м2"
+    finally:
+        gesn_service.load_overlay_norms.cache_clear()
+        gesn_service.load_base_norms.cache_clear()
+
+
 def test_unknown_code_flagged():
     r = compute_position({"code": "ГЭСН99-99-999-99", "qty": 1})
     assert r["flags"] and "норма ГЭСН не найдена" in r["flags"][0]

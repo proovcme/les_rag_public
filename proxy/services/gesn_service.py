@@ -30,6 +30,7 @@ DEFAULT_PATH = Path("config/domain/gesn_seed.yaml")
 DEFAULT_BASE_PATH = mutable_path("data/gesn_base/gesn2022.parquet")
 DEFAULT_BASE_V2_PATH = mutable_path("data/gesn_base/gesn2022_v2.parquet")
 DEFAULT_UNIFIED_BASE_PATH = mutable_path("data/gesn_base/gesn2022_unified.parquet")
+DEFAULT_OVERLAY_PATH = mutable_path("data/gesn_base/gesn2022_overlay.parquet")
 DEFAULT_STRUCTURED_BASE_PATH = mutable_path("data/smeta_base/les_smeta_base.sqlite")
 
 # Старые базы могли хранить труд как «Средний разряд работы N,M» без кода.
@@ -356,9 +357,22 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
     return out
 
 
+@lru_cache(maxsize=4)
+def load_overlay_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]]:
+    """Official FGIS overlay parquet. Fills missing keys only; never chooses a work."""
+
+    path = Path(parquet_path) if parquet_path else DEFAULT_OVERLAY_PATH
+    if not path.exists():
+        return {}
+    return load_base_norms(str(path))
+
+
 def _merged_norms(*, path: str | None = None, base_path: str | None = None) -> dict[str, dict[str, Any]]:
-    """База + семя в один каталог. Семя побеждает при совпадении кода (эталон точный)."""
+    """База + overlay + семя. Семя побеждает; overlay только закрывает дыры базы."""
     merged = dict(load_base_norms(base_path))
+    if base_path is None:
+        for key, norm in load_overlay_norms().items():
+            merged.setdefault(key, norm)
     merged.update(load_norms(path))   # семя поверх базы
     return merged
 

@@ -6,7 +6,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
 import re
+import sqlite3
 import time
 from datetime import datetime, timezone
 from datetime import tzinfo as TzInfo
@@ -236,19 +238,22 @@ def format_job_ready_eta_line(
         prior_elapsed = float(prior_elapsed_seconds or 0)
     except (TypeError, ValueError):
         return ""
-    eta = compute_eta(started_at, done, all_n, running=running, now_ts=now_ts)
-    text = str(eta.get("eta_text") or "").strip()
-    if not text and running and done <= 0 and all_n > 0 and prior_done > 0 and prior_elapsed > 0:
-        stamp = now_ts if now_ts is not None else time.time()
-        seeded_start = datetime.fromtimestamp(stamp - prior_elapsed).isoformat(timespec="seconds")
-        eta = compute_eta(
-            seeded_start,
-            prior_done,
-            prior_done + all_n,
-            running=True,
-            now_ts=stamp,
-        )
+    try:
+        eta = compute_eta(started_at, done, all_n, running=running, now_ts=now_ts)
         text = str(eta.get("eta_text") or "").strip()
+        if not text and running and done <= 0 and all_n > 0 and prior_done > 0 and prior_elapsed > 0:
+            stamp = now_ts if now_ts is not None else time.time()
+            seeded_start = datetime.fromtimestamp(stamp - prior_elapsed).isoformat(timespec="seconds")
+            eta = compute_eta(
+                seeded_start,
+                prior_done,
+                prior_done + all_n,
+                running=True,
+                now_ts=stamp,
+            )
+            text = str(eta.get("eta_text") or "").strip()
+    except (TypeError, ValueError, OSError):
+        return ""
     if not text:
         return ""
     return f"Результат будет готов примерно через {text}"
@@ -300,14 +305,485 @@ DETACHED_HISTORY_POLL_SEC = 8.0
 DETACHED_HISTORY_TIMEOUT_SEC = 36 * 3600
 
 
-def format_detached_stream_notice() -> str:
-    """Overnight-safe copy when the chat window drops SSE but the job continues."""
+_WORKBOOK_PHASE_RU = {
+    "catalog": "разбор исходника",
+    "packets": "поиск норм",
+    "complete": "сборка файла",
+    "cancelled": "остановлено",
+    "paused": "на паузе",
+}
 
-    return (
-        "Связь с окном чата пропала, но сборка на сервере продолжается. "
-        "Не нажимайте «Продолжить», пока задача идёт. "
-        "Файл появится в этой сессии, когда сборка закончится — окно можно закрыть и открыть утром."
+
+def format_workbook_phase_label(phase: Any = None, sheet: Any = None) -> str:
+    """Operator-facing sheet-pass stage; never leak raw `packets`."""
+
+    raw = str(phase or "").strip()
+    label = _WORKBOOK_PHASE_RU.get(raw.casefold(), raw)
+    sheet_name = str(sheet or "").strip()
+    if sheet_name and label:
+        return f"лист «{sheet_name}»: {label}"
+    return label
+
+
+def merge_chat_pending_progress(pending: Any, payload: Any) -> dict[str, Any]:
+    """Keep last sheet-pass counts so reconnect can show the same job, not a new request."""
+
+    data = dict(pending) if isinstance(pending, dict) else {}
+    if not isinstance(payload, dict):
+        return data
+    job_id = str(payload.get("workbook_research_job_id") or payload.get("job_id") or "").strip()
+    if job_id:
+        data["job_id"] = job_id
+    for key, dest in (("completed", "accepted"), ("total", "total"), ("remaining", "remaining")):
+        if payload.get(key) is None:
+            continue
+        try:
+            data[dest] = int(payload.get(key))
+        except (TypeError, ValueError):
+            continue
+    for key in (
+        "created_at",
+        "started_at",
+        "updated_at",
+        "phase",
+        "sheet",
+        "job_status",
+        "prior_completed",
+        "prior_elapsed_seconds",
+    ):
+        value = payload.get(key)
+        if value not in (None, ""):
+            data[key] = value
+    label = str(payload.get("label") or payload.get("status_label") or "").strip()
+    if label:
+        data["status_label"] = label
+    return data
+
+
+def _pending_int(payload: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        if payload.get(key) is None:
+            continue
+        try:
+            return int(payload.get(key))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _accepted_work_row_count(rows: Any) -> int:
+    count = 0
+    for item in rows or []:
+        if not isinstance(item, dict):
+            continue
+        if not str(item.get("source_row") or "").strip():
+            continue
+        role = str(item.get("row_role") or "work").strip().casefold()
+        if role in {"", "work"}:
+            count += 1
+    return count
+
+
+def _as_utc_iso(stamp: Any) -> str:
+    raw = str(stamp or "").strip()
+    if not raw:
+        return ""
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat(sep=" ", timespec="seconds")
+
+
+def _held_packet_progress(job: Any) -> tuple[int, int]:
+    payload = job if isinstance(job, dict) else {}
+    held = payload.get("held_packet") if isinstance(payload.get("held_packet"), dict) else {}
+    queries = [
+        str(item).strip()
+        for item in (held.get("queries") or [])
+        if str(item).strip()
+    ]
+    locators = [
+        str(item).strip()
+        for item in (held.get("locators") or payload.get("packet_locators") or [])
+        if str(item).strip()
+    ]
+    return len(locators), len(queries)
+
+
+def _work_total_from_job_events(job_id: str) -> int:
+    """Catalog work count is the max remaining_total seen, not accepted+leftover."""
+
+    wanted = str(job_id or "").strip()
+    if not wanted:
+        return 0
+    from proxy.services.workbook_research_job_service import (
+        WorkbookResearchJobError,
+        WorkbookResearchJobService,
     )
+
+    for path in _workbook_research_db_candidates():
+        service = WorkbookResearchJobService(path)
+        try:
+            service.get(wanted)
+        except WorkbookResearchJobError:
+            continue
+        best = 0
+        for event in service.events_after(wanted, 0):
+            data = event.get("data") if isinstance(event, dict) else None
+            if not isinstance(data, dict):
+                continue
+            try:
+                remaining_total = data.get("remaining_total")
+                if remaining_total is not None:
+                    best = max(best, int(remaining_total))
+            except (TypeError, ValueError):
+                continue
+        if best:
+            return best
+    return 0
+
+
+def workbook_job_to_pending_progress(job: Any, pending: Any = None) -> dict[str, Any]:
+    """Map a durable workbook-research checkpoint to the reconnect bubble."""
+
+    data = dict(pending) if isinstance(pending, dict) else {}
+    if not isinstance(job, dict):
+        return data
+    job_id = str(job.get("job_id") or "").strip()
+    if job_id:
+        data["job_id"] = job_id
+    remaining = [
+        str(item).strip()
+        for item in (job.get("remaining") or [])
+        if str(item).strip()
+    ]
+    accepted_rows = [
+        item for item in (job.get("accepted_rows") or []) if isinstance(item, dict)
+    ]
+    dims = job.get("status_dimensions") if isinstance(job.get("status_dimensions"), dict) else {}
+    try:
+        remaining_n = int(dims.get("remaining") if dims.get("remaining") is not None else len(remaining))
+    except (TypeError, ValueError):
+        remaining_n = len(remaining)
+    accepted_all = sum(1 for item in accepted_rows if str(item.get("source_row") or "").strip())
+    accepted_work = _accepted_work_row_count(accepted_rows)
+    prior_total = _pending_int(data, "total") or 0
+    packet_n, held_queries = _held_packet_progress(job)
+    work_total = 0
+    for raw in (
+        job.get("work_total"),
+        dims.get("work_total"),
+        dims.get("catalog_work_count"),
+        _work_total_from_job_events(job_id) if job_id else 0,
+        remaining_n + accepted_work,
+        remaining_n,
+    ):
+        try:
+            work_total = max(work_total, int(raw or 0))
+        except (TypeError, ValueError):
+            continue
+    mixed_total = accepted_all + remaining_n if remaining_n else accepted_all
+    if prior_total and prior_total != mixed_total:
+        work_total = max(work_total, prior_total)
+    closed = max(0, work_total - remaining_n) if work_total else accepted_work
+    if work_total:
+        data["accepted"] = closed
+        data["total"] = work_total
+        data["remaining"] = remaining_n
+    data["accepted_all"] = accepted_all
+    data["packet_size"] = packet_n
+    data["held_queries"] = held_queries
+    if job.get("created_at"):
+        utc_stamp = _as_utc_iso(job.get("created_at"))
+        data["created_at"] = utc_stamp or job.get("created_at")
+        data["started_at"] = data["created_at"]
+    if job.get("updated_at"):
+        data["updated_at"] = job.get("updated_at")
+    if job.get("phase"):
+        data["phase"] = job.get("phase")
+    if job.get("sheet"):
+        data["sheet"] = job.get("sheet")
+    status = str(job.get("status") or "").strip()
+    if status:
+        data["job_status"] = status
+    phase_label = format_workbook_phase_label(job.get("phase"), job.get("sheet"))
+    if phase_label:
+        data["status_label"] = phase_label
+    return data
+
+
+def workbook_job_status(job_or_pending: Any) -> str:
+    payload = job_or_pending if isinstance(job_or_pending, dict) else {}
+    return str(payload.get("job_status") or payload.get("status") or "").strip().casefold()
+
+
+def workbook_assembly_is_running(job_or_pending: Any) -> bool:
+    return workbook_job_status(job_or_pending) == "running"
+
+
+def workbook_assembly_is_paused(job_or_pending: Any) -> bool:
+    return workbook_job_status(job_or_pending) == "paused"
+
+
+def format_paused_assembly_notice(pending: Any = None) -> str:
+    """First pass packed a draft; the model is not assembling now."""
+
+    payload = pending if isinstance(pending, dict) else {}
+    remaining = _pending_int(payload, "remaining")
+    accepted_all = _pending_int(payload, "accepted_all")
+    total = _pending_int(payload, "total")
+    parts = [
+        "Первый проход закончен. Сборка сейчас не идёт.",
+        "В панели «Файлы» лежит черновик — это ещё не посчитанная смета.",
+    ]
+    if remaining:
+        if total:
+            parts.append(f"Незакрытых строк покрытия: {remaining} из {total}.")
+        else:
+            parts.append(f"Незакрытых строк покрытия: {remaining}.")
+    if accepted_all:
+        parts.append(f"В черновик записано {accepted_all} строк без полного расчёта.")
+    parts.append(
+        "Новый поиск норм — только кнопка «Продолжить незакрытые строки»; "
+        "это отдельный проход, не продолжение той же минуты."
+    )
+    return " ".join(parts)
+
+
+def format_workbook_assembly_notice(
+    pending: Any = None,
+    *,
+    now_ts: float | None = None,
+) -> str:
+    if workbook_assembly_is_paused(pending):
+        return format_paused_assembly_notice(pending)
+    return format_in_progress_assembly_notice(pending, now_ts=now_ts)
+
+
+def format_workbook_session_sys_notice(pending: Any = None) -> str:
+    if workbook_assembly_is_paused(pending):
+        return "Первый проход закончен. Сборка сейчас не идёт."
+    if pending:
+        return "Сборка на сервере продолжается."
+    return "Сессия загружена из истории."
+
+
+def _elapsed_seconds_from_stamp(stamp: Any, now_ts: float | None = None) -> float:
+    raw = str(stamp or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        start = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if start.tzinfo is not None:
+        start = start.astimezone(timezone.utc)
+        end = (
+            datetime.fromtimestamp(now_ts, tz=timezone.utc)
+            if now_ts is not None
+            else datetime.now(timezone.utc)
+        )
+        return max(0.0, (end - start).total_seconds())
+    end = datetime.fromtimestamp(now_ts if now_ts is not None else time.time())
+    return max(0.0, (end - start).total_seconds())
+
+
+def format_in_progress_assembly_notice(
+    pending: Any = None,
+    *,
+    now_ts: float | None = None,
+) -> str:
+    """One in-progress bubble: live counts and remaining time, not a dropped window."""
+
+    payload = pending if isinstance(pending, dict) else {}
+    bits = ["Сборка продолжается"]
+    accepted = _pending_int(payload, "accepted", "completed")
+    total = _pending_int(payload, "total")
+    remaining = _pending_int(payload, "remaining")
+    if accepted is not None and total:
+        bits.append(f"{accepted}/{total}")
+    if remaining:
+        bits.append(f"осталось {remaining}")
+    packet_size = _pending_int(payload, "packet_size")
+    held_queries = _pending_int(payload, "held_queries")
+    if packet_size:
+        bits.append(f"пакет {packet_size} строк")
+    if held_queries:
+        bits.append(f"ещё {held_queries} запросов")
+    phase_label = format_workbook_phase_label(payload.get("phase"), payload.get("sheet"))
+    if not phase_label:
+        phase_label = str(payload.get("status_label") or "").strip()
+    if phase_label:
+        bits.append(phase_label)
+    elapsed = _elapsed_seconds_from_stamp(
+        payload.get("started_at") or payload.get("created_at"),
+        now_ts,
+    )
+    elapsed_text = format_chat_duration_sec(elapsed) if elapsed >= 1 else ""
+    if elapsed_text:
+        bits.append(f"с начала задачи {elapsed_text}")
+    head = bits[0] if len(bits) == 1 else f"{bits[0]}: {', '.join(bits[1:])}"
+    eta = format_job_ready_eta_line(
+        payload.get("started_at") or payload.get("created_at"),
+        accepted,
+        total,
+        running=(workbook_job_status(payload) or "running") == "running",
+        now_ts=now_ts,
+        prior_completed=payload.get("prior_completed"),
+        prior_elapsed_seconds=payload.get("prior_elapsed_seconds"),
+    )
+    parts = [f"{head}."]
+    if eta:
+        parts.append(eta if eta.endswith(".") else f"{eta}.")
+    elif accepted in (None, 0) and not total:
+        parts.append("Счётчик строк появится после первого принятого пакета.")
+    parts.append("Не нажимайте «Продолжить», пока задача идёт.")
+    parts.append("Файл появится в этой сессии.")
+    return " ".join(parts)
+
+
+def _workbook_research_db_candidates() -> list[Path]:
+    from backend.rag_config import rag_meta_db_path
+    from backend.runtime_paths import mutable_root
+    from proxy.config import META_DB_PATH
+
+    found: list[Path] = []
+    for raw in (
+        os.getenv("RAG_META_DB_PATH"),
+        META_DB_PATH,
+        rag_meta_db_path(),
+        mutable_root("data") / "les_meta.db",
+        mutable_root("data") / "les_meta_qwen.db",
+    ):
+        if not raw:
+            continue
+        path = Path(str(raw)).expanduser()
+        if path in found or not path.is_file():
+            continue
+        try:
+            conn = sqlite3.connect(str(path), timeout=5)
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='workbook_research_jobs'"
+                ).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            continue
+        if row:
+            found.append(path)
+    return found
+
+
+def read_active_workbook_research(
+    *,
+    session_id: str = "",
+    job_id: str = "",
+    service: Any = None,
+) -> dict[str, Any] | None:
+    """Read the durable sheet-pass checkpoint without waiting for SSE."""
+
+    from proxy.services.workbook_research_job_service import (
+        WorkbookResearchJobError,
+        WorkbookResearchJobService,
+    )
+
+    wanted = str(job_id or "").strip()
+    sid = str(session_id or "").strip()
+    services: list[Any] = []
+    if service is not None:
+        services.append(service)
+    else:
+        for path in _workbook_research_db_candidates():
+            services.append(WorkbookResearchJobService(path))
+    if not services:
+        return None
+    for item in services:
+        if wanted:
+            try:
+                return item.get(wanted)
+            except WorkbookResearchJobError:
+                pass
+        jobs = item.list_open(session_id=sid, limit=20)
+        if jobs:
+            return jobs[0]
+    return None
+
+
+async def fetch_active_workbook_research(
+    *,
+    session_id: str = "",
+    job_id: str = "",
+    getter: Any = None,
+) -> dict[str, Any] | None:
+    """Prefer the live GET, then the same SQLite the proxy is writing."""
+
+    from sovushka.state import api_get
+
+    fetch = getter or api_get
+    wanted = str(job_id or "").strip()
+    sid = str(session_id or "").strip()
+    if wanted:
+        job = await fetch(f"/api/workbook-research/{wanted}")
+        if isinstance(job, dict) and job.get("job_id"):
+            return job
+    listed = await fetch(
+        f"/api/workbook-research-active?session_id={sid}"
+        if sid
+        else "/api/workbook-research-active"
+    )
+    if isinstance(listed, dict):
+        jobs = listed.get("jobs") or []
+        if jobs and isinstance(jobs[0], dict):
+            return jobs[0]
+    return read_active_workbook_research(session_id=sid, job_id=wanted)
+
+
+async def hydrate_chat_pending_from_workbook(
+    *,
+    session_id: str = "",
+    pending: Any = None,
+    fetch_job: Any = None,
+    ignore_prior_job_id: bool = False,
+) -> dict[str, Any] | None:
+    """Attach a running sheet-pass to a reopened chat session.
+
+    History after SSE detach often has the user turn and no PENDING stub.
+    Opening that session must still restore the in-progress bubble.
+    """
+
+    prior = dict(pending) if isinstance(pending, dict) else {}
+    job_id = "" if ignore_prior_job_id else str(prior.get("job_id") or "")
+    fetch = fetch_job or fetch_active_workbook_research
+    job = await fetch(session_id=str(session_id or "").strip(), job_id=job_id)
+    if not isinstance(job, dict) or not job.get("job_id"):
+        return prior or None
+    return workbook_job_to_pending_progress(job, prior)
+
+
+def format_detached_stream_notice(pending: Any = None) -> str:
+    """Alias for the overnight in-progress bubble; no connection-failure wording."""
+
+    return format_in_progress_assembly_notice(pending)
+
+
+def should_render_local_chat_pending(messages: Any, chat_pending: Any) -> bool:
+    """Do not add a second typing bubble when history already has the PENDING stub."""
+
+    if not isinstance(chat_pending, dict) or not chat_pending:
+        return False
+    return not any(history_row_is_in_progress(item) for item in (messages or []))
+
+
+_STALE_DISCONNECT_MARKERS = (
+    "Связь с окном чата пропала",
+    "Запрос выполняется:",
+    "Соединение прервано после начала сборки",
+)
 
 
 def history_ai_is_pending(msg: Any) -> bool:
@@ -320,17 +796,45 @@ def history_ai_is_pending(msg: Any) -> bool:
     return crag == "PENDING"
 
 
+def history_row_is_in_progress(msg: Any) -> bool:
+    """PENDING stub or a leftover disconnect bubble from an older UI build."""
+
+    if history_ai_is_pending(msg):
+        return True
+    if not isinstance(msg, dict):
+        return False
+    role = str(msg.get("role") or "ai").strip().casefold()
+    if role not in {"ai", "assistant"}:
+        return False
+    text = str(msg.get("text") or "")
+    return any(marker in text for marker in _STALE_DISCONNECT_MARKERS)
+
+
 def completed_history_chat_payload(messages: Any) -> dict[str, Any] | None:
-    """Latest finished AI history row (text or artifact), skipping PENDING stubs."""
+    """Finished AI answer of the current turn only.
+
+    An older «ЛСР не создана» in the same session is not completion of the
+    overnight job that still has a PENDING stub after the latest user message.
+    """
 
     rows = list(messages) if isinstance(messages, list) else []
-    for msg in reversed(rows):
+    last_user = -1
+    for index, msg in enumerate(rows):
+        if not isinstance(msg, dict):
+            continue
+        if str(msg.get("role") or "").strip().casefold() == "user":
+            last_user = index
+    current = []
+    for msg in rows[last_user + 1 :]:
         if not isinstance(msg, dict):
             continue
         role = str(msg.get("role") or "ai").strip().casefold()
-        if role not in {"ai", "assistant"}:
-            continue
-        if history_ai_is_pending(msg):
+        if role in {"ai", "assistant"}:
+            current.append(msg)
+    if not current or any(history_row_is_in_progress(item) for item in current):
+        return None
+    for msg in reversed(current):
+        if history_row_is_in_progress(msg):
             continue
         text = str(msg.get("text") or msg.get("answer") or "")
         meta = msg.get("meta") if isinstance(msg.get("meta"), dict) else {}
@@ -374,6 +878,7 @@ async def follow_detached_chat_history(
     timeout_sec: float = DETACHED_HISTORY_TIMEOUT_SEC,
     clock: Any = time.monotonic,
     sleep: Any = asyncio.sleep,
+    on_poll: Any = None,
 ) -> dict[str, Any] | None:
     """Wait until the PENDING history stub is replaced by a finished answer."""
 
@@ -381,9 +886,19 @@ async def follow_detached_chat_history(
     while float(clock()) < deadline:
         messages = await fetch_history()
         rows = list(messages or [])
-        if not any(history_ai_is_pending(item) for item in rows):
-            return completed_history_chat_payload(rows)
-        await sleep(interval_sec)
+        job_running = False
+        if on_poll is not None:
+            result = on_poll(rows)
+            if inspect.isawaitable(result):
+                result = await result
+            job_running = bool(result)
+        finished = completed_history_chat_payload(rows)
+        if finished and not job_running:
+            return finished
+        if any(history_row_is_in_progress(item) for item in rows) or job_running:
+            await sleep(interval_sec)
+            continue
+        return finished
     return None
 
 
@@ -2662,16 +3177,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             add_log("[ИСТОРИЯ] Ошибка загрузки сессии")
             return
         state["chat_history"] = msgs
-        state["load_session_id"] = session_id
+        state["load_session_id"] = None
         state["session_id"] = persist_session_id(session_id)
         if selected_session_card["el"]:
             selected_session_card["el"].classes(remove="sov-session-card-active")
         if el:
             el.classes(add="sov-session-card-active")
             selected_session_card["el"] = el
-        _render_chat_history("Сессия загружена из истории.")
         history_drawer.set_visibility(False)
-        _scroll_chat_to_tail(force=True)
+        await _hydrate_running_workbook_progress(from_history=True)
 
     def _source_label(source) -> str:
         # v0.16: «N · file · абз.85» вместо сырого пути; нет ref → «без ссылки» (не фейк-линк).
@@ -4400,12 +4914,61 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 )
         return bubble
 
-    def _render_ai_placeholder(text: str):
-        with ui.element("div").classes("chat-msg-ai typing") as bubble:
+    def _render_ai_placeholder(text: str, *, typing: bool = True):
+        classes = "chat-msg-ai typing" if typing else "chat-msg-ai"
+        with ui.element("div").classes(classes) as bubble:
             label = ui.label(text).classes("sov-chat-message-text")
             eta = ui.label("").classes("sov-chat-eta")
             eta.set_visibility(False)
         return bubble, label, eta
+
+    _follow_placeholder = {"bubble": None, "label": None, "eta": None}
+
+    def _paint_in_progress_bubble(pending: Any = None) -> None:
+        payload = pending if isinstance(pending, dict) else (state.get("chat_pending") or {})
+        if not isinstance(payload, dict):
+            payload = {}
+        notice = format_workbook_assembly_notice(payload)
+        running = workbook_assembly_is_running(payload)
+        eta_line = format_job_ready_eta_line(
+            payload.get("started_at") or payload.get("created_at"),
+            payload.get("accepted"),
+            payload.get("total"),
+            running=running,
+            prior_completed=payload.get("prior_completed"),
+            prior_elapsed_seconds=payload.get("prior_elapsed_seconds"),
+        ) if running else ""
+        label = _follow_placeholder.get("label")
+        eta = _follow_placeholder.get("eta")
+        bubble = _follow_placeholder.get("bubble")
+        if label is not None:
+            try:
+                label.set_text(notice)
+                label.update()
+                if bubble is not None:
+                    if running:
+                        bubble.classes(add="typing")
+                    else:
+                        bubble.classes(remove="typing")
+                if eta is not None:
+                    if eta_line:
+                        eta.set_text(eta_line)
+                        eta.set_visibility(True)
+                    else:
+                        eta.set_visibility(False)
+                    eta.update()
+                return
+            except Exception:
+                _follow_placeholder["label"] = None
+                _follow_placeholder["eta"] = None
+                _follow_placeholder["bubble"] = None
+        bubble, label, eta = _render_ai_placeholder(notice, typing=running)
+        if eta_line:
+            eta.set_text(eta_line)
+            eta.set_visibility(True)
+        _follow_placeholder["bubble"] = bubble
+        _follow_placeholder["label"] = label
+        _follow_placeholder["eta"] = eta
 
     def _finish_ai_placeholder(
         bubble,
@@ -4467,8 +5030,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if msg.get("role") == "system":
             _render_chat_bubble(msg.get("text", ""), "chat-msg-sys")
             return
-        if history_ai_is_pending(msg):
-            _render_chat_bubble(format_detached_stream_notice(), "chat-msg-ai typing")
+        if history_row_is_in_progress(msg):
+            _paint_in_progress_bubble(state.get("chat_pending"))
             return
         _render_chat_bubble(
             msg.get("text", ""),
@@ -4480,15 +5043,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         _register_artifact_downloads(msg.get("meta"))
 
     def _render_chat_history(system_msg: str = "История загружена."):
+        _follow_placeholder["bubble"] = None
+        _follow_placeholder["label"] = None
+        _follow_placeholder["eta"] = None
         chat_column.clear()
         _clear_file_artifacts()
         with chat_column:
             _render_chat_bubble(system_msg, "chat-msg-sys")
             for msg in state.get("chat_history", []):
                 _render_msg(msg)
-            if state.get("chat_pending"):
-                pending_q = state["chat_pending"].get("question", "")
-                _render_chat_bubble(f"Запрос выполняется: {pending_q[:80]}", "chat-msg-ai typing")
+            if should_render_local_chat_pending(
+                state.get("chat_history"), state.get("chat_pending")
+            ):
+                _paint_in_progress_bubble(state.get("chat_pending"))
         for msg in reversed(state.get("chat_history", [])):
             meta = msg.get("meta") if isinstance(msg, dict) and isinstance(msg.get("meta"), dict) else {}
             rows = _smeta_artifact_rows(meta.get("artifact"))
@@ -4500,6 +5067,25 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     "markdown",
                 )
                 break
+
+    async def _hydrate_running_workbook_progress(*, from_history: bool = False) -> None:
+        from sovushka.state import persist_chat_pending
+
+        pending = await hydrate_chat_pending_from_workbook(
+            session_id=str(state.get("session_id") or ""),
+            pending=state.get("chat_pending"),
+            ignore_prior_job_id=from_history,
+        )
+        if pending:
+            persist_chat_pending(pending)
+        notice = (
+            format_workbook_session_sys_notice(state.get("chat_pending"))
+            if state.get("chat_pending")
+            else "Сессия загружена из истории."
+        )
+        _render_chat_history(notice)
+        _scroll_chat_to_tail(force=True)
+        asyncio.create_task(_follow_pending_history_if_needed())
 
     def _apply_loaded_session() -> bool:
         """Подхват сессии, выбранной в ИСТОРИИ. Вызывается и при построении,
@@ -4513,6 +5099,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         persist_session_id(state["session_id"])
         _render_chat_history("Сессия загружена из истории.")
         _scroll_chat_to_tail(force=True)
+        asyncio.create_task(_hydrate_running_workbook_progress(from_history=True))
         return True
 
     # Хук для вкладки ИСТОРИЯ: после выбора сессии чат перерисовывается сразу,
@@ -4520,10 +5107,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     state["chat_reload_hook"] = _apply_loaded_session
 
     async def _load_history():
-        from sovushka.state import ensure_session_id, persist_session_id
+        from sovushka.state import (
+            ensure_session_id,
+            persist_chat_pending,
+            persist_session_id,
+            restore_chat_pending,
+        )
+
+        restore_chat_pending()
 
         if _apply_loaded_session():
-            asyncio.create_task(_follow_pending_history_if_needed())
             return
         sid = ensure_session_id()
         hist = await api_get(f"/api/chat/history?session_id={sid}")
@@ -4531,7 +5124,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         state["chat_history"] = list(hist or [])
         persist_session_id(sid)
-        if state["chat_history"]:
+        pending = dict(state.get("chat_pending") or {})
+        job = await fetch_active_workbook_research(
+            session_id=str(sid or ""),
+            job_id=str(pending.get("job_id") or ""),
+        )
+        if job:
+            persist_chat_pending(workbook_job_to_pending_progress(job, pending))
+        if state["chat_history"] or state.get("chat_pending"):
             _render_chat_history("Сессия восстановлена.")
             _scroll_chat_to_tail(force=True)
         asyncio.create_task(_follow_pending_history_if_needed())
@@ -4548,24 +5148,74 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     _history_follow_lock = {"busy": False}
 
     async def _follow_pending_history_if_needed() -> None:
-        """After SSE drop or morning reopen, wait for the PENDING stub to finish."""
+        """After SSE drop or morning reopen, keep live packet counts until the file lands."""
 
         if _history_follow_lock["busy"]:
             return
         _history_follow_lock["busy"] = True
         try:
+            from sovushka.state import persist_chat_pending
+
+            async def _poll_workbook_progress(_rows=None) -> bool:
+                pending = dict(state.get("chat_pending") or {})
+                job = await fetch_active_workbook_research(
+                    session_id=str(state.get("session_id") or ""),
+                    job_id=str(pending.get("job_id") or ""),
+                )
+                if job:
+                    pending = workbook_job_to_pending_progress(job, pending)
+                    persist_chat_pending(pending)
+                    _paint_in_progress_bubble(pending)
+                if workbook_assembly_is_running(state.get("chat_pending") or job or {}):
+                    return True
+                if workbook_assembly_is_paused(state.get("chat_pending") or job or {}):
+                    return False
+                return any(history_row_is_in_progress(item) for item in (_rows or []))
+
             first = await _fetch_session_history_messages()
-            if not any(history_ai_is_pending(item) for item in first):
+            if first:
+                state["chat_history"] = first
+            pending = dict(state.get("chat_pending") or {})
+            job = await fetch_active_workbook_research(
+                session_id=str(state.get("session_id") or ""),
+                job_id=str(pending.get("job_id") or ""),
+            )
+            if job:
+                pending = workbook_job_to_pending_progress(job, pending)
+                persist_chat_pending(pending)
+            in_progress = any(history_row_is_in_progress(item) for item in first)
+            job_running = workbook_assembly_is_running(pending)
+            job_paused = workbook_assembly_is_paused(pending)
+            if pending and _follow_placeholder.get("label") is None:
+                _render_chat_history(format_workbook_session_sys_notice(pending))
+            elif pending:
+                _paint_in_progress_bubble(pending)
+            if job_paused:
+                return
+            if not in_progress and not job_running and not pending:
                 return
             payload = await follow_detached_chat_history(
-                fetch_history=_fetch_session_history_messages
+                fetch_history=_fetch_session_history_messages,
+                on_poll=_poll_workbook_progress,
             )
-            if not payload:
-                return
             hist = await _fetch_session_history_messages()
             if hist:
                 state["chat_history"] = hist
-            state["chat_pending"] = None
+            pending = dict(state.get("chat_pending") or {})
+            if workbook_assembly_is_paused(pending):
+                _render_chat_history(format_workbook_session_sys_notice(pending))
+                _scroll_chat_to_tail(force=True)
+                return
+            still_open = any(history_row_is_in_progress(item) for item in hist) or (
+                workbook_assembly_is_running(pending)
+            )
+            if still_open or not payload:
+                if state.get("chat_pending"):
+                    _paint_in_progress_bubble(state.get("chat_pending"))
+                return
+            persist_chat_pending(None)
+            _sending["v"] = False
+            stop_dialog_btn.set_visibility(False)
             _render_chat_history("Сборка на сервере завершилась. Файл в этой сессии.")
             _scroll_chat_to_tail(force=True)
         finally:
@@ -4689,7 +5339,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     chat_input.on("input", lambda: _update_prompt_preview())
 
     def _clear_chat():
-        from sovushka.state import _new_session_id, persist_session_id
+        from sovushka.state import _new_session_id, persist_chat_pending, persist_session_id
 
         chat_column.clear()
         with chat_column:
@@ -4706,13 +5356,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         state["chat_history"].clear()
         state["session_id"] = persist_session_id(_new_session_id())
         state["load_session_id"] = None
-        state["chat_pending"] = None
+        persist_chat_pending(None)
         asyncio.create_task(_refresh_active_model_chip())
         add_log("[ЧАТ] История очищена, новая сессия")
 
     _sending = {"v": False}
+    _operator_stop = {"v": False}
     _active_send_task: dict[str, asyncio.Task | None] = {"task": None}
-    _active_research_job_id = {"v": ""}
+    _active_research_job_id = {
+        "v": str((state.get("chat_pending") or {}).get("job_id") or "")
+    }
     _last_estimator_resume: dict[str, Any] = {}
     _resource_blocked = {"v": False, "reason": ""}
 
@@ -4772,6 +5425,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             ui.notify("Сейчас нет активного ответа", type="info")
             return
         add_log("[ЧАТ] Пользователь остановил текущий ответ")
+        _operator_stop["v"] = True
         job_id = str(_active_research_job_id["v"] or "").strip()
         if job_id:
             asyncio.create_task(api_post(f"/api/workbook-research/{job_id}/pause", {}))
@@ -4936,6 +5590,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "started_at": time.time(),
             "requested_at": request_started_at,
         }
+        from sovushka.state import persist_chat_pending
+
+        persist_chat_pending(state["chat_pending"])
+        _operator_stop["v"] = False
 
         with chat_column:
             _render_chat_bubble(
@@ -5263,6 +5921,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     job_id = str(payload.get("workbook_research_job_id") or "").strip()
                     if job_id:
                         _active_research_job_id["v"] = job_id
+                    from sovushka.state import persist_chat_pending
+
+                    persist_chat_pending(
+                        merge_chat_pending_progress(state.get("chat_pending"), payload)
+                    )
                     label = str(payload.get("label") or "Собираю файл").strip()
                     completed_rows = payload.get("completed")
                     total_rows = payload.get("total")
@@ -5401,6 +6064,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 stream_state["error"] = payload if isinstance(payload, dict) else {"detail": str(payload)}
 
         completed = False
+        detached_follow = False
         try:
             await api_post_stream("/api/chat/stream", payload, _on_sse)
             _stop_tick["v"] = True
@@ -5453,29 +6117,47 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                         _render_artifact_error(message)
                 else:
-                    message = format_detached_stream_notice()
-                    _finish_ai_placeholder(
-                        ai_placeholder,
-                        ai_placeholder_label,
-                        message,
-                        error=False,
+                    detached_follow = True
+                    pending = merge_chat_pending_progress(
+                        state.get("chat_pending"),
+                        {"status_label": _status_text["v"], "job_id": _active_research_job_id["v"]},
+                    )
+                    from sovushka.state import persist_chat_pending
+
+                    persist_chat_pending(pending)
+                    message = str(_status_text["v"] or "").strip() or format_in_progress_assembly_notice(
+                        pending
                     )
                     try:
+                        ai_placeholder_label.set_text(message)
+                        ai_placeholder_label.update()
                         ai_placeholder.classes(add="typing")
                     except Exception:
                         pass
                     asyncio.create_task(_follow_pending_history_if_needed())
         except asyncio.CancelledError:
-            completed = True
-            _finish_ai_placeholder(
-                ai_placeholder,
-                ai_placeholder_label,
-                "Диалог остановлен пользователем.",
-                [],
-                "",
-                meta={"out_mode": out_mode},
-            )
-            add_log("[ЧАТ] Текущий ответ остановлен")
+            if _operator_stop["v"]:
+                completed = True
+                _finish_ai_placeholder(
+                    ai_placeholder,
+                    ai_placeholder_label,
+                    "Диалог остановлен пользователем.",
+                    [],
+                    "",
+                    meta={"out_mode": out_mode},
+                )
+                add_log("[ЧАТ] Текущий ответ остановлен")
+            else:
+                detached_follow = True
+                pending = merge_chat_pending_progress(
+                    state.get("chat_pending"),
+                    {"status_label": _status_text["v"], "job_id": _active_research_job_id["v"]},
+                )
+                from sovushka.state import persist_chat_pending
+
+                persist_chat_pending(pending)
+                add_log("[ЧАТ] Окно чата переподключилось; сборка на сервере продолжается")
+                asyncio.create_task(_follow_pending_history_if_needed())
         except Exception as ex:
             completed = True
             if applied_result["v"]:
@@ -5494,12 +6176,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 _render_artifact_error(operator_background_ui_error(str(ex)))
         finally:
             if completed:
-                state["chat_pending"] = None
-            _stop_tick["v"] = True
-            _tick_task.cancel()
-            _sending["v"] = False
-            _active_send_task["task"] = None
-            stop_dialog_btn.set_visibility(False)
+                from sovushka.state import persist_chat_pending
+
+                persist_chat_pending(None)
+            if not detached_follow:
+                _stop_tick["v"] = True
+                _tick_task.cancel()
+                _sending["v"] = False
+                _active_send_task["task"] = None
+                stop_dialog_btn.set_visibility(False)
             await _refresh_resource_gate()
             _scroll_chat_to_tail()
 

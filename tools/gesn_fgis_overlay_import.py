@@ -17,10 +17,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 
+from backend.runtime_paths import mutable_path
 from tools.gesn_pdf_import import build_parquet, parse_fgis_json
 
 API = "https://fgiscs.minstroyrf.ru/api/FullTextSearch/SearchEstimatedRates?search="
-DEFAULT_OUT = Path("storage/cache/gesn_fgis/gesn2022_overlay_raw.parquet")
+DEFAULT_OUT = mutable_path("data/gesn_base/gesn2022_overlay.parquet")
 
 PRESETS: dict[str, tuple[str, ...]] = {
     # GESNm10 candidates used by SCS/telecom estimates.  These are navigation
@@ -37,7 +38,15 @@ PRESETS: dict[str, tuple[str, ...]] = {
         "10-06-057-04",  # optical cable stripping family
         "10-06-058-01",  # optical fiber splicing
         "10-06-059-05",  # optical measurements, 24 fibers
+        "10-06-060-12",
+        "10-06-060-14",
         "10-06-060-15",  # optical cross, 24 fibers
+        "10-06-060-16",
+        "10-06-060-17",
+        "10-06-037-13",
+        "10-01-001-12",
+        "08-03-576-01",
+        "46-03-017-02",
         "10-06-062-02",  # terminal measurements, two wavelengths
         "10-06-065-05",  # mounted optical section measurements, 24 fibers
         "10-06-068-17",  # object handover / acceptance tests

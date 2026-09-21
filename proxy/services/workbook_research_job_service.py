@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
 from proxy.config import META_DB_PATH
+from proxy.services.lsr_source_coverage_service import inferred_row_role
 
 SCHEMA = "les.workbook-research-job.v1"
 TERMINAL_STATUSES = {"complete", "failed"}
@@ -25,6 +26,13 @@ _EXTRA_COLUMNS = {
 
 class WorkbookResearchJobError(ValueError):
     pass
+
+
+def _decision_key(item: Mapping[str, Any]) -> tuple[str, str]:
+    """One durable decision is a source locator plus its authored role."""
+
+    locator = str(item.get("source_row") or "").strip()
+    return locator, inferred_row_role(item) or "work"
 
 
 @dataclass(frozen=True)
@@ -233,11 +241,15 @@ class WorkbookResearchJobService:
             if str(row["status"]) in TERMINAL_STATUSES:
                 return self._row(row)
             existing_rows = json.loads(str(row["accepted_rows_json"]))
-            seen = {str(item.get("source_row") or "") for item in existing_rows}
+            seen = {
+                _decision_key(item)
+                for item in existing_rows
+                if isinstance(item, Mapping) and _decision_key(item)[0]
+            }
             for item in accepted_rows:
                 payload = dict(item)
-                key = str(payload.get("source_row") or "")
-                if key and key not in seen:
+                key = _decision_key(payload)
+                if key[0] and key not in seen:
                     existing_rows.append(payload)
                     seen.add(key)
             existing_evidence = json.loads(str(row["evidence_json"]))
@@ -391,17 +403,17 @@ class WorkbookResearchJobService:
                 raise WorkbookResearchJobError("workbook research job not found")
             existing_rows = json.loads(str(row["accepted_rows_json"]))
             by_key = {
-                str(item.get("source_row") or ""): dict(item)
+                _decision_key(item): dict(item)
                 for item in existing_rows
-                if isinstance(item, Mapping)
+                if isinstance(item, Mapping) and _decision_key(item)[0]
             }
             replaced = 0
             for item in rows:
                 if not isinstance(item, Mapping):
                     continue
                 payload = dict(item)
-                key = str(payload.get("source_row") or "")
-                if not key or key not in by_key:
+                key = _decision_key(payload)
+                if not key[0] or key not in by_key:
                     continue
                 keep_code = by_key[key].get("norm_code")
                 if "norm_code" not in payload or payload.get("norm_code") in (None, ""):
@@ -409,8 +421,8 @@ class WorkbookResearchJobService:
                 by_key[key] = payload
                 replaced += 1
             next_rows = [
-                by_key[str(item.get("source_row") or "")]
-                if str(item.get("source_row") or "") in by_key
+                by_key[_decision_key(item)]
+                if isinstance(item, Mapping) and _decision_key(item) in by_key
                 else item
                 for item in existing_rows
             ]
@@ -564,6 +576,75 @@ class WorkbookResearchJobService:
         if row is None:
             raise WorkbookResearchJobError("workbook research job not found")
         return self._row(row)
+
+    def list_active(
+        self,
+        *,
+        session_id: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Running sheet-pass checkpoints, newest first.
+
+        Session match is preferred after a UI restart; if the NiceGUI session
+        was regenerated, the newest running job is still returned so overnight
+        progress is not blank.
+        """
+
+        limit_n = max(1, min(int(limit or 20), 100))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM workbook_research_jobs
+                   WHERE status='running'
+                   ORDER BY updated_at DESC
+                   LIMIT ?""",
+                (limit_n,),
+            ).fetchall()
+        jobs = [self._row(row) for row in rows]
+        sid = str(session_id or "").strip()
+        if not sid:
+            return jobs
+        matched = [
+            job
+            for job in jobs
+            if str((job.get("identity") or {}).get("session_id") or "") == sid
+        ]
+        return matched or jobs
+
+    def list_open(
+        self,
+        *,
+        session_id: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Running sheet-pass first; paused draft of the same session otherwise."""
+
+        limit_n = max(1, min(int(limit or 20), 100))
+        sid = str(session_id or "").strip()
+        with self._connect() as conn:
+
+            def _fetch(status: str, session: str) -> list[dict[str, Any]]:
+                if session:
+                    rows = conn.execute(
+                        """SELECT * FROM workbook_research_jobs
+                           WHERE status=? AND json_extract(identity_json,'$.session_id')=?
+                           ORDER BY updated_at DESC LIMIT ?""",
+                        (status, session, limit_n),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """SELECT * FROM workbook_research_jobs
+                           WHERE status=? ORDER BY updated_at DESC LIMIT ?""",
+                        (status, limit_n),
+                    ).fetchall()
+                return [self._row(row) for row in rows]
+
+            running = _fetch("running", sid)
+            if running:
+                return running
+            paused = _fetch("paused", sid)
+            if paused:
+                return paused
+        return self.list_active(session_id=session_id, limit=limit)
 
     def events_after(self, job_id: str, sequence: int = 0) -> list[dict[str, Any]]:
         with self._connect() as conn:

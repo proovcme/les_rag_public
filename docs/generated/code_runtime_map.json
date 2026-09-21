@@ -671,6 +671,7 @@
         "proxy/services/system_dataset_service.py",
         "proxy/services/task_service.py",
         "proxy/smeta_core/norm_browser.py",
+        "sovushka/pages/chat.py",
         "tests/test_activate_qdrant_generation.py",
         "tests/test_chunking_w2.py",
         "tests/test_decision_service_w174.py",
@@ -698,10 +699,11 @@
         "tools/smeta_embedding_parity.py",
         "tools/smeta_rag_quality_probe.py"
       ],
-      "lines": 376,
+      "lines": 381,
       "module": "backend.rag_config",
       "outbound": [
-        "backend/__init__.py"
+        "backend/__init__.py",
+        "backend/runtime_paths.py"
       ],
       "path": "backend/rag_config.py",
       "status": "PRODUCT_REACHABLE",
@@ -824,6 +826,8 @@
     {
       "inbound": [
         "backend/qdrant_adapter.py",
+        "backend/rag_config.py",
+        "proxy/config.py",
         "proxy/routers/artifacts.py",
         "proxy/routers/chat.py",
         "proxy/routers/checklist_review.py",
@@ -877,8 +881,10 @@
         "proxy/services/table_sql_service.py",
         "proxy/services/unified_construction_harness_service.py",
         "proxy/storage/file_storage.py",
+        "sovushka/pages/chat.py",
         "sovushka/state.py",
         "tests/test_runtime_paths.py",
+        "tools/gesn_fgis_overlay_import.py",
         "tools/gesn_update_from_fgis.py",
         "tools/smeta_generation_coordinator.py"
       ],
@@ -1343,13 +1349,15 @@
         "proxy/services/job_service.py",
         "proxy/services/workbook_research_job_service.py",
         "proxy/storage/file_storage.py",
+        "sovushka/pages/chat.py",
         "tests/test_model_connections_router.py",
         "tests/test_smoke_offline.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 170,
+      "lines": 171,
       "module": "proxy.config",
       "outbound": [
+        "backend/runtime_paths.py",
         "proxy/__init__.py",
         "proxy/local_model_registry.py"
       ],
@@ -1649,7 +1657,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4542,
+      "lines": 4556,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -2263,7 +2271,7 @@
         "tests/test_smeta_agent_runners.py",
         "tests/test_web_research_settings.py"
       ],
-      "lines": 591,
+      "lines": 645,
       "module": "proxy.routers.settings",
       "outbound": [
         "proxy/__init__.py",
@@ -2274,6 +2282,7 @@
         "proxy/security.py",
         "proxy/services/freetoken_cache_profile_service.py",
         "proxy/services/llm_transport_profile_service.py",
+        "proxy/services/model_execution_preset_service.py",
         "proxy/services/preset_service.py",
         "proxy/services/runtime_config_registry_service.py",
         "proxy/services/web_research_config_service.py"
@@ -3058,7 +3067,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 7624,
+      "lines": 7744,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4131,11 +4140,13 @@
         "tests/test_freetoken_cache_profile_service.py",
         "tests/test_freetoken_provider.py"
       ],
-      "lines": 240,
+      "lines": 341,
       "module": "proxy.services.freetoken_cache_profile_service",
       "outbound": [
         "proxy/__init__.py",
-        "proxy/services/__init__.py"
+        "proxy/services/__init__.py",
+        "proxy/services/model_execution_preset_service.py",
+        "proxy/services/runtime_admission.py"
       ],
       "path": "proxy/services/freetoken_cache_profile_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -4222,7 +4233,7 @@
         "tools/les_mcp_server.py",
         "tools/smeta_agent_benchmark.py"
       ],
-      "lines": 414,
+      "lines": 428,
       "module": "proxy.services.gesn_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -4653,7 +4664,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_llm_transport_profile_service.py"
       ],
-      "lines": 306,
+      "lines": 325,
       "module": "proxy.services.llm_transport_profile_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4700,7 +4711,7 @@
         "proxy/services/rim_lsr_trace_service.py",
         "tests/test_lsr_norm_quality_research_reopen.py"
       ],
-      "lines": 1935,
+      "lines": 1941,
       "module": "proxy.services.lsr_norm_quality_gate_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4717,7 +4728,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_lsr_result_readiness_service.py"
       ],
-      "lines": 441,
+      "lines": 445,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4736,7 +4747,7 @@
         "proxy/services/workbook_research_job_service.py",
         "tests/test_lsr_source_coverage_service.py"
       ],
-      "lines": 245,
+      "lines": 279,
       "module": "proxy.services.lsr_source_coverage_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5114,8 +5125,10 @@
     },
     {
       "inbound": [
+        "proxy/routers/settings.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/context_governor_service.py",
+        "proxy/services/freetoken_cache_profile_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/model_connection_resolver_service.py",
         "tests/test_chat_evidence_application_service.py",
@@ -5126,7 +5139,7 @@
         "tests/test_model_preset_workflow_parity.py",
         "tests/test_openai_compatible_transport_service.py"
       ],
-      "lines": 211,
+      "lines": 215,
       "module": "proxy.services.model_execution_preset_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6142,7 +6155,7 @@
         "tests/test_smeta_core.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 1440,
+      "lines": 1494,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6281,7 +6294,9 @@
         "proxy/routers/datasets.py",
         "proxy/routers/runtime.py",
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/freetoken_cache_profile_service.py",
         "proxy/services/runtime_dispatcher.py",
+        "tests/test_freetoken_cache_profile_service.py",
         "tests/test_freetoken_provider.py",
         "tests/test_runtime_admission.py"
       ],
@@ -6324,7 +6339,7 @@
         "tests/test_indexing_eta.py",
         "tests/test_runtime_dispatcher.py"
       ],
-      "lines": 779,
+      "lines": 787,
       "module": "proxy.services.runtime_dispatcher",
       "outbound": [
         "backend/rag_config.py",
@@ -7321,9 +7336,11 @@
       "inbound": [
         "proxy/routers/chat.py",
         "proxy/services/chat_evidence_application_service.py",
+        "sovushka/pages/chat.py",
+        "tests/test_sovushka_chat.py",
         "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 656,
+      "lines": 737,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8216,12 +8233,16 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 5862,
+      "lines": 6547,
       "module": "sovushka.pages.chat",
       "outbound": [
+        "backend/rag_config.py",
+        "backend/runtime_paths.py",
+        "proxy/config.py",
         "proxy/services/kot_service.py",
         "proxy/services/query_router.py",
         "proxy/services/runtime_dispatcher.py",
+        "proxy/services/workbook_research_job_service.py",
         "sovushka/__init__.py",
         "sovushka/answer_render.py",
         "sovushka/components/charts.py",
@@ -8493,7 +8514,7 @@
         "tests/test_sovushka_chat.py",
         "tests/test_state_w53.py"
       ],
-      "lines": 778,
+      "lines": 806,
       "module": "sovushka.state",
       "outbound": [
         "backend/http_client_policy.py",
@@ -9243,7 +9264,7 @@
     },
     {
       "inbound": [],
-      "lines": 3496,
+      "lines": 3604,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10277,10 +10298,11 @@
     },
     {
       "inbound": [],
-      "lines": 89,
+      "lines": 240,
       "module": "tests.test_freetoken_cache_profile_service",
       "outbound": [
-        "proxy/services/freetoken_cache_profile_service.py"
+        "proxy/services/freetoken_cache_profile_service.py",
+        "proxy/services/runtime_admission.py"
       ],
       "path": "tests/test_freetoken_cache_profile_service.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -10288,7 +10310,7 @@
     },
     {
       "inbound": [],
-      "lines": 235,
+      "lines": 246,
       "module": "tests.test_freetoken_provider",
       "outbound": [
         "backend/inference/routing.py",
@@ -10401,7 +10423,7 @@
     },
     {
       "inbound": [],
-      "lines": 54,
+      "lines": 87,
       "module": "tests.test_gesn_service",
       "outbound": [
         "proxy/services/gesn_service.py",
@@ -10506,7 +10528,7 @@
     },
     {
       "inbound": [],
-      "lines": 50,
+      "lines": 59,
       "module": "tests.test_indexing_eta",
       "outbound": [
         "proxy/services/runtime_dispatcher.py"
@@ -10910,7 +10932,7 @@
     },
     {
       "inbound": [],
-      "lines": 30,
+      "lines": 44,
       "module": "tests.test_lsr_packet_integrity",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py"
@@ -10921,7 +10943,7 @@
     },
     {
       "inbound": [],
-      "lines": 68,
+      "lines": 82,
       "module": "tests.test_lsr_result_readiness_service",
       "outbound": [
         "proxy/services/lsr_result_readiness_service.py"
@@ -10943,7 +10965,7 @@
     },
     {
       "inbound": [],
-      "lines": 59,
+      "lines": 108,
       "module": "tests.test_lsr_source_coverage_service",
       "outbound": [
         "proxy/services/lsr_source_coverage_service.py"
@@ -11872,7 +11894,7 @@
     },
     {
       "inbound": [],
-      "lines": 576,
+      "lines": 577,
       "module": "tests.test_proxy_routers",
       "outbound": [
         "proxy/local_model_registry.py",
@@ -12544,7 +12566,7 @@
     },
     {
       "inbound": [],
-      "lines": 649,
+      "lines": 733,
       "module": "tests.test_rim_lsr_trace_service",
       "outbound": [
         "proxy/services/gesn_service.py",
@@ -12738,7 +12760,7 @@
     },
     {
       "inbound": [],
-      "lines": 31,
+      "lines": 67,
       "module": "tests.test_runtime_paths",
       "outbound": [
         "backend/runtime_paths.py"
@@ -13330,7 +13352,7 @@
     },
     {
       "inbound": [],
-      "lines": 110,
+      "lines": 111,
       "module": "tests.test_source_excerpts",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13353,13 +13375,14 @@
     },
     {
       "inbound": [],
-      "lines": 1348,
+      "lines": 1711,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
         "proxy/routers/datasets.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/context_governor_service.py",
+        "proxy/services/workbook_research_job_service.py",
         "sovushka/pages/chat.py",
         "sovushka/pages/instrumenty.py",
         "sovushka/pages/samovar.py",
@@ -14157,7 +14180,7 @@
     },
     {
       "inbound": [],
-      "lines": 112,
+      "lines": 204,
       "module": "tests.test_workbook_research_job_service",
       "outbound": [
         "proxy/services/workbook_research_job_service.py"
@@ -14181,7 +14204,7 @@
     },
     {
       "inbound": [],
-      "lines": 554,
+      "lines": 565,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
         "proxy/services/artifact_revision_service.py",
@@ -15214,9 +15237,10 @@
       "inbound": [
         "tests/test_gesn_fgis_overlay_import.py"
       ],
-      "lines": 132,
+      "lines": 141,
       "module": "tools.gesn_fgis_overlay_import",
       "outbound": [
+        "backend/runtime_paths.py",
         "tools/__init__.py",
         "tools/gesn_pdf_import.py"
       ],
@@ -18733,6 +18757,12 @@
       "source": "proxy/routers/runtime.py"
     },
     {
+      "handler": "list_active_workbook_research",
+      "method": "GET",
+      "path": "/api/workbook-research-active",
+      "source": "proxy/routers/chat.py"
+    },
+    {
       "handler": "get_workbook_research",
       "method": "GET",
       "path": "/api/workbook-research/{job_id}",
@@ -18792,11 +18822,11 @@
     "dormant_candidates": 1,
     "parse_warnings": 0,
     "product_reachable": 356,
-    "registered_api_routes": 336,
+    "registered_api_routes": 337,
     "runtime_support": 11,
     "test_or_tool_only": 636,
     "tracked_python_files": 1004,
-    "tracked_python_lines": 325100
+    "tracked_python_lines": 327318
   },
   "warnings": []
 }

@@ -119,7 +119,7 @@ def test_old_prompt_chips_not_rendered_inline():
 def test_prompt_examples_are_grouped_by_mode_and_bounded():
     from sovushka.pages import chat as chat_mod
 
-    assert set(chat_mod.CHAT_MODE_GUIDANCE) == {"text", "rag", "smeta", "doc_review"}
+    assert set(chat_mod.CHAT_MODE_GUIDANCE) == {"agent", "engineer", "estimator", "search"}
     for guide in chat_mod.CHAT_MODE_GUIDANCE.values():
         assert guide["description"]
         assert guide["data_hint"]

@@ -7,12 +7,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from backend.runtime_paths import mutable_root
 from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 
 
 ROOT = Path(".")
-DATA_DIR = ROOT / "data"
-META_DB_PATH = DATA_DIR / "les_meta.db"
+DATA_DIR = mutable_root("data")
+META_DB_PATH = Path(os.getenv("RAG_META_DB_PATH", str(DATA_DIR / "les_meta.db"))).expanduser()
 ENV_PATH = Path(os.getenv("LES_ENV_PATH", str(ROOT / ".env"))).expanduser()
 load_dotenv(ENV_PATH, override=False)
 

@@ -458,5 +458,5 @@ if __name__ in {"__main__", "__mp_main__"}:
         show=False,
         storage_secret=STORAGE_SECRET,
         reload=False,
-        reconnect_timeout=180,  # длинные RAG-запросы не должны срывать страницу
+        reconnect_timeout=43200,  # ночная ЛСР: 12 ч на возврат сокета без пересборки страницы
     )

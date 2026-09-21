@@ -25,6 +25,7 @@ def _new_session_id() -> str:
 
 
 _SESSION_STORAGE_KEY = "les_chat_session_id"
+_PENDING_STORAGE_KEY = "les_chat_pending"
 
 
 def get_persisted_session_id() -> str | None:
@@ -45,6 +46,33 @@ def persist_session_id(session_id: str) -> str:
     except Exception:
         pass
     return sid
+
+
+def persist_chat_pending(pending: dict | None) -> None:
+    """Keep overnight in-progress identity across NiceGUI reconnect."""
+
+    payload = dict(pending) if isinstance(pending, dict) and pending else None
+    state["chat_pending"] = payload
+    try:
+        if payload:
+            app.storage.user[_PENDING_STORAGE_KEY] = payload
+        else:
+            app.storage.user.pop(_PENDING_STORAGE_KEY, None)
+    except Exception:
+        pass
+
+
+def restore_chat_pending() -> dict | None:
+    stored = None
+    try:
+        stored = app.storage.user.get(_PENDING_STORAGE_KEY)
+    except Exception:
+        stored = None
+    if isinstance(stored, dict) and stored:
+        state["chat_pending"] = stored
+        return stored
+    current = state.get("chat_pending")
+    return current if isinstance(current, dict) and current else None
 
 
 def ensure_session_id() -> str:

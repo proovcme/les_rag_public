@@ -51,6 +51,9 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
    Startup-журналы и `windows-light-state.json` создаются напрямую в
    `%LOCALAPPDATA%\LES\logs`; runtime junction `runtime\logs` служит для
    совместимого чтения уже созданных файлов и не является путём записи.
+   Core MetaDB и RAG MetaDB аналогично разрешаются через `mutable_path` прямо
+   в `%LOCALAPPDATA%\LES\data`; чистый proxy не создаёт SQLite через
+   `runtime\data` junction.
 2. Immutable ФСНБ baseline проверяется; его недоступность отражается degraded status, но не
    превращает отсутствие внешнего компонента в повреждение Python.
 3. Docker/Qdrant и answer/embedding providers определяются как optional capabilities.

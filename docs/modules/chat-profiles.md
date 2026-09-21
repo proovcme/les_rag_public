@@ -1,5 +1,100 @@
 # Chat profiles
 
+Build 775 result instruction uses ten core columns and adds conversion,
+coefficient and assessment fields only when applicable. It preserves source
+locator/unit/quantity while allowing the model to name a derived installation
+work; the previous mandatory verbatim product title contradicted that task.
+No norms or installation operations are chosen by code.
+
+
+Build 775 also requires an explicit code/norm_code cell to contain only a
+code (formatting and colon prefixes are accepted). It never extracts a rejected
+norm from shifted explanatory prose. Original cell text remains in the binding.
+
+
+## Build 775: decorative table separators cannot erase decisions
+
+The labelled table header determines the columns. A nonempty Markdown divider
+containing valid separator cells may have a different width; data cells and
+professional decisions are unchanged. Invalid separator tokens remain rejected.
+Each sheet-pass trace records parsed_rows, kept_rows and row_errors so losses
+between reading and acceptance can be distinguished. History 162 replay reads
+143 authored rows across attempts instead of 12; this is not proof of selected
+norms or a priced estimate. Missing norms and malformed authored cells remain
+open. Tests: test_chat_evidence_application_service.py.
+
+
+## Build 774: material+work на одном локаторе
+
+Спецификация может отдать и материал, и монтажную работу на одном `source_row`.
+Дубликат считается только для одной и той же роли; merge — first-wins на пару
+(locator, role). Authored `row_role` задаёт `model_rag_row_kind`, поэтому
+материал не проходит work-гейты evidence. Лишние `|` внутри title сливаются в
+ячейку названия, строка не отбрасывается целиком. История 161: шифры R28–R38
+больше не должны выжигаться из‑за пары material+work. Код по-прежнему не
+выдумывает ГЭСН.
+
+## Build 773: одна числовая ячейка не уничтожает таблицу
+
+Reader сохраняет исходный текст нечисловых полей quantity/calc_quantity/
+conversion_factor/confirmed_price во всех поддержанных текстовых формах.
+Расчёт требует числовые quantity и confirmed_price; нечисловой conversion_factor
+или calc_quantity создаёт needs_input с invalid_field/authored_value и не
+подменяется первым числом из выражения или другим количеством. Соседние строки
+продолжают рассчитываться. Это не вычислитель выражений и не исправление норм.
+Реальный ответ 160 теперь читается целиком (6 строк); live release acceptance
+фиксируется отдельно в RELEASE_LEDGER.
+
+## Build 772: безопасная подготовка FreeToken
+
+Чтение настроек только наблюдает KV (`probe_freetoken_cache`), не запускает
+перестройку. ACTIVE выбирает cache target по extension фактического answer
+connection, а не по старому env provider (Ollama в history 158 при ответе FreeToken).
+ACTIVE и legacy подготовка кеша в chat-evidence использует тот же
+generation semaphore, что генерация. Отмена ожидающего HTTP-запроса не освобождает
+слот до завершения уже запущенного worker перестройки. Это защита от конкуренции
+внутри процесса LES, а не блокировка внешних клиентов FreeToken.
+Регрессии: `tests/test_freetoken_cache_profile_service.py` и
+`tests/test_proxy_routers.py`. Live B0_DIRECT/СКС и установленный 772 не проверены.
+
+## Build 768: пузырь не падает на UTC-метке
+
+ETA считает aware `created_at` без TypeError; иначе typing-пузырь не
+рисуется.
+
+## Build 767: История снова показывает живую сборку
+
+Открытие «выполняется» подтягивает checkpoint и рисует пузырь, даже если
+в истории нет PENDING.
+
+## Build 766: знаменатель 75, не 65
+
+N/M — work-локаторы каталога. 35/65 была ошибка: материалы + leftover.
+Текущий пакет показывает оставшиеся поисковые запросы.
+
+## Build 765: СКС 35/65, не 0/30
+
+Пузырь считает закрытые source-строки (включая material/equipment), если
+work-role пуст. «С начала задачи» — прошедшее время, не остаток.
+
+## Build 764: прогресс не сбрасывается старым ответом
+
+Follow смотрит только текущий ход. Старое «ЛСР не создана» в той же сессии
+не завершает ночную сборку и не стирает N/M.
+
+## Build 763: реконнект показывает текущий N/M и ETA
+
+Обрыв SSE больше не обнуляет прогресс. Совушка опрашивает checkpoint
+sheet-pass (тот же SQLite, что пишет proxy) и пишет в пузырь принятые/всего,
+остаток, лист/этап, сколько уже идёт и «готово примерно через». Новый
+примитив не вводится.
+
+## Build 762: одно окно «сборка продолжается»
+
+Реконнект NiceGUI больше не пишет «Связь с окном чата пропала» и не
+дублирует «Запрос выполняется» с исходным вопросом. Один пузырь с
+последним счётчиком строк. Сокет UI ждёт 12 часов.
+
 ## Build 759: ночная ЛСР переживает обрыв окна
 
 Обрыв SSE (закрытие вкладки, пропадание сети, рестарт UI) сразу отвязывает
@@ -45,6 +140,16 @@ sheet-pass. Остальные запросы модели и вызов таб�
 пустая группа видна модели, нормы код не подставляет. Abort только при
 `blocked`/ошибке RRF. Если таблица так и не пришла, notice отдельно от
 ошибки разбора колонок.
+
+## Build 771: 35B получает заводское окно в начале хода
+
+Bound ACTIVE чат больше не оставляет live `num_pages≈8214` на весь overnight
+прогон. Если модель 35B, а запрошенное/живое окно < 16384, код поднимает
+запрос до заводских `35000` и один раз вызывает loopback rebuild до первого
+generate. Пакеты внутри хода KV не трогают. Settings GET/save используют тот
+же lift, чтобы карточка настроек не сжимала 35000 обратно в исторические
+`8253`. Если после rebuild живой KV всё ещё < 16384, ход 503, а не тихий
+`qwen-9b-restrictive`.
 
 ## Build 751: FreeToken KV без OOM и без урезания 35B
 
@@ -173,6 +278,10 @@ workbook adapter. Ограничение количества tool definitions �
 задаётся общей политикой `rag_policy.model_authored_initial_query`, а не
 зашитым в application-код именем режима.
 
+**Build 776:** checkpoint и coverage хранят работу и материал на одном
+локаторе; named `NEEDS_RESEARCH` идёт в exact lookup и остаётся аналогом.
+Код шифр не выбирает.
+
 **Build 671:** generic selector больше не получает скрытое указание немедленно
 выбрать ровно один workbook-tool. Отклонённый workbook result возвращается той
 же модели, поэтому она может продолжить собственный поиск по RAG и повторить
@@ -267,7 +376,9 @@ Retrieval policy также принадлежит effective profile: `candidate
 - `qwen-35b-extended` доступен только при распознанной 35B и наблюдаемом KV;
 - для FreeToken наблюдаемый KV берётся из cache status / models, не из requested window;
 - default `FREETOKEN_CONTEXT_TOKENS=35000` совпадает с заводским окном 35B;
-  rebuild clamp'ит запрос до `max_feasible_kv`, ACTIVE чат только читает live pages;
+  rebuild clamp'ит запрос до `max_feasible_kv`; для 35B окно <16384
+  поднимается до 35000, ACTIVE чат пересобирает KV один раз в начале хода,
+  пакеты только читают уже выровненные pages;
 - reasoning по умолчанию выключен;
 - разрешение пресета не меняет `legacy`/`shadow`/`active` и не перезапускает backend;
 - `/api/version` и GUI-first runtime registry показывают только безопасные

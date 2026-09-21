@@ -5,10 +5,14 @@ from __future__ import annotations
 import os
 from typing import Any, Mapping
 
-from proxy.services.freetoken_cache_profile_service import DEFAULT_FREETOKEN_CONTEXT_TOKENS
+from proxy.services.freetoken_cache_profile_service import (
+    DEFAULT_FREETOKEN_CONTEXT_TOKENS,
+    desired_kv_for_answer_model,
+)
 from proxy.services.model_execution_preset_service import (
     BackendCapacity,
     ModelExecutionPreset,
+    is_qwen_35b,
     resolve_execution_preset,
 )
 from proxy.services.context_governor_service import (
@@ -41,7 +45,9 @@ def _configured_context_request(provider: str) -> int | None:
         value = int(os.getenv(env_name, "").strip())
     except ValueError:
         return None
-    return value if value > 0 else None
+    if value <= 0:
+        return None
+    return desired_kv_for_answer_model(_configured_model(provider), value)
 
 
 def resolve_transport_execution_profile(
@@ -161,16 +167,19 @@ def freetoken_prompt_chars_for_context(
 def provider_prompt_max_chars(provider: str | None) -> int:
     if not provider_is_local(provider):
         return 120000
-    explicit = os.getenv("FREETOKEN_PROMPT_MAX_CHARS", "").strip()
-    if explicit:
-        try:
-            return max(2000, int(explicit))
-        except ValueError:
-            pass
+    model_id = _configured_model("freetoken")
     try:
         context_tokens = max(
             2048,
-            int(os.getenv("FREETOKEN_CONTEXT_TOKENS", str(DEFAULT_FREETOKEN_CONTEXT_TOKENS))),
+            desired_kv_for_answer_model(
+                model_id,
+                int(
+                    os.getenv(
+                        "FREETOKEN_CONTEXT_TOKENS",
+                        str(DEFAULT_FREETOKEN_CONTEXT_TOKENS),
+                    )
+                ),
+            ),
         )
     except ValueError:
         context_tokens = DEFAULT_FREETOKEN_CONTEXT_TOKENS
@@ -188,11 +197,21 @@ def provider_prompt_max_chars(provider: str | None) -> int:
         )
     except ValueError:
         chars_per_token = 1.25
-    return freetoken_prompt_chars_for_context(
+    derived = freetoken_prompt_chars_for_context(
         context_tokens,
         reserve_tokens=reserve_tokens,
         chars_per_token=chars_per_token,
     )
+    explicit = os.getenv("FREETOKEN_PROMPT_MAX_CHARS", "").strip()
+    if explicit:
+        try:
+            asked = max(2000, int(explicit))
+        except ValueError:
+            asked = derived
+        if is_qwen_35b(model_id) and asked < derived:
+            return derived
+        return asked
+    return derived
 
 
 def fit_prompt_sections(

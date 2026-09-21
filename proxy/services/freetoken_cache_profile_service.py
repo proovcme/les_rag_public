@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -14,6 +15,41 @@ _SAFETY_BYTES = 128 * 1024 * 1024
 # growing past this steals MoE expert cache and lengthens prefill without a
 # larger LES execution envelope. Reconcile still clamps to max_feasible_kv().
 DEFAULT_FREETOKEN_CONTEXT_TOKENS = 35000
+
+
+def cache_alignment_target(runtime, *, active_connection=None):
+    """Use the bound answer engine in ACTIVE, never an unrelated legacy engine."""
+    if active_connection is not None:
+        if getattr(active_connection, "extension_type", None) != "freetoken":
+            return None
+        return active_connection.base_url, active_connection.model_id
+    if getattr(runtime, "requires_cache_alignment", False):
+        return runtime.base_url, runtime.model
+    return None
+
+
+async def admitted_cache_call(callback, *args, semaphore, timeout_seconds, **kwargs):
+    """Serialize cache mutation with generation, including caller cancellation.
+
+    Cancelling to_thread does not stop its worker. Retain the permit until the
+    physical rebuild finishes so the next generation cannot use a changing cache.
+    """
+    from proxy.services.runtime_admission import acquire_generation_slot
+
+    async with acquire_generation_slot(semaphore, timeout_seconds=timeout_seconds):
+        worker = asyncio.create_task(asyncio.to_thread(callback, *args, **kwargs))
+        cancelled = False
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            # Observe any worker exception before propagating cancellation.
+            if not worker.cancelled():
+                worker.exception()
+            raise asyncio.CancelledError
+        return worker.result()
 
 
 def _control_url(base_url: str, suffix: str) -> str:
@@ -226,15 +262,80 @@ def reconcile_freetoken_cache(
             },
         )
         return report
-    except (httpx.HTTPError, ValueError, RuntimeError, TypeError) as exc:
+    except (httpx.HTTPError, ValueError, RuntimeError, TypeError) as exec_error:
         return {
             "status": "degraded",
             "requested_kv_tokens": requested,
             "desired_kv_tokens": requested,
             "effective_kv_tokens": None,
             "max_feasible_kv_tokens": None,
-            "reason": f"{type(exc).__name__}: {str(exc)[:180]}",
+            "reason": f"{type(exec_error).__name__}: {str(exec_error)[:180]}",
         }
     finally:
         if owned:
             http.close()
+
+
+def desired_kv_for_answer_model(model_id: str, requested: int | None) -> int:
+    """Raise a legacy 8k FreeToken window to the factory 35B envelope."""
+
+    from proxy.services.model_execution_preset_service import (
+        MIN_EXTENDED_35B_CONTEXT_TOKENS,
+        is_qwen_35b,
+    )
+
+    asked = max(1, int(requested or DEFAULT_FREETOKEN_CONTEXT_TOKENS))
+    if is_qwen_35b(model_id) and asked < MIN_EXTENDED_35B_CONTEXT_TOKENS:
+        return DEFAULT_FREETOKEN_CONTEXT_TOKENS
+    return asked
+
+
+def align_freetoken_cache_for_turn(
+    base_url: str,
+    *,
+    model_id: str,
+    requested_kv: int,
+    allow_rebuild: bool = True,
+    client: httpx.Client | None = None,
+) -> dict[str, object]:
+    """Observe live KV; rebuild once before the first generate if 35B is cramped.
+
+    Packet loops must not call this. Bound ACTIVE chat previously kept an 8k
+    cache and then ran the 9B-restrictive envelope for hours.
+    """
+
+    from proxy.services.model_execution_preset_service import (
+        MIN_EXTENDED_35B_CONTEXT_TOKENS,
+        is_qwen_35b,
+    )
+
+    desired = desired_kv_for_answer_model(model_id, requested_kv)
+    probed = probe_freetoken_cache(base_url, desired, client=client)
+    try:
+        live = int(probed.get("effective_kv_tokens") or 0)
+    except (TypeError, ValueError):
+        live = 0
+    if not is_qwen_35b(model_id):
+        return probed
+    if live == desired and probed.get("status") in {"aligned", "synchronized"}:
+        return probed
+    if not allow_rebuild:
+        if live < MIN_EXTENDED_35B_CONTEXT_TOKENS:
+            return {
+                **probed,
+                "status": "too_small_for_35b",
+                "desired_kv_tokens": desired,
+                "previous_effective_kv_tokens": live or None,
+            }
+        return probed
+    rebuilt = reconcile_freetoken_cache(base_url, desired, client=client)
+    rebuilt["previous_effective_kv_tokens"] = live or None
+    rebuilt["aligned_for"] = "qwen-35b-extended"
+    try:
+        after = int(rebuilt.get("effective_kv_tokens") or 0)
+    except (TypeError, ValueError):
+        after = 0
+    if after < MIN_EXTENDED_35B_CONTEXT_TOKENS:
+        rebuilt = dict(rebuilt)
+        rebuilt["status"] = "too_small_for_35b"
+    return rebuilt

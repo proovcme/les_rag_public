@@ -84,7 +84,8 @@ planner/model-review шага и JSON-протокола между модель
 - `proxy/services/retrieval_service.py`
 - `proxy/services/model_research_tool_service.py`
 - `proxy/services/chat_evidence_application_service.py`
-- `proxy/services/lsr_source_coverage_service.py`
+- `proxy/services/lsr_source_coverage_service.py` — покрытие по всем ролям
+  локатора; last-write одной роли больше не закрывает и не ломает пакет.
 - `proxy/services/lsr_result_readiness_service.py`
 - `proxy/services/workbook_research_job_service.py`
 - `proxy/services/chat_evidence_manifest_service.py`

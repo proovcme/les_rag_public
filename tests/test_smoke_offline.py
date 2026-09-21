@@ -92,7 +92,7 @@ def test_smoke_core_user_business_scenario():
     """Smoke test: execution of a core user scenario (query routing + resource normalization)."""
     # 1. User intent resolution
     resolution = resolve(mode="smeta", question="Смета на прокладку силового кабеля 50м")
-    assert resolution.profile_id == "estimate_harness"
+    assert resolution.profile_id == "estimator"
     assert resolution.profile.output_contract == "estimate_preliminary_v1"
 
     # 2. Data processing pipeline (normalization)
