@@ -1,5 +1,28 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**0.31.71 / 777 stage A (22.09):** operation identity and decision revisions in the
+durable job store. Every accepted decision gets an immutable `operation_id`; legacy
+stored rows migrate through a deterministic content mapping (`op_leg_…`), so an
+interrupted migration re-derives the same identifiers and no two records are ever
+joined by title. `record_packet` replaces locator-first-wins with content-hash
+idempotence: identical re-delivery adds nothing, a different operation on the same
+`(locator, role)` is kept as its own operation, and a same-id refinement appends
+revision N+1. New table `workbook_research_revisions` keeps every superseded decision
+with origin (model/operator/migration) and base revision; `record_revision` rejects a
+late write whose `base_revision` is stale; `replace_accepted_rows` matches by
+operation id first, preserves cipher and identity, and records the operator revision.
+`status_dimensions.operations` reports the distinct-operation count. Migration is
+`CREATE TABLE IF NOT EXISTS` plus idempotent in-place backfill inside the existing
+transaction — no parallel DB, no event-sourcing framework. Rehearsed on a copy of the
+live paused job (60 decisions → 60 distinct ids, zero content loss, second pass
+unchanged, uncommitted rollback discarded, backup restores originals). Consistent
+backup via the SQLite online-backup API at
+`C:\Users\MVBul\AppData\Local\LES\backups\les_meta_qwen_20260922_024204.db`
+(integrity_check ok, row parity with the live DB). Restore = stop services, copy the
+file back over `data\les_meta_qwen.db` (plus WAL siblings removed), start services.
+Tests: `tests/test_workbook_research_job_service.py` 12 passed (8 prior contracts +
+4 stage-A acceptance); `tests/test_sovushka_chat.py` 79 passed unchanged.
+
 **0.31.70 / 776 gate repair (21.09, later session):** version contract
 synchronized (`make version-sync` equivalents: pyproject/tauri/cargo now 0.31.70).
 Three stale-mode tests updated to the committed profile contract

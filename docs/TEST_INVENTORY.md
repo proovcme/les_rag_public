@@ -58,7 +58,11 @@ and a fresh `JobService` creates its SQLite file directly under state `data`.
   (`test_workbook_research_job_service`) переживает pause/resume без повторного
   поиска кэшированных запросов: `should_cancel` остаётся истинным после `pause()`,
   иначе живой цикл продолжает пакеты. Точечное reopen locator сохраняет чужие
-  решения. `ChatRequest.comparative_acceptance_variant` принимает `B0_DIRECT`
+  решения. Этап А: `operation_id` устойчив через pause/resume/пересборку,
+  несколько разных операций на одном локаторе не склеиваются, повтор того же
+  решения не дублирует позицию, уточнение дописывает ревизию в
+  `workbook_research_revisions`, запоздалая запись по устаревшему
+  `base_revision` отклоняется (`test_workbook_research_job_service`, 12 тестов). `ChatRequest.comparative_acceptance_variant` принимает `B0_DIRECT`
   (`test_sovushka_chat`). Покрытие исходника,
   нормы и цены — `test_lsr_source_coverage_service`,
   `test_lsr_result_readiness_service`; UI уточнения/подтверждения без модели —

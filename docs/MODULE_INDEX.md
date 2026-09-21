@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.71 / 777 stage A:** durable workbook decisions carry a stable
+> `operation_id` (uuid; legacy rows get a deterministic `op_leg_` content mapping,
+> never merged by title). Explicit refinements append to
+> `workbook_research_revisions` with origin + `base_revision` stale-guard;
+> `record_packet` keeps several distinct operations on one `(locator, role)` and
+> dedupes identical re-delivery. Code: `workbook_research_job_service.py`;
+> tests: `test_workbook_research_job_service.py` (12). Live-job migration
+> rehearsed on a backup copy without loss.
+
 > **0.31.70 / 776:** durable job merge and source coverage are per
 > `(locator, role)`; named `NEEDS_RESEARCH` goes to exact lookup without
 > becoming `priced_final`; FGIS overlay fills missing calc cards.
