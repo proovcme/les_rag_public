@@ -66,6 +66,8 @@ _LSR_INPUT_SCHEMA = {
             "items": _LSR_DECISION_SCHEMA,
         },
         "confirmed_data": _LSR_CONFIRMED_DATA_SCHEMA,
+        # stage D: explicit user/model pricebook request (GUI chat path)
+        "pricebook": {"type": "string"},
     },
 }
 
@@ -216,6 +218,7 @@ def _normalized_args(args: Mapping[str, Any], *, allowed_args: set[str]) -> dict
     normalized = {key: args.get(key) for key in allowed_args if key in args}
     normalized["attachment_id"] = str(normalized.get("attachment_id") or "").strip()
     normalized["question"] = str(normalized.get("question") or "").strip()
+    normalized["pricebook"] = str(normalized.get("pricebook") or "").strip()
     normalized["project_id"] = normalized.get("project_id")
     normalized["parent_revision_id"] = str(normalized.get("parent_revision_id") or "").strip() or None
     normalized["dataset_ids"] = list(dict.fromkeys(
@@ -464,6 +467,7 @@ async def _build_workbook(
             "pricing_status",
             "norms_status",
             "price_gaps",
+            "price_basis",
             "calculated_positions",
             "confirmed_amount",
             "preliminary_amount",

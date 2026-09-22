@@ -1,5 +1,22 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.75 / 781 stage D:** the price basis became an explicit, visible part of
+> the LSR result without a new subsystem: `summarize_lsr_price_basis` binds the
+> requested basis (tool arg `pricebook`, source-text price level, period named in
+> the question — digits or roman `III квартала 2026`) against the actually resolved
+> book's region/quarter and returns `exact|mismatch|unspecified|no_book` with a
+> confirmation-procedure note; the result carries `price_basis`, the XLSX header
+> prints the note (warning fill on mismatch) and `lsr_result_readiness` refuses to
+> mark prices complete while a mismatch is unconfirmed. `collect_lsr_price_gaps`
+> now names per concrete position: resource+code, quantity with unit, required
+> source, the checked basis (book region/quarter) and the dependent position
+> totals. Refill keeps using the durable confirmed-data path — recalculation at
+> trace time with no norm re-search. Code: `lsr_workbook_adapter_service.py`,
+> `rim_trace_xlsx_service.py`, `lsr_result_readiness_service.py`,
+> `workbook_tool_service.py` (`pricebook` argument), `chat_evidence_application_service.py`,
+> `routers/chat.py`; tests: +6 (`test_workbook_tool_service`,
+> `test_lsr_result_readiness_service`, `test_rim_trace_xlsx`).
+
 > **0.31.74 / 780 stage G:** norm-search trace attributes the §7 control cases
 > without a new audit subsystem: the evidence namespace is scoped per packet
 > attempt (`row_packet_id(...)+":a<n>"`) so one alias `Qx.Hy` can no longer resolve

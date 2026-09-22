@@ -563,3 +563,173 @@ async def test_vor_can_package_exact_model_rows_from_a_pdf_without_renumbering(t
         workbook.close()
     assert values[0][1:6] == ("ЭОМ", "Прокладка кабеля", None, "м", 12.5)
     assert "source.pdf#42" in values[0][6]
+def test_stage_d_price_basis_period_conflict_is_explicit():
+    """§8: a Q2 book must not be presented as a Q3 calculation."""
+    from proxy.services.lsr_workbook_adapter_service import summarize_lsr_price_basis
+
+    class _Book:
+        region = "Город Санкт-Петербург"
+        quarter = "2 квартал 2026 г."
+
+    conflict = summarize_lsr_price_basis(
+        requested_book="",
+        source_price_level="3 квартал 2026",
+        pricebook=_Book(),
+        pricebook_name="sankt-peterburg_2kv2026",
+    )
+    assert conflict["match"] == "mismatch"
+    assert "3 квартал 2026" in conflict["requested"]
+    assert "2 квартал 2026" in conflict["note"]
+    assert "не считается" in conflict["note"]
+    assert "подтвердите альтернативу" in conflict["note"]
+
+    exact = summarize_lsr_price_basis(
+        requested_book="sankt-peterburg_2kv2026",
+        source_price_level="—",
+        pricebook=_Book(),
+        pricebook_name="sankt-peterburg_2kv2026",
+    )
+    assert exact["match"] == "exact"
+
+    silent = summarize_lsr_price_basis(
+        requested_book="",
+        source_price_level="—",
+        question_text="",
+        pricebook=_Book(),
+        pricebook_name="sankt-peterburg_2kv2026",
+    )
+    assert silent["match"] == "unspecified"
+    assert "2 квартал 2026" in silent["note"]
+
+    missing_book = summarize_lsr_price_basis(
+        requested_book="moskva_3kv2026",
+        source_price_level="—",
+        pricebook=None,
+        pricebook_name="",
+    )
+    assert missing_book["match"] == "no_book"
+    assert "moskva_3kv2026" in missing_book["note"]
+
+
+def test_stage_d_price_basis_reads_the_requested_period_from_the_question():
+    from proxy.services.lsr_workbook_adapter_service import summarize_lsr_price_basis
+
+    class _Book:
+        region = "Город Санкт-Петербург"
+        quarter = "2 квартал 2026 г."
+
+    conflict = summarize_lsr_price_basis(
+        question_text="Собери ЛСР, Санкт-Петербург, цены III квартала 2026",
+        pricebook=_Book(),
+        pricebook_name="sankt-peterburg_2kv2026",
+    )
+    assert conflict["match"] == "mismatch"
+    aligned = summarize_lsr_price_basis(
+        question_text="цены 2 квартал 2026",
+        pricebook=_Book(),
+        pricebook_name="sankt-peterburg_2kv2026",
+    )
+    assert aligned["match"] == "exact"
+
+
+def test_stage_d_price_gaps_carry_unit_position_and_checked_basis():
+    """§8: every missing price names position, quantity+unit, basis and dependents."""
+    from proxy.services.lsr_workbook_adapter_service import collect_lsr_price_gaps
+
+    class _Book:
+        region = "Город Санкт-Петербург"
+        quarter = "2 квартал 2026 г."
+
+    trace = {"sections": [{"positions": [{
+        "code": "ГЭСНм08-02-395-01",
+        "name": "Монтаж лотков",
+        "rows": [{
+            "columns": {"2": "RESOURCE-9", "3": "Лоток", "4": "м", "7": 30.0},
+            "meta": {"price_action": "needs_kac"},
+        }],
+    }]}]}
+    gap, = collect_lsr_price_gaps(
+        trace, pricebook=_Book(), pricebook_name="sankt-peterburg_2kv2026"
+    )
+    assert gap["unit"] == "м"
+    assert gap["position_code"] == "ГЭСНм08-02-395-01"
+    assert gap["dependent_calculations"][0].endswith("ГЭСНм08-02-395-01")
+    assert "2 квартал 2026" in gap["checked_basis"]
+    assert "30.0" in gap["action"]
+    assert "ГЭСНм08-02-395-01" in gap["action"]
+
+
+def test_lsr_contract_accepts_explicit_pricebook_request():
+    payload = {
+        "attachment_id": "read_123456abcdef",
+        "decisions": [
+            {"source_row": "СКС!R2", "title": "Кабель", "unit": "м", "quantity": 10}
+        ],
+        "pricebook": "sankt-peterburg_2kv2026",
+    }
+    assert validate_json_schema(payload, BUILD_LSR_WORKBOOK.input_schema) == []
+    assert validate_json_schema(
+        {**payload, "pricebook": 5},
+        BUILD_LSR_WORKBOOK.input_schema,
+    )
+
+
+@pytest.mark.asyncio
+async def test_stage_d_adapter_binds_price_basis_into_result_and_render(
+    tmp_path, monkeypatch
+):
+    class _Book:
+        region = "Город Санкт-Петербург"
+        quarter = "2 квартал 2026 г."
+
+    captured = {}
+
+    def calculate(rows, **kwargs):
+        return {
+            "schema": "rim_lsr_v1",
+            "sections": [],
+            "summary": {"input_rows": 1, "bound_rows": 1, "flags": []},
+            "row_bindings": [{"row": 1, "status": "bound"}],
+        }
+
+    def render(trace, output_path, **kwargs):
+        captured["meta"] = dict(kwargs.get("meta") or {})
+        _source_workbook(output_path)
+        return output_path
+
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.build_lsr_trace_from_visible_rows",
+        calculate,
+    )
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.render_lsr_xlsx",
+        render,
+    )
+    monkeypatch.setattr(
+        "proxy.services.fgis_price_service.resolve_pricebook_path",
+        lambda book=None: "sankt-peterburg_2kv2026.parquet",
+    )
+    monkeypatch.setattr(
+        "proxy.services.fgis_price_service.get_pricebook",
+        lambda _path: _Book(),
+    )
+
+    result = await build_lsr_workbook_from_decisions(
+        tmp_path / "source.xlsx",
+        {
+            "decisions": [{
+                "source_row": 1,
+                "title": "Монтаж лотков",
+                "unit": "100 м",
+                "quantity": 1,
+                "norm_code": "ГЭСНм08-02-395-01",
+            }],
+            "question": "Собери ЛСР, цены III квартала 2026",
+        },
+        tmp_path / "result.xlsx",
+        lambda *_args: None,
+    )
+    assert result["price_basis"]["match"] == "mismatch"
+    assert captured["meta"]["price_basis_match"] == "mismatch"
+    assert "III квартала 2026" in captured["meta"]["price_basis_note"]
+    assert "2 квартал 2026" in captured["meta"]["price_basis_note"]

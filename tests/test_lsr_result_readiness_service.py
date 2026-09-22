@@ -112,3 +112,65 @@ def test_stage_v_readiness_reports_composition_and_amounts() -> None:
     assert "норм выбрано 1" in notice
     assert "позиций рассчитано 2" in notice
     assert "Подтверждённая сумма 1000" in notice
+def test_stage_d_price_basis_mismatch_blocks_price_dimension() -> None:
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[{
+            "source_row": "СКС!R2",
+            "row_role": "work",
+            "norm_code": "ГЭСН10-01-001-01",
+            "norm_status": "EXACT",
+        }],
+        pricing_status="priced_final",
+        catalog_work_count=1,
+        price_basis={
+            "requested": "3 квартал 2026",
+            "actual_quarter": "2 квартал 2026 г.",
+            "match": "mismatch",
+            "note": "Запрошена база «3 квартал 2026», фактически применена «2 квартал 2026 г.».",
+        },
+    )
+    assert readiness["dimensions"]["prices"]["complete"] is False
+    assert readiness["dimensions"]["prices"]["basis"]["match"] == "mismatch"
+    assert readiness["estimate_complete"] is False
+    notice = format_lsr_readiness_notice(readiness, filename="LSR.xlsx")
+    assert "Ценовая база не совпадает" in notice
+    assert "2 квартал 2026" in notice
+
+
+def test_stage_d_unspecified_basis_stays_visible_on_complete_result() -> None:
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[],
+        pricing_status="priced_final",
+        price_basis={
+            "match": "unspecified",
+            "note": "База не указана; применён 2 квартал 2026.",
+        },
+    )
+    assert readiness["dimensions"]["prices"]["complete"] is True
+    notice = format_lsr_readiness_notice(readiness, filename="LSR.xlsx")
+    assert notice.startswith("ЛСР собрана.")
+    assert "Ценовая база: База не указана" in notice
+
+
+def test_stage_d_gap_fields_survive_readiness_projection() -> None:
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[{"source_row": "СКС!R2", "row_role": "work"}],
+        price_gaps=[{
+            "resource": "Лоток",
+            "code": "R-1",
+            "quantity": 30,
+            "unit": "м",
+            "position_code": "ГЭСН08-02-395-01",
+            "dependent_calculations": ["итог позиции ГЭСН08-02-395-01"],
+            "checked_basis": "2 квартал 2026 г.; Санкт-Петербург",
+            "action": "Задайте цену для Лоток.",
+        }],
+    )
+    gap = readiness["dimensions"]["prices"]["gaps"][0]
+    assert gap["unit"] == "м"
+    assert gap["position_code"] == "ГЭСН08-02-395-01"
+    assert gap["dependent_calculations"] == ["итог позиции ГЭСН08-02-395-01"]
+    assert gap["checked_basis"].startswith("2 квартал")

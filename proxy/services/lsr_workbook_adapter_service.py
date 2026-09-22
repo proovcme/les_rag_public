@@ -30,8 +30,9 @@ _PRICE_SOURCE_LABEL = {
     "needs_fgis_price": "цена эксплуатации машины ФГИС ЦС",
 }
 _QUARTER_RE = re.compile(
-    r"(?i)(?P<num>[1-4])\s*(?:квартал|кв\.?)\s*(?P<year>20\d{2})"
+    r"(?i)(?P<num>[1-4]|III|II|IV|I)\s*(?:квартал\w*|кв\.?)\s*(?P<year>20\d{2})"
 )
+_QUARTER_ROMAN_TO_DIGIT = {"I": "1", "II": "2", "III": "3", "IV": "4"}
 _LABEL_RES = (
     ("customer", re.compile(r"(?im)^\s*заказчик\s*[:\-–]\s*(.+?)\s*$")),
     ("object", re.compile(
@@ -124,6 +125,101 @@ def _read_source_preview_text(path: Path) -> str:
         return ""
 
 
+def _quarter_token(value: object) -> str:
+    match = _QUARTER_RE.search(str(value or ""))
+    if not match:
+        return ""
+    raw = match.group("num")
+    num = _QUARTER_ROMAN_TO_DIGIT.get(raw.upper(), raw)
+    return f"{num}:{match.group('year')}"
+
+
+def _quarter_phrase(value: object) -> str:
+    match = _QUARTER_RE.search(str(value or ""))
+    return " ".join(match.group(0).split()) if match else ""
+
+
+def summarize_lsr_price_basis(
+    *,
+    requested_book: str = "",
+    source_price_level: str = "",
+    question_text: str = "",
+    pricebook=None,
+    pricebook_name: str = "",
+) -> dict[str, Any]:
+    """Bind the requested and the actually applied price basis; mismatches stay visible."""
+
+    requested_parts: list[str] = []
+    book_request = str(requested_book or "").strip()
+    if book_request:
+        requested_parts.append(book_request)
+    source_level = str(source_price_level or "").strip()
+    if source_level and source_level != "—":
+        requested_parts.append(source_level)
+    question_level = _quarter_phrase(question_text)
+    if question_level and question_level not in requested_parts:
+        requested_parts.append(question_level)
+    requested_label = "; ".join(requested_parts)
+    if pricebook is None:
+        return {
+            "requested": requested_label,
+            "actual_book": "",
+            "actual_region": "",
+            "actual_quarter": "",
+            "match": "no_book",
+            "note": (
+                (
+                    f"Запрошенная ценовая база «{requested_label}» локально не найдена. "
+                    if requested_label
+                    else ""
+                )
+                + "Ценовая книга не применена: расчёт идёт только по подтверждённым ценам и КАЦ. "
+                "Укажите доступную книгу или внесите цены через подтверждённые данные."
+            ),
+        }
+    actual_region = str(getattr(pricebook, "region", "") or "")
+    actual_quarter = str(getattr(pricebook, "quarter", "") or "")
+    actual_label = actual_quarter or str(pricebook_name or "")
+    subject_label = actual_region or "субъект не указан"
+    checks: list[bool] = []
+    if book_request:
+        checks.append(book_request.casefold() in str(pricebook_name or "").casefold())
+    requested_quarter = (
+        _quarter_token(book_request)
+        or _quarter_token(source_level)
+        or _quarter_token(question_level)
+    )
+    actual_quarter_token = _quarter_token(actual_quarter) or _quarter_token(pricebook_name)
+    if requested_quarter:
+        checks.append(bool(actual_quarter_token) and requested_quarter == actual_quarter_token)
+    if checks and all(checks):
+        match = "exact"
+        note = f"Ценовая база совпадает с запросом: {actual_label} ({subject_label})."
+    elif checks:
+        match = "mismatch"
+        note = (
+            f"Запрошена ценовая база «{requested_label}», фактически применена "
+            f"«{actual_label}» ({subject_label}). Расчёт по фактической базе не считается "
+            "расчётом по запросу: подтвердите альтернативу явно — пересоберите с книгой "
+            "запрошенной базы (явный аргумент pricebook) или внесите подтверждённые цены "
+            "через «Внести подтверждённые данные»."
+        )
+    else:
+        match = "unspecified"
+        note = (
+            f"Ценовая база в запросе и исходнике не указана; применено «{actual_label}» "
+            f"({subject_label}). Подтвердите, что эта база соответствует требуемому периоду."
+        )
+    return {
+        "requested": requested_label,
+        "actual_book": str(pricebook_name or ""),
+        "actual_region": actual_region,
+        "actual_quarter": actual_quarter,
+        "match": match,
+        "note": note,
+    }
+
+
 def collect_lsr_workbook_gaps(trace: Mapping[str, Any]) -> list[str]:
     """Operator-visible bind/price gaps. Code does not choose replacement norms."""
 
@@ -154,9 +250,25 @@ def collect_lsr_workbook_gaps(trace: Mapping[str, Any]) -> list[str]:
     return gaps
 
 
-def collect_lsr_price_gaps(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Price holes with resource, quantity, and the required source. Not zeros."""
+def collect_lsr_price_gaps(
+    trace: Mapping[str, Any],
+    *,
+    pricebook=None,
+    pricebook_name: str = "",
+) -> list[dict[str, Any]]:
+    """Price holes per position: resource, quantity+unit, basis checked. Not zeros."""
 
+    basis_region = (
+        str(getattr(pricebook, "region", "") or "") if pricebook is not None else ""
+    )
+    basis_quarter = (
+        str(getattr(pricebook, "quarter", "") or "") if pricebook is not None else ""
+    )
+    checked_basis = "; ".join(
+        part
+        for part in (basis_quarter or str(pricebook_name or ""), basis_region)
+        if part
+    )
     gaps: list[dict[str, Any]] = []
     for section in trace.get("sections") or []:
         if not isinstance(section, Mapping):
@@ -164,6 +276,9 @@ def collect_lsr_price_gaps(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
         for position in section.get("positions") or []:
             if not isinstance(position, Mapping):
                 continue
+            position_code = str(position.get("code") or "")
+            position_name = str(position.get("name") or "")
+            position_label = position_code or position_name
             for row in position.get("rows") or []:
                 if not isinstance(row, Mapping):
                     continue
@@ -175,19 +290,36 @@ def collect_lsr_price_gaps(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
                 code = str(columns.get(2, columns.get("2")) or "")
                 name = str(row.get("name") or columns.get(3, columns.get("3")) or code or "ресурс")
                 quantity = columns.get(7, columns.get("7"))
+                unit = str(columns.get(4, columns.get("4")) or "")
                 required = _PRICE_SOURCE_LABEL.get(action, "подтверждённая цена")
                 gaps.append(
                     {
                         "resource": name if name != code else (code or name),
                         "code": code,
                         "quantity": quantity,
+                        "unit": unit,
                         "price_action": action,
                         "required_source": required,
+                        "position_code": position_code,
+                        "position_name": position_name,
+                        "dependent_calculations": [
+                            f"итог позиции {position_label or 'без шифра'}",
+                            "прямые затраты, НР и СП этой позиции",
+                        ],
+                        "checked_basis": checked_basis,
                         "action": (
                             f"Задайте цену для {name}"
                             + (f" ({code})" if code and code != name else "")
+                            + (f" в позиции {position_label}" if position_label else "")
                             + (f", количество {quantity}" if quantity not in (None, "") else "")
-                            + f". Источник: {required}. Отсутствие цены не отменяет норму."
+                            + (f" {unit}" if unit else "")
+                            + f". Источник: {required}."
+                            + (
+                                f" Проверенная ценовая база: {checked_basis}."
+                                if checked_basis
+                                else ""
+                            )
+                            + " Отсутствие цены не отменяет норму."
                         ),
                     }
                 )
@@ -258,6 +390,13 @@ async def build_lsr_workbook_from_decisions(
         source_text=source_text,
         source_name=source_name,
     )
+    price_basis = summarize_lsr_price_basis(
+        requested_book=requested_pricebook,
+        source_price_level=identity["price_level"],
+        question_text=str(args.get("question") or ""),
+        pricebook=pricebook,
+        pricebook_name=pricebook_name,
+    )
     progress("model_decisions", 0, len(decisions))
     overlays = args.get("confirmed_data") if isinstance(args.get("confirmed_data"), Mapping) else None
     trace = await asyncio.to_thread(
@@ -280,6 +419,8 @@ async def build_lsr_workbook_from_decisions(
         render_meta["stroika"] = identity["stroika"]
     if pricebook is not None:
         render_meta["subject"] = str(getattr(pricebook, "region", "") or "Не указан")
+    render_meta["price_basis_note"] = price_basis["note"]
+    render_meta["price_basis_match"] = price_basis["match"]
     await asyncio.to_thread(
         render_lsr_xlsx,
         trace,
@@ -297,7 +438,12 @@ async def build_lsr_workbook_from_decisions(
         "pricing_status": str((trace.get("summary") or {}).get("result_status") or ""),
         "norms_status": str((trace.get("summary") or {}).get("norms_status") or ""),
         "missing": missing,
-        "price_gaps": collect_lsr_price_gaps(trace),
+        "price_gaps": collect_lsr_price_gaps(
+            trace,
+            pricebook=pricebook,
+            pricebook_name=pricebook_name,
+        ),
+        "price_basis": price_basis,
         # stage V operator counts: calculated positions and the confirmed /
         # preliminary split of the known amount (code arithmetic, no statuses raised)
         "calculated_positions": int(

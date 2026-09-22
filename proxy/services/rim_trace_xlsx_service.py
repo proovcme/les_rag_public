@@ -120,7 +120,17 @@ def _header_block(ws, put, S: dict[str, Any], *, name: str, summary: dict[str, A
         basis = Path(basis.replace("file://", "")).name
     put(r, 1, "Основание: " + basis, font=S["dim"]); r += 1
     put(r, 1, "Составлен(а) в текущем уровне цен: " + str(meta.get("price_level", "—")), font=S["dim"]); r += 1
-    put(r, 1, "Наименование субъекта РФ: " + str(meta.get("subject", "—")), font=S["dim"]); r += 2
+    put(r, 1, "Наименование субъекта РФ: " + str(meta.get("subject", "—")), font=S["dim"]); r += 1
+    basis_note = str(meta.get("price_basis_note") or "")
+    if basis_note:
+        if str(meta.get("price_basis_match") or "") == "mismatch":
+            put(r, 1, basis_note, font=S["warning"])
+            for c in range(1, 13):
+                ws.cell(row=r, column=c).fill = S["fill_warning"]
+        else:
+            put(r, 1, basis_note, font=S["dim"])
+        r += 1
+    r += 1
     result_status = str(summary.get("result_status") or "").strip()
     if result_status and result_status != "priced_final":
         put(

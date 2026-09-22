@@ -205,3 +205,30 @@ def test_endpoint_lsr_trace_export_returns_download():
     assert len(res["sections"]) == 2
     assert res["download"].startswith("/api/lsr/download?path=lsr_trace_")
     assert Path(res["path"]).exists()
+def test_stage_d_lsr_header_shows_price_basis_note(tmp_path):
+    import openpyxl
+
+    lsr = _lsr_trace()
+    lsr["row_bindings"] = []
+    out = rim_xlsx.render_lsr_xlsx(
+        lsr,
+        tmp_path / "basis.xlsx",
+        meta={
+            "subject": "Санкт-Петербург",
+            "price_level": "3 квартал 2026",
+            "price_basis_match": "mismatch",
+            "price_basis_note": (
+                "Запрошена ценовая база «3 квартал 2026», фактически применена "
+                "«2 квартал 2026 г.»."
+            ),
+        },
+    )
+    wb = openpyxl.load_workbook(out)
+    header_text = " ".join(
+        str(cell.value)
+        for row in wb["ЛСР РИМ"].iter_rows(max_row=16)
+        for cell in row
+        if cell.value
+    )
+    assert "фактически применена" in header_text
+    assert "Наименование субъекта РФ" in header_text

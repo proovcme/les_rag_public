@@ -1,5 +1,27 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**0.31.75 / 781 stage D (22.09):** §8 price visibility closed on the existing
+seams. The LSR build now returns `price_basis`: requested basis (explicit
+`pricebook` argument — added to the LSR tool schema, period in the source text,
+period in the user question with roman/digit normalization) versus the actually
+resolved book's region/quarter; states `exact/mismatch/unspecified/no_book` with a
+note that names the prescribed alternative-confirmation procedure (rebuild with the
+requested book or enter confirmed prices). A mismatch is never presented as
+matching the request: it blocks the prices dimension of readiness, marks the
+estimate incomplete, prints a warning-filled line in the XLSX header and a named
+line in the operator notice. The missing-price list became concrete: position
+code/name, quantity with unit, required source, the checked price base
+(book quarter+region) and the dependent position totals; empty price ≠ zero, the
+norm stays valid. Refill of a confirmed price reuses the durable `confirmed_data`
+overlay → trace-time recalculation without norm re-search and a new file revision.
+Live acceptance on the real СКС job (wrj_b94c…, backup DB read-only): the stored
+decisions run produced `unspecified` naming «2 квартал 2026 г.»/Санкт-Петербург;
+the same inputs with «цены III квартала 2026» produced `mismatch` visible in
+result+XLSX+notice with prices dimension incomplete; all 50 gaps carried the §8
+fields; a 125.5 ₽ confirmed overlay on СКС!R6 removed its two gap rows
+(50→48) and grew the confirmed amount by 502 ₽ with 14 norm-card lookups and zero
+search/model calls. Verified: 43 targeted + 175 regression tests green (+6 new).
+
 **0.31.74 / 780 stage G (22.09):** the existing trace became sufficient to
 attribute the six §7 causes on the live СКС job (wrj_b94c…) with no new audit
 subsystem. Durable-job diagnosis: the correct tray cards ГЭСНм08-02-395-01/-02 were

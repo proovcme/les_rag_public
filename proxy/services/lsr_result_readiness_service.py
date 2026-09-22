@@ -83,14 +83,24 @@ def _structured_price_gaps(
             + (f", количество {quantity}" if quantity not in (None, "") else "")
             + f". Источник: {required}."
         )
-        gaps.append(
-            {
-                "resource": resource,
-                "quantity": quantity,
-                "required_source": required,
-                "action": action,
-            }
-        )
+        gap = {
+            "resource": resource,
+            "quantity": quantity,
+            "required_source": required,
+            "action": action,
+        }
+        for key in (
+            "code",
+            "unit",
+            "price_action",
+            "position_code",
+            "position_name",
+            "dependent_calculations",
+            "checked_basis",
+        ):
+            if item.get(key) not in (None, "", [], {}):
+                gap[key] = item[key]
+        gaps.append(gap)
     for item in missing:
         text = _text(item)
         if not text.startswith("price_missing:"):
@@ -159,6 +169,7 @@ def build_lsr_result_readiness(
     catalog_work_count: int = 0,
     catalog_locators: Sequence[str] = (),
     price_gaps: Sequence[Mapping[str, Any]] = (),
+    price_basis: Mapping[str, Any] | None = None,
     calculated_positions: int = -1,
     confirmed_amount: float = -1.0,
     preliminary_amount: float = -1.0,
@@ -216,6 +227,9 @@ def build_lsr_result_readiness(
         )
 
     structured_prices = _structured_price_gaps(missing, price_gaps)
+    basis_info = dict(price_basis or {})
+    basis_match = _text(basis_info.get("match"))
+    basis_note = _text(basis_info.get("note"))
     unbound = _unbound_locators(missing)
     priced_complete = (
         not structured_prices
@@ -225,6 +239,10 @@ def build_lsr_result_readiness(
     if packaged and _text(pricing_status) in {"priced_partial", "norm_selection_required"}:
         priced_complete = False
     if structured_prices:
+        priced_complete = False
+    if basis_match == "mismatch":
+        # §8: prices on a base that contradicts the request are not a closed
+        # condition until the alternative is explicitly confirmed.
         priced_complete = False
 
     if packaged and not packaging_failed:
@@ -358,6 +376,7 @@ def build_lsr_result_readiness(
             ][:40],
             "gaps": structured_prices[:80],
             "action": prices_action,
+            "basis": basis_info,
         },
     }
     actions: list[dict[str, str]] = []
@@ -407,6 +426,16 @@ def build_lsr_result_readiness(
     }
 
 
+def _lsr_basis_suffix(match: str, note: str) -> str:
+    """Explicit price-basis line; the code never silently reconciles periods."""
+
+    if not note:
+        return ""
+    if match == "mismatch":
+        return " Ценовая база не совпадает с запрошенной. " + note
+    return " Ценовая база: " + note
+
+
 def format_lsr_readiness_notice(
     readiness: Mapping[str, Any] | None,
     *,
@@ -427,8 +456,21 @@ def format_lsr_readiness_notice(
     coverage_complete = bool(coverage_dim.get("complete"))
     norms_complete = bool(norms_dim.get("complete"))
     prices_complete = bool(prices_dim.get("complete"))
+    basis_dim = (
+        prices_dim.get("basis") if isinstance(prices_dim.get("basis"), Mapping) else {}
+    )
+    basis_match = _text(basis_dim.get("match"))
+    basis_note = _text(basis_dim.get("note"))
+    basis_visible = bool(basis_note) and basis_match in {
+        "mismatch",
+        "unspecified",
+        "no_book",
+    }
     if file_ready and coverage_complete and norms_complete and prices_complete:
-        return f"ЛСР собрана.{file_bit}".strip()
+        done_line = f"ЛСР собрана.{file_bit}".strip()
+        if basis_visible:
+            done_line += _lsr_basis_suffix(basis_match, basis_note)
+        return done_line
     parts = [f"ЛСР собрана частично.{file_bit}".strip()]
     counts = payload.get("counts") if isinstance(payload.get("counts"), Mapping) else {}
     if counts:
@@ -469,6 +511,8 @@ def format_lsr_readiness_notice(
             f"Цены: не полные ({int(prices_dim.get('gap_count') or 0)}). "
             f"{_text(prices_dim.get('action'))}".strip()
         )
+    if basis_visible:
+        parts.append(_lsr_basis_suffix(basis_match, basis_note).strip())
     continue_action = _text(payload.get("continue_action"))
     if continue_action:
         parts.append(continue_action)

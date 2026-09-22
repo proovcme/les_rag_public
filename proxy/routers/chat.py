@@ -340,6 +340,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             pricing_status=str(harvested.get("pricing_status") or ""),
             remaining_locators=remaining,
             price_gaps=list(harvested.get("price_gaps") or []),
+            price_basis=dict(harvested.get("price_basis") or {}),
             calculated_positions=int(payload.get("calculated_positions") or -1),
             confirmed_amount=float(payload.get("confirmed_amount") or -1.0),
             preliminary_amount=float(payload.get("preliminary_amount") or -1.0),

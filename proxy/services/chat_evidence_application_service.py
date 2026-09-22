@@ -513,6 +513,7 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         "norms_status": str(result.get("norms_status") or ""),
         "missing": list(result.get("missing") or []),
         "price_gaps": list(result.get("price_gaps") or []),
+        "price_basis": dict(result.get("price_basis") or {}),
         "blockers": list(result.get("blockers") or []),
     }
 
@@ -7470,6 +7471,9 @@ async def _execute_chat_evidence_application(
                             ),
                             price_gaps=list(
                                 (workbook_chat_meta or {}).get("price_gaps") or []
+                            ),
+                            price_basis=dict(
+                                (workbook_chat_meta or {}).get("price_basis") or {}
                             ),
                             calculated_positions=int(
                                 (safe_payload or {}).get("calculated_positions") or -1
