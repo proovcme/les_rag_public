@@ -452,6 +452,8 @@ class WorkbookResearchJobService:
         self,
         job_id: str,
         query_hits: Mapping[str, Sequence[Mapping[str, Any]]],
+        *,
+        context: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -478,12 +480,14 @@ class WorkbookResearchJobService:
                 (json.dumps(cache, ensure_ascii=False), job_id),
             )
             if added:
-                self._append_event(
-                    conn,
-                    job_id,
-                    "search_cache",
-                    {"added": added, "cached_total": len(cache)},
-                )
+                payload: dict[str, Any] = {"added": added, "cached_total": len(cache)}
+                for key in ("sheet", "packet_id", "locators", "queries"):
+                    value = dict(context or {}).get(key)
+                    if isinstance(value, (list, tuple)):
+                        value = list(value)
+                    if value:
+                        payload[key] = value
+                self._append_event(conn, job_id, "search_cache", payload)
         return self.get(job_id)
 
     def record_overrides(

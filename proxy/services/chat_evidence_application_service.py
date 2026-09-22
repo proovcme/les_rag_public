@@ -1319,15 +1319,99 @@ def row_packet_id(
     return "packet_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
+_SHIFR_RE = re.compile(r"\u0428\u0438\u0444\u0440:\s*([^\s,;]+)")
+
+
+def _card_code_from_body(body: str, doc_name: str) -> str:
+    match = _SHIFR_RE.search(body or "")
+    return match.group(1) if match else str(doc_name or "")
+
+
+def row_evidence_provenance_check(
+    row,
+    bindings,
+    alias_to_card,
+    alias_to_query,
+):
+    """Structural citation check only: never rewrites the model's decision."""
+
+    norm_code = str(row.get("norm_code") or "").strip()
+    if not norm_code:
+        return None
+    cited = [
+        {
+            "ref": alias,
+            "card": alias_to_card.get(alias, ""),
+            "query": alias_to_query.get(alias, ""),
+        }
+        for alias in sorted(bindings)
+    ]
+    unresolved = sorted(
+        {
+            str(ref).strip().upper()
+            for ref in row.get("evidence_refs") or ()
+            if str(ref).strip() and str(ref).strip().upper() not in bindings
+        }
+    )
+    codes = [item["card"] for item in cited if item["card"]]
+    return {
+        "norm_code": norm_code,
+        "cited": cited,
+        "unresolved_refs": unresolved,
+        "code_not_in_refs": not any(
+            norm_code in code or code in norm_code for code in codes
+        ),
+    }
+
+
+def model_rag_budget_omitted_cards(included_hits, chunks, omitted_refs):
+    """Cards found by search but dropped by the evidence budget: name them."""
+
+    if not omitted_refs:
+        return []
+    wanted = {str(ref).strip().upper() for ref in omitted_refs}
+    shown = {
+        str((getattr(chunk, "meta", {}) or {}).get("model_evidence_ref") or "")
+        .strip()
+        .upper()
+        for chunk in chunks
+    }
+    detail = []
+    for query_index, (query_text, hits) in enumerate(list(included_hits), 1):
+        for hit_index, hit in enumerate(list(hits), 1):
+            ref = f"Q{query_index}.H{hit_index}"
+            if ref not in wanted or ref in shown:
+                continue
+            detail.append(
+                {
+                    "ref": ref,
+                    "query": str(query_text or ""),
+                    "card": _card_code_from_body(
+                        str(getattr(hit, "content", "") or ""),
+                        str(getattr(hit, "doc_name", "") or ""),
+                    ),
+                }
+            )
+    return detail[:300]
+
+
 def bind_row_evidence_ids(
     rows: Sequence[Mapping[str, Any]],
     evidence_chunks: Sequence[Any],
 ) -> list[dict[str, Any]]:
     alias_to_global: dict[str, str] = {}
+    alias_to_card: dict[str, str] = {}
+    alias_to_query: dict[str, str] = {}
     for chunk in evidence_chunks:
         meta = getattr(chunk, "meta", {}) or {}
         alias = str(meta.get("model_evidence_ref") or "").strip().upper()
         global_id = str(meta.get("global_evidence_id") or "").strip()
+        if alias and alias not in alias_to_card:
+            alias_to_card[alias] = _card_code_from_body(
+                str(getattr(chunk, "content", "") or ""),
+                str(getattr(chunk, "doc_name", "") or ""),
+            )
+            alias_to_query[alias] = str(meta.get("model_query_text") or "")
         if alias and global_id and alias not in alias_to_global:
             alias_to_global[alias] = global_id
     bound: list[dict[str, Any]] = []
@@ -1345,6 +1429,11 @@ def bind_row_evidence_ids(
             if alias and global_id and alias not in merged:
                 merged[alias] = global_id
         payload["evidence_bindings"] = merged
+        evidence_check = row_evidence_provenance_check(
+            payload, merged, alias_to_card, alias_to_query
+        )
+        if evidence_check is not None:
+            payload["_evidence_check"] = evidence_check
         bound.append(payload)
     return bound
 
@@ -1470,6 +1559,7 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "action_match",
             "object_match",
             "_quality_gate",
+            "_evidence_check",
             "quality_message",
             "row_role",
             "work_row",
@@ -2385,7 +2475,7 @@ def build_model_rag_evidence_groups(
     if not included:
         return [], [], omitted_refs
 
-    prepared: list[tuple[int, str, list[tuple[int, Any, str, str]]]] = []
+    prepared: list[tuple[int, str, str, list[tuple[int, Any, str, str]]]] = []
     source_index = 0
     fixed_chars = 0
     segment_count = 0
@@ -2404,11 +2494,13 @@ def build_model_rag_evidence_groups(
             hits.append((hit_index, hit, source_header, body))
             fixed_chars += len(source_header) + 2
             segment_count += 1
-        prepared.append((query_index, query_header, hits))
+        prepared.append((query_index, query_header, query, hits))
 
     fixed_chars += max(0, segment_count - 1) * 2
 
-    bodies = [body for _qi, _qh, hits in prepared for _hi, _hit, _sh, body in hits]
+    bodies = [
+        body for _qi, _qh, _q, hits in prepared for _hi, _hit, _sh, body in hits
+    ]
     body_budget = max(0, int(max_chars) - fixed_chars)
     low, high = 0, max((len(body) for body in bodies), default=0)
     while low < high:
@@ -2424,9 +2516,9 @@ def build_model_rag_evidence_groups(
     included_caps: dict[tuple[int, int], int] = {}
     if omit_mode:
         used = 0
-        max_rank = max((len(hits) for _qi, _qh, hits in prepared), default=0)
+        max_rank = max((len(hits) for _qi, _qh, _q, hits in prepared), default=0)
         for rank in range(1, max_rank + 1):
-            for query_index, _query_header, hits in prepared:
+            for query_index, _query_header, _query, hits in prepared:
                 match = next((item for item in hits if item[0] == rank), None)
                 if match is None:
                     continue
@@ -2446,7 +2538,7 @@ def build_model_rag_evidence_groups(
     groups: list[str] = []
     chunks: list[_ModelRagEvidenceChunk] = []
     source_index = 0
-    for query_index, query_header, hits in prepared:
+    for query_index, query_header, query, hits in prepared:
         group_parts = [query_header]
         for hit_index, hit, source_header, body in hits:
             if omit_mode and (query_index, hit_index) not in included_caps:
@@ -2477,6 +2569,7 @@ def build_model_rag_evidence_groups(
             meta.update(
                 {
                     "model_query_index": query_index,
+                    "model_query_text": query,
                     "model_hit_index": hit_index,
                     "model_evidence_ref": alias,
                     "global_evidence_id": (
@@ -5749,6 +5842,16 @@ async def _execute_chat_evidence_application(
                                     research_job = research_job_service.record_search_cache(
                                         research_job["job_id"],
                                         cache_updates,
+                                        context={
+                                            "sheet": sheet_name,
+                                            "packet_id": row_packet_id(
+                                                source_catalog,
+                                                sheet=sheet_name,
+                                                locators=packet,
+                                            ),
+                                            "locators": list(packet),
+                                            "queries": list(cache_updates),
+                                        },
                                     )
                                 tool_results_for_model = pass_tools
                                 model_rag_query_hits = pass_hits
@@ -5833,14 +5936,22 @@ async def _execute_chat_evidence_application(
                                     included_hits,
                                     max_chars=group_max_chars,
                                     hits_per_query=retrieval_limits["model_evidence_k"],
-                                    evidence_namespace=row_packet_id(
-                                        source_catalog,
-                                        sheet=sheet_name,
-                                        locators=packet,
+                                    evidence_namespace=(
+                                        row_packet_id(
+                                            source_catalog,
+                                            sheet=sheet_name,
+                                            locators=packet,
+                                        )
+                                        + f":a{packet_attempts[fingerprint]}"
                                     ),
                                 )
                             sheet_pass_evidence_chunks.extend(model_evidence_chunks)
                             pass_omitted.extend(omitted_now)
+                            omitted_cards = model_rag_budget_omitted_cards(
+                                included_hits,
+                                model_evidence_chunks,
+                                omitted_now,
+                            )
                             context = "\n\n".join(model_rag_evidence_groups)
                             answer_source_map = _model_rag_source_map(
                                 model_evidence_chunks
@@ -5962,6 +6073,10 @@ async def _execute_chat_evidence_application(
                                     "queries": model_queries,
                                     "shown_queries": len(included_hits),
                                     "leftover_queries": len(leftover_query_hits),
+                                    "leftover_query_texts": [
+                                        str(query) for query, _hits in leftover_query_hits
+                                    ][:100],
+                                    "omitted_cards": omitted_cards,
                                     "kept_rows": len(kept),
                                     "parsed_rows": len(pass_rows),
                                     "row_errors": list(pass_errors),
@@ -6051,6 +6166,16 @@ async def _execute_chat_evidence_application(
                                     research_job = research_job_service.record_search_cache(
                                         research_job["job_id"],
                                         leftover_cache,
+                                        context={
+                                            "sheet": sheet_name,
+                                            "packet_id": row_packet_id(
+                                                source_catalog,
+                                                sheet=sheet_name,
+                                                locators=packet,
+                                            ),
+                                            "locators": list(packet),
+                                            "queries": list(leftover_cache),
+                                        },
                                     )
                             if (
                                 research_job_service is not None

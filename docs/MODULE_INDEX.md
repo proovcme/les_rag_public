@@ -1,5 +1,17 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.74 / 780 stage G:** norm-search trace attributes the §7 control cases
+> without a new audit subsystem: the evidence namespace is scoped per packet
+> attempt (`row_packet_id(...)+":a<n>"`) so one alias `Qx.Hy` can no longer resolve
+> to several cards across retries; every visible chunk carries `model_query_text`;
+> budget-dropped cards are named per pass (`omitted_cards`: ref/query/card) with
+> deferred `leftover_query_texts`; `search_cache` events carry sheet/packet/locators/
+> queries context; accepted rows store `_evidence_check` — a structural citation
+> check (cited card vs authored norm_code, unresolved refs) that never rewrites the
+> model's decision. Code: `chat_evidence_application_service.py`,
+> `workbook_research_job_service.py`; tests: +4 (`test_chat_evidence_application_service`,
+> `test_workbook_research_job_service`).
+
 > **0.31.73 / 779 stage V:** every LSR row binding carries split readiness
 > (`source_accounted / operation_defined / norm_selected / applicability_substantiated /
 > volume_verified / position_calculated / prices_provided`) — `bound` alone never means

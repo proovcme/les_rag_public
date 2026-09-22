@@ -1,5 +1,29 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**0.31.74 / 780 stage G (22.09):** the existing trace became sufficient to
+attribute the six §7 causes on the live СКС job (wrj_b94c…) with no new audit
+subsystem. Durable-job diagnosis: the correct tray cards ГЭСНм08-02-395-01/-02 were
+returned by the model's own queries yet became visible only in packets for R56-R77,
+never in the packets covering R47-R50 (cause 4), where the model honestly bound the
+crane-run analogue ГЭСН21-03-004-02 with an open_gap (cause 5 layered); the Wi-Fi
+row chose the top-ranked lexical collision ГЭСНм10-10-006-01 («доступ») but its
+citation Q7.H1 resolved to another card, and the ИБП citation mismatch repeated it —
+`(namespace, alias)` collisions were proven on packet_5755a625 where one Qx.Hy maps
+to up to 5 different cards across attempts (cause 6 class). Fixes are minimal trace
+supplements: attempt-scoped evidence namespace (`:a<n>`), `model_query_text` in
+chunk meta, per-pass `omitted_cards`/`leftover_query_texts` in the sheet-pass trace,
+sheet/packet/locators/queries context on `search_cache` events, and `_evidence_check`
+stored on accepted rows (cited card vs authored norm_code plus unresolved refs;
+model statuses and norm choices are never rewritten). Baseline vs production on
+identical inputs (the model's own stored queries through the same smeta native RRF):
+tray queries rank the expected cards top-1 even in degraded sparse-only mode, so
+search is not the failure point for trays; the Wi-Fi expected card surfaces behind
+facade-cable collisions, matching the production durable order. Verified: 126
+targeted tests green (+4 new stage Г), patched-seam replay on a copy of the real
+backup DB proves unique per-attempt ids, durable event context and persisted
+`_evidence_check` with `norm_code` untouched; pre-existing environment failures in
+`test_notebook_study_chat_policy` confirmed identical at HEAD (unrelated).
+
 **0.31.73 / 779 stage V (22.09):** readiness states were split per §6. Each
 row binding now exposes `readiness` (source row accounted / operation defined /
 norm selected / applicability substantiated / volume verified / position

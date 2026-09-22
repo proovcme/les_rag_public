@@ -368,3 +368,49 @@ def test_legacy_operation_ids_are_stable_and_never_merged_by_title(tmp_path) -> 
     revisions = WorkbookResearchJobService(db).list_revisions(job["job_id"])
     migrated = [item for item in revisions if item["origin"] == "migration"]
     assert {item["operation_id"] for item in migrated} == set(legacy_ids)
+
+
+def test_search_cache_event_carries_packet_context(tmp_path) -> None:
+    import json
+
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    first = service.begin_or_resume(_identity(service))
+    service.record_search_cache(
+        first["job_id"],
+        {
+            "\u043b\u043e\u0442\u043e\u043a \u0434\u043e 200": [
+                {"content": "\u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0430", "doc_id": "c1", "doc_name": "d", "score": 1.0, "meta": {}}
+            ]
+        },
+        context={
+            "sheet": "\u0421\u041a\u0421",
+            "packet_id": "packet_ctx",
+            "locators": ["\u0421\u041a\u0421!R47", "\u0421\u041a\u0421!R48"],
+            "queries": ["\u043b\u043e\u0442\u043e\u043a \u0434\u043e 200"],
+        },
+    )
+    # Legacy positional calls without context keep working unchanged.
+    service.record_search_cache(
+        first["job_id"],
+        {
+            "\u0434\u0440\u0443\u0433\u043e\u0439 \u0437\u0430\u043f\u0440\u043e\u0441": [
+                {"content": "\u0435\u0449\u0451", "doc_id": "c2", "doc_name": "d", "score": 1.0, "meta": {}}
+            ]
+        },
+    )
+    events = [
+        item
+        for item in service.events_after(first["job_id"])
+        if item["event"] == "search_cache"
+    ]
+    assert len(events) == 2
+    with_context = events[0]["data"]
+    assert with_context["sheet"] == "\u0421\u041a\u0421"
+    assert with_context["packet_id"] == "packet_ctx"
+    assert with_context["locators"] == ["\u0421\u041a\u0421!R47", "\u0421\u041a\u0421!R48"]
+    assert with_context["queries"] == ["\u043b\u043e\u0442\u043e\u043a \u0434\u043e 200"]
+    assert with_context["added"] == 1
+    bare = events[1]["data"]
+    assert "sheet" not in bare and bare["cached_total"] == 2
+    cached = service.get(first["job_id"])["query_cache"]
+    assert json.dumps(sorted(cached))  # both queries durable, order irrelevant

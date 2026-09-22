@@ -3607,3 +3607,120 @@ def test_restore_query_hits_from_cache_skips_search_payload() -> None:
 
 async def _async_value(value):
     return value
+
+
+def test_stage_g_evidence_meta_names_query_and_attempt_scopes_ids():
+    query_hits = [
+        (
+            "\u041b\u043e\u0442\u043e\u043a \u043c\u0435\u0442\u0430\u043b\u043b\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0448\u0442\u0430\u043c\u043f\u043e\u0432\u0430\u043d\u043d\u044b\u0439 \u0434\u043e 200 \u043c\u043c",
+            [
+                SimpleNamespace(
+                    content="\u0428\u0438\u0444\u0440: \u0413\u042d\u0421\u041d\u043c08-02-395-01 \u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435: \u041b\u043e\u0442\u043a\u0438",
+                    doc_id="doc-tray-1",
+                    doc_name="smeta_norm_cards.v1",
+                    score=1.0,
+                    meta={},
+                )
+            ],
+        )
+    ]
+    _groups, chunks, omitted = service.build_model_rag_evidence_groups(
+        query_hits,
+        max_chars=4000,
+        hits_per_query=4,
+        evidence_namespace="packet_attempt_one:a1",
+    )
+    assert omitted == []
+    meta = chunks[0].meta
+    assert meta["model_query_text"] == query_hits[0][0]
+    assert meta["evidence_namespace"] == "packet_attempt_one:a1"
+    _g2, chunks2, _o2 = service.build_model_rag_evidence_groups(
+        query_hits,
+        max_chars=4000,
+        hits_per_query=4,
+        evidence_namespace="packet_attempt_one:a2",
+    )
+    # The same alias in two attempts of one packet must not collide.
+    assert chunks2[0].meta["global_evidence_id"] != meta["global_evidence_id"]
+
+
+def test_stage_g_provenance_check_flags_mismatch_without_touching_norm():
+    query_hits = [
+        (
+            "\u041c\u043e\u043d\u0442\u0430\u0436 \u043e\u0431\u043e\u0440\u0443\u0434\u043e\u0432\u0430\u043d\u0438\u044f \u0434\u043e\u0441\u0442\u0443\u043f\u0430",
+            [
+                SimpleNamespace(
+                    content="\u0428\u0438\u0444\u0440: \u0413\u042d\u0421\u041d\u043c08-02-384-02 \u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435: \u041a\u0430\u0431\u0435\u043b\u044c",
+                    doc_id="doc-wifi-1",
+                    doc_name="smeta_norm_cards.v1",
+                    score=1.0,
+                    meta={},
+                )
+            ],
+        )
+    ]
+    _groups, chunks, _omitted = service.build_model_rag_evidence_groups(
+        query_hits,
+        max_chars=4000,
+        hits_per_query=4,
+        evidence_namespace="packet_probe",
+    )
+    row = {
+        "source_row": "\u0421\u041a\u0421!R45",
+        "norm_code": "\u0413\u042d\u0421\u041d\u043c10-10-006-01",
+        "evidence_refs": ["Q1.H1", "Q9.H9"],
+    }
+    bound = service.bind_row_evidence_ids([row], chunks)
+    check = bound[0]["_evidence_check"]
+    assert bound[0]["norm_code"] == "\u0413\u042d\u0421\u041d\u043c10-10-006-01"
+    assert check["code_not_in_refs"] is True
+    assert check["cited"][0]["card"] == "\u0413\u042d\u0421\u041d\u043c08-02-384-02"
+    assert check["cited"][0]["query"] == query_hits[0][0]
+    assert check["unresolved_refs"] == ["Q9.H9"]
+    # A matching citation must not be flagged.
+    row_ok = {
+        "source_row": "\u0421\u041a\u0421!R45",
+        "norm_code": "\u0413\u042d\u0421\u041d\u043c08-02-384-02",
+        "evidence_refs": ["Q1.H1"],
+    }
+    check_ok = service.bind_row_evidence_ids([row_ok], chunks)[0]["_evidence_check"]
+    assert check_ok["code_not_in_refs"] is False
+    # Rows without a norm carry no check at all.
+    plain = service.bind_row_evidence_ids(
+        [{"source_row": "\u0421\u041a\u0421!R47", "evidence_refs": ["Q1.H1"]}],
+        chunks,
+    )
+    assert "_evidence_check" not in plain[0]
+
+
+def test_stage_g_budget_omitted_cards_name_query_and_shifr():
+    query_hits = [
+        (
+            "\u0448\u043a\u0430\u0444 42U",
+            [
+                SimpleNamespace(
+                    content="\u0428\u0438\u0444\u0440: \u0413\u042d\u0421\u041d01-01-001-01 " + "\u0441\u043e\u0441\u0442\u0430\u0432 " * 40,
+                    doc_id="doc-cab-1",
+                    doc_name="smeta_norm_cards.v1",
+                    score=0.9,
+                    meta={},
+                )
+                for _ in range(3)
+            ],
+        )
+    ]
+    groups, chunks, omitted_refs = service.build_model_rag_evidence_groups(
+        query_hits,
+        max_chars=0,
+        hits_per_query=3,
+    )
+    assert groups == [] and chunks == []
+    assert "Q1.H1" in omitted_refs
+    detail = service.model_rag_budget_omitted_cards(query_hits, chunks, omitted_refs)
+    assert detail
+    first = detail[0]
+    assert first["ref"] == "Q1.H1"
+    assert first["query"] == "\u0448\u043a\u0430\u0444 42U"
+    assert first["card"] == "\u0413\u042d\u0421\u041d01-01-001-01"
+    # Nothing omitted -> nothing named.
+    assert service.model_rag_budget_omitted_cards(query_hits, chunks, []) == []
