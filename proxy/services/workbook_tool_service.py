@@ -460,7 +460,14 @@ async def _build_workbook(
             ),
             "tool": tool_name,
         }
-        for key in ("pricing_status", "norms_status", "price_gaps"):
+        for key in (
+            "pricing_status",
+            "norms_status",
+            "price_gaps",
+            "calculated_positions",
+            "confirmed_amount",
+            "preliminary_amount",
+        ):
             if generated.get(key) not in (None, "", [], ()):
                 payload[key] = generated[key]
         return payload

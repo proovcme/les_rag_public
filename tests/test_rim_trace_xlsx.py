@@ -180,7 +180,8 @@ def test_lsr_header_uses_passed_source_metadata_and_review_issues_are_readable(t
     review = wb["Проверка"]
     issue_row = next(row[0].row for row in review.iter_rows() if row[0].value == "warning")
     assert review.cell(issue_row, 4).value.startswith("Длинное профессиональное замечание")
-    assert f"D{issue_row}:M{issue_row}" in {str(value) for value in review.merged_cells.ranges}
+    # stage V added the "Готовность строки" column, so the review grid is 14 wide
+    assert f"D{issue_row}:N{issue_row}" in {str(value) for value in review.merged_cells.ranges}
     assert review.column_dimensions["A"].width >= 20
 
 

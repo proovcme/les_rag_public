@@ -5,6 +5,7 @@ from typing import Any, Mapping, Sequence
 
 from proxy.services.lsr_source_coverage_service import (
     build_source_coverage,
+    canonicalize_row_role,
     inferred_row_role,
 )
 
@@ -127,6 +128,9 @@ def classify_norm_gap(row: Mapping[str, Any]) -> str:
     role = inferred_row_role(row)
     if role in {"material", "equipment", "resource", "unresolved"}:
         return ""
+    if canonicalize_row_role(row.get("row_role")) == "header":
+        # A heading is accounted as structure; it never requires a mounting norm.
+        return ""
     status = _norm_status(row)
     code = _norm_code(row)
     if status in _OPEN_STATUSES or code.casefold() in _ABSENT_CODES:
@@ -155,6 +159,9 @@ def build_lsr_result_readiness(
     catalog_work_count: int = 0,
     catalog_locators: Sequence[str] = (),
     price_gaps: Sequence[Mapping[str, Any]] = (),
+    calculated_positions: int = -1,
+    confirmed_amount: float = -1.0,
+    preliminary_amount: float = -1.0,
 ) -> dict[str, Any]:
     """Split technical file readiness from coverage, norms, and prices."""
 
@@ -263,7 +270,7 @@ def build_lsr_result_readiness(
         continue_action = ""
 
     if coverage_complete:
-        coverage_action = "Все исходные строки учтены как работа, материал, ресурс или вопрос."
+        coverage_action = "Все исходные строки учтены как работа, материал, ресурс, заголовок или вопрос."
     else:
         coverage_action = (
             "Закройте покрытие исходника: каждая строка должна иметь роль. "
@@ -300,6 +307,21 @@ def build_lsr_result_readiness(
             "Пересоберите файл без модели после закрытия норм; "
             "цены подставляются из выбранной книги. Отсутствие цены не обнуляет норму."
         )
+
+    counts = {
+        "works": sum(1 for row in work_rows if inferred_row_role(row) == "work"),
+        "materials": sum(1 for row in work_rows if inferred_row_role(row) == "material"),
+        "equipment": sum(1 for row in work_rows if inferred_row_role(row) == "equipment"),
+        "headers": sum(1 for row in work_rows if canonicalize_row_role(row.get("row_role")) == "header"),
+        "unresolved": sum(1 for row in work_rows if inferred_row_role(row) == "unresolved"),
+        "norms_selected": sum(1 for row in work_rows if _norm_code(row) and not classify_norm_gap(row)),
+    }
+    if calculated_positions >= 0:
+        counts["calculated_positions"] = int(calculated_positions)
+    if confirmed_amount >= 0:
+        counts["confirmed_amount"] = round(float(confirmed_amount), 2)
+    if preliminary_amount >= 0:
+        counts["preliminary_amount"] = round(float(preliminary_amount), 2)
 
     technical_complete = file_status == "ready"
     estimate_complete = bool(
@@ -377,6 +399,7 @@ def build_lsr_result_readiness(
         "row_count": len(work_rows),
         "technical_complete": technical_complete,
         "estimate_complete": estimate_complete,
+        "counts": counts,
         "coverage": coverage,
         "dimensions": dimensions,
         "actions": unique_actions,
@@ -407,6 +430,22 @@ def format_lsr_readiness_notice(
     if file_ready and coverage_complete and norms_complete and prices_complete:
         return f"ЛСР собрана.{file_bit}".strip()
     parts = [f"ЛСР собрана частично.{file_bit}".strip()]
+    counts = payload.get("counts") if isinstance(payload.get("counts"), Mapping) else {}
+    if counts:
+        composition = (
+            f"Состав: работ {int(counts.get('works') or 0)}, материалов "
+            f"{int(counts.get('materials') or 0)}, оборудования {int(counts.get('equipment') or 0)}, "
+            f"заголовков {int(counts.get('headers') or 0)}, нерешённых {int(counts.get('unresolved') or 0)}; "
+            f"норм выбрано {int(counts.get('norms_selected') or 0)}"
+        )
+        if counts.get("calculated_positions") is not None:
+            composition += f", позиций рассчитано {int(counts['calculated_positions'])}"
+        if counts.get("confirmed_amount") is not None:
+            composition += (
+                f". Подтверждённая сумма {float(counts['confirmed_amount']):g}, "
+                f"предварительная {float(counts.get('preliminary_amount') or 0):g}"
+            )
+        parts.append(composition + ".")
     file_label = "файл готов" if file_ready else "файл не готов"
     parts.append(f"Файл: {file_label}. {_text(file_dim.get('action'))}".strip())
     if coverage_complete:

@@ -1,5 +1,17 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.73 / 779 stage V:** every LSR row binding carries split readiness
+> (`source_accounted / operation_defined / norm_selected / applicability_substantiated /
+> volume_verified / position_calculated / prices_provided`) — `bound` alone never means
+> "ready" or "priced". Model may author `row_role=header`: headings/notes/subtotals are
+> accounted as `structure_accounted` without any mounting norm demand. Summary exposes
+> per-kind counts and the confirmed/preliminary amount split (NEEDS_RESEARCH analogues
+> and unpriced supply lines stay preliminary, model status never raised); the review
+> sheet and the chat readiness notice show them. Code: `rim_lsr_trace_service.py`,
+> `lsr_source_coverage_service.py`, `lsr_result_readiness_service.py`,
+> `rim_trace_xlsx_service.py`; tests: +8 (`test_rim_lsr_trace_service`,
+> `test_lsr_result_readiness_service`).
+
 > **0.31.72 / 778 stage B:** the workbook adapter stamps raw source cells/numbers
 > (`_catalog_source_*`) from the server-owned attachment catalog; the calculator
 > refuses an authored unit/quantity change that has no cited conversion basis —

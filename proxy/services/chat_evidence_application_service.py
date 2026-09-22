@@ -422,7 +422,13 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         source = value if isinstance(value, dict) else {}
         return {field: source[field] for field in fields if field in source}
 
-    safe = selected(result, ("schema", "tool", "status", "code", "pricing_status", "norms_status"))
+    safe = selected(
+        result,
+        (
+            "schema", "tool", "status", "code", "pricing_status", "norms_status",
+            "calculated_positions", "confirmed_amount", "preliminary_amount",
+        ),
+    )
     if safe.get("status") in {"complete", "partial"}:
         for field in ("missing", "blockers"):
             values = result.get(field)
@@ -7339,6 +7345,15 @@ async def _execute_chat_evidence_application(
                             ),
                             price_gaps=list(
                                 (workbook_chat_meta or {}).get("price_gaps") or []
+                            ),
+                            calculated_positions=int(
+                                (safe_payload or {}).get("calculated_positions") or -1
+                            ),
+                            confirmed_amount=float(
+                                (safe_payload or {}).get("confirmed_amount") or -1.0
+                            ),
+                            preliminary_amount=float(
+                                (safe_payload or {}).get("preliminary_amount") or -1.0
                             ),
                         )
                         retrieval_trace["result_readiness"] = lsr_readiness

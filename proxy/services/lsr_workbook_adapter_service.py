@@ -131,7 +131,11 @@ def collect_lsr_workbook_gaps(trace: Mapping[str, Any]) -> list[str]:
     for binding in trace.get("row_bindings") or []:
         if not isinstance(binding, Mapping):
             continue
-        if str(binding.get("status") or "") in {"bound", "resource_linked"}:
+        if str(binding.get("status") or "") in {
+            "bound",
+            "resource_linked",
+            "structure_accounted",
+        }:
             continue
         gaps.append(
             f"row:{binding.get('row')}:{binding.get('status') or 'unresolved'}"
@@ -294,6 +298,17 @@ async def build_lsr_workbook_from_decisions(
         "norms_status": str((trace.get("summary") or {}).get("norms_status") or ""),
         "missing": missing,
         "price_gaps": collect_lsr_price_gaps(trace),
+        # stage V operator counts: calculated positions and the confirmed /
+        # preliminary split of the known amount (code arithmetic, no statuses raised)
+        "calculated_positions": int(
+            (trace.get("summary") or {}).get("calculated_positions") or 0
+        ),
+        "confirmed_amount": float(
+            (trace.get("summary") or {}).get("confirmed_amount") or 0.0
+        ),
+        "preliminary_amount": float(
+            (trace.get("summary") or {}).get("preliminary_amount") or 0.0
+        ),
         # A zero-priced result is still a useful audit workbook. Unresolved
         # rows and their reasons remain in ``missing`` and the rendered trace.
         "blockers": [],

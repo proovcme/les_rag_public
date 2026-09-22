@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Sequence
 
 SCHEMA = "les.lsr-source-coverage.v1"
-ROLES = ("work", "material", "equipment", "resource", "unresolved")
+ROLES = ("work", "material", "equipment", "resource", "unresolved", "header")
 SUPPLY_KINDS = ("install", "supply", "both")
 _CONFIRMED_KEYS = (
     "conversion_factor",
@@ -32,6 +32,17 @@ _ROLE_ALIASES = {
     "unresolved": "unresolved",
     "нерешено": "unresolved",
     "open": "unresolved",
+    "header": "header",
+    "заголовок": "header",
+    "заголов": "header",
+    "раздел": "header",
+    "шапка": "header",
+    "примечание": "header",
+    "note": "header",
+    "итог": "header",
+    "итоги": "header",
+    "subtotal": "header",
+    "сводка": "header",
 }
 _SUPPLY_ALIASES = {
     "install": "install",

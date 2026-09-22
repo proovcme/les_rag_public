@@ -387,7 +387,7 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
 
     ws = wb.create_sheet("Проверка")
     headers = [
-        "Строка", "work_id", "Статус", "Норма", "Тип выбора", "Причина выбора",
+        "Строка", "work_id", "Статус", "Готовность строки", "Норма", "Тип выбора", "Причина выбора",
         "Ограничения аналога", "Проверка ресурсов", "Решения по ресурсам",
         "Труд", "Машины", "Материалы", "Повторная проверка влияния",
     ]
@@ -403,7 +403,19 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
             for entry in (item.get("resource_bindings") or [])
         )
         ws.append([
-            item.get("row"), item.get("work_id"), item.get("status"), item.get("code"),
+            item.get("row"), item.get("work_id"), item.get("status"),
+            " | ".join(
+                f"{label}={'да' if value is True else ('нет' if value is False else 'н/п')}"
+                for label, value in (
+                    ("операция", (item.get("readiness") or {}).get("operation_defined")),
+                    ("норма", (item.get("readiness") or {}).get("norm_selected")),
+                    ("применимость", (item.get("readiness") or {}).get("applicability_substantiated")),
+                    ("объём", (item.get("readiness") or {}).get("volume_verified")),
+                    ("рассчитана", (item.get("readiness") or {}).get("position_calculated")),
+                    ("цены", (item.get("readiness") or {}).get("prices_provided")),
+                )
+            ),
+            item.get("code"),
             item.get("selection_kind") or ("covered_by " + str(item.get("covered_by_work_id") or "") if item.get("covered_by_work_id") else ""),
             item.get("reason") or item.get("coverage_reason"),
             "\n".join(str(value) for value in (item.get("analog_limitations") or [])),
@@ -432,12 +444,12 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
     ws.append([])
     ws.append(["Общие замечания и незакрытые позиции"])
     section_row = ws.max_row
-    ws.merge_cells(start_row=section_row, start_column=1, end_row=section_row, end_column=13)
+    ws.merge_cells(start_row=section_row, start_column=1, end_row=section_row, end_column=14)
     ws.cell(section_row, 1).font = Font(bold=True)
     ws.cell(section_row, 1).fill = PatternFill("solid", fgColor="FCE4D6")
     ws.append(["Код", "work_id", "Тип", "Сообщение"])
     issue_header_row = ws.max_row
-    ws.merge_cells(start_row=issue_header_row, start_column=4, end_row=issue_header_row, end_column=13)
+    ws.merge_cells(start_row=issue_header_row, start_column=4, end_row=issue_header_row, end_column=14)
     for cell in ws[issue_header_row]:
         cell.font = Font(bold=True)
         cell.fill = PatternFill("solid", fgColor="FFF2CC")
@@ -449,7 +461,7 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
         message = str(payload.get("reason") or payload.get("message") or item)
         ws.append([code, work_id, issue_type, message])
         issue_row = ws.max_row
-        ws.merge_cells(start_row=issue_row, start_column=4, end_row=issue_row, end_column=13)
+        ws.merge_cells(start_row=issue_row, start_column=4, end_row=issue_row, end_column=14)
         ws.row_dimensions[issue_row].height = max(30, min(90, 15 * (1 + len(message) // 110)))
 
     for item in lsr.get("blockers") or []:

@@ -16,6 +16,7 @@ from proxy.services.estimate_math_service import parse_ru_number
 from proxy.services import gesn_service, nr_sp_service
 from proxy.services.lsr_source_coverage_service import (
     apply_confirmed_data,
+    canonicalize_row_role,
     inferred_row_role,
     locators_with_separate_supply,
     work_row_key,
@@ -1230,6 +1231,72 @@ def _with_visible_identity(
     return binding
 
 
+_SUBSTANTIATED_NORM_STATUSES = {
+    "EXACT",
+    "ANALOGUE",
+    "ANALOGUE_CANDIDATE",
+    "EXACT_VERIFIED",
+    "ANALOGUE_VERIFIED",
+}
+
+def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str, Any]:
+    """Per-row split of the §6 states — never raised above what the data shows.
+
+    Code reports facts only: was the row given an explicit role, does a cipher
+    exist, did the model substantiate applicability, was the volume verified,
+    is a position calculated, are all amounts priced. ``bound`` alone is none
+    of "fully ready" or "price found".
+    """
+
+    role = str(binding.get("row_role") or "") or canonicalize_row_role(
+        row.get("row_role")
+    ) or inferred_row_role(row)
+    status = str(binding.get("status") or "")
+    explicit_header = (
+        canonicalize_row_role(row.get("row_role")) == "header" or role == "header"
+    )
+    operation_defined = (
+        explicit_header
+        or role in {"work", "material", "equipment", "resource"}
+        or (role == "unresolved" and bool(str(row.get("open_gap") or row.get("open_question") or "").strip()))
+    )
+    if str(binding.get("code") or ""):
+        norm_selected = True
+    elif explicit_header or (role in {"material", "equipment"} and status == "bound"):
+        norm_selected = None  # a heading or supply line takes no mounting norm
+    else:
+        norm_selected = False
+    authored_status = str(binding.get("norm_status") or "") or (
+        str(row.get("norm_status") or "").strip().upper() if norm_selected else ""
+    )
+    applicability = (
+        bool(norm_selected)
+        and authored_status in _SUBSTANTIATED_NORM_STATUSES
+    )
+    if role in {"material", "equipment"} and status not in {
+        "unconfirmed_quantity", "missing_quantity",
+    }:
+        volume_verified: bool | None = True
+    elif status in {"unconfirmed_quantity", "missing_quantity"}:
+        volume_verified = False
+    elif isinstance(binding.get("quantity_trace"), Mapping):
+        volume_verified = status not in {"needs_input", "norm_not_found"}
+    elif status == "bound":
+        volume_verified = True
+    else:
+        volume_verified = None
+    return {
+        "source_accounted": True,
+        "operation_defined": operation_defined,
+        "norm_selected": norm_selected,
+        "applicability_substantiated": applicability,
+        "volume_verified": volume_verified,
+        "position_calculated": bool(binding.get("position")),
+        "prices_provided": None,
+        "header_row": explicit_header,
+    }
+
+
 def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Bind already visible/selected LSR rows to trace positions.
 
@@ -1264,6 +1331,24 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         )
         role = inferred_row_role(row)
         parent = work_row_key(row)
+        if canonicalize_row_role(row.get("row_role")) == "header" and not code:
+            # Headings/notes/subtotals are accounted as structure — no norm,
+            # no volume gate, and no place in any sum.
+            bindings.append(
+                _with_visible_identity(
+                    {
+                        "row": source_row,
+                        "status": "structure_accounted",
+                        "row_role": "header",
+                        "message": "структурная строка исходника учтена без монтажной нормы",
+                        "source_row": row,
+                    },
+                    title=title,
+                    source_qty=source_qty,
+                    source_unit=source_unit,
+                )
+            )
+            continue
         if role == "resource":
             binding = {
                 "row": source_row,
@@ -1566,7 +1651,7 @@ def build_lsr_trace_from_visible_rows(
         coefficient_basis=coefficient_basis,
         name=name,
     )
-    closed = {"bound", "resource_linked"}
+    closed = {"bound", "resource_linked", "structure_accounted"}
     binding_flags = [
         f"строка {b.get('row')}: {b.get('message') or b.get('status')}"
         for b in bound["row_bindings"]
@@ -1605,5 +1690,43 @@ def build_lsr_trace_from_visible_rows(
         summary["result_status"] = "priced_partial"
     else:
         summary["result_status"] = "priced_final"
+    visible_by_row = {item.get("source_row"): item for item in visible}
+    amounts_by_row: dict[Any, dict[str, Any]] = {}
+    for entry in lsr.get("sections") or []:
+        for trace in entry.get("positions") or []:
+            if trace.get("source_row") is not None:
+                amounts_by_row[trace.get("source_row")] = trace.get("summary") or {}
+    kind_counts = {"work": 0, "material": 0, "equipment": 0, "resource": 0, "header": 0, "unresolved": 0}
+    selected_norms = 0
+    confirmed_amount = 0.0
+    preliminary_amount = 0.0
+    for binding in bound["row_bindings"]:
+        source_row = binding.get("row")
+        model_row = visible_by_row.get(source_row) or {}
+        readiness = _row_readiness(binding, model_row if isinstance(model_row, Mapping) else {})
+        position = binding.get("position")
+        if isinstance(position, Mapping):
+            pos_summary = amounts_by_row.get(source_row) or {}
+            amount = _f(pos_summary.get("known_amount", pos_summary.get("total")))
+            complete = pos_summary.get("amount_status") == "complete" and pos_summary.get("full_amount") is not None
+            preliminary = bool(pos_summary.get("completeness_reasons")) or (
+                canonicalize_norm_status(binding.get("norm_status")) == "NEEDS_RESEARCH"
+            )
+            readiness["prices_provided"] = complete and not preliminary
+            if preliminary:
+                preliminary_amount = round(preliminary_amount + amount, 2)
+            else:
+                confirmed_amount = round(confirmed_amount + amount, 2)
+        binding["readiness"] = readiness
+        role_key = str(binding.get("row_role") or inferred_row_role(model_row if isinstance(model_row, Mapping) else {}))
+        if role_key in kind_counts:
+            kind_counts[role_key] += 1
+        if binding.get("code"):
+            selected_norms += 1
+    summary["kind_counts"] = kind_counts
+    summary["selected_norms"] = selected_norms
+    summary["calculated_positions"] = len(bound["positions"])
+    summary["confirmed_amount"] = confirmed_amount
+    summary["preliminary_amount"] = preliminary_amount
     lsr["row_bindings"] = bound["row_bindings"]
     return lsr

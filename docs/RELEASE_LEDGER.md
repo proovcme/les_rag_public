@@ -1,5 +1,27 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**0.31.73 / 779 stage V (22.09):** readiness states were split per §6. Each
+row binding now exposes `readiness` (source row accounted / operation defined /
+norm selected / applicability substantiated / volume verified / position
+calculated / prices provided) — a `bound` material or an unpriced work is
+visibly not ready, and the live СКС replay proves it: 52 bound rows all report
+`prices_provided=нет`, only 3 ciphers selected, works/materials/equipment/
+headers/unresolved counted separately (4/51/2/0/3). A model-authored
+`row_role=header` (aliases заголовок/примечание/итог/…) becomes
+`structure_accounted`: the source row is kept, no mounting norm or work_row is
+demanded, and it never blocks readiness. NEEDS_RESEARCH analogues and positions
+with missing prices/normatives stay calculated but move to
+`summary.preliminary_amount`; fully closed amounts go to `confirmed_amount`,
+and the two reconstruct the known total exactly. Model statuses are never
+raised. The «Проверка» sheet gained a «Готовность строки» column, and the chat
+readiness notice shows the composition line (works/materials/equipment/headers/
+unresolved, norms selected, positions calculated, confirmed vs preliminary).
+Tests: +8 in `test_rim_lsr_trace_service`/`test_lsr_result_readiness_service`,
+`test_rim_trace_xlsx` merge-range expectation widened with the new column;
+regression 255 green (workbook tool, chat evidence, xlsx, api, jobs, assembly,
+sovushka, packets) + 54 trace/coverage/readiness + live replay boundary check
+still STAGE_B_BOUNDARY_OK.
+
 **0.31.72 / 778 stage B (22.09):** source quantity/unit became the calculation
 boundary. Reproduced on the live СКС job: source 30/210/18/162 м.п. were authored
 back as the same count of шт. with cipher ГЭСН21-03-004-02, `source_unit_mismatch`

@@ -80,3 +80,35 @@ def test_saved_material_does_not_disappear_from_resume_readiness():
     assert readiness["remaining_locators"] == locators
     assert readiness["estimate_complete"] is False
     assert readiness["technical_complete"] is True
+
+
+def test_stage_v_readiness_reports_composition_and_amounts() -> None:
+    """§6: works / materials / equipment / norms / calculated counts are shown separately."""
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[
+            {"source_row": "СКС!R1", "row_role": "header", "title": "Раздел"},
+            {
+                "source_row": "СКС!R2",
+                "row_role": "work",
+                "norm_code": "ГЭСН12-01-034-02",
+                "norm_status": "EXACT",
+            },
+            {"source_row": "СКС!R3", "row_role": "material", "work_row": "СКС!R2"},
+        ],
+        pricing_status="priced_partial",
+        calculated_positions=2,
+        confirmed_amount=1000.0,
+        preliminary_amount=500.0,
+    )
+    counts = readiness["counts"]
+    assert counts["works"] == 1
+    assert counts["materials"] == 1
+    assert counts["headers"] == 1
+    assert counts["norms_selected"] == 1
+    assert counts["calculated_positions"] == 2
+    notice = format_lsr_readiness_notice(readiness, filename="LSR.xlsx")
+    assert "Состав: работ 1, материалов 1" in notice
+    assert "норм выбрано 1" in notice
+    assert "позиций рассчитано 2" in notice
+    assert "Подтверждённая сумма 1000" in notice

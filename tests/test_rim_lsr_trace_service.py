@@ -877,3 +877,229 @@ def test_adapter_stamps_catalog_facts_without_rewriting_model_cells(monkeypatch)
     assert decisions[0]["unit"] == snapshot["unit"]
     assert decisions[0]["_catalog_source_values"] == ["м.п", "30"]
     assert decisions[0]["_catalog_source_numbers"] == [30.0]
+
+
+# ---------------------------------------------------------------- stage V split states
+def test_stage_v_header_row_is_accounted_without_norm_demand():
+    """§6: headings/notes/subtotals are accounted and never demand a mounting norm."""
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "source_row": "СКС!R1",
+                "row_role": "header",
+                "title": "Слаботочные системы. Раздел 1",
+                "norm_status": "MISSING",
+            },
+            {
+                "source_row": "СКС!R2",
+                "row_role": "work",
+                "basis": "ГЭСН 12-01-034-02",
+                "title": "Устройство обрешетки",
+                "quantity": 61,
+                "unit": "м2",
+                "norm_status": "EXACT",
+            },
+        ]
+    )
+    header = next(item for item in lsr["row_bindings"] if item["row"] == "СКС!R1")
+    assert header["status"] == "structure_accounted"
+    assert header["readiness"]["header_row"] is True
+    assert header["readiness"]["operation_defined"] is True
+    assert header["readiness"]["norm_selected"] is None
+    assert lsr["summary"]["kind_counts"]["header"] == 1
+    # a heading adds no flag and keeps the priced part final
+    assert lsr["summary"]["result_status"] == "priced_final"
+    assert not [flag for flag in lsr["summary"]["flags"] if "СКС!R1" in str(flag)]
+    from proxy.services.lsr_result_readiness_service import classify_norm_gap
+
+    assert classify_norm_gap(header["source_row"]) == ""
+
+
+def test_stage_v_bound_material_without_price_is_not_ready():
+    """§6: ``bound`` must not read as 'position fully ready / price found'."""
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "source_row": "СКС!R9",
+                "row_role": "material",
+                "work_row": "СКС!R8",
+                "title": "Лоток лестничный",
+                "unit": "м.п",
+                "quantity": 30,
+            }
+        ]
+    )
+    binding = lsr["row_bindings"][0]
+    assert binding["status"] == "bound"
+    assert binding["readiness"]["norm_selected"] is None
+    assert binding["readiness"]["position_calculated"] is True
+    assert binding["readiness"]["prices_provided"] is False
+    assert lsr["summary"]["kind_counts"]["material"] == 1
+    assert lsr["summary"]["confirmed_amount"] == 0.0
+    assert lsr["summary"]["preliminary_amount"] >= 0.0
+    assert lsr["summary"]["result_status"] != "priced_final"
+
+
+def test_stage_v_bound_material_with_confirmed_price_is_confirmed():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "source_row": "СКС!R9",
+                "row_role": "material",
+                "work_row": "СКС!R9",
+                "title": "Лоток лестничный",
+                "unit": "м.п",
+                "quantity": 30,
+                "confirmed_price": 100,
+                "price_source": "operator",
+            }
+        ]
+    )
+    binding = lsr["row_bindings"][0]
+    assert binding["status"] == "bound"
+    assert binding["readiness"]["prices_provided"] is True
+    assert lsr["summary"]["confirmed_amount"] == 3000.0
+    assert lsr["summary"]["preliminary_amount"] == 0.0
+
+
+def test_stage_v_needs_research_bound_stays_preliminary_and_keeps_status():
+    """§6: analogue/NEEDS_RESEARCH calculation is visible but separated from confirmed."""
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "source_row": "PDF!R18",
+                "row_role": "work",
+                "basis": "ГЭСН 12-01-034-02",
+                "title": "Устройство обрешетки",
+                "quantity": "61",
+                "unit": "м2",
+                "norm_status": "NEEDS_RESEARCH",
+                "quality_message": "аналог, требуется ревизия",
+            }
+        ]
+    )
+    binding = lsr["row_bindings"][0]
+    assert binding["status"] == "bound"
+    assert binding["norm_status"] == "NEEDS_RESEARCH"
+    assert binding["readiness"]["norm_selected"] is True
+    assert binding["readiness"]["applicability_substantiated"] is False
+    assert binding["readiness"]["prices_provided"] is False
+    assert lsr["summary"]["confirmed_amount"] == 0.0
+    assert lsr["summary"]["preliminary_amount"] == 11813.04
+    assert lsr["summary"]["result_status"] == "priced_partial"
+
+
+def test_stage_v_exact_priced_work_is_confirmed_end_to_end():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "source_row": "PDF!R2",
+                "row_role": "work",
+                "basis": "ГЭСН 12-01-034-02",
+                "title": "Устройство обрешетки",
+                "quantity": "61",
+                "unit": "м2",
+                "norm_status": "EXACT",
+            }
+        ]
+    )
+    binding = lsr["row_bindings"][0]
+    readiness = binding["readiness"]
+    assert readiness["operation_defined"] is True
+    assert readiness["norm_selected"] is True
+    assert readiness["applicability_substantiated"] is True
+    assert readiness["volume_verified"] is True
+    assert readiness["position_calculated"] is True
+    assert readiness["prices_provided"] is True
+    assert lsr["summary"]["confirmed_amount"] == 11813.04
+    assert lsr["summary"]["preliminary_amount"] == 0.0
+    assert lsr["summary"]["selected_norms"] == 1
+    assert lsr["summary"]["calculated_positions"] == 1
+    assert lsr["summary"]["result_status"] == "priced_final"
+
+
+def test_stage_v_counts_are_separate_per_kind():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {"source_row": "A!R1", "row_role": "header", "title": "Раздел"},
+            {
+                "source_row": "A!R2",
+                "row_role": "work",
+                "basis": "ГЭСН 12-01-034-02",
+                "title": "Работа",
+                "quantity": 61,
+                "unit": "м2",
+                "norm_status": "EXACT",
+            },
+            {
+                "source_row": "A!R3",
+                "row_role": "material",
+                "work_row": "A!R2",
+                "title": "Материал",
+                "unit": "шт",
+                "quantity": 2,
+            },
+            {
+                "source_row": "A!R4",
+                "row_role": "resource",
+                "work_row": "A!R2",
+                "title": "Ресурс",
+            },
+        ]
+    )
+    counts = lsr["summary"]["kind_counts"]
+    assert counts["header"] == 1
+    assert counts["work"] == 1
+    assert counts["material"] == 1
+    assert counts["resource"] == 1
+    assert lsr["summary"]["selected_norms"] == 1
+    assert lsr["summary"]["calculated_positions"] == 2
+
+
+def test_stage_v_coverage_accounts_header_without_gap():
+    from proxy.services.lsr_source_coverage_service import build_source_coverage
+
+    coverage = build_source_coverage(
+        catalog_locators=["A!R1", "A!R2"],
+        rows=[
+            {"source_row": "A!R1", "row_role": "заголовок", "title": "Раздел 1"},
+            {
+                "source_row": "A!R2",
+                "row_role": "work",
+                "norm_code": "ГЭСН12-01-034-02",
+            },
+        ],
+    )
+    assert coverage["complete"] is True
+    assert coverage["accounted"] == 2
+    assert coverage["gaps"] == []
+
+
+def test_stage_v_renderer_writes_readiness_column(tmp_path):
+    from proxy.services.rim_trace_xlsx_service import render_lsr_xlsx
+    from openpyxl import load_workbook
+
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {"source_row": "A!R1", "row_role": "header", "title": "Раздел"},
+            {
+                "source_row": "A!R2",
+                "row_role": "work",
+                "basis": "ГЭСН 12-01-034-02",
+                "title": "Работа",
+                "quantity": 61,
+                "unit": "м2",
+                "norm_status": "EXACT",
+            },
+        ]
+    )
+    out = tmp_path / "lsr.xlsx"
+    render_lsr_xlsx(lsr, out)
+    review = load_workbook(out)["Проверка"]
+    headers = [cell.value for cell in review[1]]
+    assert "Готовность строки" in headers
+    column = headers.index("Готовность строки") + 1
+    values = [row[column - 1].value for row in review.iter_rows(min_row=2)]
+    text = "\n".join(str(value) for value in values if value)
+    assert "цены=да" in text
+    assert "норма=н/п" in text
