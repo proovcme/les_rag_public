@@ -1,4 +1,10 @@
-"""Ordinary profiles do not let deterministic spec_to_bor hijack the model."""
+"""Ordinary profiles must not let the deterministic spec_to_bor channel hijack
+the model route.
+
+Routing is a pure decision (0 LLM), so it is asserted deterministically and can
+NEVER skip. Whether a live ``answer`` model connection is reachable is a separate
+concern checked only by the explicitly-gated full-route test at the bottom.
+"""
 
 from __future__ import annotations
 
@@ -10,17 +16,43 @@ import pytest
 
 from proxy.routers import chat as chat_router
 from proxy.services.chat_attachment_service import preserve_read_attachment
+from proxy.services.profile_resolver import resolve as resolve_profile
+from proxy.services.query_router import route_query
+from proxy.services.spec_to_bor_service import is_spec_to_bor_query
 
 
-# Ordinary-agent answers require a bound `answer` model connection; when the
-# runtime has none, resolution raises a 503. That is an external dependency, not
-# a routing bug, so skip precisely (a wrong channel/profile still fails elsewhere).
+# The intent recognizer may see "ВОР из спецификации", but the ordinary
+# (auto -> agent) route must resolve the channel through query_router and never
+# hand control to a deterministic spec_to_bor handler.
+_SPEC_VOR_QUESTIONS = (
+    "сделай ВОР из спецификации",
+    "Собери ВОР в разрезе ЛВЖ",
+)
+
+
+@pytest.mark.parametrize("question", _SPEC_VOR_QUESTIONS)
+def test_spec_vor_intent_never_hijacks_channel_deterministically(question: str) -> None:
+    # Meaningful precondition: this really is a recognised spec->ВОР intent, so
+    # "not hijacked" is a non-trivial claim about routing, not about the intent
+    # matcher finding nothing.
+    assert is_spec_to_bor_query(question, has_attachment=True) is True
+
+    intent = route_query(question)
+    assert intent.channel != "spec_to_bor"
+    assert resolve_profile(mode="auto", question=question).profile_id == "agent"
+
+
+# ── separate concern: live-model availability of the full agent route ──────────
+# The end-to-end agent route needs a bound `answer` model connection; when the
+# runtime has none, resolution raises 503. That is an external dependency, so
+# ONLY these two checks may skip. Routing correctness above must never skip.
 _MODEL_CONNECTION_MARKERS = (
     "ROLE_BINDING_MISSING",
     "MODEL_CONNECTION_RESOLUTION_FAILED",
     "MODEL_SERVICE_UNAVAILABLE",
     "MODEL_CONNECTION_RESOLVER_REQUIRED",
 )
+
 
 async def _chat_or_skip(request, **kwargs):
     from fastapi import HTTPException
@@ -73,7 +105,7 @@ def _write_spec_xlsx(path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_vor_from_attachment_stays_in_selected_profile(tmp_path, monkeypatch):
+async def test_live_agent_vor_from_attachment_stays_in_selected_profile(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
     monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta_qwen.db"))
@@ -114,7 +146,7 @@ async def test_chat_vor_from_attachment_stays_in_selected_profile(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_chat_vor_without_attachment_id_is_not_claimed_by_spec_handler(tmp_path, monkeypatch):
+async def test_live_agent_vor_without_attachment_id_is_not_claimed(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
     monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta_qwen.db"))

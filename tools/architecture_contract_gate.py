@@ -16,11 +16,21 @@ _PARALLEL_WORKBOOK_RE = re.compile(
 )
 _WORKBOOK_NAMES = {"build_lsr_workbook", "build_vor_workbook"}
 _MODEL_ENDPOINT_MARKERS = (
-    "/api/chat",
     "/api/generate",
     "/v1/chat/completions",
     "/v1/responses",
 )
+# The chat-generation route is ``/api/chat`` exactly. Match it only as a whole
+# endpoint so sibling data routes (e.g. ``/api/chat/patch-lsr-rows``), which
+# persist model-authored rows and never call a model, are not mistaken for a
+# governor bypass. External model transports above stay substring-matched.
+_MODEL_CHAT_ROUTE_RE = re.compile(r"/api/chat(?:[\"'\s?]|$)")
+
+
+def _calls_model_endpoint(call_text: str) -> bool:
+    if any(marker in call_text for marker in _MODEL_ENDPOINT_MARKERS):
+        return True
+    return bool(_MODEL_CHAT_ROUTE_RE.search(call_text))
 _ACTIVATION_BOUNDARIES = {
     "proxy/routers/profiles.py",
     "proxy/services/chat_profile_service.py",
@@ -309,7 +319,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
             + [_string_value(keyword.value) for keyword in node.keywords]
         ).lower()
         is_http_post = short_name in {"post", "urlopen"}
-        if is_http_post and any(marker in call_text for marker in _MODEL_ENDPOINT_MARKERS):
+        if is_http_post and _calls_model_endpoint(call_text):
             function_name = _enclosing_function_name(node, parents)
             if (
                 (relative, function_name) not in INFERENCE_CALLSITE_BASELINE

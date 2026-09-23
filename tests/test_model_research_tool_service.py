@@ -187,7 +187,88 @@ async def test_estimator_search_uses_dedicated_smeta_rrf_and_configured_limit():
 
 
 @pytest.mark.asyncio
-async def test_estimator_search_never_falls_back_when_dedicated_rrf_is_not_ready():
+async def test_estimator_degraded_dense_serves_verified_cards_but_stays_honest():
+    """Dense channel down but the dedicated browser produced exact/FTS cards with
+    verified typed-base provenance: they reach the model, yet the search is
+    reported honestly as ``degraded_sparse_only`` (never ``ok``) with the concrete
+    dense reason. Never fall back to the mixed general les_rag collection."""
+
+    async def general_retrieve(**_kwargs):
+        pytest.fail("degraded smeta RRF must not fall back to mixed les_rag")
+
+    service = ModelResearchToolService(
+        retrieve=general_retrieve,
+        frozen_dataset_ids=("smeta-system-dataset",),
+        retrieval_kwargs={"rag_backend": "les_rag"},
+        fallback=lambda *_args: pytest.fail("fallback must not run"),
+        smeta_norm_retrieve=lambda _query, *, limit: {
+            "cards": [
+                {
+                    "norm_code": "ГЭСН01-01-001-01",
+                    "title": "Разработка грунта",
+                    "norm_key": "gesn01-01-001-01",
+                    "source_ref": "ФСНБ-2022#guid=abc",
+                }
+            ],
+            "retrieval_trace": {
+                "rag": {
+                    "status": "degraded_sparse_only",
+                    "collection": "les_smeta_norm_cards",
+                    "dense_error": True,
+                    "dense_error_detail": "Сервис поискового представления недоступен",
+                    "dense_endpoint": "http://127.0.0.1:8080",
+                }
+            },
+        },
+    )
+
+    result = await service.execute(
+        {"tool": "search_sources", "args": {"q": "разработка грунта"}}
+    )
+
+    assert len(result.chunks) == 1
+    assert result.payload["status"] == "degraded_sparse_only"
+    assert result.payload["result"]["hits"][0]["meta"]["norm_code"] == "ГЭСН01-01-001-01"
+    assert any("exact/FTS" in w for w in result.payload["warnings"])
+    assert any("Сервис поискового представления недоступен" in w for w in result.payload["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_estimator_degraded_drops_cards_without_normative_provenance():
+    """A leftover non-empty card list is never accepted as success when the cards
+    lack typed-base provenance: they are dropped, so the honest status is
+    ``missing`` and the model is still told a decision is required."""
+
+    async def general_retrieve(**_kwargs):
+        pytest.fail("unverified smeta cards must not fall back to mixed les_rag")
+
+    service = ModelResearchToolService(
+        retrieve=general_retrieve,
+        frozen_dataset_ids=("smeta-system-dataset",),
+        retrieval_kwargs={"rag_backend": "les_rag"},
+        fallback=lambda *_args: pytest.fail("fallback must not run"),
+        smeta_norm_retrieve=lambda _query, *, limit: {
+            "cards": [{"norm_code": "ГЭСН01-01-001-01", "title": "Разработка грунта"}],
+            "retrieval_trace": {
+                "rag": {"status": "degraded_sparse_only", "collection": "les_smeta_norm_cards"}
+            },
+        },
+    )
+
+    result = await service.execute(
+        {"tool": "search_sources", "args": {"q": "разработка грунта"}}
+    )
+
+    assert result.chunks == ()
+    assert result.payload["status"] == "missing"
+    assert any("provenance" in w for w in result.payload["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_estimator_search_blocks_when_dedicated_rrf_unusable_and_no_cards():
+    """A genuine infrastructure failure (neither ok nor degraded) that produced
+    no cards stays blocked; it must not fabricate evidence or read general RRF."""
+
     async def general_retrieve(**_kwargs):
         pytest.fail("blocked smeta RRF must not fall back to mixed les_rag")
 
@@ -197,11 +278,11 @@ async def test_estimator_search_never_falls_back_when_dedicated_rrf_is_not_ready
         retrieval_kwargs={"rag_backend": "les_rag"},
         fallback=lambda *_args: pytest.fail("fallback must not run"),
         smeta_norm_retrieve=lambda _query, *, limit: {
-            "cards": [{"norm_code": "ГЭСН01-01-001-01", "title": "Лексический шум"}],
+            "cards": [],
             "retrieval_trace": {
                 "rag": {
-                    "status": "degraded_sparse_only",
-                    "collection": "les_smeta_norm_cards",
+                    "status": "unavailable",
+                    "collection": "",
                 }
             },
         },

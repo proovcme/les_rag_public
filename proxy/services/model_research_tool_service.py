@@ -105,9 +105,29 @@ class ModelResearchToolService:
             )
             trace = dict(browse.get("retrieval_trace") or {})
             rag_trace = trace.get("rag") if isinstance(trace.get("rag"), Mapping) else {}
-            if str(rag_trace.get("status") or "") != "ok" or not str(
-                rag_trace.get("collection") or ""
-            ).strip():
+            rag_status = str(rag_trace.get("status") or "").strip().casefold()
+            cards_all = list(browse.get("cards") or [])
+
+            # Integrity filter (NOT a norm selection): only cards that genuinely
+            # originate from the typed smeta base carry a norm code plus a base
+            # reference. Cards without that provenance are dropped so a leftover
+            # non-empty list is never treated as authoritative evidence; the model
+            # still decides which verified card applies.
+            def _has_normative_provenance(card: Mapping[str, Any]) -> bool:
+                return bool(str(card.get("norm_code") or "").strip()) and bool(
+                    str(card.get("source_ref") or card.get("norm_key") or "").strip()
+                )
+
+            cards_verified = [card for card in cards_all if _has_normative_provenance(card)]
+            dropped_unverified = len(cards_all) - len(cards_verified)
+            # `degraded_sparse_only` is a documented functional state: the additive
+            # dense channel is down but exact/FTS cards from the typed base remain.
+            # Those verified cards still reach the model, yet the search is reported
+            # honestly as degraded, never as a healthy ``ok``. Block only on a hard
+            # channel failure that produced no verified card, and never fall back to
+            # the mixed general RRF corpus.
+            dense_functional = rag_status in {"ok", "degraded_sparse_only"}
+            if not dense_functional and not cards_verified:
                 return ModelResearchToolResult(
                     payload={
                         "schema": "les_tool_result_v1",
@@ -124,7 +144,7 @@ class ModelResearchToolService:
                     },
                     retrieval_trace=trace,
                 )
-            cards = list(browse.get("cards") or [])[: self._model_evidence_k]
+            cards = cards_verified[: self._model_evidence_k]
             chunks = tuple(
                 _SmetaNormChunk(
                     content="\n".join(
@@ -157,13 +177,38 @@ class ModelResearchToolService:
                 for index, card in enumerate(cards)
             )
             hits = [_chunk_payload(chunk) for chunk in chunks]
+            # Honest effective status: a degraded channel stays degraded even when
+            # it serves verified cards; zero verified hits is a model-visible
+            # ``missing``; only a healthy ``ok`` channel reports ``ok``.
+            if not hits:
+                effective_status = "missing"
+            elif rag_status == "ok":
+                effective_status = "ok"
+            else:
+                effective_status = "degraded_sparse_only"
+            result_warnings: list[str] = []
+            if dropped_unverified:
+                result_warnings.append(
+                    f"{dropped_unverified} card(s) dropped for missing normative provenance"
+                )
+            if effective_status == "degraded_sparse_only":
+                dense_detail = str(rag_trace.get("dense_error_detail") or "").strip()
+                dense_reason = str(rag_trace.get("reason") or "").strip()
+                dense_endpoint = str(rag_trace.get("dense_endpoint") or "").strip()
+                dense_why = dense_detail or dense_reason or "dense vector channel unavailable"
+                result_warnings.append(
+                    "exact/FTS normative cards served from the dedicated base; "
+                    f"dense vector channel unavailable ({dense_why}"
+                    + (f" at {dense_endpoint}" if dense_endpoint else "")
+                    + ")"
+                )
             return ModelResearchToolResult(
                 payload={
                     "schema": "les_tool_result_v1",
                     "tool": "search_sources",
                     "operation": "smeta_norm_native_rrf",
                     "inputs": [{"q": query, "limit": self._model_evidence_k}],
-                    "status": "ok" if hits else "missing",
+                    "status": effective_status,
                     "result": {"hits": hits, "count": len(hits)},
                     "sources": [
                         {
@@ -173,7 +218,7 @@ class ModelResearchToolService:
                         for hit in hits
                     ],
                     "missing": [] if hits else ["no smeta norm cards matched query"],
-                    "warnings": [],
+                    "warnings": result_warnings,
                     "trace": trace,
                     "decision_required_from_model": True,
                 },

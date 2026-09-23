@@ -668,6 +668,26 @@ def _rag_dense_compatibility(base_path: Path) -> tuple[bool, str]:
     return compatible, reason
 
 
+def _resolve_embed_base_url(query_backend: str) -> str:
+    """Resolve the dedicated smeta query-embedding endpoint from active config.
+
+    The smeta sibling index is served by the same OpenAI-compatible embedder the
+    rest of the product already uses. With the ``ollama`` backend that host
+    listens on ``:11434``; the MLX/CoreML default is ``:8080``. An explicit
+    ``LES_SMETA_NORM_EMBED_URL`` or ``MLX_URL`` always wins. This mirrors the
+    platform-aware resolution the application bootstrap performs, so a healthy
+    dense index is not reported as an outage merely because the browser pointed
+    at the wrong port. It changes no index, no corpus and selects no norm.
+    """
+    explicit = os.getenv("LES_SMETA_NORM_EMBED_URL", "").strip() or os.getenv("MLX_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    lowered = str(query_backend or "").strip().lower()
+    if lowered == "ollama" or os.getenv("EMBED_BACKEND", "").strip().lower() == "ollama":
+        return "http://127.0.0.1:11434"
+    return "http://127.0.0.1:8080"
+
+
 def _rag_cards_many(
     queries: list[str],
     *,
@@ -713,7 +733,7 @@ def _rag_cards_many(
         sparse_mode = index_mode in {"sparse_only", "building_dense"} or not dense_compatible
         if not sparse_mode:
             embed = EmbedClient(
-                os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+                _resolve_embed_base_url(query_embedding_backend),
                 model=embedding_model,
                 backend=query_embedding_backend,
             )
@@ -765,10 +785,26 @@ def _rag_cards_many(
                 "retrieval_ms": round((perf_counter() - retrieval_started) * 1000, 2),
             })
     except Exception as exc:
-        # Dense retrieval is an additive candidate channel. The caller still has
-        # exact/FTS cards and exposes the degraded backend in its trace.
+        # The dense hybrid is an additive candidate channel. A raised error here
+        # is a runtime OUTAGE, not a documented ``sparse_only`` index mode, so it
+        # is recorded distinctly. The caller still receives the exact/FTS cards
+        # ``browse_norms`` produced from the typed base, but the RAG channel is
+        # never reported as a healthy ``ok``; the concrete cause (endpoint plus
+        # message) is kept so the UI can explain WHY dense is unavailable.
         if trace is not None:
-            trace.update({"status": "degraded_sparse_only", "reason": type(exc).__name__, "collection": collection})
+            try:
+                _qb = query_embedding_backend
+            except NameError:
+                _qb = ""
+            trace.update({
+                "status": "degraded_sparse_only",
+                "reason": type(exc).__name__,
+                "collection": collection,
+                "dense_error": True,
+                "dense_error_detail": " ".join(str(exc).split())[:240],
+                "dense_endpoint": _resolve_embed_base_url(_qb),
+                "rag_channel_contributed": False,
+            })
         return out
     finally:
         client.close()

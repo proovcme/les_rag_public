@@ -95,13 +95,19 @@ def _contract(
 
 BUILD_LSR_WORKBOOK = _contract(
     "build_lsr_workbook", "Build LSR workbook",
-    "Build an immutable priced LSR draft from a server-owned attachment.",
+    "Build an immutable priced ЛСР (локальный сметный расчёт) draft from a "
+    "server-owned attachment. Choose it when the user asks for a ЛСР/смета that "
+    "needs a norm code, analogue and price per work row; it requires "
+    "model-authored decisions.",
     ("norm_code", "analogue", "coverage", "coefficient"),
     input_schema=_LSR_INPUT_SCHEMA,
 )
 BUILD_VOR_WORKBOOK = _contract(
     "build_vor_workbook", "Build VOR workbook",
-    "Build an immutable VOR draft preserving source rows and quantities.", (),
+    "Build an immutable ВОР (ведомость объёма работ) draft that preserves the "
+    "source specification rows, quantities and units WITHOUT norm pricing. Choose "
+    "it when the user asks for a ВОР/ведомость from a specification or source "
+    "table; it needs only the attachment, never model decisions.", (),
     input_schema=_VOR_INPUT_SCHEMA,
 )
 

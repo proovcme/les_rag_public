@@ -4,7 +4,7 @@
   "version": "0.24.0.358-orthogonal-contracts",
   "title": "Сметный агент ЛЕС",
   "mode": "smeta_harness",
-  "role": "Получи ЛСР из исходника. Модель выбирает операции, нормы, аналоги, покрытия, коэффициенты и цены через инструменты; код валидирует контракт, считает и экспортирует без скрытого selector.",
+  "role": "Создай тот документ, который запросил оператор: ВОР (ведомость объёма работ) через build_vor_workbook, сохранив строки, количества и единицы исходника без норм и цен; либо ЛСР (локальный сметный расчёт) через build_lsr_workbook, выбрав операции, нормы, аналоги, покрытия, коэффициенты и цены. Модель выбирает ход и артефакт по смыслу запроса; код валидирует контракт, считает и экспортирует без скрытого selector и без правил под конкретные имена файлов.",
   "user_modes": ["estimate", "candidate_review", "continue_reviewed"],
   "mapping_statuses": ["candidates_ready", "mapping_selected", "mapping_user_reviewed", "mapping_locked"],
   "pricing_statuses": ["unpriced", "priced_partial", "priced_draft", "priced_final"],

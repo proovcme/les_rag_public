@@ -112,6 +112,36 @@ def generate(base_url: str, payload: dict):
     assert "INFERENCE_GOVERNOR_BYPASS" in _codes(tmp_path)
 
 
+def test_allows_non_inference_chat_data_subroute(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "tests/test_patch_rows_behavior.py",
+        """from fastapi.testclient import TestClient
+
+
+def test_patch_rows(client: TestClient):
+    return client.post("/api/chat/patch-lsr-rows", json={"session_id": "s"})
+""",
+    )
+
+    assert "INFERENCE_GOVERNOR_BYPASS" not in _codes(tmp_path)
+
+
+def test_rejects_direct_chat_generation_route(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "proxy/services/sneaky_chat.py",
+        """import httpx
+
+
+def answer(payload: dict):
+    return httpx.post("http://127.0.0.1:8050/api/chat", json=payload)
+""",
+    )
+
+    assert "INFERENCE_GOVERNOR_BYPASS" in _codes(tmp_path)
+
+
 def test_inference_baseline_is_exact_path_and_function(tmp_path: Path) -> None:
     _write(
         tmp_path,

@@ -1196,7 +1196,7 @@ def restore_query_hits_from_cache(
     return restored
 
 
-_MODEL_SEARCH_CONTINUE_STATUSES = frozenset({"ok", "missing"})
+_MODEL_SEARCH_CONTINUE_STATUSES = frozenset({"ok", "missing", "degraded_sparse_only"})
 
 
 def model_search_result_blocks_packet(payload: Mapping[str, Any] | None) -> bool:
