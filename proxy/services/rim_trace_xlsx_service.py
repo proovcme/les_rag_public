@@ -213,10 +213,13 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     r = start_r
     pp = pp_start
     by_type: dict[str, list[int]] = {}
+    row_meta_by_type: dict[str, dict[str, Any]] = {}
     for row in rows:
         cols = row.get("columns", {}) or {}
         rtype = row.get("type", "")
         by_type.setdefault(str(rtype), []).append(r)
+        if rtype == "position_total":
+            row_meta_by_type["position_total"] = row.get("meta") or {}
         is_group = rtype in _GROUP_TYPES
         is_total = rtype in _TOTAL_TYPES
         if rtype == "work":
@@ -281,8 +284,18 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     if sp_row and fot_row:
         ws.cell(row=sp_row, column=12, value=f"=ROUND(L{fot_row}*E{sp_row}/100,2)")
     if total_row:
-        refs = [row_no for row_no in (direct_row, nr_row, sp_row) if row_no]
-        ws.cell(row=total_row, column=12, value=_sum_formula(refs))
+        operator_price_value = (
+            row_meta_by_type.get("position_total") or {}
+        ).get("operator_confirmed_price")
+        if operator_price_value is not None:
+            ws.cell(
+                row=total_row,
+                column=12,
+                value=round(float(operator_price_value), 2),
+            )
+        else:
+            refs = [row_no for row_no in (direct_row, nr_row, sp_row) if row_no]
+            ws.cell(row=total_row, column=12, value=_sum_formula(refs))
     return r, pp, by_type
 
 

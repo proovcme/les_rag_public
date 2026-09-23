@@ -1,5 +1,7 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.76 / 782 stage F:** the six 781 defects closed on existing seams. Merge/validator key on decision identity (operation_id, else locator+role+content sha); trace amounts, positions and bindings carry op_key so per-operation sums replace per-locator overwrite; norms counters accept only real ciphers; summarize_lsr_price_basis binds explicit requested_region (with origin) + year + quarter (incl. file-name tokens) + book id, lists contradictions instead of resolving them, and honors the operator _price_basis confirmation; apply_confirmed_data is addressed by operation_id/row_role (confirm_ambiguous guards unaddressed multi-row patches) and double_count_conflicts makes the R6 equipment+material pattern visible; replace_accepted_rows enforces base_revision (router 409) and packet_attempt_seed restores attempt numbering from durable events. Code: chat_evidence_application_service.py, lsr_source_coverage_service.py, rim_lsr_trace_service.py, lsr_result_readiness_service.py, lsr_workbook_adapter_service.py, workbook_research_job_service.py, routers/chat.py; tests: +22 (test_finalization_defects_782.py).
+
 > **0.31.75 / 781 stage D:** the price basis became an explicit, visible part of
 > the LSR result without a new subsystem: `summarize_lsr_price_basis` binds the
 > requested basis (tool arg `pricebook`, source-text price level, period named in

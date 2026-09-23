@@ -191,8 +191,13 @@ def spec_to_bor(rows: list[dict]) -> dict[str, Any]:
     for ln in lines:
         p = ln.payload()
         positions.append({"work": p["name"], "unit": p["unit"], "qty": p["qty"],
-                          "source_refs": p.get("sources", []) or []})
-    return {"status": "ok" if positions else "empty", "positions": positions}
+                          "source_refs": p.get("sources", []) or [],
+                          "requires_decision": bool(p.get("requires_decision")),
+                          "original_item": p.get("original_item", "")})
+    unresolved = sum(1 for position in positions if position["requires_decision"])
+    return {"status": "ok" if positions else "empty", "positions": positions,
+            "requires_decision_count": unresolved,
+            "complete": bool(positions) and unresolved == 0}
 
 
 def gesn_expand(position: dict[str, Any]) -> dict[str, Any]:

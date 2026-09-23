@@ -32,6 +32,8 @@ _PRICE_SOURCE_LABEL = {
 _QUARTER_RE = re.compile(
     r"(?i)(?P<num>[1-4]|III|II|IV|I)\s*(?:квартал\w*|кв\.?)\s*(?P<year>20\d{2})"
 )
+# A book file name carries the period too: "sankt-peterburg_2kv2026".
+_FILE_QUARTER_RE = re.compile(r"(?i)(?P<num>[1-4])\s*kv\.?\s*(?P<year>20\d{2})")
 _QUARTER_ROMAN_TO_DIGIT = {"I": "1", "II": "2", "III": "3", "IV": "4"}
 _LABEL_RES = (
     ("customer", re.compile(r"(?im)^\s*заказчик\s*[:\-–]\s*(.+?)\s*$")),
@@ -126,7 +128,8 @@ def _read_source_preview_text(path: Path) -> str:
 
 
 def _quarter_token(value: object) -> str:
-    match = _QUARTER_RE.search(str(value or ""))
+    text = str(value or "")
+    match = _QUARTER_RE.search(text) or _FILE_QUARTER_RE.search(text)
     if not match:
         return ""
     raw = match.group("num")
@@ -139,6 +142,29 @@ def _quarter_phrase(value: object) -> str:
     return " ".join(match.group(0).split()) if match else ""
 
 
+_REGION_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("санкт-петербург", "санкт петербург", "петербург", "спб", "ленинград",
+         "sankt", "peterburg", "spb", "leningrad"),
+        "Санкт-Петербург",
+    ),
+    (
+        ("москв", "moskva", "moscow"),
+        "Москва",
+    ),
+)
+
+
+def _region_in_text(value: object) -> str:
+    text = str(value or "").casefold().replace("ё", "е")
+    if not text.strip():
+        return ""
+    for patterns, canonical in _REGION_PATTERNS:
+        if any(token in text for token in patterns):
+            return canonical
+    return ""
+
+
 def summarize_lsr_price_basis(
     *,
     requested_book: str = "",
@@ -146,8 +172,16 @@ def summarize_lsr_price_basis(
     question_text: str = "",
     pricebook=None,
     pricebook_name: str = "",
+    requested_region: str = "",
+    requested_region_origin: str = "",
+    operator_confirmation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Bind the requested and the actually applied price basis; mismatches stay visible."""
+    """Bind the requested and the actually applied price basis; mismatches stay visible.
+
+    Region, year, quarter and the book identity are checked together. Contradictions
+    between explicit parameters are never resolved by hidden priority: they are
+    reported, and only an operator confirmation can accept an alternative basis.
+    """
 
     requested_parts: list[str] = []
     book_request = str(requested_book or "").strip()
@@ -160,9 +194,64 @@ def summarize_lsr_price_basis(
     if question_level and question_level not in requested_parts:
         requested_parts.append(question_level)
     requested_label = "; ".join(requested_parts)
+
+    region_text = str(requested_region or "").strip()
+    if region_text:
+        region_text = _region_in_text(region_text) or region_text
+        region_origin = str(requested_region_origin or "").strip() or "параметр расчёта"
+    else:
+        region_origin = ""
+        for candidate, origin in (
+            (book_request, "запрошенная книга"),
+            (question_text, "вопрос"),
+            (source_level, "исходник"),
+        ):
+            found = _region_in_text(candidate)
+            if found:
+                region_text = found
+                region_origin = f"выведено из: {origin}"
+                break
+    if not region_text:
+        region_origin = "не указан"
+
+    # A contradiction between explicit parameters must never be resolved by a
+    # hidden priority: collect every distinct token instead.
+    requested_regions = {
+        found
+        for found in (
+            _region_in_text(book_request),
+            _region_in_text(question_text),
+            _region_in_text(source_level),
+        )
+        if found
+    }
+    quarter_tokens = {
+        token
+        for token in (
+            _quarter_token(book_request),
+            _quarter_token(source_level),
+            _quarter_token(question_level),
+        )
+        if token
+    }
+    contradictions: list[str] = []
+    if len(requested_regions) > 1:
+        contradictions.append("регион: " + ", ".join(sorted(requested_regions)))
+    if len(quarter_tokens) > 1:
+        contradictions.append("период цен: " + ", ".join(sorted(quarter_tokens)))
+    requested_quarter = next(iter(quarter_tokens)) if len(quarter_tokens) == 1 else ""
+
+    confirmation = (
+        operator_confirmation if isinstance(operator_confirmation, Mapping) else None
+    )
+    confirmed_book = str((confirmation or {}).get("pricebook") or "").strip()
+
     if pricebook is None:
         return {
             "requested": requested_label,
+            "requested_region": region_text,
+            "requested_region_origin": region_origin,
+            "contradictions": contradictions,
             "actual_book": "",
             "actual_region": "",
             "actual_quarter": "",
@@ -181,29 +270,48 @@ def summarize_lsr_price_basis(
     actual_quarter = str(getattr(pricebook, "quarter", "") or "")
     actual_label = actual_quarter or str(pricebook_name or "")
     subject_label = actual_region or "субъект не указан"
+    actual_region_token = _region_in_text(actual_region) or _region_in_text(pricebook_name)
     checks: list[bool] = []
     if book_request:
         checks.append(book_request.casefold() in str(pricebook_name or "").casefold())
-    requested_quarter = (
-        _quarter_token(book_request)
-        or _quarter_token(source_level)
-        or _quarter_token(question_level)
-    )
     actual_quarter_token = _quarter_token(actual_quarter) or _quarter_token(pricebook_name)
     if requested_quarter:
         checks.append(bool(actual_quarter_token) and requested_quarter == actual_quarter_token)
+    if region_text and actual_region_token:
+        checks.append(region_text == actual_region_token)
+    if contradictions:
+        checks.append(False)
     if checks and all(checks):
         match = "exact"
         note = f"Ценовая база совпадает с запросом: {actual_label} ({subject_label})."
     elif checks:
         match = "mismatch"
         note = (
-            f"Запрошена ценовая база «{requested_label}», фактически применена "
-            f"«{actual_label}» ({subject_label}). Расчёт по фактической базе не считается "
-            "расчётом по запросу: подтвердите альтернативу явно — пересоберите с книгой "
-            "запрошенной базы (явный аргумент pricebook) или внесите подтверждённые цены "
-            "через «Внести подтверждённые данные»."
+            f"Запрошена ценовая база «{requested_label}"
+            + (f" (регион: {region_text})" if region_text else "")
+            + f"», фактически применена «{actual_label}» ({subject_label}). "
+            "Расчёт по фактической базе не считается расчётом по запросу: "
+            "подтвердите альтернативу явно — пересоберите с книгой запрошенной базы "
+            "(явный аргумент pricebook) или внесите подтверждённые цены через "
+            "«Внести подтверждённые данные»."
         )
+        if contradictions:
+            note = (
+                "Явные параметры противоречат друг другу ("
+                + "; ".join(contradictions)
+                + "). "
+                + note
+            )
+        if confirmed_book and (
+            confirmed_book.casefold() in str(pricebook_name or "").casefold()
+            or str(pricebook_name or "").casefold() in confirmed_book.casefold()
+        ):
+            match = "confirmed_alternative"
+            note = (
+                f"Альтернативная ценовая база «{actual_label}» ({subject_label}) "
+                "подтверждена оператором как согласованное отклонение; расчёт по "
+                "запрошенной базе не подменён."
+            )
     else:
         match = "unspecified"
         note = (
@@ -212,6 +320,9 @@ def summarize_lsr_price_basis(
         )
     return {
         "requested": requested_label,
+        "requested_region": region_text,
+        "requested_region_origin": region_origin,
+        "contradictions": contradictions,
         "actual_book": str(pricebook_name or ""),
         "actual_region": actual_region,
         "actual_quarter": actual_quarter,
@@ -359,6 +470,9 @@ def _attach_catalog_facts(
         item["_catalog_source_numbers"] = [
             float(value) for value in quantity_candidates(cat_row)
         ]
+        item["_catalog_source_quantity_known"] = bool(
+            getattr(cat_row, "quantity_column_known", False)
+        )
 
 
 async def build_lsr_workbook_from_decisions(
@@ -390,12 +504,33 @@ async def build_lsr_workbook_from_decisions(
         source_text=source_text,
         source_name=source_name,
     )
+    overlays = (
+        args.get("confirmed_data")
+        if isinstance(args.get("confirmed_data"), Mapping)
+        else None
+    )
+    basis_confirmation = None
+    if (
+        isinstance(overlays, Mapping)
+        and isinstance(overlays.get("_price_basis"), Mapping)
+    ):
+        basis_confirmation = dict(overlays["_price_basis"])
+        basis_confirmation.setdefault("confirmed_by", "operator")
     price_basis = summarize_lsr_price_basis(
         requested_book=requested_pricebook,
         source_price_level=identity["price_level"],
         question_text=str(args.get("question") or ""),
         pricebook=pricebook,
         pricebook_name=pricebook_name,
+        requested_region=str(
+            args.get("region") or args.get("price_region") or ""
+        ).strip(),
+        requested_region_origin=(
+            "параметр расчёта"
+            if str(args.get("region") or args.get("price_region") or "").strip()
+            else ""
+        ),
+        operator_confirmation=basis_confirmation,
     )
     progress("model_decisions", 0, len(decisions))
     overlays = args.get("confirmed_data") if isinstance(args.get("confirmed_data"), Mapping) else None

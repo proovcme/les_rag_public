@@ -9,7 +9,7 @@ It does not choose norms or rewrite model cells.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -21,6 +21,11 @@ _WORK_UNITS = {
 _SUBTOTAL_MARKERS = ("итого", "всего", "subtotal", "total")
 _SECTION_MARKERS = ("раздел", "глава", "этап", "section")
 _HEADER_MARKERS = ("наименование", "единица", "ед изм", "количество", "объем", "объём")
+# Header labels that, when exactly one column matches, unambiguously name
+# the quantity column. Content-only; no sheet name or row number involved.
+_QUANTITY_HEADER_TOKENS = (
+    "кол-во", "кол", "количество", "объем", "объём", "qty", "quantity", "число",
+)
 
 
 def _compact_cell(value: Any, *, max_len: int = 480) -> str:
@@ -152,6 +157,8 @@ class CatalogRow:
     section_context: str = ""
     hidden_row: bool = False
     hidden_sheet: bool = False
+    header_quantity: float | None = None
+    quantity_column_known: bool = False
 
     def is_work_row(self) -> bool:
         # Ambiguous rows remain in the completeness denominator.  The catalog
@@ -204,13 +211,130 @@ def _classify_row(
     )
 
 
-def quantity_candidates(row: CatalogRow) -> tuple[float, ...]:
-    """Numeric cells that can be a source quantity.
+def _normalize_header(text: str) -> str:
+    return " ".join(str(text or "").casefold().replace("ё", "е").split())
 
-    A leading sequential № that equals the Excel row index is ignored when the
-    same row has another number (typical construction sheets).
+
+def _header_labels_from_row(row: CatalogRow) -> dict[int, str]:
+    """Column -> header label taken from a single header-classified row."""
+
+    headers: dict[int, str] = {}
+    for cell in row.cells:
+        label = " ".join(str(cell.display_value or "").split())
+        if label and cell.column not in headers:
+            headers[cell.column] = label
+    return headers
+
+
+def _has_text_header(headers: Mapping[int, str]) -> bool:
+    """A governing header must carry a letter; a numeric column-legend may not."""
+
+    return any(any(ch.isalpha() for ch in label) for label in headers.values())
+
+
+def _quantity_column(headers: Mapping[int, str]) -> int | None:
+    """The quantity column when exactly one header names it, else None."""
+
+    matches = [
+        column
+        for column, label in headers.items()
+        if any(token in _normalize_header(label) for token in _QUANTITY_HEADER_TOKENS)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _cell_number(cell: CatalogCell) -> float | None:
+    """Numeric value of a cell, preferring a formula's cached computed result.
+
+    A formula cell keeps its displayed expression as evidence, but its confirmed
+    value is the cached result the workbook stored; a formula with no cached
+    value yields None so the code never invents a quantity from an unresolved
+    expression.
     """
 
+    direct = _parse_number(cell.display_value)
+    if direct is not None:
+        return float(direct)
+    if cell.formula and cell.cached_formula_value is not None:
+        cached = _parse_number(str(cell.cached_formula_value))
+        if cached is not None:
+            return float(cached)
+    return None
+
+
+def _bind_column_headers(rows: Sequence[CatalogRow]) -> list[CatalogRow]:
+    """Bind each row to its governing source header without dropping evidence.
+
+    A sheet can stack several tables that repeat their headers or reorder
+    columns, so the binding tracks the most recent header row ABOVE each data
+    row, not the sheet's first header. For each data row the model-facing line
+    is labelled per column and the quantity is bound to the governing header's
+    quantity column:
+
+      * usable value there -> a single header-bound candidate;
+      * a known quantity column whose value is empty / erroneous / an unresolved
+        formula -> an explicit "no confirmed quantity" (empty candidates), never
+        a fallback to another number in the row;
+      * no proven quantity column (missing or ambiguous header) -> the row stays
+        ambiguous with the legacy candidate set.
+    """
+
+    headers: dict[int, str] = {}
+    quantity_col: int | None = None
+    bound: list[CatalogRow] = []
+    for row in rows:
+        if row.row_classification == "header":
+            candidate = _header_labels_from_row(row)
+            if _has_text_header(candidate):
+                headers = candidate
+                quantity_col = _quantity_column(headers)
+            bound.append(row)
+            continue
+        if not headers:
+            bound.append(row)
+            continue
+        parts: list[str] = []
+        header_quantity: float | None = None
+        for cell in row.cells:
+            label = headers.get(cell.column, "")
+            number = _cell_number(cell)
+            parts.append(
+                f"{cell.display_value} [{label}]"
+                if label and number is not None
+                else cell.display_value
+            )
+            if quantity_col is not None and cell.column == quantity_col:
+                header_quantity = number
+        if not parts:
+            bound.append(row)
+            continue
+        bound.append(
+            replace(
+                row,
+                line=f"{row.locator}: " + " | ".join(parts),
+                header_quantity=header_quantity,
+                quantity_column_known=quantity_col is not None,
+            )
+        )
+    return bound
+
+
+def quantity_candidates(row: CatalogRow) -> tuple[float, ...]:
+    """Source quantity candidates, bound to the governing header column.
+
+    When a quantity column is proven from the header, only that column's value
+    is a candidate; an empty / erroneous / unresolved-formula cell yields no
+    candidate, so a neighbor number (e.g. a mass) can never be mistaken for the
+    quantity and no other value is invented. Only when no quantity column is
+    proven does the row fall back to every non-sequence number, keeping an
+    ambiguous document ambiguous instead of guessing a value for it.
+    """
+
+    header_quantity = getattr(row, "header_quantity", None)
+    if header_quantity is not None:
+        return (float(header_quantity),)
+    if getattr(row, "quantity_column_known", False):
+        return ()
     others = tuple(
         number
         for number in row.numbers
@@ -564,6 +688,7 @@ def load_tabular_source_catalog(
     catalog_rows: list[CatalogRow] = []
     sheet_counts: list[tuple[str, int]] = []
     for sheet, _sheet_id, _hidden_sheet, rows in sheets:
+        rows = _bind_column_headers(rows)
         sheet_counts.append((sheet, len(rows)))
         catalog_rows.extend(rows)
     if not sheet_counts:
@@ -642,9 +767,12 @@ def compare_model_row_to_catalog(
     if isinstance(quantity, bool):
         quantity = None
     candidates = quantity_candidates(catalog_row)
-    if isinstance(quantity, (int, float)) and candidates:
-        if not any(quantities_close(float(quantity), number) for number in candidates):
-            errors.append(f"source_quantity_mismatch:{source_row}")
+    if isinstance(quantity, (int, float)):
+        if candidates:
+            if not any(quantities_close(float(quantity), number) for number in candidates):
+                errors.append(f"source_quantity_mismatch:{source_row}")
+        elif getattr(catalog_row, "quantity_column_known", False):
+            errors.append(f"source_quantity_unconfirmed:{source_row}")
     unit = normalize_unit(row.get("unit"))
     if unit:
         cell_units = {normalize_unit(item) for item in catalog_row.values}

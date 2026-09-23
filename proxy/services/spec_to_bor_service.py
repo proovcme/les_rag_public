@@ -73,6 +73,25 @@ def work_verb(name: str) -> str:
     return _DEFAULT_VERB
 
 
+# Ведущее действие-существительное: имя уже обозначает работу. Контентно,
+# без шифров/листов/номеров строк. «Светильник», «Кабель» — изделие, не работа.
+_EXPLICIT_WORK_VERBS = frozenset({
+    "монтаж", "прокладка", "установка", "устройство", "сборка", "демонтаж",
+    "разработка", "укладка", "навеска", "подключение", "опробование",
+    "испытание", "врезка", "сварка", "бетонирование", "кладка", "засыпка",
+    "планировка", "отделка", "окраска", "облицовка", "гидроизоляция",
+    "теплоизоляция", "крепление", "сверление", "резка", "бурение", "трамбовка",
+})
+
+
+def _name_is_explicit_work(name: str) -> bool:
+    """True when the source name already denotes a work (leading action noun)."""
+
+    tokens = re.split(r"[^0-9a-zа-я]+", (name or "").casefold().replace("ё", "е"))
+    first = next((t for t in tokens if t), "")
+    return first in _EXPLICIT_WORK_VERBS
+
+
 def spec_rows_to_work_lines(rows: list[dict]) -> list[BorLine]:
     """Свод работ из позиций спецификации: группировка по (раздел, работа, ед.), сумма qty."""
     lines: dict[tuple, BorLine] = {}
@@ -143,6 +162,24 @@ def _decompose(name: str) -> tuple[tuple[str, ...], str]:
             return works, note
     return _DEFAULT_DECOMPOSE
 
+def derive_work_for_item(name: str) -> tuple[str, bool]:
+    """Propose a work for a source item WITHOUT confirming it.
+
+    Returns (proposed_work, requires_decision). An explicit work (leading action
+    noun) needs no decision; a material/equipment item gets a dictionary-derived work
+    that must be flagged 'ТРЕБУЕТ РЕШЕНИЯ' — an item matching a rule is not proof of
+    an installation work. Noise/header names return ('', False).
+    """
+    raw = str(name or '').strip()
+    if not raw or _is_noise_name(raw):
+        return '', False
+    norm = re.sub(r'\s+', ' ', raw)
+    if _name_is_explicit_work(norm):
+        return norm, False
+    works, _note = _decompose(norm)
+    proposed = (works[0].replace('{предмет}', norm) if works else f'Монтаж {norm}')
+    return proposed, True
+
 
 @dataclass
 class WorkLine:
@@ -156,12 +193,16 @@ class WorkLine:
     source_rows: int = 0
     qty_missing_rows: int = 0
     sources: list[str] = field(default_factory=list)
+    requires_decision: bool = False
+    original_item: str = ""
 
     def payload(self) -> dict:
         return {"section": self.section, "name": self.work, "unit": self.unit,
                 "qty": (round(self.qty, 3) if self.qty is not None else None),
                 "chertezh": self.chertezh, "note": self.note,
-                "source_rows": self.source_rows, "sources": self.sources}
+                "source_rows": self.source_rows, "sources": self.sources,
+                "requires_decision": self.requires_decision,
+                "original_item": self.original_item}
 
 
 def spec_rows_to_work_lines_v2(rows: list[dict]) -> list[WorkLine]:
@@ -180,6 +221,7 @@ def spec_rows_to_work_lines_v2(rows: list[dict]) -> list[WorkLine]:
         pos = str(row.get("pos") or row.get("position") or "").strip()
         src = str(row.get("source_file") or "").strip()
         ref = f"{src}#{pos}" if pos else src
+        explicit_work = _name_is_explicit_work(name)
         for tmpl in works:
             work = tmpl.replace("{предмет}", name)
             key = (section.casefold(), _normalize_name(work), unit)
@@ -188,8 +230,18 @@ def spec_rows_to_work_lines_v2(rows: list[dict]) -> list[WorkLine]:
                 note = f"объём = кол-ву по спецификации (поз. {pos})" if pos else "объём = кол-ву по спецификации"
                 if dnote:
                     note += "; " + dnote
+                if not explicit_work:
+                    note = (
+                        "ТРЕБУЕТ РЕШЕНИЯ: работа выведена из изделия автоматически; "
+                        "исходная позиция и количество сохранены"
+                        + (("; " + note) if note else "")
+                    )
                 line = WorkLine(section=section, work=work, unit=unit, chertezh=chertezh, note=note)
                 lines[key] = line
+            if not explicit_work:
+                line.requires_decision = True
+                if not line.original_item:
+                    line.original_item = name
             if qty is None:
                 line.qty_missing_rows += 1
             else:
@@ -419,6 +471,10 @@ def format_spec_bor_answer(result: dict, dataset_label: str = "") -> str:
     head = (f"ВОР из спецификации: {result['bor_lines']} работ "
             f"из {result['source_rows']} позиций"
             + (f" · {dataset_label}" if dataset_label else "") + ".")
+    unresolved = sum(1 for l in lines if l.get("requires_decision"))
+    if unresolved:
+        head += (f" Не подтверждено как работа (требует решения): {unresolved} из "
+                 f"{result['bor_lines']}. ВОР не завершён до разрешения неопределённостей.")
     # Group preview by section when present.
     sample = []
     seen_sections: list[str] = []

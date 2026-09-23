@@ -1014,23 +1014,47 @@ def _decision_role_key(row: Mapping[str, Any]) -> str:
     return inferred_row_role(row) or "work"
 
 
+def _decision_identity_sha(row: Mapping[str, Any]) -> str:
+    """Content fingerprint of one decision, identity bookkeeping excluded."""
+
+    from proxy.services.workbook_research_job_service import _decision_content_sha
+
+    return _decision_content_sha(row)
+
+
 def merge_model_rag_rows(
     existing: Sequence[Mapping[str, Any]],
     incoming: Sequence[Mapping[str, Any]],
     catalog: AttachmentSourceCatalog | None = None,
 ) -> list[dict[str, Any]]:
-    """First accepted decision per (source_row, role) wins. Code does not rewrite cells.
+    """Decision identity wins: operation_id first, else locator+role+content.
 
-    A specification line may legally carry both material and install-work rows on
-    the same locator; those are different decisions, not duplicates.
+    A specification line may legally carry several distinct operations on the
+    same locator; those are different decisions, not duplicates. A redelivered
+    identical packet is the same decision again and never enters twice. Code
+    does not rewrite cells and does not fuse operations by title.
     """
 
     merged = [dict(row) for row in existing if isinstance(row, Mapping)]
-    seen: set[tuple[str, str]] = set()
+    seen_ops: set[str] = set()
+    seen_keys: set[tuple[str, str, str]] = set()
+    # Index rows for in-place volatile-field refresh when a redelivery carries
+    # newer note / evidence_refs / status. Directive 2.1: those updates must
+    # not spawn a new operation but must not be silently discarded either.
+    by_op: dict[str, dict[str, Any]] = {}
+    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in merged:
+        op = str(row.get("operation_id") or "").strip()
+        if op:
+            seen_ops.add(op)
+            by_op[op] = row
         role = _decision_role_key(row)
+        digest = _decision_identity_sha(row)
         for alias in _source_locator_aliases(row.get("source_row"), catalog):
-            seen.add((alias, role))
+            key = (alias, role, digest)
+            seen_keys.add(key)
+            by_key.setdefault(key, row)
+    _volatile_refresh = ("note", "evidence_refs", "status")
     for row in incoming:
         if not isinstance(row, Mapping):
             continue
@@ -1038,12 +1062,33 @@ def merge_model_rag_rows(
         raw = payload.get("source_row")
         if raw in (None, ""):
             continue
+        op = str(payload.get("operation_id") or "").strip()
         role = _decision_role_key(payload)
+        digest = _decision_identity_sha(payload)
         aliases = _source_locator_aliases(raw, catalog)
-        if any((alias, role) in seen for alias in aliases):
+        target: dict[str, Any] | None = None
+        if op and op in seen_ops:
+            target = by_op.get(op)
+        elif not op:
+            for alias in aliases:
+                candidate = by_key.get((alias, role, digest))
+                if candidate is not None:
+                    target = candidate
+                    break
+        if target is not None:
+            # Same decision, refresh volatile metadata only. Identity, quantity,
+            # unit, norm_code, title and locator stay as the first-authority.
+            for field in _volatile_refresh:
+                if field in payload:
+                    target[field] = payload[field]
             continue
+        if op:
+            seen_ops.add(op)
+            by_op[op] = payload
         for alias in aliases:
-            seen.add((alias, role))
+            key = (alias, role, digest)
+            seen_keys.add(key)
+            by_key.setdefault(key, payload)
         merged.append(payload)
     return merged
 
@@ -1283,6 +1328,33 @@ def structurally_complete_source_keys(rows, catalog):
     coverage = build_source_coverage(catalog_locators=catalog.work_locators(), rows=rows)
     invalid = set(coverage["incomplete_locators"])
     return keys - invalid
+
+def adjudicated_source_keys(rows, catalog):
+    """Locators the model gave a terminal role to (work/material/equipment/resource/
+    unresolved/header).
+
+    A classified row is *decided* even when a quality gap (no norm, no work_row link,
+    no open_gap sentence) remains — those gaps belong in the reported ``missing`` list,
+    not in an endless resume.  Completion must not re-queue positions that legitimately
+    have no applicable norm, or a large document can never finalize.
+    """
+    from proxy.services.lsr_source_coverage_service import inferred_row_role
+
+    keys: set[str] = set()
+    for row in rows:
+        if not hasattr(row, "get"):
+            continue
+        raw = row.get("source_row")
+        if raw in (None, ""):
+            continue
+        if not inferred_row_role(row):
+            continue
+        keys.add(str(raw).strip())
+        if catalog is not None:
+            found = catalog.lookup(raw)
+            if found is not None:
+                keys.add(found.locator)
+    return keys
 
 
 def adaptive_row_packet(
@@ -2924,7 +2996,7 @@ def validate_model_rag_result_structure(
             "source_incomplete:"
             + ",".join(list(source_incomplete_locators)[:8])
         )
-    observed_keys: set[tuple[str, str, str]] = set()
+    observed_keys: set[tuple[str, str, str, str]] = set()
     for row in rows:
         source_row = row.get("source_row")
         is_positive_int = (
@@ -2936,12 +3008,14 @@ def validate_model_rag_result_structure(
         if not is_positive_int and not is_authored_label:
             errors.append("invalid_source_row")
             continue
-        # Same locator may carry material + install work. Duplicate only the
-        # same role twice; mixed roles are the specification→work pattern.
+        # One locator may legally carry several distinct operations, even with
+        # the same role. Duplicate means the identical content was authored
+        # twice; distinct content on one locator is the two-operations pattern.
         source_key = (
             type(source_row).__name__,
             str(source_row),
             _decision_role_key(row),
+            _decision_identity_sha(row),
         )
         if source_key in observed_keys:
             errors.append(f"duplicate_source_row:{source_row}")
@@ -5571,6 +5645,20 @@ async def _execute_chat_evidence_application(
                         )
                         exhausted_locators: set[str] = set()
                         packet_attempts: dict[tuple[str, ...], int] = {}
+                        if (
+                            research_job_service is not None
+                            and isinstance(research_job, Mapping)
+                            and research_job.get("job_id")
+                        ):
+                            # A restarted process must continue attempt numbering
+                            # from the durable checkpoints, so a Qx.Hy reference
+                            # can never address another attempt's cards.
+                            packet_attempts = packet_attempt_seed(
+                                research_job_service.list_events(
+                                    str(research_job["job_id"]),
+                                    event_type="packet_checkpoint",
+                                )
+                            )
                         locator_research_round: dict[str, int] = {}
                         inner = 0
                         deferred_query_hits: list[tuple[str, Sequence[Any]]] = []
@@ -6226,11 +6314,19 @@ async def _execute_chat_evidence_application(
                             status_code=503,
                             detail="MODEL_RAG_QUERY_LIST_EMPTY",
                         )
+                    complete_keys = structurally_complete_source_keys(
+                        accumulated_rows, source_catalog
+                    )
+                    # A row the model adjudicated with any terminal role is finished for
+                    # completion purposes even if a quality gap remains; only rows that
+                    # received NO decision at all are re-queued for the next resume pass.
+                    adjudicated_keys = adjudicated_source_keys(
+                        accumulated_rows, source_catalog
+                    )
                     unfinished_locators = [
                         locator
                         for locator in source_catalog.work_locators()
-                        if locator
-                        not in structurally_complete_source_keys(accumulated_rows, source_catalog)
+                        if locator not in complete_keys and locator not in adjudicated_keys
                     ]
                     if research_job_service is not None and research_job is not None:
                         if owns_sheet_pass:
@@ -7475,14 +7571,26 @@ async def _execute_chat_evidence_application(
                             price_basis=dict(
                                 (workbook_chat_meta or {}).get("price_basis") or {}
                             ),
-                            calculated_positions=int(
-                                (safe_payload or {}).get("calculated_positions") or -1
+                            calculated_positions=(
+                                int((safe_payload or {})["calculated_positions"])
+                                if isinstance(
+                                    (safe_payload or {}).get("calculated_positions"), (int, float)
+                                )
+                                else -1
                             ),
-                            confirmed_amount=float(
-                                (safe_payload or {}).get("confirmed_amount") or -1.0
+                            confirmed_amount=(
+                                float((safe_payload or {})["confirmed_amount"])
+                                if isinstance(
+                                    (safe_payload or {}).get("confirmed_amount"), (int, float)
+                                )
+                                else -1.0
                             ),
-                            preliminary_amount=float(
-                                (safe_payload or {}).get("preliminary_amount") or -1.0
+                            preliminary_amount=(
+                                float((safe_payload or {})["preliminary_amount"])
+                                if isinstance(
+                                    (safe_payload or {}).get("preliminary_amount"), (int, float)
+                                )
+                                else -1.0
                             ),
                         )
                         retrieval_trace["result_readiness"] = lsr_readiness
@@ -7886,3 +7994,33 @@ async def _execute_chat_evidence_application(
 
             logger.error("[CHAT] UNEXPECTED ERROR: %s\n%s", e, traceback.format_exc())
             raise HTTPException(500, f"{type(e).__name__}: {e}")
+
+
+
+def packet_attempt_seed(
+    events: Sequence[Mapping[str, Any]],
+) -> dict[tuple[str, ...], int]:
+    """Rebuild per-packet attempt counters from durable checkpoint events.
+
+    A restarted process must not number a second delivery of the same packet
+    as the first one: the Qx.Hy evidence namespace is keyed by the attempt, so
+    resuming from zero would let a fresh reference address another attempt's
+    cards.
+    """
+
+    seeded: dict[tuple[str, ...], int] = {}
+    for event in events or ():
+        if not isinstance(event, Mapping):
+            continue
+        if str(event.get("event_type") or "") != "packet_checkpoint":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        locators = tuple(
+            str(item) for item in (payload.get("packet_locators") or []) if str(item)
+        )
+        if not locators:
+            continue
+        seeded[locators] = seeded.get(locators, 0) + 1
+    return seeded

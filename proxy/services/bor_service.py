@@ -196,7 +196,8 @@ def source_rows_to_vor_xlsx(
     sheet.append([title])
     sheet["A1"].font = Font(bold=True, size=13)
     sheet.append([])
-    headers = ["№", "Раздел", "Наименование", "Код/Шифр", "Ед. изм.", "Кол-во", "Источник"]
+    headers = ["№", "Раздел", "Наименование", "Код/Шифр", "Ед. изм.", "Кол-во",
+               "Источник", "Предполагаемая работа", "Статус решения"]
     sheet.append(headers)
     for cell in sheet[3]:
         cell.font = Font(bold=True)
@@ -206,6 +207,8 @@ def source_rows_to_vor_xlsx(
         source = str(row.get("source_file") or "").strip()
         position = str(row.get("pos") or row.get("position") or "").strip()
         locator = f"{source}#{position}" if source and position else source
+        requires_decision = bool(row.get("requires_decision"))
+        proposed = str(row.get("derived_work") or "").strip()
         sheet.append([
             index,
             str(row.get("section") or "").strip(),
@@ -214,9 +217,12 @@ def source_rows_to_vor_xlsx(
             str(row.get("unit") or "").strip(),
             row.get("qty"),
             locator,
+            proposed,
+            ("ТРЕБУЕТ РЕШЕНИЯ" if requires_decision else ("подтверждено" if proposed else "")),
         ])
 
-    for column, width in {"A": 6, "B": 18, "C": 60, "D": 16, "E": 10, "F": 12, "G": 42}.items():
+    for column, width in {"A": 6, "B": 18, "C": 60, "D": 16, "E": 10, "F": 12, "G": 42,
+                          "H": 46, "I": 18}.items():
         sheet.column_dimensions[column].width = width
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)

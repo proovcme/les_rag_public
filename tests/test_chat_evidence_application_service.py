@@ -494,12 +494,15 @@ def test_model_rag_packaging_requires_complete_rows_and_real_matching_evidence()
     errors = service.validate_model_rag_result_structure(
         [
             {"source_row": 1, "norm_code": "ГЭСН26-01-055-99", "evidence_refs": ["Q1.H2"]},
+            {"source_row": 1, "norm_code": "ГЭСН26-01-055-99", "evidence_refs": ["Q1.H2"]},
             {"source_row": 1, "norm_code": "ГЭСНм08-02-146-01", "evidence_refs": ["Q9.H9"]},
         ],
         evidence,
         expected_source_rows=2,
     )
 
+    # Duplicate means the fully identical decision was authored twice;
+    # distinct content on one locator is the legal two-operations pattern (1.1).
     assert "duplicate_source_row:1" in errors
     assert "missing_source_row:2" not in errors
     assert "unknown_evidence_ref:Q9.H9" in errors
@@ -556,13 +559,29 @@ def test_material_and_work_same_locator_are_not_duplicate_decisions():
 
     merged = service.merge_model_rag_rows([], rows)
     assert len(merged) == 2
-    # First-wins per role: second material for same locator is ignored.
-    again = service.merge_model_rag_rows(
+    # Redelivery of an identical packet never creates new operations.
+    again = service.merge_model_rag_rows(merged, [dict(rows[0]), dict(rows[1])])
+    assert len(again) == 2
+    assert again[0]["title"] == "Кабель"
+    # A distinct material decision on the same locator is a second operation,
+    # not something "first-wins per role" may drop (defect 1.1).
+    amended = service.merge_model_rag_rows(
         merged,
         [{**rows[0], "title": "другой материал"}],
     )
-    assert len(again) == 2
-    assert again[0]["title"] == "Кабель"
+    assert len(amended) == 3
+    # A known operation_id marks the same operation: redelivering it with
+    # revised content never adds another card (revision is the job service).
+    existing = service.merge_model_rag_rows(
+        [],
+        [{**rows[0], "operation_id": "op_mat_1"}],
+    )
+    refined = service.merge_model_rag_rows(
+        existing,
+        [{**rows[0], "operation_id": "op_mat_1", "title": "уточнённый кабель"}],
+    )
+    assert len(refined) == 1
+    assert refined[0]["title"] == "Кабель"
 
 
 def test_markdown_title_with_pipe_still_parses_row():

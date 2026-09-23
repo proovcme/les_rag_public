@@ -414,3 +414,450 @@ def test_search_cache_event_carries_packet_context(tmp_path) -> None:
     assert "sheet" not in bare and bare["cached_total"] == 2
     cached = service.get(first["job_id"])["query_cache"]
     assert json.dumps(sorted(cached))  # both queries durable, order irrelevant
+
+
+# ─── Directive §4: product-internal stall guard ───
+
+def test_stall_guard_auto_pauses_after_threshold(tmp_path):
+    """After STALL_THRESHOLD rounds without progress, job auto-pauses with reason."""
+    from proxy.services.workbook_research_job_service import (
+        WorkbookResearchJobService,
+        WorkbookResearchIdentity,
+        _STALL_THRESHOLD,
+    )
+
+    svc = WorkbookResearchJobService(tmp_path / "meta.db")
+    identity = WorkbookResearchIdentity(
+        session_id="s1",
+        attachment_id="att1",
+        source_sha256="abc",
+        dataset_ids=(),
+        profile_revision_id="p1",
+        model_identity="m1",
+        question_sha256="q1",
+    )
+    job = svc.begin_or_resume(identity)
+    job_id = job["job_id"]
+
+    remaining = ["r1", "r2", "r3"]
+    # First round: no previous remaining, so it counts as progress from (empty) -> 3
+    # Actually prev_remaining is [] initially, so len(3) > len(0) = no progress
+    # Wait: made_progress = new < prev, so 3 < 0 is False... 
+    # Let me set it up properly: first call sets remaining to 3.
+    # Second call same 3: no progress -> stall_count=1
+    # Third call same 3: no progress -> stall_count=2 >= threshold -> auto-pause
+
+    # Round 1: establish remaining=3 (prev is [] so 3 not < 0 -> no progress, stall=1)
+    # Hmm actually: prev_remaining = [] (len=0), new len=3, 3 < 0 is False, stall=1
+    # That means first delivery already counts as stall. Let me check:
+    # A fresh job has remaining_json=[], so prev_remaining=[] (len=0).
+    # First record_packet with remaining=["r1","r2","r3"]: len(3) < len(0) is False -> stall++
+    # This is wrong. Let's fix: first round should not count as stall because prev=0 is "not started".
+    # Actually the semantics: if remaining == prev and both > 0, that's a stall.
+    # If prev == 0 (initial) or prev == [] (fresh), it's the first batch, not a stall.
+    
+    # We'll test the real behavior: deliver same remaining multiple times
+    # First: prev=[] -> new=["r1","r2","r3"]. made_progress = 3 < 0 = False. stall=1
+    # Second: prev=["r1","r2","r3"] -> new=["r1","r2","r3"]. 3 < 3 = False. stall=2 >= threshold -> PAUSE
+    
+    result = None
+    for i in range(_STALL_THRESHOLD + 1):
+        result = svc.record_packet(
+            job_id,
+            sheet="Sheet1",
+            packet_locators=["r1"],
+            accepted_rows=[],
+            evidence=[],
+            omitted=[],
+            remaining=remaining,
+        )
+        # Once paused, subsequent calls hit TERMINAL_STATUSES check...
+        # Actually 'paused' is NOT in TERMINAL_STATUSES (only complete/failed). So it still processes.
+        # But the UPDATE will still happen with should_auto_pause=True again.
+        if result["status"] == "paused":
+            break
+
+    assert result["status"] == "paused", f"Expected paused, got {result['status']}"
+    assert result["phase"] == "stalled"
+    sg = result["stall_guard"]
+    assert sg["stall_count"] >= _STALL_THRESHOLD
+    assert "stalled" in sg["reason"]
+    assert sg["round_count"] >= _STALL_THRESHOLD
+
+
+def test_stall_guard_resets_on_progress(tmp_path):
+    """Substantive progress (new operations) resets the stall streak.
+
+    Directive §1 (22.09): progress is measured by *content produced*, not by a
+    shrinking sheet-local ``remaining`` count. Each packet here delivers a brand
+    new operation, so the streak stays at zero even though the pass also carries
+    a non-empty remainder.
+    """
+    from proxy.services.workbook_research_job_service import (
+        WorkbookResearchJobService,
+        WorkbookResearchIdentity,
+    )
+
+    svc = WorkbookResearchJobService(tmp_path / "meta.db")
+    identity = WorkbookResearchIdentity(
+        session_id="s1",
+        attachment_id="att1",
+        source_sha256="abc",
+        dataset_ids=(),
+        profile_revision_id="p1",
+        model_identity="m1",
+        question_sha256="q1",
+    )
+    job = svc.begin_or_resume(identity)
+    job_id = job["job_id"]
+
+    for i, remaining in enumerate(
+        (["r1", "r2", "r3"], ["r1", "r2"], ["r1"], []), start=1
+    ):
+        result = svc.record_packet(
+            job_id,
+            sheet="Sheet1",
+            packet_locators=[f"Sheet1!R{i}"],
+            accepted_rows=[
+                {"source_row": f"Sheet1!R{i}", "norm_code": f"N{i}", "norm_status": "EXACT"}
+            ],
+            evidence=[],
+            omitted=[],
+            remaining=remaining,
+        )
+        assert result["stall_guard"]["stall_count"] == 0
+
+    assert result["status"] == "running"
+    assert len(result["accepted_rows"]) == 4
+
+
+def test_no_absolute_round_ceiling_when_progressing(tmp_path):
+    """Progressing packets must not pause on the old cumulative _MAX_ROUNDS ceiling.
+
+    Directive §1 (22.09): sequential processing of NEW packets with real progress
+    is not a loop. The former ``max_rounds`` pause trigger is removed; round_count
+    keeps accumulating purely for reporting.
+    """
+    from proxy.services.workbook_research_job_service import (
+        WorkbookResearchJobService,
+        WorkbookResearchIdentity,
+        _MAX_ROUNDS,
+    )
+
+    svc = WorkbookResearchJobService(tmp_path / "meta.db")
+    identity = WorkbookResearchIdentity(
+        session_id="s1",
+        attachment_id="att1",
+        source_sha256="abc",
+        dataset_ids=(),
+        profile_revision_id="p1",
+        model_identity="m1",
+        question_sha256="q1",
+    )
+    job = svc.begin_or_resume(identity)
+    job_id = job["job_id"]
+
+    result = None
+    for i in range(1, _MAX_ROUNDS + 6):  # clearly past the old ceiling of 8
+        remaining = [f"r{j}" for j in range(_MAX_ROUNDS + 6 - i, 0, -1)]
+        result = svc.record_packet(
+            job_id,
+            sheet="Sheet1",
+            packet_locators=[f"Sheet1!R{i}"],
+            accepted_rows=[
+                {"source_row": f"Sheet1!R{i}", "norm_code": f"N{i}", "norm_status": "EXACT"}
+            ],
+            evidence=[],
+            omitted=[],
+            remaining=remaining,
+        )
+
+    assert result["status"] == "running"
+    assert "max_rounds" not in result["stall_guard"]["reason"]
+    assert result["stall_guard"]["round_count"] >= _MAX_ROUNDS  # informational only
+
+
+def test_no_progress_empty_packets_pause_as_stalled(tmp_path):
+    """Empty (no-content) packets are a genuine stall and pause as 'stalled'."""
+    from proxy.services.workbook_research_job_service import (
+        WorkbookResearchJobService,
+        WorkbookResearchIdentity,
+        _STALL_THRESHOLD,
+    )
+
+    svc = WorkbookResearchJobService(tmp_path / "meta.db")
+    identity = WorkbookResearchIdentity(
+        session_id="s1",
+        attachment_id="att1",
+        source_sha256="abc",
+        dataset_ids=(),
+        profile_revision_id="p1",
+        model_identity="m1",
+        question_sha256="q1",
+    )
+    job = svc.begin_or_resume(identity)
+    job_id = job["job_id"]
+
+    result = None
+    for _ in range(_STALL_THRESHOLD + 3):
+        result = svc.record_packet(
+            job_id,
+            sheet="Sheet1",
+            packet_locators=[],
+            accepted_rows=[],
+            evidence=[],
+            omitted=[],
+            remaining=["r1", "r2", "r3"],  # constant, no new content → no progress
+        )
+        if result["status"] == "paused":
+            break
+
+    assert result["status"] == "paused"
+    assert "stalled" in result["stall_guard"]["reason"]
+
+
+# ─── Directive §1 (22.09): split stall / progress counters ───
+from proxy.services.workbook_research_job_service import (
+    _RUN_PACKET_BUDGET,
+    _STALL_THRESHOLD,
+)
+
+
+def _pkt_row(i: int) -> dict:
+    # Each call yields a distinct, substantively new operation → real progress.
+    return {"source_row": f"СКС!R{i}", "norm_code": f"N{i:04d}", "norm_status": "EXACT"}
+
+
+def test_more_than_eight_progressing_packets_do_not_pause(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    for i in range(1, 13):  # 12 sequential packets, each with new content
+        job = service.record_packet(
+            job["job_id"],
+            sheet="СКС",
+            packet_locators=[f"СКС!R{i}"],
+            accepted_rows=[_pkt_row(i)],
+            evidence=[],
+            remaining=[f"СКС!R{i + 1}"],
+        )
+    assert job["status"] == "running"
+    sg = job["stall_guard"]
+    assert sg["stall_count"] == 0
+    assert sg["round_count"] == 12          # informational cumulative counter
+    assert sg["run_round_count"] == 12      # well under the per-run budget
+    assert len(job["accepted_rows"]) == 12
+
+
+def test_sheet_transition_does_not_count_as_stall(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    # Sheet АР progresses and leaves a big local remainder.
+    job = service.record_packet(
+        job["job_id"],
+        sheet="АР",
+        packet_locators=["АР!R2"],
+        accepted_rows=[{"source_row": "АР!R2", "norm_code": "A2", "norm_status": "EXACT"}],
+        evidence=[],
+        remaining=["АР!R3", "АР!R4", "АР!R5"],
+    )
+    # Move to sheet СКС: its local remaining list is LONGER, but this packet also
+    # produces a NEW operation — that is progress, not a regression.
+    job = service.record_packet(
+        job["job_id"],
+        sheet="СКС",
+        packet_locators=["СКС!R2"],
+        accepted_rows=[{"source_row": "СКС!R2", "norm_code": "K2", "norm_status": "EXACT"}],
+        evidence=[],
+        remaining=["СКС!R3", "СКС!R4", "СКС!R5", "СКС!R6", "СКС!R7"],
+    )
+    assert job["status"] == "running"
+    assert job["stall_guard"]["stall_count"] == 0
+
+
+def test_final_packet_with_empty_remainder_is_not_paused(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    job = service.record_packet(
+        job["job_id"],
+        sheet="СКС",
+        packet_locators=["СКС!R2"],
+        accepted_rows=[_pkt_row(2)],
+        evidence=[],
+        remaining=["СКС!R3"],
+    )
+    # Last packet: produces a new op AND leaves nothing remaining, nothing held.
+    job = service.record_packet(
+        job["job_id"],
+        sheet="СКС",
+        packet_locators=["СКС!R3"],
+        accepted_rows=[_pkt_row(3)],
+        evidence=[],
+        remaining=[],
+        held_packet={},
+    )
+    assert job["status"] == "running"
+    assert job["stall_guard"]["reason"] == ""
+    assert job["remaining"] == []
+
+
+def test_no_progress_at_natural_completion_is_not_paused(tmp_path) -> None:
+    """Live-bug regression (build 787): the final packets drained remaining to 0 but
+    produced no NEW revision (nothing left to add).  The no-progress streak must NOT
+    be reported as a paused stall once there is no outstanding work."""
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    job = service.record_packet(
+        job["job_id"],
+        sheet="\u0421\u041a\u0421",
+        packet_locators=["\u0421\u041a\u0421!R2"],
+        accepted_rows=[_pkt_row(2)],
+        evidence=[],
+        remaining=["\u0421\u041a\u0421!R3"],
+    )
+    # A packet that re-delivers the same row (no new revision) but still has work left.
+    job = service.record_packet(
+        job["job_id"],
+        sheet="\u0421\u041a\u0421",
+        packet_locators=["\u0421\u041a\u0421!R2"],
+        accepted_rows=[_pkt_row(2)],
+        evidence=[],
+        remaining=["\u0421\u041a\u0421!R3"],
+    )
+    assert job["stall_guard"]["stall_count"] == 1  # streak building, but work remains
+    assert job["status"] == "running"
+    # Final packet: still no new revision AND now nothing remaining, nothing held.
+    job = service.record_packet(
+        job["job_id"],
+        sheet="\u0421\u041a\u0421",
+        packet_locators=["\u0421\u041a\u0421!R3"],
+        accepted_rows=[_pkt_row(2)],
+        evidence=[],
+        remaining=[],
+        held_packet={},
+    )
+    sg = job["stall_guard"]
+    assert job["status"] != "paused"
+    assert "remaining=0" not in (sg.get("reason") or "")
+    assert job["remaining"] == []
+
+
+def test_stall_reason_disambiguates_sheet_local_from_global_remaining(tmp_path) -> None:
+    """Directive §2 (23.09): the stall reason previously printed a bare
+    ``remaining=N`` that was the *sheet-local* tail, while job.remaining holds the
+    *global* document remainder — identical label, different scope (the 314-vs-13
+    customer confusion).  The reason must now label the scope and name the sheet, and
+    the API must expose the stall sheet."""
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    reason = ""
+    for _ in range(4):
+        job = service.record_packet(
+            job["job_id"],
+            sheet="\u0410\u0420",
+            packet_locators=["\u0410\u0420!R2"],
+            accepted_rows=[_pkt_row(2)],
+            evidence=[],
+            remaining=["\u0410\u0420!R3", "\u0410\u0420!R4"],
+        )
+        reason = job["stall_guard"]["reason"]
+        if job["status"] == "paused":
+            break
+    assert job["status"] == "paused", reason
+    assert "sheet_remaining" in reason
+    assert "global document remainder" in reason
+    assert "(remaining=" not in reason  # no bare, scope-less 'remaining='
+    assert job["stall_guard"]["sheet"] == "\u0410\u0420"
+    assert job["stall_guard"]["remaining_scope"] == "sheet_local_in_reason_global_in_remaining"
+    # the persisted remaining is the sheet tail passed here; global is set by pause().
+    assert len(job["remaining"]) == 2
+
+
+def test_no_progress_triggers_bounded_pause(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    job = service.record_packet(
+        job["job_id"],
+        sheet="СКС",
+        packet_locators=["СКС!R2"],
+        accepted_rows=[_pkt_row(2)],
+        evidence=[],
+        remaining=["СКС!R9"],
+    )
+    # Two subsequent packets re-deliver the SAME row (no new revision), resolve no
+    # new omitted rows, hold nothing → genuine lack of progress.
+    for _ in range(_STALL_THRESHOLD):
+        job = service.record_packet(
+            job["job_id"],
+            sheet="СКС",
+            packet_locators=["СКС!R2"],
+            accepted_rows=[_pkt_row(2)],  # identical → deduped, new_revisions empty
+            evidence=[],
+            remaining=["СКС!R9"],
+        )
+    assert job["status"] == "paused"
+    assert "stalled" in job["stall_guard"]["reason"]
+    assert job["stall_guard"]["stall_count"] >= _STALL_THRESHOLD
+
+
+def test_run_budget_pause_is_continuable_and_resets(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    i = 0
+    while i < _RUN_PACKET_BUDGET + 20:
+        i += 1
+        job = service.record_packet(
+            job["job_id"],
+            sheet="СКС",
+            packet_locators=[f"СКС!R{i}"],
+            accepted_rows=[_pkt_row(i)],
+            evidence=[],
+            remaining=["СКС!REND"],  # work still outstanding → run_budget may fire
+        )
+        if job["status"] == "paused":
+            break
+    assert job["status"] == "paused"
+    assert "run_budget" in job["stall_guard"]["reason"]
+    assert job["stall_guard"]["run_round_count"] == _RUN_PACKET_BUDGET
+    # Resume starts a fresh run budget and does not immediately re-pause.
+    job = service.begin_or_resume(_identity(service))
+    assert job["status"] == "running"
+    assert job["stall_guard"]["run_round_count"] == 0
+    cumulative_before = job["stall_guard"]["round_count"]
+    for j in range(i + 1, i + 6):
+        job = service.record_packet(
+            job["job_id"],
+            sheet="СКС",
+            packet_locators=[f"СКС!R{j}"],
+            accepted_rows=[_pkt_row(j)],
+            evidence=[],
+            remaining=["СКС!REND"],
+        )
+    assert job["status"] == "running"
+    assert job["stall_guard"]["run_round_count"] < _RUN_PACKET_BUDGET
+    # round_count keeps accumulating (informational) yet never blocks processing.
+    assert job["stall_guard"]["round_count"] > cumulative_before
+
+
+def test_legacy_high_round_count_continues_safely(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    # Simulate a job persisted by the pre-fix code: it already blew the old
+    # cumulative ceiling and carries a stale stall streak.
+    with service._connect() as conn:
+        conn.execute(
+            "UPDATE workbook_research_jobs SET round_count=999, stall_count=3 WHERE job_id=?",
+            (job["job_id"],),
+        )
+    # A single progressing packet must NOT pause: round_count is informational and
+    # the fresh progress clears the stall streak.
+    job = service.record_packet(
+        job["job_id"],
+        sheet="СКС",
+        packet_locators=["СКС!R50"],
+        accepted_rows=[_pkt_row(50)],
+        evidence=[],
+        remaining=["СКС!R51"],
+    )
+    assert job["status"] == "running"
+    assert job["stall_guard"]["stall_count"] == 0
+    assert len(job["accepted_rows"]) == 1

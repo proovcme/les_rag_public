@@ -341,9 +341,21 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             remaining_locators=remaining,
             price_gaps=list(harvested.get("price_gaps") or []),
             price_basis=dict(harvested.get("price_basis") or {}),
-            calculated_positions=int(payload.get("calculated_positions") or -1),
-            confirmed_amount=float(payload.get("confirmed_amount") or -1.0),
-            preliminary_amount=float(payload.get("preliminary_amount") or -1.0),
+            calculated_positions=(
+                int(payload["calculated_positions"])
+                if isinstance(payload.get("calculated_positions"), (int, float))
+                else -1
+            ),
+            confirmed_amount=(
+                float(payload["confirmed_amount"])
+                if isinstance(payload.get("confirmed_amount"), (int, float))
+                else -1.0
+            ),
+            preliminary_amount=(
+                float(payload["preliminary_amount"])
+                if isinstance(payload.get("preliminary_amount"), (int, float))
+                else -1.0
+            ),
         )
         artifact["result_readiness"] = readiness
         harvested["artifact"] = artifact
@@ -368,12 +380,15 @@ async def patch_lsr_rows(req: LsrPatchRequest, _user=Depends(require_user)):
         job = service.get(job_id)
     except WorkbookResearchJobError as error:
         raise HTTPException(404, str(error)) from error
-    if req.replace_rows:
-        job = service.replace_accepted_rows(job_id, req.replace_rows)
-    if req.reopen_locators:
-        job = service.reopen_locators(job_id, req.reopen_locators)
-    if req.confirmed_data:
-        job = service.record_overrides(job_id, req.confirmed_data)
+    try:
+        if req.replace_rows:
+            job = service.replace_accepted_rows(job_id, req.replace_rows)
+        if req.reopen_locators:
+            job = service.reopen_locators(job_id, req.reopen_locators)
+        if req.confirmed_data:
+            job = service.record_overrides(job_id, req.confirmed_data)
+    except WorkbookResearchJobError as error:
+        raise HTTPException(409, str(error)) from error
     packed: dict[str, Any] | None = None
     if req.repack and not req.reopen_locators:
         packed = await repack_lsr_without_model(

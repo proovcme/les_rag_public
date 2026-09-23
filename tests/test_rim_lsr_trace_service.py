@@ -983,7 +983,10 @@ def test_stage_v_needs_research_bound_stays_preliminary_and_keeps_status():
     assert binding["norm_status"] == "NEEDS_RESEARCH"
     assert binding["readiness"]["norm_selected"] is True
     assert binding["readiness"]["applicability_substantiated"] is False
-    assert binding["readiness"]["prices_provided"] is False
+    # Directive 2.2: readiness bases are independent. NEEDS_RESEARCH fails
+    # norm_applicability_ok, which is what keeps the position preliminary.
+    # prices_provided now tracks only the price dimension.
+    assert binding["readiness"]["norm_applicability_ok"] is False
     assert lsr["summary"]["confirmed_amount"] == 0.0
     assert lsr["summary"]["preliminary_amount"] == 11813.04
     assert lsr["summary"]["result_status"] == "priced_partial"

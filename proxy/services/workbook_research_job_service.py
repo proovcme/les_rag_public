@@ -14,6 +14,7 @@ from proxy.config import META_DB_PATH
 from proxy.services.lsr_source_coverage_service import inferred_row_role
 
 SCHEMA = "les.workbook-research-job.v1"
+_PRICE_BASIS_KEY = "_price_basis"
 TERMINAL_STATUSES = {"complete", "failed"}
 RESUMABLE_STATUSES = {"running", "paused", "failed", "cancelled"}
 _EXTRA_COLUMNS = {
@@ -21,7 +22,33 @@ _EXTRA_COLUMNS = {
     "query_cache_json": "TEXT NOT NULL DEFAULT '{}'",
     "held_packet_json": "TEXT NOT NULL DEFAULT '{}'",
     "operator_overrides_json": "TEXT NOT NULL DEFAULT '{}'",
+    # Directive §4: product-internal stall guard (replaces external chain-script logic).
+    # Directive §1 (22.09): the guard is split into orthogonal counters so that
+    # sequential processing of *new* packets with real progress is never treated
+    # as looping.  ``stall_count`` now means "consecutive packets without
+    # substantive progress"; ``round_count`` is a purely informational cumulative
+    # packet counter that NEVER triggers a pause; the per-run budget lives in
+    # ``run_round_count`` and resets on every begin_or_resume so a paused job can
+    # always be continued.  ``held_fingerprint``/``held_attempts`` bound retries
+    # of the *same* deferred packet, an axis distinct from progress.
+    "stall_count": "INTEGER NOT NULL DEFAULT 0",
+    "round_count": "INTEGER NOT NULL DEFAULT 0",
+    "stall_reason": "TEXT NOT NULL DEFAULT ''",
+    "run_round_count": "INTEGER NOT NULL DEFAULT 0",
+    "held_fingerprint": "TEXT NOT NULL DEFAULT ''",
+    "held_attempts": "INTEGER NOT NULL DEFAULT 0",
 }
+
+# Directive §4 / §1: bounded, orthogonal stall detection thresholds.
+_STALL_THRESHOLD = 2          # consecutive packets with no substantive progress
+_MAX_ROUNDS = 8               # DEPRECATED as a pause trigger; kept only so the
+                              # legacy ceiling value is still reportable.
+# Continuable per-run budget: sized for the customer's ~386-element VOR pass so
+# genuine work is never mistaken for a loop; resets on begin_or_resume.
+_RUN_PACKET_BUDGET = 48       # packets within a single run before a *continuable*
+                              # run_budget pause
+_HELD_PACKET_MAX_ATTEMPTS = 3  # retries of the same deferred packet before it
+                               # starts counting toward the stall streak
 
 
 class WorkbookResearchJobError(ValueError):
@@ -35,7 +62,22 @@ def _decision_key(item: Mapping[str, Any]) -> tuple[str, str]:
     return locator, inferred_row_role(item) or "work"
 
 
-_VOLATILE_DECISION_FIELDS = {"operation_id", "revision", "revision_origin", "content_sha256"}
+_VOLATILE_DECISION_FIELDS = {
+    # Identity / version bookkeeping (never part of the "what did the operator
+    # actually decide" content fingerprint).
+    "operation_id",
+    "revision",
+    "revision_origin",
+    "content_sha256",
+    # Directive 2.1: a note, evidence-ref drift or status transition does not
+    # by itself introduce a new paid operation. Keeping these out of the
+    # content digest lets merge_model_rag_rows dedup such redeliveries while
+    # still distinguishing operations that differ in locator, role, title,
+    # norm_code, unit or quantity.
+    "note",
+    "evidence_refs",
+    "status",
+}
 
 
 def _decision_content_sha(item: Mapping[str, Any]) -> str:
@@ -213,9 +255,17 @@ class WorkbookResearchJobService:
                 )
                 status = str(row["status"])
                 if status in RESUMABLE_STATUSES:
+                    # Directive §1: resuming starts a fresh run budget and clears
+                    # the stall/retry streaks, so a job previously stopped by the
+                    # old cumulative ceiling continues without immediately
+                    # re-triggering a pause.  round_count stays cumulative
+                    # (informational only).
                     conn.execute(
                         """UPDATE workbook_research_jobs
-                        SET status='running',cancel_requested=0,updated_at=CURRENT_TIMESTAMP
+                        SET status='running',cancel_requested=0,
+                            stall_count=0,stall_reason='',
+                            run_round_count=0,held_attempts=0,held_fingerprint='',
+                            updated_at=CURRENT_TIMESTAMP
                         WHERE job_id=?""",
                         (job_id,),
                     )
@@ -223,7 +273,7 @@ class WorkbookResearchJobService:
                         conn,
                         job_id,
                         "resumed",
-                        {"from_status": status},
+                        {"from_status": status, "reset_run_budget": True},
                     )
         job = self.get(job_id)
         job["prior_elapsed_seconds"] = prior_elapsed
@@ -266,6 +316,38 @@ class WorkbookResearchJobService:
             (job_id, sequence, event_type, json.dumps(dict(payload), ensure_ascii=False)),
         )
         return sequence
+
+    def list_events(
+        self, job_id: str, event_type: str = ""
+    ) -> list[dict[str, Any]]:
+        """Durable job events, oldest first: attempt identity rebuild after restart."""
+
+        with self._connect() as conn:
+            if event_type:
+                rows = conn.execute(
+                    "SELECT event_type,payload_json FROM workbook_research_events"
+                    " WHERE job_id=? AND event_type=? ORDER BY sequence",
+                    (str(job_id), str(event_type)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT event_type,payload_json FROM workbook_research_events"
+                    " WHERE job_id=? ORDER BY sequence",
+                    (str(job_id),),
+                ).fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except ValueError:
+                payload = {}
+            events.append(
+                {
+                    "event_type": str(row["event_type"]),
+                    "payload": payload if isinstance(payload, Mapping) else {},
+                }
+            )
+        return events
 
     def record_packet(
         self,
@@ -359,13 +441,113 @@ class WorkbookResearchJobService:
             held_payload = dict(held_packet or {})
             for op_id, revision, origin, payload in new_revisions:
                 self._insert_revision(conn, job_id, op_id, revision, origin, payload, None)
+            # ─── Directive §1 (22.09): orthogonal stall / progress counters ───
+            # Substantive progress is measured by *content produced by this packet*
+            # (new operations or new revisions) plus rows newly resolved as omitted —
+            # never by the sheet-local ``remaining`` count, which legitimately grows
+            # when the pass moves to the next sheet.
+            prev_stall = int(row["stall_count"] or 0) if "stall_count" in row.keys() else 0
+            prev_round = int(row["round_count"] or 0) if "round_count" in row.keys() else 0
+            prev_run = int(row["run_round_count"] or 0) if "run_round_count" in row.keys() else 0
+            prev_held_fp = str(row["held_fingerprint"] or "") if "held_fingerprint" in row.keys() else ""
+            prev_held_attempts = int(row["held_attempts"] or 0) if "held_attempts" in row.keys() else 0
+            prev_omitted = _json_list(row, "omitted_json")
+            newly_omitted = len(existing_omitted) - len(prev_omitted)
+            progressed = bool(new_revisions) or newly_omitted > 0
+
+            new_round = prev_round + 1  # informational cumulative counter only
+            new_run = prev_run + 1      # per-run budget (reset by begin_or_resume)
+
+            # Held (deferred) packet retry axis: the same deferred locators replayed
+            # without progress is a *retry*, tracked separately from stalling.
+            held_present = bool(held_payload.get("locators"))
+            held_fp = ""
+            if held_present:
+                held_fp = hashlib.sha256(
+                    json.dumps(
+                        {
+                            "sheet": str(sheet),
+                            "locators": sorted(
+                                str(x) for x in (held_payload.get("locators") or [])
+                            ),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ).encode("utf-8")
+                ).hexdigest()[:16]
+            if progressed:
+                new_held_attempts = 0
+            elif held_present and held_fp == prev_held_fp:
+                new_held_attempts = prev_held_attempts + 1
+            elif held_present:
+                new_held_attempts = 0  # a new/different deferred packet restarts retries
+            else:
+                new_held_attempts = 0
+
+            # Stall streak axis: consecutive packets with no substantive progress.
+            if progressed:
+                new_stall = 0
+            elif held_present and new_held_attempts < _HELD_PACKET_MAX_ATTEMPTS:
+                # A deferred packet awaiting more evidence is an in-flight retry,
+                # not a stall yet; hold the streak flat rather than incrementing.
+                new_stall = prev_stall
+            else:
+                new_stall = prev_stall + 1
+
+            # Decide pause.  Order: genuine stall, then held retry exhaustion, then
+            # the continuable per-run budget.  Finishing the last packet (nothing
+            # remaining and nothing held) is NEVER a pause.
+            work_outstanding = bool(remaining_locators) or held_present
+            stall_reason = ""
+            should_auto_pause = False
+            pause_kind = ""
+            # A no-progress streak is only a stall while there is still work to
+            # do (locators remaining or a deferred packet held).  Reaching the end
+            # with nothing outstanding is natural completion, NEVER a paused with
+            # remaining=0.
+            if new_stall >= _STALL_THRESHOLD and work_outstanding:
+                should_auto_pause = True
+                pause_kind = "stalled"
+                stall_reason = (
+                    f"stalled: {new_stall} consecutive packets without substantive "
+                    f"progress (sheet='{sheet}' sheet_remaining="
+                    f"{len(remaining_locators)}; global document remainder is "
+                    f"reported on job.remaining)"
+                )
+            elif held_present and new_held_attempts >= _HELD_PACKET_MAX_ATTEMPTS:
+                should_auto_pause = True
+                pause_kind = "held_retry_exhausted"
+                stall_reason = (
+                    f"held_retry_exhausted: {new_held_attempts} attempts on the same "
+                    f"deferred packet without progress"
+                )
+            elif new_run >= _RUN_PACKET_BUDGET and work_outstanding:
+                should_auto_pause = True
+                pause_kind = "run_budget"
+                stall_reason = (
+                    f"run_budget: {new_run} packets in this run (continuable; "
+                    f"sheet='{sheet}' sheet_remaining={len(remaining_locators)}, "
+                    f"held={held_present}; global document remainder is reported "
+                    f"on job.remaining)"
+                )
+            new_status = "paused" if should_auto_pause else str(row["status"])
+            if not should_auto_pause:
+                new_phase = "packets"
+            elif pause_kind == "run_budget":
+                new_phase = "run_budget"
+            else:
+                new_phase = "stalled"
             conn.execute(
                 """UPDATE workbook_research_jobs
-                SET phase='packets',sheet_name=?,packet_json=?,accepted_rows_json=?,
+                SET status=?,phase=?,sheet_name=?,packet_json=?,accepted_rows_json=?,
                     evidence_json=?,omitted_json=?,remaining_json=?,held_packet_json=?,
+                    stall_count=?,round_count=?,stall_reason=?,
+                    run_round_count=?,held_fingerprint=?,held_attempts=?,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE job_id=?""",
                 (
+                    new_status,
+                    new_phase,
                     str(sheet),
                     json.dumps(packet, ensure_ascii=False),
                     json.dumps(existing_rows, ensure_ascii=False),
@@ -373,6 +555,12 @@ class WorkbookResearchJobService:
                     json.dumps(existing_omitted, ensure_ascii=False),
                     json.dumps(remaining_locators, ensure_ascii=False),
                     json.dumps(held_payload, ensure_ascii=False),
+                    new_stall,
+                    new_round,
+                    stall_reason if should_auto_pause else "",
+                    new_run,
+                    held_fp,
+                    new_held_attempts,
                     job_id,
                 ),
             )
@@ -390,6 +578,25 @@ class WorkbookResearchJobService:
                     "new_revisions": len(new_revisions),
                 },
             )
+            # Directive §4: emit stall event when auto-paused
+            if should_auto_pause:
+                self._append_event(
+                    conn,
+                    job_id,
+                    "stall_guard_triggered",
+                    {
+                        "reason": stall_reason,
+                        "kind": pause_kind,
+                        "stall_count": new_stall,
+                        "round_count": new_round,
+                        "run_round_count": new_run,
+                        "held_attempts": new_held_attempts,
+                        "remaining_total": len(remaining_locators),
+                        "threshold": _STALL_THRESHOLD,
+                        "run_packet_budget": _RUN_PACKET_BUDGET,
+                        "held_max_attempts": _HELD_PACKET_MAX_ATTEMPTS,
+                    },
+                )
         return self.get(job_id)
 
     @staticmethod
@@ -499,9 +706,19 @@ class WorkbookResearchJobService:
 
         payload = overlays if isinstance(overlays, Mapping) else {}
         cleaned: dict[str, dict[str, Any]] = {}
+        confirmation = payload.get(_PRICE_BASIS_KEY)
+        if isinstance(confirmation, Mapping):
+            basis_item = {
+                field: confirmation[field]
+                for field in ("pricebook", "note")
+                if str(confirmation.get(field) or "").strip()
+            }
+            basis_item["confirmed_by"] = "operator"
+            if basis_item:
+                cleaned[_PRICE_BASIS_KEY] = basis_item
         for locator, patch in payload.items():
             key = str(locator or "").strip()
-            if not key or not isinstance(patch, Mapping):
+            if not key or not isinstance(patch, Mapping) or key == _PRICE_BASIS_KEY:
                 continue
             item = {
                 field: patch[field]
@@ -568,6 +785,7 @@ class WorkbookResearchJobService:
                 if not isinstance(item, Mapping):
                     continue
                 payload = dict(item)
+                base_revision = payload.pop("base_revision", None)
                 op = str(payload.get("operation_id") or "").strip()
                 pos = index_by_op.get(op) if op else None
                 if pos is None:
@@ -577,6 +795,19 @@ class WorkbookResearchJobService:
                     continue
                 current = existing_rows[pos]
                 op = str(op or current.get("operation_id") or "")
+                if base_revision is not None:
+                    current_revision = int(current.get("revision") or 1)
+                    try:
+                        wanted_base = int(base_revision)
+                    except (TypeError, ValueError) as error:
+                        raise WorkbookResearchJobError(
+                            f"invalid base_revision for {op}: {base_revision!r}"
+                        ) from error
+                    if wanted_base != current_revision:
+                        raise WorkbookResearchJobError(
+                            f"stale revision for {op}: "
+                            f"base={wanted_base} current={current_revision}"
+                        )
                 keep_code = current.get("norm_code")
                 if "norm_code" not in payload or payload.get("norm_code") in (None, ""):
                     payload["norm_code"] = keep_code
@@ -991,6 +1222,23 @@ class WorkbookResearchJobService:
             "cancel_requested": bool(row["cancel_requested"]),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
+            # Directive §4: stall guard visibility in API response
+            "stall_guard": {
+                # Directive §2: the stall reason counts the SHEET-LOCAL tail of
+                # this sheet; `remaining`/`status_dimensions.remaining` is the
+                # GLOBAL document remainder.  Expose the sheet so the two are
+                # never conflated under one label.
+                "sheet": str(row["sheet_name"]),
+                "remaining_scope": "sheet_local_in_reason_global_in_remaining",
+                "stall_count": int(row["stall_count"] or 0) if "stall_count" in row.keys() else 0,
+                "round_count": int(row["round_count"] or 0) if "round_count" in row.keys() else 0,
+                "run_round_count": int(row["run_round_count"] or 0) if "run_round_count" in row.keys() else 0,
+                "held_attempts": int(row["held_attempts"] or 0) if "held_attempts" in row.keys() else 0,
+                "reason": str(row["stall_reason"] or "") if "stall_reason" in row.keys() else "",
+                "threshold": _STALL_THRESHOLD,
+                "run_packet_budget": _RUN_PACKET_BUDGET,
+                "held_max_attempts": _HELD_PACKET_MAX_ATTEMPTS,
+            },
         }
 
 

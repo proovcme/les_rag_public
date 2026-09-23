@@ -1,6 +1,7 @@
 """Operator-visible LSR readiness: coverage vs norms vs prices, plus file packaging."""
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping, Sequence
 
 from proxy.services.lsr_source_coverage_service import (
@@ -11,7 +12,23 @@ from proxy.services.lsr_source_coverage_service import (
 
 SCHEMA = "les.lsr-result-readiness.v1"
 
-_ABSENT_CODES = frozenset({"", "missing", "нет", "не найдено", "—"})
+_ABSENT_CODES = frozenset(
+    {"", "-", "–", "—", "missing", "нет", "н/д", "n/a", "не найдено"}
+)
+_CIPHER_CELL_RE = re.compile(
+    r"(?:гэсн|фер|тер)(?:мр|м|п|р)?[:\s]*\d{1,3}[-–]\d{1,2}[-–]\d{1,3}[-–]\d{1,2}[а-яё]?"
+    r"|\d{1,3}[-–]\d{1,2}[-–]\d{1,3}[-–]\d{1,2}[а-яё]?",
+    re.IGNORECASE,
+)
+
+
+def _selected_cipher(row: Mapping[str, Any]) -> str:
+    """The authored cipher cell only: '-', MISSING and explanations are not norms."""
+
+    raw = _text(row.get("norm_code") or row.get("code")).strip().strip("`* ")
+    if not raw or raw.casefold() in _ABSENT_CODES:
+        return ""
+    return raw if _CIPHER_CELL_RE.fullmatch(raw) else ""
 _CHOSEN_STATUSES = frozenset(
     {
         "EXACT",
@@ -332,7 +349,19 @@ def build_lsr_result_readiness(
         "equipment": sum(1 for row in work_rows if inferred_row_role(row) == "equipment"),
         "headers": sum(1 for row in work_rows if canonicalize_row_role(row.get("row_role")) == "header"),
         "unresolved": sum(1 for row in work_rows if inferred_row_role(row) == "unresolved"),
-        "norms_selected": sum(1 for row in work_rows if _norm_code(row) and not classify_norm_gap(row)),
+        "norms_selected": sum(
+            1
+            for row in work_rows
+            if _selected_cipher(row) and not classify_norm_gap(row)
+        ),
+        # distinct ciphers are reported apart from the per-operation count
+        "norms_unique_ciphers": len(
+            {
+                _selected_cipher(row).casefold()
+                for row in work_rows
+                if _selected_cipher(row) and not classify_norm_gap(row)
+            }
+        ),
     }
     if calculated_positions >= 0:
         counts["calculated_positions"] = int(calculated_positions)
@@ -410,8 +439,50 @@ def build_lsr_result_readiness(
         seen.add(key)
         unique_actions.append(item)
 
+    # Four distinct not-ready states, grouped explicitly so an empty XLSX
+    # formula cache is never misread as "zero calculated works".  The
+    # authoritative quantity is the application's own calculated_positions.
+    works_total = int(counts.get("works") or 0)
+    calc_known = isinstance(calculated_positions, (int, float)) and calculated_positions >= 0
+    calculation_incomplete = (
+        max(0, works_total - int(calculated_positions)) if calc_known else None
+    )
+    gap_states = {
+        "norm_missing": {
+            "count": sum(
+                1 for g in norm_gaps
+                if g.get("kind") in {"missing_norm", "needs_research", "conflict"}
+            ),
+            "meaning": (
+                "Нет подтверждённой нормы: модель не выбрала шифр или норма не найдена."
+            ),
+        },
+        "price_missing": {
+            "count": len(structured_prices),
+            "meaning": (
+                "Нет подтверждённой цены ресурса; выбранная норма при этом сохраняется."
+            ),
+        },
+        "calculation_incomplete": {
+            "count": calculation_incomplete,
+            "meaning": (
+                "Работы без рассчитанной стоимости (итог по позиции не сведён)."
+                if calc_known else
+                "Приложение не передало число рассчитанных позиций."
+            ),
+        },
+        "formula_cache_uncached": {
+            "authoritative": "calculated_positions",
+            "meaning": (
+                "Итоги в XLSX — живые формулы СУММ без сохранённого кэша значений; "
+                "их вычисляет пересчёт в Excel/LibreOffice. Пустой кэш формул НЕ равен "
+"нулю рассчитанных работ — опора на расчётные данные приложения."
+            ),
+        },
+    }
     return {
         "schema": SCHEMA,
+        "gap_states": gap_states,
         "paused": bool(paused),
         "remaining_locators": remaining,
         "catalog_work_count": int(catalog_work_count or len(wanted) or 0),

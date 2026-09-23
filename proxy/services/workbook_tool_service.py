@@ -294,6 +294,17 @@ async def _default_vor_adapter(
         rows = _vor_rows_from_draft(args.get("decisions") or [], source_label=source_label)
     if not rows and spec_error is not None:
         raise spec_error
+    from proxy.services.spec_to_bor_service import derive_work_for_item
+
+    requires_decision_count = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        proposed, needs = derive_work_for_item(str(row.get("name") or row.get("work_name") or ""))
+        row["derived_work"] = proposed
+        row["requires_decision"] = bool(row.get("requires_decision")) or needs
+        if row["requires_decision"]:
+            requires_decision_count += 1
     progress("source_rows", 0, len(rows))
     await asyncio.to_thread(
         source_rows_to_vor_xlsx,
@@ -311,6 +322,7 @@ async def _default_vor_adapter(
     return {
         "file_path": output_path,
         "source_rows": len(rows),
+        "requires_decision_count": requires_decision_count,
         "missing": missing,
         "blockers": (["NO_SOURCE_ROWS"] if not rows else []),
     }

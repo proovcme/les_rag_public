@@ -17,8 +17,10 @@ from proxy.services import gesn_service, nr_sp_service
 from proxy.services.lsr_source_coverage_service import (
     apply_confirmed_data,
     canonicalize_row_role,
+    double_count_conflicts,
     inferred_row_role,
     locators_with_separate_supply,
+    operation_identity,
     work_row_key,
 )
 from proxy.services.lsr_norm_quality_gate_service import (
@@ -699,6 +701,32 @@ def build_position_trace(
         total = round(total + sp, 2)
     full_amount = total if not completeness_reasons else None
     position_total_label = "Всего по позиции" if full_amount is not None else "Известная стоимость позиции"
+    # An operator-confirmed price addressed to this operation applies to exactly
+    # this calculated position: the position total becomes qty x price, and the
+    # amount is confirmed. Norm resource rows and direct-cost subtotals above
+    # stay visible as the norm's own composition (reference); no other
+    # operation on the locator is touched.
+    operator_price = _num(position.get("confirmed_price"))
+    operator_price_trace: dict[str, Any] = {}
+    if operator_price is not None and math.isfinite(operator_price):
+        operator_cost = round(work_qty * operator_price, 2)
+        norm_known = total
+        direct = operator_cost
+        total = operator_cost
+        full_amount = operator_cost
+        position_total_label = "Всего по позиции (цена подтверждена оператором)"
+        flags.append(
+            "итог позиции взят по подтверждённой цене оператора за единицу, "
+            "а не по ресурсному составу нормы"
+        )
+        operator_price_trace = {
+            "status": "operator_confirmed_position_price",
+            "price": operator_price,
+            "qty": work_qty,
+            "cost": operator_cost,
+            "norm_known": norm_known,
+            "source": str(position.get("price_source") or "operator"),
+        }
 
     rows: list[dict[str, Any]] = [
         _row(
@@ -806,6 +834,11 @@ def build_position_trace(
                 meta={
                     "amount_status": "complete" if full_amount is not None else "partial",
                     "completeness_reasons": list(dict.fromkeys(completeness_reasons)),
+                    **(
+                        {"operator_confirmed_price": operator_cost}
+                        if operator_price_trace
+                        else {}
+                    ),
                 },
             ),
         ]
@@ -833,6 +866,17 @@ def build_position_trace(
             "known_amount": total,
             "full_amount": full_amount,
             "amount_status": "complete" if full_amount is not None else "partial",
+            "operator_price_trace": operator_price_trace,
+            # Directive 2.3: when an operator supplied a confirmed unit price the
+            # norm-derived resource amounts stay visible in the document as
+            # reference, but they must NOT be re-counted in the estimate-level
+            # aggregate direct / fot / nr / sp / machine / em / mat / ozp / zpm.
+            # The flag is set here (build_position_trace) so build_lsr_trace's
+            # summary loop, which runs before the caller can annotate, honors it.
+            "resource_reference_only": bool(
+                isinstance(operator_price_trace, Mapping)
+                and operator_price_trace.get("status") == "operator_confirmed_position_price"
+            ),
             "completeness_reasons": list(dict.fromkeys(completeness_reasons)),
             "resource_review_status": resource_review_status,
             "resource_review_reason": resource_review_reason,
@@ -881,6 +925,8 @@ def build_lsr_trace(
             trace["work_id"] = pos.get("work_id")
         if pos.get("source_row") is not None:
             trace["source_row"] = pos.get("source_row")
+        if pos.get("op_key") is not None:
+            trace["op_key"] = pos.get("op_key")
         if pos.get("source_refs") is not None:
             trace["source_refs"] = list(pos.get("source_refs") or [])
         if pos.get("evidence_refs") is not None:
@@ -903,22 +949,33 @@ def build_lsr_trace(
         )
 
     money_keys = ("ozp", "zpm", "machine", "em", "mat", "direct", "fot", "nr", "sp", "total")
+    # Directive 2.3: on operator-replaced positions the "total" flows through
+    # the estimate; the resource-level components are reference-only and must
+    # not inflate the aggregate direct / fot / nr / sp / machine / em / mat.
+    _resource_keys = ("ozp", "zpm", "machine", "em", "mat", "direct", "fot", "nr", "sp")
     summary: dict[str, Any] = {k: 0.0 for k in money_keys}
     summary["labor_qty"] = 0.0
     summary["machinist_qty"] = 0.0
+    summary["reference_only_positions"] = 0
     flags: list[str] = []
     all_positions_complete = True
     count = 0
     for entry in sections:
         for trace in entry["positions"]:
             s = trace["summary"]
+            reference_only = bool(s.get("resource_reference_only"))
             for k in money_keys:
+                if reference_only and k in _resource_keys:
+                    continue
                 value = s.get(k)
                 if value is None:
                     continue
                 summary[k] = round(summary[k] + _f(value), 2)
-            summary["labor_qty"] = round(summary["labor_qty"] + _f(s.get("labor_qty")), 6)
-            summary["machinist_qty"] = round(summary["machinist_qty"] + _f(s.get("machinist_qty")), 6)
+            if not reference_only:
+                summary["labor_qty"] = round(summary["labor_qty"] + _f(s.get("labor_qty")), 6)
+                summary["machinist_qty"] = round(summary["machinist_qty"] + _f(s.get("machinist_qty")), 6)
+            else:
+                summary["reference_only_positions"] += 1
             flags.extend(s.get("flags") or [])
             all_positions_complete = all_positions_complete and s.get("full_amount") is not None
             count += 1
@@ -1105,6 +1162,23 @@ def _unconfirmed_source_change(
                 f"количество {source_qty:g} не совпадает с исходником "
                 f"({', '.join(f'{item:g}' for item in numbers[:3])}); "
                 "изменение количества без основания пересчёта не рассчитывается"
+            ),
+        }
+    if (
+        isinstance(numbers, list)
+        and not numbers
+        and source_qty is not None
+        and row.get("_catalog_source_quantity_known")
+    ):
+        return {
+            "field": "quantity",
+            "source_value": "столбец количества распознан, но значение не подтверждено",
+            "authored_value": source_qty,
+            "needed": _GAP_UNCONFIRMED_BASIS,
+            "message": (
+                f"количество {source_qty:g} не подтверждено источником: в исходном "
+                "столбце количества пусто/ошибка/формула без вычисленного значения; "
+                "другое число строки за количество не принимается"
             ),
         }
     return None
@@ -1423,6 +1497,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 continue
             position = {
                 "code": "",
+                "op_key": operation_identity(row),
                 "qty": float(source_qty),
                 "name": title,
                 "unit": source_unit,
@@ -1549,6 +1624,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             continue
         position = {
             "code": code,
+            "op_key": operation_identity(row),
             "qty": norm_qty,
             "section": str(_first_value(row, "section", "раздел") or "").strip() or "Без раздела",
             "source_row": source_row,
@@ -1559,6 +1635,10 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         }
         if title:
             position["name"] = title
+        confirmed_price = _num(row.get("confirmed_price"))
+        if confirmed_price is not None and math.isfinite(confirmed_price):
+            position["confirmed_price"] = confirmed_price
+            position["price_source"] = str(row.get("price_source") or "operator")
         if norm and norm.get("unit"):
             position["unit"] = norm.get("unit")
         position["row_role"] = role
@@ -1592,6 +1672,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             "code": code,
             "status": "bound",
             "quantity_trace": qty_trace,
+            "source_row": row,
             "position": {k: v for k, v in position.items() if k != "source_row"},
         }
         for key in (
@@ -1626,6 +1707,21 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             )
         )
     return {"positions": positions, "row_bindings": bindings}
+
+
+_SELECTED_CIPHER_RE = re.compile(
+    r"(?:ГЭСН|ФЕР|ТЕР|GESN|FER|TER)(?:мр|м|п|р)?[:\s]*"
+    r"\d{1,3}[-–]\d{1,2}[-–]\d{1,3}[-–]\d{1,2}[а-яa-z]?"
+    r"|\d{1,3}[-–]\d{1,2}[-–]\d{1,3}[-–]\d{1,2}[а-яa-z]?",
+    re.IGNORECASE,
+)
+
+
+def _is_selected_cipher(value: Any) -> bool:
+    """A real cipher cell only: '-', MISSING and explanations are not norms."""
+
+    text = str(value or "").strip().strip("`* ")
+    return bool(text) and bool(_SELECTED_CIPHER_RE.fullmatch(text))
 
 
 def build_lsr_trace_from_visible_rows(
@@ -1691,42 +1787,105 @@ def build_lsr_trace_from_visible_rows(
     else:
         summary["result_status"] = "priced_final"
     visible_by_row = {item.get("source_row"): item for item in visible}
+    amounts_by_op: dict[str, dict[str, Any]] = {}
     amounts_by_row: dict[Any, dict[str, Any]] = {}
     for entry in lsr.get("sections") or []:
         for trace in entry.get("positions") or []:
+            pos_summary = trace.get("summary") or {}
+            op_key = str(trace.get("op_key") or "")
+            if op_key:
+                amounts_by_op[op_key] = pos_summary
             if trace.get("source_row") is not None:
-                amounts_by_row[trace.get("source_row")] = trace.get("summary") or {}
+                amounts_by_row.setdefault(trace.get("source_row"), pos_summary)
+    conflict_locators = {
+        str(item.get("locator") or "") for item in double_count_conflicts(visible)
+    }
     kind_counts = {"work": 0, "material": 0, "equipment": 0, "resource": 0, "header": 0, "unresolved": 0}
     selected_norms = 0
+    selected_ciphers: set[str] = set()
     confirmed_amount = 0.0
     preliminary_amount = 0.0
     for binding in bound["row_bindings"]:
         source_row = binding.get("row")
-        model_row = visible_by_row.get(source_row) or {}
-        readiness = _row_readiness(binding, model_row if isinstance(model_row, Mapping) else {})
+        model_row = binding.get("source_row")
+        if not isinstance(model_row, Mapping):
+            model_row = visible_by_row.get(source_row) or {}
+        readiness = _row_readiness(binding, model_row)
         position = binding.get("position")
         if isinstance(position, Mapping):
-            pos_summary = amounts_by_row.get(source_row) or {}
+            op_key = str(position.get("op_key") or "")
+            pos_summary = (
+                amounts_by_op.get(op_key)
+                or amounts_by_row.get(source_row)
+                or {}
+            )
             amount = _f(pos_summary.get("known_amount", pos_summary.get("total")))
             complete = pos_summary.get("amount_status") == "complete" and pos_summary.get("full_amount") is not None
-            preliminary = bool(pos_summary.get("completeness_reasons")) or (
-                canonicalize_norm_status(binding.get("norm_status")) == "NEEDS_RESEARCH"
+            _opt = pos_summary.get("operator_price_trace") or {}
+            operator_confirmed_price = (
+                isinstance(_opt, Mapping)
+                and _opt.get("status") == "operator_confirmed_position_price"
             )
-            readiness["prices_provided"] = complete and not preliminary
+            # Directive 2.2: a position's readiness rests on four independent
+            # bases; confirming a price closes only the price question. Norm
+            # applicability, unit / volume correctness and the absence of
+            # conflicts each require their own evidence.
+            # Norm applicability is a WORK-role question: material / equipment
+            # / resource / header rows have no norm to substantiate. Directive
+            # 2.2 keeps their readiness independent of that check.
+            role = str(binding.get("row_role") or readiness.get("row_role") or "")
+            if role in {"material", "equipment", "resource", "header"} or readiness.get("header_row"):
+                norm_applicability_ok = True
+            else:
+                norm_applicability_ok = (
+                    canonicalize_norm_status(binding.get("norm_status")) != "NEEDS_RESEARCH"
+                    and readiness.get("applicability_substantiated") is not False
+                )
+            units_ok = readiness.get("volume_verified") is not False
+            price_ok = bool(
+                complete
+                or operator_confirmed_price
+                or (not pos_summary.get("completeness_reasons"))
+            )
+            conflicts_ok = (
+                str(source_row) not in conflict_locators
+                and not bool(model_row.get("confirm_ambiguous"))
+            )
+            preliminary = not (
+                norm_applicability_ok and units_ok and price_ok and conflicts_ok
+            )
+            readiness["norm_applicability_ok"] = bool(norm_applicability_ok)
+            readiness["units_ok"] = bool(units_ok)
+            readiness["price_ok"] = bool(price_ok)
+            readiness["conflicts_ok"] = bool(conflicts_ok)
+            readiness["operator_confirmed_price"] = bool(operator_confirmed_price)
+            readiness["prices_provided"] = price_ok and conflicts_ok
+            readiness["double_count_conflict"] = str(source_row) in conflict_locators
             if preliminary:
                 preliminary_amount = round(preliminary_amount + amount, 2)
             else:
                 confirmed_amount = round(confirmed_amount + amount, 2)
         binding["readiness"] = readiness
-        role_key = str(binding.get("row_role") or inferred_row_role(model_row if isinstance(model_row, Mapping) else {}))
+        role_key = str(binding.get("row_role") or inferred_row_role(model_row))
         if role_key in kind_counts:
             kind_counts[role_key] += 1
-        if binding.get("code"):
+        cipher = str(binding.get("code") or "")
+        if cipher and _is_selected_cipher(cipher):
             selected_norms += 1
+            selected_ciphers.add(cipher)
     summary["kind_counts"] = kind_counts
     summary["selected_norms"] = selected_norms
+    summary["selected_norm_ciphers"] = len(selected_ciphers)
     summary["calculated_positions"] = len(bound["positions"])
     summary["confirmed_amount"] = confirmed_amount
     summary["preliminary_amount"] = preliminary_amount
+    if conflict_locators:
+        summary["flags"] = list(summary.get("flags") or []) + [
+            f"строка {locator}: двойной учёт одного предмета в ролях material и "
+            "equipment — роль должна быть подтверждена явно"
+            for locator in sorted(conflict_locators)
+        ]
+        if summary.get("result_status") == "priced_final":
+            summary["result_status"] = "priced_partial"
     lsr["row_bindings"] = bound["row_bindings"]
     return lsr

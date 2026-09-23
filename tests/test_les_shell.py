@@ -63,6 +63,10 @@ def test_ensure_started_starts_then_waits(monkeypatch):
 def test_start_stack_uses_runtime_control(monkeypatch):
     from tools import les_runtime_control as rc
 
+    # start_stack() only reaches les_runtime_control on a non-Windows host; without
+    # this pin the Windows branch runs the real start-light.ps1 and blocks forever.
+    monkeypatch.setattr(les_shell, "_platform", lambda: "other")
+
     class _R:
         ok = True
 

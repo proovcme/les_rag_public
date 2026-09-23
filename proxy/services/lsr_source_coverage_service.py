@@ -1,12 +1,15 @@
 """Source-row coverage, roles, and operator-confirmed overlays. Code does not choose norms."""
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Mapping, Sequence
 
 SCHEMA = "les.lsr-source-coverage.v1"
 ROLES = ("work", "material", "equipment", "resource", "unresolved", "header")
 SUPPLY_KINDS = ("install", "supply", "both")
 _CONFIRMED_KEYS = (
+    "operation_id",
     "conversion_factor",
     "conversion_source",
     "calc_quantity",
@@ -101,28 +104,124 @@ def work_row_key(row: Mapping[str, Any]) -> str:
     return ""
 
 
+_VOLATILE_IDENTITY_FIELDS = frozenset(
+    {"operation_id", "revision", "revision_origin", "content_sha256"}
+)
+
+
+def operation_identity(row: Mapping[str, Any]) -> str:
+    """Stable operation key: authored operation_id, else locator+content digest.
+
+    Distinct content on one locator stays a distinct operation; the identical
+    decision redelivered resolves to the same key. No title guessing involved.
+    """
+
+    op = _text(row.get("operation_id"))
+    if op:
+        return f"op:{op}"
+    core = {
+        str(key): value
+        for key, value in row.items()
+        if str(key) not in _VOLATILE_IDENTITY_FIELDS
+    }
+    raw = json.dumps(
+        core, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
+    return f"id:{_locator(row)}:{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}"
+
+
+def double_count_conflicts(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Same locator, different supply roles, same item: an accounting conflict.
+
+    Code never deletes one of the rows on a guess. It surfaces the conflict so
+    the model or the operator resolves the role explicitly; both rows and the
+    full history stay in place.
+    """
+
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        role = inferred_row_role(row)
+        if role not in {"material", "equipment"}:
+            continue
+        locator = _locator(row)
+        if not locator:
+            continue
+        grouped.setdefault(locator, []).append(row)
+    conflicts: list[dict[str, Any]] = []
+    for locator, group in grouped.items():
+        by_item: dict[str, list[Mapping[str, Any]]] = {}
+        for row in group:
+            name = " ".join(_text(row.get("title") or row.get("name")).casefold().split())
+            if not name:
+                continue
+            by_item.setdefault(name, []).append(row)
+        for name, items in by_item.items():
+            roles = {inferred_row_role(row) for row in items}
+            if len(items) > 1 and len(roles) > 1:
+                conflicts.append(
+                    {
+                        "locator": locator,
+                        "item": name,
+                        "roles": sorted(roles),
+                        "operations": [operation_identity(row) for row in items],
+                    }
+                )
+    return conflicts
+
+
 def apply_confirmed_data(
     rows: Sequence[Mapping[str, Any]],
     overlays: Mapping[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Apply operator-confirmed fields. Never replace a model cipher."""
+    """Apply operator-confirmed fields. Never replace a model cipher.
+
+    A patch may be addressed to one operation via ``operation_id`` or
+    ``row_role``. An unaddressed patch on a locator that carries several
+    operations stays ambiguous: a confirmed price is never applied to every
+    row of the locator without an explicit target.
+    """
 
     payload = overlays if isinstance(overlays, Mapping) else {}
+    shaped = [dict(row) for row in rows if isinstance(row, Mapping)]
+    rows_by_locator: dict[str, list[dict[str, Any]]] = {}
+    for item in shaped:
+        locator = _locator(item)
+        if locator:
+            rows_by_locator.setdefault(locator, []).append(item)
     merged: list[dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
+    for row in shaped:
         item = dict(row)
         locator = _locator(item)
         patch = payload.get(locator) if locator else None
         if isinstance(patch, Mapping):
-            for key in _CONFIRMED_KEYS:
-                if key not in patch or patch.get(key) in (None, ""):
-                    continue
-                item[key] = patch[key]
-            item["confirmed_by"] = "operator"
+            target_op = _text(patch.get("operation_id"))
+            target_role = canonicalize_row_role(patch.get("row_role"))
+            addressed = bool(target_op or target_role)
+            matches = True
+            if target_op:
+                matches = matches and _text(item.get("operation_id")) == target_op
+            if target_role:
+                matches = matches and inferred_row_role(item) == target_role
+            if addressed and matches:
+                _apply_overlay_fields(item, patch)
+            elif not addressed and len(rows_by_locator.get(locator, [])) > 1:
+                # One locator, several operations: an unaddressed confirmation
+                # must not silently price all of them. Keep it visible instead.
+                item["confirm_ambiguous"] = True
+            elif not addressed:
+                _apply_overlay_fields(item, patch)
         merged.append(item)
     return merged
+
+
+def _apply_overlay_fields(item: dict[str, Any], patch: Mapping[str, Any]) -> None:
+    for key in _CONFIRMED_KEYS:
+        if key not in patch or patch.get(key) in (None, ""):
+            continue
+        item[key] = patch[key]
+    item["confirmed_by"] = "operator"
 
 
 def locators_with_separate_supply(rows: Sequence[Mapping[str, Any]]) -> set[str]:

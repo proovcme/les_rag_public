@@ -584,6 +584,8 @@ def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_p
 
 def test_reranker_exception_returns_fallback_input_order(monkeypatch):
     from proxy.smeta_core import norm_browser
+    monkeypatch.setenv("RERANKER_ENABLED", "true")
+    monkeypatch.setenv("LES_SMETA_NORM_RERANK", "true")
 
     cards = [{"norm_code": f"N-{i}", "title": str(i)} for i in range(6)]
 
@@ -605,6 +607,8 @@ def test_reranker_exception_returns_fallback_input_order(monkeypatch):
 
 def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
     from proxy.smeta_core import norm_browser
+    monkeypatch.setenv("RERANKER_ENABLED", "true")
+    monkeypatch.setenv("LES_SMETA_NORM_RERANK", "true")
 
     cards = [{"norm_code": f"N-{i}", "title": str(i)} for i in range(6)]
 
@@ -630,6 +634,8 @@ def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
 
 def test_reranker_is_fused_with_original_rrf_instead_of_erasing_it(monkeypatch):
     from proxy.smeta_core import norm_browser
+    monkeypatch.setenv("RERANKER_ENABLED", "true")
+    monkeypatch.setenv("LES_SMETA_NORM_RERANK", "true")
 
     cards = [
         {"norm_code": "GOOD-1", "title": "strong hybrid candidate"},
@@ -661,6 +667,8 @@ def test_reranker_is_fused_with_original_rrf_instead_of_erasing_it(monkeypatch):
 
 def test_reranker_timeout_falls_back_and_preserves_raw_order(monkeypatch):
     from proxy.smeta_core import norm_browser
+    monkeypatch.setenv("RERANKER_ENABLED", "true")
+    monkeypatch.setenv("LES_SMETA_NORM_RERANK", "true")
 
     cards = [{"norm_code": f"N-{i}", "title": str(i)} for i in range(6)]
 
@@ -883,3 +891,47 @@ def test_staged_smeta_manifest_does_not_replace_active_manifest(monkeypatch, tmp
 
     assert _rag_manifest_path(base) == staged
     assert json.loads(active.read_text(encoding="utf-8"))["collection"] == "active"
+
+
+def test_rerank_cards_honors_runtime_reranker_policy(monkeypatch):
+    """RERANKER_ENABLED=false must short-circuit before select_reranker_cls.
+
+    Regression for the Windows native crash on 318-row VOR: the smeta-norm
+    browser must align with proxy.services.retrieval_service.required_reranker_policy
+    so native RRF stays the production ranking contract.
+    """
+    import os
+
+    from proxy.smeta_core import norm_browser
+
+    monkeypatch.setenv("LES_SMETA_NORM_RERANK", "true")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+
+    def _boom():
+        raise AssertionError("select_reranker_cls must not be called when disabled")
+
+    monkeypatch.setattr(norm_browser, "select_reranker_cls", _boom)
+
+    cards = [{"title": f"c{i}"} for i in range(5)]
+    result, used, reason = norm_browser._rerank_cards("q", cards, limit=3)
+    assert used is False
+    assert reason == "disabled_by_runtime_policy"
+    assert result == cards[:3]
+
+
+def test_rerank_cards_still_short_circuits_on_local_toggle(monkeypatch):
+    """The dedicated smeta toggle still wins over the global policy."""
+    from proxy.smeta_core import norm_browser
+
+    monkeypatch.setenv("LES_SMETA_NORM_RERANK", "false")
+    monkeypatch.setenv("RERANKER_ENABLED", "true")
+
+    def _boom():
+        raise AssertionError("select_reranker_cls must not be called when local toggle is off")
+
+    monkeypatch.setattr(norm_browser, "select_reranker_cls", _boom)
+
+    cards = [{"title": f"c{i}"} for i in range(5)]
+    _, used, reason = norm_browser._rerank_cards("q", cards, limit=3)
+    assert used is False
+    assert reason == "disabled"

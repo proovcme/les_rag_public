@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1004 |
-| Строк Python | 327318 |
+| Строк Python | 331100 |
 | PRODUCT_REACHABLE | 356 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 636 |
@@ -33,9 +33,9 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| proxy/services/chat_evidence_application_service.py | 7744 | 8 |
-| sovushka/pages/chat.py | 6547 | 6 |
-| proxy/routers/chat.py | 4556 | 40 |
+| proxy/services/chat_evidence_application_service.py | 8026 | 8 |
+| sovushka/pages/chat.py | 6678 | 6 |
+| proxy/routers/chat.py | 4575 | 40 |
 | backend/qdrant_adapter.py | 4552 | 29 |
 | sovushka/uikit/tokens.py | 4274 | 2 |
 | sovushka/pages/documents.py | 3927 | 3 |
@@ -46,22 +46,22 @@
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2044 | 4 |
-| proxy/services/lsr_norm_quality_gate_service.py | 1941 | 3 |
-| proxy/smeta_core/norm_browser.py | 1659 | 13 |
+| proxy/services/lsr_norm_quality_gate_service.py | 1943 | 3 |
+| proxy/services/rim_lsr_trace_service.py | 1891 | 10 |
+| proxy/smeta_core/norm_browser.py | 1667 | 13 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | sovushka/pages/diag.py | 1602 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
-| proxy/services/rim_lsr_trace_service.py | 1494 | 10 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 12 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
+| proxy/services/workbook_research_job_service.py | 1258 | 5 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |
 | backend/document_router.py | 1124 | 6 |
-| proxy/routers/rim.py | 1122 | 2 |
 
 ## Сметный монолит: фактические потребители
 

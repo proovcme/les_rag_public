@@ -840,6 +840,14 @@ def _rerank_cards(
         "1", "true", "yes", "on",
     }:
         return cards[:limit], False, "disabled"
+    # Aligned with proxy.services.retrieval_service.required_reranker_policy:
+    # native RRF is the production ranking contract, reranking is opt-in.
+    # Without this gate the smeta-norm path loads CrossEncoder even when the
+    # chat API has reranker disabled, which crashes Windows runtime natively.
+    if os.getenv("RERANKER_ENABLED", "false").strip().casefold() not in {
+        "1", "true", "yes", "on",
+    }:
+        return cards[:limit], False, "disabled_by_runtime_policy"
     if len(cards) <= 3:
         return cards[:limit], False, "pool_too_small"
     chunks = [
