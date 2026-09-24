@@ -6824,7 +6824,7 @@
         "tests/test_vor_route_columns_23.py",
         "tools/les_mcp_server.py"
       ],
-      "lines": 535,
+      "lines": 548,
       "module": "proxy.services.spec_to_bor_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -13603,7 +13603,7 @@
     },
     {
       "inbound": [],
-      "lines": 248,
+      "lines": 276,
       "module": "tests.test_spec_to_bor_service",
       "outbound": [
         "backend/parquet_writer.py",
@@ -18956,7 +18956,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 643,
     "tracked_python_files": 1011,
-    "tracked_python_lines": 332706
+    "tracked_python_lines": 332747
   },
   "warnings": []
 }

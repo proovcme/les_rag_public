@@ -246,3 +246,31 @@ def test_v2_xlsx_has_gost_columns(tmp_path):
     ws = openpyxl.load_workbook(out).active
     hdr = [ws.cell(row=2, column=c).value for c in range(1, 7)]
     assert hdr == ["№", "Наименование работ", "Ед. изм.", "Кол-во", "Ссылка на чертёж", "Примечание"]
+
+
+def test_rows_from_spec_xlsx_binds_obem_header_to_qty(tmp_path):
+    # Live 795 finding: header 'Объем' was not bound, so a correct ВОР still
+    # lost every quantity. Units and rows must all survive the header mapping.
+    import openpyxl
+
+    from proxy.services.spec_to_bor_service import rows_from_spec_xlsx
+
+    path = tmp_path / "spec_obem.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "спецификация"
+    ws.append(["№", "Наименование", "Ед.изм.", "Объем"])
+    ws.append([1, "Труба ПНД для водоснабжения ПЭ100", "м", 330])
+    ws.append([2, "Кабель акустический LY24", "м", 600])
+    ws.append([3, "Разъем XLR F", "шт", 6])
+    wb.save(path)
+
+    rows = rows_from_spec_xlsx(path, source_label="spec_obem.xlsx")
+
+    assert [row["qty"] for row in rows] == [330.0, 600.0, 6.0]
+    assert [row["unit"] for row in rows] == ["м", "м", "шт"]
+    assert [row["name"] for row in rows] == [
+        "Труба ПНД для водоснабжения ПЭ100",
+        "Кабель акустический LY24",
+        "Разъем XLR F",
+    ]

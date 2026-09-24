@@ -327,6 +327,8 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
         "qty",
         "колич",
         "кол.",
+        # заказческие спецификации называют объём строки просто «Объём»
+        "объем",
     ),
     "section": ("раздел", "section", "объект", "зона"),
     "code": ("артикул", "код", "code", "шифр"),
@@ -341,18 +343,29 @@ def _normalize_header(value: object) -> str:
 
 
 def _map_headers(cells: list[object]) -> dict[str, int]:
-    """Map logical field → 0-based column index from a header row."""
+    """Map logical field → 0-based column index from a header row.
+
+    When several columns match one field, the alias priority in
+    _HEADER_ALIASES wins over left-to-right order: «Кол-во ФАКТ» must bind
+    to qty even when an earlier textual «Объем» column ("осн./доп.") also
+    matches a lower-priority qty alias.
+    """
     found: dict[str, int] = {}
+    best_rank: dict[str, int] = {}
     normalized = [_normalize_header(c) for c in cells]
     for idx, header in enumerate(normalized):
         if not header:
             continue
         for field, aliases in _HEADER_ALIASES.items():
-            if field in found:
+            for rank, alias in enumerate(aliases):
+                if header == alias or header.startswith(alias):
+                    if field not in found or rank < best_rank[field]:
+                        found[field] = idx
+                        best_rank[field] = rank
+                    break
+            else:
                 continue
-            if any(header == alias or header.startswith(alias) for alias in aliases):
-                found[field] = idx
-                break
+            break
     return found
 
 
