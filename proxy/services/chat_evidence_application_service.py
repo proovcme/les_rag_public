@@ -188,20 +188,28 @@ def prioritize_workbook_tools(
 def workbook_packaging_tool(profile_tools: Sequence[str], question: str) -> list[str]:
     """Choose the packaging tool for the sheet-pass result by intent.
 
-    A visible build_lsr_workbook keeps the priced route. When the operator's
-    own words asked for a ВОР (build_lsr_workbook was hidden from the model by
-    prioritize_workbook_tools), the result must be packaged as ВОР, not
-    silently as a priced ЛСР. Returns at most one tool name; never executes a
-    tool and never selects a norm.
+    The operator's own words decide the artifact, checked before any profile
+    list membership: a ВОР/ведомость request is packaged as a row-preserving
+    ВОР even when an un-narrowed profile list still contains
+    build_lsr_workbook (the sheet-pass and durable-resume routes never run
+    prioritize_workbook_tools), while a ЛСР/смета request keeps the priced
+    route. An unspecified request defaults to the priced packager only when it
+    is available. Returns at most one tool name; never executes a tool and
+    never selects a norm.
     """
     tools = set(profile_tools)
+    intent = workbook_artifact_intent(question)
+    if intent == "vor":
+        # The operator named a ВОР: package the row-preserving ВОР even when an
+        # un-narrowed profile list still carries build_lsr_workbook (sheet-pass
+        # and durable-resume routes). A material line must not silently become a
+        # priced монтажная работа.
+        return ["build_vor_workbook"] if "build_vor_workbook" in tools else []
+    if intent == "lsr":
+        return ["build_lsr_workbook"] if "build_lsr_workbook" in tools else []
+    # Unspecified ("both"): keep the priced route when it is actually available.
     if "build_lsr_workbook" in tools:
         return ["build_lsr_workbook"]
-    if (
-        "build_vor_workbook" in tools
-        and workbook_artifact_intent(question) == "vor"
-    ):
-        return ["build_vor_workbook"]
     return []
 
 

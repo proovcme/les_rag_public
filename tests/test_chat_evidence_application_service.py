@@ -3804,14 +3804,24 @@ def test_agent_loop_llm_client_uses_registered_timeout(monkeypatch):
 
 
 def test_workbook_packaging_tool_follows_operator_intent():
+    # Both packagers present, as on the sheet-pass / durable-resume routes
+    # where prioritize_workbook_tools never runs: intent must still win.
     both = ["build_lsr_workbook", "build_vor_workbook", "search_sources"]
     vor_only = ["build_vor_workbook", "search_sources", "read_source"]
     assert service.workbook_packaging_tool(both, "Собери ВОР из спецификации") == [
-        "build_lsr_workbook"
+        "build_vor_workbook"
     ]
     assert service.workbook_packaging_tool(
         vor_only, "Собери ВОР из прикреплённой спецификации"
     ) == ["build_vor_workbook"]
+    # A priced request keeps the priced packager even with both available.
+    assert service.workbook_packaging_tool(both, "Собери ЛСР из ВОР") == [
+        "build_lsr_workbook"
+    ]
+    # Unspecified request defaults to the priced packager when available.
+    assert service.workbook_packaging_tool(both, "Что видно в документе") == [
+        "build_lsr_workbook"
+    ]
     assert service.workbook_packaging_tool(vor_only, "Что видно в документе") == []
     assert service.workbook_packaging_tool(["search_sources"], "Собери ВОР") == []
 
