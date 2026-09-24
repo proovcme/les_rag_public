@@ -3871,3 +3871,82 @@ def test_sheet_pass_visible_tools_for_vor_intent_hide_priced_packager():
     assert service.workbook_packaging_tool(tools, "Собери ВОР из прикреплённой спецификации") == [
         "build_vor_workbook"
     ]
+
+
+def test_terminal_research_packaging_rows_only_for_complete_jobs():
+    rows = [
+        {"source_row": "СКС!R26", "title": "Монтаж", "unit": "м", "quantity": 2}
+    ]
+    assert service.terminal_research_packaging_rows(None) == []
+    assert service.terminal_research_packaging_rows(
+        {"status": "running", "accepted_rows": rows}
+    ) == []
+    assert service.terminal_research_packaging_rows(
+        {"status": "paused", "accepted_rows": rows}
+    ) == []
+    durable = service.terminal_research_packaging_rows(
+        {"status": "complete", "accepted_rows": rows}
+    )
+    assert durable == rows
+    # Packaged copies never alias the stored job payload.
+    assert all(item is not rows[index] for index, item in enumerate(durable))
+    # Non-mapping entries can never leak into the decision set.
+    assert service.terminal_research_packaging_rows(
+        {"status": "complete", "accepted_rows": rows + ["junk", None]}
+    ) == rows
+
+
+def test_workbook_packaging_args_draft_and_parent_are_opt_in():
+    # Regression (build 797 live run wrj_ca8feeda): the completing resume must
+    # package the full durable set as a fresh non-draft revision, while paused
+    # intermediates carry an explicit draft marker.  The identity already covers
+    # decisions, so ordinary calls must keep gaining no new keys.
+    from proxy.services.structured_extract import validate as validate_json_schema
+    from proxy.services.workbook_tool_service import (
+        BUILD_LSR_WORKBOOK,
+        BUILD_VOR_WORKBOOK,
+    )
+
+    decisions = [
+        {"source_row": "СКС!R2", "title": "Монтаж трубы", "unit": "м", "quantity": 10}
+    ]
+    base = service.workbook_packaging_args(
+        packaging_tool="build_lsr_workbook",
+        attachment_id="att-1",
+        question="Собери ЛСР из ВОР",
+        decisions=decisions,
+        operator_overrides={},
+    )
+    assert "draft" not in base
+    assert "parent_revision_id" not in base
+    draft_args = service.workbook_packaging_args(
+        packaging_tool="build_lsr_workbook",
+        attachment_id="att-1",
+        question="Собери ЛСР из ВОР",
+        decisions=decisions,
+        operator_overrides={},
+        draft=True,
+    )
+    assert draft_args["draft"] is True
+    assert validate_json_schema(draft_args, BUILD_LSR_WORKBOOK.input_schema) == []
+    final_args = service.workbook_packaging_args(
+        packaging_tool="build_lsr_workbook",
+        attachment_id="att-1",
+        question="Собери ЛСР из ВОР",
+        decisions=decisions,
+        operator_overrides={},
+        parent_revision_id="rev_draft",
+    )
+    assert final_args["parent_revision_id"] == "rev_draft"
+    assert "draft" not in final_args
+    assert validate_json_schema(final_args, BUILD_LSR_WORKBOOK.input_schema) == []
+    vor_draft = service.workbook_packaging_args(
+        packaging_tool="build_vor_workbook",
+        attachment_id="att-1",
+        question="Собери ВОР из спецификации",
+        decisions=decisions,
+        operator_overrides=None,
+        draft=True,
+    )
+    assert validate_json_schema(vor_draft, BUILD_VOR_WORKBOOK.input_schema) == []
+    assert "confirmed_data" not in vor_draft

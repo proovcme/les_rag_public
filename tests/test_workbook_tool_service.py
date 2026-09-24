@@ -733,3 +733,145 @@ async def test_stage_d_adapter_binds_price_basis_into_result_and_render(
     assert captured["meta"]["price_basis_match"] == "mismatch"
     assert "III квартала 2026" in captured["meta"]["price_basis_note"]
     assert "2 квартал 2026" in captured["meta"]["price_basis_note"]
+
+
+def _durable_decisions(count: int) -> list[dict]:
+    return [
+        {
+            "source_row": f"СКС!R{index}",
+            "title": f"Работа {index}",
+            "unit": "м",
+            "quantity": index,
+        }
+        for index in range(2, count + 2)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_draft_packaging_marks_filename_and_metadata_but_not_adapter(tmp_path):
+    meta = _attachment(tmp_path)
+    seen: dict = {}
+
+    async def adapter(_path, args, output_path, _progress):
+        seen.update(dict(args))
+        _source_workbook(output_path)
+        return {"file_path": output_path, "missing": [], "blockers": [], "source_rows": 2}
+
+    ctx = _context(tmp_path, lsr_adapter=adapter)
+    result = await build_lsr_workbook(
+        {
+            "attachment_id": meta["attachment_id"],
+            "decisions": _durable_decisions(30),
+            "draft": True,
+        },
+        ctx,
+    )
+
+    assert result["status"] == "complete"
+    assert result["artifact"]["filename"].startswith("draft_LSR")
+    revision = ctx.artifacts.get_revision(result["artifact"]["revision_id"])
+    assert revision.tool_calls[0]["draft"] is True
+    # The draft marker is packaging metadata; adapters keep receiving only
+    # contract-owned decision and overlay fields.
+    assert "draft" not in seen
+
+
+@pytest.mark.asyncio
+async def test_pause_then_complete_packages_final_revision_into_same_chain(tmp_path):
+    # Scenario (build 797 / wrj_ca8feeda): paused packaging stays a marked
+    # draft; the completing resume chains one revision higher with the full
+    # durable decision set and no draft marker.
+    meta = _attachment(tmp_path)
+    calls = 0
+
+    async def adapter(_path, _args, output_path, _progress):
+        nonlocal calls
+        calls += 1
+        _source_workbook(output_path)
+        return {"file_path": output_path, "missing": [], "blockers": [], "source_rows": 2}
+
+    draft_ctx = _context(tmp_path, key="key-draft", decision="decision-draft", lsr_adapter=adapter)
+    draft = await build_lsr_workbook(
+        {
+            "attachment_id": meta["attachment_id"],
+            "decisions": _durable_decisions(30),
+            "draft": True,
+        },
+        draft_ctx,
+    )
+    final_ctx = _context(tmp_path, key="key-final", decision="decision-final", lsr_adapter=adapter)
+    final = await build_lsr_workbook(
+        {
+            "attachment_id": meta["attachment_id"],
+            "decisions": _durable_decisions(58),
+            "parent_revision_id": draft["artifact"]["revision_id"],
+        },
+        final_ctx,
+    )
+
+    assert final["artifact"]["artifact_id"] == draft["artifact"]["artifact_id"]
+    assert final["artifact"]["revision_no"] == 2
+    assert final["artifact"]["filename"].startswith("LSR")
+    final_meta = final_ctx.artifacts.get_revision(final["artifact"]["revision_id"])
+    assert "draft" not in final_meta.tool_calls[0]
+    draft_meta = draft_ctx.artifacts.get_revision(draft["artifact"]["revision_id"])
+    assert draft_meta.tool_calls[0]["draft"] is True
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_reopen_terminal_decisions_serves_same_revision_without_duplicate(tmp_path):
+    meta = _attachment(tmp_path)
+    calls = 0
+
+    async def adapter(_path, _args, output_path, _progress):
+        nonlocal calls
+        calls += 1
+        _source_workbook(output_path)
+        return {"file_path": output_path, "missing": [], "blockers": [], "source_rows": 2}
+
+    ctx = _context(tmp_path, lsr_adapter=adapter)
+    args = {
+        "attachment_id": meta["attachment_id"],
+        "decisions": _durable_decisions(58),
+    }
+    first = await build_lsr_workbook(args, ctx)
+    second = await build_lsr_workbook(args, ctx)
+
+    assert calls == 1
+    assert second["artifact"]["revision_id"] == first["artifact"]["revision_id"]
+    assert second["checkpoint"]["resumed"] is True
+    revisions = ctx.artifacts.list_revisions(first["artifact"]["artifact_id"])
+    assert [revision.revision_id for revision in revisions] == [
+        first["artifact"]["revision_id"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_interrupted_draft_packaging_resumes_to_single_marked_revision(tmp_path):
+    meta = _attachment(tmp_path)
+    calls = 0
+
+    async def flaky(_path, _args, output_path, _progress):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("interrupted during packaging")
+        _source_workbook(output_path)
+        return {"file_path": output_path, "missing": [], "blockers": [], "source_rows": 2}
+
+    ctx = _context(tmp_path, lsr_adapter=flaky)
+    args = {
+        "attachment_id": meta["attachment_id"],
+        "decisions": _durable_decisions(30),
+        "draft": True,
+    }
+    first = await build_lsr_workbook(args, ctx)
+    second = await build_lsr_workbook(args, ctx)
+
+    assert first["status"] == "failed"
+    assert second["status"] == "complete"
+    assert second["checkpoint"]["checkpoint_id"] == first["checkpoint"]["checkpoint_id"]
+    assert second["artifact"]["filename"].startswith("draft_LSR")
+    revisions = ctx.artifacts.list_revisions(second["artifact"]["artifact_id"])
+    assert len(revisions) == 1

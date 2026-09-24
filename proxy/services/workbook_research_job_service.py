@@ -356,6 +356,27 @@ class WorkbookResearchJobService:
             )
         return events
 
+    def record_packaging(
+        self, job_id: str, *, tool: str, revision_id: str, draft: bool
+    ) -> int:
+        """Durable trace of a packaged workbook revision for this job.
+
+        The next packaging pass reads these events to keep the downloadable
+        document in one revision chain: draft revisions while the job is
+        paused, the final revision once the job is terminal.
+        """
+        with self._connect() as conn:
+            return self._append_event(
+                conn,
+                str(job_id),
+                "workbook_packaged",
+                {
+                    "tool": str(tool),
+                    "revision_id": str(revision_id),
+                    "draft": bool(draft),
+                },
+            )
+
     def record_packet(
         self,
         job_id: str,

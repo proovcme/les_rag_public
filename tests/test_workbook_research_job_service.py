@@ -939,3 +939,32 @@ def test_different_norm_decisions_on_one_locator_still_distinct(tmp_path) -> Non
     )
     stored = service.get(job["job_id"])["accepted_rows"]
     assert len([r for r in stored if r["source_row"] == "\u0412\u041e\u0420!R9"]) == 2
+
+
+def test_record_packaging_events_keep_last_revision_per_tool(tmp_path) -> None:
+    # Packaging lineage: the next pass chains from the last revision this job
+    # packaged for the same tool; drafts stay visible in the event history.
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.record_packaging(
+        job["job_id"], tool="build_lsr_workbook", revision_id="rev_draft", draft=True
+    )
+    service.record_packaging(
+        job["job_id"], tool="build_vor_workbook", revision_id="rev_vor", draft=True
+    )
+    service.record_packaging(
+        job["job_id"], tool="build_lsr_workbook", revision_id="rev_final", draft=False
+    )
+
+    latest: dict[str, dict] = {}
+    for event in service.list_events(job["job_id"], event_type="workbook_packaged"):
+        payload = event["payload"]
+        latest[str(payload["tool"])] = payload
+
+    assert latest["build_lsr_workbook"] == {
+        "tool": "build_lsr_workbook",
+        "revision_id": "rev_final",
+        "draft": False,
+    }
+    assert latest["build_vor_workbook"]["revision_id"] == "rev_vor"
+    assert latest["build_vor_workbook"]["draft"] is True

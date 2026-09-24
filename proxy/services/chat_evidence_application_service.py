@@ -220,6 +220,8 @@ def workbook_packaging_args(
     question: str,
     decisions: Sequence[Mapping[str, Any]],
     operator_overrides: Mapping[str, Any] | None,
+    draft: bool = False,
+    parent_revision_id: str | None = None,
 ) -> dict[str, Any]:
     """Build contract-valid args for the sheet-pass auto-packaging call.
 
@@ -227,6 +229,10 @@ def workbook_packaging_args(
     priced ЛСР tool consumes operator overlays. The ВОР contract declares
     additionalProperties False without confirmed_data, so sending the overlay
     there fails schema validation (TOOL_SCHEMA_INVALID) and drops the artifact.
+    ``draft`` and ``parent_revision_id`` are emitted only when set: an ordinary
+    final call keeps the identity it had before durable packaging existed, a
+    paused intermediate is explicitly marked, and a terminal repack continues
+    the same revision chain.
     """
     args: dict[str, Any] = {
         "attachment_id": attachment_id,
@@ -235,7 +241,34 @@ def workbook_packaging_args(
     }
     if packaging_tool == "build_lsr_workbook":
         args["confirmed_data"] = dict(operator_overrides or {})
+    if draft:
+        args["draft"] = True
+    if parent_revision_id:
+        args["parent_revision_id"] = str(parent_revision_id)
     return args
+
+
+def terminal_research_packaging_rows(
+    research_job: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Return the durable accepted decisions of a completed research job.
+
+    A terminal job's saved set is authoritative: the final workbook revision
+    must be packaged from the full saved decisions even when the per-call
+    re-validation of the answer reports integrity noise. The decisions are
+    forwarded unchanged; no model call happens here. Returns nothing for a
+    paused/running job or when durability is unavailable, so an intermediate
+    file can never masquerade as the finished document.
+    """
+    if not isinstance(research_job, Mapping):
+        return []
+    if str(research_job.get("status") or "") != "complete":
+        return []
+    return [
+        dict(item)
+        for item in (research_job.get("accepted_rows") or ())
+        if isinstance(item, Mapping)
+    ]
 
 
 def model_answer_timeout_seconds() -> float:
@@ -4736,6 +4769,12 @@ async def _execute_chat_evidence_application(
                 sheet_pass_done = False
                 sheet_pass_rows: list[dict[str, Any]] = []
                 research_cancelled = False
+                # Durable research-job handles stay unbound unless the sheet-pass
+                # route initializes them; the packaging tail reads them regardless,
+                # so they are pre-bound to None here (local annotations are not
+                # evaluated at runtime).
+                research_job_service: WorkbookResearchJobService | None = None
+                research_job: dict[str, Any] | None = None
                 visual_tool_requested = any(
                     marker in str(req.question or "").casefold().replace("ё", "е")
                     for marker in ("посмотри глазами", "посмотри чертеж", "посмотри схему", "что видно на лист", "что изображено на лист")
@@ -7032,6 +7071,14 @@ async def _execute_chat_evidence_application(
                     model_result_rows: list[dict[str, Any]] = []
                     model_result_errors: list[str] = []
                     model_result_blocking_errors: list[str] = []
+                    # The durable job, not the re-parsed answer, decides what the
+                    # final revision contains once the job reached its terminal
+                    # state; a not-yet-terminal durable job makes the packaged
+                    # file an explicitly marked draft.
+                    durable_packaging_rows = terminal_research_packaging_rows(
+                        research_job
+                    )
+                    packaging_is_draft = bool(research_job) and not durable_packaging_rows
                     if parsed_model_result is not None:
                         answer, model_result_rows = parsed_model_result
                         # The model's first complete result is the terminal professional
@@ -7446,6 +7493,15 @@ async def _execute_chat_evidence_application(
                             model_result_errors,
                             work_row_count=work_row_count,
                         )
+                        if durable_packaging_rows:
+                            # Terminal durable state wins over the ephemeral
+                            # re-parse: the accepted decisions are already saved
+                            # and the final revision is packaged from that full
+                            # set unchanged (no model re-call). Re-parse noise
+                            # stays visible in model_result_errors but can no
+                            # longer suppress the complete artifact.
+                            model_result_rows = durable_packaging_rows
+                            model_result_blocking_errors = []
                         notice_kwargs = {
                             "errors": model_result_errors,
                             "row_count": len(model_result_rows),
@@ -7505,9 +7561,10 @@ async def _execute_chat_evidence_application(
                         profile_tools, str(getattr(req, "question", "") or "")
                     )
                     if (
-                        parsed_model_result is not None
+                        (parsed_model_result is not None or bool(durable_packaging_rows))
                         and (
                             bool(model_result_rows)
+                            or bool(durable_packaging_rows)
                             or packaging_tools == ["build_vor_workbook"]
                         )
                         and not model_result_blocking_errors
@@ -7523,6 +7580,24 @@ async def _execute_chat_evidence_application(
                         packaging_trace: list[dict[str, Any]] = []
                         packaging_failures: list[dict[str, Any]] = []
                         workbook_files: list[dict[str, str]] = []
+                        packaging_parents: dict[str, str] = {}
+                        if research_job_service is not None and research_job is not None:
+                            # Keep one downloadable document per durable job:
+                            # every later revision chains from the last one this
+                            # job packaged (draft first, final after completion).
+                            for packaged_event in research_job_service.list_events(
+                                str(research_job.get("job_id") or ""),
+                                event_type="workbook_packaged",
+                            ):
+                                packaged_payload = packaged_event.get("payload")
+                                if not isinstance(packaged_payload, Mapping):
+                                    continue
+                                event_tool = str(packaged_payload.get("tool") or "")
+                                event_revision = str(
+                                    packaged_payload.get("revision_id") or ""
+                                )
+                                if event_tool and event_revision:
+                                    packaging_parents[event_tool] = event_revision
                         for packaging_tool in packaging_tools:
                             workbook_call = {
                                 "tool": packaging_tool,
@@ -7530,10 +7605,16 @@ async def _execute_chat_evidence_application(
                                     packaging_tool=packaging_tool,
                                     attachment_id=attachment_id,
                                     question=str(req.question or ""),
-                                    decisions=model_result_rows,
+                                    decisions=(
+                                        durable_packaging_rows or model_result_rows
+                                    ),
                                     operator_overrides=(
                                         retrieval_trace.get("workbook_research_job") or {}
                                     ).get("operator_overrides"),
+                                    draft=packaging_is_draft,
+                                    parent_revision_id=packaging_parents.get(
+                                        packaging_tool
+                                    ),
                                 ),
                             }
                             execution_context = {
@@ -7580,6 +7661,23 @@ async def _execute_chat_evidence_application(
                                     if isinstance(harvested.get("artifact"), dict)
                                     else {}
                                 )
+                                if (
+                                    research_job_service is not None
+                                    and research_job is not None
+                                    and str(artifact.get("revision_id") or "")
+                                ):
+                                    try:
+                                        research_job_service.record_packaging(
+                                            str(research_job["job_id"]),
+                                            tool=packaging_tool,
+                                            revision_id=str(artifact["revision_id"]),
+                                            draft=packaging_is_draft,
+                                        )
+                                    except Exception as record_error:  # noqa: BLE001 - lineage hint is best-effort
+                                        logger.warning(
+                                            "[WORKBOOK] packaging event not recorded: %s",
+                                            type(record_error).__name__,
+                                        )
                                 if artifact.get("download_url"):
                                     kind = str(artifact.get("artifact_kind") or "").strip()
                                     if kind not in {"lsr_workbook", "vor_workbook"}:
@@ -7596,6 +7694,7 @@ async def _execute_chat_evidence_application(
                                         ),
                                         "download_url": str(artifact["download_url"]),
                                         "artifact_kind": kind,
+                                        "draft": "true" if packaging_is_draft else "false",
                                     })
                                 if packaging_tool == "build_lsr_workbook" or not workbook_chat_meta:
                                     workbook_chat_meta = harvested
@@ -7617,6 +7716,7 @@ async def _execute_chat_evidence_application(
                         if workbook_chat_meta:
                             artifact_meta = workbook_chat_meta.get("artifact")
                             if isinstance(artifact_meta, dict):
+                                artifact_meta["draft"] = bool(packaging_is_draft)
                                 artifact_meta["draft_rows"] = compact_estimator_draft_rows(
                                     model_result_rows
                                 )

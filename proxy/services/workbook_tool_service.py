@@ -33,6 +33,9 @@ _BASE_INPUT_PROPERTIES = {
     "project_id": {"type": ["integer", "null"]},
     "parent_revision_id": {"type": ["string", "null"]},
     "dataset_ids": {"type": ["array", "null"], "items": {"type": "string"}},
+    # Explicit draft marking for intermediates of a durable research job;
+    # optional, so an ordinary final call keeps its pre-existing identity.
+    "draft": {"type": "boolean"},
 }
 
 _VOR_INPUT_SCHEMA = {
@@ -117,11 +120,15 @@ def workbook_download_filename(
     artifact_kind: str,
     source_name: str = "",
     when: datetime | None = None,
+    draft: bool = False,
 ) -> str:
     """Build a stable operator-facing workbook name without filesystem details."""
 
     stamp = (when or datetime.now()).strftime("%Y-%m-%d_%H%M")
-    prefix = "VOR" if str(artifact_kind) == "vor_workbook" else "LSR"
+    prefix = ("VOR" if str(artifact_kind) == "vor_workbook" else "LSR")
+    if draft:
+        # A paused durable job must never look like the finished document.
+        prefix = f"draft_{prefix}"
     stem = Path(str(source_name or "")).stem
     from proxy.services.lsr_workbook_adapter_service import is_question_like_title
 
@@ -225,6 +232,8 @@ def _normalized_args(args: Mapping[str, Any], *, allowed_args: set[str]) -> dict
     normalized["attachment_id"] = str(normalized.get("attachment_id") or "").strip()
     normalized["question"] = str(normalized.get("question") or "").strip()
     normalized["pricebook"] = str(normalized.get("pricebook") or "").strip()
+    if "draft" in args:
+        normalized["draft"] = bool(args.get("draft"))
     normalized["project_id"] = normalized.get("project_id")
     normalized["parent_revision_id"] = str(normalized.get("parent_revision_id") or "").strip() or None
     normalized["dataset_ids"] = list(dict.fromkeys(
@@ -434,12 +443,16 @@ async def _build_workbook(
             "blockers": list(failed.blockers),
         }
     try:
-        adapter_args = {**normalized, "_source_name": str(attachment_meta["original_name"])}
+        adapter_payload = {
+            key: value for key, value in normalized.items() if key != "draft"
+        }
+        adapter_args = {**adapter_payload, "_source_name": str(attachment_meta["original_name"])}
         generated = await _call_adapter(adapter, source_path, adapter_args, output_path, progress)
         generated_path = Path(str(generated.get("file_path") or output_path))
         display_name = workbook_download_filename(
             artifact_kind=artifact_kind,
             source_name=str(attachment_meta.get("original_name") or ""),
+            draft=bool(normalized.get("draft")),
         )
         named_path = generated_path.with_name(display_name)
         if named_path.resolve() != generated_path.resolve() and generated_path.exists():
@@ -447,6 +460,15 @@ async def _build_workbook(
             generated_path = named_path
         missing = tuple(str(item) for item in (generated.get("missing") or ()))
         blockers = tuple(str(item) for item in (generated.get("blockers") or ()))
+        tool_call_meta = {
+            "name": tool_name,
+            "version": "1.0.0",
+            "idempotency_key": ctx.idempotency_key,
+            "model_decision_revision": ctx.model_decision_revision,
+            "source_rows": int(generated.get("source_rows") or 0),
+        }
+        if normalized.get("draft"):
+            tool_call_meta["draft"] = True
         revision = ctx.artifacts.create_revision(ArtifactRevisionRequest(
             artifact_kind=artifact_kind,
             file_path=generated_path,
@@ -458,13 +480,7 @@ async def _build_workbook(
             profile_revision_id=ctx.profile_revision_id,
             model_identity=ctx.model_identity,
             model_preset=ctx.model_preset,
-            tool_calls=({
-                "name": tool_name,
-                "version": "1.0.0",
-                "idempotency_key": ctx.idempotency_key,
-                "model_decision_revision": ctx.model_decision_revision,
-                "source_rows": int(generated.get("source_rows") or 0),
-            },),
+            tool_calls=(tool_call_meta,),
             decision_checkpoint_id=checkpoint.checkpoint_id,
             missing=missing,
             blockers=blockers,
