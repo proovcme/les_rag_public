@@ -248,6 +248,20 @@ def workbook_packaging_args(
     return args
 
 
+# Events that can change the durable decision set a packaged workbook is built
+# from.  Terminal bookkeeping is deliberately absent: every pass that re-finishes
+# an already complete job appends another ``complete`` event *before* it packages,
+# so treating it as a change made a re-open of a finished job write one more copy
+# of the same document (live regression on job wrj_2b0fff82, events 38-41).
+PACKAGING_DECISION_CHANGE_EVENTS = frozenset({
+    "packet_checkpoint",
+    "rows_replaced",
+    "decision_revision",
+    "locators_reopened",
+    "operator_overrides",
+})
+
+
 def workbook_packaging_lineage(
     events: Sequence[Mapping[str, Any]],
     *,
@@ -257,12 +271,12 @@ def workbook_packaging_lineage(
 
     ``parents`` is the last revision each packager wrote for this job, so a new
     decision set continues the same downloadable document. ``settled`` marks a
-    packager whose last revision is a final one that already covers the saved
-    durable decisions: replaying that call with the parent it built on (recorded
-    in the event, or read back from the packaging chain for events written before
-    the parent was recorded) keeps the existing call identity
-    (which already covers ``decisions``), so opening
-    a finished job again serves the same file instead of duplicating it.
+    packager whose last revision is a final one that was written after the last
+    event able to change the saved durable decisions: replaying that call with
+    the parent it built on (recorded in the event, or read back from the
+    packaging chain for events written before the parent was recorded) keeps the
+    existing call identity (which already covers ``decisions``), so opening a
+    finished job again serves the same file instead of duplicating it.
     """
 
     parents: dict[str, str] = {}
@@ -271,7 +285,7 @@ def workbook_packaging_lineage(
         (
             int(event.get("sequence") or 0)
             for event in events
-            if str(event.get("event_type") or "") != "workbook_packaged"
+            if str(event.get("event_type") or "") in PACKAGING_DECISION_CHANGE_EVENTS
         ),
         default=0,
     )

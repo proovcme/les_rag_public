@@ -4087,3 +4087,61 @@ def test_workbook_packaging_lineage_derives_parent_for_legacy_events():
     first_only = [legacy_events[0], legacy_events[3]]
     _, first_settled = service.workbook_packaging_lineage(first_only, durable_decisions=True)
     assert first_settled == {"build_lsr_workbook": None}
+
+
+def test_workbook_packaging_lineage_survives_repeated_terminal_bookkeeping():
+    # Live ledger of job wrj_2b0fff82: each re-open of the finished job appended
+    # another ``complete`` event before packaging, which made the previous final
+    # revision look stale and wrote a duplicate document.  Only events that can
+    # change the saved durable decisions may invalidate a settled final.
+    events = [
+        {"sequence": 35, "event_type": "packet_checkpoint", "payload": {}},
+        {"sequence": 36, "event_type": "complete", "payload": {}},
+        {
+            "sequence": 37,
+            "event_type": "workbook_packaged",
+            "payload": {"tool": "build_lsr_workbook", "revision_id": "rev_first", "draft": False},
+        },
+        {"sequence": 38, "event_type": "complete", "payload": {}},
+        {
+            "sequence": 39,
+            "event_type": "workbook_packaged",
+            "payload": {
+                "tool": "build_lsr_workbook",
+                "revision_id": "rev_second",
+                "draft": False,
+                "parent_revision_id": "rev_first",
+            },
+        },
+        {"sequence": 40, "event_type": "complete", "payload": {}},
+    ]
+    parents, settled = service.workbook_packaging_lineage(events, durable_decisions=True)
+    assert parents == {"build_lsr_workbook": "rev_second"}
+    assert settled == {"build_lsr_workbook": "rev_first"}
+
+    # Re-running the query cache or a stall guard is bookkeeping too.  A replay
+    # records the same revision with the parent it was built on, so the settled
+    # parent stays stable across repeated re-opens.
+    noisy = [
+        *events,
+        {"sequence": 41, "event_type": "workbook_packaged",
+         "payload": {"tool": "build_lsr_workbook", "revision_id": "rev_second",
+                     "draft": False, "parent_revision_id": "rev_first"}},
+        {"sequence": 42, "event_type": "search_cache", "payload": {}},
+        {"sequence": 43, "event_type": "stall_guard_triggered", "payload": {}},
+    ]
+    _, noisy_settled = service.workbook_packaging_lineage(noisy, durable_decisions=True)
+    assert noisy_settled == {"build_lsr_workbook": "rev_first"}
+
+    # Reopened locators are a real change: the next package must chain.
+    reopened = [
+        *events,
+        {"sequence": 41, "event_type": "workbook_packaged",
+         "payload": {"tool": "build_lsr_workbook", "revision_id": "rev_second",
+                     "draft": False, "parent_revision_id": "rev_first"}},
+        {"sequence": 42, "event_type": "locators_reopened", "payload": {}},
+    ]
+    _, reopened_settled = service.workbook_packaging_lineage(
+        reopened, durable_decisions=True
+    )
+    assert reopened_settled == {}
