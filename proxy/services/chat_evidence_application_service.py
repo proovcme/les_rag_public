@@ -185,6 +185,26 @@ def prioritize_workbook_tools(
     return workbook + other
 
 
+def workbook_packaging_tool(profile_tools: Sequence[str], question: str) -> list[str]:
+    """Choose the packaging tool for the sheet-pass result by intent.
+
+    A visible build_lsr_workbook keeps the priced route. When the operator's
+    own words asked for a ВОР (build_lsr_workbook was hidden from the model by
+    prioritize_workbook_tools), the result must be packaged as ВОР, not
+    silently as a priced ЛСР. Returns at most one tool name; never executes a
+    tool and never selects a norm.
+    """
+    tools = set(profile_tools)
+    if "build_lsr_workbook" in tools:
+        return ["build_lsr_workbook"]
+    if (
+        "build_vor_workbook" in tools
+        and workbook_artifact_intent(question) == "vor"
+    ):
+        return ["build_vor_workbook"]
+    return []
+
+
 def model_answer_timeout_seconds() -> float:
     """One end-to-end window for an explicitly assigned answer connection.
 
@@ -7448,14 +7468,15 @@ async def _execute_chat_evidence_application(
                         if answer:
                             await token_sink({"event": "token", "data": answer})
                     attachment_id = str(getattr(req, "attachment_id", None) or "").strip()
-                    packaging_tools = (
-                        ["build_lsr_workbook"]
-                        if "build_lsr_workbook" in profile_tools
-                        else []
+                    packaging_tools = workbook_packaging_tool(
+                        profile_tools, str(getattr(req, "question", "") or "")
                     )
                     if (
                         parsed_model_result is not None
-                        and model_result_rows
+                        and (
+                            bool(model_result_rows)
+                            or packaging_tools == ["build_vor_workbook"]
+                        )
                         and not model_result_blocking_errors
                         and attachment_id
                         and packaging_tools

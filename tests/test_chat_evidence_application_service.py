@@ -3801,3 +3801,30 @@ def test_agent_loop_llm_client_uses_registered_timeout(monkeypatch):
     source = inspect.getsource(service)
     assert "async with httpx.AsyncClient(timeout=model_answer_timeout_seconds()) as client:" in source
     assert "httpx.AsyncClient(timeout=300.0)" not in source
+
+
+def test_workbook_packaging_tool_follows_operator_intent():
+    both = ["build_lsr_workbook", "build_vor_workbook", "search_sources"]
+    vor_only = ["build_vor_workbook", "search_sources", "read_source"]
+    assert service.workbook_packaging_tool(both, "Собери ВОР из спецификации") == [
+        "build_lsr_workbook"
+    ]
+    assert service.workbook_packaging_tool(
+        vor_only, "Собери ВОР из прикреплённой спецификации"
+    ) == ["build_vor_workbook"]
+    assert service.workbook_packaging_tool(vor_only, "Что видно в документе") == []
+    assert service.workbook_packaging_tool(["search_sources"], "Собери ВОР") == []
+
+
+def test_sheet_pass_visible_tools_for_vor_intent_hide_priced_packager():
+    # integration of the two intent gates: narrowing must leave exactly the
+    # row-preserving packager visible and selectable for auto-packaging.
+    tools = service.prioritize_workbook_tools(
+        ["search_sources", "read_source", "build_lsr_workbook", "build_vor_workbook"],
+        workbook_phase=True,
+        question="Собери ВОР из прикреплённой спецификации",
+    )
+    assert "build_lsr_workbook" not in tools
+    assert service.workbook_packaging_tool(tools, "Собери ВОР из прикреплённой спецификации") == [
+        "build_vor_workbook"
+    ]
