@@ -327,6 +327,12 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
         "qty",
         "колич",
         "кол.",
+        # Сметные формы заказчика печатают ту же графу с пропуском буквы:
+        # «Ко-во» вместо «Кол-во» (реальный «Сметный расчёт №1 к Договору»).
+        # Variant spellings are bound only by their literal prefix, so no other
+        # column can be mistaken for the quantity graph.
+        "ко-во",
+        "ко во",
         # заказческие спецификации называют объём строки просто «Объём»
         "объем",
     ),
