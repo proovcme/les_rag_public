@@ -248,6 +248,51 @@ def workbook_packaging_args(
     return args
 
 
+def workbook_packaging_lineage(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    durable_decisions: bool,
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Revision lineage for durable workbook packaging.
+
+    ``parents`` is the last revision each packager wrote for this job, so a new
+    decision set continues the same downloadable document. ``settled`` marks a
+    packager whose last revision is a final one that already covers the saved
+    durable decisions: replaying that call with its own recorded parent keeps
+    the existing call identity (which already covers ``decisions``), so opening
+    a finished job again serves the same file instead of duplicating it.
+    """
+
+    parents: dict[str, str] = {}
+    settled: dict[str, str | None] = {}
+    last_change_sequence = max(
+        (
+            int(event.get("sequence") or 0)
+            for event in events
+            if str(event.get("event_type") or "") != "workbook_packaged"
+        ),
+        default=0,
+    )
+    for event in events:
+        if str(event.get("event_type") or "") != "workbook_packaged":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        tool = str(payload.get("tool") or "")
+        revision_id = str(payload.get("revision_id") or "")
+        if not tool or not revision_id:
+            continue
+        parents[tool] = revision_id
+        if (
+            durable_decisions
+            and not bool(payload.get("draft"))
+            and int(event.get("sequence") or 0) >= last_change_sequence
+        ):
+            settled[tool] = str(payload.get("parent_revision_id") or "") or None
+    return parents, settled
+
+
 def terminal_research_packaging_rows(
     research_job: Mapping[str, Any] | None,
 ) -> list[dict[str, Any]]:
@@ -7580,25 +7625,27 @@ async def _execute_chat_evidence_application(
                         packaging_trace: list[dict[str, Any]] = []
                         packaging_failures: list[dict[str, Any]] = []
                         workbook_files: list[dict[str, str]] = []
+                        # Keep one downloadable document per durable job: a new
+                        # decision set chains from the last revision this job
+                        # packaged; an already-settled final revision is replayed
+                        # with its own identity so a re-open serves the same file.
                         packaging_parents: dict[str, str] = {}
+                        packaging_settled: dict[str, str | None] = {}
                         if research_job_service is not None and research_job is not None:
-                            # Keep one downloadable document per durable job:
-                            # every later revision chains from the last one this
-                            # job packaged (draft first, final after completion).
-                            for packaged_event in research_job_service.list_events(
-                                str(research_job.get("job_id") or ""),
-                                event_type="workbook_packaged",
-                            ):
-                                packaged_payload = packaged_event.get("payload")
-                                if not isinstance(packaged_payload, Mapping):
-                                    continue
-                                event_tool = str(packaged_payload.get("tool") or "")
-                                event_revision = str(
-                                    packaged_payload.get("revision_id") or ""
+                            packaging_parents, packaging_settled = (
+                                workbook_packaging_lineage(
+                                    research_job_service.list_events(
+                                        str(research_job.get("job_id") or "")
+                                    ),
+                                    durable_decisions=bool(durable_packaging_rows),
                                 )
-                                if event_tool and event_revision:
-                                    packaging_parents[event_tool] = event_revision
+                            )
                         for packaging_tool in packaging_tools:
+                            packaging_parent = (
+                                packaging_settled[packaging_tool]
+                                if packaging_tool in packaging_settled
+                                else packaging_parents.get(packaging_tool)
+                            )
                             workbook_call = {
                                 "tool": packaging_tool,
                                 "args": workbook_packaging_args(
@@ -7612,9 +7659,7 @@ async def _execute_chat_evidence_application(
                                         retrieval_trace.get("workbook_research_job") or {}
                                     ).get("operator_overrides"),
                                     draft=packaging_is_draft,
-                                    parent_revision_id=packaging_parents.get(
-                                        packaging_tool
-                                    ),
+                                    parent_revision_id=packaging_parent,
                                 ),
                             }
                             execution_context = {
@@ -7672,6 +7717,7 @@ async def _execute_chat_evidence_application(
                                             tool=packaging_tool,
                                             revision_id=str(artifact["revision_id"]),
                                             draft=packaging_is_draft,
+                                            parent_revision_id=packaging_parent,
                                         )
                                     except Exception as record_error:  # noqa: BLE001 - lineage hint is best-effort
                                         logger.warning(

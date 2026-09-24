@@ -875,3 +875,55 @@ async def test_interrupted_draft_packaging_resumes_to_single_marked_revision(tmp
     assert second["artifact"]["filename"].startswith("draft_LSR")
     revisions = ctx.artifacts.list_revisions(second["artifact"]["artifact_id"])
     assert len(revisions) == 1
+
+
+@pytest.mark.asyncio
+async def test_settled_final_revision_replays_same_file_while_growth_chains(tmp_path):
+    # What the durable packaging lineage now feeds into the call: replaying the
+    # settled final args (same decisions, same recorded parent) must serve the
+    # same revision; a grown decision set must chain a new one.
+    meta = _attachment(tmp_path)
+    calls = 0
+
+    async def adapter(_path, _args, output_path, _progress):
+        nonlocal calls
+        calls += 1
+        _source_workbook(output_path)
+        return {"file_path": output_path, "missing": [], "blockers": [], "source_rows": 2}
+
+    draft_ctx = _context(tmp_path, key="key-draft", decision="decision-draft",
+                         lsr_adapter=adapter)
+    draft = await build_lsr_workbook(
+        {"attachment_id": meta["attachment_id"], "decisions": _durable_decisions(30),
+         "draft": True},
+        draft_ctx,
+    )
+    final_args = {
+        "attachment_id": meta["attachment_id"],
+        "decisions": _durable_decisions(58),
+        "parent_revision_id": draft["artifact"]["revision_id"],
+    }
+    # The settled replay carries the parent the final call itself used, so the
+    # call identity is unchanged and the same checkpoint/revision is resumed.
+    final_ctx = _context(tmp_path, key="key-final", decision="decision-final",
+                         lsr_adapter=adapter)
+    final = await build_lsr_workbook(dict(final_args), final_ctx)
+    replay = await build_lsr_workbook(dict(final_args), final_ctx)
+
+    assert replay["artifact"]["revision_id"] == final["artifact"]["revision_id"]
+    assert replay["checkpoint"]["resumed"] is True
+    assert calls == 2
+    revisions = final_ctx.artifacts.list_revisions(final["artifact"]["artifact_id"])
+    assert [r.revision_no for r in revisions] == [1, 2]
+
+    grown_args = {
+        "attachment_id": meta["attachment_id"],
+        "decisions": _durable_decisions(60),
+        "parent_revision_id": final["artifact"]["revision_id"],
+    }
+    grown_ctx = _context(tmp_path, key="key-grown", decision="decision-grown",
+                         lsr_adapter=adapter)
+    grown = await build_lsr_workbook(grown_args, grown_ctx)
+    assert grown["artifact"]["revision_no"] == 3
+    assert grown["artifact"]["revision_id"] != final["artifact"]["revision_id"]
+    assert calls == 3

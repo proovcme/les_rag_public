@@ -965,6 +965,32 @@ def test_record_packaging_events_keep_last_revision_per_tool(tmp_path) -> None:
         "tool": "build_lsr_workbook",
         "revision_id": "rev_final",
         "draft": False,
+        "parent_revision_id": "",
     }
     assert latest["build_vor_workbook"]["revision_id"] == "rev_vor"
     assert latest["build_vor_workbook"]["draft"] is True
+
+
+def test_record_packaging_keeps_parent_revision_and_sequence(tmp_path) -> None:
+    # A settled final revision is replayed with its own call identity, so the
+    # event has to remember which parent that call was built with.
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    first = service.record_packaging(
+        job["job_id"], tool="build_lsr_workbook", revision_id="rev_draft", draft=True
+    )
+    second = service.record_packaging(
+        job["job_id"],
+        tool="build_lsr_workbook",
+        revision_id="rev_final",
+        draft=False,
+        parent_revision_id="rev_draft",
+    )
+
+    events = service.list_events(job["job_id"], event_type="workbook_packaged")
+    assert [event["payload"]["parent_revision_id"] for event in events] == [
+        "",
+        "rev_draft",
+    ]
+    assert [event["sequence"] for event in events] == [first, second]
+    assert first < second

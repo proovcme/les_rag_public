@@ -332,13 +332,13 @@ class WorkbookResearchJobService:
         with self._connect() as conn:
             if event_type:
                 rows = conn.execute(
-                    "SELECT event_type,payload_json FROM workbook_research_events"
+                    "SELECT sequence,event_type,payload_json FROM workbook_research_events"
                     " WHERE job_id=? AND event_type=? ORDER BY sequence",
                     (str(job_id), str(event_type)),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT event_type,payload_json FROM workbook_research_events"
+                    "SELECT sequence,event_type,payload_json FROM workbook_research_events"
                     " WHERE job_id=? ORDER BY sequence",
                     (str(job_id),),
                 ).fetchall()
@@ -350,6 +350,7 @@ class WorkbookResearchJobService:
                 payload = {}
             events.append(
                 {
+                    "sequence": int(row["sequence"]),
                     "event_type": str(row["event_type"]),
                     "payload": payload if isinstance(payload, Mapping) else {},
                 }
@@ -357,7 +358,13 @@ class WorkbookResearchJobService:
         return events
 
     def record_packaging(
-        self, job_id: str, *, tool: str, revision_id: str, draft: bool
+        self,
+        job_id: str,
+        *,
+        tool: str,
+        revision_id: str,
+        draft: bool,
+        parent_revision_id: str | None = None,
     ) -> int:
         """Durable trace of a packaged workbook revision for this job.
 
@@ -374,6 +381,7 @@ class WorkbookResearchJobService:
                     "tool": str(tool),
                     "revision_id": str(revision_id),
                     "draft": bool(draft),
+                    "parent_revision_id": str(parent_revision_id or ""),
                 },
             )
 

@@ -3950,3 +3950,93 @@ def test_workbook_packaging_args_draft_and_parent_are_opt_in():
     )
     assert validate_json_schema(vor_draft, BUILD_VOR_WORKBOOK.input_schema) == []
     assert "confirmed_data" not in vor_draft
+
+
+def test_workbook_packaging_lineage_replays_settled_final_without_duplicate():
+    # Live regression (build 798 runtime run wrj_2b0fff82): re-opening a job
+    # that is already terminal packaged the identical durable decision set as a
+    # second revision. The lineage helper must hand back the parent that the
+    # settled final call itself used, so the call identity (which already
+    # covers ``decisions``) matches and the tool serves the same revision.
+    draft_event = {
+        "sequence": 2,
+        "event_type": "workbook_packaged",
+        "payload": {
+            "tool": "build_lsr_workbook",
+            "revision_id": "rev_draft",
+            "draft": True,
+            "parent_revision_id": "",
+        },
+    }
+    final_event = {
+        "sequence": 5,
+        "event_type": "workbook_packaged",
+        "payload": {
+            "tool": "build_lsr_workbook",
+            "revision_id": "rev_final",
+            "draft": False,
+            "parent_revision_id": "rev_draft",
+        },
+    }
+    events = [
+        {"sequence": 1, "event_type": "packet_checkpoint", "payload": {}},
+        draft_event,
+        {"sequence": 3, "event_type": "packet_checkpoint", "payload": {}},
+        {"sequence": 4, "event_type": "complete", "payload": {}},
+        final_event,
+    ]
+
+    parents, settled = service.workbook_packaging_lineage(events, durable_decisions=True)
+    assert parents == {"build_lsr_workbook": "rev_final"}
+    assert settled == {"build_lsr_workbook": "rev_draft"}
+
+    # A paused job has no final revision to replay: it must keep chaining.
+    _, settled_paused = service.workbook_packaging_lineage(
+        events[:3], durable_decisions=False
+    )
+    assert settled_paused == {}
+
+    # New durable decisions after the final revision must chain, not replay.
+    grown = events + [{"sequence": 6, "event_type": "packet_checkpoint", "payload": {}}]
+    grown_parents, grown_settled = service.workbook_packaging_lineage(
+        grown, durable_decisions=True
+    )
+    assert grown_parents == {"build_lsr_workbook": "rev_final"}
+    assert grown_settled == {}
+
+    # A sibling packager writing later is not a decision change for this tool.
+    sibling = events + [
+        {
+            "sequence": 6,
+            "event_type": "workbook_packaged",
+            "payload": {
+                "tool": "build_vor_workbook",
+                "revision_id": "rev_vor",
+                "draft": False,
+                "parent_revision_id": "",
+            },
+        }
+    ]
+    _, sibling_settled = service.workbook_packaging_lineage(
+        sibling, durable_decisions=True
+    )
+    assert sibling_settled == {
+        "build_lsr_workbook": "rev_draft",
+        "build_vor_workbook": None,
+    }
+    parents_all, _ = service.workbook_packaging_lineage(sibling, durable_decisions=True)
+    assert parents_all == {
+        "build_lsr_workbook": "rev_final",
+        "build_vor_workbook": "rev_vor",
+    }
+
+
+def test_workbook_packaging_lineage_ignores_malformed_events():
+    events = [
+        {"sequence": 1, "event_type": "workbook_packaged", "payload": "not-a-mapping"},
+        {"sequence": 2, "event_type": "workbook_packaged", "payload": {"tool": "build_lsr_workbook"}},
+        {"sequence": 3, "event_type": "workbook_packaged", "payload": {"revision_id": "rev_x"}},
+    ]
+    parents, settled = service.workbook_packaging_lineage(events, durable_decisions=True)
+    assert parents == {}
+    assert settled == {}

@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1011 |
-| Строк Python | 333219 |
+| Строк Python | 333441 |
 | PRODUCT_REACHABLE | 356 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 643 |
@@ -33,7 +33,7 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| proxy/services/chat_evidence_application_service.py | 8226 | 10 |
+| proxy/services/chat_evidence_application_service.py | 8272 | 10 |
 | sovushka/pages/chat.py | 6678 | 6 |
 | proxy/routers/chat.py | 4575 | 41 |
 | backend/qdrant_adapter.py | 4552 | 29 |
@@ -57,8 +57,8 @@
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 12 |
+| proxy/services/workbook_research_job_service.py | 1294 | 6 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
-| proxy/services/workbook_research_job_service.py | 1286 | 6 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |
 | backend/document_router.py | 1124 | 6 |
