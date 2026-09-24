@@ -2869,6 +2869,7 @@
         "proxy/services/spec_to_bor_service.py",
         "proxy/services/workbook_tool_service.py",
         "tests/test_bor_service.py",
+        "tests/test_vor_qty_header_variant_25.py",
         "tests/test_vor_route_columns_23.py",
         "tools/les_mcp_server.py"
       ],
@@ -6822,6 +6823,7 @@
         "tests/test_chat_spec_to_bor_attachment.py",
         "tests/test_spec_to_bor_service.py",
         "tests/test_spec_to_bor_uncertainty.py",
+        "tests/test_vor_qty_header_variant_25.py",
         "tests/test_vor_route_columns_23.py",
         "tools/les_mcp_server.py"
       ],
@@ -14170,6 +14172,18 @@
     },
     {
       "inbound": [],
+      "lines": 60,
+      "module": "tests.test_vor_qty_header_variant_25",
+      "outbound": [
+        "proxy/services/bor_service.py",
+        "proxy/services/spec_to_bor_service.py"
+      ],
+      "path": "tests/test_vor_qty_header_variant_25.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 96,
       "module": "tests.test_vor_route_columns_23",
       "outbound": [
@@ -18968,9 +18982,9 @@
     "product_reachable": 356,
     "registered_api_routes": 337,
     "runtime_support": 11,
-    "test_or_tool_only": 644,
-    "tracked_python_files": 1012,
-    "tracked_python_lines": 333947
+    "test_or_tool_only": 645,
+    "tracked_python_files": 1013,
+    "tracked_python_lines": 334007
   },
   "warnings": []
 }
