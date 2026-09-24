@@ -4145,3 +4145,111 @@ def test_workbook_packaging_lineage_survives_repeated_terminal_bookkeeping():
         reopened, durable_decisions=True
     )
     assert reopened_settled == {}
+
+
+# --------------------------------------------------------------------------- #
+# Criterion 2 (build 806): packaging that dies of MemoryError must not end the
+# run without a file.
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_memory_pressure_packaging_gets_a_relief_and_retry_attempt(monkeypatch) -> None:
+    """A retry that repeats the same allocation is useless without relief."""
+
+    calls: list[int] = []
+    cleared: list[str] = []
+
+    def fake_relief(reason: str = "") -> dict:
+        cleared.append(reason)
+        return {"released": ["fgis_pricebook"], "reason": reason}
+
+    monkeypatch.setattr(
+        service, "release_memory_for_packaging", fake_relief, raising=False
+    )
+
+    async def executor(_call, _ctx, _sink):
+        calls.append(len(calls) + 1)
+        return {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": "build_lsr_workbook",
+            "status": "failed",
+            "code": "WORKBOOK_GENERATION_FAILED",
+            "error_type": "MemoryError",
+            "memory_pressure": True,
+            "message": "injected packaging fault",
+            "checkpoint": {"checkpoint_id": "cp-mem", "resumed": len(calls) > 1},
+        }
+
+    payload, traces = await service.execute_workbook_with_bounded_retry(
+        executor,
+        {"tool": "build_lsr_workbook", "args": {}},
+        {"session_id": "s1"},
+        None,
+    )
+
+    assert len(calls) == service._PACKAGING_MEMORY_ATTEMPTS
+    assert cleared == ["build_lsr_workbook"] * (len(calls) - 1)
+    assert payload["memory_relief"][0]["released"] == ["fgis_pricebook"]
+    # The repair hint survives the retry loop, so the client still sees it.
+    assert traces[-1]["status"] == "failed"
+    # Each retry is logged with the relief that made it worth attempting.
+    assert "memory_released" not in traces[-1]
+    assert [item.get("memory_released") for item in traces] == [
+        ["fgis_pricebook"],
+        ["fgis_pricebook"],
+        None,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deterministic_packaging_failure_is_not_retried_forever(monkeypatch) -> None:
+    calls: list[int] = []
+    monkeypatch.setattr(
+        service, "release_memory_for_packaging",
+        lambda reason="": calls.append(1) or {"released": []},
+        raising=False,
+    )
+
+    async def executor(_call, _ctx, _sink):
+        calls.append(len(calls) + 1)
+        return {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": "build_lsr_workbook",
+            "status": "failed",
+            "code": "WORKBOOK_GENERATION_FAILED",
+            "error_type": "ValueError",
+            "memory_pressure": False,
+            "checkpoint": {"checkpoint_id": "cp-det", "resumed": len(calls) > 1},
+        }
+
+    payload, traces = await service.execute_workbook_with_bounded_retry(
+        executor,
+        {"tool": "build_lsr_workbook", "args": {}},
+        {"session_id": "s1"},
+        None,
+    )
+
+    # Bounded: the same deterministic error cannot burn the run.
+    assert len(calls) == 2
+    assert "memory_relief" not in payload
+    assert all("memory_released" not in item for item in traces)
+
+
+def test_terminal_research_without_packaging_events_reports_pending_document() -> None:
+    readiness_state = service._turn_document_state(
+        research_job_service=None,
+        research_job={"job_id": "wrj_1", "status": "complete"},
+        job_status="complete",
+        workbook_files=[{"filename": "ЛСР · черновик.xlsx", "draft": True}],
+    )
+
+    # A draft-only turn of a finished job is not "the document is ready".
+    assert readiness_state == "draft_only"
+
+
+def test_open_research_claims_no_durable_document_state() -> None:
+    assert service._turn_document_state(
+        research_job_service=None,
+        research_job={"job_id": "wrj_1", "status": "paused"},
+        job_status="paused",
+        workbook_files=[],
+    ) == ""

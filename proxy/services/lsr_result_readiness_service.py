@@ -12,6 +12,11 @@ from proxy.services.lsr_source_coverage_service import (
 
 SCHEMA = "les.lsr-result-readiness.v1"
 
+# What the durable packaging projection of a terminal job can assert about its
+# document.  ``"none"`` is deliberately absent: it means "nothing was claimed",
+# so the live file status keeps the wording in that case.
+_DURABLE_DOCUMENT_STATES = frozenset({"ready", "draft_only", "pending"})
+
 _ABSENT_CODES = frozenset(
     {"", "-", "–", "—", "missing", "нет", "н/д", "n/a", "не найдено"}
 )
@@ -190,6 +195,8 @@ def build_lsr_result_readiness(
     calculated_positions: int = -1,
     confirmed_amount: float = -1.0,
     preliminary_amount: float = -1.0,
+    document_state: str = "",
+    download_url: str = "",
 ) -> dict[str, Any]:
     """Split technical file readiness from coverage, norms, and prices."""
 
@@ -262,6 +269,19 @@ def build_lsr_result_readiness(
         # condition until the alternative is explicitly confirmed.
         priced_complete = False
 
+    # The durable packaging projection of the job outranks the in-memory file
+    # list: an intermediate draft must never be announced as the finished
+    # document, and a terminal job without a final revision stays repairable.
+    durable_state = _text(document_state).casefold()
+    missing_final_document = durable_state in {"pending", "draft_only"}
+    if packaged and missing_final_document:
+        packaged = False
+        packaging_failed = True
+        packaging_code = packaging_code or (
+            "DRAFT_ONLY_DOCUMENT" if durable_state == "draft_only"
+            else "NO_FINAL_DOCUMENT"
+        )
+
     if packaged and not packaging_failed:
         file_status = "ready"
         file_action = "Файл собран из сохранённых решений модели."
@@ -300,6 +320,11 @@ def build_lsr_result_readiness(
         continue_action = (
             "Сборка остановлена. Можно пересобрать файл без модели "
             "или продолжить, если остались пробелы."
+        )
+    elif file_status == "ready" and not remaining:
+        continue_action = (
+            "Задание завершено. Повторный вход показывает эту ревизию; "
+            "новое исследование не начинается."
         )
     else:
         continue_action = ""
@@ -409,6 +434,35 @@ def build_lsr_result_readiness(
         },
     }
     actions: list[dict[str, str]] = []
+    # The finished document is reported in ``document`` rather than in the
+    # repair-action list: "nothing outstanding" must keep meaning exactly that,
+    # while a re-entered client still gets one pointer to the last revision.
+    durable_document_notes = {
+        "ready": "Последняя ревизия сохранена и доступна для скачивания.",
+        "draft_only": (
+            "Сохранена только промежуточная ревизия: итоговый документ не собран."
+        ),
+        "pending": (
+            "Задание завершено, но итоговый файл не сохранён. "
+            "Решения модели целы, файл пересобирается без повторного расчёта."
+        ),
+    }
+    document_note = durable_document_notes.get(durable_state, "") or file_action
+    document_offer = {
+        # The durable record names the state the client can actually rely on:
+        # "pending" and "draft_only" describe a finished job with no usable
+        # document, where "failed" would suggest a packaging run that never
+        # happened in this session.
+        "state": (
+            durable_state if durable_state in _DURABLE_DOCUMENT_STATES
+            else file_status
+        ),
+        "durable_state": durable_state or "unknown",
+        "file_status": file_status,
+        "download_url": _text(download_url),
+        "label": "Файл готов" if file_status == "ready" else "Файл не готов",
+        "note": document_note,
+    }
     if file_status != "ready" and work_rows:
         actions.append({"id": "repack", "label": "Пересобрать файл", "kind": "repack"})
     if remaining or paused:
@@ -493,6 +547,7 @@ def build_lsr_result_readiness(
         "coverage": coverage,
         "dimensions": dimensions,
         "actions": unique_actions,
+        "document": document_offer,
         "continue_action": continue_action,
     }
 

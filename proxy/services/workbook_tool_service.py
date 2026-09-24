@@ -16,6 +16,10 @@ from proxy.services.artifact_revision_service import (
     ArtifactRevisionStore,
 )
 from proxy.services.chat_attachment_service import resolve_read_attachment
+from proxy.services.packaging_recovery_service import (
+    memory_pressure_note,
+    packaging_fault,
+)
 from proxy.services.tool_contract_service import (
     EffectClass, IdempotencyPolicy, ResultBudget, RetryPolicy, ToolContract,
 )
@@ -443,6 +447,9 @@ async def _build_workbook(
             "blockers": list(failed.blockers),
         }
     try:
+        # Operator-injected, default-off: lets the recovery path be verified on
+        # an installed build without waiting for a real memory-pressure incident.
+        packaging_fault()
         adapter_payload = {
             key: value for key, value in normalized.items() if key != "draft"
         }
@@ -515,15 +522,30 @@ async def _build_workbook(
             status="failed",
             blockers=(f"{type(error).__name__}: {error}",),
         )
+        error_type = type(error).__name__
+        memory_pressure = error_type == "MemoryError" or "memory" in str(error).casefold()
         return {
             "schema": "les.workbook_tool_result.v1",
             "tool": tool_name,
             "status": "failed",
             "code": "WORKBOOK_GENERATION_FAILED",
-            "message": str(error),
+            "error_type": error_type,
+            "memory_pressure": memory_pressure,
+            "message": str(error) or f"{error_type}: сборка файла не удалась",
             "checkpoint": _checkpoint_payload(failed, resumed=checkpoint.status != "running"),
             "missing": list(failed.missing),
             "blockers": list(failed.blockers),
+            # The saved model decision is untouched by a packaging failure, so
+            # the only correct next step is a rebuild that does not call the
+            # model.  Stating it here keeps the repair with the failure.
+            "recovery": {
+                "action": "repack",
+                "endpoint": "/api/chat/repack-lsr",
+                "model_called": False,
+                "note": memory_pressure_note(
+                    {"code": error_type, "message": str(error)}
+                ),
+            },
         }
 
 

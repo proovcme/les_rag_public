@@ -99,6 +99,11 @@ from proxy.services.saferag_service import (
 from proxy.services.table_query_service import maybe_answer_table_query
 from proxy.services.memory_port import get_memory_port
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+from proxy.services.packaging_recovery_service import (
+    release_memory_for_packaging,
+    packaging_recovery_payload,
+    describe_packaging_document,
+)
 from proxy.services.lsr_result_readiness_service import (
     build_lsr_result_readiness,
     format_lsr_readiness_notice,
@@ -622,6 +627,7 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         (
             "schema", "tool", "status", "code", "pricing_status", "norms_status",
             "calculated_positions", "confirmed_amount", "preliminary_amount",
+            "error_type", "memory_pressure",
         ),
     )
     if safe.get("status") in {"complete", "partial"}:
@@ -713,6 +719,48 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
     }
 
 
+#: A memory-pressure packaging failure is worth one extra relief-and-retry
+#: attempt; other failures repeat the identical deterministic call.
+_PACKAGING_MEMORY_ATTEMPTS = 3
+
+
+def _turn_document_state(
+    *,
+    research_job_service: Any,
+    research_job: Mapping[str, Any] | None,
+    job_status: str,
+    workbook_files: Sequence[Mapping[str, Any]],
+) -> str:
+    """Durable file state of this research, or "" when nothing is claimable.
+
+    Only a terminal job can promise a finished document, so an open job keeps
+    the pre-existing in-memory wording.  For a completed job the durable
+    ``workbook_packaged`` events answer the question — which is what stops a
+    draft, or a packaging that died of ``MemoryError``, from being reported as
+    "файл собран" while the client has nothing to download.
+    """
+
+    status = str((research_job or {}).get("status") or job_status or "").strip()
+    if status != "complete":
+        return ""
+    job_id = str((research_job or {}).get("job_id") or "").strip()
+    if research_job_service is not None and job_id:
+        try:
+            events = research_job_service.list_events(job_id, "workbook_packaged")
+        except Exception:  # noqa: BLE001 - fall back to this turn's own result
+            events = []
+        else:
+            return str(
+                describe_packaging_document(events, status=status).get("state") or ""
+            )
+    files = [dict(item) for item in workbook_files or () if isinstance(item, Mapping)]
+    if not files:
+        return "pending"
+    if any(not bool(item.get("draft")) for item in files):
+        return "ready"
+    return "draft_only"
+
+
 async def execute_workbook_with_bounded_retry(
     executor,
     call: dict[str, Any],
@@ -721,11 +769,25 @@ async def execute_workbook_with_bounded_retry(
     *,
     max_attempts: int = 2,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Retry only the idempotent packaging step, preserving model decisions."""
+    """Retry only the idempotent packaging step, preserving model decisions.
+
+    A packaging failure is never a professional decision: the saved model
+    result is reused verbatim, the same checkpoint is resumed, and the model is
+    not called again.  Under real memory pressure the *same* allocation fails
+    again immediately, so a retry is only useful once the process has actually
+    released the reference tables packaging built.  ``release_memory_for_packaging``
+    runs between attempts, and a memory-pressure failure gets one extra
+    relief-and-retry attempt before the client is told to rebuild from the
+    interface.
+    """
 
     traces: list[dict[str, Any]] = []
     safe_payload: dict[str, Any] = {}
-    for attempt in range(1, max(1, int(max_attempts)) + 1):
+    attempts = max(1, int(max_attempts))
+    memory_relief: list[dict[str, Any]] = []
+    attempt = 0
+    while attempt < attempts:
+        attempt += 1
         payload = await executor(call, request_context, progress_sink)
         safe_payload = safe_workbook_history_projection(payload)
         checkpoint = (
@@ -745,6 +807,19 @@ async def execute_workbook_with_bounded_retry(
         traces.append(trace)
         if safe_payload.get("status") != "failed":
             break
+        if not bool(safe_payload.get("memory_pressure")):
+            continue
+        if attempts < _PACKAGING_MEMORY_ATTEMPTS:
+            attempts = _PACKAGING_MEMORY_ATTEMPTS
+        if attempt >= attempts:
+            break
+        relief = release_memory_for_packaging(
+            reason=str(call.get("tool") or "workbook")
+        )
+        memory_relief.append(relief)
+        trace["memory_released"] = list(relief.get("released") or ())
+    if memory_relief:
+        safe_payload["memory_relief"] = memory_relief
     return safe_payload, traces
 
 
@@ -7865,6 +7940,20 @@ async def _execute_chat_evidence_application(
                                 (packaging_failures[-1] or {}).get("code")
                                 if packaging_failures
                                 else ""
+                            ),
+                            document_state=_turn_document_state(
+                                research_job_service=research_job_service,
+                                research_job=research_job,
+                                job_status=str(job_meta.get("status") or ""),
+                                workbook_files=workbook_files,
+                            ),
+                            download_url=next(
+                                (
+                                    str(item.get("download_url") or "")
+                                    for item in reversed(workbook_files)
+                                    if str(item.get("download_url") or "").strip()
+                                ),
+                                "",
                             ),
                             rows=model_result_rows,
                             missing=list(workbook_chat_meta.get("missing") or [])

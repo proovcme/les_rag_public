@@ -174,3 +174,81 @@ def test_stage_d_gap_fields_survive_readiness_projection() -> None:
     assert gap["position_code"] == "ГЭСН08-02-395-01"
     assert gap["dependent_calculations"] == ["итог позиции ГЭСН08-02-395-01"]
     assert gap["checked_basis"].startswith("2 квартал")
+
+
+def test_durable_draft_only_document_is_never_announced_as_ready() -> None:
+    # The panel may hold a draft of a finished research; that is not the
+    # estimate, and calling it ready would hide the only available repair.
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[
+            {
+                "source_row": "АР!R11",
+                "norm_code": "ГЭСНр1-01-001",
+                "norm_status": "EXACT",
+                "row_role": "work",
+            }
+        ],
+        pricing_status="priced_final",
+        catalog_work_count=1,
+        document_state="draft_only",
+    )
+
+    assert readiness["dimensions"]["file"]["ready"] is False
+    assert "repack" in {item["id"] for item in readiness["actions"]}
+    assert "DRAFT_ONLY_DOCUMENT" in readiness["dimensions"]["file"]["action"]
+
+
+def test_durable_pending_document_keeps_the_repair_offered() -> None:
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[
+            {
+                "source_row": "АР!R11",
+                "norm_code": "ГЭСНр1-01-001",
+                "norm_status": "EXACT",
+                "row_role": "work",
+            }
+        ],
+        pricing_status="priced_final",
+        catalog_work_count=1,
+        document_state="pending",
+    )
+
+    assert readiness["dimensions"]["file"]["ready"] is False
+    assert readiness["actions"][0]["kind"] == "repack"
+    document = readiness["document"]
+    assert document["state"] == "pending"
+    assert document["durable_state"] == "pending"
+    # The operator is told the model decisions survived, which is what makes
+    # the rebuild an obvious move instead of a fresh research.
+    assert "не сохранён" in document["note"]
+    assert "без повторного расчёта" in document["note"]
+    assert document["download_url"] == ""
+
+
+def test_ready_document_is_reported_separately_from_outstanding_actions() -> None:
+    """A closed estimate stays "nothing outstanding"; the file is its own field."""
+
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[
+            {
+                "source_row": "АР!R11",
+                "norm_code": "ГЭСНр1-01-001",
+                "norm_status": "EXACT",
+                "row_role": "work",
+            }
+        ],
+        pricing_status="priced_final",
+        catalog_work_count=1,
+        document_state="ready",
+        download_url="/api/artifacts/rev_final/download",
+    )
+
+    assert readiness["actions"] == []
+    assert readiness["document"]["state"] == "ready"
+    assert readiness["document"]["download_url"] == "/api/artifacts/rev_final/download"
+    # Re-entering a finished research must not read as an invitation to start
+    # another one.
+    assert "завершено" in readiness["continue_action"]

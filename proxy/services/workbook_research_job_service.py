@@ -12,6 +12,10 @@ from uuid import uuid4
 
 from proxy.config import META_DB_PATH
 from proxy.services.lsr_source_coverage_service import inferred_row_role
+from proxy.services.packaging_recovery_service import (
+    describe_packaging_document,
+    packaging_recovery_payload,
+)
 
 SCHEMA = "les.workbook-research-job.v1"
 _PRICE_BASIS_KEY = "_price_basis"
@@ -1106,9 +1110,62 @@ class WorkbookResearchJobService:
             row = conn.execute(
                 "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)
             ).fetchone()
-        if row is None:
-            raise WorkbookResearchJobError("workbook research job not found")
-        return self._row(row)
+            if row is None:
+                raise WorkbookResearchJobError("workbook research job not found")
+            events = self._events(conn, str(job_id), "workbook_packaged")
+        job = self._row(row)
+        job["document"] = describe_packaging_document(
+            events, status=str(job.get("status") or "")
+        )
+        if job["document"]["needs_document"]:
+            job["document_recovery"] = packaging_recovery_payload(job, job["document"])
+        return job
+
+    def document_state(self, job_id: str) -> dict[str, Any]:
+        """Durable answer to "does this finished job already have its file?".
+
+        Read from the job's own ``workbook_packaged`` events, so a process
+        restart or an SSE detach cannot lose it: ``state='pending'`` means the
+        model decision is saved and terminal while the document was never
+        packaged, which is exactly the case the interface must repair without
+        starting a new research.
+        """
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM workbook_research_jobs WHERE job_id=?",
+                (str(job_id),),
+            ).fetchone()
+            if row is None:
+                raise WorkbookResearchJobError("workbook research job not found")
+            events = self._events(conn, str(job_id), "workbook_packaged")
+        return describe_packaging_document(
+            events, status=str(row["status"] or "")
+        )
+
+    @staticmethod
+    def _events(
+        conn: sqlite3.Connection, job_id: str, event_type: str
+    ) -> list[dict[str, Any]]:
+        rows = conn.execute(
+            "SELECT sequence,event_type,payload_json FROM workbook_research_events"
+            " WHERE job_id=? AND event_type=? ORDER BY sequence",
+            (str(job_id), str(event_type)),
+        ).fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except ValueError:
+                payload = {}
+            events.append(
+                {
+                    "sequence": int(row["sequence"]),
+                    "event_type": str(row["event_type"]),
+                    "payload": payload if isinstance(payload, Mapping) else {},
+                }
+            )
+        return events
 
     def list_active(
         self,
@@ -1142,6 +1199,53 @@ class WorkbookResearchJobService:
             if str((job.get("identity") or {}).get("session_id") or "") == sid
         ]
         return matched or jobs
+
+    def latest(
+        self,
+        *,
+        session_id: str = "",
+        attachment_id: str = "",
+        limit: int = 200,
+    ) -> dict[str, Any] | None:
+        """Newest research of a session or source, in *any* status.
+
+        ``list_active``/``list_open`` hide terminal jobs, which is right for
+        progress reconnect but wrong for the question "does this session
+        already have a finished research and its document?".  Matching on the
+        durable identity lets a regenerated UI session still find the job.
+        """
+
+        sid = str(session_id or "").strip()
+        aid = str(attachment_id or "").strip()
+        if not sid and not aid:
+            return None
+        limit_n = max(1, min(int(limit or 200), 500))
+        found: sqlite3.Row | None = None
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM workbook_research_jobs"
+                " ORDER BY updated_at DESC LIMIT ?",
+                (limit_n,),
+            ).fetchall()
+            for row in rows:
+                identity = json.loads(str(row["identity_json"] or "{}") or "{}")
+                identity = identity if isinstance(identity, dict) else {}
+                if sid and str(identity.get("session_id") or "") != sid:
+                    continue
+                if aid and str(identity.get("attachment_id") or "") != aid:
+                    continue
+                found = row
+                events = self._events(conn, str(row["job_id"]), "workbook_packaged")
+                break
+        if found is None:
+            return None
+        job = self._row(found)
+        job["document"] = describe_packaging_document(
+            events, status=str(job.get("status") or "")
+        )
+        if job["document"]["needs_document"]:
+            job["document_recovery"] = packaging_recovery_payload(job, job["document"])
+        return job
 
     def list_open(
         self,

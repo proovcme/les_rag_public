@@ -1658,7 +1658,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4575,
+      "lines": 4634,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -2670,7 +2670,8 @@
         "proxy/services/workbook_research_job_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
-        "proxy/services/workflow_plan_service.py"
+        "proxy/services/workflow_plan_service.py",
+        "tests/test_workbook_tool_service.py"
       ],
       "lines": 2,
       "module": "proxy.services",
@@ -3077,9 +3078,10 @@
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py",
-        "tests/test_stall_completion_23.py"
+        "tests/test_stall_completion_23.py",
+        "tests/test_workbook_tool_service.py"
       ],
-      "lines": 8375,
+      "lines": 8464,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4745,7 +4747,7 @@
         "tests/test_money_states_23.py",
         "tests/test_rim_lsr_trace_service.py"
       ],
-      "lines": 599,
+      "lines": 654,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7375,7 +7377,7 @@
         "tests/test_sovushka_chat.py",
         "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 1294,
+      "lines": 1398,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7397,7 +7399,7 @@
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 550,
+      "lines": 572,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8269,7 +8271,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 6678,
+      "lines": 6872,
       "module": "sovushka.pages.chat",
       "outbound": [
         "backend/rag_config.py",
@@ -9322,7 +9324,7 @@
     },
     {
       "inbound": [],
-      "lines": 4147,
+      "lines": 4255,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -11025,7 +11027,7 @@
     },
     {
       "inbound": [],
-      "lines": 176,
+      "lines": 254,
       "module": "tests.test_lsr_result_readiness_service",
       "outbound": [
         "proxy/services/lsr_result_readiness_service.py"
@@ -13485,7 +13487,7 @@
     },
     {
       "inbound": [],
-      "lines": 1738,
+      "lines": 1882,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -14338,7 +14340,7 @@
     },
     {
       "inbound": [],
-      "lines": 996,
+      "lines": 1083,
       "module": "tests.test_workbook_research_job_service",
       "outbound": [
         "proxy/services/workbook_research_job_service.py"
@@ -14362,11 +14364,13 @@
     },
     {
       "inbound": [],
-      "lines": 929,
+      "lines": 1043,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
+        "proxy/services/__init__.py",
         "proxy/services/artifact_revision_service.py",
         "proxy/services/chat_attachment_service.py",
+        "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/rim_lsr_trace_service.py",
         "proxy/services/structured_extract.py",
@@ -18921,6 +18925,12 @@
       "source": "proxy/routers/chat.py"
     },
     {
+      "handler": "get_last_workbook_research",
+      "method": "GET",
+      "path": "/api/workbook-research-last",
+      "source": "proxy/routers/chat.py"
+    },
+    {
       "handler": "get_workbook_research",
       "method": "GET",
       "path": "/api/workbook-research/{job_id}",
@@ -18980,11 +18990,11 @@
     "dormant_candidates": 1,
     "parse_warnings": 0,
     "product_reachable": 356,
-    "registered_api_routes": 337,
+    "registered_api_routes": 338,
     "runtime_support": 11,
     "test_or_tool_only": 645,
     "tracked_python_files": 1013,
-    "tracked_python_lines": 334007
+    "tracked_python_lines": 335061
   },
   "warnings": []
 }

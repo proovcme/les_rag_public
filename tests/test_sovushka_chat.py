@@ -391,6 +391,49 @@ def test_chat_ui_consumes_tool_progress_and_canonical_artifact_download():
     assert 'retry.get("attachment_id")' in helper
 
 
+def test_chat_ui_projects_durable_document_state_into_readiness_card():
+    def spec_for(document: dict | None) -> dict:
+        return chat_page.lsr_readiness_card_spec({
+            "dimensions": {
+                "file": {"ready": document is not None and document.get("state") == "ready"},
+                "coverage": {"complete": True},
+                "norms": {"complete": True},
+                "prices": {"complete": True},
+            },
+            "actions": [],
+            "document": document,
+        })
+
+    ready = spec_for({
+        "state": "ready",
+        "label": "Файл готов",
+        "note": "Последняя ревизия сохранена и доступна для скачивания.",
+        "download_url": "/api/artifacts/rev-final/download",
+    })
+    assert ready["document"] == {
+        "state": "ready",
+        "label": "Файл готов",
+        "note": "Последняя ревизия сохранена и доступна для скачивания.",
+        "download_url": "/api/artifacts/rev-final/download",
+        "tone": "ok",
+    }
+    # A finished document stays out of the repair-action list.
+    assert ready["actions"] == []
+
+    pending = spec_for({
+        "state": "pending",
+        "label": "Файл не готов",
+        "note": "Задание завершено, но итоговый файл не сохранён.",
+        "download_url": "",
+    })
+    assert pending["document"]["state"] == "pending"
+    assert pending["document"]["tone"] == "warn"
+    assert pending["document"]["download_url"] == ""
+
+    # Readiness without a durable projection still renders a card.
+    assert spec_for(None)["document"]["state"] == "none"
+
+
 def test_chat_ui_splits_lsr_readiness_and_rebuilds_without_model():
     source = inspect.getsource(chat_page.build_chat)
     spec = chat_page.lsr_readiness_card_spec({
@@ -1736,3 +1779,104 @@ def test_lsr_resume_payload_from_job_matches_durable_identity():
     assert payload["attachment_id"] == "read_8f574357c416"
     assert payload["dataset_ids"] == ["d1", "d2"]
     assert payload["mode"] == "estimator"
+
+
+# --------------------------------------------------------------------------- #
+# A finished research must never restart itself (build 806, criterion 2).
+# --------------------------------------------------------------------------- #
+def test_terminal_job_with_ready_document_serves_the_last_revision() -> None:
+    plan = chat_page.terminal_job_repair_plan(
+        {
+            "job_id": "wrj_1",
+            "status": "complete",
+            "document": {"state": "ready", "final_revision_id": "rev_final"},
+        }
+    )
+
+    assert plan["mode"] == "document"
+    assert plan["revision_id"] == "rev_final"
+    # Showing the file is not "continuing" — nothing may reach the model.
+    assert plan["mode"] != "resume"
+
+
+def test_terminal_job_without_document_repairs_instead_of_researching() -> None:
+    plan = chat_page.terminal_job_repair_plan(
+        {
+            "job_id": "wrj_1",
+            "status": "complete",
+            "document": {
+                "state": "pending",
+                "needs_document": True,
+                "recovery_reason": "Задание завершено, но финальный файл не собран.",
+            },
+        }
+    )
+
+    assert plan["mode"] == "repack"
+    assert plan["reason"] == "Задание завершено, но финальный файл не собран."
+
+
+def test_draft_of_finished_job_is_repaired_not_reopened() -> None:
+    plan = chat_page.terminal_job_repair_plan(
+        {"job_id": "wrj_1", "status": "complete", "document": {"state": "draft_only"}}
+    )
+
+    assert plan["mode"] == "repack"
+
+
+def test_open_job_keeps_the_real_continue_path() -> None:
+    # ``failed`` stays on the continue path on purpose: the job service lists it
+    # among RESUMABLE_STATUSES, so «Продолжить» is the operator's only retry.
+    for status in ("running", "paused", "failed", "cancelled"):
+        plan = chat_page.terminal_job_repair_plan(
+            {"job_id": "wrj_1", "status": status, "document": {"state": "none"}}
+        )
+        assert plan["mode"] == "resume", status
+
+
+def test_terminal_job_without_any_document_information_reports_only() -> None:
+    # A projection the job never wrote must not invent a repair or a document.
+    plan = chat_page.terminal_job_repair_plan({"job_id": "wrj_1", "status": "complete"})
+
+    assert plan["mode"] == "report"
+
+
+def test_terminal_statuses_are_the_job_service_statuses() -> None:
+    from proxy.services.workbook_research_job_service import TERMINAL_STATUSES
+
+    assert set(chat_page.TERMINAL_WORKBOOK_JOB_STATUSES) == set(TERMINAL_STATUSES)
+    assert chat_page.workbook_job_is_terminal({"status": "Complete"}) is True
+    assert chat_page.workbook_job_is_terminal({"job_status": "paused"}) is False
+
+
+def test_restored_document_name_keeps_the_revision_identity() -> None:
+    name = chat_page.terminal_revision_download_name(
+        {"identity": {"source_name": "ВОР.xlsx"}}, "rev_17e60265abcd"
+    )
+
+    assert name.startswith("ЛСР")
+    assert "17e60265" in name
+    assert name.endswith(".xlsx")
+
+
+def test_resume_stalled_handler_refuses_a_terminal_job_before_dispatching() -> None:
+    """The «Продолжить» gesture must branch on the durable state, not resend."""
+
+    source = inspect.getsource(chat_page)
+    handler = source[source.index("async def _resume_stalled_lsr()"):]
+    handler = handler[: handler.index("async def _follow_resume_stream")]
+
+    assert "terminal_job_repair_plan(job)" in handler
+    assert "_apply_terminal_job_plan" in handler
+    # The guard sits before the resend, so a finished job can never reach
+    # `/api/chat/stream` through this path.
+    assert handler.index("terminal_job_repair_plan") < handler.index("_follow_resume_stream")
+
+
+def test_reopened_session_restores_the_finished_research_file_state() -> None:
+    source = inspect.getsource(chat_page)
+
+    assert "/api/workbook-research-last?session_id=" in source
+    loader = source[source.index("async def _load_history()"):]
+    loader = loader[: loader.index("async def _fetch_session_history_messages")]
+    assert "_restore_last_finished_research()" in loader

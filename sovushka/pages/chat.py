@@ -528,6 +528,84 @@ def workbook_assembly_is_paused(job_or_pending: Any) -> bool:
     return workbook_job_status(job_or_pending) == "paused"
 
 
+#: A finished research has nothing left to continue; only its file can still
+#: be missing, and that is repaired from the saved decisions.
+TERMINAL_WORKBOOK_JOB_STATUSES = frozenset({"complete", "failed"})
+
+
+def workbook_job_is_terminal(job_or_pending: Any) -> bool:
+    return workbook_job_status(job_or_pending) in TERMINAL_WORKBOOK_JOB_STATUSES
+
+
+def terminal_revision_download_name(job: Any, revision_id: str) -> str:
+    """Label for the finished document restored from a terminal job.
+
+    The durable revision id is always shown, so a restored client can be
+    matched against the packet log instead of presenting an anonymous "LSR".
+    """
+
+    payload = job if isinstance(job, dict) else {}
+    identity = (
+        payload.get("identity") if isinstance(payload.get("identity"), dict) else {}
+    )
+    source = str(identity.get("source_name") or identity.get("original_name") or "").strip()
+    stem = source.rsplit(".", 1)[0] if source else ""
+    stem = stem.replace("ВОР", "").strip(" -_") or "ЛСР"
+    tail = str(revision_id or "").replace("rev_", "")[:8]
+    return f"{stem} · готово · {tail}.xlsx"
+
+
+def terminal_job_repair_plan(job: Any) -> dict[str, Any]:
+    """What a «Продолжить» gesture must do for a job that is already finished.
+
+    The durable document projection answers this, so a re-entered client can
+    never mistake a completed research for a paused one and dispatch a fresh
+    model research:
+
+    * ``document`` — the finished revision exists, show it;
+    * ``repack``   — the research is over but the file is missing or only a
+      draft, rebuild it from the saved decisions without the model;
+    * ``report``   — finished with nothing the projection can offer, say so
+      instead of restarting the research.
+
+    A ``failed`` job is *not* routed away from «Продолжить»: the job service
+    lists it among the resumable statuses, so removing that gesture would
+    strand the operator with no retry at all.
+    """
+
+    payload = job if isinstance(job, dict) else {}
+    document = (
+        payload.get("document")
+        if isinstance(payload.get("document"), dict)
+        else {}
+    )
+    state = str(document.get("state") or "").strip().casefold()
+    job_id = str(payload.get("job_id") or "").strip()
+    if workbook_job_status(payload) != "complete":
+        return {"mode": "resume", "job_id": job_id, "reason": ""}
+    if state == "ready" or str(document.get("final_revision_id") or "").strip():
+        return {
+            "mode": "document",
+            "job_id": job_id,
+            "revision_id": str(document.get("final_revision_id") or "").strip(),
+            "reason": "Задание завершено и файл уже собран — показана последняя ревизия.",
+        }
+    if state in {"pending", "draft_only"} or bool(document.get("needs_document")):
+        return {
+            "mode": "repack",
+            "job_id": job_id,
+            "reason": str(
+                document.get("recovery_reason")
+                or "Задание завершено, но финальный файл не собран."
+            ),
+        }
+    return {
+        "mode": "report",
+        "job_id": job_id,
+        "reason": "Задание завершено; дополнительных действий не требуется.",
+    }
+
+
 def format_paused_assembly_notice(pending: Any = None) -> str:
     """First pass packed a draft; the model is not assembling now."""
 
@@ -1112,10 +1190,24 @@ def lsr_readiness_card_spec(readiness: Any) -> dict[str, Any]:
         for item in (prices_dim.get("gaps") or [])[:8]
         if isinstance(item, dict)
     ]
+    document_dim = (
+        payload.get("document") if isinstance(payload.get("document"), dict) else {}
+    )
+    document_state = str(document_dim.get("state") or "").casefold() or "none"
     return {
         "file_label": "Файл готов" if file_dim.get("ready") else "Файл не готов",
         "file_tone": "ok" if file_dim.get("ready") else "error",
         "file_action": str(file_dim.get("action") or ""),
+        # The durable file state is reported separately from ``actions``: a
+        # finished job has no outstanding work, yet the operator still needs
+        # to see which revision the download button points at.
+        "document": {
+            "state": document_state,
+            "label": str(document_dim.get("label") or ""),
+            "note": str(document_dim.get("note") or ""),
+            "download_url": str(document_dim.get("download_url") or ""),
+            "tone": "ok" if document_state == "ready" else "warn",
+        },
         "coverage_label": (
             "Покрытие полное"
             if coverage_dim.get("complete")
@@ -4193,6 +4285,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     # ── ФАЙЛЫ-АРТЕФАКТЫ: готовые документы (смета xlsx, формы) в панели «Файлы» ──
     _file_artifacts: dict[str, dict] = {}  # url → {name, kind}
     _lsr_card_state: dict[str, Any] = {}
+    # Sessions whose finished research was already restored in this page
+    # instance; the repair of a missing document must not retry every rerender.
+    _terminal_restore_attempted: set[str] = set()
     _smeta_approval_payloads: dict[str, dict] = {}
     _smeta_approval_cards: set[str] = set()
     _smeta_locked_revisions: set[str] = set()
@@ -4439,6 +4534,59 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         _register_artifact_downloads({"artifact": harvested.get("artifact") or {}})
         _notify("Файл пересобран без модели. Решения не пересматривались.", type="positive")
 
+    async def _apply_terminal_job_plan(job: dict, plan: dict) -> None:
+        """Do what a finished job actually needs instead of restarting research.
+
+        Reached from every «Продолжить» gesture, so the customer never has to
+        discover that a completed assignment now needs a brand-new run — and
+        never gets a second research over the same source.
+        """
+
+        mode = str(plan.get("mode") or "")
+        job_id = str(job.get("job_id") or "")
+        document = job.get("document") if isinstance(job.get("document"), dict) else {}
+        reason = str(plan.get("reason") or "")
+        if mode == "document":
+            # Re-entry into a finished research serves the last revision: the
+            # download is bound straight to the durable revision id, so nothing
+            # new is dispatched and no second document is created.
+            revision_id = str(document.get("final_revision_id") or "").strip()
+            if revision_id:
+                _register_file_artifact(
+                    terminal_revision_download_name(job, revision_id),
+                    f"/api/artifacts/{revision_id}/download",
+                    "xlsx",
+                    rebuild=False,
+                )
+                _rebuild_files_artifacts_panel()
+            _notify(reason or "Задание завершено, файл готов.", type="positive")
+            return
+        if mode == "repack":
+            _notify(reason or "Файл не собран — пересобираю без модели.", type="info")
+            await _repack_lsr_from_ui(
+                {
+                    "job_id": job_id,
+                    "session_id": str(
+                        (job.get("identity") or {}).get("session_id")
+                        if isinstance(job.get("identity"), dict)
+                        else ""
+                    ) or str(state.get("session_id") or ""),
+                    "attachment_id": str(
+                        (job.get("identity") or {}).get("attachment_id")
+                        if isinstance(job.get("identity"), dict)
+                        else ""
+                    ),
+                    "question": str(
+                        (job.get("identity") or {}).get("question")
+                        if isinstance(job.get("identity"), dict)
+                        else ""
+                    ),
+                },
+                {"draft_rows": []},
+            )
+            return
+        _notify(reason or "Задание завершено.", type="info")
+
     async def _resume_lsr_packets(resume: dict) -> None:
         payload = merge_lsr_resume_payload(
             resume,
@@ -4498,6 +4646,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         job = await api_get(f"/api/workbook-research/{job_id}") if job_id else None
         if not isinstance(job, dict) or not job.get("job_id"):
             _notify("Нет сохранённой сборки для продолжения", type="warning")
+            return
+        # A finished research must never be re-dispatched: «Продолжить» on a
+        # terminal job either serves the last revision or rebuilds the missing
+        # file from the saved decisions — in both cases without the model.
+        plan = terminal_job_repair_plan(job)
+        if plan["mode"] != "resume":
+            await _apply_terminal_job_plan(job, plan)
             return
         last_send = state.get("last_chat_send") or {}
         payload = dict(last_send.get("payload") or {})
@@ -4704,6 +4859,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             locators = [str(item).strip() for item in (spec.get("gap_locators") or []) if str(item).strip()]
             if locators:
                 remainder.append("Незакрытые адреса: " + ", ".join(locators))
+            document_dim = (
+                spec.get("document") if isinstance(spec.get("document"), dict) else {}
+            )
+            document_note = str(document_dim.get("note") or "")
+            if document_note and document_note not in remainder:
+                remainder.append(document_note)
             if remainder:
                 with ui.expansion("Что осталось закрыть", value=False).classes("w-full"):
                     for text in remainder:
@@ -5229,6 +5390,37 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     # а не «при следующем рендере» (которого без хука не наступало).
     state["chat_reload_hook"] = _apply_loaded_session
 
+    async def _restore_last_finished_research() -> None:
+        """Re-entry after a finished job: show its document, never a new research.
+
+        ``/workbook-research-active`` hides terminal jobs, so a reopened chat
+        had nothing to restore and the next «Продолжи» started fresh research
+        over the same source.  This lookup returns the last research of the
+        session with its durable file state.  A ready document is bound to the
+        file panel; a job that finished *without* one — the ``MemoryError``
+        packaging case — is rebuilt here from the saved decisions, without a
+        model call and at most once per session load.
+        """
+
+        sid = str(state.get("session_id") or "").strip()
+        if not sid or sid in _terminal_restore_attempted:
+            return
+        _terminal_restore_attempted.add(sid)
+        last = await api_get(f"/api/workbook-research-last?session_id={sid}")
+        if not isinstance(last, dict) or not last.get("found"):
+            return
+        job = last.get("job") if isinstance(last.get("job"), dict) else {}
+        if not job:
+            return
+        # Only a finished research is restored here; an open one is already
+        # served by the active-job lookup above.
+        if not workbook_job_is_terminal(job):
+            return
+        plan = terminal_job_repair_plan(job)
+        if plan["mode"] == "resume":
+            return
+        await _apply_terminal_job_plan(job, plan)
+
     async def _load_history():
         from sovushka.state import (
             ensure_session_id,
@@ -5254,6 +5446,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         )
         if job:
             persist_chat_pending(workbook_job_to_pending_progress(job, pending))
+        else:
+            await _restore_last_finished_research()
         if state["chat_history"] or state.get("chat_pending"):
             _render_chat_history("Сессия восстановлена.")
             _scroll_chat_to_tail(force=True)

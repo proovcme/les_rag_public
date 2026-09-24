@@ -20,12 +20,12 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1013 |
-| Строк Python | 334007 |
+| Строк Python | 335061 |
 | PRODUCT_REACHABLE | 356 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 645 |
 | DORMANT_CANDIDATE | 1 |
-| Зарегистрированных API-маршрутов | 337 |
+| Зарегистрированных API-маршрутов | 338 |
 | Ошибок разбора | 0 |
 
 ## Крупнейшие продуктовые модули
@@ -33,9 +33,9 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| proxy/services/chat_evidence_application_service.py | 8375 | 11 |
-| sovushka/pages/chat.py | 6678 | 6 |
-| proxy/routers/chat.py | 4575 | 41 |
+| proxy/services/chat_evidence_application_service.py | 8464 | 12 |
+| sovushka/pages/chat.py | 6872 | 6 |
+| proxy/routers/chat.py | 4634 | 41 |
 | backend/qdrant_adapter.py | 4552 | 29 |
 | sovushka/uikit/tokens.py | 4274 | 2 |
 | sovushka/pages/documents.py | 3927 | 3 |
@@ -57,7 +57,7 @@
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 12 |
-| proxy/services/workbook_research_job_service.py | 1294 | 7 |
+| proxy/services/workbook_research_job_service.py | 1398 | 7 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |

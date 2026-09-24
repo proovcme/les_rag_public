@@ -994,3 +994,90 @@ def test_record_packaging_keeps_parent_revision_and_sequence(tmp_path) -> None:
     ]
     assert [event["sequence"] for event in events] == [first, second]
     assert first < second
+
+
+def test_completed_job_without_packaging_reports_durable_pending_document(tmp_path) -> None:
+    # The MemoryError incident: the research is terminal, the file is missing.
+    # Only the durable job can tell a reopened client that, so `get()` carries it.
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.record_packet(
+        job["job_id"],
+        sheet="АР",
+        packet_locators=["АР!R11"],
+        accepted_rows=[{"source_row": "АР!R11", "norm_code": "ГЭСНр1-01"}],
+        evidence=[],
+        remaining=[],
+        held_packet={},
+    )
+    service.finish(job["job_id"], status="complete")
+
+    stored = service.get(job["job_id"])
+
+    assert stored["status"] == "complete"
+    assert stored["document"]["state"] == "pending"
+    assert stored["document"]["needs_document"] is True
+    # The repair needs no model and no new research: the saved decisions ship
+    # with the job, so the interface can rebuild the file from them alone.
+    recovery = stored["document_recovery"]
+    assert recovery["model_called"] is False
+    assert recovery["decision_count"] == 1
+    assert recovery["attachment_id"] == "read_123456abcdef"
+
+
+def test_final_packaging_flips_the_completed_job_document_to_ready(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.record_packet(
+        job["job_id"],
+        sheet="АР",
+        packet_locators=["АР!R11"],
+        accepted_rows=[{"source_row": "АР!R11", "norm_code": "ГЭСНр1-01"}],
+        evidence=[],
+        remaining=[],
+        held_packet={},
+    )
+    service.finish(job["job_id"], status="complete")
+    service.record_packaging(
+        job["job_id"], tool="build_lsr_workbook", revision_id="rev_final", draft=False
+    )
+
+    stored = service.get(job["job_id"])
+
+    assert stored["document"]["state"] == "ready"
+    assert stored["document"]["final_revision_id"] == "rev_final"
+    assert "document_recovery" not in stored
+
+
+def test_latest_returns_terminal_job_that_active_list_hides(tmp_path) -> None:
+    # `/workbook-research-active` only lists running jobs, which is why a
+    # finished research used to restore nothing at all on re-entry.
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.finish(job["job_id"], status="complete")
+
+    assert service.list_active(session_id="session-1") == []
+    latest = service.latest(session_id="session-1")
+
+    assert latest is not None
+    assert latest["job_id"] == job["job_id"]
+    assert latest["document"]["state"] == "pending"
+
+
+def test_latest_matches_the_source_when_the_ui_session_was_regenerated(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.finish(job["job_id"], status="complete")
+
+    assert service.latest(session_id="another-session") is None
+    found = service.latest(attachment_id="read_123456abcdef")
+
+    assert found is not None
+    assert found["job_id"] == job["job_id"]
+
+
+def test_latest_requires_a_scope_and_never_invents_a_job(tmp_path) -> None:
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+
+    assert service.latest() is None
+    assert service.latest(session_id="", attachment_id="") is None

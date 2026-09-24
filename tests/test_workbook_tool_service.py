@@ -927,3 +927,117 @@ async def test_settled_final_revision_replays_same_file_while_growth_chains(tmp_
     assert grown["artifact"]["revision_no"] == 3
     assert grown["artifact"]["revision_id"] != final["artifact"]["revision_id"]
     assert calls == 3
+
+
+# --------------------------------------------------------------------------- #
+# Criterion 2 (build 806): a packaging failure never leaves the client holding
+# nothing but a completed job — the repair travels with the failure.
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_memory_error_failure_states_the_repair_that_needs_no_model(tmp_path, monkeypatch):
+    meta = _attachment(tmp_path)
+
+    async def out_of_memory(*_args):
+        raise MemoryError
+
+    result = await build_lsr_workbook(
+        {"attachment_id": meta["attachment_id"]}, _context(tmp_path, lsr_adapter=out_of_memory)
+    )
+
+    # str(MemoryError()) is empty: the type must survive, or the client is told
+    # "failed" with no way to know the run is repairable.
+    assert result["status"] == "failed"
+    assert result["error_type"] == "MemoryError"
+    assert result["memory_pressure"] is True
+    assert result["message"]
+    recovery = result["recovery"]
+    assert recovery["model_called"] is False
+    assert recovery["action"] == "repack"
+    assert recovery["endpoint"] == "/api/chat/repack-lsr"
+    assert "памяти" in recovery["note"]
+
+
+@pytest.mark.asyncio
+async def test_ordinary_adapter_failure_is_not_reported_as_memory_pressure(tmp_path):
+    meta = _attachment(tmp_path)
+
+    async def broken(*_args):
+        raise RuntimeError("adapter stopped")
+
+    result = await build_lsr_workbook({"attachment_id": meta["attachment_id"]}, _context(tmp_path, lsr_adapter=broken))
+
+    assert result["error_type"] == "RuntimeError"
+    assert result["memory_pressure"] is False
+    assert result["recovery"]["model_called"] is False
+
+
+@pytest.mark.asyncio
+async def test_injected_packaging_fault_reproduces_the_incident_on_demand(tmp_path, monkeypatch):
+    """Controlled failure for the installed build, inert unless asked for."""
+
+    from proxy.services.packaging_recovery_service import reset_packaging_fault
+
+    meta = _attachment(tmp_path)
+    monkeypatch.delenv("LES_DEBUG_PACKAGING_FAULT", raising=False)
+    reset_packaging_fault()
+
+    healthy = await build_lsr_workbook(
+        {"attachment_id": meta["attachment_id"]},
+        _context(tmp_path, lsr_adapter=build_lsr_workbook_from_decisions),
+    )
+    assert healthy["status"] != "failed"
+
+    monkeypatch.setenv("LES_DEBUG_PACKAGING_FAULT", "MemoryError")
+    monkeypatch.delenv("LES_DEBUG_PACKAGING_FAULT_ROUNDS", raising=False)
+    reset_packaging_fault()
+
+    # A distinct call identity: the completed checkpoint above legitimately
+    # short-circuits, so the injected fault is only observed by new packaging.
+    failing = await build_lsr_workbook(
+        {"attachment_id": meta["attachment_id"]},
+        _context(
+            tmp_path, key="key-fault", decision="decision-fault",
+            lsr_adapter=build_lsr_workbook_from_decisions,
+        ),
+    )
+    assert failing["status"] == "failed"
+    assert failing["error_type"] == "MemoryError"
+    assert failing["recovery"]["model_called"] is False
+
+    # Clearing the variable restores packaging without a restart.
+    monkeypatch.delenv("LES_DEBUG_PACKAGING_FAULT")
+    reset_packaging_fault()
+    repaired = await build_lsr_workbook(
+        {"attachment_id": meta["attachment_id"]},
+        _context(
+            tmp_path, key="key-repair", decision="decision-repair",
+            lsr_adapter=build_lsr_workbook_from_decisions,
+        ),
+    )
+    assert repaired["status"] != "failed"
+    assert repaired["artifact"]["download_url"]
+
+
+def test_failed_packaging_payload_survives_the_history_projection():
+    """The repair hint must reach the stored chat row, not stop at the service."""
+
+    from proxy.services.chat_evidence_application_service import (
+        safe_workbook_history_projection,
+    )
+
+    projected = safe_workbook_history_projection(
+        {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": "build_lsr_workbook",
+            "status": "failed",
+            "code": "WORKBOOK_GENERATION_FAILED",
+            "error_type": "MemoryError",
+            "memory_pressure": True,
+            "message": "injected packaging fault",
+            "blockers": ["MemoryError: "],
+        }
+    )
+
+    assert projected["status"] == "failed"
+    assert projected["error_type"] == "MemoryError"
+    assert projected["memory_pressure"] is True

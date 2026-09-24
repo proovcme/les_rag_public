@@ -34,6 +34,7 @@ from proxy.services.chat_evidence_application_service import (
     harvest_workbook_tool_result,
     run_chat_evidence_application,
     compact_estimator_draft_rows,
+    workbook_packaging_lineage,
 )
 from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
 from proxy.services.workbook_research_job_service import (
@@ -246,6 +247,38 @@ async def get_workbook_research(job_id: str, _user=Depends(require_user)):
         raise HTTPException(404, str(error)) from error
 
 
+@router.get("/workbook-research-last")
+async def get_last_workbook_research(
+    session_id: Annotated[str, Query()] = "",
+    attachment_id: Annotated[str, Query()] = "",
+    _user=Depends(require_user),
+):
+    """Newest research of this session in *any* status, with its file state.
+
+    ``/workbook-research-active`` deliberately hides terminal jobs, so after a
+    finished research the interface had nothing to restore: the next
+    «Продолжи» then started a brand-new research instead of serving the last
+    revision.  This lookup returns the completed job together with the durable
+    packaging projection, so the client can offer exactly one of "open the
+    document" or "rebuild the file without the model".
+    """
+
+    service = WorkbookResearchJobService()
+    job = service.latest(
+        session_id=str(session_id or "").strip(),
+        attachment_id=str(attachment_id or "").strip(),
+    )
+    if job is None:
+        return {"schema": "les.workbook-research-last.v1", "found": False, "job": None}
+    return {
+        "schema": "les.workbook-research-last.v1",
+        "found": True,
+        "job": job,
+        "document": job.get("document") or {},
+        "document_recovery": job.get("document_recovery") or {},
+    }
+
+
 @router.get("/workbook-research-active")
 async def list_active_workbook_research(
     session_id: Annotated[str, Query()] = "",
@@ -329,13 +362,33 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     )
     harvested = harvest_workbook_tool_result(payload)
     artifact = harvested.get("artifact") if isinstance(harvested.get("artifact"), dict) else {}
+    if job_id and isinstance(artifact, dict) and str(artifact.get("revision_id") or ""):
+        # A recovery rebuild is the finished document, not another draft: it
+        # must be written back to the job so the durable state stops offering
+        # repair and a later re-entry serves this revision instead.
+        try:
+            service = WorkbookResearchJobService()
+            _parents, settled = workbook_packaging_lineage(
+                service.list_events(job_id, "workbook_packaged"),
+                durable_decisions=str(job.get("status") or "") == "complete",
+            )
+            service.record_packaging(
+                job_id,
+                tool="build_lsr_workbook",
+                revision_id=str(artifact["revision_id"]),
+                draft=str(job.get("status") or "") != "complete",
+                parent_revision_id=settled.get("build_lsr_workbook", ""),
+            )
+            artifact["document_state"] = service.document_state(job_id)
+        except (WorkbookResearchJobError, OSError) as error:
+            logger.warning("[REPACK] packaging event not recorded: %s", type(error).__name__)
+        harvested["artifact"] = artifact
     if isinstance(artifact, dict):
         artifact["draft_rows"] = compact_estimator_draft_rows(decisions)
         readiness = build_lsr_result_readiness(
             packaged=bool(artifact.get("download_url")),
             packaging_failed=str(payload.get("status") or "") == "failed",
-            packaging_code=str(payload.get("code") or ""),
-            rows=decisions,
+            packaging_code=str(payload.get("code") or ""),            rows=decisions,
             missing=list(harvested.get("missing") or []),
             pricing_status=str(harvested.get("pricing_status") or ""),
             remaining_locators=remaining,
@@ -356,6 +409,12 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
                 if isinstance(payload.get("preliminary_amount"), (int, float))
                 else -1.0
             ),
+            document_state=str(
+                (artifact.get("document_state") or {}).get("state")
+                if isinstance(artifact.get("document_state"), dict)
+                else ""
+            ),
+            download_url=str(artifact.get("download_url") or ""),
         )
         artifact["result_readiness"] = readiness
         harvested["artifact"] = artifact
