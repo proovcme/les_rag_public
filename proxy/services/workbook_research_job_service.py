@@ -77,6 +77,13 @@ _VOLATILE_DECISION_FIELDS = {
     "note",
     "evidence_refs",
     "status",
+    # Directive §3 (23.09): open_gap is the model's free-text explanation of a
+    # remaining gap (why no norm applies), not a billable decision. When a
+    # paused job resumes and the model re-proposes the same source row with the
+    # same role/title/norm fields but a reworded open_gap, the digest must stay
+    # stable so record_packet dedups the redelivery instead of appending a
+    # duplicate durable decision for one source position.
+    "open_gap",
 }
 
 

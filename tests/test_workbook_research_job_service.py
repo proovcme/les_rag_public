@@ -861,3 +861,81 @@ def test_legacy_high_round_count_continues_safely(tmp_path) -> None:
     assert job["status"] == "running"
     assert job["stall_guard"]["stall_count"] == 0
     assert len(job["accepted_rows"]) == 1
+
+
+def test_reworded_open_gap_on_same_row_does_not_duplicate(tmp_path) -> None:
+    """Directive §3 (23.09) live-bug regression: a paused small-control ВОР job
+    resumed to complete, but the durable ledger listed section-header source rows
+    (ВОР!R4 / ВОР!R6) three times -- the model re-proposed the same unresolved
+    decision each round with only the free-text open_gap reworded. open_gap must
+    not introduce a new durable decision."""
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    first = {
+        "source_row": "\u0412\u041e\u0420!R4",
+        "row_role": "unresolved",
+        "row_classification": "ambiguous",
+        "title": "\u041f\u043e\u043b\u0435\u0432\u044b\u0435 \u0440\u0430\u0431\u043e\u0442\u044b",
+        "norm_code": "-",
+        "norm_status": "MISSING",
+        "open_gap": "\u0420\u0430\u0437\u0434\u0435\u043b \u043d\u0435 \u0438\u043c\u0435\u0435\u0442 \u0441\u043e\u0441\u0442\u0430\u0432\u0430.",
+    }
+    service.record_packet(
+        job["job_id"],
+        sheet="\u0412\u041e\u0420",
+        packet_locators=["\u0412\u041e\u0420!R4"],
+        accepted_rows=[dict(first)],
+        evidence=[],
+        remaining=["\u0412\u041e\u0420!R5"],
+    )
+    service.pause(job["job_id"], remaining=["\u0412\u041e\u0420!R5"])
+    resumed = service.begin_or_resume(_identity(service))
+    assert resumed["job_id"] == job["job_id"]
+    # A later round re-proposes the SAME decision with different prose.
+    reworded = dict(first)
+    reworded["open_gap"] = "\u0422\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044f \u0434\u0435\u0442\u0430\u043b\u0438\u0437\u0430\u0446\u0438\u044f \u0440\u0430\u0437\u0434\u0435\u043b\u0430."
+    service.record_packet(
+        resumed["job_id"],
+        sheet="\u0412\u041e\u0420",
+        packet_locators=["\u0412\u041e\u0420!R4"],
+        accepted_rows=[reworded],
+        evidence=[],
+        remaining=[],
+    )
+    stored = service.get(job["job_id"])["accepted_rows"]
+    same = [r for r in stored if r["source_row"] == "\u0412\u041e\u0420!R4"]
+    assert len(same) == 1, f"open_gap rewording duplicated the decision: {same}"
+
+
+def test_different_norm_decisions_on_one_locator_still_distinct(tmp_path) -> None:
+    """Guard: marking open_gap volatile must NOT merge operations that differ in
+    norm_status/norm_code -- the intended two-works-on-one-locator capability."""
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.record_packet(
+        job["job_id"],
+        sheet="\u0412\u041e\u0420",
+        packet_locators=["\u0412\u041e\u0420!R9"],
+        accepted_rows=[
+            {
+                "source_row": "\u0412\u041e\u0420!R9",
+                "row_role": "work",
+                "title": "\u041c\u043e\u043d\u0442\u0430\u0436",
+                "norm_code": "\u0413\u042d\u0421\u041d17-01-010-02",
+                "norm_status": "ANALOGUE_CANDIDATE",
+                "open_gap": "",
+            },
+            {
+                "source_row": "\u0412\u041e\u0420!R9",
+                "row_role": "work",
+                "title": "\u041c\u043e\u043d\u0442\u0430\u0436",
+                "norm_code": "",
+                "norm_status": "MISSING",
+                "open_gap": "\u041d\u0435\u0442 \u043d\u043e\u0440\u043c\u044b.",
+            },
+        ],
+        evidence=[],
+        remaining=[],
+    )
+    stored = service.get(job["job_id"])["accepted_rows"]
+    assert len([r for r in stored if r["source_row"] == "\u0412\u041e\u0420!R9"]) == 2
