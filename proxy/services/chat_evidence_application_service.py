@@ -258,8 +258,10 @@ def workbook_packaging_lineage(
     ``parents`` is the last revision each packager wrote for this job, so a new
     decision set continues the same downloadable document. ``settled`` marks a
     packager whose last revision is a final one that already covers the saved
-    durable decisions: replaying that call with its own recorded parent keeps
-    the existing call identity (which already covers ``decisions``), so opening
+    durable decisions: replaying that call with the parent it built on (recorded
+    in the event, or read back from the packaging chain for events written before
+    the parent was recorded) keeps the existing call identity
+    (which already covers ``decisions``), so opening
     a finished job again serves the same file instead of duplicating it.
     """
 
@@ -283,13 +285,14 @@ def workbook_packaging_lineage(
         revision_id = str(payload.get("revision_id") or "")
         if not tool or not revision_id:
             continue
+        built_on = parents.get(tool)
         parents[tool] = revision_id
         if (
             durable_decisions
             and not bool(payload.get("draft"))
             and int(event.get("sequence") or 0) >= last_change_sequence
         ):
-            settled[tool] = str(payload.get("parent_revision_id") or "") or None
+            settled[tool] = str(payload.get("parent_revision_id") or "") or built_on
     return parents, settled
 
 

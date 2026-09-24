@@ -4040,3 +4040,50 @@ def test_workbook_packaging_lineage_ignores_malformed_events():
     parents, settled = service.workbook_packaging_lineage(events, durable_decisions=True)
     assert parents == {}
     assert settled == {}
+
+
+def test_workbook_packaging_lineage_derives_parent_for_legacy_events():
+    # The runtime job wrj_2b0fff82 was packaged by build 798, which recorded no
+    # parent in the workbook_packaged event. Re-opening it after the fix must
+    # still replay the existing call, so the parent is read back from the
+    # packaging chain itself.
+    legacy_events = [
+        {"sequence": 1, "event_type": "packet_checkpoint", "payload": {}},
+        {
+            "sequence": 2,
+            "event_type": "workbook_packaged",
+            "payload": {"tool": "build_lsr_workbook", "revision_id": "rev_draft", "draft": True},
+        },
+        {"sequence": 3, "event_type": "complete", "payload": {}},
+        {
+            "sequence": 4,
+            "event_type": "workbook_packaged",
+            "payload": {"tool": "build_lsr_workbook", "revision_id": "rev_final", "draft": False},
+        },
+    ]
+    parents, settled = service.workbook_packaging_lineage(
+        legacy_events, durable_decisions=True
+    )
+    assert parents == {"build_lsr_workbook": "rev_final"}
+    assert settled == {"build_lsr_workbook": "rev_draft"}
+
+    # A recorded parent wins over the chain when both exist.
+    mixed = [legacy_events[0], legacy_events[1]] + [
+        {
+            "sequence": 4,
+            "event_type": "workbook_packaged",
+            "payload": {
+                "tool": "build_lsr_workbook",
+                "revision_id": "rev_final",
+                "draft": False,
+                "parent_revision_id": "rev_external",
+            },
+        }
+    ]
+    _, mixed_settled = service.workbook_packaging_lineage(mixed, durable_decisions=True)
+    assert mixed_settled == {"build_lsr_workbook": "rev_external"}
+
+    # A first-ever final has no parent at all, recorded or derived.
+    first_only = [legacy_events[0], legacy_events[3]]
+    _, first_settled = service.workbook_packaging_lineage(first_only, durable_decisions=True)
+    assert first_settled == {"build_lsr_workbook": None}
