@@ -3077,7 +3077,7 @@
         "tests/test_sovushka_chat.py",
         "tests/test_stall_completion_23.py"
       ],
-      "lines": 8103,
+      "lines": 8126,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -6874,6 +6874,7 @@
         "proxy/services/extract_service.py",
         "proxy/services/rim_agent_action_service.py",
         "proxy/services/trusted_executor_service.py",
+        "tests/test_chat_evidence_application_service.py",
         "tests/test_extract_service.py",
         "tests/test_structured_extract.py",
         "tests/test_workbook_tool_service.py",
@@ -9317,7 +9318,7 @@
     },
     {
       "inbound": [],
-      "lines": 3840,
+      "lines": 3873,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -9329,6 +9330,7 @@
         "proxy/services/model_connection_contracts.py",
         "proxy/services/model_execution_preset_service.py",
         "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/structured_extract.py",
         "proxy/services/tool_contract_service.py",
         "proxy/services/tool_harness_service.py",
         "proxy/services/tool_registry_service.py",
@@ -18954,7 +18956,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 643,
     "tracked_python_files": 1011,
-    "tracked_python_lines": 332650
+    "tracked_python_lines": 332706
   },
   "warnings": []
 }

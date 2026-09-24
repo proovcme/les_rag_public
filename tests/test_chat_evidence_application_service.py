@@ -3826,6 +3826,39 @@ def test_workbook_packaging_tool_follows_operator_intent():
     assert service.workbook_packaging_tool(["search_sources"], "Собери ВОР") == []
 
 
+def test_workbook_packaging_args_match_each_tool_contract():
+    # Regression (build 794 live run wrj_5bbbf11b): the ВОР packaging call sent
+    # the priced-only confirmed_data overlay and died with TOOL_SCHEMA_INVALID.
+    from proxy.services.structured_extract import validate as validate_json_schema
+    from proxy.services.workbook_tool_service import (
+        BUILD_LSR_WORKBOOK,
+        BUILD_VOR_WORKBOOK,
+    )
+
+    decisions = [
+        {"source_row": "СКС!R2", "title": "Монтаж трубы", "unit": "м", "quantity": 10}
+    ]
+    overrides = {"СКС!R2": {"confirmed_price": 125.5}}
+    vor_args = service.workbook_packaging_args(
+        packaging_tool="build_vor_workbook",
+        attachment_id="att-1",
+        question="Собери ВОР из спецификации",
+        decisions=decisions,
+        operator_overrides=overrides,
+    )
+    assert validate_json_schema(vor_args, BUILD_VOR_WORKBOOK.input_schema) == []
+    assert "confirmed_data" not in vor_args
+    lsr_args = service.workbook_packaging_args(
+        packaging_tool="build_lsr_workbook",
+        attachment_id="att-1",
+        question="Собери ЛСР из ВОР",
+        decisions=decisions,
+        operator_overrides=overrides,
+    )
+    assert validate_json_schema(lsr_args, BUILD_LSR_WORKBOOK.input_schema) == []
+    assert lsr_args["confirmed_data"] == overrides
+
+
 def test_sheet_pass_visible_tools_for_vor_intent_hide_priced_packager():
     # integration of the two intent gates: narrowing must leave exactly the
     # row-preserving packager visible and selectable for auto-packaging.

@@ -213,6 +213,31 @@ def workbook_packaging_tool(profile_tools: Sequence[str], question: str) -> list
     return []
 
 
+def workbook_packaging_args(
+    *,
+    packaging_tool: str,
+    attachment_id: str,
+    question: str,
+    decisions: Sequence[Mapping[str, Any]],
+    operator_overrides: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Build contract-valid args for the sheet-pass auto-packaging call.
+
+    Both workbook packagers receive the row-preserving decisions; only the
+    priced ЛСР tool consumes operator overlays. The ВОР contract declares
+    additionalProperties False without confirmed_data, so sending the overlay
+    there fails schema validation (TOOL_SCHEMA_INVALID) and drops the artifact.
+    """
+    args: dict[str, Any] = {
+        "attachment_id": attachment_id,
+        "question": question,
+        "decisions": [dict(item) for item in decisions or []],
+    }
+    if packaging_tool == "build_lsr_workbook":
+        args["confirmed_data"] = dict(operator_overrides or {})
+    return args
+
+
 def model_answer_timeout_seconds() -> float:
     """One end-to-end window for an explicitly assigned answer connection.
 
@@ -7501,17 +7526,15 @@ async def _execute_chat_evidence_application(
                         for packaging_tool in packaging_tools:
                             workbook_call = {
                                 "tool": packaging_tool,
-                                "args": {
-                                    "attachment_id": attachment_id,
-                                    "question": str(req.question or ""),
-                                    "decisions": model_result_rows,
-                                    "confirmed_data": dict(
-                                        (
-                                            retrieval_trace.get("workbook_research_job") or {}
-                                        ).get("operator_overrides")
-                                        or {}
-                                    ),
-                                },
+                                "args": workbook_packaging_args(
+                                    packaging_tool=packaging_tool,
+                                    attachment_id=attachment_id,
+                                    question=str(req.question or ""),
+                                    decisions=model_result_rows,
+                                    operator_overrides=(
+                                        retrieval_trace.get("workbook_research_job") or {}
+                                    ).get("operator_overrides"),
+                                ),
                             }
                             execution_context = {
                                 "session_id": str(req.session_id or ""),
