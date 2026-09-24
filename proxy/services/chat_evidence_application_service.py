@@ -1556,11 +1556,18 @@ def adaptive_row_packet(
     remaining: Sequence[str],
     *,
     generation_reserve_tokens: int,
+    already_offered: Sequence[str] = (),
 ) -> list[str]:
     """Bound one model result by row count and the available output budget.
 
     This is technical orchestration only: order and row content come unchanged
     from the exact catalog.  The model still owns queries and every decision.
+
+    Rows already put to the model in this pass go last.  A row the model
+    classified but that keeps a quality gap stays in the completeness
+    denominator, so a plain head slice re-sent the same leading rows on every
+    packet and never reached the rows behind them; those unseen rows then ended
+    the document with no decision from the model at all.
     """
 
     locators = [str(item).strip() for item in remaining if str(item).strip()]
@@ -1571,8 +1578,17 @@ def adaptive_row_packet(
     # rows including roles, links and provenance. Low-capacity backends must
     # be allowed packets smaller than eight rows.
     budget_rows = max(1, (reserve - 400) // 250)
-    size = min(_ROW_PACKET_MAX, budget_rows)
-    return locators[: min(size, len(locators))]
+    size = min(_ROW_PACKET_MAX, budget_rows, len(locators))
+    offered = {str(item).strip() for item in already_offered if str(item).strip()}
+    if offered:
+        fresh = [locator for locator in locators if locator not in offered]
+        if len(fresh) >= size:
+            locators = fresh
+        elif fresh:
+            locators = fresh + [
+                locator for locator in locators if locator in offered
+            ]
+    return locators[:size]
 
 
 def row_packet_id(
@@ -5846,6 +5862,10 @@ async def _execute_chat_evidence_application(
                             structurally_complete_source_keys(accumulated_rows, source_catalog),
                         )
                         exhausted_locators: set[str] = set()
+                        # Rows already put to the model in this sheet pass.  The
+                        # packet pool is ordered unseen-first so no row can be
+                        # starved by a leading row that keeps a quality gap.
+                        offered_locators: set[str] = set()
                         packet_attempts: dict[tuple[str, ...], int] = {}
                         if (
                             research_job_service is not None
@@ -5913,6 +5933,7 @@ async def _execute_chat_evidence_application(
                                     )
                                     held_packet = []
                                     continue
+                                offered_locators.update(packet)
                                 fingerprint = tuple(packet)
                                 packet_attempts.setdefault(fingerprint, 1)
                                 inner += 1
@@ -5940,9 +5961,11 @@ async def _execute_chat_evidence_application(
                                     generation_reserve_tokens=(
                                         answer_execution_preset.generation_reserve_tokens
                                     ),
+                                    already_offered=tuple(sorted(offered_locators)),
                                 )
                                 if not packet:
                                     break
+                                offered_locators.update(packet)
                                 fingerprint = tuple(packet)
                                 packet_attempts[fingerprint] = packet_attempts.get(fingerprint, 0) + 1
                                 inner += 1

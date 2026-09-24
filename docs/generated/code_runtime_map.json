@@ -3077,7 +3077,7 @@
         "tests/test_sovushka_chat.py",
         "tests/test_stall_completion_23.py"
       ],
-      "lines": 8289,
+      "lines": 8312,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -11010,7 +11010,7 @@
     },
     {
       "inbound": [],
-      "lines": 44,
+      "lines": 88,
       "module": "tests.test_lsr_packet_integrity",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py"
@@ -18956,7 +18956,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 643,
     "tracked_python_files": 1011,
-    "tracked_python_lines": 333563
+    "tracked_python_lines": 333630
   },
   "warnings": []
 }
