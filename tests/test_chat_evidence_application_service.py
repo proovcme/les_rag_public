@@ -126,6 +126,47 @@ def test_attachment_workbook_tools_survive_restrictive_model_shortlist():
     ]
 
 
+def test_workbook_artifact_intent_narrows_visible_tools_by_operator_noun():
+    tools = [
+        "search_sources",
+        "read_source",
+        "build_lsr_workbook",
+        "build_vor_workbook",
+    ]
+
+    assert service.workbook_artifact_intent("Собери ВОР из спецификации") == "vor"
+    assert service.workbook_artifact_intent("сделай ведомость объёмов работ") == "vor"
+    assert service.workbook_artifact_intent("Собери смету") == "lsr"
+    # A сметa/LSR noun wins over a ВОР noun: this is the priced route.
+    assert service.workbook_artifact_intent("Собери ЛСР из прикреплённого ВОР") == "lsr"
+    assert service.workbook_artifact_intent("что видно в документе") == "both"
+
+    # A bare ВОР request must not keep the priced ЛСР tool visible.
+    vor_only = service.prioritize_workbook_tools(
+        tools, workbook_phase=True, question="Собери проверяемый ВОР"
+    )
+    assert vor_only == ["build_vor_workbook", "search_sources", "read_source"]
+    assert "build_lsr_workbook" not in vor_only
+
+    # An explicit ЛСР request keeps only the priced workbook tool.
+    lsr_only = service.prioritize_workbook_tools(
+        tools, workbook_phase=True, question="Собери ЛСР из ВОР"
+    )
+    assert "build_lsr_workbook" in lsr_only
+    assert "build_vor_workbook" not in lsr_only
+
+    # Unspecified artifact keeps both visible for the model to decide.
+    both = service.prioritize_workbook_tools(
+        tools, workbook_phase=True, question="что видно в документе"
+    )
+    assert {"build_lsr_workbook", "build_vor_workbook"} <= set(both)
+
+    # Outside the workbook phase nothing is narrowed.
+    assert service.prioritize_workbook_tools(
+        tools, workbook_phase=False, question="Собери ВОР"
+    ) == tools
+
+
 def test_tool_selector_request_declares_bound_attachment_without_copying_its_text():
     payload = service.tool_selector_request_payload(
         question="build workbook",

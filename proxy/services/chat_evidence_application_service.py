@@ -135,19 +135,51 @@ from proxy.services.llm_transport_profile_service import (
 _WORKBOOK_TOOL_NAMES = frozenset({"build_lsr_workbook", "build_vor_workbook"})
 
 
+_VOR_INTENT_TERMS = (
+    "вор", "ведомость объ", "ведомость работ", "spec to bor", "spec_to_bor",
+)
+_LSR_INTENT_TERMS = ("лср", "смет", "локальн")
+
+
+def workbook_artifact_intent(question: str) -> str:
+    """Classify the artifact the operator's own words ask to produce.
+
+    This is intent, not a filename rule and not a norm choice. A сметa/ЛСР noun
+    wins over a ВОР noun so "собери ЛСР из ВОР" stays the priced route; a bare
+    ВОР/ведомость request means the row-preserving route. Returns "vor", "lsr"
+    or "both" (unspecified -> leave the decision to the model).
+    """
+    q = (question or "").casefold()
+    if any(term in q for term in _LSR_INTENT_TERMS):
+        return "lsr"
+    if any(term in q for term in _VOR_INTENT_TERMS):
+        return "vor"
+    return "both"
+
+
 def prioritize_workbook_tools(
     profile_tools: Sequence[str],
     *,
     workbook_phase: bool,
+    question: str = "",
 ) -> list[str]:
     """Keep attachment-bound workbook choices inside a small-model shortlist.
 
-    Ordering only controls what the model can see. It never selects or executes
-    a tool on the model's behalf.
+    When the operator explicitly names the target artifact, only that workbook
+    tool stays visible for the turn: a ВОР/ведомость request must not be answered
+    with a priced ЛСР (materials silently becoming costed works), while a
+    ЛСР/смета request is the priced route. This still never executes a tool on the
+    model's behalf and never selects a norm; an unspecified request keeps both.
     """
     tools = [str(name) for name in profile_tools if str(name).strip()]
     if not workbook_phase:
         return tools
+    hidden = {
+        "vor": "build_lsr_workbook",
+        "lsr": "build_vor_workbook",
+    }.get(workbook_artifact_intent(question))
+    if hidden:
+        tools = [name for name in tools if name != hidden]
     workbook = [name for name in tools if name in _WORKBOOK_TOOL_NAMES]
     other = [name for name in tools if name not in _WORKBOOK_TOOL_NAMES]
     return workbook + other
@@ -4983,6 +5015,7 @@ async def _execute_chat_evidence_application(
                         profile_tools = prioritize_workbook_tools(
                             profile_tools,
                             workbook_phase=workbook_phase,
+                            question=str(getattr(req, "question", "") or ""),
                         )
                         tool_loop_stage = "shortlist"
                         from proxy.services.workbook_tool_service import (
