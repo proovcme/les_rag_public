@@ -185,6 +185,21 @@ def prioritize_workbook_tools(
     return workbook + other
 
 
+def model_answer_timeout_seconds() -> float:
+    """One end-to-end window for an explicitly assigned answer connection.
+
+    Mirrors model_connection_timeout() in routers/chat.py and the registered
+    LES_MODEL_CONNECTION_TIMEOUT_SEC runtime-config knob. The agent-loop client
+    previously hardcoded 300s, so a remote-model latency spike aborted a live
+    workbook pass with ReadTimeout/502 and the operator setting changed nothing.
+    """
+    try:
+        return max(1.0, float(os.getenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "300")))
+    except (TypeError, ValueError):
+        return 300.0
+
+
+
 def tool_selector_request_payload(
     *,
     question: str,
@@ -4473,7 +4488,7 @@ async def _execute_chat_evidence_application(
         timeout_seconds=generation_slot_timeout_seconds(),
     ):
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            async with httpx.AsyncClient(timeout=model_answer_timeout_seconds()) as client:
                 answer = ""
                 crag_status = "UNKNOWN"
                 tokens = 0

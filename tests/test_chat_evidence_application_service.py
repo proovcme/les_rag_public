@@ -3784,3 +3784,20 @@ def test_stage_g_budget_omitted_cards_name_query_and_shifr():
     assert first["card"] == "\u0413\u042d\u0421\u041d01-01-001-01"
     # Nothing omitted -> nothing named.
     assert service.model_rag_budget_omitted_cards(query_hits, chunks, []) == []
+
+
+def test_model_answer_timeout_follows_registered_runtime_knob(monkeypatch):
+    monkeypatch.delenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", raising=False)
+    assert service.model_answer_timeout_seconds() == 300.0
+    monkeypatch.setenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "600")
+    assert service.model_answer_timeout_seconds() == 600.0
+    monkeypatch.setenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "0")
+    assert service.model_answer_timeout_seconds() == 1.0
+    monkeypatch.setenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "not-a-number")
+    assert service.model_answer_timeout_seconds() == 300.0
+
+
+def test_agent_loop_llm_client_uses_registered_timeout(monkeypatch):
+    source = inspect.getsource(service)
+    assert "async with httpx.AsyncClient(timeout=model_answer_timeout_seconds()) as client:" in source
+    assert "httpx.AsyncClient(timeout=300.0)" not in source
