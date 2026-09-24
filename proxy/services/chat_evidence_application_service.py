@@ -1557,17 +1557,22 @@ def adaptive_row_packet(
     *,
     generation_reserve_tokens: int,
     already_offered: Sequence[str] = (),
+    offer_counts: Mapping[str, int] | None = None,
 ) -> list[str]:
     """Bound one model result by row count and the available output budget.
 
     This is technical orchestration only: order and row content come unchanged
     from the exact catalog.  The model still owns queries and every decision.
 
-    Rows already put to the model in this pass go last.  A row the model
-    classified but that keeps a quality gap stays in the completeness
+    Rows are ordered by how often they have already been put to the model,
+    least offered first, with the catalog position breaking ties.  A row the
+    model classified but that keeps a quality gap stays in the completeness
     denominator, so a plain head slice re-sent the same leading rows on every
     packet and never reached the rows behind them; those unseen rows then ended
-    the document with no decision from the model at all.
+    the document with no decision from the model at all.  The rows offered in
+    this pass alone are not enough: a sheet pass stops after a few packets, so
+    the counts taken from the durable checkpoints are what keep the rotation
+    going across resumes instead of restarting it at the head of the sheet.
     """
 
     locators = [str(item).strip() for item in remaining if str(item).strip()]
@@ -1580,14 +1585,21 @@ def adaptive_row_packet(
     budget_rows = max(1, (reserve - 400) // 250)
     size = min(_ROW_PACKET_MAX, budget_rows, len(locators))
     offered = {str(item).strip() for item in already_offered if str(item).strip()}
-    if offered:
-        fresh = [locator for locator in locators if locator not in offered]
-        if len(fresh) >= size:
-            locators = fresh
-        elif fresh:
-            locators = fresh + [
-                locator for locator in locators if locator in offered
-            ]
+    durable_counts = {
+        str(key).strip(): max(0, int(value or 0))
+        for key, value in (offer_counts or {}).items()
+        if str(key).strip()
+    }
+    if offered or durable_counts:
+        position = {locator: index for index, locator in enumerate(locators)}
+
+        def _times_put_to_model(locator: str) -> int:
+            return durable_counts.get(locator, 0) + (1 if locator in offered else 0)
+
+        locators = sorted(
+            locators,
+            key=lambda locator: (_times_put_to_model(locator), position[locator]),
+        )
     return locators[:size]
 
 
@@ -5863,10 +5875,11 @@ async def _execute_chat_evidence_application(
                         )
                         exhausted_locators: set[str] = set()
                         # Rows already put to the model in this sheet pass.  The
-                        # packet pool is ordered unseen-first so no row can be
-                        # starved by a leading row that keeps a quality gap.
+                        # packet pool is ordered least-offered-first so no row can
+                        # be starved by a leading row that keeps a quality gap.
                         offered_locators: set[str] = set()
                         packet_attempts: dict[tuple[str, ...], int] = {}
+                        offer_counts: dict[str, int] = {}
                         if (
                             research_job_service is not None
                             and isinstance(research_job, Mapping)
@@ -5874,13 +5887,17 @@ async def _execute_chat_evidence_application(
                         ):
                             # A restarted process must continue attempt numbering
                             # from the durable checkpoints, so a Qx.Hy reference
-                            # can never address another attempt's cards.
-                            packet_attempts = packet_attempt_seed(
-                                research_job_service.list_events(
-                                    str(research_job["job_id"]),
-                                    event_type="packet_checkpoint",
-                                )
+                            # can never address another attempt's cards.  The same
+                            # checkpoints carry how often each row was already put
+                            # to the model, which is what keeps the rotation across
+                            # the pass boundary instead of restarting it at the head
+                            # of the sheet.
+                            checkpoint_events = research_job_service.list_events(
+                                str(research_job["job_id"]),
+                                event_type="packet_checkpoint",
                             )
+                            packet_attempts = packet_attempt_seed(checkpoint_events)
+                            offer_counts = packet_offer_counts(checkpoint_events)
                         locator_research_round: dict[str, int] = {}
                         inner = 0
                         deferred_query_hits: list[tuple[str, Sequence[Any]]] = []
@@ -5962,6 +5979,7 @@ async def _execute_chat_evidence_application(
                                         answer_execution_preset.generation_reserve_tokens
                                     ),
                                     already_offered=tuple(sorted(offered_locators)),
+                                    offer_counts=offer_counts,
                                 )
                                 if not packet:
                                     break
@@ -8310,3 +8328,31 @@ def packet_attempt_seed(
             continue
         seeded[locators] = seeded.get(locators, 0) + 1
     return seeded
+
+
+def packet_offer_counts(
+    events: Sequence[Mapping[str, Any]],
+) -> dict[str, int]:
+    """How many times each source row was already put to the model.
+
+    Derived only from durable ``packet_checkpoint`` events, which record the
+    exact locator set of every packet that was sent.  This is the fairness
+    memory of the packet rotation: without it a resumed sheet pass restarts at
+    the head of the sheet and rows that sit behind a permanently gapped row are
+    never offered.
+    """
+
+    counts: dict[str, int] = {}
+    for event in events or ():
+        if not isinstance(event, Mapping):
+            continue
+        if str(event.get("event_type") or "") != "packet_checkpoint":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        for item in payload.get("packet_locators") or []:
+            locator = str(item).strip()
+            if locator:
+                counts[locator] = counts.get(locator, 0) + 1
+    return counts
