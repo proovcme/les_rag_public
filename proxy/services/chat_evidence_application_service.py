@@ -1552,6 +1552,25 @@ def adjudicated_source_keys(rows, catalog):
     return keys
 
 
+def settled_source_keys(rows, catalog):
+    """Source rows that need no further packet: complete, or given a terminal role.
+
+    Both halves are required.  ``structurally_complete_source_keys`` alone keeps
+    a row in the packet pool for ever when the model legitimately decided it has
+    no applicable norm, so a large document stalls on already-decided rows and
+    the sheets behind them are never offered.  The terminal completion rule at
+    the end of the sheet-pass loop has always accepted an adjudicated row; this
+    helper is simply that one rule shared by the pool, so the loop can never
+    queue work the completion check would already accept.  Quality gaps stay
+    visible in the reported ``missing`` list, and an operator reopen of a
+    locator removes its accepted rows, which returns it to the pool.
+    """
+
+    return structurally_complete_source_keys(rows, catalog) | adjudicated_source_keys(
+        rows, catalog
+    )
+
+
 def adaptive_row_packet(
     remaining: Sequence[str],
     *,
@@ -5868,10 +5887,13 @@ async def _execute_chat_evidence_application(
                         ):
                             research_cancelled = True
                             break
+                        # Same definition of outstanding as the terminal rule
+                        # below, otherwise the loop re-offers decided rows on the
+                        # first sheet and never reaches the next one.
                         remaining = remaining_sheet_work_locators(
                             source_catalog,
                             sheet_name,
-                            structurally_complete_source_keys(accumulated_rows, source_catalog),
+                            settled_source_keys(accumulated_rows, source_catalog),
                         )
                         exhausted_locators: set[str] = set()
                         # Rows already put to the model in this sheet pass.  The
@@ -6419,9 +6441,7 @@ async def _execute_chat_evidence_application(
                             remaining = remaining_sheet_work_locators(
                                 source_catalog,
                                 sheet_name,
-                                structurally_complete_source_keys(
-                                    accumulated_rows, source_catalog
-                                ),
+                                settled_source_keys(accumulated_rows, source_catalog),
                             )
                             remaining = [
                                 locator
@@ -6557,19 +6577,16 @@ async def _execute_chat_evidence_application(
                             status_code=503,
                             detail="MODEL_RAG_QUERY_LIST_EMPTY",
                         )
-                    complete_keys = structurally_complete_source_keys(
-                        accumulated_rows, source_catalog
-                    )
                     # A row the model adjudicated with any terminal role is finished for
                     # completion purposes even if a quality gap remains; only rows that
                     # received NO decision at all are re-queued for the next resume pass.
-                    adjudicated_keys = adjudicated_source_keys(
-                        accumulated_rows, source_catalog
-                    )
+                    # The packet pool uses this same set, so a row counted as unfinished
+                    # here is always still reachable by the loop that produces it.
+                    settled_keys = settled_source_keys(accumulated_rows, source_catalog)
                     unfinished_locators = [
                         locator
                         for locator in source_catalog.work_locators()
-                        if locator not in complete_keys and locator not in adjudicated_keys
+                        if locator not in settled_keys
                     ]
                     if research_job_service is not None and research_job is not None:
                         if owns_sheet_pass:
