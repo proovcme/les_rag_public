@@ -2105,6 +2105,19 @@ def test_session_sys_notice_of_a_stalled_job_says_stopped() -> None:
     )
 
 
+def test_a_stalled_bubble_does_not_blink_as_if_the_server_were_working() -> None:
+    painter = inspect.getsource(chat_page.build_chat)
+    painter = painter[painter.index("def _paint_in_progress_bubble"):]
+    painter = painter[: painter.index("def _follow_pending_history_if_needed")]
+
+    # мигающий «▋» над мёртвой сборкой — то же враньё, что и «Сборка
+    # продолжается»: интерфейс показывает работу, которой никто не делает
+    assert "if running and not stalled:" in painter
+    assert "typing=running and not stalled" in painter
+    assert "typing=running)" not in painter
+    assert "if (running and not stalled) else" in painter
+
+
 def test_the_follow_loop_reports_the_durable_file_state_not_a_promise() -> None:
     source = inspect.getsource(chat_page.build_chat)
     at = source.index('"Сборка на сервере завершилась')

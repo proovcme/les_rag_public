@@ -5345,7 +5345,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             running=running,
             prior_completed=payload.get("prior_completed"),
             prior_elapsed_seconds=payload.get("prior_elapsed_seconds"),
-        ) if running else ""
+        ) if (running and not stalled) else ""
         label = _follow_placeholder.get("label")
         eta = _follow_placeholder.get("eta")
         bubble = _follow_placeholder.get("bubble")
@@ -5354,7 +5354,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 label.set_text(notice)
                 label.update()
                 if bubble is not None:
-                    if running:
+                    # ``running`` alone is not enough: a job whose checkpoint has
+                    # gone quiet keeps the status word forever, and a blinking
+                    # caret over it advertises work nobody is doing.
+                    if running and not stalled:
                         bubble.classes(add="typing")
                     else:
                         bubble.classes(remove="typing")
@@ -5370,7 +5373,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 _follow_placeholder["label"] = None
                 _follow_placeholder["eta"] = None
                 _follow_placeholder["bubble"] = None
-        bubble, label, eta = _render_ai_placeholder(notice, typing=running)
+        bubble, label, eta = _render_ai_placeholder(notice, typing=running and not stalled)
         if eta_line:
             eta.set_text(eta_line)
             eta.set_visibility(True)
