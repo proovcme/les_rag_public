@@ -1136,6 +1136,7 @@
         "proxy/services/office_passport_service.py",
         "proxy/services/ontology_service.py",
         "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/packaging_recovery_service.py",
         "proxy/services/parent_card_hydration_service.py",
         "proxy/services/pd_rd_manifest_service.py",
         "proxy/services/pdf_contour_service.py",
@@ -1640,6 +1641,7 @@
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_connection_chat_integration.py",
         "tests/test_notebook_study_chat_policy.py",
+        "tests/test_packaging_recovery_service.py",
         "tests/test_profile_resolver.py",
         "tests/test_public_provider_setup.py",
         "tests/test_reasoning_answer.py",
@@ -2572,6 +2574,7 @@
         "proxy/services/office_passport_service.py",
         "proxy/services/ontology_service.py",
         "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/packaging_recovery_service.py",
         "proxy/services/parent_card_hydration_service.py",
         "proxy/services/pd_rd_manifest_service.py",
         "proxy/services/pdf_contour_service.py",
@@ -2670,8 +2673,7 @@
         "proxy/services/workbook_research_job_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
-        "proxy/services/workflow_plan_service.py",
-        "tests/test_workbook_tool_service.py"
+        "proxy/services/workflow_plan_service.py"
       ],
       "lines": 2,
       "module": "proxy.services",
@@ -3075,13 +3077,14 @@
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_lsr_packet_integrity.py",
         "tests/test_notebook_study_chat_policy.py",
+        "tests/test_packaging_recovery_service.py",
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py",
         "tests/test_stall_completion_23.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 8464,
+      "lines": 8568,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3114,6 +3117,7 @@
         "proxy/services/notebook_service.py",
         "proxy/services/notebook_study_service.py",
         "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/packaging_recovery_service.py",
         "proxy/services/project_summary_service.py",
         "proxy/services/prompt_registry_service.py",
         "proxy/services/retrieval_service.py",
@@ -4747,7 +4751,7 @@
         "tests/test_money_states_23.py",
         "tests/test_rim_lsr_trace_service.py"
       ],
-      "lines": 654,
+      "lines": 690,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5395,6 +5399,24 @@
         "proxy/services/model_secret_service.py"
       ],
       "path": "proxy/services/openai_compatible_transport_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/workbook_research_job_service.py",
+        "proxy/services/workbook_tool_service.py",
+        "tests/test_packaging_recovery_service.py",
+        "tests/test_workbook_tool_service.py"
+      ],
+      "lines": 274,
+      "module": "proxy.services.packaging_recovery_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/packaging_recovery_service.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -7373,17 +7395,19 @@
         "proxy/services/chat_evidence_application_service.py",
         "sovushka/pages/chat.py",
         "tests/test_finalization_defects_782.py",
+        "tests/test_packaging_recovery_service.py",
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_sovushka_chat.py",
         "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 1398,
+      "lines": 1638,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/config.py",
         "proxy/services/__init__.py",
-        "proxy/services/lsr_source_coverage_service.py"
+        "proxy/services/lsr_source_coverage_service.py",
+        "proxy/services/packaging_recovery_service.py"
       ],
       "path": "proxy/services/workbook_research_job_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -7408,6 +7432,7 @@
         "proxy/services/bor_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
+        "proxy/services/packaging_recovery_service.py",
         "proxy/services/spec_to_bor_service.py",
         "proxy/services/tool_contract_service.py",
         "proxy/services/tool_registry_service.py",
@@ -11675,6 +11700,20 @@
     },
     {
       "inbound": [],
+      "lines": 353,
+      "module": "tests.test_packaging_recovery_service",
+      "outbound": [
+        "proxy/routers/chat.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/packaging_recovery_service.py",
+        "proxy/services/workbook_research_job_service.py"
+      ],
+      "path": "tests/test_packaging_recovery_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 70,
       "module": "tests.test_parent_card_hydration_service",
       "outbound": [
@@ -14367,11 +14406,11 @@
       "lines": 1043,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
-        "proxy/services/__init__.py",
         "proxy/services/artifact_revision_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
+        "proxy/services/packaging_recovery_service.py",
         "proxy/services/rim_lsr_trace_service.py",
         "proxy/services/structured_extract.py",
         "proxy/services/workbook_tool_service.py",
@@ -18989,12 +19028,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 356,
+    "product_reachable": 357,
     "registered_api_routes": 338,
     "runtime_support": 11,
-    "test_or_tool_only": 645,
-    "tracked_python_files": 1013,
-    "tracked_python_lines": 335061
+    "test_or_tool_only": 646,
+    "tracked_python_files": 1015,
+    "tracked_python_lines": 336068
   },
   "warnings": []
 }

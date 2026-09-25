@@ -1646,6 +1646,67 @@ def settled_source_keys(rows, catalog):
     )
 
 
+def declared_gap_rows(
+    catalog: AttachmentSourceCatalog | None,
+    locators: Sequence[str],
+    *,
+    offers: int,
+) -> list[dict[str, Any]]:
+    """Durable positions for source rows no model offer ever resolved.
+
+    The application owns this bookkeeping and explicitly NOT the professional
+    choice: every row keeps the source title the catalog rendered and gets an
+    ``open_gap`` that says in plain Russian that the model produced no solution
+    after ``offers`` offers.  No cipher, no price and no volume is invented.
+    """
+
+    from proxy.services.workbook_research_job_service import declared_gap_decision
+    from proxy.services.attachment_source_catalog_service import (
+        _WORK_UNITS,
+        normalize_unit,
+    )
+
+    reason = (
+        f"Решение модели не получено после {int(offers)} предложений; "
+        "строка закрыта приложением как пробел, норма и цена не подобраны."
+    )
+    rows: list[dict[str, Any]] = []
+    for raw in locators:
+        locator = str(raw or "").strip()
+        if not locator:
+            continue
+        line = ""
+        unit = ""
+        quantity: Any = None
+        classification = ""
+        if catalog is not None:
+            found = catalog.lookup(locator)
+            if found is not None:
+                line = str(found.line or "")
+                quantity = found.header_quantity
+                classification = str(found.row_classification or "")
+                unit = next(
+                    (
+                        str(value).strip()
+                        for value in found.values
+                        if normalize_unit(value) in _WORK_UNITS
+                    ),
+                    "",
+                )
+        rows.append(
+            declared_gap_decision(
+                locator,
+                line=line,
+                unit=unit,
+                quantity=quantity,
+                row_classification=classification,
+                reason=reason,
+                attempts=offers,
+            )
+        )
+    return rows
+
+
 def adaptive_row_packet(
     remaining: Sequence[str],
     *,
@@ -6671,6 +6732,49 @@ async def _execute_chat_evidence_application(
                                     remaining=unfinished_locators,
                                     phase="packets",
                                 )
+                                # A cancelled run stays resumable: the operator
+                                # stopped it, so nothing here may close rows the
+                                # model never saw.  An identical GLOBAL remainder
+                                # reported by consecutive resumes is different:
+                                # those exact rows have already been offered on
+                                # every pass since, so the loop has no other
+                                # outcome and must terminate with declared gaps.
+                                guard = research_job.get("stall_guard") or {}
+                                repeats = int(guard.get("remainder_repeats") or 0)
+                                bound = int(guard.get("terminal_bound") or 0)
+                                if (
+                                    not research_cancelled
+                                    and unfinished_locators
+                                    and bound > 0
+                                    and repeats >= bound
+                                ):
+                                    research_job = (
+                                        research_job_service.finish_with_declared_gaps(
+                                            research_job["job_id"],
+                                            gap_rows=declared_gap_rows(
+                                                source_catalog,
+                                                unfinished_locators,
+                                                offers=repeats + 1,
+                                            ),
+                                            reason=str(guard.get("reason") or ""),
+                                            attempts=repeats + 1,
+                                        )
+                                    )
+                                    retrieval_trace["declared_gaps"] = {
+                                        "schema": "les.declared-gaps.v1",
+                                        "count": len(unfinished_locators),
+                                        "offers": repeats + 1,
+                                        "model_called": False,
+                                        "locators": [
+                                            str(item) for item in unfinished_locators
+                                        ][:80],
+                                    }
+                                    logger.info(
+                                        "[STALL_BOUND] closing %s rows as declared "
+                                        "gaps after %s identical remainders",
+                                        len(unfinished_locators),
+                                        repeats,
+                                    )
                             else:
                                 research_job = research_job_service.finish(
                                     research_job["job_id"],

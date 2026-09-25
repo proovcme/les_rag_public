@@ -41,6 +41,15 @@ _EXTRA_COLUMNS = {
     "run_round_count": "INTEGER NOT NULL DEFAULT 0",
     "held_fingerprint": "TEXT NOT NULL DEFAULT ''",
     "held_attempts": "INTEGER NOT NULL DEFAULT 0",
+    # Cross-resume memory of the *global* remainder.  ``stall_count`` and
+    # ``held_attempts`` reset on every run, so a job whose last rows the model
+    # refuses again and again pauses and resumes forever: the live customer ВОР
+    # reproduced 34 identical pauses on the same five work rows (АР!R22, R23,
+    # R24, R26, R49) and never reached a terminal state.  These two columns
+    # remember which remainder was reported last and how many resumes in a row
+    # reported the very same one.
+    "stall_fingerprint": "TEXT NOT NULL DEFAULT ''",
+    "stall_occurrences": "INTEGER NOT NULL DEFAULT 0",
 }
 
 # Directive §4 / §1: bounded, orthogonal stall detection thresholds.
@@ -53,6 +62,77 @@ _RUN_PACKET_BUDGET = 48       # packets within a single run before a *continuabl
                               # run_budget pause
 _HELD_PACKET_MAX_ATTEMPTS = 3  # retries of the same deferred packet before it
                                # starts counting toward the stall streak
+# How many times the *same* global remainder may be reported by consecutive
+# resumes before the stalled rows are closed as declared gaps.  The number is
+# taken from the live customer ВОР, not from taste: a healthy 12-pass run
+# produced two streaks of three identical remainders (377 on passes 1-3 while
+# the query cache warmed, 231 on passes 8-10 on a hard packet) and then made
+# progress again, while the pathological run reported the same remainder 34
+# times in a row and never reached a terminal state.  Four therefore sits above
+# every observed healthy streak without excusing a real deadlock - and closing
+# at the bound only removes those rows from `remaining`, it does not complete a
+# document that still has sheets to work on.
+STALL_TERMINAL_OCCURRENCES = 4
+
+
+def remainder_fingerprint(remaining: Sequence[Any]) -> str:
+    """Order-independent fingerprint of the outstanding locator set."""
+
+    locators = sorted({str(item).strip() for item in remaining or () if str(item).strip()})
+    if not locators:
+        return ""
+    raw = json.dumps(locators, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def declared_gap_decision(
+    locator: str,
+    *,
+    line: str = "",
+    unit: str = "",
+    quantity: Any = None,
+    row_classification: str = "",
+    reason: str,
+    attempts: int = 0,
+) -> dict[str, Any]:
+    """One durable position that records the ABSENCE of a model decision.
+
+    A declared gap is bookkeeping, never a professional decision: it carries no
+    norm cipher, no price and no title the source does not have.  ``title`` is
+    the source row as the catalog renders it, and ``open_gap`` states in plain
+    Russian that the application closed the row because the model produced no
+    solution for it.  ``decision_origin='declared_gap'`` keeps it distinguishable
+    from a model row everywhere the durable set is read back.
+    """
+
+    text = " ".join(str(line or "").split())
+    # the document's "Строка" column is for the customer: a machine prefix such
+    # as ``LOCATOR:`` must never reach it, in either the title or the locator.
+    raw = str(locator or "").strip()
+    if raw.upper().startswith("LOCATOR:"):
+        raw = raw[len("LOCATOR:") :].strip()
+    for prefix in (f"LOCATOR:{raw}:", f"{raw}:"):
+        if text.upper().startswith(prefix.upper()):
+            text = text[len(prefix) :].strip()
+            break
+    title = text
+    return {
+        "source_row": raw,
+        "work_row": raw,
+        "row_role": "unresolved",
+        "title": title[:480],
+        "unit": str(unit or ""),
+        "quantity": quantity,
+        "norm_code": "",
+        "norm_status": "MISSING",
+        "open_gap": str(reason or "").strip(),
+        "row_classification": str(row_classification or "work"),
+        "decision_origin": "declared_gap",
+        "declared_after_offers": int(attempts or 0),
+        "evidence_refs": [],
+        "evidence_bindings": {},
+    }
+
 
 
 class WorkbookResearchJobError(ValueError):
@@ -1004,7 +1084,8 @@ class WorkbookResearchJobService:
             conn.execute(
                 """UPDATE workbook_research_jobs
                 SET status='paused',phase='refine',accepted_rows_json=?,remaining_json=?,
-                    operator_overrides_json=?,cancel_requested=0,updated_at=CURRENT_TIMESTAMP
+                    operator_overrides_json=?,cancel_requested=0,
+                    stall_fingerprint='',stall_occurrences=0,updated_at=CURRENT_TIMESTAMP
                 WHERE job_id=?""",
                 (
                     json.dumps(kept, ensure_ascii=False),
@@ -1048,15 +1129,35 @@ class WorkbookResearchJobService:
                 if held_packet is not None
                 else _json_object(row, "held_packet_json")
             )
+            keys = row.keys()
+            fingerprint = remainder_fingerprint(remaining_locators)
+            previous_fingerprint = (
+                str(row["stall_fingerprint"] or "") if "stall_fingerprint" in keys else ""
+            )
+            previous_occurrences = (
+                int(row["stall_occurrences"] or 0) if "stall_occurrences" in keys else 0
+            )
+            # The same remainder reported by consecutive resumes is the loop the
+            # per-run counters cannot see; anything else (progress, a different
+            # sheet, an operator reopen) restarts the count from one.
+            if not fingerprint:
+                occurrences = 0
+            elif fingerprint == previous_fingerprint:
+                occurrences = previous_occurrences + 1
+            else:
+                occurrences = 1
             conn.execute(
                 """UPDATE workbook_research_jobs
                 SET status='paused',phase=?,cancel_requested=0,remaining_json=?,
-                    held_packet_json=?,updated_at=CURRENT_TIMESTAMP
+                    held_packet_json=?,stall_fingerprint=?,stall_occurrences=?,
+                    updated_at=CURRENT_TIMESTAMP
                 WHERE job_id=?""",
                 (
                     str(phase),
                     json.dumps(remaining_locators, ensure_ascii=False),
                     json.dumps(held_payload, ensure_ascii=False),
+                    fingerprint,
+                    occurrences,
                     job_id,
                 ),
             )
@@ -1067,6 +1168,9 @@ class WorkbookResearchJobService:
                 {
                     "remaining_total": len(remaining_locators),
                     "held_queries": len(held_payload.get("queries") or []),
+                    "remainder_fingerprint": fingerprint,
+                    "remainder_repeats": occurrences,
+                    "terminal_bound": STALL_TERMINAL_OCCURRENCES,
                 },
             )
         return self.get(job_id)
@@ -1105,13 +1209,133 @@ class WorkbookResearchJobService:
             self._append_event(conn, job_id, status, {"phase": str(phase)})
         return self.get(job_id)
 
-    def get(self, job_id: str) -> dict[str, Any]:
+    def finish_with_declared_gaps(
+        self,
+        job_id: str,
+        *,
+        gap_rows: Sequence[Mapping[str, Any]],
+        reason: str = "",
+        attempts: int = 0,
+    ) -> dict[str, Any]:
+        """Close the rows no model offer ever produced, without lying about the rest.
+
+        This is the terminal half of the stall bound.  It never touches an
+        accepted model decision: a locator that already has any role keeps it,
+        and only the locators with NO decision at all are appended, through
+        :func:`declared_gap_decision`, as positions that state the absence of a
+        solution.
+
+        Whether the job also becomes ``complete`` depends on the *global*
+        remainder, not on the stalled sheet.  On the live customer ВОР a pass
+        stalls on two dead rows of АР while six whole sheets (200 work rows) have
+        not been offered yet; completing there would have told the customer the
+        document was finished.  So the stalled locators leave ``remaining`` for
+        good - the model is never asked about them again, which is what breaks
+        the loop - and the job only reaches ``complete`` / phase ``declared_gaps``
+        when nothing is left, which is the state the caller packages the final
+        workbook from with no further model call.  Reporting stays honest either
+        way because a declared row carries no cipher and no price and the
+        readiness projection counts them separately as ``declared_gaps``.
+        """
+
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)
             ).fetchone()
             if row is None:
                 raise WorkbookResearchJobError("workbook research job not found")
+            existing_rows = json.loads(str(row["accepted_rows_json"]))
+            self._ensure_operation_ids(str(job_id), existing_rows)
+
+            def _plain(item: Mapping[str, Any]) -> str:
+                # both sides of the "already decided?" test are normalised the
+                # same way, so a ``LOCATOR:`` spelling cannot smuggle in a
+                # duplicate position for a row the model already answered.
+                text = str(item.get("source_row") or "").strip()
+                if text.upper().startswith("LOCATOR:"):
+                    text = text[len("LOCATOR:"):].strip()
+                return text.upper()
+
+            decided = {
+                _plain(item)
+                for item in existing_rows
+                if isinstance(item, Mapping) and _plain(item)
+            }
+            declared: list[dict[str, Any]] = []
+            for raw in gap_rows or ():
+                if not isinstance(raw, Mapping):
+                    continue
+                payload = dict(raw)
+                locator = str(payload.get("source_row") or "").strip()
+                if not locator or _plain(payload) in decided:
+                    continue
+                payload["operation_id"] = _new_operation_id()
+                payload["revision"] = 1
+                payload["revision_origin"] = "declared_gap"
+                decided.add(_plain(payload))
+                existing_rows.append(payload)
+                declared.append(payload)
+                self._insert_revision(
+                    conn, str(job_id), payload["operation_id"], 1, "declared_gap", payload, None
+                )
+            closed = {_plain(item) for item in declared}
+            still_open = [
+                str(loc)
+                for loc in _json_list(row, "remaining_json")
+                if str(loc).strip()
+                and str(loc).replace("LOCATOR:", "").strip().upper() not in closed
+            ]
+            completed = not still_open
+            phase = "declared_gaps" if (declared and completed) else (
+                "research_complete" if completed else "packets"
+            )
+            conn.execute(
+                """UPDATE workbook_research_jobs
+                SET status=?,phase=?,accepted_rows_json=?,remaining_json=?,
+                    stall_count=0,stall_reason='',stall_fingerprint='',
+                    stall_occurrences=0,run_round_count=0,held_attempts=0,
+                    held_packet_json='{}',updated_at=CURRENT_TIMESTAMP
+                WHERE job_id=?""",
+                (
+                    "complete" if completed else "paused",
+                    phase,
+                    json.dumps(existing_rows, ensure_ascii=False),
+                    json.dumps(still_open, ensure_ascii=False),
+                    str(job_id),
+                ),
+            )
+            if declared:
+                self._append_event(
+                    conn,
+                    job_id,
+                    "gaps_declared",
+                    {
+                        "schema": "les.declared-gaps.v1",
+                        "locators": [item["source_row"] for item in declared],
+                        "count": len(declared),
+                        "offers": int(attempts or 0),
+                        "reason": str(reason or ""),
+                        "decision_author": "application",
+                        "model_called": False,
+                        "job_completed": completed,
+                        "still_remaining": len(still_open),
+                    },
+                )
+            if completed:
+                self._append_event(
+                    conn,
+                    job_id,
+                    "complete",
+                    {"phase": phase, "declared_gaps": len(declared)},
+                )
+        return self.get(job_id)
+
+    def get(self, job_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)
+            ).fetchone()
             events = self._events(conn, str(job_id), "workbook_packaged")
         job = self._row(row)
         job["document"] = describe_packaging_document(
@@ -1378,6 +1602,22 @@ class WorkbookResearchJobService:
                 "threshold": _STALL_THRESHOLD,
                 "run_packet_budget": _RUN_PACKET_BUDGET,
                 "held_max_attempts": _HELD_PACKET_MAX_ATTEMPTS,
+                # Cross-resume bound: how many resumes in a row reported the very
+                # same GLOBAL remainder.  The per-run counters above reset on every
+                # resume, so without this a job whose last rows the model keeps
+                # refusing pauses and resumes forever and never reaches a terminal
+                # state the customer can download.
+                "remainder_fingerprint": (
+                    str(row["stall_fingerprint"] or "")
+                    if "stall_fingerprint" in row.keys()
+                    else ""
+                ),
+                "remainder_repeats": (
+                    int(row["stall_occurrences"] or 0)
+                    if "stall_occurrences" in row.keys()
+                    else 0
+                ),
+                "terminal_bound": STALL_TERMINAL_OCCURRENCES,
             },
         }
 

@@ -374,6 +374,15 @@ def build_lsr_result_readiness(
         "equipment": sum(1 for row in work_rows if inferred_row_role(row) == "equipment"),
         "headers": sum(1 for row in work_rows if canonicalize_row_role(row.get("row_role")) == "header"),
         "unresolved": sum(1 for row in work_rows if inferred_row_role(row) == "unresolved"),
+        # Rows the application closed on its own bookkeeping because no model
+        # offer produced a decision.  Reported apart from the model's own
+        # "unresolved" so the customer can never read an application-side
+        # stop-loss as a professional verdict.
+        "declared_gaps": sum(
+            1
+            for row in work_rows
+            if str(row.get("decision_origin") or "") == "declared_gap"
+        ),
         "norms_selected": sum(
             1
             for row in work_rows
@@ -396,8 +405,17 @@ def build_lsr_result_readiness(
         counts["preliminary_amount"] = round(float(preliminary_amount), 2)
 
     technical_complete = file_status == "ready"
+    # A row the application closed on its own because no model offer produced a
+    # decision is an admitted hole in the estimate, so it must block every
+    # "complete" claim even though coverage is closed and no norm/price gap is
+    # attached to an ``unresolved`` role.
+    declared_gap_count = int(counts.get("declared_gaps") or 0)
     estimate_complete = bool(
-        coverage_complete and norms_complete and priced_complete and technical_complete
+        coverage_complete
+        and norms_complete
+        and priced_complete
+        and technical_complete
+        and declared_gap_count == 0
     )
 
     dimensions = {
@@ -592,13 +610,20 @@ def format_lsr_readiness_notice(
         "unspecified",
         "no_book",
     }
-    if file_ready and coverage_complete and norms_complete and prices_complete:
+    counts = payload.get("counts") if isinstance(payload.get("counts"), Mapping) else {}
+    declared_count = int(counts.get("declared_gaps") or 0)
+    if (
+        file_ready
+        and coverage_complete
+        and norms_complete
+        and prices_complete
+        and declared_count == 0
+    ):
         done_line = f"ЛСР собрана.{file_bit}".strip()
         if basis_visible:
             done_line += _lsr_basis_suffix(basis_match, basis_note)
         return done_line
     parts = [f"ЛСР собрана частично.{file_bit}".strip()]
-    counts = payload.get("counts") if isinstance(payload.get("counts"), Mapping) else {}
     if counts:
         composition = (
             f"Состав: работ {int(counts.get('works') or 0)}, материалов "
@@ -606,6 +631,11 @@ def format_lsr_readiness_notice(
             f"заголовков {int(counts.get('headers') or 0)}, нерешённых {int(counts.get('unresolved') or 0)}; "
             f"норм выбрано {int(counts.get('norms_selected') or 0)}"
         )
+        if int(counts.get("declared_gaps") or 0):
+            composition += (
+                f", из них {int(counts['declared_gaps'])} строк закрыто приложением "
+                "как пробел (модель не дала решения)"
+            )
         if counts.get("calculated_positions") is not None:
             composition += f", позиций рассчитано {int(counts['calculated_positions'])}"
         if counts.get("confirmed_amount") is not None:
@@ -639,6 +669,12 @@ def format_lsr_readiness_notice(
         )
     if basis_visible:
         parts.append(_lsr_basis_suffix(basis_match, basis_note).strip())
+    if declared_count:
+        parts.append(
+            f"Пробелов, закрытых приложением без решения модели: {declared_count}. "
+            "Норма и цена для них не подобраны и не выдуманы; строки видны в файле "
+            "с явной причиной."
+        )
     continue_action = _text(payload.get("continue_action"))
     if continue_action:
         parts.append(continue_action)
