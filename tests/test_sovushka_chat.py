@@ -2048,6 +2048,88 @@ def test_an_open_job_still_gets_the_real_progress_bubble() -> None:
     assert notice.startswith("Сборка продолжается")
 
 
+# --------------------------------------------------------------------------- #
+# A killed executor leaves its durable row on ``running`` forever. The customer
+# re-entered exactly such a session: the bubble promised «Сборка продолжается…
+# Файл появится в этой сессии», while the banner above the composer said the
+# build had stopped. The bubble now reads the checkpoint age, like the banner.
+# --------------------------------------------------------------------------- #
+def _zombie_running_job() -> dict:
+    return {
+        "job_id": "wrj_2d8d71d5",
+        "status": "running",
+        "phase": "catalog",
+        "identity": {"session_id": "acc785r2_1790102794", "source_name": "ВОР.xlsx"},
+        "accepted_rows": [],
+        "remaining": [],
+        "created_at": "2026-09-22 18:46:35",
+        "updated_at": "2026-09-22 18:46:35",
+        "document": {"state": "none"},
+    }
+
+
+def _stalled_pending() -> dict:
+    return chat_page.workbook_job_to_pending_progress(_zombie_running_job(), {})
+
+
+def test_a_stalled_job_stops_announcing_a_build_that_is_not_happening() -> None:
+    now_ts = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc).timestamp()
+    pending = _stalled_pending()
+    assert chat_page.workbook_job_is_stalled(pending, now_ts=now_ts, threshold_sec=1200)
+
+    notice = chat_page.format_workbook_assembly_notice(pending, now_ts=now_ts)
+
+    assert notice.startswith("Сборка остановилась")
+    assert "Сборка продолжается" not in notice
+    assert "Не нажимайте «Продолжить»" not in notice
+    # the file is not coming, so the bubble must not promise it either
+    assert "только после завершения сборки" in notice
+    assert not notice.endswith("Файл появится в этой сессии.")
+    assert "Ни одна строка ещё не принята" in notice
+
+
+def test_the_stalled_bubble_points_at_the_row_that_actually_holds_the_button() -> None:
+    now_ts = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc).timestamp()
+    notice = chat_page.format_workbook_assembly_notice(_stalled_pending(), now_ts=now_ts)
+
+    assert "«Продолжить» в строке над полем ввода" in notice
+    assert "под полем ввода" not in notice
+    source = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+    assert "«Продолжить» под полем ввода" not in source
+
+
+def test_session_sys_notice_of_a_stalled_job_says_stopped() -> None:
+    assert (
+        chat_page.format_workbook_session_sys_notice(_stalled_pending())
+        == "Сборка остановлена: сервер не обновляет чекпоинт."
+    )
+
+
+def test_the_follow_loop_reports_the_durable_file_state_not_a_promise() -> None:
+    source = inspect.getsource(chat_page.build_chat)
+    at = source.index('"Сборка на сервере завершилась')
+    before = source[at - 760: at]
+
+    # the sentence is kept only for a job the projection cannot call terminal;
+    # a finished research without a file is routed to the repair plan instead
+    assert "workbook_job_is_terminal(pending)" in before
+    assert "format_terminal_assembly_notice(pending)" in before
+
+
+def test_a_live_job_keeps_the_counting_bubble_and_the_dont_touch_hint() -> None:
+    now_ts = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc).timestamp()
+    pending = _stalled_pending()
+    pending["updated_at"] = "2026-09-25 11:58:02"
+    pending["accepted"] = 41
+    pending["total"] = 318
+
+    notice = chat_page.format_workbook_assembly_notice(pending, now_ts=now_ts)
+
+    assert notice.startswith("Сборка продолжается")
+    assert "41/318" in notice
+    assert "Не нажимайте «Продолжить», пока задача идёт." in notice
+
+
 def test_load_history_serves_a_finished_job_and_starts_no_follow_task() -> None:
     source = inspect.getsource(chat_page.build_chat)
     loader = source[source.index("async def _load_history()"):]

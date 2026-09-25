@@ -690,6 +690,12 @@ def format_workbook_assembly_notice(
         return format_terminal_assembly_notice(pending)
     if workbook_assembly_is_paused(pending):
         return format_paused_assembly_notice(pending)
+    if workbook_job_is_stalled(pending, now_ts=now_ts):
+        # A dead executor leaves the durable row on ``running`` forever, so the
+        # reconnect bubble has to read the checkpoint age, not the status word:
+        # «Сборка продолжается» over a 65-часовой тишине противоречит баннеру
+        # «Сборка остановилась» прямо над полем ввода.
+        return format_in_progress_assembly_notice(pending, now_ts=now_ts, stalled=True)
     return format_in_progress_assembly_notice(pending, now_ts=now_ts)
 
 
@@ -698,6 +704,8 @@ def format_workbook_session_sys_notice(pending: Any = None) -> str:
         return format_terminal_assembly_notice(pending)
     if workbook_assembly_is_paused(pending):
         return "Первый проход закончен. Сборка сейчас не идёт."
+    if workbook_job_is_stalled(pending):
+        return "Сборка остановлена: сервер не обновляет чекпоинт."
     if pending:
         return "Сборка на сервере продолжается."
     return "Сессия загружена из истории."
@@ -787,11 +795,23 @@ def format_in_progress_assembly_notice(
     pending: Any = None,
     *,
     now_ts: float | None = None,
+    stalled: bool = False,
 ) -> str:
-    """One in-progress bubble: live counts and remaining time, not a dropped window."""
+    """One in-progress bubble: live counts and remaining time, not a dropped window.
+
+    ``stalled`` is the state the durable checkpoint actually reports: the row is
+    still ``running``, but nothing has been written for longer than any bounded
+    model/tool window, so the executor is gone. Such a job must not announce a
+    build that is happening, must not promise a file that is not coming, and
+    must not point at a button that no longer sits under the input.
+    """
 
     payload = pending if isinstance(pending, dict) else {}
-    bits = ["Сборка продолжается"]
+    bits = (
+        ["Сборка остановилась — чекпоинт не обновляется"]
+        if stalled
+        else ["Сборка продолжается"]
+    )
     accepted = _pending_int(payload, "accepted", "completed")
     total = _pending_int(payload, "total")
     remaining = _pending_int(payload, "remaining")
@@ -816,24 +836,41 @@ def format_in_progress_assembly_notice(
     )
     elapsed_text = format_chat_duration_sec(elapsed) if elapsed >= 1 else ""
     if elapsed_text:
-        bits.append(f"с начала задачи {elapsed_text}")
+        bits.append(
+            f"задача открыта {elapsed_text}" if stalled else f"с начала задачи {elapsed_text}"
+        )
     head = bits[0] if len(bits) == 1 else f"{bits[0]}: {', '.join(bits[1:])}"
-    eta = format_job_ready_eta_line(
-        payload.get("started_at") or payload.get("created_at"),
-        accepted,
-        total,
-        running=(workbook_job_status(payload) or "running") == "running",
-        now_ts=now_ts,
-        prior_completed=payload.get("prior_completed"),
-        prior_elapsed_seconds=payload.get("prior_elapsed_seconds"),
+    eta = (
+        ""
+        if stalled
+        else format_job_ready_eta_line(
+            payload.get("started_at") or payload.get("created_at"),
+            accepted,
+            total,
+            running=(workbook_job_status(payload) or "running") == "running",
+            now_ts=now_ts,
+            prior_completed=payload.get("prior_completed"),
+            prior_elapsed_seconds=payload.get("prior_elapsed_seconds"),
+        )
     )
     parts = [f"{head}."]
     if eta:
         parts.append(eta if eta.endswith(".") else f"{eta}.")
     elif accepted in (None, 0) and not total:
-        parts.append("Счётчик строк появится после первого принятого пакета.")
-    parts.append("Не нажимайте «Продолжить», пока задача идёт.")
-    parts.append("Файл появится в этой сессии.")
+        parts.append(
+            "Ни одна строка ещё не принята: сохранённого результата нет."
+            if stalled
+            else "Счётчик строк появится после первого принятого пакета."
+        )
+    if stalled:
+        parts.append(
+            "Нажмите «Продолжить» в строке над полем ввода — сборка пойдёт с "
+            "сохранённого кэша, принятые решения не теряются."
+        )
+        parts.append("Файл появится в этой сессии только после завершения сборки.")
+    else:
+        parts.append("Не нажимайте «Продолжить», пока задача идёт.")
+        parts.append("Файл появится в этой сессии.")
     return " ".join(parts)
 
 
@@ -5293,11 +5330,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         notice = format_workbook_assembly_notice(payload)
         running = workbook_assembly_is_running(payload)
         stalled = running and workbook_job_is_stalled(payload)
-        if stalled:
-            notice = str(notice).replace(
-                "Не нажимайте «Продолжить», пока задача идёт.",
-                "Чекпоинт не обновляется — нажмите «Продолжить» под полем ввода.",
-            )
+        # ``format_workbook_assembly_notice`` already reads the checkpoint age, so
+        # the bubble and the banner above the composer cannot disagree any more;
+        # patching the sentence here is what used to leave "Сборка продолжается"
+        # next to "Сборка остановилась".
         try:
             lsr_stalled_row.set_visibility(bool(stalled) and not _sending["v"])
         except Exception:
@@ -5646,7 +5682,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             persist_chat_pending(None)
             _sending["v"] = False
             stop_dialog_btn.set_visibility(False)
-            _render_chat_history("Сборка на сервере завершилась. Файл в этой сессии.")
+            if workbook_job_is_terminal(pending):
+                # The follow loop ends on the durable state, not on hope: a
+                # research that finished without a file must not be announced
+                # as "Файл в этой сессии" — that sentence is what sent the
+                # operator looking for a document that does not exist.
+                _render_chat_history(format_terminal_assembly_notice(pending))
+            else:
+                _render_chat_history("Сборка на сервере завершилась. Файл в этой сессии.")
             _scroll_chat_to_tail(force=True)
         finally:
             _history_follow_lock["busy"] = False
