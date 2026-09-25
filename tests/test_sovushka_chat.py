@@ -1056,6 +1056,41 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert "max-width: 1440px" in styles
 
 
+def test_chat_composer_keeps_status_banner_out_of_the_action_row():
+    """Композер не должен ничего накладывать на поле ввода.
+
+    Отчёт заказчика: «Сборка остановилась…» и «Продолжить» легли поверх
+    строки ввода и вылезли за рамку. ``.sov-composer`` — авторастущая
+    textarea без запаса по высоте, поэтому любой абсолютный слой внутри
+    неё накрывает текст, а nowrap-ряд кнопок на узкой ширине уходит за
+    левый край рамки. Баннер живёт НАД композером, ряд действий — ПОД
+    полем ввода в обычном потоке и переносится.
+    """
+    source = inspect.getsource(chat_page.build_chat)
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+    uikit = Path("sovushka/uikit/tokens.py").read_text(encoding="utf-8")
+
+    banner = source.index('classes("sov-lsr-stalled-row items-center")')
+    composer = source.index('classes("sov-composer") as composer_box')
+    footer = source.index('classes("sov-composer-footer")')
+    assert banner < composer < footer
+
+    footer_rule = styles.split(".sov-composer-footer {", 1)[1].split("}", 1)[0]
+    assert "position: static" in footer_rule
+    assert "position: absolute" not in footer_rule
+
+    actions_rule = uikit.split(".sov-composer-actions {", 1)[1].split("}", 1)[0]
+    assert "flex-wrap: wrap" in actions_rule
+    assert "flex-wrap: nowrap" not in actions_rule
+
+    banner_rule = styles.split(".sov-lsr-stalled-row {", 1)[1].split("}", 1)[0]
+    assert "align-self: center" in banner_rule
+    assert "width: calc(100% - 48px)" in banner_rule
+    assert "max-width: 1440px" in banner_rule
+    assert ".sov-lsr-stalled-row" not in uikit
+    assert "flex: 0 1 152px" in uikit
+
+
 def test_chat_file_picker_uses_task_language_and_compact_uikit_surface():
     source = inspect.getsource(chat_page.build_chat)
     uikit = Path("sovushka/uikit/tokens.py").read_text(encoding="utf-8")
@@ -1471,6 +1506,21 @@ async def test_free_mode_injects_session_memory(monkeypatch):
     )
     monkeypatch.setattr(chat_router, "session_memory", lambda session_id, **kwargs: "ПАМЯТЬ СЕССИИ")
     monkeypatch.setattr(chat_router.httpx, "AsyncClient", _FakeAsyncClient)
+
+    async def _no_capability_probe(client):
+        """Пробу возможностей связанной модели гасим явно.
+
+        ``_refresh_stale_bound_model_capabilities`` читает постоянный реестр
+        подключений (``%LOCALAPPDATA%\\LES``), а на стенде заказчика или после
+        живого прогона там уже лежит ANSWER-биндинг со стёртым TTL. Тогда
+        зонд зовёт ``client.stream`` на фейковом клиенте, и тест памяти
+        падает не по своей вине.
+        """
+        return None
+
+    monkeypatch.setattr(
+        chat_router, "_refresh_stale_bound_model_capabilities", _no_capability_probe
+    )
 
     answer = await chat_router._run_free_mode(ChatRequest(question="продолжи", session_id="s1"))
     prompt = _FakeAsyncClient.last_json["messages"][1]["content"]
@@ -1923,6 +1973,37 @@ def test_terminal_notice_for_a_job_without_a_file_offers_the_repair() -> None:
     assert "файла пока нет" in notice
     assert "без повторного поиска норм" in notice
     assert "Сборка продолжается" not in notice
+
+
+def test_terminal_notice_points_at_the_control_that_is_actually_on_screen() -> None:
+    """Текст не должен звать на кнопку, которую сборка 808 убрала.
+
+    Для завершённого задания «Продолжить» больше не предлагается: карточка
+    даёт «Скачать последнюю ревизию», а при незапакованном файле —
+    «Пересобрать файл». Заказчик видел указание на несуществующую кнопку.
+    """
+
+    document_notice = chat_page.format_terminal_assembly_notice(_finished_vor_job())
+    assert "«Скачать последнюю ревизию»" in document_notice
+    assert "«Продолжить»" not in document_notice
+
+    job = _finished_vor_job()
+    job["document"] = {
+        "state": "pending",
+        "needs_document": True,
+        "recovery_reason": "Сохранённые решения модели не пересматриваются.",
+    }
+    repack_notice = chat_page.format_terminal_assembly_notice(job)
+    assert "«Пересобрать файл»" in repack_notice
+    assert "«Продолжить»" not in repack_notice
+    assert ".." not in repack_notice
+
+    # «Продолжить» остаётся единственной выходной жестикуляции для failed:
+    # сервис заданий перечисляет его в возобновляемых статусах.
+    failed_notice = chat_page.format_terminal_assembly_notice(
+        {"job_id": "wrj_f", "status": "failed", "document": {"state": "none"}}
+    )
+    assert "«Продолжить»" in failed_notice
 
 
 def test_stopped_research_is_reported_as_stopped_not_as_running() -> None:

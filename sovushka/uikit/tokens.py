@@ -829,7 +829,9 @@ html {
 }
 
 /* Chat first layer: prompt, one mode selector, attachment, settings and send.
-   Guidance stays inside the settings menu and never floats over the thread. */
+   Guidance stays inside the settings menu and never floats over the thread.
+   Строка действий живёт под полем ввода и переносится, а не выезжает за
+   рамку композера: nowrap на узкой ширине давал отрицательные X у кнопок. */
 .sov-composer-footer {
   min-height: var(--sov-ui-hit);
 }
@@ -839,13 +841,14 @@ html {
   min-width: 0;
   gap: var(--sov-ui-space-2);
   align-items: center;
-  flex-wrap: nowrap;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .sov-mode-select {
   width: 152px;
-  min-width: 132px;
-  flex: 0 0 152px;
+  min-width: 118px;
+  flex: 0 1 152px;
 }
 
 .sov-mode-select .q-field__control {

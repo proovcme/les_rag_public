@@ -8300,7 +8300,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 6980,
+      "lines": 6985,
       "module": "sovushka.pages.chat",
       "outbound": [
         "backend/rag_config.py",
@@ -8600,7 +8600,7 @@
         "sovushka_ng.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 3264,
+      "lines": 3301,
       "module": "sovushka.styles",
       "outbound": [
         "sovushka/__init__.py"
@@ -8698,7 +8698,7 @@
         "sovushka/uikit/__init__.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 4274,
+      "lines": 4277,
       "module": "sovushka.uikit.tokens",
       "outbound": [
         "sovushka/__init__.py",
@@ -13530,7 +13530,7 @@
     },
     {
       "inbound": [],
-      "lines": 2024,
+      "lines": 2105,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -19051,7 +19051,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 647,
     "tracked_python_files": 1016,
-    "tracked_python_lines": 336987
+    "tracked_python_lines": 337113
   },
   "warnings": []
 }

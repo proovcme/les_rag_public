@@ -740,6 +740,34 @@ body, .nicegui-content, .q-page, .q-layout, .q-card, .q-dialog, .q-menu,
   font-weight: 900;
   letter-spacing: .02em;
 }
+.sov-lsr-stalled-row {
+  /* Ширина и посадка — как у композера: баннер стоит над полем ввода
+     в той же колонке, и иначе его края смотрятся «съехавшими». */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+  width: calc(100% - 48px);
+  max-width: 1440px;
+  margin: 0 0 8px;
+  padding: 7px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(245,158,11,.46);
+  background: rgba(245,158,11,.10);
+}
+.sov-lsr-stalled-hint {
+  flex: 1 1 190px;
+  min-width: 0;
+  color: var(--warn);
+  font-size: .72rem;
+  font-weight: 900;
+  letter-spacing: .02em;
+  line-height: 1.25;
+}
+.sov-lsr-stalled-resume {
+  flex: 0 0 auto;
+}
 .sov-composer-blocked {
   opacity: .72;
   filter: saturate(.75);
@@ -2043,23 +2071,34 @@ body, .nicegui-content {
   box-shadow: 0 0 0 1px rgba(52,211,153,.32);
 }
 .sov-composer-footer {
-  position: absolute;
-  right: 10px;
-  bottom: 8px;
+  /* Футер идёт в обычном потоке и всегда под полем ввода. Абсолютное
+     позиционирование требовало запаса по высоте у ``.sov-composer``,
+     которого у авторастущей textarea нет: кнопки ложились на строку
+     ввода и на рамку, а при переносе второй строки вылезал за верх поля. */
+  position: static;
+  width: 100%;
   z-index: 2;
-  width: auto;
   min-height: 44px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  margin: 0;
+  gap: 8px;
+  margin: 6px 0 0;
   padding: 0;
   background: transparent;
   box-shadow: none;
 }
 .sov-composer-actions {
-  width: auto;
-  margin: 0 0 0 auto;
-  flex-wrap: nowrap;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .sov-composer-action {
   min-width: 40px !important;
@@ -2089,12 +2128,6 @@ body, .nicegui-content {
 @media (max-width: 1100px) {
   .sov-mode-picker { padding-right: 0; flex-wrap: wrap; }
   .sov-mode-guides { width: calc(100% - 20px); }
-  .sov-composer-footer {
-    position: static;
-    width: 100%;
-    min-height: 40px;
-    margin-top: 3px;
-  }
 }
 @media (max-width: 640px) {
   .sov-mode-guides { bottom: calc(100% + 7px); }
@@ -3219,6 +3252,10 @@ body, .nicegui-content {
   .sov-composer {
     width: calc(100% - 20px);
     margin: 0 10px 10px;
+  }
+  .sov-lsr-stalled-row {
+    width: calc(100% - 20px);
+    margin: 0 10px 8px;
   }
   .sov-mode-picker { gap: 4px; }
   .sov-mode-btn { padding-inline: 9px !important; }

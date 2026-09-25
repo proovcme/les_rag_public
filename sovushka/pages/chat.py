@@ -636,14 +636,14 @@ def format_terminal_assembly_notice(job: Any = None) -> str:
             "Задание завершено. Последняя ревизия: "
             f"{terminal_revision_download_name(payload, revision_id)} — файл в "
             "панели «Файлы», скачайте его из этой сессии. Новое исследование не "
-            "запускается: «Продолжить» для завершённого задания ведёт к этому файлу."
+            "запускается: карточка задания предлагает «Скачать последнюю ревизию»."
         )
     if mode == "repack":
+        reason = str(plan.get("reason") or "финальная ревизия не собрана").rstrip(".")
         return (
             "Задание завершено, а файла пока нет: "
-            f"{plan.get('reason') or 'финальная ревизия не собрана'}. "
-            "«Продолжить» пересобирает его из сохранённых решений модели, без "
-            "повторного поиска норм."
+            f"{reason}. Кнопка «Пересобрать файл» в карточке задания собирает его "
+            "из сохранённых решений модели, без повторного поиска норм."
         )
     if workbook_job_status(payload) == "failed":
         return (
@@ -2509,6 +2509,24 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 if notify:
                     ui.notify("Вложение снято", type="info")
 
+            # Статус-баннер незавершённой сборки живёт НАД полем ввода, а не
+            # в строке кнопок ``sov-composer-footer``: этот ряд рассчитан
+            # только на действия композера, поэтому второй элемент в нём
+            # сжимался в колонку и наползал на «Отправить» и на рамку поля.
+            with ui.row().classes("sov-lsr-stalled-row items-center") as lsr_stalled_row:
+                lsr_stalled_row.set_visibility(False)
+                ui.label("Сборка остановилась: сервер не обновляет чекпоинт.").classes(
+                    "sov-lsr-stalled-hint"
+                )
+                action_button(
+                    "Продолжить",
+                    icon="o_play_arrow",
+                    on_click=lambda: asyncio.create_task(_resume_stalled_lsr()),
+                    variant="primary",
+                    compact=True,
+                    classes="sov-lsr-stalled-resume",
+                ).tooltip("Возобновить сборку с сохранённого кэша пакетов")
+
             with ui.element("div").classes("sov-composer") as composer_box:
                 indexing_banner = ui.label("").classes("sov-indexing-banner")
                 indexing_banner.set_visibility(False)
@@ -2642,19 +2660,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             aria_label="Отправить",
                             classes="sov-send-btn",
                         )
-                    with ui.row().classes("sov-lsr-stalled-row w-full items-center gap-2") as lsr_stalled_row:
-                        lsr_stalled_row.set_visibility(False)
-                        ui.label("Сборка остановилась: сервер не обновляет чекпоинт.").classes(
-                            "sov-lsr-stalled-hint"
-                        )
-                        action_button(
-                            "Продолжить",
-                            icon="o_play_arrow",
-                            on_click=lambda: asyncio.create_task(_resume_stalled_lsr()),
-                            variant="primary",
-                            compact=True,
-                            classes="sov-lsr-stalled-resume",
-                        ).tooltip("Возобновить сборку с сохранённого кэша пакетов")
 
         # Резиновый layout: разделитель между чатом и артефактами (таскать по ширине).
         artifact_divider = ui.element("div").classes("sov-resize-divider")
