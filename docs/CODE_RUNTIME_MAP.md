@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1015 |
-| Строк Python | 336068 |
+| Python-файлов под git | 1016 |
+| Строк Python | 336749 |
 | PRODUCT_REACHABLE | 357 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 646 |
+| TEST_OR_TOOL_ONLY | 647 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 338 |
 | Ошибок разбора | 0 |
@@ -33,8 +33,8 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| proxy/services/chat_evidence_application_service.py | 8568 | 13 |
-| sovushka/pages/chat.py | 6872 | 6 |
+| proxy/services/chat_evidence_application_service.py | 8568 | 14 |
+| sovushka/pages/chat.py | 6951 | 6 |
 | proxy/routers/chat.py | 4634 | 42 |
 | backend/qdrant_adapter.py | 4552 | 29 |
 | sovushka/uikit/tokens.py | 4274 | 2 |
@@ -47,11 +47,11 @@
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2044 | 4 |
 | proxy/services/lsr_norm_quality_gate_service.py | 1943 | 3 |
-| proxy/services/rim_lsr_trace_service.py | 1891 | 11 |
+| proxy/services/rim_lsr_trace_service.py | 1891 | 12 |
 | proxy/smeta_core/norm_browser.py | 1703 | 13 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
-| proxy/services/workbook_research_job_service.py | 1638 | 8 |
+| proxy/services/workbook_research_job_service.py | 1643 | 9 |
 | sovushka/pages/diag.py | 1602 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |

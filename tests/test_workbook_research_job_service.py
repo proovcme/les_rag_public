@@ -1081,3 +1081,18 @@ def test_latest_requires_a_scope_and_never_invents_a_job(tmp_path) -> None:
 
     assert service.latest() is None
     assert service.latest(session_id="", attachment_id="") is None
+
+
+def test_get_of_an_unknown_job_is_not_found_rather_than_a_crash(tmp_path) -> None:
+    """Probing several durable databases for one id is a normal UI gesture.
+
+    ``_work_total_from_job_events`` walks the candidate databases and skips the
+    ones that do not hold the job, so a missing row has to answer with the
+    documented "not found" error.  Reading the row before that check made the
+    probe die on ``TypeError`` whenever the app's own database was present.
+    """
+
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+
+    with pytest.raises(WorkbookResearchJobError, match="not found"):
+        service.get("wrj_does_not_exist")

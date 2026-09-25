@@ -1880,3 +1880,122 @@ def test_reopened_session_restores_the_finished_research_file_state() -> None:
     loader = source[source.index("async def _load_history()"):]
     loader = loader[: loader.index("async def _fetch_session_history_messages")]
     assert "_restore_last_finished_research()" in loader
+
+
+# --------------------------------------------------------------------------- #
+# Re-entering a FINISHED research must show its file, not a progress bubble.
+# Found on the installed build after the customer's ВОР reached its terminal
+# job: the durable state said ``complete`` while the restored page still said
+# "Сборка продолжается".
+# --------------------------------------------------------------------------- #
+def _finished_vor_job() -> dict:
+    return {
+        "job_id": "wrj_vor",
+        "status": "complete",
+        "phase": "declared_gaps",
+        "sheet": "АР",
+        "identity": {"session_id": "live-vor", "source_name": "ВОР.xlsx"},
+        "accepted_rows": [{"source_row": "СКС!R6", "row_role": "work"}],
+        "remaining": [],
+        "document": {
+            "state": "ready",
+            "final_revision_id": "rev_962288fd",
+            "draft_revision_id": "rev_2108237a",
+            "needs_document": False,
+        },
+    }
+
+
+def test_terminal_notice_names_the_last_revision_and_rules_out_a_new_research() -> None:
+    notice = chat_page.format_terminal_assembly_notice(_finished_vor_job())
+
+    assert "Последняя ревизия" in notice
+    assert "962288fd" in notice
+    assert "Сборка продолжается" not in notice
+    assert "Новое исследование не запускается" in notice
+
+
+def test_terminal_notice_for_a_job_without_a_file_offers_the_repair() -> None:
+    job = _finished_vor_job()
+    job["document"] = {"state": "pending", "needs_document": True}
+    notice = chat_page.format_terminal_assembly_notice(job)
+
+    assert "файла пока нет" in notice
+    assert "без повторного поиска норм" in notice
+    assert "Сборка продолжается" not in notice
+
+
+def test_stopped_research_is_reported_as_stopped_not_as_running() -> None:
+    notice = chat_page.format_terminal_assembly_notice(
+        {"job_id": "wrj_x", "status": "failed", "document": {"state": "none"}}
+    )
+
+    assert "остановлена с ошибкой" in notice
+    assert "Сборка продолжается" not in notice
+
+
+def test_reconnect_bubble_of_a_finished_job_cannot_claim_the_build_is_running() -> None:
+    pending = chat_page.workbook_job_to_pending_progress(
+        _finished_vor_job(), {"job_id": "wrj_vor"}
+    )
+
+    # the durable file state travels with the bubble, so a restored client can
+    # tell "finished" from "still assembling" without another request
+    assert pending["document"]["final_revision_id"] == "rev_962288fd"
+    assert chat_page.workbook_job_is_terminal(pending) is True
+    notice = chat_page.format_workbook_assembly_notice(pending)
+    assert "Сборка продолжается" not in notice
+    assert "962288fd" in notice
+
+
+def test_session_sys_notice_for_a_finished_job_is_not_the_running_line() -> None:
+    pending = chat_page.workbook_job_to_pending_progress(_finished_vor_job(), {})
+
+    assert (
+        chat_page.format_workbook_session_sys_notice(pending)
+        != "Сборка на сервере продолжается."
+    )
+
+
+def test_an_open_job_still_gets_the_real_progress_bubble() -> None:
+    job = _finished_vor_job()
+    job["status"] = "running"
+    job["remaining"] = ["ОВиК!R12", "ОВиК!R13"]
+    pending = chat_page.workbook_job_to_pending_progress(job, {})
+
+    notice = chat_page.format_workbook_assembly_notice(pending)
+    assert notice.startswith("Сборка продолжается")
+
+
+def test_load_history_serves_a_finished_job_and_starts_no_follow_task() -> None:
+    source = inspect.getsource(chat_page.build_chat)
+    loader = source[source.index("async def _load_history()"):]
+    loader = loader[: loader.index("async def _fetch_session_history_messages")]
+
+    assert "workbook_job_is_terminal(job)" in loader
+    assert "persist_chat_pending(None)" in loader
+    assert "format_terminal_assembly_notice(job)" in loader
+    branch = loader[loader.index("if job and workbook_job_is_terminal(job):"):]
+    branch = branch[: branch.index("if job:\n            persist_chat_pending(")]
+    # the finished document is bound AFTER the history render (rendering clears
+    # the artifact panel), and no polling task is created for a terminal job
+    assert branch.index("_render_chat_history(") < branch.index("_apply_terminal_job_plan")
+    assert "asyncio.create_task" not in branch
+    assert "return" in branch
+
+
+def test_progress_polling_stops_as_soon_as_the_research_turns_terminal() -> None:
+    source = inspect.getsource(chat_page.build_chat)
+    poll = source[source.index("async def _poll_workbook_progress"):]
+    poll = poll[: poll.index("first = await _fetch_session_history_messages")]
+
+    assert "workbook_job_is_terminal" in poll
+    assert poll.index("workbook_job_is_terminal") < poll.index("workbook_assembly_is_running")
+
+
+def test_follow_task_bails_out_before_waiting_on_a_finished_job() -> None:
+    source = inspect.getsource(chat_page.build_chat)
+    follow = source[source.index("async def _follow_pending_history_if_needed"):]
+    follow = follow[: follow.index("payload = await follow_detached_chat_history")]
+
+    assert "workbook_job_is_terminal" in follow

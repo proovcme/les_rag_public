@@ -496,6 +496,18 @@ def workbook_job_to_pending_progress(job: Any, pending: Any = None) -> dict[str,
     data["accepted_all"] = accepted_all
     data["packet_size"] = packet_n
     data["held_queries"] = held_queries
+    document = job.get("document") if isinstance(job.get("document"), dict) else {}
+    if document:
+        # The reconnect bubble is what a re-entered client has to reason about,
+        # so it has to carry the durable file state as well: without it a
+        # finished research looks like "still assembling" to the restored page.
+        data["document"] = {
+            "state": str(document.get("state") or ""),
+            "final_revision_id": str(document.get("final_revision_id") or ""),
+            "draft_revision_id": str(document.get("draft_revision_id") or ""),
+            "needs_document": bool(document.get("needs_document")),
+            "recovery_reason": str(document.get("recovery_reason") or ""),
+        }
     if job.get("created_at"):
         utc_stamp = _as_utc_iso(job.get("created_at"))
         data["created_at"] = utc_stamp or job.get("created_at")
@@ -606,6 +618,44 @@ def terminal_job_repair_plan(job: Any) -> dict[str, Any]:
     }
 
 
+def format_terminal_assembly_notice(job: Any = None) -> str:
+    """What a re-entered client says about a research that is already over.
+
+    A terminal job is never "в процессе": the honest line names the last
+    revision and where to get it, or states that the file still has to be
+    rebuilt from the saved decisions.  This is what replaces the progress
+    bubble after «job.status=complete».
+    """
+
+    payload = job if isinstance(job, dict) else {}
+    plan = terminal_job_repair_plan(payload)
+    mode = str(plan.get("mode") or "")
+    revision_id = str(plan.get("revision_id") or "").strip()
+    if mode == "document" and revision_id:
+        return (
+            "Задание завершено. Последняя ревизия: "
+            f"{terminal_revision_download_name(payload, revision_id)} — файл в "
+            "панели «Файлы», скачайте его из этой сессии. Новое исследование не "
+            "запускается: «Продолжить» для завершённого задания ведёт к этому файлу."
+        )
+    if mode == "repack":
+        return (
+            "Задание завершено, а файла пока нет: "
+            f"{plan.get('reason') or 'финальная ревизия не собрана'}. "
+            "«Продолжить» пересобирает его из сохранённых решений модели, без "
+            "повторного поиска норм."
+        )
+    if workbook_job_status(payload) == "failed":
+        return (
+            "Сборка остановлена с ошибкой. Принятые решения сохранены; "
+            "«Продолжить» возобновляет сборку, а не начинает её заново."
+        )
+    return (
+        "Задание завершено. Отдельного файла для скачивания нет: "
+        f"{plan.get('reason') or 'ревизий не сохранено'}."
+    )
+
+
 def format_paused_assembly_notice(pending: Any = None) -> str:
     """First pass packed a draft; the model is not assembling now."""
 
@@ -636,12 +686,16 @@ def format_workbook_assembly_notice(
     *,
     now_ts: float | None = None,
 ) -> str:
+    if workbook_job_is_terminal(pending):
+        return format_terminal_assembly_notice(pending)
     if workbook_assembly_is_paused(pending):
         return format_paused_assembly_notice(pending)
     return format_in_progress_assembly_notice(pending, now_ts=now_ts)
 
 
 def format_workbook_session_sys_notice(pending: Any = None) -> str:
+    if workbook_job_is_terminal(pending):
+        return format_terminal_assembly_notice(pending)
     if workbook_assembly_is_paused(pending):
         return "Первый проход закончен. Сборка сейчас не идёт."
     if pending:
@@ -5444,6 +5498,22 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             session_id=str(sid or ""),
             job_id=str(pending.get("job_id") or ""),
         )
+        if job and workbook_job_is_terminal(job):
+            # Re-entry after «job.status=complete» must land on the finished
+            # document, not on a progress bubble that implies the research is
+            # still running.  The durable file state decides what to show, and
+            # the pending blob is dropped first so nothing later repaints it as
+            # work.  The file panel is bound *after* the history render, because
+            # rendering clears the artifact list.
+            persist_chat_pending(None)
+            _render_chat_history(
+                "Сессия восстановлена. " + format_terminal_assembly_notice(job)
+            )
+            _scroll_chat_to_tail(force=True)
+            plan = terminal_job_repair_plan(job)
+            if plan["mode"] != "resume":
+                await _apply_terminal_job_plan(job, plan)
+            return
         if job:
             persist_chat_pending(workbook_job_to_pending_progress(job, pending))
         else:
@@ -5483,6 +5553,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     pending = workbook_job_to_pending_progress(job, pending)
                     persist_chat_pending(pending)
                     _paint_in_progress_bubble(pending)
+                if workbook_job_is_terminal(state.get("chat_pending") or job or {}):
+                    # The research ended while we were polling: say what it
+                    # produced instead of keeping a progress bubble running.
+                    return False
                 if workbook_assembly_is_running(state.get("chat_pending") or job or {}):
                     return True
                 if workbook_assembly_is_paused(state.get("chat_pending") or job or {}):
@@ -5503,6 +5577,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             in_progress = any(history_row_is_in_progress(item) for item in first)
             job_running = workbook_assembly_is_running(pending)
             job_paused = workbook_assembly_is_paused(pending)
+            if workbook_job_is_terminal(pending) or workbook_job_is_terminal(job or {}):
+                # Nothing to follow: the research is over.  Render its result
+                # line, not "Сборка продолжается", and leave the bubble alone.
+                _paint_in_progress_bubble(pending)
+                return
             if pending and _follow_placeholder.get("label") is None:
                 _render_chat_history(format_workbook_session_sys_notice(pending))
             elif pending:

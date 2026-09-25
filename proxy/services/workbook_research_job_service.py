@@ -1337,6 +1337,11 @@ class WorkbookResearchJobService:
                 "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)
             ).fetchone()
             events = self._events(conn, str(job_id), "workbook_packaged")
+        if row is None:
+            # An unknown id is the documented "not found" answer, not a crash:
+            # callers probe several durable databases and skip the ones that do
+            # not hold this job.
+            raise WorkbookResearchJobError("workbook research job not found")
         job = self._row(row)
         job["document"] = describe_packaging_document(
             events, status=str(job.get("status") or "")

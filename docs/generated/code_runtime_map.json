@@ -3081,6 +3081,7 @@
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py",
+        "tests/test_stall_bound_25.py",
         "tests/test_stall_completion_23.py",
         "tests/test_workbook_tool_service.py"
       ],
@@ -4749,7 +4750,8 @@
         "tests/test_finalization_defects_782.py",
         "tests/test_lsr_result_readiness_service.py",
         "tests/test_money_states_23.py",
-        "tests/test_rim_lsr_trace_service.py"
+        "tests/test_rim_lsr_trace_service.py",
+        "tests/test_stall_bound_25.py"
       ],
       "lines": 690,
       "module": "proxy.services.lsr_result_readiness_service",
@@ -6202,6 +6204,7 @@
         "tests/test_rim_session_xlsx.py",
         "tests/test_rim_trace_xlsx.py",
         "tests/test_smeta_core.py",
+        "tests/test_stall_bound_25.py",
         "tests/test_workbook_tool_service.py"
       ],
       "lines": 1891,
@@ -7398,9 +7401,10 @@
         "tests/test_packaging_recovery_service.py",
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_sovushka_chat.py",
+        "tests/test_stall_bound_25.py",
         "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 1638,
+      "lines": 1643,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8296,7 +8300,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 6872,
+      "lines": 6951,
       "module": "sovushka.pages.chat",
       "outbound": [
         "backend/rag_config.py",
@@ -13526,7 +13530,7 @@
     },
     {
       "inbound": [],
-      "lines": 1882,
+      "lines": 2001,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13702,6 +13706,20 @@
         "proxy/services/spreadsheet_object_model.py"
       ],
       "path": "tests/test_spreadsheet_object_model.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 463,
+      "module": "tests.test_stall_bound_25",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/lsr_result_readiness_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
+        "proxy/services/workbook_research_job_service.py"
+      ],
+      "path": "tests/test_stall_bound_25.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -14379,7 +14397,7 @@
     },
     {
       "inbound": [],
-      "lines": 1083,
+      "lines": 1098,
       "module": "tests.test_workbook_research_job_service",
       "outbound": [
         "proxy/services/workbook_research_job_service.py"
@@ -19031,9 +19049,9 @@
     "product_reachable": 357,
     "registered_api_routes": 338,
     "runtime_support": 11,
-    "test_or_tool_only": 646,
-    "tracked_python_files": 1015,
-    "tracked_python_lines": 336068
+    "test_or_tool_only": 647,
+    "tracked_python_files": 1016,
+    "tracked_python_lines": 336749
   },
   "warnings": []
 }
