@@ -787,7 +787,7 @@ class RimSessionStore:
                 """
                 SELECT revision_id, parent_revision_id, revision_kind, created_by,
                        created_at, payload_json, payload_sha256
-                FROM rim_revisions WHERE session_id=? ORDER BY created_at, revision_id
+                FROM rim_revisions WHERE session_id=? ORDER BY rowid
                 """,
                 (safe_id,),
             ).fetchall()

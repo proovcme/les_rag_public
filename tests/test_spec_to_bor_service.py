@@ -274,3 +274,46 @@ def test_rows_from_spec_xlsx_binds_obem_header_to_qty(tmp_path):
         "Кабель акустический LY24",
         "Разъем XLR F",
     ]
+
+
+def test_rows_from_spec_xlsx_reads_every_matching_sheet_with_source_coordinates(tmp_path):
+    import openpyxl
+
+    path = tmp_path / "many sheets.xlsx"
+    wb = openpyxl.Workbook()
+    first = wb.active
+    first.title = "Пояснение"
+    first.append(["Текст без таблицы"])
+    for title, item, quantity in (("Раздел А", "Кабель А", 10), ("Раздел Б", "Кабель Б", 20)):
+        ws = wb.create_sheet(title)
+        ws.append(["Наименование", "Ед. изм.", "Кол-во"])
+        ws.append([item, "м", quantity])
+    wb.save(path)
+
+    rows = rows_from_spec_xlsx(path, source_label="проект.xlsx")
+
+    assert [(row["name"], row["qty"]) for row in rows] == [("Кабель А", 10.0), ("Кабель Б", 20.0)]
+    assert [row["source_row"] for row in rows] == ["Раздел А!R2", "Раздел Б!R2"]
+    assert [row["source_file"] for row in rows] == ["проект.xlsx!Раздел А", "проект.xlsx!Раздел Б"]
+
+
+@pytest.mark.parametrize("headers", [
+    ["Наименование", "Ед. изм.", "Кол-во"],
+    ["Name", "Unit", "Quantity"],
+])
+def test_rows_from_spec_xlsx_exposes_formula_without_cached_quantity(tmp_path, headers):
+    import openpyxl
+
+    path = tmp_path / "formula.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(headers)
+    ws.append(["Кабель", "м", "=SUM(10,20)"])
+    wb.save(path)
+
+    rows = rows_from_spec_xlsx(path)
+
+    assert len(rows) == 1
+    assert rows[0]["qty"] is None
+    assert rows[0]["quantity_issue"] == "formula_without_cached_value"
+    assert rows[0]["source_row"] == f"{ws.title}!R2"

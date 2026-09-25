@@ -82,6 +82,22 @@ def test_saved_material_does_not_disappear_from_resume_readiness():
     assert readiness["technical_complete"] is True
 
 
+def test_material_only_source_cannot_claim_complete_work_estimate():
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[{"source_row": "СКС!R6", "row_role": "material", "title": "Cabinet"}],
+        catalog_work_count=1,
+        catalog_locators=["СКС!R6"],
+        pricing_status="priced_final",
+        price_basis={"match": "exact"},
+    )
+
+    assert readiness["counts"]["works"] == 0
+    assert readiness["dimensions"]["norms"]["complete"] is False
+    assert readiness["estimate_complete"] is False
+    assert any(gap["kind"] == "missing_work_layer" for gap in readiness["dimensions"]["norms"]["gaps"])
+
+
 def test_stage_v_readiness_reports_composition_and_amounts() -> None:
     """§6: works / materials / equipment / norms / calculated counts are shown separately."""
     readiness = build_lsr_result_readiness(
@@ -138,7 +154,7 @@ def test_stage_d_price_basis_mismatch_blocks_price_dimension() -> None:
     assert "2 квартал 2026" in notice
 
 
-def test_stage_d_unspecified_basis_stays_visible_on_complete_result() -> None:
+def test_unspecified_basis_blocks_complete_result_until_operator_selects_period() -> None:
     readiness = build_lsr_result_readiness(
         packaged=True,
         rows=[],
@@ -148,9 +164,11 @@ def test_stage_d_unspecified_basis_stays_visible_on_complete_result() -> None:
             "note": "База не указана; применён 2 квартал 2026.",
         },
     )
-    assert readiness["dimensions"]["prices"]["complete"] is True
+    assert readiness["dimensions"]["prices"]["complete"] is False
+    assert readiness["estimate_complete"] is False
+    assert "город" in readiness["dimensions"]["prices"]["action"]
     notice = format_lsr_readiness_notice(readiness, filename="LSR.xlsx")
-    assert notice.startswith("ЛСР собрана.")
+    assert notice.startswith("ЛСР собрана частично.")
     assert "Ценовая база: База не указана" in notice
 
 

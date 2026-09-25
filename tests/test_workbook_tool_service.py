@@ -229,6 +229,35 @@ async def test_vor_handler_preserves_source_rows_and_creates_revision(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_vor_formula_without_cached_quantity_is_a_visible_blocker(tmp_path):
+    source = tmp_path / "formula.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Наименование", "Ед. изм.", "Кол-во"])
+    sheet.append(["Cable", "m", "=SUM(10,20)"])
+    workbook.save(source)
+    meta = preserve_read_attachment(
+        source,
+        attachment_id="read_123456abcdef",
+        original_name="formula.xlsx",
+        root=tmp_path / "attachments",
+    )
+
+    context = _context(tmp_path)
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"]}, context)
+
+    assert "row:1:quantity_formula_without_cached_value" in result["missing"]
+    stored = context.artifacts.resolve_path(result["artifact"]["revision_id"])
+    rendered = openpyxl.load_workbook(stored, data_only=True, read_only=True)
+    try:
+        row = next(rendered.active.iter_rows(min_row=4, values_only=True))
+    finally:
+        rendered.close()
+    assert "R2" in row[6]
+    assert row[8] == "ТРЕБУЕТ ПЕРЕСЧЁТА ИСХОДНОГО ФАЙЛА"
+
+
+@pytest.mark.asyncio
 async def test_lsr_handler_does_not_accept_model_supplied_prices(tmp_path):
     meta = _attachment(tmp_path)
     result = await build_lsr_workbook(

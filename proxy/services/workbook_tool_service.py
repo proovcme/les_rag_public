@@ -321,7 +321,9 @@ async def _default_vor_adapter(
             continue
         proposed, needs = derive_work_for_item(str(row.get("name") or row.get("work_name") or ""))
         row["derived_work"] = proposed
-        row["requires_decision"] = bool(row.get("requires_decision")) or needs
+        row["requires_decision"] = (
+            bool(row.get("requires_decision")) or needs or bool(row.get("quantity_issue"))
+        )
         if row["requires_decision"]:
             requires_decision_count += 1
     progress("source_rows", 0, len(rows))
@@ -337,6 +339,8 @@ async def _default_vor_adapter(
             missing.append(f"row:{index}:unit")
         if row.get("qty") is None:
             missing.append(f"row:{index}:quantity")
+            if row.get("quantity_issue") == "formula_without_cached_value":
+                missing.append(f"row:{index}:quantity_formula_without_cached_value")
     progress("source_rows", len(rows), len(rows))
     return {
         "file_path": output_path,

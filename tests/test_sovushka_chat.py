@@ -2338,6 +2338,17 @@ def test_load_history_serves_a_finished_job_and_starts_no_follow_task() -> None:
     assert "return" in branch
 
 
+def test_load_history_restores_last_finished_file_after_history_render() -> None:
+    source = inspect.getsource(chat_page.build_chat)
+    loader = source[source.index("async def _load_history():"):]
+    loader = loader[: loader.index("async def _fetch_session_history_messages")]
+    no_active_job = loader[loader.index("if job:\n            persist_chat_pending("):]
+
+    assert no_active_job.index("_render_chat_history(") < no_active_job.index(
+        "await _restore_last_finished_research()"
+    )
+
+
 def test_progress_polling_stops_as_soon_as_the_research_turns_terminal() -> None:
     source = inspect.getsource(chat_page.build_chat)
     poll = source[source.index("async def _poll_workbook_progress"):]

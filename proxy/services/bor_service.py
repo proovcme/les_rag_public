@@ -207,6 +207,9 @@ def source_rows_to_vor_xlsx(
         source = str(row.get("source_file") or "").strip()
         position = str(row.get("pos") or row.get("position") or "").strip()
         locator = f"{source}#{position}" if source and position else source
+        source_row = str(row.get("source_row") or "").strip()
+        if source_row:
+            locator = f"{locator} ({source_row})" if locator else source_row
         requires_decision = bool(row.get("requires_decision"))
         proposed = str(row.get("derived_work") or "").strip()
         sheet.append([
@@ -218,7 +221,12 @@ def source_rows_to_vor_xlsx(
             row.get("qty"),
             locator,
             proposed,
-            ("ТРЕБУЕТ РЕШЕНИЯ" if requires_decision else ("подтверждено" if proposed else "")),
+            (
+                "ТРЕБУЕТ ПЕРЕСЧЁТА ИСХОДНОГО ФАЙЛА"
+                if row.get("quantity_issue") == "formula_without_cached_value"
+                else "ТРЕБУЕТ РЕШЕНИЯ" if requires_decision
+                else "подтверждено" if proposed else ""
+            ),
         ])
 
     for column, width in {"A": 6, "B": 18, "C": 60, "D": 16, "E": 10, "F": 12, "G": 42,

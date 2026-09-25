@@ -290,6 +290,20 @@ def build_lsr_result_readiness(
                 "action": gap_action,
             }
         )
+    if catalog_work_count and any(
+        inferred_row_role(row) in {"material", "equipment", "resource"} for row in work_rows
+    ) and not any(
+        inferred_row_role(row) == "work" for row in work_rows
+    ):
+        norm_gaps.append({
+            "locator": _locator(work_rows[0]),
+            "kind": "missing_work_layer",
+            "action": (
+                "В исходнике есть позиции, но модель не выделила ни одной работы. "
+                "Определите монтажные операции и их нормы либо подтвердите, что документ "
+                "содержит только поставку."
+            ),
+        })
 
     structured_prices = _structured_price_gaps(missing, price_gaps)
     basis_info = dict(price_basis or {})
@@ -305,9 +319,9 @@ def build_lsr_result_readiness(
         priced_complete = False
     if structured_prices:
         priced_complete = False
-    if basis_match == "mismatch":
-        # §8: prices on a base that contradicts the request are not a closed
-        # condition until the alternative is explicitly confirmed.
+    if basis_match in {"mismatch", "unspecified", "no_book"}:
+        # A default book cannot complete an estimate when the operator never
+        # selected a period, and a missing/mismatched book is not a price basis.
         priced_complete = False
 
     # The durable packaging projection of the job outranks the in-memory file
@@ -398,6 +412,10 @@ def build_lsr_result_readiness(
 
     if priced_complete:
         prices_action = "Цены закрыты по выбранным ресурсам."
+    elif basis_match == "unspecified":
+        prices_action = "Выберите город и уровень цен (квартал и год), затем пересоберите файл."
+    elif basis_match == "no_book":
+        prices_action = "Для выбранного города и периода нет ценовой книги. Добавьте проверенный набор цен или выберите доступный период."
     elif structured_prices:
         prices_action = (
             "Задайте подтверждённые цены: "

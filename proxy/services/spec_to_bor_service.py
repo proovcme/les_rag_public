@@ -325,6 +325,7 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
         "кол-во",
         "количество",
         "qty",
+        "quantity",
         "колич",
         "кол.",
         # Сметные формы заказчика печатают ту же графу с пропуском буквы:
@@ -383,61 +384,79 @@ def rows_from_spec_xlsx(path: Path | str, *, source_label: str = "") -> list[dic
     if file_path.suffix.lower() not in {".xlsx", ".xlsm"}:
         raise ValueError(f"unsupported attachment type for spec→ВОР: {file_path.suffix}")
     wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+    formula_wb = openpyxl.load_workbook(file_path, data_only=False, read_only=True)
     try:
-        ws = wb.active
-        rows_iter = ws.iter_rows(values_only=True)
-        header_map: dict[str, int] | None = None
         source = source_label or file_path.name
         out: list[dict] = []
-        pos = 0
-        for raw in rows_iter:
-            cells = list(raw or ())
-            if not any(c is not None and str(c).strip() for c in cells):
-                continue
-            if header_map is None:
-                mapped = _map_headers(cells)
-                if "name" in mapped:
-                    header_map = mapped
-                continue
-            assert header_map is not None
-            name_idx = header_map["name"]
-            if name_idx >= len(cells):
-                continue
-            name = str(cells[name_idx] or "").strip()
-            if not name or _is_noise_name(name):
-                continue
-            pos += 1
+        for ws in wb.worksheets:
+            formula_ws = formula_wb[ws.title]
+            header_map: dict[str, int] | None = None
+            position = 0
+            for row_number, (raw, formula_raw) in enumerate(
+                zip(ws.iter_rows(values_only=True), formula_ws.iter_rows(values_only=True)),
+                1,
+            ):
+                cells = list(raw or ())
+                formulas = list(formula_raw or ())
+                if not any(c is not None and str(c).strip() for c in cells):
+                    continue
+                if header_map is None:
+                    mapped = _map_headers(cells)
+                    if "name" in mapped:
+                        header_map = mapped
+                    continue
+                name_idx = header_map["name"]
+                if name_idx >= len(cells):
+                    continue
+                name = str(cells[name_idx] or "").strip()
+                if not name or _is_noise_name(name):
+                    continue
+                position += 1
 
-            def _cell(field: str) -> object:
-                idx = header_map.get(field)
-                if idx is None or idx >= len(cells):
-                    return None
-                return cells[idx]
+                def _cell(field: str) -> object:
+                    idx = header_map.get(field)
+                    if idx is None or idx >= len(cells):
+                        return None
+                    return cells[idx]
 
-            qty_raw = _cell("qty")
-            qty: float | None
-            try:
-                qty = float(qty_raw) if qty_raw is not None and str(qty_raw).strip() != "" else None
-            except (TypeError, ValueError):
-                qty = None
-            code = str(_cell("code") or "").strip()
-            mark = str(_cell("mark") or "").strip()
-            out.append(
-                {
-                    "doc_type": "SPEC",
-                    "name": name,
-                    "unit": _cell("unit"),
-                    "qty": qty,
-                    "section": str(_cell("section") or "").strip(),
-                    "code": code,
-                    "mark": mark or code,
-                    "pos": str(pos),
-                    "source_file": source,
-                }
-            )
+                qty_raw = _cell("qty")
+                qty: float | None
+                try:
+                    qty = float(qty_raw) if qty_raw is not None and str(qty_raw).strip() != "" else None
+                except (TypeError, ValueError):
+                    qty = None
+                qty_idx = header_map.get("qty")
+                formula_value = (
+                    formulas[qty_idx]
+                    if qty_idx is not None and qty_idx < len(formulas)
+                    else None
+                )
+                quantity_issue = (
+                    "formula_without_cached_value"
+                    if qty is None and isinstance(formula_value, str) and formula_value.startswith("=")
+                    else ""
+                )
+                code = str(_cell("code") or "").strip()
+                mark = str(_cell("mark") or "").strip()
+                out.append(
+                    {
+                        "doc_type": "SPEC",
+                        "name": name,
+                        "unit": _cell("unit"),
+                        "qty": qty,
+                        "quantity_issue": quantity_issue,
+                        "section": str(_cell("section") or "").strip(),
+                        "code": code,
+                        "mark": mark or code,
+                        "pos": str(position),
+                        "source_file": f"{source}!{ws.title}" if len(wb.worksheets) > 1 else source,
+                        "source_row": f"{ws.title}!R{row_number}",
+                    }
+                )
         return out
     finally:
         wb.close()
+        formula_wb.close()
 
 
 def generate_spec_bor_from_rows(

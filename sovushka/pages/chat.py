@@ -5629,11 +5629,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         if job:
             persist_chat_pending(workbook_job_to_pending_progress(job, pending))
-        else:
-            await _restore_last_finished_research()
         if state["chat_history"] or state.get("chat_pending"):
             _render_chat_history("Сессия восстановлена.")
             _scroll_chat_to_tail(force=True)
+        if not job:
+            # Rendering clears the file panel. Restore the durable final
+            # revision only after the history has been painted.
+            await _restore_last_finished_research()
         asyncio.create_task(_follow_pending_history_if_needed())
 
     async def _fetch_session_history_messages() -> list:

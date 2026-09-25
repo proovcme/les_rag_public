@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import proxy.smeta_core.rim_session as rim_session
 
 from proxy.smeta_core.rim_session import (
     RimSessionConflict,
@@ -55,6 +56,26 @@ def _create_with_vor(store: RimSessionStore):
         rows=_vor_rows(),
         expected_parent_revision_id=created.revision_id,
     )
+
+
+def test_audit_revisions_follow_append_order_when_timestamps_collide(tmp_path, monkeypatch):
+    class FakeUUID:
+        def __init__(self, value: int):
+            self.hex = f"{value:032x}"
+
+        def __str__(self) -> str:
+            return self.hex
+
+    ids = iter(range(255, 240, -1))
+    monkeypatch.setattr(rim_session, "uuid4", lambda: FakeUUID(next(ids)))
+    monkeypatch.setattr(rim_session, "_utcnow", lambda: "2026-09-25T12:00:00Z")
+    store = RimSessionStore(tmp_path)
+    vor = _create_with_vor(store)
+
+    revisions = store.list_revisions(vor.session["session_id"], owner_id="tester")
+
+    assert [item["revision_kind"] for item in revisions] == ["session_created", "vor_revision"]
+    assert revisions[-1]["revision_id"] == vor.revision_id
 
 
 def test_persistent_session_separates_mapping_pricing_and_final_locks(tmp_path):
