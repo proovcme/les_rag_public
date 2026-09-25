@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1016 |
-| Строк Python | 337254 |
+| Строк Python | 337483 |
 | PRODUCT_REACHABLE | 357 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 647 |
@@ -34,10 +34,10 @@
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | proxy/services/chat_evidence_application_service.py | 8569 | 14 |
-| sovushka/pages/chat.py | 7031 | 6 |
+| sovushka/pages/chat.py | 7039 | 6 |
 | proxy/routers/chat.py | 4636 | 42 |
 | backend/qdrant_adapter.py | 4552 | 29 |
-| sovushka/uikit/tokens.py | 4277 | 2 |
+| sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3927 | 3 |
 | proxy/routers/datasets.py | 3776 | 16 |
 | sovushka/styles.py | 3301 | 3 |
@@ -48,10 +48,10 @@
 | proxy/services/estimate_harness_service.py | 2044 | 4 |
 | proxy/services/lsr_norm_quality_gate_service.py | 1943 | 3 |
 | proxy/services/rim_lsr_trace_service.py | 1891 | 12 |
+| proxy/services/workbook_research_job_service.py | 1705 | 9 |
 | proxy/smeta_core/norm_browser.py | 1703 | 13 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
-| proxy/services/workbook_research_job_service.py | 1643 | 9 |
 | sovushka/pages/diag.py | 1602 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |

@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -6,6 +7,7 @@ from proxy.services.workbook_research_job_service import (
     WorkbookResearchJobError,
     WorkbookResearchJobService,
     _legacy_operation_id,
+    stalled_resume_seconds,
 )
 
 
@@ -139,6 +141,70 @@ def test_list_active_prefers_session_then_newest_running(tmp_path) -> None:
     assert other_match[0]["job_id"] == other["job_id"]
     unknown = service.list_active(session_id="missing")
     assert unknown[0]["job_id"] in {first["job_id"], other["job_id"]}
+
+
+def _age_checkpoint(db, job_id: str, *, seconds: int) -> None:
+    """Отмотать `updated_at` назад — так в живом виде выглядит мёртвый исполнитель."""
+
+    stamp = (
+        datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=seconds)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute(
+            "UPDATE workbook_research_jobs SET updated_at=? WHERE job_id=?",
+            (stamp, job_id),
+        )
+        conn.commit()
+
+
+def test_a_dead_running_row_is_not_adopted_by_another_session(tmp_path) -> None:
+    """Новый чат не должен открываться чужой сборкой.
+
+    Живой случай из установленной сборки: три строки `running` молчали
+    65-66 часов, и любой свежий чат подхватывал такую строку через fallback
+    «последний running в базе» — оператор в пустом чате видел «Сборка
+    остановилась» и кнопку «Продолжить» на задание, которое он там не
+    запускал («В новом чате… вот так криво отражается все»).
+    """
+
+    db = tmp_path / "meta.db"
+    service = WorkbookResearchJobService(db)
+    dead = service.begin_or_resume(_identity(service))
+    _age_checkpoint(db, dead["job_id"], seconds=66 * 3600)
+    # своя сессия видит своё задание независимо от возраста чекпоинта:
+    # честный ответ «сборка остановилась» остаётся доступным
+    assert service.list_active(session_id="session-1")[0]["job_id"] == dead["job_id"]
+    # чужая — нет
+    assert service.list_active(session_id="session-brand-new") == []
+    assert service.list_open(session_id="session-brand-new") == []
+
+
+def test_a_live_running_row_still_reappears_after_the_session_is_regenerated(
+    tmp_path,
+) -> None:
+    """Ночная сборка не должна терять пузырь из-за нового session_id.
+
+    Fallback сохранён, но его граница — ровно та же, по которой чат переходит
+    от «Сборка продолжается» к «Сборка остановилась»: пока чекпоинт живой,
+    чат без своего session_id его подхватывает, как только чекпоинт
+    замолчал — не имеет права.
+    """
+
+    db = tmp_path / "meta.db"
+    service = WorkbookResearchJobService(db)
+    live = service.begin_or_resume(_identity(service))
+    service.record_packet(
+        live["job_id"],
+        sheet="СКС",
+        packet_locators=["СКС!R2"],
+        accepted_rows=[{"source_row": "СКС!R2", "norm_code": "10-01-001-01", "row_role": "work"}],
+        evidence=[],
+        remaining=["СКС!R3"],
+    )
+    adopted = service.list_active(session_id="session-regenerated")
+    assert adopted[0]["job_id"] == live["job_id"]
+    _age_checkpoint(db, live["job_id"], seconds=stalled_resume_seconds() + 600)
+    assert service.list_active(session_id="session-regenerated") == []
 
 
 def test_list_open_returns_paused_when_session_has_no_running(tmp_path) -> None:

@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
@@ -73,6 +74,49 @@ _HELD_PACKET_MAX_ATTEMPTS = 3  # retries of the same deferred packet before it
 # at the bound only removes those rows from `remaining`, it does not complete a
 # document that still has sheets to work on.
 STALL_TERMINAL_OCCURRENCES = 4
+
+
+def stalled_resume_seconds() -> int:
+    """Молчание чекпоинта, после которого `running` считается мёртвым исполнителем.
+
+    Чат читает эту же ручку (`LES_LSR_STALLED_RESUME_SEC`, по умолчанию 20
+    минут), чтобы выбрать между «Сборка продолжается» и «Сборка остановилась».
+    Хранилище обязано делить ровно ту же границу, иначе два слоя разойдутся
+    тем же способом, которым они расходились до сборки 810.
+    """
+
+    try:
+        return max(60, int(os.getenv("LES_LSR_STALLED_RESUME_SEC", "1200") or 1200))
+    except ValueError:
+        return 1200
+
+
+def checkpoint_age_seconds(updated_at: str, *, now: datetime | None = None) -> float:
+    """Сколько секунд чекпоинт молчит (SQLite пишет наивный UTC).
+
+    Отсутствие даты читается как «молчит вечно»: строка, у которой нет
+    валидного `updated_at`, не может быть показана как живая сборка.
+    """
+
+    text = str(updated_at or "").strip()
+    stamp: datetime | None = None
+    for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            stamp = datetime.strptime(text, pattern)
+            break
+        except ValueError:
+            continue
+    if stamp is None:
+        try:
+            stamp = datetime.fromisoformat(text.replace(" ", "T"))
+        except ValueError:
+            return float("inf")
+    if stamp.tzinfo is not None:
+        stamp = stamp.astimezone(timezone.utc).replace(tzinfo=None)
+    moment = now if now is not None else datetime.now(timezone.utc).replace(tzinfo=None)
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+    return max(0.0, (moment - stamp).total_seconds())
 
 
 def remainder_fingerprint(remaining: Sequence[Any]) -> str:
@@ -1406,7 +1450,9 @@ class WorkbookResearchJobService:
 
         Session match is preferred after a UI restart; if the NiceGUI session
         was regenerated, the newest running job is still returned so overnight
-        progress is not blank.
+        progress is not blank — but only while its checkpoint is actually fresh,
+        because a stale `running` row belongs to a dead executor and must not be
+        adopted by a chat that never started it.
         """
 
         limit_n = max(1, min(int(limit or 20), 100))
@@ -1427,7 +1473,23 @@ class WorkbookResearchJobService:
             for job in jobs
             if str((job.get("identity") or {}).get("session_id") or "") == sid
         ]
-        return matched or jobs
+        if matched:
+            return matched
+        # Фallback «самая свежая running-строка любой сессии» существует ради
+        # ночной сборки: NiceGUI пересоздаёт session_id, и чат без него открывался
+        # пустым там, где работа реально шла. Но ровно тот же fallback притаскивал
+        # в *новый* чат мёртвую строку `running`, которую исполнитель оставил 66
+        # часов назад: заказчик открывал новый чат и видел «Сборка остановилась»
+        # с кнопкой «Продолжить» на чужое задание («В новом чате… криво
+        # отражается все»). Поэтому чужое задание принимается только пока его
+        # чекпоинт действительно живой — ту же границу задаёт
+        # `stalled_resume_seconds`.
+        return [
+            job
+            for job in jobs
+            if checkpoint_age_seconds(str(job.get("updated_at") or ""))
+            <= stalled_resume_seconds()
+        ]
 
     def latest(
         self,

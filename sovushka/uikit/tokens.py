@@ -3425,6 +3425,19 @@ html {
     flex-wrap: nowrap !important;
     justify-content: flex-start !important;
     text-align: left !important;
+  }
+
+  /* Левый столбец широкой сборке не поднять: рельса 184 px оставляет 163 px на
+     контент, а «Обновить данные» с иконкой требует 168 px — из-за этого последние
+     5 px буквы «е» обрезались (scrollWidth 168 против clientWidth 163 при
+     ≥ 1200 px). Перенос подписи вместо подрезки; иконка остаётся в своей
+     колонке, потому что `flex-wrap` выше всё ещё nowrap. */
+  .sov-ui-header-utility .q-btn__content,
+  .sov-ui-header-secondary {
+    white-space: normal;
+  }
+
+  .sov-ui-header-action .q-btn__content {
     white-space: nowrap !important;
   }
 

@@ -923,6 +923,12 @@ def read_active_workbook_research(
 
     wanted = str(job_id or "").strip()
     sid = str(session_id or "").strip()
+    if not wanted and not sid:
+        # Без имени сессии читать нечего: единственный доступный запрос —
+        # «последняя running-строка в базе», то есть чужое задание. Именно так
+        # новый чат и получал баннер «Сборка остановилась» («В новом чате… вот
+        # так криво отражается все»).
+        return None
     services: list[Any] = []
     if service is not None:
         services.append(service)
@@ -956,15 +962,17 @@ async def fetch_active_workbook_research(
     fetch = getter or api_get
     wanted = str(job_id or "").strip()
     sid = str(session_id or "").strip()
+    if not wanted and not sid:
+        return None
     if wanted:
         job = await fetch(f"/api/workbook-research/{wanted}")
         if isinstance(job, dict) and job.get("job_id"):
             return job
-    listed = await fetch(
-        f"/api/workbook-research-active?session_id={sid}"
-        if sid
-        else "/api/workbook-research-active"
-    )
+    if not sid:
+        # Есть job_id, но нет сессии: показывать чужую running-сборку вместо
+        # потерянной своей — тот же дефект, что и запрос без session_id.
+        return None
+    listed = await fetch(f"/api/workbook-research-active?session_id={sid}")
     if isinstance(listed, dict):
         jobs = listed.get("jobs") or []
         if jobs and isinstance(jobs[0], dict):

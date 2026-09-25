@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -174,6 +175,37 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert ".sov-ui-button--primary" in UIKIT_CSS
     assert ".sov-ui-button--danger" in UIKIT_CSS
     assert ".sov-ui-panel--inset" in UIKIT_CSS
+
+
+def test_header_utility_labels_wrap_instead_of_getting_cut():
+    """Подпись в левом столбце не должна терять пиксели на ровном месте.
+
+    Замер установленной сборки: рельса `.sov-ui-header` даёт 163 px контента,
+    «Обновить данные» с иконкой — 168 px, и последние 5 px буквы «е» просто
+    исчезали. Правильный выход — перенос строки, а не подрезка и не широкая
+    рельса; nowrap остаётся только у точечных действий (`.sov-ui-header-action`).
+    """
+    wrap_rule = re.search(
+        r"\.sov-ui-header-utility \.q-btn__content,\s*\.sov-ui-header-secondary \{\s*"
+        r"white-space: normal;",
+        UIKIT_CSS,
+    )
+    assert wrap_rule, "утилитарные подписи шапки обязаны переноситься, а не обрезаться"
+    shared_rule = re.search(
+        r"\.sov-ui-header-utility \.q-btn__content,\s*\.sov-ui-header-secondary,\s*"
+        r"\.sov-ui-header-action \.q-btn__content \{(.*?)\}",
+        UIKIT_CSS,
+        re.S,
+    )
+    assert shared_rule, "общее правило подписей шапки потерялось"
+    assert "white-space: nowrap" not in shared_rule.group(1)
+    action_rule = re.search(
+        r"\.sov-ui-header-action \.q-btn__content \{\s*white-space: nowrap !important;",
+        UIKIT_CSS,
+    )
+    assert action_rule, "точечные действия шапки остаются в одну строку"
+    # иконка не уезжает: переносим только текст, сам контейнер не заворачиваем
+    assert "flex-wrap: nowrap !important;" in UIKIT_CSS
 
 
 def test_desktop_typography_uses_readable_system_sans_scale():

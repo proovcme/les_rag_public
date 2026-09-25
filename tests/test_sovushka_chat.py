@@ -2118,6 +2118,54 @@ def test_a_stalled_bubble_does_not_blink_as_if_the_server_were_working() -> None
     assert "if (running and not stalled) else" in painter
 
 
+@pytest.mark.asyncio
+async def test_a_fresh_chat_never_borrows_another_sessions_running_job() -> None:
+    """Пустой чат не имеет права показывать сборку, которую он не запускал.
+
+    Замерено на установленной сборке: новый чат в свежном профиле открывался с
+    «Сборка остановилась…» и «Продолжить», потому что без имени сессии UI делал
+    `/api/workbook-research-active` без фильтра и получал самую свежую
+    running-строку в базе — чужую и мёртвую.
+    """
+
+    calls: list[str] = []
+
+    async def getter(path: str):
+        calls.append(path)
+        return {"jobs": [{"job_id": "wrj_foreign", "status": "running"}], "count": 1}
+
+    assert await fetch_active_workbook_research(session_id="", getter=getter) is None
+    assert (
+        await fetch_active_workbook_research(
+            session_id="", job_id="wrj_lost", getter=getter
+        )
+        is None
+    )
+    # потерянный job_id допустимо поискать по имени — но не подменять его чужой
+    # сборкой из общего списка
+    assert calls == ["/api/workbook-research/wrj_lost"]
+    assert (
+        await fetch_active_workbook_research(
+            session_id="session-mine", getter=getter
+        )
+    )["job_id"] == "wrj_foreign"
+    assert calls[-1] == "/api/workbook-research-active?session_id=session-mine"
+
+
+def test_the_sqlite_fallback_also_refuses_to_guess_the_session() -> None:
+    class _EveryJobIsMine:
+        def list_open(self, *, session_id: str = "", limit: int = 20):
+            return [{"job_id": "wrj_foreign", "status": "running"}]
+
+        def get(self, job_id: str):  # pragma: no cover - не должно вызываться
+            raise AssertionError("job_id не запрашивался")
+
+    assert read_active_workbook_research(service=_EveryJobIsMine()) is None
+    assert read_active_workbook_research(
+        session_id="", service=_EveryJobIsMine()
+    ) is None
+
+
 def test_the_follow_loop_reports_the_durable_file_state_not_a_promise() -> None:
     source = inspect.getsource(chat_page.build_chat)
     at = source.index('"Сборка на сервере завершилась')
