@@ -1999,3 +1999,26 @@ def test_follow_task_bails_out_before_waiting_on_a_finished_job() -> None:
     follow = follow[: follow.index("payload = await follow_detached_chat_history")]
 
     assert "workbook_job_is_terminal" in follow
+
+
+def test_readiness_card_points_a_finished_job_at_its_file() -> None:
+    """The card's document action downloads the revision; it never re-runs."""
+
+    source = inspect.getsource(chat_page.build_chat)
+    document_branch = source[source.index('elif kind == "document"'):]
+    document_branch = document_branch[: document_branch.index("fields[\"refine\"]")]
+
+    assert "_download_last_lsr_revision" in document_branch
+    assert "_resume_lsr_packets" not in document_branch
+    assert 'spec.get("document")' in document_branch
+
+
+def test_last_revision_download_falls_back_to_the_saved_files() -> None:
+    source = inspect.getsource(chat_page.build_chat)
+    helper = source[source.index("async def _download_last_lsr_revision"):]
+    helper = helper[: helper.index("def _rows_from_spreadsheet")]
+
+    assert "artifact_workbook_files(artifact)" in helper
+    # A finished job whose file vanished is repaired, not re-searched.
+    assert "без повторного поиска норм" in helper
+    assert "_download_file_artifact(url" in helper

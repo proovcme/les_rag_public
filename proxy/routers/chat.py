@@ -388,10 +388,12 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         readiness = build_lsr_result_readiness(
             packaged=bool(artifact.get("download_url")),
             packaging_failed=str(payload.get("status") or "") == "failed",
-            packaging_code=str(payload.get("code") or ""),            rows=decisions,
+            packaging_code=str(payload.get("code") or ""),
+            rows=decisions,
             missing=list(harvested.get("missing") or []),
             pricing_status=str(harvested.get("pricing_status") or ""),
             remaining_locators=remaining,
+            job_status=str(job.get("status") or ""),
             price_gaps=list(harvested.get("price_gaps") or []),
             price_basis=dict(harvested.get("price_basis") or {}),
             calculated_positions=(

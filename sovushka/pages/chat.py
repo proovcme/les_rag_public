@@ -4354,6 +4354,22 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         data, fname = res
         ui.download(data, name or fname)
 
+    async def _download_last_lsr_revision(document: dict, artifact: dict) -> None:
+        """Serve a finished job's card from the revision it already produced."""
+
+        url = str(document.get("download_url") or artifact.get("download_url") or "")
+        if not url:
+            files = artifact_workbook_files(artifact)
+            url = str(files[-1]["download_url"]) if files else ""
+        if not url:
+            _notify(
+                "Файл завершённого задания не сохранён: "
+                "пересоберите его без повторного поиска норм.",
+                type="warning",
+            )
+            return
+        await _download_file_artifact(url, str(artifact.get("filename") or ""))
+
     def _rows_from_spreadsheet(data: bytes, kind: str) -> list[dict]:
         """xlsx/csv байты → list[dict] (первый лист, шапка = первая строка). Лимит 200 строк."""
         try:
@@ -4873,6 +4889,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                 )
                             ),
                             variant="secondary",
+                            compact=True,
+                        )
+                    elif kind == "document":
+                        # The research is finished, so the card's forward
+                        # gesture is the file that already exists - never a
+                        # second pass over the same source.
+                        action_button(
+                            str(item.get("label") or "Скачать последнюю ревизию"),
+                            icon="o_download",
+                            on_click=lambda d=dict(spec.get("document") or {}), a=dict(artifact): asyncio.create_task(
+                                _download_last_lsr_revision(d, a)
+                            ),
+                            variant="primary",
                             compact=True,
                         )
             fields["refine"] = text_field(

@@ -8068,6 +8068,7 @@ async def _execute_chat_evidence_application(
                             ),
                             paused=str(job_meta.get("status") or "") == "paused"
                             or "workbook_research_cancelled" in model_result_errors,
+                            job_status=str(job_meta.get("status") or ""),
                             remaining_locators=remaining_locators,
                             catalog_work_count=(
                                 len(source_catalog.work_locators())

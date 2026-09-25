@@ -17,6 +17,11 @@ SCHEMA = "les.lsr-result-readiness.v1"
 # so the live file status keeps the wording in that case.
 _DURABLE_DOCUMENT_STATES = frozenset({"ready", "draft_only", "pending"})
 
+# A research job in one of these states will not process another packet, so no
+# readiness line may send the operator to «Продолжить» to close a row.  The open
+# rows of such a job are declared gaps that a person decides on.
+FINISHED_RESEARCH_JOB_STATUSES = frozenset({"complete", "failed"})
+
 _ABSENT_CODES = frozenset(
     {"", "-", "–", "—", "missing", "нет", "н/д", "n/a", "не найдено"}
 )
@@ -197,10 +202,15 @@ def build_lsr_result_readiness(
     preliminary_amount: float = -1.0,
     document_state: str = "",
     download_url: str = "",
+    job_status: str = "",
 ) -> dict[str, Any]:
     """Split technical file readiness from coverage, norms, and prices."""
 
     work_rows = [dict(row) for row in rows if isinstance(row, Mapping) and _locator(row)]
+    # ``job_status`` is the durable state of the research, not of this answer:
+    # once it is terminal, the advice below has to send the operator to the
+    # declared gaps in the file instead of to a gesture that cannot continue.
+    research_finished = _text(job_status).casefold() in FINISHED_RESEARCH_JOB_STATUSES
     remaining = [_text(item) for item in remaining_locators if _text(item)]
     cited = {_locator(row) for row in work_rows}
     wanted = [_text(item) for item in catalog_locators if _text(item)]
@@ -216,6 +226,23 @@ def build_lsr_result_readiness(
         [item for item in remaining if item not in cited or item in incomplete]
         + coverage["incomplete_locators"]
     ))
+    if research_finished:
+        # Coverage gaps are worded by the coverage service, which has no idea
+        # the research is over.  A finished document must not send its operator
+        # to a gesture that cannot close a row.
+        coverage["gaps"] = [
+            {
+                **dict(gap),
+                "action": (
+                    f"Строка {gap.get('locator')} не закрыта и объявлена пробелом в "
+                    "листе «Проверка»; «Продолжить» для завершённого задания её не считает."
+                    if "Продолжите" in _text(gap.get("action"))
+                    else _text(gap.get("action"))
+                ),
+            }
+            for gap in (coverage.get("gaps") or [])
+            if isinstance(gap, Mapping)
+        ]
     norm_gaps: list[dict[str, str]] = []
     for row in work_rows:
         kind = classify_norm_gap(row)
@@ -228,10 +255,16 @@ def build_lsr_result_readiness(
                 f"для строки {locator}; код его не подменяет."
             )
         elif kind == "needs_research":
-            action = (
-                f"Продолжите поиск нормы для строки {locator}. "
-                "Уже принятые строки повторно не ищутся."
-            )
+            if research_finished:
+                action = (
+                    f"Строка {locator} осталась без нормы и закрыта как объявленный "
+                    "пробел в листе «Проверка»; новое исследование по ней не идёт."
+                )
+            else:
+                action = (
+                    f"Продолжите поиск нормы для строки {locator}. "
+                    "Уже принятые строки повторно не ищутся."
+                )
         else:
             action = (
                 f"Модель должна выбрать норму для строки {locator} "
@@ -239,14 +272,22 @@ def build_lsr_result_readiness(
             )
         norm_gaps.append({"locator": locator, "kind": kind, "action": action})
     for locator in remaining:
+        gap_kind = "structure_incomplete" if locator in cited else "unprocessed"
+        if research_finished:
+            gap_action = (
+                f"Строка {locator} не закрыта и объявлена пробелом в листе "
+                "«Проверка»; «Продолжить» для завершённого задания её не считает."
+            )
+        else:
+            gap_action = (
+                f"Продолжите незакрытую строку {locator}. "
+                "Повторный поиск уже обработанных строк не выполняется."
+            )
         norm_gaps.append(
             {
                 "locator": locator,
-                "kind": "structure_incomplete" if locator in cited else "unprocessed",
-                "action": (
-                    f"Продолжите незакрытую строку {locator}. "
-                    "Повторный поиск уже обработанных строк не выполняется."
-                ),
+                "kind": gap_kind,
+                "action": gap_action,
             }
         )
 
@@ -321,7 +362,7 @@ def build_lsr_result_readiness(
             "Сборка остановлена. Можно пересобрать файл без модели "
             "или продолжить, если остались пробелы."
         )
-    elif file_status == "ready" and not remaining:
+    elif file_status == "ready" and (research_finished or not remaining):
         continue_action = (
             "Задание завершено. Повторный вход показывает эту ревизию; "
             "новое исследование не начинается."
@@ -339,6 +380,11 @@ def build_lsr_result_readiness(
 
     if norms_complete:
         norms_action = "Все работы имеют выбранную норму или явный пропуск."
+    elif research_finished and remaining:
+        norms_action = (
+            "Незакрытые строки объявлены пробелами в листе «Проверка»: "
+            f"{_preview(remaining)}. Их закрывает решение человека, а не «Продолжить»."
+        )
     elif remaining:
         norms_action = (
             "Продолжите незакрытые строки: "
@@ -484,9 +530,17 @@ def build_lsr_result_readiness(
     if file_status != "ready" and work_rows:
         actions.append({"id": "repack", "label": "Пересобрать файл", "kind": "repack"})
     if remaining or paused:
-        actions.append(
-            {"id": "resume", "label": "Продолжить незакрытые строки", "kind": "resume"}
-        )
+        if not research_finished:
+            actions.append(
+                {"id": "resume", "label": "Продолжить незакрытые строки", "kind": "resume"}
+            )
+        elif file_status == "ready":
+            # A terminal job has no packet left to continue, but its open rows
+            # still need the operator's attention: the only gesture that can
+            # answer it points at the revision carrying them as declared gaps.
+            actions.append(
+                {"id": "document", "label": "Скачать последнюю ревизию", "kind": "document"}
+            )
     if work_rows and not estimate_complete and (not coverage_complete or not norms_complete):
         actions.append(
             {"id": "refine", "label": "Уточнить выбранные строки", "kind": "refine"}

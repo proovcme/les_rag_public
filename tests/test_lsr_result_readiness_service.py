@@ -252,3 +252,132 @@ def test_ready_document_is_reported_separately_from_outstanding_actions() -> Non
     # Re-entering a finished research must not read as an invitation to start
     # another one.
     assert "завершено" in readiness["continue_action"]
+
+
+def _vor_rows() -> list[dict]:
+    return [
+        {
+            "source_row": "АР!R11",
+            "norm_code": "ГЭСНр1-01-001",
+            "norm_status": "EXACT",
+            "row_role": "work",
+        },
+        {
+            "source_row": "АР!R23",
+            "norm_code": "",
+            "norm_status": "NEEDS_RESEARCH",
+            "row_role": "work",
+        },
+    ]
+
+
+def test_finished_research_never_offers_the_continue_gesture() -> None:
+    """A terminal job cannot take another packet, so «Продолжить» must not appear."""
+
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=_vor_rows(),
+        missing=["price_missing:ГЭСНр1-01-001"],
+        pricing_status="priced_partial",
+        remaining_locators=["АР!R81", "АР!R86"],
+        catalog_work_count=3,
+        document_state="ready",
+        download_url="/api/artifacts/rev_final/download",
+        job_status="complete",
+    )
+
+    ids = {item["id"] for item in readiness["actions"]}
+    assert "resume" not in ids
+    assert "document" in ids
+    # The advice now names where the open rows already live instead of sending
+    # the operator to a gesture that cannot close them.
+    assert "Проверка" in readiness["dimensions"]["norms"]["action"]
+    assert "Продолжите" not in readiness["dimensions"]["norms"]["action"]
+    assert [gap["action"] for gap in readiness["dimensions"]["norms"]["gaps"]]
+    assert all("Продолжите" not in gap["action"] for gap in readiness["dimensions"]["norms"]["gaps"])
+    assert "объявлен" in readiness["dimensions"]["norms"]["gaps"][0]["action"]
+    # The coverage service writes its own gap actions: they are reworded too.
+    assert all(
+        "Продолжите" not in str(gap.get("action") or "")
+        for gap in readiness["dimensions"]["coverage"]["gaps"]
+    )
+    assert "завершено" in readiness["continue_action"]
+
+
+def test_open_research_still_offers_the_continue_gesture() -> None:
+    """Only a finished job loses the gesture: an open one keeps the old wording."""
+
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=_vor_rows(),
+        missing=["price_missing:ГЭСНр1-01-001"],
+        pricing_status="priced_partial",
+        remaining_locators=["АР!R81", "АР!R86"],
+        catalog_work_count=3,
+        document_state="draft_only",
+        job_status="running",
+    )
+
+    ids = {item["id"] for item in readiness["actions"]}
+    assert "resume" in ids
+    assert "document" not in ids
+    assert "Продолжите незакрытые строки" in readiness["dimensions"]["norms"]["action"]
+
+
+def test_failed_research_is_finished_too() -> None:
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=_vor_rows(),
+        remaining_locators=["АР!R81"],
+        catalog_work_count=2,
+        document_state="ready",
+        download_url="/api/artifacts/rev_final/download",
+        job_status="failed",
+    )
+
+    ids = {item["id"] for item in readiness["actions"]}
+    assert "resume" not in ids
+    assert "document" in ids
+
+
+def test_readiness_notice_of_a_finished_job_does_not_point_at_continue() -> None:
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=_vor_rows(),
+        missing=["price_missing:ГЭСНр1-01-001"],
+        pricing_status="priced_partial",
+        remaining_locators=["АР!R81", "АР!R86"],
+        catalog_work_count=3,
+        document_state="ready",
+        download_url="/api/artifacts/rev_final/download",
+        job_status="complete",
+    )
+
+    notice = format_lsr_readiness_notice(readiness, filename="LSR_ВОР.xlsx")
+    assert "Продолжите" not in notice
+    assert "Проверка" in notice
+
+
+def test_finished_and_fully_closed_job_offers_no_action_at_all() -> None:
+    """"Nothing outstanding" must keep meaning exactly that: an empty action list."""
+
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[
+            {
+                "source_row": "АР!R11",
+                "norm_code": "ГЭСНр1-01-001",
+                "norm_status": "EXACT",
+                "row_role": "work",
+            }
+        ],
+        pricing_status="priced_final",
+        catalog_work_count=1,
+        document_state="ready",
+        download_url="/api/artifacts/rev_final/download",
+        job_status="complete",
+    )
+
+    assert readiness["actions"] == []
+    assert readiness["document"]["state"] == "ready"
+    assert readiness["document"]["download_url"] == "/api/artifacts/rev_final/download"
