@@ -1032,7 +1032,11 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert 'classes="sov-mobile-chat-menu"' in source
     for label in ("История", "Артефакты"):
         assert f'"{label}"' in source
-    assert 'ui.menu_item("Новый чат"' not in source
+    # Пин 28.08 запрещал «Новый чат» в этом меню, потому что кнопка была в
+    # топбаре. Замер 812 в узком окне (≤ 900 px) показал, что вместе с
+    # `.sov-topbar-icon-action` скрывается и сама кнопка, а меню заменяющее
+    # топбар остаётся без «Нового чата» — начать новую сессию было нельзя.
+    assert 'ui.menu_item("Новый чат", on_click=lambda: _clear_chat())' in source
     assert 'ui.menu_item(\n                                    "Документы"' not in source
     assert ".sov-mobile-chat-menu" in uikit
     assert ".sov-topbar-icon-action {\n    display: none !important;" in uikit
@@ -1089,6 +1093,39 @@ def test_chat_composer_keeps_status_banner_out_of_the_action_row():
     assert "max-width: 1440px" in banner_rule
     assert ".sov-lsr-stalled-row" not in uikit
     assert "flex: 0 1 152px" in uikit
+
+
+def test_a_new_chat_clears_the_status_the_thread_clear_cannot_reach():
+    """«Новый чат» не оставляет ни чужую сборку, ни чужой файл.
+
+    Отчёт заказчика: «В новом чате, да и в целом в чате вот так криво
+    отражается все».  Замер 812 на установленной сборке сразу после нажатия
+    «Новый чат»: нитка пуста (`messageCount` 0, заголовок «Новый чат»), но над
+    полем ввода осталась полоса «Сборка остановилась: сервер не обновляет
+    чекпоинт» с кнопкой «Продолжить» от предыдущей задачи (и через +1.5 с тоже),
+    а строка вложений держала файл прошлой беседы («attach_probe.xlsx · В чат»).
+    Оба виджета нарисованы ВНЕ ``chat_column``, поэтому ``clear()`` их не снимает,
+    а ``_paint_in_progress_bubble`` после очистки больше не вызывается — прятать
+    надо явно, иначе пустой новый чат открывается чужой сборкой.
+    """
+    source = inspect.getsource(chat_page.build_chat)
+
+    reset = source.split("def _reset_transient_chat_status", 1)[1].split(
+        "def _clear_chat():", 1
+    )[0]
+    assert "lsr_stalled_row.set_visibility(False)" in reset
+    assert "_clear_attachment(notify=False)" in reset
+    assert '_pending_target_files["v"] = []' in reset
+    assert "_follow_placeholder" in reset
+
+    clear = source.split("def _clear_chat():", 1)[1].split("\n    _sending = ", 1)[0]
+    assert "_reset_transient_chat_status()" in clear
+    # Порядок — часть контракта: сброс снимает ссылки на пузырь прогресса, а сам
+    # пузырь лежит в колонке, которую очищают первой.
+    assert clear.index("chat_column.clear()") < clear.index("_reset_transient_chat_status()")
+    assert clear.index("persist_chat_pending(None)") < clear.index(
+        "_reset_transient_chat_status()"
+    )
 
 
 def test_chat_file_picker_uses_task_language_and_compact_uikit_surface():
@@ -2164,6 +2201,99 @@ def test_the_sqlite_fallback_also_refuses_to_guess_the_session() -> None:
     assert read_active_workbook_research(
         session_id="", service=_EveryJobIsMine()
     ) is None
+
+
+@pytest.mark.asyncio
+async def test_a_new_chat_does_not_take_back_the_build_it_just_dismissed(
+    monkeypatch,
+) -> None:
+    """«Новый чат» отказывается и от жив ещё идущей сборки предыдущего чата.
+
+    Мёртвую строку не отдаёт service (замер 812: `checkpoint_age_seconds` против
+    `stalled_resume_seconds`). Живую — отдаёт: тот же fallback нужен ночной
+    сборке, у которой NiceGUI пересоздал сессию. Значит отказ должен пережить
+    очистку pending и запомниться под именем задачи, иначе через пару секунд
+    пузырь возвращался в пустой новый чат.
+    """
+
+    from sovushka import state as sovushka_state
+
+    live = {
+        "job_id": "wrj_live",
+        "status": "running",
+        "identity": {"session_id": "session-old"},
+    }
+    other = {
+        "job_id": "wrj_other",
+        "status": "running",
+        "identity": {"session_id": "session-nightly"},
+    }
+
+    async def getter(path: str):
+        return {"jobs": [live], "count": 1}
+
+    monkeypatch.setattr(sovushka_state, "dismissed_research_jobs", lambda: ["wrj_live"])
+    assert (
+        await fetch_active_workbook_research(session_id="session-new", getter=getter)
+        is None
+    )
+
+    async def getter_other(path: str):
+        return {"jobs": [other], "count": 1}
+
+    # ночную сборку, от которой не уходили, fallback обязан возвращать
+    assert (
+        await fetch_active_workbook_research(
+            session_id="session-new", getter=getter_other
+        )
+    )["job_id"] == "wrj_other"
+
+    # а владелец потерянного чата получает свою задачу всегда
+    async def getter_owner(path: str):
+        return {"jobs": [live], "count": 1}
+
+    assert (
+        await fetch_active_workbook_research(
+            session_id="session-old", getter=getter_owner
+        )
+    )["job_id"] == "wrj_live"
+
+
+def test_the_new_chat_button_releases_the_previous_build_and_the_file(monkeypatch) -> None:
+    """Список отказов живёт в `storage.user` и не растёт бесконечно."""
+
+    from sovushka import state as sovushka_state
+
+    storage = monkeypatch_storage(monkeypatch, sovushka_state)
+
+    assert sovushka_state.dismiss_research_job("wrj_a") == ["wrj_a"]
+    assert sovushka_state.dismiss_research_job("wrj_a") == ["wrj_a"]
+    assert sovushka_state.dismissed_research_jobs() == ["wrj_a"]
+    for index in range(30):
+        sovushka_state.dismiss_research_job(f"wrj_{index}")
+    kept = sovushka_state.dismissed_research_jobs()
+    assert len(kept) == 20
+    assert kept[-1] == "wrj_29"
+    assert "wrj_a" not in kept
+    assert storage["les_chat_dismissed_jobs"] == kept
+
+    source = inspect.getsource(chat_page.build_chat)
+    clear = source.split("def _clear_chat():", 1)[1].split("\n    _sending = ", 1)[0]
+    # отказ фиксируется ДО `persist_chat_pending(None)`: после него имя задачи
+    # в состоянии чата уже недоступно
+    assert "dismiss_research_job(" in clear
+    assert clear.index("dismiss_research_job(") < clear.index("persist_chat_pending(None)")
+
+
+def monkeypatch_storage(monkeypatch, module) -> dict:
+    storage: dict = {}
+    monkeypatch.setattr(
+        module,
+        "app",
+        SimpleNamespace(storage=SimpleNamespace(user=storage)),
+        raising=False,
+    )
+    return storage
 
 
 def test_the_follow_loop_reports_the_durable_file_state_not_a_promise() -> None:

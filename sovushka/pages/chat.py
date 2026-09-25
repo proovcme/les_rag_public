@@ -949,6 +949,29 @@ def read_active_workbook_research(
     return None
 
 
+def _adopted_workbook_job(job: Any, sid: str) -> dict[str, Any] | None:
+    """Принять «свою» сборку, отказать той, от которой ушли в «Новый чат».
+
+    `/workbook-research-active` отдаёт и чужое running-задание, если его
+    чекпоинт ещё жив: это reconnect для пересозданной NiceGUI-сессии ночной
+    сборки. Но ровно этот же канал возвращал пузырь предыдущей задачи в чат,
+    который пользователь только что начал заново, — пока та задача ещё на
+    ходу. Владелец (`session_id` совпал) получает всегда, чужое — только если
+    его не отбросили.
+    """
+
+    if not isinstance(job, dict) or not job.get("job_id"):
+        return None
+    identity = job.get("identity") if isinstance(job.get("identity"), dict) else {}
+    if str(identity.get("session_id") or "") == str(sid or ""):
+        return job
+    from sovushka.state import dismissed_research_jobs
+
+    if str(job.get("job_id") or "") in dismissed_research_jobs():
+        return None
+    return job
+
+
 async def fetch_active_workbook_research(
     *,
     session_id: str = "",
@@ -976,8 +999,10 @@ async def fetch_active_workbook_research(
     if isinstance(listed, dict):
         jobs = listed.get("jobs") or []
         if jobs and isinstance(jobs[0], dict):
-            return jobs[0]
-    return read_active_workbook_research(session_id=sid, job_id=wanted)
+            return _adopted_workbook_job(jobs[0], sid)
+    return _adopted_workbook_job(
+        read_active_workbook_research(session_id=sid, job_id=wanted), sid
+    )
 
 
 async def hydrate_chat_pending_from_workbook(
@@ -2396,6 +2421,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         classes="sov-mobile-chat-menu",
                     ):
                         with ui.menu().classes("sov-mobile-chat-actions"):
+                            # `.sov-topbar-icon-action` прячется целиком при
+                            # ширине ≤ 900 px, а «Новый чат» живёт именно в этом
+                            # классе. Замер 812: в узком окне кнопка
+                            # `display: none`, а в заменяющем её меню были только
+                            # «История» и «Артефакты» — то есть начать новый чат
+                            # было нельзя вообще.
+                            ui.menu_item("Новый чат", on_click=lambda: _clear_chat())
                             ui.menu_item("История", on_click=lambda: _toggle_history())
                             ui.menu_item("Артефакты", on_click=lambda: _open_artifacts())
 
@@ -5822,6 +5854,30 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     chat_input.on("input", lambda: _update_prompt_preview())
 
+    def _reset_transient_chat_status() -> None:
+        """Снять переходящие статусы чата — то, что переживает `clear()` колонки.
+
+        Полоса незавершённой сборки и строка вложения нарисованы ВНЕ
+        ``chat_column`` (между тредом и полем ввода), поэтому очистка чата до них
+        не доходит, а ``_paint_in_progress_bubble`` после очистки больше не
+        вызывается и спрятать их уже не может.
+        """
+
+        try:
+            lsr_stalled_row.set_visibility(False)
+        except Exception:
+            pass
+        try:
+            _clear_attachment(notify=False)
+        except Exception:
+            pass
+        _pending_target_files["v"] = []
+        # Ссылки на пузырь прогресса выбрасываем: иначе следующий отрисовщик
+        # попробовал бы обновлять уже удалённый элемент и дописал бы пустой пузырь
+        # в очищенную колонку.
+        for _key in ("bubble", "label", "eta"):
+            _follow_placeholder[_key] = None
+
     def _clear_chat():
         from sovushka.state import _new_session_id, persist_chat_pending, persist_session_id
 
@@ -5840,7 +5896,23 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         state["chat_history"].clear()
         state["session_id"] = persist_session_id(_new_session_id())
         state["load_session_id"] = None
+        # Отказ от предыдущей сборки фиксируем ДО очистки pending: иначе новый
+        # чат через пару секунд молча подхватывал её обратно, пока чекпоинт ещё
+        # живой (fallback `/workbook-research-active` рассчитан на ночную
+        # сборку с пересозданной сессией и не знает, что от задачи ушли).
+        from sovushka.state import dismiss_research_job
+
+        dismiss_research_job(str((state.get("chat_pending") or {}).get("job_id") or ""))
         persist_chat_pending(None)
+        # Кнопка обещает «Новая сессия без памяти прошлого диалога». Замер 812 на
+        # установленной сборке показал обратное: после клика нитка чата пуста
+        # (`messageCount` 0, заголовок «Новый чат»), но над полем ввода остаётся
+        # полоса «Сборка остановилась: сервер не обновляет чекпоинт» с кнопкой
+        # «Продолжить» от ЧУЖОЙ завершённой задачи, а строка вложений держит файл
+        # прошлой беседы («attach_probe.xlsx · В чат»). Пустой новый чат с
+        # чужой сборкой и чужим файлом — это и есть «в новом чате … вот так криво
+        # отражается все».
+        _reset_transient_chat_status()
         asyncio.create_task(_refresh_active_model_chip())
         add_log("[ЧАТ] История очищена, новая сессия")
 

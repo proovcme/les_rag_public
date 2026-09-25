@@ -26,6 +26,52 @@ def _new_session_id() -> str:
 
 _SESSION_STORAGE_KEY = "les_chat_session_id"
 _PENDING_STORAGE_KEY = "les_chat_pending"
+_DISMISSED_STORAGE_KEY = "les_chat_dismissed_jobs"
+
+
+def _storage_user_get(key: str):
+    """Чтение `storage.user` без NiceGUI-контекста не обязано работать.
+
+    Unit-вызовы и фоновые таски приходят сюда вне запроса, где `app.storage`
+    бросает исключение; молчаливое "ничего не сохранено" для этого состояния
+    безопаснее, чем уронить чат.
+    """
+
+    try:
+        return app.storage.user.get(key)
+    except Exception:
+        return None
+
+
+def dismissed_research_jobs() -> list[str]:
+    """Сборки, от которых пользователь ушёл через «Новый чат»."""
+
+    raw = _storage_user_get(_DISMISSED_STORAGE_KEY)
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
+
+
+def dismiss_research_job(job_id: str) -> list[str]:
+    """Запомнить сборку, которую бросили в новом чате.
+
+    Список живёт рядом с `session_id` — в `storage.user`, потому что и сессия
+    чата берётся оттуда. Без этого «Новый чат» честен только для мёртвой
+    сборки: живую (чекпоинт моложе `LES_LSR_STALLED_RESUME_SEC`) service всё
+    ещё отдаёт чужому сессионному id как "ночную", и пузырь возвращался в
+    только что очищенный чат.
+    """
+
+    jid = str(job_id or "").strip()
+    items = dismissed_research_jobs()
+    if not jid or jid in items:
+        return items
+    items = (items + [jid])[-20:]
+    try:
+        app.storage.user[_DISMISSED_STORAGE_KEY] = items
+    except Exception:
+        return items
+    return items
 
 
 def get_persisted_session_id() -> str | None:
