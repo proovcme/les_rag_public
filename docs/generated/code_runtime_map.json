@@ -6249,7 +6249,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 2216,
+      "lines": 2221,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -10756,7 +10756,7 @@
     },
     {
       "inbound": [],
-      "lines": 618,
+      "lines": 654,
       "module": "tests.test_installer_windows",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -14783,7 +14783,7 @@
       "inbound": [
         "tests/test_architecture_contract_gate.py"
       ],
-      "lines": 816,
+      "lines": 818,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -19176,7 +19176,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 653,
     "tracked_python_files": 1023,
-    "tracked_python_lines": 344431
+    "tracked_python_lines": 344474
   },
   "warnings": []
 }

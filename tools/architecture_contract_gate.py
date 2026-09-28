@@ -107,10 +107,12 @@ UNOWNED_PRICE_SOURCES = {
 
 # Task 2026-09-28 § 8, § 11 № 8: a price book row is a price *per the unit the
 # row states*.  The book answers to a шифр, so an engine that took the number
-# without comparing units could price a resource the norm card gives in «л» off a
-# row that says «кг» and still report the position as complete.  The hole is
-# latent on the current base (135 rows read by шифр over the 818 matrix sample, 0
-# of them naming another unit — ``stage_b/live_818/book_unit_gap.json``), which is
+# without comparing units could price a position that states «л» off a row that
+# says «кг» and still report it as complete (the 818 probe sent exactly that:
+# ``stage_b/live_818/markup_price_path.json``).  No card in the sample disagrees
+# with its own book row, so the hole is latent on the current base (135 rows read
+# by шифр over the 818 matrix sample, 0 of them naming another unit —
+# ``stage_b/live_818/book_unit_gap.json``), which is
 # exactly why it is closed by a rule and a gate rather than by an example.  Both
 # LSR calculators read the same book, so every function that looks a resource up
 # has to pass the row through the one shared rule; a hole that rule opens has to

@@ -41,6 +41,21 @@ $env:LES_RUNTIME_HOME = $Root.Path
 $env:LES_REPO_ROOT = $Root.Path
 . (Join-Path $PSScriptRoot "runtime-process.ps1")
 
+# The per-user state root decides which durable store the app opens: its .env
+# carries LES_EMBED_PROFILE, and the embedding profile names the meta database
+# (this installation lives in data\les_meta_qwen.db).  Without it the light start
+# silently loads the runtime-root .env, falls back to the legacy profile and
+# opens data\les_meta.db — an empty workspace, unknown jobs, and
+# "Версия профиля не найдена" on a turn that worked minutes before.
+# stop-light.ps1 and state.ps1 already derive this root; the desktop launcher
+# passes it explicitly; a caller that wants another root still overrides it
+# through LES_WINDOWS_STATE_ROOT, and smoke tests do exactly that.
+if (-not $env:LES_WINDOWS_STATE_ROOT) {
+  $DefaultStateRoot = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "LES" } else { "" }
+  if ($DefaultStateRoot -and (Test-Path -LiteralPath $DefaultStateRoot)) {
+    $env:LES_WINDOWS_STATE_ROOT = [System.IO.Path]::GetFullPath($DefaultStateRoot)
+  }
+}
 $StateRoot = if ($env:LES_WINDOWS_STATE_ROOT) { [System.IO.Path]::GetFullPath($env:LES_WINDOWS_STATE_ROOT) } else { "" }
 if ($StateRoot) {
   $env:LES_ENV_PATH = if ($env:LES_ENV_PATH) { $env:LES_ENV_PATH } else { Join-Path $StateRoot ".env" }

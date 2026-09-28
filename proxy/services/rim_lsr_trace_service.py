@@ -215,16 +215,21 @@ def book_price_unit_conflict(book_unit: Any, resource_unit: Any) -> str:
 
     An empty return means the book row is usable.  The rule has one home because
     both LSR calculators read the same book (§ 10: one document, one sum).
-    The book is matched by шифр alone, so nothing in the code stopped a resource
-    the norm card gives in «л» from being priced by a book row that says «кг» —
-    an amount that would look confirmed and be arithmetically wrong
-    (``stage_b/live_818/markup_price_path.json`` shows that read: a row taken by
-    шифр, its unit never consulted).  On the current base the hole is latent:
-    measuring the 186 matrix resources against the installed book gave 135 rows
-    read by шифр, 131 of them naming the same unit, 0 naming another and 4
-    naming none (``stage_b/live_818/book_unit_gap.json``), and the guard moves no
-    sum on that sample (``stage_b/live_819/book_unit_guard_effect.json``) — which
-    is why § 11 № 8 asks for the rule, not for one repaired example.  Only a unit
+    The book is matched by шифр alone, so nothing in the code stopped a position
+    that states «л» from being priced by a book row that says «кг» — an amount
+    that would look confirmed and be arithmetically wrong
+    (``stage_b/live_818/markup_price_path.json`` shows that read: the same шифр
+    sent with unit «л» took the «кг» row, its unit never consulted).  No norm card
+    in the sample actually disagrees with its book row: measuring the 186 matrix
+    resources against the installed book gave 135 rows read by шифр, 131 of them
+    naming the same unit, 0 naming another and 4 naming none
+    (``stage_b/live_818/book_unit_gap.json``), and the guard moves no sum on that
+    sample (``stage_b/live_819/book_unit_guard_effect.json``) — which is why
+    § 11 № 8 asks for the rule, not for one repaired example.  The installed 819
+    build shows both sides of the rule live
+    (``stage_b/live_819/installed/book_unit_latest.json``): a position in «кг» is
+    priced as before (графа 10 = 97.57), the same шифр stated in «л» prices
+    nothing and names both units in the question.  Only a unit
     that reads the same after canonisation is the same price base: «п.м» and «м»,
     «шт.» and «шт» match, while «м3» and «100 м3» do not.  A differing factor
     would be a silent multiplication, and § 8 allows the code to convert only

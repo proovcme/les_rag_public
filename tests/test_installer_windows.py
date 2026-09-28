@@ -144,6 +144,42 @@ def test_windows_light_start_always_exports_runtime_identity():
     assert "$env:LES_REPO_ROOT = $Root.Path" in text
 
 
+def test_windows_light_start_and_stop_resolve_one_state_root():
+    """Start must open the store the customer's data is in, not a second one.
+
+    The durable store is named by the embedding profile, and the profile comes
+    from the state root's ``.env`` (``LES_EMBED_PROFILE=qwen`` here selects
+    ``data/les_meta_qwen.db``).  ``stop-light.ps1`` already derived that root from
+    ``%LOCALAPPDATA%\\LES`` while ``start-light.ps1`` only honoured an explicit
+    ``LES_WINDOWS_STATE_ROOT``: restarted without it — which is what a bare light
+    restart and any hand-run of the script does — the app loaded the runtime-root
+    ``.env``, fell back to the legacy profile and opened ``data/les_meta.db``.  The
+    operator then sees an empty workspace, ``/api/workbook-research/<job>`` answers
+    404 for jobs that exist, and a chat turn is rejected with
+    ``Версия профиля не найдена``; the first matrix run of build 819 died exactly
+    like that.  A caller that wants a different root still wins, because the
+    derivation is a fallback over an unset variable.
+    """
+    windows = build_windows_installer.ROOT / "installers" / "windows"
+    start = (windows / "start-light.ps1").read_text(encoding="utf-8")
+    stop = (windows / "stop-light.ps1").read_text(encoding="utf-8-sig")
+
+    assert 'if (-not $env:LES_WINDOWS_STATE_ROOT)' in start
+    assert 'Join-Path $env:LOCALAPPDATA "LES"' in start
+    assert "Test-Path -LiteralPath $DefaultStateRoot" in start
+    # the root has to exist before it is adopted: a dev checkout without an
+    # installed state keeps the previous runtime-root behaviour
+    assert "$DefaultStateRoot -and (Test-Path" in start
+    # ...and it has to be settled before the state .env is read, since that file
+    # is what carries the profile naming the database
+    assert start.index('Join-Path $env:LOCALAPPDATA "LES"') < start.index("$env:LES_ENV_PATH =")
+    assert start.index("if (-not $env:LES_WINDOWS_STATE_ROOT)") < start.index(
+        "$StateRoot = if ($env:LES_WINDOWS_STATE_ROOT)"
+    )
+    # stop derives the same root, or the two scripts would look at different stores
+    assert 'Join-Path $env:LOCALAPPDATA "LES"' in stop
+
+
 def test_windows_release_smoke_reports_cleanup_failures_before_success():
     smoke = (
         build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
