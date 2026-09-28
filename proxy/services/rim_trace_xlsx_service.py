@@ -404,6 +404,21 @@ def _set_header_total_formula(ws, total_row: int | None) -> None:
             return
 
 
+def _readiness_label(value: Any) -> str:
+    """One visible word per readiness question.
+
+    ``True``/``False`` stay «да»/«нет»; a third state carries its own wording so a
+    price that exists but belongs to nobody is not shown as a settled price.
+    """
+
+    if value is True:
+        return "да"
+    if value is False:
+        return "нет"
+    text = str(value or "").strip()
+    return text or "н/п"
+
+
 def _review_sheet(wb, lsr: dict[str, Any]) -> None:
     """Visible decisions/gaps; JSON remains the full immutable trace."""
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -428,7 +443,7 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
         ws.append([
             item.get("row"), item.get("work_id"), item.get("status"),
             " | ".join(
-                f"{label}={'да' if value is True else ('нет' if value is False else 'н/п')}"
+                f"{label}={_readiness_label(value)}"
                 for label, value in (
                     ("операция", (item.get("readiness") or {}).get("operation_defined")),
                     ("норма", (item.get("readiness") or {}).get("norm_selected")),

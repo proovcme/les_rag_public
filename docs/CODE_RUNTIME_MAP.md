@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1016 |
-| Строк Python | 337906 |
-| PRODUCT_REACHABLE | 357 |
+| Python-файлов под git | 1023 |
+| Строк Python | 342192 |
+| PRODUCT_REACHABLE | 358 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 647 |
+| TEST_OR_TOOL_ONLY | 653 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 338 |
 | Ошибок разбора | 0 |
@@ -33,9 +33,9 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| proxy/services/chat_evidence_application_service.py | 8569 | 14 |
-| sovushka/pages/chat.py | 7113 | 6 |
-| proxy/routers/chat.py | 4636 | 42 |
+| proxy/services/chat_evidence_application_service.py | 8822 | 15 |
+| sovushka/pages/chat.py | 7578 | 6 |
+| proxy/routers/chat.py | 4637 | 42 |
 | backend/qdrant_adapter.py | 4552 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3927 | 3 |
@@ -46,8 +46,8 @@
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2044 | 4 |
-| proxy/services/lsr_norm_quality_gate_service.py | 1943 | 3 |
-| proxy/services/rim_lsr_trace_service.py | 1891 | 12 |
+| proxy/services/lsr_norm_quality_gate_service.py | 2031 | 5 |
+| proxy/services/rim_lsr_trace_service.py | 2020 | 15 |
 | proxy/services/workbook_research_job_service.py | 1705 | 9 |
 | proxy/smeta_core/norm_browser.py | 1703 | 13 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |

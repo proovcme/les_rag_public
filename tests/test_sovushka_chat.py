@@ -2387,3 +2387,249 @@ def test_last_revision_download_falls_back_to_the_saved_files() -> None:
     # A finished job whose file vanished is repaired, not re-searched.
     assert "без повторного поиска норм" in helper
     assert "_download_file_artifact(url" in helper
+
+
+def _basis_readiness(basis: dict, *, prices_complete: bool = False) -> dict:
+    """Readiness payload shaped like ``build_lsr_result_readiness`` output."""
+
+    return {
+        "dimensions": {
+            "file": {"ready": True},
+            "coverage": {"complete": True},
+            "norms": {"complete": True},
+            "prices": {
+                "complete": prices_complete,
+                "gap_count": 0 if prices_complete else 2,
+                "action": (
+                    "Цены закрыты по выбранным ресурсам."
+                    if prices_complete
+                    else "Задайте цены."
+                ),
+                "basis": basis,
+            },
+        },
+        "actions": [],
+    }
+
+
+def test_price_basis_prompt_keeps_a_resolved_basis_out_of_the_card():
+    assert (
+        chat_page.lsr_price_basis_prompt({"match": "exact"}, books=("sankt-peterburg_2kv2026",))[
+            "visible"
+        ]
+        is False
+    )
+    assert (
+        chat_page.lsr_price_basis_prompt(
+            {"match": "confirmed_alternative", "actual_book": "sankt-peterburg_2kv2026"},
+            books=("sankt-peterburg_2kv2026",),
+        )["visible"]
+        is False
+    )
+    assert chat_page.lsr_price_basis_prompt(None, books=())["visible"] is False
+
+
+def test_price_basis_prompt_separates_requested_from_actually_used():
+    """An unselected basis is named as the system's pick, never as a decision."""
+
+    basis = {
+        "requested": "",
+        "requested_region": "",
+        "requested_region_origin": "не указан",
+        "contradictions": [],
+        "actual_book": "sankt-peterburg_2kv2026",
+        "actual_region": "Санкт-Петербург",
+        "actual_quarter": "2 квартал 2026 г.",
+        "match": "unspecified",
+        "note": "Ценовая база в запросе и исходнике не указана.",
+    }
+    prompt = chat_page.lsr_price_basis_prompt(
+        basis, books=("sankt-peterburg_2kv2026", "sankt-peterburg_3kv2026")
+    )
+    text = "\n".join(prompt["lines"])
+
+    assert prompt["visible"] is True
+    assert prompt["title"] == "Выберите регион и уровень цен"
+    assert prompt["state_label"] == "Ценовая база не выбрана оператором"
+    assert "Запрошенная ценовая база: не указана ни в запросе, ни в исходнике." in text
+    # The exact identifier stays next to its Russian decoding.
+    assert "sankt-peterburg_2kv2026" in text
+    assert "Санкт-Петербург · II квартал 2026" in text
+    assert "подбор системы по умолчанию, а не ваш выбор" in text
+    assert "Смета остаётся черновиком" in text
+    assert prompt["books"][0]["flag"] == "system_pick"
+    assert "flag" not in prompt["books"][1]
+    for phrase in ("подтверждена оператором", "по вашему выбору", "выбранный оператором"):
+        assert phrase not in text
+    assert prompt["technical"]["match"] == "unspecified"
+
+
+def test_price_basis_prompt_names_an_absent_quarter_and_applies_nothing():
+    """A missing period is stated as missing; no book is offered as a substitute."""
+
+    basis = {
+        "requested": "4kv2026",
+        "requested_region": "",
+        "requested_region_origin": "",
+        "contradictions": [],
+        "actual_book": "",
+        "actual_region": "",
+        "actual_quarter": "",
+        "match": "no_book",
+        "note": "Ценовая книга не применена.",
+    }
+    prompt = chat_page.lsr_price_basis_prompt(
+        basis, books=("sankt-peterburg_2kv2026", "krasnodarskiy-kray_4kv2025")
+    )
+    text = "\n".join(prompt["lines"])
+
+    assert prompt["state_label"] == "Ценовая книга не применена"
+    assert "Ценовая книга не применена: в расчёте только подтверждённые цены и КАЦ." in text
+    assert "Запрошенного периода «IV квартал 2026» среди доступных локальных книг нет." in text
+    assert "Ни одна книга вместо него не применяется." in text
+    # An absent book is never presented as applied.
+    assert "Фактически" not in text
+    assert all("flag" not in book for book in prompt["books"])
+    assert prompt["available_title"] == "Доступные ценовые книги локально — выберите одну:"
+
+    empty = chat_page.lsr_price_basis_prompt(basis, books=())
+    assert empty["books"] == []
+    assert "Локальных ценовых книг нет." in empty["empty_note"]
+
+
+def test_price_basis_prompt_shows_city_and_zone_as_different_things():
+    """Contradictions between region and period stay visible and get translated."""
+
+    basis = {
+        "requested": "Москва, 4 квартал 2026 г.",
+        "requested_region": "Москва",
+        "requested_region_origin": "параметр расчёта",
+        "contradictions": ["регион: Москва, Санкт-Петербург", "период цен: 2:2026, 4:2026"],
+        "actual_book": "sankt-peterburg_2kv2026",
+        "actual_region": "Санкт-Петербург",
+        "actual_quarter": "2 квартал 2026 г.",
+        "match": "mismatch",
+        "note": "Запрошена одна база, применена другая.",
+    }
+    prompt = chat_page.lsr_price_basis_prompt(basis, books=("sankt-peterburg_2kv2026",))
+    text = "\n".join(prompt["lines"])
+
+    assert prompt["state_label"] == "Ценовая база не совпадает с запросом"
+    assert prompt["state_tone"] == "error"
+    assert "Регион в запросе: Москва (параметр расчёта)." in text
+    assert (
+        "Город и ценовая зона — не одно и то же: противоречие показано, а не "
+        "разрешено кодом." in text
+    )
+    assert "В запросе названо несколько регионов: Москва, Санкт-Петербург." in text
+    assert "не та, что запрошена" in text
+    assert "применена вместо запрошенной" in prompt["books"][0]["flag_note"]
+    # Machine tokens are translated at the UI boundary.
+    assert "II квартал 2026, IV квартал 2026" in text
+    assert "2:2026" not in text
+
+
+def test_price_basis_choice_is_an_ordinary_chat_formulation():
+    book = chat_page.describe_pricebook_identifier("sankt-peterburg_3kv2026")
+
+    assert book["identifier"] == "sankt-peterburg_3kv2026"
+    assert book["region"] == "Санкт-Петербург"
+    assert book["period"] == "III квартал 2026"
+    assert book["label"] == "Санкт-Петербург · III квартал 2026"
+
+    sentence = chat_page.pricebook_chat_formulation(book)
+    assert "Пересчитай ЛСР: регион Санкт-Петербург, III квартал 2026" in sentence
+    assert "sankt-peterburg_3kv2026" in sentence
+    assert "Регион и уровень цен подтверждаю явно." in sentence
+
+    unknown = chat_page.describe_pricebook_identifier("some-region_1kv2024")
+    assert unknown["region_proven"] is False
+    assert unknown["region_note"] == "регион по идентификатору не подтверждён"
+    assert "Пересчитай ЛСР по ценовой книге some-region_1kv2024 (I квартал 2024)" in (
+        chat_page.pricebook_chat_formulation(unknown)
+    )
+
+
+def test_readiness_spec_keeps_the_price_basis_apart_from_price_gaps():
+    """No price gaps does not mean the operator picked a region and a period."""
+
+    basis = {
+        "requested": "",
+        "requested_region": "",
+        "requested_region_origin": "",
+        "contradictions": [],
+        "actual_book": "sankt-peterburg_2kv2026",
+        "actual_region": "Санкт-Петербург",
+        "actual_quarter": "2 квартал 2026 г.",
+        "match": "unspecified",
+        "note": "Применено значение по умолчанию.",
+    }
+    spec = chat_page.lsr_readiness_card_spec(_basis_readiness(basis, prices_complete=True))
+
+    assert spec["price_basis"] == basis
+    assert spec["prices_label"] == "Цены полные"
+    prompt = chat_page.lsr_price_basis_prompt(
+        spec["price_basis"], books=("sankt-peterburg_2kv2026",)
+    )
+    assert prompt["visible"] is True
+    assert "Смета остаётся черновиком" in "\n".join(prompt["lines"])
+
+
+def test_pricebook_identifiers_comes_from_the_local_price_service(monkeypatch) -> None:
+    """The offered list is the resolver's own visible set, reduced to identifiers."""
+
+    from proxy.services import fgis_price_service
+
+    monkeypatch.setattr(chat_page, "_pricebook_list_cache", (0.0, ()))
+    monkeypatch.setattr(
+        fgis_price_service,
+        "available_pricebooks",
+        lambda *args, **kwargs: [
+            "data/price_base/sankt-peterburg_3kv2026.parquet",
+            "data/price_base/sankt-peterburg_2kv2026.parquet",
+            "data/price_base/sankt-peterburg_2kv2026.parquet",
+        ],
+    )
+
+    assert chat_page.pricebook_identifiers(refresh=True) == (
+        "sankt-peterburg_2kv2026",
+        "sankt-peterburg_3kv2026",
+    )
+
+
+def test_chat_page_surfaces_the_price_basis_choice_in_the_readiness_card() -> None:
+    source = inspect.getsource(chat_page.build_chat)
+    block = source[
+        source.index("def _render_price_basis_prompt"):
+        source.index("def _render_lsr_readiness_card")
+    ]
+    card = source[source.index("def _render_lsr_readiness_card"):]
+    card = card[: card.index("def _render_smeta_approval_card")]
+
+    # Only shared primitives and existing token classes are used here.
+    assert "section_heading(" in block
+    assert "status_badge(" in block
+    assert "action_button(" in block
+    assert "render_feedback_state(" in block
+    assert 'classes("sov-ui-section-detail")' in block
+    assert "sov-ui-source-chip" in block
+    assert "sov-lsr-field-help" in block
+    assert "w-full gap-1" in block
+    assert "Технические детали ценовой базы" in block
+    assert "PRICE_BASIS_CHOICE_LABEL" in block
+    # The choice goes through the composer, not a bespoke endpoint.
+    assert "_prefill_chat_prompt(t)" in block
+    assert "api_post" not in block
+    assert "api_get" not in block
+    prefill = source[
+        source.index("def _prefill_chat_prompt"):source.index("def _render_price_basis_prompt")
+    ]
+    assert 'chat_input.value = str(text or "")' in prefill
+    assert "chat_input.update()" in prefill
+
+    assert "lsr_price_basis_prompt(" in card
+    assert 'spec.get("price_basis")' in card
+    assert "pricebook_identifiers()" in card
+    assert "_render_price_basis_prompt(basis_prompt)" in card
+    assert 'if basis_prompt["visible"]:' in card
+    assert "PRICE_BASIS_CITY_VS_ZONE_NOTE" in card

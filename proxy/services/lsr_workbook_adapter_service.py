@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import re
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from proxy.services import fgis_price_service
 from proxy.services.rim_lsr_trace_service import build_lsr_trace_from_visible_rows
@@ -28,6 +28,7 @@ _PRICE_SOURCE_LABEL = {
     "needs_labor_rate": "ставка ОЗП",
     "needs_machinist_rate": "ставка ЗПМ",
     "needs_fgis_price": "цена эксплуатации машины ФГИС ЦС",
+    "card_price_without_basis": "выбранная ценовая книга, КАЦ или подтверждённая цена",
 }
 _QUARTER_RE = re.compile(
     r"(?i)(?P<num>[1-4]|III|II|IV|I)\s*(?:квартал\w*|кв\.?)\s*(?P<year>20\d{2})"
@@ -112,9 +113,12 @@ def _read_source_preview_text(path: Path) -> str:
     if path.suffix.lower() != ".pdf" or not path.exists():
         return ""
     try:
-        import fitz
+        import pymupdf as fitz
     except Exception:
-        return ""
+        try:
+            import fitz
+        except Exception:
+            return ""
     try:
         with fitz.open(str(path)) as document:
             pages: list[str] = []
@@ -142,27 +146,222 @@ def _quarter_phrase(value: object) -> str:
     return " ".join(match.group(0).split()) if match else ""
 
 
-_REGION_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
+_REGION_PATTERNS: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
+    # (any-of tokens, none-of tokens, canonical subject). Order is
+    # significant: an oblast is checked before its capital, because a capital
+    # and a price zone of the same name are not the same basis (ADR-16 § 7).
+    (
+        ("ленинградск", "ленінградск", "leningradsk", "ленинградская"),
+        (),
+        "Ленинградская область",
+    ),
+    (
+        ("московск",),
+        ("город", "москва"),
+        "Московская область",
+    ),
     (
         ("санкт-петербург", "санкт петербург", "петербург", "спб", "ленинград",
          "sankt", "peterburg", "spb", "leningrad"),
+        (),
         "Санкт-Петербург",
     ),
     (
         ("москв", "moskva", "moscow"),
+        (),
         "Москва",
     ),
 )
+# An oblast is its own price zone; naming it must not be read as naming its
+# capital, and the reverse never happens (the capital token is not a substring
+# of the oblast name).
+_REGION_SUPERSESSIONS = {
+    "Ленинградская область": "Санкт-Петербург",
+    "Московская область": "Москва",
+}
 
 
 def _region_in_text(value: object) -> str:
     text = str(value or "").casefold().replace("ё", "е")
     if not text.strip():
         return ""
-    for patterns, canonical in _REGION_PATTERNS:
-        if any(token in text for token in patterns):
+    for patterns, excludes, canonical in _REGION_PATTERNS:
+        if any(token in text for token in patterns) and not any(
+            token in text for token in excludes
+        ):
             return canonical
     return ""
+
+
+def _region_candidates(value: object) -> set[str]:
+    """Every distinct subject named in one text.
+
+    City and price zone are never identified with each other here: a text that
+    names both produces two candidates, and the caller must not resolve that
+    conflict by picking one. An oblast names its capital too, so the oblast is
+    kept and the capital dropped instead of reporting a false conflict.
+    """
+
+    text = str(value or "").casefold().replace("ё", "е")
+    found: set[str] = set()
+    for patterns, excludes, canonical in _REGION_PATTERNS:
+        if not any(token in text for token in patterns):
+            continue
+        if any(token in text for token in excludes):
+            continue
+        found.add(canonical)
+    for oblast, capital in _REGION_SUPERSESSIONS.items():
+        if oblast in found:
+            found.discard(capital)
+    return found
+
+
+def visible_pricebook_stems() -> list[str]:
+    """Identifiers of the installed, operator-selectable price books."""
+
+    try:
+        return sorted(
+            Path(path).stem for path in fgis_price_service.available_pricebooks()
+        )
+    except Exception:  # noqa: BLE001 - a missing catalog is reported, not guessed
+        return []
+
+
+def explicit_estimate_pricebook(
+    *,
+    requested_book: str = "",
+    operator_book: str = "",
+    region_text: str = "",
+    question_text: str = "",
+    source_text: str = "",
+    source_name: str = "",
+    pricebooks: Sequence[object] | None = None,
+) -> dict[str, Any]:
+    """Bind a price book only when the basis is explicit (ADR-16 § 7).
+
+    Three origins are accepted, in this order and never mixed silently: the
+    calculation parameter, the operator's confirmation stored on the active
+    revision, and a unique derived match of an explicitly named subject plus an
+    explicitly written quarter against the installed catalog. Anything else
+    returns an empty book with the visible list of what is installed, so the
+    estimate stays a draft and the operator is asked — the configured default is
+    not allowed to price an estimate nobody chose.
+    """
+
+    stems = [
+        str(stem).strip()
+        for stem in (
+            visible_pricebook_stems() if pricebooks is None else list(pricebooks)
+        )
+        if str(stem or "").strip()
+    ]
+    result: dict[str, Any] = {
+        "pricebook": "",
+        "origin": "",
+        "reason": "",
+        "requested_region": "",
+        "requested_quarter": "",
+        "basis_binding": "",
+        "available_books": stems,
+    }
+    if requested_book.strip():
+        result["origin"] = "параметр расчёта"
+        result["reason"] = "книга задана явно в параметре расчёта"
+        result["pricebook"] = requested_book.strip()
+        result["basis_binding"] = requested_book.strip()
+        return result
+    if operator_book.strip():
+        result["origin"] = "подтверждение оператора"
+        result["reason"] = "базу выбрал пользователь и подтвердил в текущей ревизии"
+        result["pricebook"] = operator_book.strip()
+        result["basis_binding"] = operator_book.strip()
+        return result
+    if not stems:
+        result["reason"] = "локально нет ни одной доступной ценовой книги"
+        return result
+
+    named: list[tuple[str, str]] = []
+    if region_text.strip():
+        named.append(("параметр расчёта", region_text))
+    if question_text.strip():
+        named.append(("задача", question_text))
+    if source_text.strip():
+        named.append(("исходник", source_text))
+    if source_name.strip():
+        named.append(("имя исходника", source_name))
+    regions: set[str] = set()
+    region_origin = ""
+    for origin, text in named:
+        found = _region_candidates(text)
+        if found and not regions:
+            region_origin = origin
+        regions |= found
+    quarters: set[str] = set()
+    quarter_origin = ""
+    for origin, text in named:
+        token = _quarter_token(text)
+        if token and token not in quarters:
+            if not quarters:
+                quarter_origin = origin
+            quarters.add(token)
+    if len(regions) > 1:
+        result["reason"] = "регион назван по-разному в задаче, исходнике или параметре"
+        return result
+    if len(quarters) > 1:
+        result["reason"] = "период цен назван по-разному в задаче, исходнике или параметре"
+        return result
+    result["requested_region"] = next(iter(regions)) if regions else ""
+    result["requested_quarter"] = next(iter(quarters)) if quarters else ""
+    result["basis_binding"] = " ".join(
+        part
+        for part in (
+            result["requested_region"],
+            _quarter_phrase(" ".join(text for _, text in named)),
+        )
+        if part
+    ).strip()
+    if not regions and not quarters:
+        result["reason"] = (
+            "в задаче и исходнике явно не названы ни субъект, ни период — "
+            "книга по умолчанию не подставляется"
+        )
+        return result
+    if not regions:
+        result["reason"] = (
+            "в явном тексте назван период, но не назван (или не распознан) "
+            "субъект — книгу не подставляют молча"
+        )
+        return result
+    if not quarters:
+        result["reason"] = (
+            "в явном тексте назван субъект, но не назван квартал и год — "
+            "книгу не подставляют молча"
+        )
+        return result
+
+    requested_quarter = result["requested_quarter"]
+    matches = [
+        stem
+        for stem in stems
+        if _region_in_text(stem) == result["requested_region"]
+        and _quarter_token(stem) == requested_quarter
+    ]
+    if len(matches) == 1:
+        result["pricebook"] = matches[0]
+        result["origin"] = (
+            f"выведено из: {region_origin} + {quarter_origin} "
+            "(единственная подходящая книга)"
+        )
+        result["reason"] = "субъект и период названы явно и совпали ровно с одной книгой"
+        return result
+    if not matches:
+        result["reason"] = (
+            "среди доступных книг нет книги для названных субъекта и периода; "
+            "запрошенную базу не подменяют другой книгой"
+        )
+        return result
+    result["reason"] = "для названных субъекта и периода подходит несколько книг"
+    return result
 
 
 def summarize_lsr_price_basis(
@@ -175,12 +374,20 @@ def summarize_lsr_price_basis(
     requested_region: str = "",
     requested_region_origin: str = "",
     operator_confirmation: Mapping[str, Any] | None = None,
+    pricebook_origin: str = "",
+    available_books: Sequence[object] = (),
+    basis_binding: str = "",
 ) -> dict[str, Any]:
     """Bind the requested and the actually applied price basis; mismatches stay visible.
 
     Region, year, quarter and the book identity are checked together. Contradictions
     between explicit parameters are never resolved by hidden priority: they are
     reported, and only an operator confirmation can accept an alternative basis.
+
+    ``pricebook_origin`` states which explicit source the applied book came from
+    (parameter, operator confirmation, or a unique derived match), so the chosen
+    basis is visible instead of implied; ``available_books`` lists the installed
+    identifiers whenever no book could be bound (ADR-16 § 7).
     """
 
     requested_parts: list[str] = []
@@ -193,6 +400,11 @@ def summarize_lsr_price_basis(
     question_level = _quarter_phrase(question_text)
     if question_level and question_level not in requested_parts:
         requested_parts.append(question_level)
+    # A subject and period written in the task or the file are a requested
+    # basis even when no book could be bound to them (ADR-16 § 7).
+    binding = str(basis_binding or "").strip()
+    if binding and binding not in requested_parts:
+        requested_parts.append(binding)
     requested_label = "; ".join(requested_parts)
 
     region_text = str(requested_region or "").strip()
@@ -245,6 +457,19 @@ def summarize_lsr_price_basis(
         operator_confirmation if isinstance(operator_confirmation, Mapping) else None
     )
     confirmed_book = str((confirmation or {}).get("pricebook") or "").strip()
+    # The operator has to be able to choose from what actually exists, so the
+    # installed identifiers travel with the "no book applied" state (§ 7).
+    visible_books = [
+        str(stem).strip()
+        for stem in (available_books or ())
+        if str(stem or "").strip()
+    ]
+    available_hint = (
+        " Доступные книги: " + ", ".join(visible_books[:20])
+        + ("" if len(visible_books) <= 20 else f" … (всего {len(visible_books)})")
+        if visible_books
+        else " Локально нет ни одной доступной ценовой книги."
+    )
 
     if pricebook is None:
         return {
@@ -255,15 +480,23 @@ def summarize_lsr_price_basis(
             "actual_book": "",
             "actual_region": "",
             "actual_quarter": "",
+            "origin": "",
+            "available_books": visible_books,
+            "requested_book": book_request,
+            "requested_basis_present": bool(requested_label),
             "match": "no_book",
             "note": (
                 (
-                    f"Запрошенная ценовая база «{requested_label}» локально не найдена. "
+                    f"Запрошенная ценовая база «{requested_label}» локально не найдена "
+                    f"и не подменена другой книгой.{available_hint}"
                     if requested_label
-                    else ""
+                    else
+                    f"Ценовая база не задана явно, поэтому книга не выбрана и цены "
+                    f"не подставлены молча.{available_hint}"
                 )
-                + "Ценовая книга не применена: расчёт идёт только по подтверждённым ценам и КАЦ. "
-                "Укажите доступную книгу или внесите цены через подтверждённые данные."
+                + " Расчёт без книги остаётся черновиком: считаются подтверждённые"
+                " оператором цены, цены КАЦ и помеченные цены из карточек нормы."
+                " Выберите книгу из списка выше или внесите цены через подтверждённые данные."
             ),
         }
     actual_region = str(getattr(pricebook, "region", "") or "")
@@ -284,6 +517,9 @@ def summarize_lsr_price_basis(
     if checks and all(checks):
         match = "exact"
         note = f"Ценовая база совпадает с запросом: {actual_label} ({subject_label})."
+        origin_label = str(pricebook_origin or "").strip()
+        if origin_label:
+            note += f" Источник выбора базы: {origin_label}."
     elif checks:
         match = "mismatch"
         note = (
@@ -320,12 +556,15 @@ def summarize_lsr_price_basis(
         )
     return {
         "requested": requested_label,
+        "requested_book": book_request,
         "requested_region": region_text,
         "requested_region_origin": region_origin,
         "contradictions": contradictions,
         "actual_book": str(pricebook_name or ""),
         "actual_region": actual_region,
         "actual_quarter": actual_quarter,
+        "origin": str(pricebook_origin or ""),
+        "available_books": visible_books,
         "match": match,
         "note": note,
     }
@@ -359,6 +598,118 @@ def collect_lsr_workbook_gaps(trace: Mapping[str, Any]) -> list[str]:
                 if text.startswith("price_missing:"):
                     gaps.append(text)
     return gaps
+
+
+def collect_lsr_card_prices(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Resources whose money came out of the norm card instead of a basis.
+
+    The number is not deleted from the document — it is named, so the operator
+    can replace it with a book price, a КАЦ price or their own confirmation
+    (ADR-16 § 7).
+    """
+
+    found: list[dict[str, Any]] = []
+    for section in trace.get("sections") or []:
+        if not isinstance(section, Mapping):
+            continue
+        for position in section.get("positions") or []:
+            if not isinstance(position, Mapping):
+                continue
+            summary = (
+                position.get("summary")
+                if isinstance(position.get("summary"), Mapping)
+                else {}
+            )
+            for item in summary.get("card_priced_resources") or []:
+                if not isinstance(item, Mapping):
+                    continue
+                found.append(
+                    {
+                        **dict(item),
+                        "position_code": str(position.get("code") or ""),
+                        "position_name": str(position.get("name") or ""),
+                        "locator": position.get("source_row"),
+                    }
+                )
+    return found
+
+
+def collect_lsr_action_conflicts(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Rows whose own words name the opposite operation from the chosen norm.
+
+    The cipher the model selected is never rewritten here; the list exists so
+    the readiness channels ask one concrete question about it (task § 11 №8).
+    """
+
+    found: list[dict[str, Any]] = []
+    for binding in trace.get("row_bindings") or []:
+        if not isinstance(binding, Mapping):
+            continue
+        conflict = binding.get("action_conflict")
+        if not (isinstance(conflict, Mapping) and conflict):
+            continue
+        found.append(
+            {
+                **dict(conflict),
+                "locator": str(binding.get("row") or ""),
+                "code": str(binding.get("code") or ""),
+            }
+        )
+    return found
+
+
+def describe_lsr_card_prices(
+    card_priced: Sequence[Mapping[str, Any]], *, limit: int = 6
+) -> str:
+    """The header sentence naming money that came out of the norm cards.
+
+    The same rate normally repeats across several ВОР rows, so resources are
+    grouped by what the operator actually recognises (name, code, unit, rate)
+    and each group names the rows it was applied to.  Nothing is dropped and
+    nothing is presented as a distinct amount twice (ADR-16 § 7).
+    """
+
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for item in card_priced:
+        name = str(item.get("name") or item.get("code") or "ресурс")
+        code = str(item.get("code") or "")
+        price = item.get("price")
+        unit = str(item.get("unit") or "")
+        rate = f"{price:g} руб." if isinstance(price, (int, float)) else ""
+        locator = str(item.get("locator") or item.get("position_code") or "")
+        grouped.setdefault((name, code, rate + "|" + unit), []).append(locator)
+    labels: list[str] = []
+    for (name, code, rate_unit), locators in list(grouped.items())[:limit]:
+        label = name + (f" ({code})" if code and code != name else "")
+        rate, _, unit = rate_unit.partition("|")
+        if rate:
+            label += f" — {rate}" + (f"/{unit}" if unit else "")
+        rows = [locator for locator in dict.fromkeys(locators) if locator]
+        if rows:
+            label += ", строки " + ", ".join(rows[:4]) + (
+                f" … (ещё {len(rows) - 4})" if len(rows) > 4 else ""
+            )
+        labels.append(label)
+    total_rows = len(
+        {
+            locator
+            for locators in grouped.values()
+            for locator in locators
+            if locator
+        }
+    ) or len(card_priced)
+    tail = (
+        f" … (показаны {limit} из {len(grouped)} ресурсов, "
+        f"строк с ценой из карточки нормы всего: {total_rows})"
+        if len(grouped) > limit
+        else ""
+    )
+    return (
+        " Часть посчитанных ресурсов взята не из ценовой базы, а из карточки нормы: "
+        + "; ".join(labels)
+        + tail
+        + ". Такие позиции остаются черновиком: подтвердите книгу, КАЦ или свою цену."
+    )
 
 
 def collect_lsr_price_gaps(
@@ -403,9 +754,49 @@ def collect_lsr_price_gaps(
                 quantity = columns.get(7, columns.get("7"))
                 unit = str(columns.get(4, columns.get("4")) or "")
                 required = _PRICE_SOURCE_LABEL.get(action, "подтверждённая цена")
+                card_amount = columns.get(10, columns.get("10"))
+                identity = name if name != code else (code or name)
+                named = (
+                    f"Для {name}"
+                    if action == "card_price_without_basis"
+                    else f"Задайте цену для {name}"
+                ) + (f" ({code})" if code and code != name else "") + (
+                    f" в позиции {position_label}" if position_label else ""
+                )
+                if action == "card_price_without_basis":
+                    # Money exists but nobody owns the number: the question names
+                    # the rate actually applied and asks for its owner (ADR-16 § 7).
+                    rate_text = (
+                        f" ({card_amount:g} руб."
+                        + (f"/{unit}" if unit else "")
+                        + ")"
+                        if isinstance(card_amount, (int, float))
+                        and not isinstance(card_amount, bool)
+                        else ""
+                    )
+                    action_text = (
+                        named
+                        + f" посчитано по цене из карточки нормы{rate_text}, а не по"
+                        + " выбранной ценовой базе, КАЦ или подтверждённой цене."
+                        + " Подтвердите книгу, КАЦ или свою цену — без этого позиция"
+                        " остаётся черновиком."
+                    )
+                else:
+                    action_text = (
+                        named
+                        + (f", количество {quantity}" if quantity not in (None, "") else "")
+                        + (f" {unit}" if unit else "")
+                        + f". Источник: {required}."
+                        + (
+                            f" Проверенная ценовая база: {checked_basis}."
+                            if checked_basis
+                            else ""
+                        )
+                        + " Отсутствие цены не отменяет норму."
+                    )
                 gaps.append(
                     {
-                        "resource": name if name != code else (code or name),
+                        "resource": identity,
                         "code": code,
                         "quantity": quantity,
                         "unit": unit,
@@ -418,20 +809,7 @@ def collect_lsr_price_gaps(
                             "прямые затраты, НР и СП этой позиции",
                         ],
                         "checked_basis": checked_basis,
-                        "action": (
-                            f"Задайте цену для {name}"
-                            + (f" ({code})" if code and code != name else "")
-                            + (f" в позиции {position_label}" if position_label else "")
-                            + (f", количество {quantity}" if quantity not in (None, "") else "")
-                            + (f" {unit}" if unit else "")
-                            + f". Источник: {required}."
-                            + (
-                                f" Проверенная ценовая база: {checked_basis}."
-                                if checked_basis
-                                else ""
-                            )
-                            + " Отсутствие цены не отменяет норму."
-                        ),
+                        "action": action_text,
                     }
                 )
     return gaps
@@ -487,22 +865,9 @@ async def build_lsr_workbook_from_decisions(
     requested_pricebook = str(
         args.get("pricebook") or args.get("pricebook_id") or ""
     ).strip()
-    pricebook_path = fgis_price_service.resolve_pricebook_path(
-        requested_pricebook or None
-    )
-    pricebook = (
-        fgis_price_service.get_pricebook(pricebook_path)
-        if pricebook_path
-        else None
-    )
-    pricebook_name = Path(pricebook_path).stem if pricebook_path else ""
     source_name = str(args.get("_source_name") or _source_path.name or "")
     source_text = str(args.get("_source_text") or "") or _read_source_preview_text(
         Path(_source_path)
-    )
-    identity = extract_lsr_source_identity(
-        source_text=source_text,
-        source_name=source_name,
     )
     overlays = (
         args.get("confirmed_data")
@@ -516,21 +881,49 @@ async def build_lsr_workbook_from_decisions(
     ):
         basis_confirmation = dict(overlays["_price_basis"])
         basis_confirmation.setdefault("confirmed_by", "operator")
-    price_basis = summarize_lsr_price_basis(
+    operator_book = str((basis_confirmation or {}).get("pricebook") or "").strip()
+    requested_region = str(
+        args.get("region") or args.get("price_region") or ""
+    ).strip()
+    # ADR-16 § 7: only an explicit basis may bind a book. The configured default
+    # is not allowed to price an estimate whose region and period nobody chose.
+    basis_choice = explicit_estimate_pricebook(
         requested_book=requested_pricebook,
+        operator_book=operator_book,
+        region_text=requested_region,
+        question_text=str(args.get("question") or ""),
+        source_text=source_text,
+        source_name=source_name,
+    )
+    pricebook_path = fgis_price_service.resolve_pricebook_path(
+        basis_choice["pricebook"] or None, explicit_only=True
+    )
+    pricebook = (
+        fgis_price_service.get_pricebook(pricebook_path)
+        if pricebook_path
+        else None
+    )
+    pricebook_name = Path(pricebook_path).stem if pricebook_path else ""
+    identity = extract_lsr_source_identity(
+        source_text=source_text,
+        source_name=source_name,
+    )
+    price_basis = summarize_lsr_price_basis(
+        requested_book=requested_pricebook or operator_book,
         source_price_level=identity["price_level"],
         question_text=str(args.get("question") or ""),
         pricebook=pricebook,
         pricebook_name=pricebook_name,
-        requested_region=str(
-            args.get("region") or args.get("price_region") or ""
-        ).strip(),
+        requested_region=requested_region,
         requested_region_origin=(
             "параметр расчёта"
-            if str(args.get("region") or args.get("price_region") or "").strip()
+            if requested_region
             else ""
         ),
         operator_confirmation=basis_confirmation,
+        pricebook_origin=str(basis_choice["origin"] or ""),
+        available_books=basis_choice["available_books"],
+        basis_binding=str(basis_choice["basis_binding"] or ""),
     )
     progress("model_decisions", 0, len(decisions))
     overlays = args.get("confirmed_data") if isinstance(args.get("confirmed_data"), Mapping) else None
@@ -542,12 +935,32 @@ async def build_lsr_workbook_from_decisions(
         confirmed_data=overlays,
     )
     source_label = "" if is_question_like_title(Path(source_name).stem) else source_name
+    card_priced = collect_lsr_card_prices(trace)
+    if card_priced:
+        # ADR-16 § 7: the header may not claim that nothing was priced while the
+        # norm cards themselves supplied numbers.  Those amounts stay visible and
+        # are named as not belonging to the chosen basis.
+        card_note = describe_lsr_card_prices(card_priced)
+        price_basis = {
+            **price_basis,
+            "card_priced_resources": card_priced,
+            "card_priced_note": card_note.strip(),
+            "note": str(price_basis.get("note") or "") + card_note,
+        }
     render_meta = {
         "source": source_label,
         "pricebook": pricebook_name,
         "osnovanie": identity["osnovanie"],
         "price_level": identity["price_level"],
     }
+    if pricebook_name:
+        # The header states the level actually applied, never a default implied
+        # by an absent source period.
+        render_meta["price_level"] = (
+            price_basis["actual_quarter"]
+            if str(price_basis.get("actual_quarter") or "").strip()
+            else pricebook_name
+        )
     if identity["object"]:
         render_meta["object"] = identity["object"]
     if identity["stroika"]:
@@ -572,6 +985,8 @@ async def build_lsr_workbook_from_decisions(
         "pricebook": pricebook_name,
         "pricing_status": str((trace.get("summary") or {}).get("result_status") or ""),
         "norms_status": str((trace.get("summary") or {}).get("norms_status") or ""),
+        # which explicit source bound the book, and why nothing was bound
+        "price_basis_choice": basis_choice,
         "missing": missing,
         "price_gaps": collect_lsr_price_gaps(
             trace,
@@ -579,6 +994,9 @@ async def build_lsr_workbook_from_decisions(
             pricebook_name=pricebook_name,
         ),
         "price_basis": price_basis,
+        # rows whose own wording names the opposite operation from the chosen
+        # norm: a question for the operator, never a silent re-selection
+        "norm_conflicts": collect_lsr_action_conflicts(trace),
         # stage V operator counts: calculated positions and the confirmed /
         # preliminary split of the known amount (code arithmetic, no statuses raised)
         "calculated_positions": int(

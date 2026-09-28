@@ -97,6 +97,30 @@ and a fresh `JobService` creates its SQLite file directly under state `data`.
   (`model_search_result_blocks_packet`). Конверсия единиц только с источником
   и без угадывания габарита из названия — `test_rim_lsr_trace_service`.
 
+- ADR-16 (сметный путь): систематический сбор кандидатов кодом — `test_lsr_candidate_query_service`
+  (дословная композиция из ячеек, drop-if-ungrounded, происхождение
+  `original`/`derived`/`model`, лимит = interrupted/deferred, а не «нормы нет»);
+  применижность нормы — `test_lsr_norm_applicability` (`EXACT` от модели ≠
+  подтверждённая применимость, `norm_code` с evidence другого шифра не закрывает
+  готовность, `ANALOGUE_CANDIDATE` без обоснования остаётся черновиком);
+  групповые ресурсы — `test_lsr_group_resource_specificity`; ценовая база —
+  `test_lsr_price_basis_explicit` (город ≠ ценовая зона, отсутствующий квартал
+  предлагается и не применяется, запрошенная база не подменяется другой книгой,
+  список доступных книг видим); владение ценой — `test_lsr_price_ownership`
+  (подтверждённая цена оператора и выбранная книга сильнее ставки из карточки
+  нормы; помеченная ставка карточки считается, но остаётся в
+  `preliminary_amount`, называется в `price_gaps` и не делает позицию полной);
+  замаскированная незакрытость — `test_lsr_disguised_gaps` (§ 11: «демонтаж»,
+  посчитанный нормой «монтаж», остаётся вопросом; совпадающие и неоднозначные
+  формулировки ложного вопроса не дают; шт не пересчитывается в 100 м²;
+  подтверждённая цена материала не закрывает отсутствующую норму работ;
+  двойной учёт одного предмета в двух ролях и неадресованное подтверждение не
+  становятся подтверждённой суммой).
+  Архитектурный gate закрепляет всё четырьмя кодами:
+  `DERIVED_QUERY_SEMANTIC_INVENTION`, `QUERY_PROVENANCE_MISSING`,
+  `PRICE_BASIS_SILENT_DEFAULT`, `UNOWNED_PRICE_SOURCE`
+  (`test_architecture_contract_gate`).
+
 - LSR quality gate: нейтральная проверка карточки, сохранение последнего
   `CONFLICT` после исчерпания поиска, отдельный честный `MISSING`, store-card
   и PDF Markdown source catalog с устойчивыми локаторами и точным work-row count;

@@ -395,6 +395,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             remaining_locators=remaining,
             job_status=str(job.get("status") or ""),
             price_gaps=list(harvested.get("price_gaps") or []),
+            norm_conflicts=list(harvested.get("norm_conflicts") or []),
             price_basis=dict(harvested.get("price_basis") or {}),
             calculated_positions=(
                 int(payload["calculated_positions"])

@@ -25,11 +25,13 @@ from proxy.services.lsr_source_coverage_service import (
 )
 from proxy.services.lsr_norm_quality_gate_service import (
     canonicalize_norm_status,
+    norm_applicability_substantiated,
 )
 from proxy.services.attachment_source_catalog_service import (
     normalize_unit,
     quantities_close,
 )
+from proxy.services.smeta_norm_store import reversed_action_pair
 
 
 def _f(value: Any) -> float:
@@ -377,6 +379,19 @@ def _missing_price_action(res: dict[str, Any]) -> str:
     return "needs_price"
 
 
+def _price_is_attributed(res: dict[str, Any]) -> bool:
+    """Whether an explicit resource price has an owner the customer can check.
+
+    Only two owners exist: the operator who confirmed the price, and a source
+    reference written with it.  A number the imported norm card carries by
+    itself belongs to neither (ADR-16 § 7).
+    """
+
+    if res.get("price_confirmed"):
+        return True
+    return bool(str(res.get("price_source_ref") or "").strip())
+
+
 def _resolve_price_trace(
     res: dict[str, Any],
     *,
@@ -384,9 +399,11 @@ def _resolve_price_trace(
     kac_map: dict[str, float] | None = None,
 ) -> PriceTrace:
     """Вернуть цену ресурса с сохранением происхождения граф 8-10."""
-    if res.get("price") not in (None, ""):
-        price = _round(res.get("price"))
-        return PriceTrace(price=price, source="manual", column_10=price, basis="explicit_resource_price")
+    explicit = (
+        _round(res.get("price")) if res.get("price") not in (None, "") else None
+    )
+    if explicit is not None and _price_is_attributed(res):
+        return PriceTrace(price=explicit, source="manual", column_10=explicit, basis="explicit_resource_price")
 
     code = str(res.get("code") or "").strip()
     if code and pricebook is not None:
@@ -428,6 +445,19 @@ def _resolve_price_trace(
         if price is not None:
             price = _round(price)
             return PriceTrace(price=price, source="kac", column_10=price, basis="kac")
+
+    # Last resort, and never a silent one: the number written inside the norm
+    # card is applied only when neither the chosen book nor КАЦ has the resource,
+    # it is labelled with its own action, and the position stops being a
+    # confirmed amount (ADR-16 § 7, acceptance § 12 "no invented prices").
+    if explicit is not None:
+        return PriceTrace(
+            price=explicit,
+            source="card_price",
+            column_10=explicit,
+            basis="norm_card_price",
+            action="card_price_without_basis",
+        )
 
     action = _missing_price_action(res)
     return PriceTrace(price=None, source=action, basis=action, action=action)
@@ -543,6 +573,15 @@ def build_position_trace(
     if position.get("code") and norm is None and not position.get("resources"):
         flags.append(f"норма ГЭСН не найдена: {position.get('code')}")
         completeness_reasons.append("norm_missing")
+    action_conflict = position.get("action_conflict")
+    if isinstance(action_conflict, Mapping) and action_conflict:
+        # Task § 11 №8: the amount is still shown, but a position whose own row
+        # names the opposite operation is a draft until the conflict is resolved.
+        flags.append(f"противоречие операции: {action_conflict.get('message') or ''}".strip())
+        completeness_reasons.append(
+            "action_conflict:"
+            f"{action_conflict.get('row_action') or ''}->{action_conflict.get('norm_action') or ''}"
+        )
     application = str(coeff_meta.get("application") or "")
     authored_coeff = coeff_meta.get("authored")
     if application == "unparsed":
@@ -635,6 +674,7 @@ def build_position_trace(
     detail_rows: dict[str, list[dict[str, Any]]] = {"labor": [], "machine": [], "machinist": [], "material": []}
     sums = {"labor": 0.0, "machine": 0.0, "machinist": 0.0, "material": 0.0}
     qty_sums = {"labor": 0.0, "machine": 0.0, "machinist": 0.0, "material": 0.0}
+    card_prices: list[dict[str, Any]] = []
 
     for res in resources:
         kind = str(res.get("kind") or "")
@@ -652,6 +692,27 @@ def build_position_trace(
             }.get(price.action or price.source, "нужна цена")
             flags.append(f"{action_label}: {res.get('name','?')} ({res.get('code','—')})")
             completeness_reasons.append(f"price_missing:{res.get('code') or res.get('name') or '?'}")
+        elif price.action == "card_price_without_basis":
+            # Money exists, but nobody owns the number: it stays in the document,
+            # is reported as a price gap, breaks the position's completeness and
+            # is never counted as a confirmed amount (ADR-16 § 7, § 12).
+            card_prices.append(
+                {
+                    "kind": kind,
+                    "code": str(res.get("code") or ""),
+                    "name": str(res.get("name") or ""),
+                    "unit": str(res.get("unit") or ""),
+                    "price": price.price,
+                    "cost": cost,
+                }
+            )
+            flags.append(
+                "цена взята из карточки нормы, а не из выбранной ценовой базы или КАЦ: "
+                f"{res.get('name','?')} ({res.get('code','—')})"
+            )
+            completeness_reasons.append(
+                f"card_price_without_basis:{res.get('code') or res.get('name') or '?'}"
+            )
         if kind not in detail_rows:
             flags.append(f"неизвестный вид ресурса: {kind!r}")
             continue
@@ -866,6 +927,10 @@ def build_position_trace(
             "known_amount": total,
             "full_amount": full_amount,
             "amount_status": "complete" if full_amount is not None else "partial",
+            # ADR-16 § 7: money whose only owner is the norm card itself is named
+            # here so the header, the checklist and the readiness agree that the
+            # position is a draft even though an amount exists.
+            "card_priced_resources": card_prices,
             "operator_price_trace": operator_price_trace,
             # Directive 2.3: when an operator supplied a confirmed unit price the
             # norm-derived resource amounts stay visible in the document as
@@ -1024,8 +1089,11 @@ def _coverage_marker_text(value: Any) -> str:
 def model_row_rejects_selected_norm(row: Mapping[str, Any] | None) -> tuple[bool, str]:
     """True when the model itself refused the selected card.
 
-    Code does not judge montage vs dismantling. It only honors an explicit
-    authored coverage/analogue refusal and leaves the row visible as MISSING.
+    Code does not choose between montage and dismantling: it never rewrites the
+    model's cipher.  It only honors an explicit authored coverage/analogue
+    refusal and leaves the row visible as MISSING.  A pairing where the two
+    texts name opposite actions is handled by :func:`norm_action_conflict`,
+    which asks instead of deciding.
     """
     payload = row if isinstance(row, Mapping) else {}
     for key in ("coverage", "analogue", "note"):
@@ -1038,6 +1106,37 @@ def model_row_rejects_selected_norm(row: Mapping[str, Any] | None) -> tuple[bool
             if phrase in marker:
                 return True, f"модель отклонила норму: {key} содержит «{phrase}»"
     return False, ""
+
+
+def norm_action_conflict(row_title: Any, norm: Mapping[str, Any] | None) -> dict[str, str]:
+    """A verbatim reversal between the operation the row names and the card names.
+
+    Task § 11 №8: «демонтаж» must not be delivered as «монтаж».  This reads the
+    two texts that are already in the document and states one structural fact:
+    each side names exactly one action and the actions are opposite.  It chooses
+    no norm, edits no cipher, recomputes no number and infers no technology — it
+    removes only the claim that applicability is substantiated, and puts one
+    concrete question in every channel that shows the row (ADR-16 § 6, § 10).
+
+    Returns ``{}`` when nothing contradicts, including every ambiguous case.
+    """
+
+    card = norm if isinstance(norm, Mapping) else {}
+    norm_title = str(card.get("name") or card.get("title") or "").strip()
+    pair = reversed_action_pair(row_title, norm_title)
+    if not pair:
+        return {}
+    row_action, norm_action = pair
+    return {
+        "row_action": row_action,
+        "norm_action": norm_action,
+        "norm_title": norm_title,
+        "message": (
+            f"в строке названа операция «{row_action}», а в названии выбранной "
+            f"нормы — «{norm_action}»: подтвердите операцию или выберите другую "
+            "норму; код норму не подменяет"
+        ),
+    }
 
 
 def _code_from_visible_row(row: dict[str, Any]) -> str:
@@ -1343,9 +1442,18 @@ def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str,
     authored_status = str(binding.get("norm_status") or "") or (
         str(row.get("norm_status") or "").strip().upper() if norm_selected else ""
     )
-    applicability = (
-        bool(norm_selected)
-        and authored_status in _SUBSTANTIATED_NORM_STATUSES
+    # ADR-16 § 6: the status token is the model's claim, never the evidence for
+    # it.  A cipher that no cited card carries, or an analogue whose five match
+    # fields the model left unproven, stays a candidate: it may show in the
+    # draft and in the trace, but it does not make the row applicable.
+    applicability = bool(norm_selected) and (
+        authored_status in _SUBSTANTIATED_NORM_STATUSES
+    ) and not binding.get("action_conflict") and norm_applicability_substantiated(
+        {
+            **dict(row),
+            "norm_status": authored_status,
+            "norm_code": str(binding.get("code") or row.get("norm_code") or ""),
+        }
     )
     if role in {"material", "equipment"} and status not in {
         "unconfirmed_quantity", "missing_quantity",
@@ -1604,6 +1712,10 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             )
             continue
         norm_qty, qty_trace = _norm_qty_from_visible_row(row, code, norm)
+        # ADR-16 § 6: a reversal between the row's own words and the card's own
+        # words is recorded whether or not the volume could be resolved, so the
+        # row is never reported as merely "waiting for a number".
+        action_conflict = norm_action_conflict(title, norm)
         if norm_qty is None:
             binding = {
                 "row": source_row,
@@ -1612,6 +1724,8 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 "quantity_trace": qty_trace,
                 "source_row": row,
             }
+            if action_conflict:
+                binding["action_conflict"] = action_conflict
             if source_qty is not None:
                 binding["source_quantity"] = source_qty
             if source_unit:
@@ -1635,6 +1749,8 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         }
         if title:
             position["name"] = title
+        if action_conflict:
+            position["action_conflict"] = action_conflict
         confirmed_price = _num(row.get("confirmed_price"))
         if confirmed_price is not None and math.isfinite(confirmed_price):
             position["confirmed_price"] = confirmed_price
@@ -1685,6 +1801,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             "source_unit",
             "norm_quantity",
             "source_coefficient_overlap",
+            "action_conflict",
         ):
             if key in position:
                 binding[key] = position[key]
@@ -1842,10 +1959,17 @@ def build_lsr_trace_from_visible_rows(
                     and readiness.get("applicability_substantiated") is not False
                 )
             units_ok = readiness.get("volume_verified") is not False
+            # ADR-16 § 7: an amount whose only owner is the norm card is money the
+            # customer has not chosen.  It stays in the document and in the
+            # preliminary total; it never becomes a "confirmed" amount.
+            card_priced_money = bool(pos_summary.get("card_priced_resources"))
             price_ok = bool(
-                complete
-                or operator_confirmed_price
-                or (not pos_summary.get("completeness_reasons"))
+                (
+                    complete
+                    or operator_confirmed_price
+                    or (not pos_summary.get("completeness_reasons"))
+                )
+                and not (card_priced_money and not operator_confirmed_price)
             )
             conflicts_ok = (
                 str(source_row) not in conflict_locators
@@ -1857,9 +1981,14 @@ def build_lsr_trace_from_visible_rows(
             readiness["norm_applicability_ok"] = bool(norm_applicability_ok)
             readiness["units_ok"] = bool(units_ok)
             readiness["price_ok"] = bool(price_ok)
+            readiness["price_from_norm_card"] = bool(card_priced_money)
             readiness["conflicts_ok"] = bool(conflicts_ok)
             readiness["operator_confirmed_price"] = bool(operator_confirmed_price)
-            readiness["prices_provided"] = price_ok and conflicts_ok
+            readiness["prices_provided"] = (
+                "не по базе"
+                if card_priced_money and not operator_confirmed_price
+                else bool(price_ok and conflicts_ok)
+            )
             readiness["double_count_conflict"] = str(source_row) in conflict_locators
             if preliminary:
                 preliminary_amount = round(preliminary_amount + amount, 2)

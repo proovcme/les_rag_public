@@ -108,10 +108,17 @@ from proxy.services.lsr_result_readiness_service import (
     build_lsr_result_readiness,
     format_lsr_readiness_notice,
 )
+from proxy.services.lsr_candidate_query_service import (
+    candidate_queries_enabled_for_turn,
+    candidate_queries_for_packet,
+    dropped_ungrounded_queries,
+    merge_candidate_queries,
+)
 from proxy.services.lsr_norm_quality_gate_service import (
     LsrResearchRoundResult,
     aggregate_norms_status,
     build_blind_review_evidence_items,
+    ciphers_compatible,
     invented_source_row,
     lsr_coefficient_instruction,
     lsr_format_retry_instruction,
@@ -120,6 +127,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
     lsr_result_table_instruction,
     lsr_verifier_format_retry_instruction,
     lsr_verifier_instruction,
+    looks_like_cipher,
     mark_research_exhausted,
     merge_format_retry_rows,
     merge_quality_gated_rows,
@@ -1209,6 +1217,14 @@ def sheet_pass_query_instruction(
         model_rag_query_instruction(profile_snapshot)
         + f"\nСейчас только лист «{sheet}» ({sheet_index}/{sheet_count}). "
         "Другие листы манифеста будут отдельными шагами; не составляй запросы по ним."
+        + "\nКроме твоих запросов система гарантированно добавляет два запроса на "
+        "каждую строку листа: дословный текст строки и тот же текст с явно указанными "
+        "в исходнике атрибутами (раздел листа, написанный шифр). Такие запросы помечены "
+        "в доказательственной части как «дословный исходный текст строки» или «системный "
+        "подбор по атрибутам этой строки». Это только кандидаты: выбирать норму, оценивать "
+        "её применимость и отклонять всех предложенных кандидатов решаешь ты. Отсутствие "
+        "кандидата не означает отсутствие нормы в базе, а наличие кандидата не означает, "
+        "что она применима."
         + extra
     )
 
@@ -1804,14 +1820,19 @@ def row_evidence_provenance_check(
             if str(ref).strip() and str(ref).strip().upper() not in bindings
         }
     )
-    codes = [item["card"] for item in cited if item["card"]]
+    # Only a cited card that carries a cipher can contradict the authored one:
+    # a card body with no ``Шифр:`` line reports its document name, and a name is
+    # not evidence either way.  Spellings are folded, so a space or a colon in
+    # ``ГЭСН 10-01-001-05`` is not read as a different norm.
+    known_ciphers = [item["card"] for item in cited if looks_like_cipher(item["card"])]
     return {
         "norm_code": norm_code,
         "cited": cited,
         "unresolved_refs": unresolved,
-        "code_not_in_refs": not any(
-            norm_code in code or code in norm_code for code in codes
-        ),
+        "cited_ciphers": known_ciphers,
+        "citation_checkable": bool(known_ciphers),
+        "code_not_in_refs": bool(known_ciphers)
+        and not any(ciphers_compatible(norm_code, code) for code in known_ciphers),
     }
 
 
@@ -2051,6 +2072,13 @@ _NARRATIVE_QUERY_EXACT = {
 }
 _TABULAR_TRUNCATION_MARK = "[Табличный контекст усечён"
 _PASTE_TRUNCATION_MARK = "[Исходник усечён"
+# ADR-16: a model-authored query keeps its historical header verbatim. Only a
+# code-authored candidate group is labelled, so the model can see who put a group
+# in front of it and can reject every candidate in it.
+_QUERY_PROVENANCE_HEADER_LABELS = {
+    "original": "(дословный исходный текст строки)",
+    "derived": "(системный подбор по атрибутам этой строки)",
+}
 _MIN_MODEL_RAG_EVIDENCE_BODY_CHARS = 400
 _LENGTH_FINISH_REASONS = {"length", "max_tokens", "length_truncated"}
 
@@ -2781,8 +2809,172 @@ def _model_rag_capped_hits(raw_hits: Sequence[Any], hits_per_query: int) -> list
     return list(raw_hits)[: max(1, int(hits_per_query))]
 
 
-def _model_rag_query_header(query_index: int, query: str) -> str:
-    return f"[Поисковый запрос Q{query_index}] {str(query or '').strip()}"
+def _model_rag_query_header(
+    query_index: int,
+    query: str,
+    provenance: str = "model",
+) -> str:
+    text = str(query or "").strip()
+    label = _QUERY_PROVENANCE_HEADER_LABELS.get(
+        str(provenance or "model").strip().casefold(), ""
+    )
+    base = f"[Поисковый запрос Q{query_index}] {text}"
+    return f"{base} {label}" if label else base
+
+
+def _model_rag_query_provenance(
+    query_provenance: Mapping[str, str] | None,
+    query: str,
+) -> str:
+    """Provenance of one query text; an untagged query stays a model query.
+
+    ADR-16 makes a missing tag visible rather than silently re-routing it: the
+    estimator sheet-pass tags every query it executes, so an untagged entry can
+    only come from an ordinary (non-estimate) turn, where the model is still the
+    only author.
+    """
+
+    if not query_provenance:
+        return "model"
+    folded = " ".join(str(query or "").casefold().split())
+    for key, value in query_provenance.items():
+        if " ".join(str(key or "").casefold().split()) == folded:
+            return str(value or "model")
+    return "model"
+
+
+def _model_only_query_provenance(
+    query_hits: Sequence[Any],
+) -> dict[str, str]:
+    """Tag every query of a model-only turn as ``model`` (ADR-16 gate rule).
+
+    ``QUERY_PROVENANCE_MISSING`` requires an evidence-builder callsite to state
+    provenance rather than rely on the default.  On a turn where the model is the
+    only author, this map is that statement: an untagged query cannot reach the
+    rendered evidence on any path.
+    """
+
+    provenance: dict[str, str] = {}
+    for item in query_hits:
+        query = item[0] if isinstance(item, tuple) and item else item
+        text = str(query or "").strip()
+        if text:
+            provenance.setdefault(text, "model")
+    return provenance
+
+
+async def _execute_system_candidate_queries(
+    *,
+    catalog: AttachmentSourceCatalog | None,
+    sheet: str,
+    packet: Sequence[str],
+    profile_snapshot: Mapping[str, Any] | None,
+    comparative_variant: str,
+    model_research_tools: Any,
+    model_queries: Sequence[str],
+    pass_hits: list[tuple[str, Sequence[Any]]],
+    pass_tools: list[dict[str, Any]],
+    sheet_query_cache: Mapping[str, Sequence[dict[str, Any]]],
+    cache_updates: dict[str, list[dict[str, Any]]],
+    query_provenance: dict[str, str],
+    retrieval_trace: dict[str, Any],
+    hits_per_query: int,
+) -> int:
+    """Append the ADR-16 code-authored candidate groups after the model's own.
+
+    Scope is deliberately narrow: the estimator path only, never inside the
+    ``B0_DIRECT`` live-comparison baseline, and never before the model has had
+    its own queries executed.  Every query is tagged with its provenance, so a
+    missing tag is impossible on this path rather than defaulted.
+    """
+
+    for query in model_queries:
+        query_provenance.setdefault(str(query), "model")
+    trace = retrieval_trace.setdefault("system_candidate_queries", {})
+    trace.setdefault("sheets", {})
+    if comparative_variant == "B0_DIRECT":
+        trace["status"] = "skipped_baseline"
+        return 0
+    if not candidate_queries_enabled_for_turn(profile_snapshot):
+        return 0
+    built_report: dict[str, Any] = {}
+    built = candidate_queries_for_packet(
+        catalog, sheet=sheet, locators=list(packet), report=built_report
+    )
+    candidates = merge_candidate_queries(
+        [str(query) for query in model_queries]
+        + [str(query) for query, _hits in pass_hits],
+        built,
+    )
+    dropped = dropped_ungrounded_queries(built)
+    added = 0
+    executed: list[dict[str, Any]] = []
+    blocked = ""
+    for index, candidate in enumerate(candidates):
+        query = candidate.text
+        cached = restore_query_hits_from_cache([query], sheet_query_cache)
+        if cached:
+            hits = cached[0][1]
+            pass_tools.append(
+                {
+                    "schema": "les_tool_result_v1",
+                    "tool": "search_sources",
+                    "status": "ok" if hits else "missing",
+                    "result": {"count": len(hits), "cached": True},
+                }
+            )
+        else:
+            research_result = await model_research_tools.execute(
+                {"tool": "search_sources", "args": {"q": query}}
+            )
+            payload = research_result.payload
+            pass_tools.append(payload)
+            if model_search_result_blocks_packet(payload):
+                blocked = str(payload.get("status") or "")
+                # ADR-16 § 6: a stopped search is an interruption.  The queries
+                # it never reached stay recorded as deferred candidates, so no
+                # later reader can take them for «норма отсутствует».
+                built_report["deferred_by_search_block"] = [
+                    item.text for item in list(candidates)[index:]
+                ]
+                break
+            hits = tuple(research_result.chunks)[: max(1, int(hits_per_query))]
+            records = [durable_research_hit(item) for item in hits]
+            cache_updates[str(query)] = records
+        pass_hits.append((query, hits))
+        query_provenance[query] = candidate.provenance
+        executed.append(candidate.as_trace_dict())
+        added += 1
+    sheet_trace = trace["sheets"].setdefault(
+        str(sheet),
+        {"queries_authored_by_code": 0, "executed": [], "dropped_ungrounded": [],
+         "deferred": {}},
+    )
+    # Packets of one sheet run in sequence, so every packet's facts have to add
+    # up: overwriting per sheet left only the last packet visible and made the
+    # earlier candidate sets untraceable.
+    sheet_trace["queries_authored_by_code"] = (
+        int(sheet_trace.get("queries_authored_by_code") or 0) + added
+    )
+    sheet_trace["executed"] = list(sheet_trace.get("executed") or []) + executed
+    sheet_trace["dropped_ungrounded"] = (
+        list(sheet_trace.get("dropped_ungrounded") or []) + dropped
+    )
+    deferred = sheet_trace.setdefault("deferred", {})
+    for key in (
+        "skipped_without_source_text",
+        "deferred_by_cap",
+        "deferred_by_search_block",
+        "not_in_source_catalog",
+    ):
+        items = built_report.get(key) or []
+        if items:
+            deferred[key] = sorted({*(deferred.get(key) or []), *map(str, items)})
+    if built_report.get("limit_reached"):
+        deferred["cap"] = built_report.get("cap")
+    if blocked:
+        sheet_trace["search_blocked"] = blocked
+    return added
 
 
 def _model_rag_source_header(query_index: int, hit_index: int, hit: Any) -> str:
@@ -2796,6 +2988,7 @@ def model_rag_evidence_header_chars(
     *,
     hits_per_query: int,
     query_offset: int = 0,
+    query_provenance: Mapping[str, str] | None = None,
 ) -> int:
     """Character tax of query and hit headers, matching grouped evidence layout."""
 
@@ -2805,7 +2998,13 @@ def model_rag_evidence_header_chars(
     for query_index, (raw_query, raw_hits) in enumerate(
         query_hits, max(0, query_offset) + 1
     ):
-        fixed_chars += len(_model_rag_query_header(query_index, str(raw_query or "")))
+        fixed_chars += len(
+            _model_rag_query_header(
+                query_index,
+                str(raw_query or ""),
+                _model_rag_query_provenance(query_provenance, raw_query),
+            )
+        )
         segment_count += 1
         for hit_index, hit in enumerate(list(raw_hits)[:cap], 1):
             fixed_chars += len(_model_rag_source_header(query_index, hit_index, hit)) + 2
@@ -2838,6 +3037,7 @@ def select_model_rag_query_hits_for_budget(
     max_chars: int,
     hits_per_query: int,
     query_offset: int = 0,
+    query_provenance: Mapping[str, str] | None = None,
 ) -> tuple[
     list[tuple[str, Sequence[Any]]],
     list[tuple[str, Sequence[Any]]],
@@ -2866,6 +3066,7 @@ def select_model_rag_query_hits_for_budget(
             items[:count],
             hits_per_query=hits_per_query,
             query_offset=query_offset,
+            query_provenance=query_provenance,
         )
         if tax <= max_chars:
             taken = count
@@ -2885,6 +3086,7 @@ def select_model_rag_query_hits_for_budget(
                 trial,
                 hits_per_query=hits_per_query,
                 query_offset=query_offset,
+                query_provenance=query_provenance,
             )
             <= max_chars
         ):
@@ -2906,6 +3108,7 @@ def build_model_rag_evidence_groups(
     min_body_chars: int = _MIN_MODEL_RAG_EVIDENCE_BODY_CHARS,
     evidence_namespace: str = "",
     query_offset: int = 0,
+    query_provenance: Mapping[str, str] | None = None,
 ) -> tuple[list[str], list[_ModelRagEvidenceChunk], list[str]]:
     """Keep query headers; omit leftover queries and cards rather than crash."""
 
@@ -2914,6 +3117,7 @@ def build_model_rag_evidence_groups(
         max_chars=max_chars,
         hits_per_query=hits_per_query,
         query_offset=query_offset,
+        query_provenance=query_provenance,
     )
     omitted_refs = list(omitted_refs)
     omitted_refs.extend(
@@ -2927,6 +3131,7 @@ def build_model_rag_evidence_groups(
         return [], [], omitted_refs
 
     prepared: list[tuple[int, str, str, list[tuple[int, Any, str, str]]]] = []
+    prepared_provenance: dict[int, str] = {}
     source_index = 0
     fixed_chars = 0
     segment_count = 0
@@ -2934,7 +3139,8 @@ def build_model_rag_evidence_groups(
         included, max(0, query_offset) + 1
     ):
         query = str(raw_query or "").strip()
-        query_header = _model_rag_query_header(query_index, query)
+        provenance = _model_rag_query_provenance(query_provenance, query)
+        query_header = _model_rag_query_header(query_index, query, provenance)
         hits: list[tuple[int, Any, str, str]] = []
         fixed_chars += len(query_header)
         segment_count += 1
@@ -2946,6 +3152,7 @@ def build_model_rag_evidence_groups(
             fixed_chars += len(source_header) + 2
             segment_count += 1
         prepared.append((query_index, query_header, query, hits))
+        prepared_provenance[query_index] = provenance
 
     fixed_chars += max(0, segment_count - 1) * 2
 
@@ -3023,6 +3230,7 @@ def build_model_rag_evidence_groups(
                     "model_query_text": query,
                     "model_hit_index": hit_index,
                     "model_evidence_ref": alias,
+                    "query_provenance": prepared_provenance.get(query_index, "model"),
                     "global_evidence_id": (
                         "evidence_"
                         + hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()[:32]
@@ -5228,6 +5436,12 @@ async def _execute_chat_evidence_application(
                         model_rag_query_hits,
                         max_chars=context_chars_limit,
                         hits_per_query=retrieval_limits["model_evidence_k"],
+                        # Ordinary dataset turn: the model is the only query
+                        # author, and ADR-16 says the turn states that instead of
+                        # letting provenance fall to a default.
+                        query_provenance=_model_only_query_provenance(
+                            model_rag_query_hits
+                        ),
                     )
                     context = "\n\n".join(model_rag_evidence_groups)
                     model_rag_evidence_packet = build_retrieval_evidence_packet(
@@ -6266,6 +6480,7 @@ async def _execute_chat_evidence_application(
                                 any_sheet_queries = True
                                 pass_hits: list[tuple[str, Sequence[Any]]] = []
                                 pass_tools: list[dict[str, Any]] = []
+                                pass_query_provenance: dict[str, str] = {}
                                 search_blocked = False
                                 search_block_status = ""
                                 cache_updates: dict[str, list[dict[str, Any]]] = {}
@@ -6324,6 +6539,30 @@ async def _execute_chat_evidence_application(
                                         search_block_status,
                                     )
                                     break
+                                candidate_added = await _execute_system_candidate_queries(
+                                    catalog=source_catalog,
+                                    sheet=sheet_name,
+                                    packet=packet,
+                                    profile_snapshot=profile_snapshot,
+                                    comparative_variant=comparative_variant,
+                                    model_research_tools=model_research_tools,
+                                    model_queries=model_queries,
+                                    pass_hits=pass_hits,
+                                    pass_tools=pass_tools,
+                                    sheet_query_cache=sheet_query_cache,
+                                    cache_updates=cache_updates,
+                                    query_provenance=pass_query_provenance,
+                                    retrieval_trace=retrieval_trace,
+                                    hits_per_query=int(
+                                        retrieval_limits["model_evidence_k"]
+                                    ),
+                                )
+                                if candidate_added:
+                                    logger.info(
+                                        "[SHEET_PASS] system candidates sheet=%s added=%s",
+                                        sheet_name,
+                                        candidate_added,
+                                    )
                                 if (
                                     cache_updates
                                     and research_job_service is not None
@@ -6400,6 +6639,7 @@ async def _execute_chat_evidence_application(
                                     max_chars=group_max_chars,
                                     hits_per_query=retrieval_limits["model_evidence_k"],
                                     query_offset=0,
+                                    query_provenance=pass_query_provenance,
                                 )
                             )
                             pass_omitted.extend(trim_omitted)
@@ -6434,6 +6674,7 @@ async def _execute_chat_evidence_application(
                                         )
                                         + f":a{packet_attempts[fingerprint]}"
                                     ),
+                                    query_provenance=pass_query_provenance,
                                 )
                             sheet_pass_evidence_chunks.extend(model_evidence_chunks)
                             pass_omitted.extend(omitted_now)
@@ -6961,6 +7202,12 @@ async def _execute_chat_evidence_application(
                                 remaining_group_tokens=remaining_group_tokens,
                             ),
                             hits_per_query=retrieval_limits["model_evidence_k"],
+                            # Single-turn model-RAG path (no sheet-pass): these
+                            # queries were all authored by the model, and ADR-16
+                            # requires the turn to state that explicitly.
+                            query_provenance=_model_only_query_provenance(
+                                model_rag_query_hits
+                            ),
                         )
                         context = "\n\n".join(model_rag_evidence_groups)
                         answer_source_map = _model_rag_source_map(model_evidence_chunks)
@@ -7555,6 +7802,9 @@ async def _execute_chat_evidence_application(
                                     max_chars=context_chars_limit,
                                     hits_per_query=retrieval_limits["model_evidence_k"],
                                     query_offset=max((int((getattr(chunk, "meta", {}) or {}).get("model_query_index") or 0) for chunk in model_evidence_chunks), default=0),
+                                    # Quality-diagnostic re-research: ``queries``
+                                    # come from the model, so the round states it.
+                                    query_provenance=_model_only_query_provenance(hits),
                                 )
                                 model_evidence_chunks.extend(list(chunks))
                                 result_tail = lsr_result_table_instruction(
@@ -8082,6 +8332,9 @@ async def _execute_chat_evidence_application(
                             ),
                             price_gaps=list(
                                 (workbook_chat_meta or {}).get("price_gaps") or []
+                            ),
+                            norm_conflicts=list(
+                                (workbook_chat_meta or {}).get("norm_conflicts") or []
                             ),
                             price_basis=dict(
                                 (workbook_chat_meta or {}).get("price_basis") or {}

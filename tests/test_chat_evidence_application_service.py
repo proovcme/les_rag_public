@@ -4253,3 +4253,259 @@ def test_open_research_claims_no_durable_document_state() -> None:
         job_status="paused",
         workbook_files=[],
     ) == ""
+
+
+# ── ADR-16: систематический сбор кандидатов кодом поверх модельных запросов ──
+
+
+def _adr16_catalog():
+    from proxy.services.attachment_source_catalog_service import CatalogRow
+
+    rows = (
+        CatalogRow(
+            locator="СКС!R5",
+            sheet="СКС",
+            excel_row=5,
+            values=("Прокладка кабеля NYM 3x2.5 в трубе ПНД",),
+            line="СКС!R5: Прокладка кабеля NYM 3x2.5 в трубе ПНД",
+            numbers=(),
+            section_context="Раздел 4. Наружные сети",
+        ),
+    )
+    return SimpleNamespace(rows=rows, source_file_id="f1", original_name="СКС.xlsx")
+
+
+class _Adr16Tools:
+    """Stub of the read-only ``search_sources`` harness used by the sheet-pass."""
+
+    def __init__(self, status: str = "ok") -> None:
+        self.calls: list[str] = []
+        self.status = status
+
+    async def execute(self, call: dict) -> SimpleNamespace:
+        query = str(call["args"]["q"])
+        self.calls.append(query)
+        if self.status != "ok":
+            return SimpleNamespace(payload={"status": self.status, "error": "RAG_DOWN"}, chunks=())
+        chunk = SimpleNamespace(
+            content=f"Шифр: ГЭСН04-12-001-01 Наименование: {query}",
+            doc_id="card-1",
+            doc_name="les_smeta_norm_cards.v1",
+            score=0.9,
+            meta={"norm_code": "ГЭСН04-12-001-01", "dataset_id": "smeta"},
+        )
+        return SimpleNamespace(
+            payload={"schema": "les_tool_result_v1", "tool": "search_sources", "status": "ok",
+                     "result": {"count": 1}},
+            chunks=(chunk,),
+        )
+
+
+def _run_adr16(*, variant="B1_CANDIDATE", mode="estimator", status="ok", tools=None,
+               model_queries=("кабель NYM",), cache=None):
+    catalog = _adr16_catalog()
+    tools = tools or _Adr16Tools(status)
+    pass_hits: list[tuple[str, tuple]] = [(query, ()) for query in model_queries]
+    trace: dict = {}
+    provenance: dict[str, str] = {}
+    cache_updates: dict[str, list] = {}
+    added = asyncio.run(
+        service._execute_system_candidate_queries(
+            catalog=catalog,
+            sheet="СКС",
+            packet=["СКС!R5"],
+            profile_snapshot={"mode": mode},
+            comparative_variant=variant,
+            model_research_tools=tools,
+            model_queries=list(model_queries),
+            pass_hits=pass_hits,
+            pass_tools=[],
+            sheet_query_cache=cache if cache is not None else {},
+            cache_updates=cache_updates,
+            query_provenance=provenance,
+            retrieval_trace=trace,
+            hits_per_query=6,
+        )
+    )
+    return {
+        "added": added,
+        "tools": tools,
+        "pass_hits": pass_hits,
+        "trace": trace,
+        "provenance": provenance,
+        "cache_updates": cache_updates,
+    }
+
+
+def test_adr16_b0_direct_baseline_runs_no_system_queries() -> None:
+    result = _run_adr16(variant="B0_DIRECT")
+    assert result["added"] == 0
+    assert result["tools"].calls == []
+    assert result["provenance"] == {"кабель NYM": "model"}
+    assert result["trace"]["system_candidate_queries"]["status"] == "skipped_baseline"
+
+
+def test_adr16_ordinary_chat_turn_runs_no_system_queries() -> None:
+    result = _run_adr16(mode="agent")
+    assert result["added"] == 0
+    assert result["tools"].calls == []
+
+
+def test_adr16_estimator_sheet_pass_adds_tagged_candidate_groups() -> None:
+    result = _run_adr16()
+    assert result["added"] == 2
+    original, derived = result["tools"].calls
+    assert original == "Прокладка кабеля NYM 3x2.5 в трубе ПНД"
+    assert derived.startswith(original) and "Раздел 4. Наружные сети" in derived
+    assert result["provenance"] == {
+        "кабель NYM": "model",
+        original: "original",
+        derived: "derived",
+    }
+    # candidates are appended to the model's own groups, never instead of them
+    assert [query for query, _hits in result["pass_hits"]] == ["кабель NYM", original, derived]
+    sheet_trace = result["trace"]["system_candidate_queries"]["sheets"]["СКС"]
+    assert sheet_trace["queries_authored_by_code"] == 2
+    assert {item["query_provenance"] for item in sheet_trace["executed"]} == {"original", "derived"}
+    assert all(item["source_row"] == "СКС!R5" for item in sheet_trace["executed"])
+    assert all(item["ungrounded_tokens"] == [] for item in sheet_trace["executed"])
+
+
+def test_adr16_candidate_hits_are_cached_like_model_hits() -> None:
+    result = _run_adr16()
+    assert set(result["cache_updates"]) == set(result["tools"].calls)
+    assert result["cache_updates"][result["tools"].calls[0]][0]["doc_id"] == "card-1"
+    # a second pass over the same packet reads the cache instead of re-searching
+    tools = _Adr16Tools()
+    again = _run_adr16(
+        tools=tools,
+        cache={query: records for query, records in result["cache_updates"].items()},
+    )
+    assert again["tools"].calls == []
+    assert again["added"] == 2
+
+
+def test_adr16_search_failure_defers_candidates_without_inventing_a_norm() -> None:
+    result = _run_adr16(status="error")
+    sheet_trace = result["trace"]["system_candidate_queries"]["sheets"]["СКС"]
+    assert sheet_trace["search_blocked"] == "error"
+    # the failure is visible; rows are not silently marked as having no norm
+    assert sheet_trace["queries_authored_by_code"] == 0
+
+
+def test_adr16_query_header_states_origin_and_keeps_model_headers_unchanged() -> None:
+    assert service._model_rag_query_header(3, "кабель NYM") == "[Поисковый запрос Q3] кабель NYM"
+    assert service._model_rag_query_header(3, "кабель NYM", "model") == (
+        "[Поисковый запрос Q3] кабель NYM"
+    )
+    header = service._model_rag_query_header(4, "Прокладка кабеля", "derived")
+    assert header == "[Поисковый запрос Q4] Прокладка кабеля (системный подбор по атрибутам этой строки)"
+    origin = service._model_rag_query_provenance({"Прокладка кабеля": "derived"}, "прокладка  кабеля")
+    assert origin == "derived"
+    assert service._model_rag_query_provenance(None, "что угодно") == "model"
+
+
+def test_adr16_budget_accounts_for_the_provenance_label() -> None:
+    hit = SimpleNamespace(content="Шифр: ГЭСН04-12-001-01", doc_id="d", doc_name="c", score=0.5, meta={})
+    query_hits = [("Прокладка кабеля", (hit,))]
+    plain = service.model_rag_evidence_header_chars(query_hits, hits_per_query=6)
+    tagged = service.model_rag_evidence_header_chars(
+        query_hits, hits_per_query=6, query_provenance={"Прокладка кабеля": "derived"}
+    )
+    assert tagged > plain
+    groups, chunks, _omitted = service.build_model_rag_evidence_groups(
+        query_hits, max_chars=tagged + 400, hits_per_query=6,
+        query_provenance={"Прокладка кабеля": "derived"},
+    )
+    assert "(системный подбор по атрибутам этой строки)" in groups[0]
+    assert chunks[0].meta["query_provenance"] == "derived"
+    # an untagged query is reported as the model's own, never as a system query
+    untagged, _c, _o = service.build_model_rag_evidence_groups(
+        query_hits, max_chars=plain + 400, hits_per_query=6, query_provenance=None
+    )
+    assert "системный подбор" not in untagged[0]
+
+
+def _adr16_two_row_catalog():
+    from proxy.services.attachment_source_catalog_service import CatalogRow
+
+    rows = tuple(
+        CatalogRow(
+            locator=f"СКС!R{number}",
+            sheet="СКС",
+            excel_row=number,
+            values=(f"Прокладка кабеля NYM 3x2.5 в трубе ПНД, участок {number}",),
+            line=f"СКС!R{number}: Прокладка кабеля NYM 3x2.5 в трубе ПНД, участок {number}",
+            numbers=(),
+            section_context="Раздел 4. Наружные сети",
+        )
+        for number in (5, 6)
+    )
+    return SimpleNamespace(rows=rows, source_file_id="f1", original_name="СКС.xlsx")
+
+
+def _adr16_packet(trace: dict, *, catalog, packet: list[str], tools=None) -> dict:
+    """Run one packet of system candidates into an existing retrieval trace."""
+
+    model_queries = ["кабель NYM"]
+    tools = tools or _Adr16Tools()
+    asyncio.run(
+        service._execute_system_candidate_queries(
+            catalog=catalog,
+            sheet="СКС",
+            packet=list(packet),
+            profile_snapshot={"mode": "estimator"},
+            comparative_variant="B1_CANDIDATE",
+            model_research_tools=tools,
+            model_queries=list(model_queries),
+            pass_hits=[(query, ()) for query in model_queries],
+            pass_tools=[],
+            sheet_query_cache={},
+            cache_updates={},
+            query_provenance={},
+            retrieval_trace=trace,
+            hits_per_query=6,
+        )
+    )
+    return trace["system_candidate_queries"]["sheets"]["СКС"]
+
+
+def test_adr16_packets_of_one_sheet_accumulate_instead_of_overwriting() -> None:
+    """Two packets of the same sheet must both stay readable in the trace."""
+
+    catalog = _adr16_two_row_catalog()
+    trace: dict = {}
+    first = _adr16_packet(trace, catalog=catalog, packet=["СКС!R5"])
+    assert first["queries_authored_by_code"] == 2
+    second = _adr16_packet(trace, catalog=catalog, packet=["СКС!R6"])
+
+    assert second["queries_authored_by_code"] == 4
+    assert {item["source_row"] for item in second["executed"]} == {"СКС!R5", "СКС!R6"}
+    assert len(second["executed"]) == 4
+
+
+def test_adr16_a_blocked_candidate_search_is_recorded_as_deferred() -> None:
+    """§ 6: an interrupted search is «отложено», never «норма отсутствует»."""
+
+    trace: dict = {}
+    sheet_trace = _adr16_packet(
+        trace,
+        catalog=_adr16_two_row_catalog(),
+        packet=["СКС!R5"],
+        tools=_Adr16Tools("error"),
+    )
+
+    assert sheet_trace["search_blocked"] == "error"
+    assert sheet_trace["queries_authored_by_code"] == 0
+    deferred = sheet_trace["deferred"]["deferred_by_search_block"]
+    assert len(deferred) == 2
+    assert all("Прокладка кабеля" in item for item in deferred)
+
+
+def test_adr16_a_locator_the_catalog_lacks_is_named_in_the_trace() -> None:
+    trace: dict = {}
+    sheet_trace = _adr16_packet(
+        trace, catalog=_adr16_two_row_catalog(), packet=["СКС!R5", "СКС!R99"]
+    )
+
+    assert sheet_trace["deferred"]["not_in_source_catalog"] == ["СКС!R99"]

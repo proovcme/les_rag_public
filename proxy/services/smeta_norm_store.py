@@ -94,6 +94,61 @@ _NEGATIVE_TITLE_HINTS = (
     "копр", "резервуар", "силос", "градирн", "доменн", "плотин", "судов", "вагон", "мост",
 )
 
+_REVERSIBLE_ACTION_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    {("монтаж", "демонтаж")}
+)
+
+
+def title_action_families(title: Any) -> frozenset[str]:
+    """Action families whose words are literally present in ``title``.
+
+    This only reads the words a text already contains: it never infers a
+    technology, a working condition or a volume, and it never selects or rejects
+    a norm.  Overlapping anchors resolve to the longest match, so "демонтаж" is
+    one action rather than "монтаж" carrying a prefix.
+    """
+
+    text = str(title or "").casefold()
+    spans: list[tuple[int, int, str]] = []
+    for family, anchors in _ACTION_TITLE_HINTS.items():
+        for anchor in anchors:
+            if not anchor:
+                continue
+            start = 0
+            while True:
+                position = text.find(anchor, start)
+                if position < 0:
+                    break
+                spans.append((position, position + len(anchor), family))
+                start = position + 1
+    spans.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+    chosen: list[tuple[int, int, str]] = []
+    families: set[str] = set()
+    for span in spans:
+        if any(not (span[1] <= other[0] or span[0] >= other[1]) for other in chosen):
+            continue
+        chosen.append(span)
+        families.add(span[2])
+    return frozenset(families)
+
+
+def reversed_action_pair(left: Any, right: Any) -> tuple[str, str] | None:
+    """``(left_action, right_action)`` when both texts name one opposite action.
+
+    Only a pair listed in :data:`_REVERSIBLE_ACTION_PAIRS` counts, and only when
+    each side names exactly one action family.  Two-sided or fuzzy cases return
+    ``None``: the check exists to expose a contradiction, not to guess.
+    """
+
+    left_families = title_action_families(left)
+    right_families = title_action_families(right)
+    if len(left_families) != 1 or len(right_families) != 1:
+        return None
+    pair = (next(iter(left_families)), next(iter(right_families)))
+    if pair in _REVERSIBLE_ACTION_PAIRS or pair[::-1] in _REVERSIBLE_ACTION_PAIRS:
+        return pair
+    return None
+
 _RESOURCE_KIND_LABELS: dict[str, str] = {
     "labor": "труд рабочих",
     "machinist": "труд машинистов",

@@ -458,12 +458,18 @@ def resolve_pricebook_path(
     *,
     root: str | Path = DEFAULT_PRICE_ROOT,
     allow_scratch: bool = False,
+    explicit_only: bool = False,
 ) -> Optional[str]:
     """Resolve a pricebook stem/path to a local Parquet path.
 
     With no explicit book use the deterministic system default. This keeps
     chat, LSR traces and price lookup on the same region/period instead of
     accidentally using the first alphabetic Parquet file.
+
+    ``explicit_only`` (ADR-16 § 7) is the estimate-path contract: a price basis
+    is operator data, not a technical default, so an unnamed basis resolves to
+    ``None`` instead of silently borrowing another region or quarter. The caller
+    then keeps the result a draft and asks the operator to choose.
     """
     try:
         books = available_pricebooks(
@@ -478,10 +484,24 @@ def resolve_pricebook_path(
     if not books:
         return None
     stems = {Path(path).stem: path for path in books}
-    if book:
-        stem = _canonical_stem(Path(book).stem, set(stems))
-        return stems.get(stem)
+    if not book:
+        if explicit_only:
+            # ADR-16 § 7: the estimate path gets no book at all when the basis
+            # is not explicit. Falling through here is what let a III-quarter
+            # estimate be priced from the II-quarter default.
+            return None
+        return _default_pricebook_path(stems)
+    stem = _canonical_stem(Path(book).stem, set(stems))
+    return stems.get(stem)
 
+
+def _default_pricebook_path(stems: dict[str, str]) -> Optional[str]:
+    """Deterministic non-estimate default: config, manifest, then known stems.
+
+    Reached only when the caller did not ask for ``explicit_only``: ordinary
+    chat and lookup paths keep their previous behaviour, the estimate path does
+    not borrow a book from here.
+    """
     preferred: list[str] = []
     configured = os.getenv("LES_DEFAULT_PRICEBOOK", "").strip()
     if configured:
@@ -501,4 +521,4 @@ def resolve_pricebook_path(
         path = stems.get(stem)
         if path:
             return path
-    return books[0]
+    return next(iter(sorted(stems.values())), None)

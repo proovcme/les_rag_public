@@ -9,6 +9,11 @@ from proxy.services.lsr_source_coverage_service import (
     canonicalize_row_role,
     inferred_row_role,
 )
+from proxy.services.lsr_norm_quality_gate_service import (
+    canonicalize_norm_status,
+    cited_cipher_matches_evidence,
+    open_analogue_match_fields,
+)
 
 SCHEMA = "les.lsr-result-readiness.v1"
 
@@ -51,12 +56,19 @@ _CHOSEN_STATUSES = frozenset(
 _OPEN_STATUSES = frozenset(
     {"MISSING", "NEEDS_RESEARCH", "CONFLICT", "UNVERIFIED", ""}
 )
+# Kept apart from ``_CHOSEN_STATUSES`` on purpose: an analogue is a candidate the
+# operator still has to confirm, so it may appear in a draft but never in the
+# closed set without its own substantiation (ADR-16 § 6, § 11 № 4).
+_ANALOGUE_STATUSES = frozenset(
+    {"ANALOGUE", "ANALOGUE_CANDIDATE", "ANALOGUE_VERIFIED"}
+)
 _PRICE_SOURCE_LABEL = {
     "needs_kac": "КАЦ или выбранная ценовая книга",
     "needs_labor_rate": "ставка ОЗП",
     "needs_machinist_rate": "ставка ЗПМ",
     "needs_fgis_price": "цена эксплуатации машины ФГИС ЦС",
     "needs_price": "подтверждённая цена",
+    "card_price_without_basis": "цена из карточки нормы, подтвердите базу, КАЦ или свою цену",
 }
 
 
@@ -180,6 +192,15 @@ def classify_norm_gap(row: Mapping[str, Any]) -> str:
         return "open_status"
     if not code:
         return "missing_norm"
+    # ADR-16 § 6: a written cipher is a choice, not yet a substantiated choice.
+    # Two structural facts can still contradict the model's own token: the cards
+    # it cited hold a different cipher, or it called the row an analogue while
+    # leaving its match facts unproven.  Neither may close the readiness.
+    if cited_cipher_matches_evidence(row) is False:
+        return "cipher_not_in_cited_evidence"
+    if canonicalize_norm_status(status) in _ANALOGUE_STATUSES:
+        if open_analogue_match_fields(row):
+            return "analogue_needs_confirmation"
     return ""
 
 
@@ -196,6 +217,7 @@ def build_lsr_result_readiness(
     catalog_work_count: int = 0,
     catalog_locators: Sequence[str] = (),
     price_gaps: Sequence[Mapping[str, Any]] = (),
+    norm_conflicts: Sequence[Mapping[str, Any]] = (),
     price_basis: Mapping[str, Any] | None = None,
     calculated_positions: int = -1,
     confirmed_amount: float = -1.0,
@@ -265,6 +287,19 @@ def build_lsr_result_readiness(
                     f"Продолжите поиск нормы для строки {locator}. "
                     "Уже принятые строки повторно не ищутся."
                 )
+        elif kind == "cipher_not_in_cited_evidence":
+            action = (
+                f"Шифр {_norm_code(row)} в строке {locator} не совпадает с шифром "
+                "приведённых карточек: подтвердите норму или укажите другую "
+                "карточку; код шифр не подменяет."
+            )
+        elif kind == "analogue_needs_confirmation":
+            action = (
+                f"Строка {locator} выбрана аналогом ({_norm_code(row) or 'шифр не назван'}), "
+                "но совпадение по формулировке работы, объекту, условиям, единице "
+                "измерения и составу работ не подтверждено: аналог не закрывает "
+                "позицию без вашего решения."
+            )
         else:
             action = (
                 f"Модель должна выбрать норму для строки {locator} "
@@ -304,6 +339,26 @@ def build_lsr_result_readiness(
                 "содержит только поставку."
             ),
         })
+
+    # Task § 11 №8: the calculation layer reports a row whose own words name the
+    # opposite operation from the chosen norm card.  Readiness asks the question;
+    # it never rewrites the cipher the model selected.
+    for conflict in norm_conflicts:
+        if not isinstance(conflict, Mapping):
+            continue
+        locator = _text(conflict.get("locator")) or "без адреса строки"
+        norm_gaps.append(
+            {
+                "locator": locator,
+                "kind": "reversed_action",
+                "action": (
+                    f"Строка {locator} названа операцией «{_text(conflict.get('row_action'))}», "
+                    f"а норма {_text(conflict.get('code')) or 'без шифра'} — "
+                    f"«{_text(conflict.get('norm_action'))}»: подтвердите операцию "
+                    "или выберите другую норму; код норму не подменяет."
+                ),
+            }
+        )
 
     structured_prices = _structured_price_gaps(missing, price_gaps)
     basis_info = dict(price_basis or {})
@@ -415,7 +470,25 @@ def build_lsr_result_readiness(
     elif basis_match == "unspecified":
         prices_action = "Выберите город и уровень цен (квартал и год), затем пересоберите файл."
     elif basis_match == "no_book":
-        prices_action = "Для выбранного города и периода нет ценовой книги. Добавьте проверенный набор цен или выберите доступный период."
+        # The operator chooses from the books that actually exist; a missing
+        # basis never becomes a silently applied default (ADR-16 § 7).
+        visible_books = [
+            str(item).strip()
+            for item in (basis_info.get("available_books") or [])
+            if str(item or "").strip()
+        ]
+        listing = f" Доступно: {_preview(visible_books)}." if visible_books else ""
+        if basis_info.get("requested_basis_present"):
+            prices_action = (
+                "Для выбранного города и периода нет ценовой книги, и другую не "
+                "подменяют." + (listing or " Добавьте проверенный набор цен.")
+            )
+        else:
+            prices_action = (
+                "Выберите город и уровень цен (квартал и год): книга не подставлена "
+                "молча, расчёт идёт по подтверждённым ценам и КАЦ."
+                + (listing or " Локально нет ни одной ценовой книги.")
+            )
     elif structured_prices:
         prices_action = (
             "Задайте подтверждённые цены: "
@@ -599,6 +672,21 @@ def build_lsr_result_readiness(
             ),
             "meaning": (
                 "Нет подтверждённой нормы: модель не выбрала шифр или норма не найдена."
+            ),
+        },
+        # Kept apart from norm_missing: here a cipher IS written, and the missing
+        # thing is the evidence behind it (ADR-16 § 6, § 10).
+        "norm_unsubstantiated": {
+            "count": sum(
+                1 for g in norm_gaps
+                if g.get("kind") in {
+                    "cipher_not_in_cited_evidence",
+                    "analogue_needs_confirmation",
+                }
+            ),
+            "meaning": (
+                "Шифр выбран, но его применимость не подтверждена: карточки цитат "
+                "содержат другой шифр, либо аналог оставлен без проверки совпадений."
             ),
         },
         "price_missing": {

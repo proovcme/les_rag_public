@@ -55,6 +55,36 @@ _ENGINE_NAMES = {
     "ollama",
 }
 
+# ADR-16: on the estimate path code guarantees candidate *retrieval*, the model
+# still decides. Three boundaries make that rule mechanical instead of prose.
+SANCTIONED_CANDIDATE_QUERY_MODULE = "proxy/services/lsr_candidate_query_service.py"
+DERIVED_COMPOSITION_HELPERS = frozenset(
+    {
+        "candidate_queries_for_packet",
+        "candidate_queries_for_rows",
+        "merge_candidate_queries",
+    }
+)
+QUERY_PROVENANCE_BUILDERS = frozenset(
+    {
+        "build_model_rag_evidence_groups",
+        "select_model_rag_query_hits_for_budget",
+        "model_rag_evidence_header_chars",
+    }
+)
+EXPLICIT_PRICEBOOK_PATHS = frozenset(
+    {"proxy/services/lsr_workbook_adapter_service.py"}
+)
+
+# A rate that nobody chose may still be calculated, but only under the label the
+# readiness state, the price gaps and the confirmed/preliminary split key on.
+# Dropping that label would silently return the defect ADR-16 § 7 closes: a
+# norm-card number counted as a confirmed amount of a chosen price basis.
+UNOWNED_PRICE_SOURCES = {
+    # PriceTrace source token -> the action label that must accompany it
+    "card_price": "card_price_without_basis",
+}
+
 # Existing direct transports are migration debt, pinned by exact path + function.
 # New callsites must use ContextGovernor instead of expanding this baseline.
 INFERENCE_CALLSITE_BASELINE: frozenset[tuple[str, str]] = frozenset(
@@ -239,6 +269,112 @@ def _has_workbook_call(function: ast.AST) -> bool:
     return False
 
 
+def _adr16_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """ADR-16 boundaries: who may author a query, and what may bind a price book."""
+
+    for scope in (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        calls = [node for node in ast.walk(scope) if isinstance(node, ast.Call)]
+        names = {_call_name(node) for node in calls}
+        short_names = {name.split(".")[-1] for name in names}
+        inline_regex = any(name.startswith("re.") for name in names)
+        vocabulary_swap = bool(short_names & {"sub", "subn", "replace"})
+        composes = bool(short_names & DERIVED_COMPOSITION_HELPERS)
+        sanctioned = relative == SANCTIONED_CANDIDATE_QUERY_MODULE
+        if (sanctioned or composes) and (inline_regex or vocabulary_swap):
+            yield ArchitectureViolation(
+                "DERIVED_QUERY_SEMANTIC_INVENTION",
+                relative,
+                scope.lineno,
+                f"{scope.name}() composes candidate queries with regex or substitution "
+                "instead of literal source text",
+            )
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        short_name = _call_name(node).split(".")[-1]
+        if short_name == "CandidateQuery" and not relative.startswith("tests/"):
+            # Same scoping as the provenance rule above: the guard exists so that
+            # no production path can author a ``derived`` query somewhere the
+            # literalness check does not run.  An isolated test may build one by
+            # hand precisely to prove that check rejects it.
+            for keyword in node.keywords:
+                if keyword.arg == "provenance" and _string_value(keyword.value) == "derived":
+                    if relative != SANCTIONED_CANDIDATE_QUERY_MODULE:
+                        yield ArchitectureViolation(
+                            "DERIVED_QUERY_SEMANTIC_INVENTION",
+                            relative,
+                            node.lineno,
+                            "derived query authored outside the sanctioned candidate-query module",
+                        )
+        if short_name in QUERY_PROVENANCE_BUILDERS and not relative.startswith("tests/"):
+            # The rule guards the sheet-pass wiring: production evidence builders must
+            # name the provenance of every query they present. Isolated tests may
+            # exercise the builders through their documented model-only default.
+            provenance = next(
+                (item.value for item in node.keywords if item.arg == "query_provenance"),
+                "absent",
+            )
+            if provenance == "absent" or (
+                isinstance(provenance, ast.Constant) and provenance.value is None
+            ):
+                yield ArchitectureViolation(
+                    "QUERY_PROVENANCE_MISSING",
+                    relative,
+                    node.lineno,
+                    "evidence builder called without a query_provenance map",
+                )
+        if (
+            relative in EXPLICIT_PRICEBOOK_PATHS
+            and short_name == "resolve_pricebook_path"
+        ):
+            explicit = any(
+                item.arg == "explicit_only"
+                and isinstance(item.value, ast.Constant)
+                and item.value.value is True
+                for item in node.keywords
+            )
+            if not explicit:
+                yield ArchitectureViolation(
+                    "PRICE_BASIS_SILENT_DEFAULT",
+                    relative,
+                    node.lineno,
+                    "estimate path resolves a pricebook without explicit_only=True",
+                )
+        if short_name == "PriceTrace":
+            # ADR-16 § 7: an unowned rate is only allowed together with the
+            # label every downstream check keys on.
+            source = next(
+                (
+                    _string_value(item.value)
+                    for item in node.keywords
+                    if item.arg == "source"
+                ),
+                "",
+            )
+            required_action = UNOWNED_PRICE_SOURCES.get(source)
+            if required_action:
+                action = next(
+                    (
+                        _string_value(item.value)
+                        for item in node.keywords
+                        if item.arg == "action"
+                    ),
+                    "",
+                )
+                if action != required_action:
+                    yield ArchitectureViolation(
+                        "UNOWNED_PRICE_SOURCE",
+                        relative,
+                        node.lineno,
+                        f"PriceTrace(source={source!r}) is built without "
+                        f"action={required_action!r}, so the rate would count as an owned price",
+                    )
+
+
 def _python_violations(root: Path, path: Path, text: str) -> Iterable[ArchitectureViolation]:
     relative = _relative(root, path)
     try:
@@ -246,6 +382,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     except SyntaxError:
         return
 
+    yield from _adr16_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     if relative == "proxy/services/chat_evidence_application_service.py":
         for function in (

@@ -49,7 +49,16 @@ def test_rim_trace_from_gesn_seed_reproduces_gold_position():
     trace = build_position_trace({"code": CODE, "qty": 0.61})
     summary = trace["summary"]
 
-    assert summary["flags"] == []
+    assert summary["flags"]
+    assert all(
+        str(flag).startswith("цена взята из карточки нормы") for flag in summary["flags"]
+    )
+    # ADR-16 § 7: the seed base carries its own rates.  Those numbers still
+    # compute the estimate, but nobody chose them, so the position must be named
+    # and must not report a complete amount.
+    assert {item["name"] for item in summary["card_priced_resources"]}
+    assert summary["amount_status"] == "partial"
+    assert summary["full_amount"] is None
     assert summary["ozp"] == 3750.23
     assert summary["em"] == 992.40
     assert summary["mat"] == 83.62
@@ -359,7 +368,12 @@ def test_build_lsr_trace_multi_position_sections_and_grand_total():
 
     assert lsr["name"] == "Кровля и прочее"
     assert lsr["summary"]["positions"] == 2
-    assert lsr["summary"]["flags"] == []
+    # Grouping into sections introduces no new problem: the only flags are the
+    # ADR-16 § 7 card-price ones, one per resource whose rate nobody chose.
+    assert lsr["summary"]["flags"]
+    assert all(
+        str(flag).startswith("цена взята из карточки нормы") for flag in lsr["summary"]["flags"]
+    )
     assert lsr["summary"]["total"] == 23626.08  # 2 × 11813.04 — gold позиции сохранён
     # свод суммирует позиции (прямые/ФОТ/НР/СП) — числа считает код, не LLM
     assert lsr["summary"]["direct"] == round(2 * 4826.25, 2)
@@ -438,11 +452,116 @@ def test_lsr_trace_from_visible_rows_builds_priced_trace_from_selected_norms():
         name="Видимые строки",
     )
 
-    assert lsr["summary"]["result_status"] == "priced_final"
+    assert lsr["summary"]["result_status"] == "priced_partial"
     assert lsr["summary"]["input_rows"] == 1
     assert lsr["summary"]["bound_rows"] == 1
     assert lsr["summary"]["total"] == 11813.04
     assert lsr["sections"][0]["section"] == "Кровля"
+
+
+class _ChosenBook:
+    """A ценовая база the operator picked: exact lookup by resource code."""
+
+    def __init__(self, prices: dict[str, float]) -> None:
+        self._prices = dict(prices)
+
+    def lookup(self, code: str):
+        price = self._prices.get(str(code).strip())
+        return None if price is None else {"price_current": price}
+
+
+def test_resources_priced_from_the_chosen_book_are_confirmed_final():
+    """The priced-final path ADR-16 § 7 requires: every counted rate is owned.
+
+    Each resource resolves through the book the operator chose, so no rate is
+    the norm card's own, no card-price flag appears, and the whole amount lands
+    in ``confirmed_amount``.  The numbers come from the book, not from a card.
+    """
+    resources = [
+        {"kind": "labor", "code": "1-100-36", "name": "Средний разряд работы 3.6",
+         "unit": "чел.-ч", "per_unit": 10.0},
+        {"kind": "material", "code": "01.7.15.06-0111", "name": "Гвозди строительные",
+         "unit": "т", "per_unit": 0.001},
+    ]
+    book = _ChosenBook({"1-100-36": 500.0, "01.7.15.06-0111": 90000.0})
+
+    lsr = build_lsr_trace(
+        [{"code": CODE, "qty": 1.0, "resources": resources, "nr_pct": 0, "sp_pct": 0}],
+        pricebook=book,
+        name="База выбрана",
+    )
+    summary = lsr["summary"]
+    position = lsr["sections"][0]["positions"][0]["summary"]
+
+    assert [row["source"] for row in lsr["sections"][0]["positions"][0]["rows"]
+            if row["type"].startswith("resource")] == ["fgis_current", "fgis_current"]
+    assert position["card_priced_resources"] == []
+    assert not [flag for flag in position["flags"]
+                if str(flag).startswith("цена взята из карточки нормы")]
+    assert position["amount_status"] == "complete"
+    assert position["full_amount"] == position["total"]
+    assert summary["result_status"] == "priced_final"
+    # 10.0 чел.-ч × 500 + 0.001 т × 90000 — the book's numbers, by code
+    assert position["total"] == 5090.0
+    assert summary["total"] == 5090.0
+
+
+def test_material_priced_from_the_chosen_book_is_confirmed_money():
+    """The confirmed/preliminary split follows price ownership, not the number.
+
+    The same 30 × 100 that the card fallback would leave preliminary counts as
+    confirmed when the chosen book supplies the rate.
+    """
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "source_row": "СКС!R9",
+                "row_role": "material",
+                "work_row": "СКС!R8",
+                "title": "Лоток лестничный",
+                "resource_code": "01.7.15.06-0111",
+                "unit": "м.п",
+                "quantity": 30,
+            }
+        ],
+        pricebook=_ChosenBook({"01.7.15.06-0111": 100.0}),
+    )
+    binding = lsr["row_bindings"][0]
+    assert binding["readiness"]["prices_provided"] is True
+    assert binding["readiness"]["price_from_norm_card"] is False
+    assert lsr["summary"]["confirmed_amount"] == 3000.0
+    assert lsr["summary"]["preliminary_amount"] == 0.0
+
+
+def test_operator_confirmed_price_makes_the_position_money_confirmed_and_says_so():
+    """An operator price is owned money plus its own visible provenance flag."""
+    row = {
+        "source_row": "PDF!R2",
+        "row_role": "work",
+        "basis": "ГЭСН 12-01-034-02",
+        "title": "Устройство обрешетки",
+        "quantity": "61",
+        "unit": "м2",
+        "norm_status": "EXACT",
+    }
+    draft = build_lsr_trace_from_visible_rows([row], name="Видимые строки")
+    confirmed = build_lsr_trace_from_visible_rows(
+        [{**row, "confirmed_price": 20000.0, "price_source": "operator"}],
+        name="Видимые строки",
+    )
+
+    assert draft["summary"]["result_status"] == "priced_partial"
+    assert draft["summary"]["confirmed_amount"] == 0.0
+    assert draft["summary"]["preliminary_amount"] == 11813.04
+
+    binding = confirmed["row_bindings"][0]
+    assert binding["readiness"]["prices_provided"] is True
+    assert binding["readiness"]["operator_confirmed_price"] is True
+    # 0.61 (100 м2) × 20000 — the operator price, not the norm composition
+    assert confirmed["summary"]["confirmed_amount"] == 12200.0
+    assert confirmed["summary"]["preliminary_amount"] == 0.0
+    assert [flag for flag in confirmed["summary"]["flags"]
+            if "подтверждённой цене оператора" in str(flag)]
 
 
 def test_named_needs_research_cipher_is_priced_but_not_final():
@@ -503,7 +622,10 @@ def test_terminal_exact_status_prices_without_independent_verifier():
         name="Видимые строки",
     )
 
-    assert lsr["summary"]["result_status"] == "priced_final"
+    # A terminal EXACT status settles the norm question only.  The rates behind
+    # this total come from the norm card, and ADR-16 § 7 keeps an unowned rate
+    # out of a final document.
+    assert lsr["summary"]["result_status"] == "priced_partial"
     assert lsr["summary"]["norms_status"] == "model_norms_selected"
     assert lsr["summary"]["total"] == 11813.04
     assert lsr["row_bindings"][0]["status"] == "bound"
@@ -907,9 +1029,12 @@ def test_stage_v_header_row_is_accounted_without_norm_demand():
     assert header["readiness"]["operation_defined"] is True
     assert header["readiness"]["norm_selected"] is None
     assert lsr["summary"]["kind_counts"]["header"] == 1
-    # a heading adds no flag and keeps the priced part final
-    assert lsr["summary"]["result_status"] == "priced_final"
+    # a heading adds no flag; the only flags are the unowned norm-card rates
+    assert lsr["summary"]["result_status"] == "priced_partial"
     assert not [flag for flag in lsr["summary"]["flags"] if "СКС!R1" in str(flag)]
+    assert all(
+        str(flag).startswith("цена взята из карточки нормы") for flag in lsr["summary"]["flags"]
+    )
     from proxy.services.lsr_result_readiness_service import classify_norm_gap
 
     assert classify_norm_gap(header["source_row"]) == ""
@@ -992,7 +1117,15 @@ def test_stage_v_needs_research_bound_stays_preliminary_and_keeps_status():
     assert lsr["summary"]["result_status"] == "priced_partial"
 
 
-def test_stage_v_exact_priced_work_is_confirmed_end_to_end():
+def test_stage_v_exact_work_without_a_chosen_price_basis_stays_preliminary():
+    """Every readiness base of an EXACT work row, and where its money lands.
+
+    The norm, volume and calculation questions are settled by the row itself.
+    The price question is not: with no ценовая база and no confirmation, the
+    rate is the norm card's, so the amount is preliminary rather than confirmed
+    (ADR-16 § 7, acceptance § 12 "no false complete status").  The confirmed
+    counterpart is ``test_resources_priced_from_the_chosen_book_are_confirmed_final``.
+    """
     lsr = build_lsr_trace_from_visible_rows(
         [
             {
@@ -1013,12 +1146,14 @@ def test_stage_v_exact_priced_work_is_confirmed_end_to_end():
     assert readiness["applicability_substantiated"] is True
     assert readiness["volume_verified"] is True
     assert readiness["position_calculated"] is True
-    assert readiness["prices_provided"] is True
-    assert lsr["summary"]["confirmed_amount"] == 11813.04
-    assert lsr["summary"]["preliminary_amount"] == 0.0
+    assert readiness["prices_provided"] == "не по базе"
+    assert readiness["price_from_norm_card"] is True
+    assert readiness["price_ok"] is False
+    assert lsr["summary"]["confirmed_amount"] == 0.0
+    assert lsr["summary"]["preliminary_amount"] == 11813.04
     assert lsr["summary"]["selected_norms"] == 1
     assert lsr["summary"]["calculated_positions"] == 1
-    assert lsr["summary"]["result_status"] == "priced_final"
+    assert lsr["summary"]["result_status"] == "priced_partial"
 
 
 def test_stage_v_counts_are_separate_per_kind():
@@ -1104,5 +1239,5 @@ def test_stage_v_renderer_writes_readiness_column(tmp_path):
     column = headers.index("Готовность строки") + 1
     values = [row[column - 1].value for row in review.iter_rows(min_row=2)]
     text = "\n".join(str(value) for value in values if value)
-    assert "цены=да" in text
+    assert "цены=не по базе" in text
     assert "норма=н/п" in text

@@ -317,7 +317,7 @@ async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monk
     )
     monkeypatch.setattr(
         "proxy.services.fgis_price_service.resolve_pricebook_path",
-        lambda book=None: "sankt-peterburg_2kv2026.parquet",
+        lambda book=None, **_kwargs: "sankt-peterburg_2kv2026.parquet",
     )
     monkeypatch.setattr(
         "proxy.services.fgis_price_service.get_pricebook",
@@ -389,7 +389,8 @@ async def test_thin_lsr_adapter_publishes_zero_bound_rows_as_reviewable_workbook
         render,
     )
     monkeypatch.setattr(
-        "proxy.services.fgis_price_service.resolve_pricebook_path", lambda _book=None: None
+        "proxy.services.fgis_price_service.resolve_pricebook_path",
+        lambda _book=None, **_kwargs: None,
     )
 
     result = await build_lsr_workbook_from_decisions(
@@ -704,7 +705,7 @@ def test_lsr_contract_accepts_explicit_pricebook_request():
 
 
 @pytest.mark.asyncio
-async def test_stage_d_adapter_binds_price_basis_into_result_and_render(
+async def test_stage_d_adapter_binds_requested_price_basis_and_shows_the_mismatch(
     tmp_path, monkeypatch
 ):
     class _Book:
@@ -736,7 +737,9 @@ async def test_stage_d_adapter_binds_price_basis_into_result_and_render(
     )
     monkeypatch.setattr(
         "proxy.services.fgis_price_service.resolve_pricebook_path",
-        lambda book=None: "sankt-peterburg_2kv2026.parquet",
+        lambda book=None, **_kwargs: (
+            "sankt-peterburg_2kv2026.parquet" if book else None
+        ),
     )
     monkeypatch.setattr(
         "proxy.services.fgis_price_service.get_pricebook",
@@ -753,6 +756,9 @@ async def test_stage_d_adapter_binds_price_basis_into_result_and_render(
                 "quantity": 1,
                 "norm_code": "ГЭСНм08-02-395-01",
             }],
+            # An explicitly requested book plus a conflicting period in the task:
+            # the mismatch stays in the file instead of being resolved silently.
+            "pricebook": "sankt-peterburg_2kv2026",
             "question": "Собери ЛСР, цены III квартала 2026",
         },
         tmp_path / "result.xlsx",

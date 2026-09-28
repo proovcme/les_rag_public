@@ -12,6 +12,36 @@ code (formatting and colon prefixes are accepted). It never extracts a rejected
 norm from shifted explanatory prose. Original cell text remains in the binding.
 
 
+## Build 815: три происхождения поисковых запросов в профиле «Сметчик»
+
+ADR-16 (`docs/ADR-16-systematic-candidate-retrieval.md`) касается только активного профиля
+`estimator` на табличном sheet-pass: системный сбор включается по effective snapshot
+(`mode == estimator`) и по фактору `LES_LSR_SYSTEM_CANDIDATE_QUERIES`. Каждая исполненная
+поисковая группа помечена `query_provenance`: `model` — запрос, написанный моделью (её заголовок
+остаётся прежним байт в байт), `original` — дословный исходный текст строки каталога, `derived` —
+тот же текст плюс только явно представленные в исходнике атрибуты (заголовок раздела листа и
+написанный в ячейке шифр). Кодовые группы помечаются по-русски — «дословный исходный текст
+строки» и «системный подбор по атрибутам этой строки» — и добавляются после запросов модели, а не
+вместо них: инструкция sheet-pass явно сообщает модели про эти группы, она вправе добавить свои
+запросы и отклонить всех предложенных кандидатов. Метка входит в бюджет заголовков `Qx`.
+
+Границы: обычный пользовательский dataset/chat-прогон и quality-diagnostic-раунд остаются
+model-only — там происхождение проставляется явно (`_model_only_query_provenance`), а не падает в
+default; сравнительный baseline `B0_DIRECT` системные запросы не исполняет вовсе и пишет в trace
+`system_candidate_queries.status = skipped_baseline`.
+
+Запросы автора кода собираются из дословных значений ячеек: токен, которого нет в собственных
+строках этого запроса, отбрасывает весь запрос, и отбрасывание видно в trace как
+`dropped_ungrounded` с `reason = query_token_not_in_source`; ничего из текста строки не выводится.
+Два видимых в Совушке фактора категории `smeta` применяются со следующего запроса без рестарта:
+`LES_LSR_SYSTEM_CANDIDATE_QUERIES` (default `on`; выключенный возвращает путь «только запросы
+модели») и `LES_LSR_SYSTEM_CANDIDATE_MAX` (default `24`; технический предел числа кодовых запросов
+на пакет строк, достигнутый предел не означает «норма отсутствует»). Норму код не выбирает и
+применимость не решает. Tests: `tests/test_lsr_candidate_query_service.py`, `test_adr16_*` в
+`tests/test_chat_evidence_application_service.py`. Это проверка wiring и происхождения запросов, а
+не доказательство профессиональной правильности на живом документе: установленная приёмка ещё не
+проводилась.
+
 ## Build 775: decorative table separators cannot erase decisions
 
 The labelled table header determines the columns. A nonempty Markdown divider

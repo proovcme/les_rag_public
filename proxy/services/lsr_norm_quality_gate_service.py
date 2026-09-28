@@ -180,6 +180,64 @@ def contradictions_empty(value: Any) -> bool:
     return _fold(value) in _ABSENCE
 
 
+_EXACT_APPLICABILITY_STATUSES = frozenset({"EXACT", "EXACT_VERIFIED"})
+_ANALOGUE_APPLICABILITY_STATUSES = frozenset(
+    {"ANALOGUE", "ANALOGUE_CANDIDATE", "ANALOGUE_VERIFIED"}
+)
+
+
+def cited_cipher_matches_evidence(row: Mapping[str, Any] | None) -> bool | None:
+    """Is the authored cipher the cipher of the cards the model actually cited?
+
+    ``None`` means the payload carries no citation check, or its cited cards
+    name no cipher at all: nothing is known either way and the caller must not
+    read that as agreement — or as contradiction.  A ``False`` is a structural
+    contradiction the code can see, and ADR-16 § 6 forbids laundering it into
+    confirmed applicability: the model may claim ``EXACT`` for a cipher its own
+    references never showed.
+    """
+
+    payload = row if isinstance(row, Mapping) else {}
+    check = payload.get("_evidence_check")
+    if not isinstance(check, Mapping):
+        return None
+    if check.get("citation_checkable") is False:
+        return None
+    return not bool(check.get("code_not_in_refs"))
+
+
+def open_analogue_match_fields(row: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """Match facts the model left unproven for its own analogue choice."""
+
+    payload = row if isinstance(row, Mapping) else {}
+    return tuple(
+        field
+        for field in MATCH_FIELDS
+        if canonicalize_match_flag(payload.get(field)) != "yes"
+    )
+
+
+def norm_applicability_substantiated(row: Mapping[str, Any] | None) -> bool:
+    """Whether a row's norm choice carries evidence, not just a status token.
+
+    ADR-16 § 6: the model decides applicability, but its declaration is only
+    accepted when the cited cards really hold that cipher and — for an analogue —
+    when all five match fields say ``yes``.  Free text («подходит по сути»,
+    ``extra_ops``, a note) is explicitly not a substantiation: the first-pass
+    contract says such explanations do not put the row into the calculation.
+    """
+
+    payload = row if isinstance(row, Mapping) else {}
+    if not authored_norm_code(payload.get("norm_code") or payload.get("code")):
+        return False
+    if cited_cipher_matches_evidence(payload) is False:
+        return False
+    status = canonicalize_norm_status(payload.get("norm_status"))
+    if status in _ANALOGUE_APPLICABILITY_STATUSES:
+        return not open_analogue_match_fields(payload)
+    return status in _EXACT_APPLICABILITY_STATUSES
+
+
 def parse_norm_components(value: Any) -> list[dict[str, Any]]:
     """Accept only an explicit model list. Do not split a prose cell into codes."""
 
@@ -702,6 +760,36 @@ def _code_key(value: Any) -> str:
 def _same_code(left: Any, right: Any) -> bool:
     first, second = _code_key(left), _code_key(right)
     return bool(first and second and first == second)
+
+
+_CIPHER_SHAPE_RE = re.compile(r"\d{1,3}[-–]\d{1,2}[-–]\d{1,3}(?:[-–]\d{1,2})?[а-яё]?")
+
+
+def looks_like_cipher(value: Any) -> bool:
+    """Does this string actually carry a norm cipher, not a document title?
+
+    A citation check is only a fact when the cited card names a cipher.  Card
+    bodies fall back to the document name when no ``Шифр:`` line exists, and a
+    name never contradicts a cipher — it just says nothing.
+    """
+
+    return bool(_CIPHER_SHAPE_RE.search(str(value or "")))
+
+
+def ciphers_compatible(left: Any, right: Any) -> bool:
+    """One cipher in two spellings is one cipher.
+
+    ``ГЭСН 10-01-001-05`` and ``ГЭСН10-01-001-05`` differ by a space and a
+    colon, not by norm.  Containment is kept on purpose: a cited paragraph card
+    (``10-01-001``) and the item the model wrote (``10-01-001-05``) are the same
+    citation chain, so only a genuinely different number counts as a
+    contradiction.
+    """
+
+    first, second = _code_key(left), _code_key(right)
+    if not first or not second:
+        return False
+    return first == second or first in second or second in first
 
 
 def apply_verifier_row(

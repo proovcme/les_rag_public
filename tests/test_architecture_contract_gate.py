@@ -224,3 +224,136 @@ def test_allows_provider_names_only_inside_legacy_importer(tmp_path: Path) -> No
     )
 
     assert "ENGINE_NAME_ROUTING" not in _codes(tmp_path)
+
+
+def _adr16_probe(tmp_path: Path, relative: str, body: str) -> set[str]:
+    _write(tmp_path, relative, "import re\n\n" + body)
+    return _codes(tmp_path)
+
+
+def test_rejects_derived_query_composition_with_regex(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def _candidates(catalog, packet):
+    rows = [r for r in catalog if re.search("монтаж", r.line)]
+    return candidate_queries_for_packet(rows)
+""",
+    )
+    assert "DERIVED_QUERY_SEMANTIC_INVENTION" in codes
+
+
+def test_rejects_semantic_invention_inside_the_candidate_module(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_candidate_query_service.py",
+        """
+def candidate_queries_for_rows(rows):
+    return [re.sub(r"вручную", "механизированный", row.line) for row in rows]
+""",
+    )
+    assert "DERIVED_QUERY_SEMANTIC_INVENTION" in codes
+
+
+def test_rejects_derived_provenance_authored_elsewhere(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/estimate_harness_service.py",
+        """
+def build(rows):
+    return [
+        CandidateQuery(text=row.line, locator=row.locator, provenance="derived")
+        for row in rows
+    ]
+""",
+    )
+    assert "DERIVED_QUERY_SEMANTIC_INVENTION" in codes
+
+
+def test_rejects_evidence_builder_without_query_provenance(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def assemble(queries, hits, budget):
+    return build_model_rag_evidence_groups(queries, hits, budget)
+""",
+    )
+    assert "QUERY_PROVENANCE_MISSING" in codes
+
+
+def test_rejects_estimate_pricebook_without_explicit_only(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_workbook_adapter_service.py",
+        """
+async def build(args):
+    return resolve_pricebook_path(args.get("pricebook") or None)
+""",
+    )
+    assert "PRICE_BASIS_SILENT_DEFAULT" in codes
+
+
+def test_rejects_unowned_norm_card_price_without_its_label(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/rim_lsr_trace_service.py",
+        """
+def _resolve(res):
+    return PriceTrace(price=res["price"], source="card_price", basis="norm_card_price")
+""",
+    )
+    assert "UNOWNED_PRICE_SOURCE" in codes
+
+
+def test_allows_adr16_literal_composition_and_explicit_basis(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_candidate_query_service.py",
+        """
+def candidate_queries_for_rows(rows):
+    return [" | ".join(row.values) for row in rows]
+""",
+    )
+    _write(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def assemble(queries, hits, budget, provenance):
+    return build_model_rag_evidence_groups(
+        queries, hits, budget, query_provenance=provenance
+    )
+""",
+    )
+    _write(
+        tmp_path,
+        "proxy/services/lsr_workbook_adapter_service.py",
+        """
+async def build(args):
+    return resolve_pricebook_path(
+        args.get("pricebook") or None, explicit_only=True
+    )
+""",
+    )
+    _write(
+        tmp_path,
+        "proxy/services/rim_lsr_trace_service.py",
+        """
+def _resolve(res):
+    return PriceTrace(
+        price=res["price"],
+        source="card_price",
+        basis="norm_card_price",
+        action="card_price_without_basis",
+    )
+""",
+    )
+    assert _codes(tmp_path).isdisjoint(
+        {
+            "DERIVED_QUERY_SEMANTIC_INVENTION",
+            "QUERY_PROVENANCE_MISSING",
+            "PRICE_BASIS_SILENT_DEFAULT",
+            "UNOWNED_PRICE_SOURCE",
+        }
+    )

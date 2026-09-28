@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from datetime import tzinfo as TzInfo
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from nicegui import context, ui
 
@@ -1294,6 +1294,376 @@ LSR_SOURCE_FIELD_HELP = (
     "Без этой пометки перевод не принимается."
 )
 
+# ── Ценовая база: выбор оператора, а не подстановка кодом ────────────────────
+# ``price_basis.match`` приходит с машины состояниями ``exact`` / ``mismatch`` /
+# ``unspecified`` / ``no_book`` / ``confirmed_alternative``. Здесь они переводятся
+# на русский для оператора; сырое значение остаётся только в блоке технических
+# деталей. Никакой текст не должен звучать как «база применена по вашему выбору».
+PRICE_BASIS_PROMPT_TITLE = "Выберите регион и уровень цен"
+PRICE_BASIS_PROMPT_DETAIL = (
+    "Регион, ценовая зона, год и квартал — данные оператора. Код не выбирает их "
+    "молча: пока выбор не подтверждён, смета остаётся черновиком."
+)
+PRICE_BASIS_VISIBLE_MATCHES = frozenset({"mismatch", "unspecified", "no_book"})
+PRICE_BASIS_STATE_LABELS = {
+    "exact": "Ценовая база совпадает с запросом",
+    "mismatch": "Ценовая база не совпадает с запросом",
+    "unspecified": "Ценовая база не выбрана оператором",
+    "no_book": "Ценовая книга не применена",
+    "confirmed_alternative": "Альтернативная база подтверждена оператором",
+}
+PRICE_BASIS_DRAFT_NOTE = (
+    "Смета остаётся черновиком: цены по книге не подтверждены, пока вы явно не "
+    "укажете регион и уровень цен."
+)
+PRICE_BASIS_SYSTEM_PICK_NOTE = (
+    "Фактически подставлена книга «{book}» ({label}) — это подбор системы по "
+    "умолчанию, а не ваш выбор."
+)
+PRICE_BASIS_MISMATCH_NOTE = (
+    "Фактически применена книга «{book}» ({label}) — не та, что запрошена. "
+    "Расчёт по ней не считается расчётом по запросу."
+)
+PRICE_BASIS_NO_BOOK_NOTE = (
+    "Ценовая книга не применена: в расчёте только подтверждённые цены и КАЦ."
+)
+PRICE_BASIS_REQUESTED_NOTE = "Запрошенная ценовая база: {value}."
+PRICE_BASIS_REQUESTED_ABSENT_NOTE = "Запрошенная ценовая база: не указана ни в запросе, ни в исходнике."
+PRICE_BASIS_REGION_NOTE = "Регион в запросе: {value}."
+PRICE_BASIS_REGION_ORIGIN_NOTE = "Регион в запросе: {value} ({origin})."
+PRICE_BASIS_REGION_UNNAMED_NOTE = (
+    "Регион в запросе не назван; ценовая зона и период не выведены из слова "
+    "«город»."
+)
+PRICE_BASIS_REGION_DERIVED_NOTE = (
+    "Регион {region} выведен кодом, источник: {origin}. "
+    "Явного указания оператора нет."
+)
+PRICE_BASIS_CITY_VS_ZONE_NOTE = (
+    "Город и ценовая зона — не одно и то же: противоречие показано, а не "
+    "разрешено кодом."
+)
+PRICE_BASIS_PERIOD_MISSING_NOTE = (
+    "Запрошенного периода «{period}» среди доступных локальных книг нет. "
+    "Ни одна книга вместо него не применяется."
+)
+PRICE_BASIS_NO_LOCAL_BOOKS_NOTE = (
+    "Локальных ценовых книг нет. Загрузите проверенный набор цен или внесите "
+    "подтверждённые цены через «Внести подтверждённые данные»."
+)
+PRICE_BASIS_AVAILABLE_TITLE = "Доступные ценовые книги локально — выберите одну:"
+PRICE_BASIS_CHOICE_LABEL = "Вставить выбор в запрос"
+PRICE_BASIS_BOOK_FLAG_NOTES = {
+    "system_pick": "подставлена системой",
+    "mismatched": "применена вместо запрошенной",
+}
+PRICE_BASIS_PREFILL_TOAST = (
+    "Формулировка вставлена в поле ввода — отправьте её как обычный запрос."
+)
+_PRICEBOOK_PERIOD_TOKEN_RE = re.compile(
+    r"(?P<num>\d)\s*kv\s*(?P<year>\d{4})", re.IGNORECASE
+)
+_PRICEBOOK_PERIOD_PHRASE_RE = re.compile(
+    r"(?P<num>[1-4])\s*квартал\D*(?P<year>\d{4})", re.IGNORECASE
+)
+_PRICEBOOK_MACHINE_PERIOD_RE = re.compile(r"(?P<num>[1-4])\s*:\s*(?P<year>\d{4})")
+_PRICEBOOK_PERIOD_PATTERNS = (
+    _PRICEBOOK_PERIOD_TOKEN_RE,
+    _PRICEBOOK_PERIOD_PHRASE_RE,
+    _PRICEBOOK_MACHINE_PERIOD_RE,
+)
+_PRICEBOOK_ROMAN = {"1": "I", "2": "II", "3": "III", "4": "IV"}
+# Только те идентификаторы, чья расшифровка проверена по имени субъекта; прочие
+# показываются как есть, с явной пометкой, что регион не подтверждён.
+_PRICEBOOK_REGION_RU = {
+    "sankt-peterburg": "Санкт-Петербург",
+    "leningradskaya-oblast": "Ленинградская область",
+    "moskva": "Москва",
+    "moskovskaya-oblast": "Московская область",
+    "nizhegorodskaya-oblast": "Нижегородская область",
+    "omskaya-oblast": "Омская область",
+}
+_PRICEBOOK_LIST_TTL_SECONDS = 30.0
+_pricebook_list_cache: tuple[float, tuple[str, ...]] = (0.0, ())
+
+
+def describe_pricebook_identifier(identifier: object) -> dict[str, Any]:
+    """Decode one local price-book identifier into Russian operator terms.
+
+    The exact identifier is always kept: the human label is derived from the
+    file name, so an unknown subject prefix is shown unchanged and marked as
+    unproven instead of being guessed.
+    """
+
+    stem = str(identifier or "").strip()
+    info: dict[str, Any] = {
+        "identifier": stem,
+        "region": "",
+        "region_proven": False,
+        "period": "",
+        "label": stem,
+    }
+    if not stem:
+        return info
+    token = _PRICEBOOK_PERIOD_TOKEN_RE.search(stem)
+    if token:
+        info["period"] = (
+            f"{_PRICEBOOK_ROMAN.get(token.group('num'), token.group('num'))}"
+            f" квартал {token.group('year')}"
+        )
+    prefix = _PRICEBOOK_PERIOD_TOKEN_RE.sub("", stem).strip("_- ").casefold()
+    known = _PRICEBOOK_REGION_RU.get(prefix, "")
+    if known:
+        info["region"] = known
+        info["region_proven"] = True
+    else:
+        info["region"] = prefix
+        info["region_note"] = "регион по идентификатору не подтверждён"
+    info["label"] = " · ".join(
+        part for part in (str(info.get("region") or ""), str(info["period"])) if part
+    ) or stem
+    return info
+
+
+def _pricebook_period_phrase(value: object) -> str:
+    """Normalize a period token or phrase to «III квартал 2026».
+
+    Text that names no period stays unchanged: callers must not read a period
+    out of an unrelated phrase.
+    """
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    for pattern in _PRICEBOOK_PERIOD_PATTERNS:
+        found = pattern.search(text)
+        if found:
+            num = _PRICEBOOK_ROMAN.get(found.group("num"), found.group("num"))
+            return f"{num} квартал {found.group('year')}"
+    return text
+
+
+def _pricebook_period_named(value: object) -> str:
+    """The normalized period, or an empty string when the text names none."""
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    for pattern in _PRICEBOOK_PERIOD_PATTERNS:
+        if pattern.search(text):
+            return _pricebook_period_phrase(text)
+    return ""
+
+
+def pricebook_identifiers(*, refresh: bool = False) -> tuple[str, ...]:
+    """Local price-book stems the resolver itself is allowed to see.
+
+    Read straight from the existing price service, so the surface lists the
+    books that actually exist locally — scratch copies, aliased duplicates and
+    quarantined subjects stay hidden exactly as they do in the calculation.
+    """
+
+    global _pricebook_list_cache
+    now = time.monotonic()
+    cached = _pricebook_list_cache
+    if not refresh and cached[1] and now - cached[0] < _PRICEBOOK_LIST_TTL_SECONDS:
+        return cached[1]
+    stems: list[str] = []
+    try:
+        from proxy.services import fgis_price_service
+
+        for path in fgis_price_service.available_pricebooks():
+            stem = Path(str(path)).stem
+            if stem and stem not in stems:
+                stems.append(stem)
+    except Exception as exc:  # pragma: no cover - catalog read is best effort
+        add_log(f"[ЧАТ] список ценовых книг недоступен: {exc}")
+    ordered = tuple(sorted(stems))
+    _pricebook_list_cache = (now, ordered)
+    return ordered
+
+
+def pricebook_chat_formulation(book: dict[str, Any]) -> str:
+    """A ready-to-send ordinary-chat sentence confirming one price basis (§ 8)."""
+
+    identifier = str(book.get("identifier") or "").strip()
+    period = _pricebook_period_phrase(book.get("period") or identifier)
+    region = str(book.get("region") or "") if book.get("region_proven") else ""
+    if region and period:
+        return (
+            f"Пересчитай ЛСР: регион {region}, {period} "
+            f"(ценовая книга {identifier}). Регион и уровень цен подтверждаю явно."
+        )
+    if period:
+        return (
+            f"Пересчитай ЛСР по ценовой книге {identifier} ({period}). "
+            "Ценовую зону и уровень цен подтверждаю явно."
+        )
+    return (
+        f"Пересчитай ЛСР по ценовой книге {identifier}. "
+        "Регион и уровень цен подтверждаю явно."
+    )
+
+
+def _price_basis_contradiction_lines(items: Any) -> list[str]:
+    """Translate backend contradiction tokens into Russian operator lines."""
+
+    lines: list[str] = []
+    for raw in list(items or []):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        head, _, tail = text.partition(":")
+        kind = head.strip().casefold()
+        values = [part.strip() for part in tail.split(",") if part.strip()]
+        if kind == "регион" and values:
+            lines.append(
+                PRICE_BASIS_CITY_VS_ZONE_NOTE
+                + " В запросе названо несколько регионов: "
+                + ", ".join(values) + "."
+            )
+        elif kind == "период цен" and values:
+            lines.append(
+                "В запросе названо несколько периодов цен: "
+                + ", ".join(_pricebook_period_phrase(item) for item in values)
+                + "."
+            )
+        else:
+            readable = ", ".join(_pricebook_period_phrase(item) for item in values)
+            lines.append(
+                "Противоречие в запросе: "
+                + (f"{head.strip()}: {readable}" if readable else text)
+                + "."
+            )
+    return lines
+
+
+def lsr_price_basis_prompt(
+    basis: Any,
+    books: Optional[Sequence[str]] = None,
+) -> dict[str, Any]:
+    """Project the LSR price-basis block into a Russian selection surface.
+
+    Pure projector over ``dimensions.prices.basis`` (the ``summarize_lsr_price_basis``
+    payload) plus the locally available books. It answers three separate questions
+    and never merges them: what the operator asked for, what the calculation
+    actually used, and what is available to choose. When the basis is unresolved,
+    nothing here is phrased as an applied decision.
+    """
+
+    payload = basis if isinstance(basis, dict) else {}
+    match = str(payload.get("match") or "").strip().casefold()
+    visible = match in PRICE_BASIS_VISIBLE_MATCHES
+    projected: dict[str, Any] = {
+        "visible": visible,
+        "title": PRICE_BASIS_PROMPT_TITLE,
+        "detail": PRICE_BASIS_PROMPT_DETAIL,
+        "match": match,
+        "state_label": PRICE_BASIS_STATE_LABELS.get(match, "") if visible else "",
+        "state_tone": ("error" if match == "mismatch" else "warn") if visible else "muted",
+        "lines": [],
+        "books": [],
+        "available_title": PRICE_BASIS_AVAILABLE_TITLE,
+        "empty_note": PRICE_BASIS_NO_LOCAL_BOOKS_NOTE,
+        "technical": {
+            "match": match,
+            "note": str(payload.get("note") or ""),
+            "book": str(payload.get("actual_book") or ""),
+        },
+    }
+    if not visible:
+        return projected
+
+    identifiers = (
+        pricebook_identifiers() if books is None else tuple(str(item) for item in books)
+    )
+    described = [describe_pricebook_identifier(item) for item in identifiers if str(item).strip()]
+    lines: list[str] = []
+
+    requested = str(payload.get("requested") or "").strip()
+    lines.append(
+        PRICE_BASIS_REQUESTED_NOTE.format(value=requested)
+        if requested
+        else PRICE_BASIS_REQUESTED_ABSENT_NOTE
+    )
+
+    region = str(payload.get("requested_region") or "").strip()
+    origin = str(payload.get("requested_region_origin") or "").strip()
+    derived = origin.casefold().startswith("выведено из")
+    if region and derived:
+        lines.append(
+            PRICE_BASIS_REGION_DERIVED_NOTE.format(
+                region=region,
+                origin=origin.split(":", 1)[-1].strip() or "запроса",
+            )
+        )
+    elif region:
+        lines.append(
+            PRICE_BASIS_REGION_ORIGIN_NOTE.format(value=region, origin=origin)
+            if origin and origin.casefold() != "не указан"
+            else PRICE_BASIS_REGION_NOTE.format(value=region)
+        )
+    else:
+        lines.append(PRICE_BASIS_REGION_UNNAMED_NOTE)
+
+    applied_identifier = str(payload.get("actual_book") or "").strip()
+    if applied_identifier:
+        applied = describe_pricebook_identifier(applied_identifier)
+        proven_region = str(payload.get("actual_region") or "").strip()
+        if proven_region:
+            applied["region"] = proven_region
+            applied["region_proven"] = True
+            applied.pop("region_note", None)
+        proven_period = _pricebook_period_named(payload.get("actual_quarter") or "")
+        if proven_period:
+            applied["period"] = proven_period
+        applied["label"] = " · ".join(
+            part
+            for part in (str(applied.get("region") or ""), str(applied.get("period") or ""))
+            if part
+        ) or applied_identifier
+        template = (
+            PRICE_BASIS_MISMATCH_NOTE
+            if match == "mismatch"
+            else PRICE_BASIS_SYSTEM_PICK_NOTE
+        )
+        lines.append(
+            template.format(book=applied_identifier, label=applied["label"])
+        )
+        for item in described:
+            if item["identifier"].casefold() != applied_identifier.casefold():
+                continue
+            item["flag"] = "mismatched" if match == "mismatch" else "system_pick"
+            item["flag_note"] = PRICE_BASIS_BOOK_FLAG_NOTES[item["flag"]]
+    else:
+        lines.append(PRICE_BASIS_NO_BOOK_NOTE)
+
+    lines.extend(_price_basis_contradiction_lines(payload.get("contradictions")))
+
+    # A period is only named when the text really names one; several different
+    # periods in one request is a contradiction, not a choice to check.
+    requested_periods = {
+        period
+        for period in (_pricebook_period_named(part) for part in requested.split(";"))
+        if period
+    }
+    single_period = requested_periods.pop() if len(requested_periods) == 1 else ""
+    if single_period and described:
+        available_periods = {str(item.get("period") or "") for item in described}
+        if single_period not in available_periods:
+            lines.append(
+                PRICE_BASIS_PERIOD_MISSING_NOTE.format(period=single_period)
+            )
+
+    lines.append(PRICE_BASIS_DRAFT_NOTE)
+
+    projected["lines"] = lines
+    projected["books"] = [
+        dict(item, chat_text=pricebook_chat_formulation(item))
+        for item in described
+    ]
+    return projected
+
 
 def lsr_readiness_card_spec(readiness: Any) -> dict[str, Any]:
     """Project coverage / norms / prices status for the files panel."""
@@ -1349,6 +1719,10 @@ def lsr_readiness_card_spec(readiness: Any) -> dict[str, Any]:
         ),
         "prices_tone": "ok" if prices_dim.get("complete") else "warn",
         "prices_action": str(prices_dim.get("action") or ""),
+        # ``prices_label``/``prices_action`` speak about price gaps only. The
+        # basis block is kept separate and raw here: "no gaps" must never be
+        # readable as "the operator chose a region and a period".
+        "price_basis": dict(prices_dim.get("basis") or {}),
         "continue_action": str(payload.get("continue_action") or ""),
         "technical_complete": bool(payload.get("technical_complete")),
         "estimate_complete": bool(payload.get("estimate_complete")),
@@ -4906,6 +5280,85 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _register_artifact_downloads({"artifact": harvested.get("artifact") or {}})
         _notify("Подтверждённые данные внесены без вызова модели.", type="positive")
 
+    def _prefill_chat_prompt(text: str) -> None:
+        """Put a ready formulation in the composer; the operator still sends it.
+
+        Chosen over an extra API: the price basis becomes an ordinary chat
+        request, exactly like the mode examples that use the same mechanism.
+        """
+
+        chat_input.value = str(text or "")
+        chat_input.update()
+        _notify(PRICE_BASIS_PREFILL_TOAST, type="info")
+
+    def _render_price_basis_prompt(prompt: dict) -> None:
+        """Vertical price-basis picker: requested, actually used, available.
+
+        Rendered only when the backend reports an unresolved basis. Nothing in
+        this block may read as a confirmed choice, and the requested period is
+        stated as absent rather than substituted.
+        """
+
+        from sovushka.uikit import render_feedback_state
+
+        with ui.column().classes("w-full gap-1"):
+            section_heading(str(prompt.get("title") or ""), str(prompt.get("detail") or ""))
+            status_badge(
+                str(prompt.get("state_label") or ""),
+                str(prompt.get("state_tone") or "warn"),
+            )
+            for line in list(prompt.get("lines") or []):
+                ui.label(str(line)).classes("sov-ui-section-detail")
+            books = [dict(item) for item in (prompt.get("books") or []) if isinstance(item, dict)]
+            if books:
+                ui.label(str(prompt.get("available_title") or "")).classes(
+                    "sov-lsr-field-help"
+                )
+                for book in books:
+                    flag_note = str(book.get("flag_note") or "")
+                    with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                        ui.label(str(book.get("identifier") or "")).classes(
+                            "sov-ui-source-chip"
+                        )
+                        ui.label(str(book.get("label") or "")).classes("sov-ui-section-detail")
+                        if flag_note:
+                            status_badge(flag_note, "error")
+                        elif book.get("region_proven") is False:
+                            status_badge(
+                                str(book.get("region_note") or "регион не подтверждён"),
+                                "muted",
+                            )
+                        action_button(
+                            PRICE_BASIS_CHOICE_LABEL,
+                            icon="o_check",
+                            on_click=lambda t=str(book.get("chat_text") or ""): _prefill_chat_prompt(t),
+                            variant="secondary",
+                            compact=True,
+                            aria_label=(
+                                f"{PRICE_BASIS_CHOICE_LABEL}: "
+                                f"{book.get('identifier') or ''} {book.get('label') or ''}"
+                            ),
+                        )
+            else:
+                render_feedback_state(
+                    "empty", detail=str(prompt.get("empty_note") or "")
+                )
+            technical = (
+                prompt.get("technical") if isinstance(prompt.get("technical"), dict) else {}
+            )
+            if technical:
+                with ui.expansion("Технические детали ценовой базы", value=False).classes(
+                    "w-full"
+                ):
+                    ui.label(
+                        f"Состояние: {technical.get('match') or '—'}"
+                    ).classes("sov-ui-section-detail")
+                    ui.label(
+                        f"Книга: {technical.get('book') or '—'}"
+                    ).classes("sov-ui-section-detail")
+                    if technical.get("note"):
+                        ui.label(str(technical.get("note"))).classes("sov-ui-section-detail")
+
     def _render_lsr_readiness_card(spec: dict, resume: dict, artifact: dict) -> None:
         with panel(variant="raised", classes="sov-lsr-readiness"):
             detail = (
@@ -4923,6 +5376,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 status_badge(spec["coverage_label"], spec["coverage_tone"])
                 status_badge(spec["norms_label"], spec["norms_tone"])
                 status_badge(spec["prices_label"], spec["prices_tone"])
+            # A resolved basis stays silent; an unresolved or mismatched one is
+            # an operator decision that the card must surface, not swallow.
+            basis_prompt = lsr_price_basis_prompt(
+                spec.get("price_basis"), books=pricebook_identifiers()
+            )
+            if basis_prompt["visible"]:
+                _render_price_basis_prompt(basis_prompt)
             fields: dict[str, Any] = {}
             with ui.row().classes("w-full gap-2 flex-wrap sov-lsr-actions"):
                 for item in spec.get("actions") or []:
@@ -5021,6 +5481,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 )
                 if text
             ]
+            # The backend prices action asks for «город»; a city does not define
+            # a price zone, so the card states the difference next to it instead
+            # of letting the operator read them as the same thing.
+            if basis_prompt["visible"]:
+                remainder.append(PRICE_BASIS_CITY_VS_ZONE_NOTE)
             locators = [str(item).strip() for item in (spec.get("gap_locators") or []) if str(item).strip()]
             if locators:
                 remainder.append("Незакрытые адреса: " + ", ".join(locators))
