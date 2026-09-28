@@ -241,7 +241,9 @@ async def test_active_preserves_every_model_tool_call() -> None:
 async def test_free_chat_active_uses_bound_runner_without_legacy_http(monkeypatch) -> None:
     primary = _connection("conn:primary:r7")
     transport = Transport([_answer("active answer")])
-    runner = BoundModelChatRunner(resolver=Resolver(primary), transport=transport)
+    resolver = Resolver(primary)
+    runner = BoundModelChatRunner(resolver=resolver, transport=transport)
+    monkeypatch.setattr(chat, "_model_connection_resolver", lambda: (resolver, object()))
     monkeypatch.setattr(chat, "_bound_model_chat_runner", lambda _client: runner)
     monkeypatch.setattr(chat, "_effective_model_connection_mode", lambda: CanonicalRouteMode.ACTIVE)
     monkeypatch.setattr(chat, "session_memory", lambda *_args, **_kwargs: "remembered")

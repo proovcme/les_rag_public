@@ -11313,7 +11313,7 @@
     },
     {
       "inbound": [],
-      "lines": 323,
+      "lines": 325,
       "module": "tests.test_model_connection_chat_integration",
       "outbound": [
         "proxy/routers/chat.py",
@@ -19051,7 +19051,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 647,
     "tracked_python_files": 1016,
-    "tracked_python_lines": 337904
+    "tracked_python_lines": 337906
   },
   "warnings": []
 }
