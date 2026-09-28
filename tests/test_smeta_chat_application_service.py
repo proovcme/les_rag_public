@@ -213,6 +213,122 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
     ]
 
 
+def _prepare_complete_document_run(tmp_path, monkeypatch) -> None:
+    """Patch a document run that computes a ЛСР and then publishes its report.
+
+    The two publish regressions below only put the rename of the report file
+    under test; the workflow itself is a fixture that writes both artifacts and
+    returns a computed result.
+    """
+    _clear_smeta_host_env(monkeypatch)
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-test")
+    monkeypatch.setattr(service, "resolve_read_attachment", lambda attachment_id: (
+        source,
+        {
+            "attachment_id": attachment_id,
+            "original_name": "ВОР тест.pdf",
+            "sha256": "source-sha",
+        },
+    ))
+    monkeypatch.setattr(service, "consume_read_attachment", lambda _attachment_id: None)
+
+    def run_workflow(_path, **kwargs):
+        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
+        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
+        return {
+            "schema": "smeta_vor_pdf_workflow_v1",
+            "agent_trace": {},
+            "model_trace": [{"turn": 1}],
+            "lsr": {
+                "summary": {
+                    "result_status": "priced_partial",
+                    "input_rows": 19,
+                    "bound_rows": 16,
+                    "open_rows": 3,
+                    "total_without_vat": 100,
+                    "total_with_vat": 122,
+                },
+                "positions": [{"work_id": "w1", "selected_by": "model"}],
+            },
+        }
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
+
+
+async def _complete_document_run(tmp_path):
+    return await service.run_smeta_document_application(
+        attachment_id="read_0123456789ab",
+        user_request="Сделай ЛСР",
+        model_exchange=lambda _messages, _tools: {"tool_calls": [{"id": "model-owned"}]},
+        model_provider="openai",
+        model_name="gpt-5.4",
+        cloud_provider=True,
+        token_sink=None,
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_transient_lock_while_publishing_the_report_keeps_the_document(
+    tmp_path, monkeypatch
+):
+    """A held handle is retried, not reported as a run that produced nothing.
+
+    The 818 gate log shows `PermissionError: [WinError 5]` on the rename of a
+    freshly written report turning a computed ЛСР into `smeta_document_failed`.
+    """
+    real_replace = Path.replace
+    injections = []
+
+    def flaky_replace(self, target):
+        name = str(target)
+        if "LSR_read_" in name and name.endswith(".json") and not injections:
+            injections.append(name)
+            raise PermissionError(13, "simulated antivirus handle", str(self))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+    _prepare_complete_document_run(tmp_path, monkeypatch)
+    result = await _complete_document_run(tmp_path)
+    assert result is not None
+    assert result.operation == "smeta_document_lsr", result.answer
+    assert injections, "the report publish was never exercised"
+    report = Path(result.extra["artifact"]["files"]["trace_path"])
+    assert report.is_file()
+    saved = json.loads(report.read_text(encoding="utf-8"))
+    assert saved["agent_trace"]["provider"] == "openai"
+    assert not list(report.parent.glob(f"{report.name}.tmp"))
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_locked_report_publish_is_a_failure_not_a_phantom_file(
+    tmp_path, monkeypatch
+):
+    """Retries are bounded, and an artifact nobody can open never claims success."""
+    real_replace = Path.replace
+    attempts = []
+
+    def locked_replace(self, target):
+        name = str(target)
+        if "LSR_read_" in name and name.endswith(".json"):
+            attempts.append(name)
+            raise PermissionError(13, "file held by another process", str(self))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", locked_replace)
+    _prepare_complete_document_run(tmp_path, monkeypatch)
+    result = await _complete_document_run(tmp_path)
+    assert result.operation == "smeta_document_failed"
+    assert len(attempts) == service._PUBLISH_ATTEMPTS
+    published = list((tmp_path / "artifacts").glob("LSR_read_*.json"))
+    assert len(published) == 1
+    assert json.loads(published[0].read_text(encoding="utf-8")) == {}, (
+        "the enriched report was never published, so the file must not claim it"
+    )
+    assert result.extra["attachment_retry"]["preserved"] is True
+
+
 @pytest.mark.asyncio
 async def test_document_application_keeps_attachment_after_workflow_failure(tmp_path, monkeypatch):
     source = tmp_path / "source.pdf"

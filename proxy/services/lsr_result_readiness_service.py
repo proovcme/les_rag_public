@@ -14,6 +14,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
     cited_cipher_matches_evidence,
     open_analogue_match_fields,
 )
+from proxy.services.rim_lsr_trace_service import format_ruble_amount
 
 SCHEMA = "les.lsr-result-readiness.v1"
 
@@ -833,8 +834,9 @@ def format_lsr_readiness_notice(
             composition += f", позиций рассчитано {int(counts['calculated_positions'])}"
         if counts.get("confirmed_amount") is not None:
             composition += (
-                f". Подтверждённая сумма {float(counts['confirmed_amount']):g}, "
-                f"предварительная {float(counts.get('preliminary_amount') or 0):g}"
+                ". Подтверждённая сумма "
+                f"{format_ruble_amount(counts['confirmed_amount'])}, предварительная "
+                f"{format_ruble_amount(counts.get('preliminary_amount') or 0)}"
             )
         parts.append(composition + ".")
     file_label = "файл готов" if file_ready else "файл не готов"

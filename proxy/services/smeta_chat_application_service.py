@@ -165,6 +165,33 @@ def _load_document_checkpoint(
     return dict(agent_result) if isinstance(agent_result, dict) else None
 
 
+_PUBLISH_ATTEMPTS = 5
+
+
+def _publish_renamed_file(temporary: Path, target: Path) -> None:
+    """Move a freshly written report onto its final name, tolerating a lock.
+
+    A document run is finished only when the operator can open its file (§ 9: a
+    declared «завершено» without an accessible artifact is not success). On
+    Windows an antivirus or the search indexer keeps a handle on a file that has
+    just been created for tens of milliseconds, and ``Path.replace`` answers that
+    with ``PermissionError: [WinError 5]`` — which used to turn a fully computed
+    ЛСР into ``smeta_document_failed`` (live evidence: the 818 gate log,
+    ``stage_b/live_818/gates_818.log``). The retry is bounded and the last error
+    is re-raised, so a genuinely unwritable artifact still reports a failure
+    instead of naming a file that does not exist. The sleep schedule matches the
+    existing ``_atomic_json`` idiom in ``backend/raptor_publication_worker.py``.
+    """
+    for attempt in range(_PUBLISH_ATTEMPTS):
+        try:
+            temporary.replace(target)
+            return
+        except PermissionError:
+            if attempt == _PUBLISH_ATTEMPTS - 1:
+                raise
+            time.sleep(0.02 * (attempt + 1))
+
+
 def _write_document_checkpoint(
     path: Path,
     *,
@@ -182,7 +209,7 @@ def _write_document_checkpoint(
         json.dumps(envelope, ensure_ascii=False, default=str),
         encoding="utf-8",
     )
-    temp.replace(path)
+    _publish_renamed_file(temp, path)
 
 
 @dataclass(frozen=True)
@@ -853,7 +880,7 @@ async def run_smeta_document_application(
                 json.dumps(workflow, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
-            report_temp.replace(report_path)
+            _publish_renamed_file(report_temp, report_path)
 
         await asyncio.to_thread(persist_enriched_report)
     except asyncio.CancelledError:

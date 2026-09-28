@@ -4783,13 +4783,14 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_stall_bound_25.py"
       ],
-      "lines": 883,
+      "lines": 885,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/services/__init__.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
-        "proxy/services/lsr_source_coverage_service.py"
+        "proxy/services/lsr_source_coverage_service.py",
+        "proxy/services/rim_lsr_trace_service.py"
       ],
       "path": "proxy/services/lsr_result_readiness_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -4825,7 +4826,7 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 1107,
+      "lines": 1114,
       "module": "proxy.services.lsr_workbook_adapter_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6229,6 +6230,7 @@
     {
       "inbound": [
         "proxy/routers/lsr.py",
+        "proxy/services/lsr_result_readiness_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/smeta_core/calculator.py",
         "tests/test_finalization_defects_782.py",
@@ -6244,7 +6246,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 2064,
+      "lines": 2126,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6676,7 +6678,7 @@
         "tools/smeta_document_local_run.py",
         "tools/smeta_model_quality_benchmark.py"
       ],
-      "lines": 1008,
+      "lines": 1035,
       "module": "proxy.services.smeta_chat_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -11161,7 +11163,7 @@
     },
     {
       "inbound": [],
-      "lines": 370,
+      "lines": 443,
       "module": "tests.test_lsr_price_ownership",
       "outbound": [
         "proxy/services/lsr_workbook_adapter_service.py",
@@ -11173,7 +11175,7 @@
     },
     {
       "inbound": [],
-      "lines": 401,
+      "lines": 432,
       "module": "tests.test_lsr_result_readiness_service",
       "outbound": [
         "proxy/services/lsr_result_readiness_service.py"
@@ -12833,7 +12835,7 @@
     },
     {
       "inbound": [],
-      "lines": 1243,
+      "lines": 1286,
       "module": "tests.test_rim_lsr_trace_service",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -13272,7 +13274,7 @@
     },
     {
       "inbound": [],
-      "lines": 1628,
+      "lines": 1744,
       "module": "tests.test_smeta_chat_application_service",
       "outbound": [
         "proxy/services/smeta_chat_adapter_service.py",
@@ -19170,7 +19172,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 653,
     "tracked_python_files": 1023,
-    "tracked_python_lines": 343535
+    "tracked_python_lines": 343896
   },
   "warnings": []
 }

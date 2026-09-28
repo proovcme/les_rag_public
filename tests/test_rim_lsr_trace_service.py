@@ -1241,3 +1241,46 @@ def test_stage_v_renderer_writes_readiness_column(tmp_path):
     text = "\n".join(str(value) for value in values if value)
     assert "цены=не по базе" in text
     assert "норма=н/п" in text
+
+
+def test_a_card_resource_identity_reaches_the_operator_without_markup():
+    """Installed 0.31.89, case 3 of the installed-trace check.
+
+    The КАЦ question read «нужен КАЦ: Уайт-спирит (14.5.09.<em>11-01</em>02)»,
+    because the emphasis the norm card puts around the matched part of a шифр
+    travelled with the resource identity into every operator surface.  A code
+    with tags in it is a code no ценовая база contains, so the question could
+    not be answered.  Only tags are removed here: digits, dots and dashes stay
+    exactly as the card has them.
+    """
+    trace = build_position_trace(
+        {
+            "code": "ГЭСН00-00-000-00",
+            "name": "Окраска поверхности",
+            "unit": "м2",
+            "qty": 1,
+            "nr_pct": 0,
+            "sp_pct": 0,
+            "resources": [
+                {
+                    "kind": "material",
+                    "code": "14.5.09.<em>11-01</em>02",
+                    "name": "Уайт-спирит <em>очищенный</em>",
+                    "unit": "<em>л</em>",
+                    "per_unit": 1,
+                },
+            ],
+        }
+    )
+
+    summary = trace["summary"]
+    flags = [str(item) for item in summary.get("flags") or []]
+    reasons = [str(item) for item in summary.get("completeness_reasons") or []]
+    row = next(item for item in trace["rows"] if item["type"] == "resource_material")
+
+    assert any(item.startswith("нужен КАЦ:") for item in flags)
+    assert not any("<" in item or ">" in item for item in flags)
+    assert "price_missing:14.5.09.11-0102" in reasons
+    assert row["columns"]["2"] == "14.5.09.11-0102"
+    assert row["columns"]["3"] == "Уайт-спирит очищенный"
+    assert row["columns"]["4"] == "л"

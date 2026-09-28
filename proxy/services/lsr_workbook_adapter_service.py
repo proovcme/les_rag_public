@@ -12,7 +12,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from proxy.services import fgis_price_service
-from proxy.services.rim_lsr_trace_service import build_lsr_trace_from_visible_rows
+from proxy.services.rim_lsr_trace_service import (
+    build_lsr_trace_from_visible_rows,
+    format_ruble_amount,
+)
 from proxy.services.rim_trace_xlsx_service import render_lsr_xlsx
 
 _QUESTION_LIKE_TITLES = {
@@ -680,7 +683,11 @@ def describe_lsr_card_prices(
         code = str(item.get("code") or "")
         price = item.get("price")
         unit = str(item.get("unit") or "")
-        rate = f"{price:g} руб." if isinstance(price, (int, float)) else ""
+        rate = (
+            f"{format_ruble_amount(price, exact=True)} руб."
+            if isinstance(price, (int, float)) and not isinstance(price, bool)
+            else ""
+        )
         locator = str(item.get("locator") or item.get("position_code") or "")
         grouped.setdefault((name, code, rate + "|" + unit), []).append(locator)
     labels: list[str] = []
@@ -853,7 +860,7 @@ def collect_lsr_price_gaps(
                     # Money exists but nobody owns the number: the question names
                     # the rate actually applied and asks for its owner (ADR-16 § 7).
                     rate_text = (
-                        f" ({card_amount:g} руб."
+                        f" ({format_ruble_amount(card_amount, exact=True)} руб."
                         + (f"/{unit}" if unit else "")
                         + ")"
                         if isinstance(card_amount, (int, float))

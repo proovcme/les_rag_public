@@ -265,8 +265,8 @@ def test_header_note_names_the_card_resource_and_the_rows_it_priced():
     assert "не из ценовой базы, а из карточки нормы" in note
     assert "черновиком" in note
     # the resource is named by what the operator recognises, with its rate
-    assert "ОТ(ЗТ) средний разряд 2,5 — 475.11 руб." in note
-    assert "Краны башенные, г/п 8 т (91.05.01-017) — 865.44 руб." in note
+    assert "ОТ(ЗТ) средний разряд 2,5 — 475,11 руб." in note
+    assert "Краны башенные, г/п 8 т (91.05.01-017) — 865,44 руб." in note
     # one rate applied to two rows is stated once, and both rows are named
     assert note.count("ОТ(ЗТ) средний разряд 2,5") == 1
     assert "ВОР!R3, ВОР!R4" in note
@@ -291,7 +291,7 @@ def test_header_note_labels_a_resource_that_has_no_name_at_all():
         ]
     )
 
-    assert "ресурс — 1800 руб./шт, строки ВОР!R7" in note
+    assert "ресурс — 1 800,00 руб./шт, строки ВОР!R7" in note
     assert ".." not in note
     assert " ; " not in note
 
@@ -368,3 +368,76 @@ def test_accrual_rate_needs_a_rule_or_the_operator_and_both_close_the_position()
         assert summary["completeness_reasons"] == []
         assert summary["amount_status"] == "complete"
         assert summary["full_amount"] == summary["total"]
+
+
+def test_a_card_price_the_operator_is_asked_about_is_printed_as_a_sum():
+    """The question names the number it wants confirmed, so it has to be readable.
+
+    ``:g`` rendered a multi-million card price as ``1.23457e+06`` and dropped a
+    kopeck off ``91385.06`` into ``91385.1`` (installed build 0.31.89, live case
+    B0_camenka).  A figure the operator must confirm or replace cannot be an
+    approximation of the one the document carries.
+    """
+    trace = {
+        "sections": [
+            {
+                "positions": [
+                    {
+                        "code": CODE,
+                        "name": "Устройство покрытий",
+                        "rows": [
+                            {
+                                "name": "Материал из карточки",
+                                "meta": {"price_action": "card_price_without_basis"},
+                                "columns": {
+                                    2: MATERIAL,
+                                    3: "Материал из карточки",
+                                    4: "т",
+                                    7: 12.5,
+                                    10: 1_234_567.89,
+                                },
+                            },
+                            {
+                                "name": "Мелкий ресурс",
+                                "meta": {"price_action": "card_price_without_basis"},
+                                "columns": {
+                                    2: LABOR,
+                                    3: "Мелкий ресурс",
+                                    4: "ч",
+                                    7: 1,
+                                    10: 91385.06,
+                                },
+                            },
+                        ],
+                    }
+                ]
+            }
+        ]
+    }
+
+    actions = [
+        item["action"]
+        for item in collect_lsr_price_gaps(trace)
+        if item["price_action"] == "card_price_without_basis"
+    ]
+
+    assert len(actions) == 2
+    assert not any("e+0" in action for action in actions)
+    assert any("1 234 567,89 руб./т" in action for action in actions)
+    assert any("91 385,06 руб./ч" in action for action in actions)
+
+    # the header tells the same story as the question (§ 10: one set of sums)
+    note = describe_lsr_card_prices(
+        [
+            {
+                "kind": "material",
+                "code": MATERIAL,
+                "name": "Материал из карточки",
+                "unit": "т",
+                "price": 1_234_567.89,
+                "locator": "ВОР!R9",
+            }
+        ]
+    )
+    assert "1 234 567,89 руб." in note
+    assert "e+0" not in note

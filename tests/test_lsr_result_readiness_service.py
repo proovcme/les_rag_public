@@ -127,7 +127,38 @@ def test_stage_v_readiness_reports_composition_and_amounts() -> None:
     assert "Состав: работ 1, материалов 1" in notice
     assert "норм выбрано 1" in notice
     assert "позиций рассчитано 2" in notice
-    assert "Подтверждённая сумма 1000" in notice
+    assert "Подтверждённая сумма 1 000,00" in notice
+    assert "предварительная 500,00" in notice
+
+
+def test_a_large_draft_total_is_never_scientific_notation() -> None:
+    """Live 0.31.89, case B0_camenka: the notice said «предварительная 5.91092e+06».
+
+    A partially priced ВОР is exactly the case where the operator has to see the
+    size of what is missing, so the sum stays a readable Russian number instead
+    of a float repr — and the kopecks of a small sum keep their comma.
+    """
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[
+            {
+                "source_row": "ВОР!R4",
+                "row_role": "work",
+                "norm_code": "ГЭСН12-01-034-02",
+                "norm_status": "EXACT",
+            }
+        ],
+        pricing_status="priced_partial",
+        calculated_positions=21,
+        confirmed_amount=8119.98,
+        preliminary_amount=5_910_920.0,
+    )
+    notice = format_lsr_readiness_notice(readiness, filename="LSR.xlsx")
+    assert "e+0" not in notice
+    assert "Подтверждённая сумма 8 119,98" in notice
+    assert "предварительная 5 910 920" in notice
+
+
 def test_stage_d_price_basis_mismatch_blocks_price_dimension() -> None:
     readiness = build_lsr_result_readiness(
         packaged=True,

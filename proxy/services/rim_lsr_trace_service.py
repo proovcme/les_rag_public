@@ -54,6 +54,65 @@ def _num(value: Any) -> Optional[float]:
         return None
 
 
+def format_ruble_amount(value: Any, *, exact: bool = False) -> str:
+    """Render one money figure the way an operator has to read it.
+
+    The readiness notice used ``:g``, so a draft on a real ВОР announced
+    ``предварительная 5.91092e+06`` instead of a sum, and wrote ``8119.98`` with
+    a dot (installed build 0.31.89, live case B0_camenka, 2026-09-28).  The
+    grouping follows the convention already used for artifact sums
+    (``smeta_artifact_service``): space between digit triples, comma before
+    kopecks.  Kopecks are kept while the figure is small enough for them to
+    carry information; a multi-million total stays readable instead of exact.
+    ``exact`` is for a figure the operator is asked to confirm or replace —
+    a rate in a price question — where rounding away the kopecks would name a
+    number the document does not contain (§ 10: one set of sums).
+    """
+    amount = _num(value)
+    if amount is None:
+        return "" if value in (None, "", "-") else "—"
+    if not math.isfinite(amount):
+        return "—"
+    decimals = 2 if exact or abs(amount) < 10_000 else 0
+    return f"{amount:,.{decimals}f}".replace(",", " ").replace(".", ",")
+
+
+_MARKUP_RE = re.compile(r"<[^<>]{1,60}>")
+
+
+def _plain_resource_text(value: Any) -> str:
+    """Strip the emphasis markup a norm card carries into a resource identity.
+
+    A material code reached the operator as ``14.5.09.<em>11-01</em>02``
+    (installed build 0.31.89, case 3 of the installed-trace check), so the
+    question «нужен КАЦ: …» named a шифр no price book can contain.  Only tags
+    are removed — digits, dots and dashes of the code stay exactly as the card
+    has them, so nothing here can rewrite a шифр.
+    """
+    text = str(value or "")
+    if "<" not in text:
+        return text
+    return " ".join(_MARKUP_RE.sub("", text).split())
+
+
+def _plain_resource_line(line: dict[str, Any]) -> dict[str, Any]:
+    """Return one resource with its identity fields free of card markup.
+
+    Sanitised at the single place every resource passes through, so the flags,
+    the ``price_missing:`` reason, the detail row and the adapter question all
+    quote the same шифр the operator can look up (ADR-16 § 7).  Untouched when
+    no tag is present, so nothing here can rewrite a code that has none.
+    """
+    if not any(isinstance(line.get(key), str) and "<" in str(line.get(key)) for key in ("code", "name", "unit")):
+        return line
+    cleaned = dict(line)
+    for key in ("code", "name", "unit"):
+        value = cleaned.get(key)
+        if isinstance(value, str) and "<" in value:
+            cleaned[key] = _plain_resource_text(value)
+    return cleaned
+
+
 def _norm_name(s: Any) -> str:
     import re
 
@@ -478,13 +537,16 @@ def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None
             return None, []
         from proxy.smeta_core.resource_normalizer import normalize_norm_resources
 
-        return norm, normalize_norm_resources(list(norm.get("resources") or []))
+        return norm, [
+            _plain_resource_line(dict(res))
+            for res in normalize_norm_resources(list(norm.get("resources") or []))
+        ]
 
     norm = gesn_service.get_norm(code) if code else None
     work_qty = _f(position.get("qty")) or 1.0
     resources: list[dict[str, Any]] = []
     for res in position.get("resources") or []:
-        line = dict(res)
+        line = _plain_resource_line(dict(res))
         if line.get("per_unit") in (None, ""):
             line["per_unit"] = _f(line.get("qty")) / work_qty if work_qty else _f(line.get("qty"))
         resources.append(line)
