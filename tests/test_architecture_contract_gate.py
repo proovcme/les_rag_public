@@ -532,3 +532,76 @@ def collect_lsr_price_gaps(trace):
 """,
     )
     assert "ACCRUAL_LABEL_NOT_ASKED" not in codes
+
+
+def test_rejects_a_price_book_row_read_without_the_unit_rule(tmp_path: Path) -> None:
+    """A book row is a price per the unit it states; a шифр match alone is not one.
+
+    Both LSR calculators may take the row only through the shared rule, so a
+    lookup that lost the check cannot hand out money the unit does not support.
+    """
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/rim_lsr_trace_service.py",
+        """
+def _resolve_price_trace(res, pricebook=None):
+    rec = pricebook.lookup(res["code"])
+    if rec is not None:
+        return PriceTrace(price=rec["price_current"], source="fgis_current")
+    return PriceTrace(price=None, source="needs_kac")
+""",
+    )
+    assert "BOOK_PRICE_UNIT_UNCHECKED" in codes
+
+
+def test_accepts_a_price_book_row_that_passed_the_unit_rule(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/rim_lsr_trace_service.py",
+        """
+def _resolve_price_trace(res, pricebook=None):
+    rec = pricebook.lookup(res["code"])
+    if rec is not None and not book_price_unit_conflict(
+        rec.get("unit"), res.get("unit")
+    ):
+        return PriceTrace(price=rec["price_current"], source="fgis_current")
+    return PriceTrace(
+        price=None, source=BOOK_UNIT_CONFLICT_ACTION, action=BOOK_UNIT_CONFLICT_ACTION
+    )
+""",
+    )
+    assert "BOOK_PRICE_UNIT_UNCHECKED" not in codes
+
+
+def test_rejects_an_operator_channel_that_never_heard_of_the_book_unit_hole(
+    tmp_path: Path,
+) -> None:
+    """A hole named only inside the trace is a hole nobody answers."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_result_readiness_service.py",
+        """
+_PRICE_SOURCE_LABEL = {"needs_kac": "КАЦ или выбранная ценовая книга"}
+""",
+    )
+    assert "BOOK_PRICE_UNIT_UNCHECKED" in codes
+
+
+def test_accepts_the_operator_channel_that_names_the_book_unit_hole(
+    tmp_path: Path,
+) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_result_readiness_service.py",
+        """
+from proxy.services.rim_lsr_trace_service import BOOK_UNIT_CONFLICT_ACTION
+
+_PRICE_SOURCE_LABEL = {
+    "needs_kac": "КАЦ или выбранная ценовая книга",
+    BOOK_UNIT_CONFLICT_ACTION: "цена за единицу ресурса в позиции",
+}
+""",
+    )
+    assert "BOOK_PRICE_UNIT_UNCHECKED" not in codes

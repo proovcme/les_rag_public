@@ -6,18 +6,31 @@ header said "no price basis applied" still reported a non-zero confirmed amount
 and a complete position.  Since then the resolver asks who provided the number:
 the chosen book, КАЦ or the operator own confirmation are owners; the card is a
 labelled last resort that keeps the position a draft.
+
+The other half of ownership is the unit the owner priced.  ``PriceBook.lookup``
+answers to a шифр alone, so a book row stating «кг» used to price a resource the
+norm card gives in «л» — the amount carried the book's name and none of the
+book's meaning (acceptance § 8, § 11 № 8).  Those cases are here too, because a
+price without a unit is exactly as unowned as a price without a source.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from proxy.services import rim_lsr_trace_service
+from proxy.services.lsr_assembly_service import (
+    _rejected_book_unit,
+    _resource_price,
+    compute_position,
+)
 from proxy.services.lsr_workbook_adapter_service import (
     collect_lsr_card_prices,
     collect_lsr_price_gaps,
     describe_lsr_card_prices,
 )
 from proxy.services.rim_lsr_trace_service import (
+    BOOK_UNIT_CONFLICT_ACTION,
     build_lsr_trace_from_visible_rows,
     build_position_trace,
 )
@@ -441,3 +454,202 @@ def test_a_card_price_the_operator_is_asked_about_is_printed_as_a_sum():
     )
     assert "1 234 567,89 руб." in note
     assert "e+0" not in note
+
+
+# ── § 8, § 11 № 8: a book price is a price for the unit the row states ────────
+
+SOLVENT = "14.5.09.11-0102"
+SOLVENT_RATE = 60.6
+
+
+class _UnitBook:
+    """Chosen ценовая база that answers with the whole row, unit included.
+
+    ``PriceBook.lookup`` really returns the split-form record, so the fixture has
+    to carry the unit too — the shape of this fixture is what hid the defect.
+    """
+
+    def __init__(self, rows: dict[str, dict[str, object]]) -> None:
+        self._rows = dict(rows)
+        self.region = "Санкт-Петербург"
+        self.quarter = "2 квартал 2026 г."
+
+    def lookup(self, code: str):
+        return self._rows.get(str(code).strip())
+
+
+def _solvent(unit: str, **overrides) -> dict[str, object]:
+    resource = {
+        "kind": "material",
+        "code": SOLVENT,
+        "name": "Уайт-спирит",
+        "unit": unit,
+        "per_unit": 1.0,
+    }
+    resource.update(overrides)
+    return resource
+
+
+def _book(*, unit: str, price: float = SOLVENT_RATE) -> _UnitBook:
+    return _UnitBook({SOLVENT: {"price_current": price, "price_current_eff": price, "unit": unit}})
+
+
+def _one_material(book, resource: dict[str, object]) -> dict[str, object]:
+    return build_position_trace(_position(resources=[resource]), pricebook=book)
+
+
+def test_a_book_row_that_prices_the_cipher_in_another_unit_prices_nothing():
+    """Reading the шифр is not reading the unit it costs (§ 8, § 11 № 8).
+
+    On the installed build the book was consulted by шифр alone and the row's own
+    unit was never compared with the resource's
+    (``stage_b/live_818/markup_price_path.json`` reads exactly like that).  The
+    base at hand carried no disagreeing row — 135 rows read, 0 of them naming
+    another unit (``stage_b/live_818/book_unit_gap.json``) — so this test fixes
+    the rule rather than one repaired example.
+    """
+    trace = _one_material(_book(unit="кг"), _solvent("л"))
+    row = _resource_rows(trace)[SOLVENT]
+    summary = trace["summary"]
+
+    assert row["source"] == BOOK_UNIT_CONFLICT_ACTION
+    assert row["meta"]["price_action"] == BOOK_UNIT_CONFLICT_ACTION
+    assert row["meta"]["price_book_unit"] == "кг"
+    # No money, and no zero either: the check itself is the result.  An applied
+    # price always writes графа 10, so a missing key is the absence of a number.
+    assert row["columns"].get("10") is None
+    assert row["columns"].get("12") is None
+    assert summary["total"] == pytest.approx(0.0)
+    assert summary["amount_status"] != "complete"
+    assert summary["full_amount"] is None
+    assert summary["completeness_reasons"] == [f"price_missing:{SOLVENT}"]
+    notes = [str(flag) for flag in summary["flags"]]
+    assert any("кг" in flag and "л" in flag and "не применена" in flag for flag in notes)
+    # and the operator is not sent to look for a price the book already carries
+    assert not any("нужен КАЦ" in flag for flag in notes)
+
+
+def test_the_question_asks_about_the_unit_the_position_counts_in():
+    """§ 7 / § 10: the gap list and the readiness card ask the same question."""
+    book = _book(unit="кг")
+    position = _one_material(book, _solvent("л"))
+    gaps = collect_lsr_price_gaps(
+        {"sections": [{"positions": [position]}]},
+        pricebook=book,
+        pricebook_name="sankt-peterburg_2kv2026",
+    )
+
+    assert len(gaps) == 1
+    gap = gaps[0]
+    assert gap["price_action"] == BOOK_UNIT_CONFLICT_ACTION
+    assert gap["unit"] == "л"
+    assert gap["code"] == SOLVENT
+    assert gap["position_code"] == CODE
+    assert "«кг»" in gap["action"] and "«л»" in gap["action"]
+    assert "Подтвердите единицу" in gap["action"]
+    assert "Отсутствие цены не отменяет норму" in gap["action"]
+    assert "Санкт-Петербург" in gap["action"]
+    # the required source names the unit, not a price the book already has
+    assert gap["required_source"] == "цена за единицу ресурса в позиции"
+
+
+def test_the_same_unit_or_a_row_without_a_unit_prices_exactly_as_before():
+    """The guard must not invent holes: an equal unit and an unstated one are usable."""
+    for book_unit in ("л", "л.", "1 л", ""):
+        trace = _one_material(_book(unit=book_unit), _solvent("л"))
+        row = _resource_rows(trace)[SOLVENT]
+        summary = trace["summary"]
+
+        assert row["source"] == "fgis_current", book_unit
+        assert row["meta"]["price_action"] == "", book_unit
+        assert row["columns"]["10"] == pytest.approx(SOLVENT_RATE), book_unit
+        assert summary["completeness_reasons"] == [], book_unit
+        assert summary["full_amount"] == pytest.approx(SOLVENT_RATE), book_unit
+        assert not [flag for flag in summary["flags"] if "не применена" in str(flag)]
+
+
+def test_a_norm_factor_unit_next_to_its_plain_form_is_a_question_not_a_product():
+    """§ 8 converts with a formula written into the trace; a ×100 guess is not one."""
+    trace = _one_material(_book(unit="100 м3"), _solvent("м3"))
+    row = _resource_rows(trace)[SOLVENT]
+    summary = trace["summary"]
+
+    assert row["meta"]["price_action"] == BOOK_UNIT_CONFLICT_ACTION
+    assert row["meta"]["price_book_unit"] == "100 м3"
+    assert summary["total"] == pytest.approx(0.0)
+    assert summary["full_amount"] is None
+
+
+def test_a_rejected_book_row_does_not_delete_the_money_the_card_already_had():
+    """§ 7 ladder: the book is skipped, so a card rate still shows — labelled."""
+    trace = _one_material(_book(unit="кг"), _solvent("л", price=91.5))
+    row = _resource_rows(trace)[SOLVENT]
+    summary = trace["summary"]
+    notes = [str(flag) for flag in summary["flags"]]
+
+    assert row["source"] == "card_price"
+    assert row["meta"]["price_action"] == "card_price_without_basis"
+    assert row["meta"]["price_book_unit"] == "кг"
+    assert summary["total"] == pytest.approx(91.5)
+    assert summary["full_amount"] is None
+    assert any("карточк" in flag for flag in notes)
+    assert any("не применена" in flag for flag in notes)
+
+
+def test_both_lsr_engines_refuse_the_same_book_row():
+    """§ 10: one rule, or one document hands out two sums.
+
+    The legacy assembly engine serves ``/api/lsr`` and the MCP tool while the РИМ
+    trace serves the workbook, and both read the same ценовую базу.
+    """
+    resource = {
+        "kind": "material",
+        "code": SOLVENT,
+        "name": "Уайт-спирит",
+        "unit": "л",
+        "qty": 1.0,
+    }
+
+    assert _rejected_book_unit(resource, _book(unit="кг")) == "кг"
+    assert _resource_price(resource, _book(unit="кг"), {}) == (None, "missing")
+    assert _rejected_book_unit(resource, _book(unit="л")) == ""
+    assert _resource_price(resource, _book(unit="л"), {}) == (SOLVENT_RATE, "fgis")
+    # an explicit rate never reaches the book, so there is nothing to reconcile
+    assert _rejected_book_unit({**resource, "price": 1.0}, _book(unit="кг")) == ""
+    # and the rule itself has exactly one implementation
+    from proxy.services import lsr_assembly_service
+
+    assert lsr_assembly_service.book_price_unit_conflict is (
+        rim_lsr_trace_service.book_price_unit_conflict
+    )
+
+
+def test_the_legacy_engine_asks_about_the_unit_instead_of_a_price_it_already_has():
+    """``/api/lsr`` names a missing КАЦ only when nothing was found at all.
+
+    A refused book row is a different hole: the base has the number, states it in
+    another unit, and the position has to say which of the two the operator owes
+    (§ 7: a gap is shown as it is; § 11 № 8: units are not silently swapped).
+    """
+    position = {
+        "code": CODE,
+        "qty": 1.0,
+        "resources": [
+            {"kind": "material", "code": SOLVENT, "name": "Уайт-спирит", "unit": "л", "qty": 1.0}
+        ],
+    }
+
+    refused = compute_position(dict(position), pricebook=_book(unit="кг"))
+    priced = refused["resources"][0]
+    notes = [str(flag) for flag in refused["flags"]]
+
+    assert priced["price_used"] is None
+    assert priced["price_action"] == BOOK_UNIT_CONFLICT_ACTION
+    assert any("кг" in flag and "л" in flag and "не применена" in flag for flag in notes)
+    assert not any("нужен КАЦ" in flag for flag in notes)
+    assert refused["base"]["mat"] == pytest.approx(0.0)
+
+    # a row stating the same unit prices exactly as it did before the rule existed
+    matched = compute_position(dict(position), pricebook=_book(unit="л"))
+    assert matched["resources"][0]["price_source"] == "fgis"
+    assert matched["base"]["mat"] == pytest.approx(SOLVENT_RATE)

@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from proxy.services import fgis_price_service
 from proxy.services.rim_lsr_trace_service import (
+    BOOK_UNIT_CONFLICT_ACTION,
     build_lsr_trace_from_visible_rows,
     format_ruble_amount,
 )
@@ -37,6 +38,10 @@ _PRICE_SOURCE_LABEL = {
     # mask.  Both cases ask the operator instead of answering for them.
     "nr_sp_without_basis": "нормативное основание (812/пр, 774/пр) или явный выбор ставки",
     "nr_sp_unresolved": "нормативное основание (812/пр, 774/пр) или явный выбор ставки",
+    # The chosen book does carry the шифр, but prices it per another unit.  Asking
+    # for a КАЦ would send the operator to look for a price they already have: the
+    # open question is the unit (task 2026-09-28 § 8, § 11 № 8).
+    BOOK_UNIT_CONFLICT_ACTION: "цена за единицу ресурса в позиции",
 }
 _QUARTER_RE = re.compile(
     r"(?i)(?P<num>[1-4]|III|II|IV|I)\s*(?:квартал\w*|кв\.?)\s*(?P<year>20\d{2})"
@@ -849,16 +854,12 @@ def collect_lsr_price_gaps(
                 required = _PRICE_SOURCE_LABEL.get(action, "подтверждённая цена")
                 card_amount = columns.get(10, columns.get("10"))
                 identity = name if name != code else (code or name)
-                named = (
-                    f"Для {name}"
-                    if action == "card_price_without_basis"
-                    else f"Задайте цену для {name}"
-                ) + (f" ({code})" if code and code != name else "") + (
-                    f" в позиции {position_label}" if position_label else ""
-                )
+                code_tail = f" ({code})" if code and code != name else ""
+                position_tail = f" в позиции {position_label}" if position_label else ""
                 if action == "card_price_without_basis":
                     # Money exists but nobody owns the number: the question names
                     # the rate actually applied and asks for its owner (ADR-16 § 7).
+                    named = f"Для {name}{code_tail}{position_tail}"
                     rate_text = (
                         f" ({format_ruble_amount(card_amount, exact=True)} руб."
                         + (f"/{unit}" if unit else "")
@@ -874,7 +875,31 @@ def collect_lsr_price_gaps(
                         + " Подтвердите книгу, КАЦ или свою цену — без этого позиция"
                         " остаётся черновиком."
                     )
+                elif action == BOOK_UNIT_CONFLICT_ACTION:
+                    # The book carries the шифр and was still rejected: the operator
+                    # has to reconcile two units before any price means anything.
+                    # Converting them is not a formula here, so the code asks (§ 8).
+                    book_unit = str(meta.get("price_book_unit") or "").strip()
+                    action_text = (
+                        f"Для {name}{code_tail}{position_tail}"
+                        + (
+                            f" выбранная книга даёт цену в «{book_unit}», а ресурс в позиции"
+                            f" посчитан в «{unit}»."
+                            if book_unit and unit
+                            else " цена выбранной книги дана для другой единицы."
+                        )
+                        + " Цена книги не применена."
+                        + (
+                            f" Проверенная ценовая база: {checked_basis}."
+                            if checked_basis
+                            else ""
+                        )
+                        + " Подтвердите единицу ресурса или задайте цену за"
+                        + (f" {unit}." if unit else " эту единицу.")
+                        + " Отсутствие цены не отменяет норму."
+                    )
                 else:
+                    named = f"Задайте цену для {name}{code_tail}{position_tail}"
                     action_text = (
                         named
                         + (f", количество {quantity}" if quantity not in (None, "") else "")

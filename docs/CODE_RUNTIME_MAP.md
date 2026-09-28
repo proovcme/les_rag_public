@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1023 |
-| Строк Python | 343896 |
+| Строк Python | 344431 |
 | PRODUCT_REACHABLE | 358 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 653 |
@@ -45,7 +45,7 @@
 | proxy/services/smeta_chat_adapter_service.py | 2450 | 15 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
 | mlx_host.py | 2216 | 2 |
-| proxy/services/rim_lsr_trace_service.py | 2126 | 16 |
+| proxy/services/rim_lsr_trace_service.py | 2216 | 17 |
 | proxy/services/estimate_harness_service.py | 2044 | 4 |
 | proxy/services/lsr_norm_quality_gate_service.py | 2031 | 5 |
 | proxy/services/workbook_research_job_service.py | 1705 | 9 |
@@ -61,7 +61,7 @@
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |
-| backend/document_router.py | 1124 | 6 |
+| proxy/services/lsr_workbook_adapter_service.py | 1139 | 7 |
 
 ## Сметный монолит: фактические потребители
 

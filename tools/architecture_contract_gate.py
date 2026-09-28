@@ -105,6 +105,28 @@ UNOWNED_PRICE_SOURCES = {
     "card_price": "card_price_without_basis",
 }
 
+# Task 2026-09-28 § 8, § 11 № 8: a price book row is a price *per the unit the
+# row states*.  The book answers to a шифр, so an engine that took the number
+# without comparing units could price a resource the norm card gives in «л» off a
+# row that says «кг» and still report the position as complete.  The hole is
+# latent on the current base (135 rows read by шифр over the 818 matrix sample, 0
+# of them naming another unit — ``stage_b/live_818/book_unit_gap.json``), which is
+# exactly why it is closed by a rule and a gate rather than by an example.  Both
+# LSR calculators read the same book, so every function that looks a resource up
+# has to pass the row through the one shared rule; a hole that rule opens has to
+# stay named in the two services that speak to the operator, or the readiness card
+# would call it "подтверждённая цена" and ask for a price the book already has.
+BOOK_LOOKUP_MODULES = (
+    "proxy/services/rim_lsr_trace_service.py",
+    "proxy/services/lsr_assembly_service.py",
+)
+BOOK_UNIT_GUARD_FUNCTION = "book_price_unit_conflict"
+BOOK_UNIT_QUESTION_MODULES = (
+    "proxy/services/lsr_workbook_adapter_service.py",
+    "proxy/services/lsr_result_readiness_service.py",
+)
+BOOK_UNIT_HOLE_TOKENS = frozenset({"book_unit_conflict", "BOOK_UNIT_CONFLICT_ACTION"})
+
 # Task 2026-09-28 § 11 № 6: НР/СП copied off the norm card is money with no owner.
 # The trace service names the owner, the workbook adapter turns that name into one
 # operator question per position.  Both halves can regress silently and both are
@@ -584,6 +606,68 @@ def _accrual_label_violations(relative: str, tree: ast.AST) -> Iterable[Architec
         )
 
 
+def _book_price_unit_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Task 2026-09-28 § 8, § 11 № 8: a book price is a price for the row's own unit.
+
+    ``PriceBook.lookup`` answers to a шифр.  An engine that reads the number
+    straight away prices a resource the norm card gives in «л» off a row that
+    states «кг», and the position still closes as complete — money no arithmetic
+    supports.  Both LSR calculators therefore have to consult the one shared rule
+    in the same function that looks the resource up, and the two services that
+    speak to the operator have to keep naming the hole the rule opens: a label
+    they have never heard of reads as "подтверждённая цена" and sends the customer
+    to confirm a number instead of the unit behind it.
+    """
+
+    if relative in BOOK_LOOKUP_MODULES:
+        for scope in (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
+            calls = [node for node in ast.walk(scope) if isinstance(node, ast.Call)]
+            lookups = [
+                node
+                for node in calls
+                if _call_name(node).split(".")[-1] == "lookup"
+            ]
+            if not lookups:
+                continue
+            guarded = any(
+                _call_name(node).split(".")[-1] == BOOK_UNIT_GUARD_FUNCTION
+                for node in calls
+            )
+            if not guarded:
+                yield ArchitectureViolation(
+                    "BOOK_PRICE_UNIT_UNCHECKED",
+                    relative,
+                    lookups[0].lineno,
+                    f"{scope.name}() uses a price book row without "
+                    f"{BOOK_UNIT_GUARD_FUNCTION}(), so a шифр the book prices per "
+                    "another unit would be multiplied by this position's quantity "
+                    "and reported as a confirmed amount",
+                )
+        return
+
+    if relative in BOOK_UNIT_QUESTION_MODULES:
+        named = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        } | {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        }
+        if not named & BOOK_UNIT_HOLE_TOKENS:
+            yield ArchitectureViolation(
+                "BOOK_PRICE_UNIT_UNCHECKED",
+                relative,
+                1,
+                "the module stopped naming the book-unit price hole, so the "
+                "operator would be asked for a price the chosen book already "
+                "carries in a unit the position does not use",
+            )
+
+
 def _python_violations(root: Path, path: Path, text: str) -> Iterable[ArchitectureViolation]:
     relative = _relative(root, path)
     try:
@@ -595,6 +679,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     yield from _document_lineage_violations(relative, tree)
     yield from _basis_carrier_violations(relative, tree)
     yield from _accrual_label_violations(relative, tree)
+    yield from _book_price_unit_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     if relative == "proxy/services/chat_evidence_application_service.py":
         for function in (

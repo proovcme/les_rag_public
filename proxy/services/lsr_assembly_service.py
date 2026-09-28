@@ -25,6 +25,11 @@ from typing import Any, Optional
 from backend.runtime_paths import mutable_path
 from proxy.services import fsem_machinist_service as fsem
 from proxy.services import stesnennost_service as st
+from proxy.services.rim_lsr_trace_service import (
+    BOOK_UNIT_CONFLICT_ACTION,
+    book_price_unit_conflict,
+    book_unit_conflict_note,
+)
 
 # Справочник «машина→машинист» (ОТм/ЗПМ) вынесен в config/domain/fsem_machinist.yaml
 # (fsem_machinist_service, handoff #3). Источник истины — fsem.machine_to_machinist(); не дублируем.
@@ -58,6 +63,26 @@ def _resolve_book(book: str | None):
     return fps.get_pricebook(path)
 
 
+def _rejected_book_unit(res: dict[str, Any], pricebook) -> str:
+    """Unit of a book row this resource matches by шифр but must not be priced by.
+
+    "" means there is nothing to report: the resource carries its own rate (the
+    book is never consulted then), the book has no row, or the row states the
+    same unit.  The decision itself is `book_price_unit_conflict`, the one rule
+    the РИМ trace and this engine share so a document cannot get two sums (§ 10).
+    """
+
+    if res.get("price") not in (None, "") or pricebook is None:
+        return ""
+    code = str(res.get("code") or "").strip()
+    if not code:
+        return ""
+    rec = pricebook.lookup(code)
+    if rec is None:
+        return ""
+    return book_price_unit_conflict(rec.get("unit"), res.get("unit"))
+
+
 def _resource_price(
     res: dict[str, Any], pricebook, kac_map: dict[str, float]
 ) -> tuple[Optional[float], str]:
@@ -67,7 +92,10 @@ def _resource_price(
     code = str(res.get("code") or "").strip()
     if code and pricebook is not None:
         rec = pricebook.lookup(code)
-        if rec is not None:
+        if rec is not None and not book_price_unit_conflict(rec.get("unit"), res.get("unit")):
+            # A book row prices the шифр per the unit it states.  The РИМ trace
+            # applies the same rule (`rim_lsr_trace_service`), and both engines
+            # have to refuse the same row or one document yields two sums (§ 10).
             return _f(rec.get("price_current_eff")), "fgis"
     if str(res.get("kind")) == "material" and kac_map:
         p = kac_map.get(_norm_name(res.get("name")))
@@ -214,14 +242,28 @@ def compute_position(
     for res in resources:
         kind = str(res.get("kind") or "")
         qty = _f(res.get("qty"))
+        rejected_book_unit = _rejected_book_unit(res, pricebook)
         price, src = _resource_price(res, pricebook, kac_map)
         if price is None:
             req = _price_requirement(res)
+            if rejected_book_unit:
+                # The book was consulted and refused: asking for a КАЦ price would
+                # send the operator to look for a price the book already has, while
+                # what is open is the unit that row states (§ 7).
+                req = {
+                    **req,
+                    "action": BOOK_UNIT_CONFLICT_ACTION,
+                    "message": book_unit_conflict_note(res, rejected_book_unit),
+                }
             price_requirements.append(req)
             flags.append(req["message"])
             cost = 0.0
         else:
             cost = round(qty * price, 2)
+            if rejected_book_unit:
+                # Money exists from another rung of the ladder; the rejected row is
+                # still named so the operator can see the book was checked.
+                flags.append(book_unit_conflict_note(res, rejected_book_unit))
         if kind == "labor":
             ozp += cost
         elif kind == "machinist":

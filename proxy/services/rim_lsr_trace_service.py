@@ -204,6 +204,61 @@ def _unit_conversion_factor(src: str, dst: str) -> float | None:
     }.get((src, dst))
 
 
+#: Price of a resource the chosen book carries in another unit.  It is a price
+#: hole with its own name, not a ``needs_kac``: the book *was* checked and the
+#: operator's answer is a unit, not only a number (task 2026-09-28 § 8, § 11 № 8).
+BOOK_UNIT_CONFLICT_ACTION = "book_unit_conflict"
+
+
+def book_price_unit_conflict(book_unit: Any, resource_unit: Any) -> str:
+    """Unit the chosen book prices a шифр in, when it is not the resource's.
+
+    An empty return means the book row is usable.  The rule has one home because
+    both LSR calculators read the same book (§ 10: one document, one sum).
+    The book is matched by шифр alone, so nothing in the code stopped a resource
+    the norm card gives in «л» from being priced by a book row that says «кг» —
+    an amount that would look confirmed and be arithmetically wrong
+    (``stage_b/live_818/markup_price_path.json`` shows that read: a row taken by
+    шифр, its unit never consulted).  On the current base the hole is latent:
+    measuring the 186 matrix resources against the installed book gave 135 rows
+    read by шифр, 131 of them naming the same unit, 0 naming another and 4
+    naming none (``stage_b/live_818/book_unit_gap.json``), and the guard moves no
+    sum on that sample (``stage_b/live_819/book_unit_guard_effect.json``) — which
+    is why § 11 № 8 asks for the rule, not for one repaired example.  Only a unit
+    that reads the same after canonisation is the same price base: «п.м» and «м»,
+    «шт.» and «шт» match, while «м3» and «100 м3» do not.  A differing factor
+    would be a silent multiplication, and § 8 allows the code to convert only
+    where it can write the formula into the trace; here the honest output is one
+    question with both units named.  An empty unit on either side is deliberately
+    not a conflict: a book row that names no unit says nothing about units, and a
+    gap nobody can answer is not a conflict (§ 7: conflicts are shown, not
+    invented).
+    """
+
+    left = str(book_unit or "").strip()
+    right = str(resource_unit or "").strip()
+    if not left or not right:
+        return ""
+    if _norm_unit_factor(left) == _norm_unit_factor(right):
+        return ""
+    return left
+
+
+def book_unit_conflict_note(res: dict[str, Any], book_unit: str) -> str:
+    """One operator-readable line naming both sides of a rejected book price.
+
+    The sentence has to carry the units, because that is what the operator has to
+    reconcile: a book price for «кг» answers nothing about a resource the norm
+    card states in «л» (§ 7 — a conflict is shown, not resolved silently).
+    """
+
+    return (
+        f"цена в выбранной книге дана для «{book_unit}», а ресурс в позиции — для "
+        f"«{res.get('unit') or '?'}»; цена книги не применена: "
+        f"{res.get('name', '?')} ({res.get('code', '—')})"
+    )
+
+
 def _first_value(row: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         if key in row and row.get(key) not in (None, ""):
@@ -423,6 +478,10 @@ class PriceTrace:
     column_10: Optional[float] = None
     basis: str = ""
     action: str = ""
+    #: Unit the chosen book states for this шифр, filled only when the book row
+    #: was rejected for naming another unit.  The row's own unit is column 4, so
+    #: an operator reading the question sees both sides of the conflict.
+    book_unit: str = ""
 
 
 def _missing_price_action(res: dict[str, Any]) -> str:
@@ -465,9 +524,15 @@ def _resolve_price_trace(
         return PriceTrace(price=explicit, source="manual", column_10=explicit, basis="explicit_resource_price")
 
     code = str(res.get("code") or "").strip()
+    book_unit_conflict = ""
     if code and pricebook is not None:
         rec = pricebook.lookup(code)
         if rec is not None:
+            # The шифр is in the chosen book; its price may still be for another
+            # unit, and reading the number anyway would hand the position a
+            # confirmed amount that no arithmetic supports (§ 11 № 8).
+            book_unit_conflict = book_price_unit_conflict(rec.get("unit"), res.get("unit"))
+        if rec is not None and not book_unit_conflict:
             current = _num(rec.get("price_current"))
             if current is not None:
                 price = _round(current)
@@ -503,7 +568,13 @@ def _resolve_price_trace(
         price = kac_map.get(_norm_name(res.get("name")))
         if price is not None:
             price = _round(price)
-            return PriceTrace(price=price, source="kac", column_10=price, basis="kac")
+            return PriceTrace(
+                price=price,
+                source="kac",
+                column_10=price,
+                basis="kac",
+                book_unit=book_unit_conflict,
+            )
 
     # Last resort, and never a silent one: the number written inside the norm
     # card is applied only when neither the chosen book nor КАЦ has the resource,
@@ -516,6 +587,19 @@ def _resolve_price_trace(
             column_10=explicit,
             basis="norm_card_price",
             action="card_price_without_basis",
+            book_unit=book_unit_conflict,
+        )
+
+    if book_unit_conflict:
+        # Nothing else owns a number for this resource.  The hole is named after
+        # its real cause: the operator's answer is a unit, not only a price, and
+        # "needs КАЦ" would make them look for a price they already have.
+        return PriceTrace(
+            price=None,
+            source=BOOK_UNIT_CONFLICT_ACTION,
+            basis=BOOK_UNIT_CONFLICT_ACTION,
+            action=BOOK_UNIT_CONFLICT_ACTION,
+            book_unit=book_unit_conflict,
         )
 
     action = _missing_price_action(res)
@@ -786,14 +870,19 @@ def build_position_trace(
         total_qty = round(per_unit * coeff * work_qty, 6)
         price = _resolve_price_trace(res, pricebook=pricebook, kac_map=kac_lookup)
         cost = None if price.price is None else round(total_qty * price.price, 2)
+        if price.book_unit:
+            flags.append(book_unit_conflict_note(res, price.book_unit))
         if price.price is None:
-            action_label = {
-                "needs_kac": "нужен КАЦ",
-                "needs_labor_rate": "нужна ставка ОЗП",
-                "needs_machinist_rate": "нужна ставка ЗПМ",
-                "needs_fgis_price": "нужна цена эксплуатации машины",
-            }.get(price.action or price.source, "нужна цена")
-            flags.append(f"{action_label}: {res.get('name','?')} ({res.get('code','—')})")
+            if price.action != BOOK_UNIT_CONFLICT_ACTION:
+                # The dedicated note above already names what is missing here, so
+                # the resource is not reported twice with two different wordings.
+                action_label = {
+                    "needs_kac": "нужен КАЦ",
+                    "needs_labor_rate": "нужна ставка ОЗП",
+                    "needs_machinist_rate": "нужна ставка ЗПМ",
+                    "needs_fgis_price": "нужна цена эксплуатации машины",
+                }.get(price.action or price.source, "нужна цена")
+                flags.append(f"{action_label}: {res.get('name','?')} ({res.get('code','—')})")
             completeness_reasons.append(f"price_missing:{res.get('code') or res.get('name') or '?'}")
         elif price.action == "card_price_without_basis":
             # Money exists, but nobody owns the number: it stays in the document,
@@ -844,6 +933,7 @@ def build_position_trace(
                     "basis": price.basis,
                     "kind": kind,
                     "price_action": price.action,
+                    "price_book_unit": price.book_unit,
                     "price_source_ref": res.get("price_source_ref") or "",
                     "resource_binding": res.get("resource_binding") or {},
                 },

@@ -14,7 +14,10 @@ from proxy.services.lsr_norm_quality_gate_service import (
     cited_cipher_matches_evidence,
     open_analogue_match_fields,
 )
-from proxy.services.rim_lsr_trace_service import format_ruble_amount
+from proxy.services.rim_lsr_trace_service import (
+    BOOK_UNIT_CONFLICT_ACTION,
+    format_ruble_amount,
+)
 
 SCHEMA = "les.lsr-result-readiness.v1"
 
@@ -70,6 +73,11 @@ _PRICE_SOURCE_LABEL = {
     "needs_fgis_price": "цена эксплуатации машины ФГИС ЦС",
     "needs_price": "подтверждённая цена",
     "card_price_without_basis": "цена из карточки нормы, подтвердите базу, КАЦ или свою цену",
+    # A book row the code refused to use because it prices the шифр per another
+    # unit (task 2026-09-28 § 8, § 11 № 8).  Without this line the readiness card
+    # would call the hole "подтверждённая цена" and the operator would confirm a
+    # number without noticing that the unit is what is really open.
+    BOOK_UNIT_CONFLICT_ACTION: "цена за единицу ресурса в позиции, книга даёт шифр в другой",
 }
 
 
