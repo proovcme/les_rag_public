@@ -76,6 +76,12 @@ EXPLICIT_PRICEBOOK_PATHS = frozenset(
     {"proxy/services/lsr_workbook_adapter_service.py"}
 )
 
+# Task 2026-09-28 § 4: one source document stays one downloadable document.
+# The packaging module owns the revision chain; the model never has to name an
+# internal revision id, and a continuation may not start a second file.
+WORKBOOK_PACKAGING_MODULE = "proxy/services/workbook_tool_service.py"
+DOCUMENT_LINEAGE_RESOLVER = "_packaging_parent"
+
 # A rate that nobody chose may still be calculated, but only under the label the
 # readiness state, the price gaps and the confirmed/preliminary split key on.
 # Dropping that label would silently return the defect ADR-16 § 7 closes: a
@@ -375,6 +381,57 @@ def _adr16_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViol
                     )
 
 
+def _document_lineage_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Task 2026-09-28 § 4: the artifact revision chain is code-owned identity.
+
+    A continuation of the same source document has to stay the same downloadable
+    document.  The packaging module therefore resolves the parent revision from
+    the durable session lineage; reading it straight out of the tool arguments
+    leaves the chain at the mercy of whatever the model happened to remember,
+    which is how build 815 split one ВОР into two separate documents.
+    """
+    if relative != WORKBOOK_PACKAGING_MODULE:
+        return
+    requests = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _call_name(node) == "ArtifactRevisionRequest"
+    ]
+    if not requests:
+        return
+    resolver_defined = any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == DOCUMENT_LINEAGE_RESOLVER
+        for node in ast.walk(tree)
+    )
+    resolver_called = any(
+        isinstance(node, ast.Call) and _call_name(node) == DOCUMENT_LINEAGE_RESOLVER
+        for node in ast.walk(tree)
+    )
+    if not (resolver_defined and resolver_called):
+        yield ArchitectureViolation(
+            "DOCUMENT_LINEAGE_UNOWNED",
+            relative,
+            requests[0].lineno,
+            f"artifact revision published without {DOCUMENT_LINEAGE_RESOLVER}()"
+            " resolving the session lineage",
+        )
+        return
+    for request in requests:
+        parent = next(
+            (item.value for item in request.keywords if item.arg == "parent_revision_id"),
+            None,
+        )
+        if not isinstance(parent, ast.Name):
+            yield ArchitectureViolation(
+                "DOCUMENT_LINEAGE_UNOWNED",
+                relative,
+                request.lineno,
+                "parent_revision_id taken straight from tool arguments instead of"
+                " the code-owned lineage resolver",
+            )
+
+
 def _python_violations(root: Path, path: Path, text: str) -> Iterable[ArchitectureViolation]:
     relative = _relative(root, path)
     try:
@@ -383,6 +440,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
         return
 
     yield from _adr16_violations(relative, tree)
+    yield from _document_lineage_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     if relative == "proxy/services/chat_evidence_application_service.py":
         for function in (

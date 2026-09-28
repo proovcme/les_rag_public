@@ -7465,7 +7465,7 @@
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 576,
+      "lines": 626,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7491,7 +7491,7 @@
         "tests/test_workbook_tool_service.py",
         "tests/test_workflow_checkpoint_service.py"
       ],
-      "lines": 195,
+      "lines": 222,
       "module": "proxy.services.workflow_checkpoint_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8872,7 +8872,7 @@
     },
     {
       "inbound": [],
-      "lines": 359,
+      "lines": 410,
       "module": "tests.test_architecture_contract_gate",
       "outbound": [
         "tools/architecture_contract_gate.py"
@@ -14536,7 +14536,7 @@
     },
     {
       "inbound": [],
-      "lines": 1078,
+      "lines": 1159,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
         "proxy/services/artifact_revision_service.py",
@@ -14773,7 +14773,7 @@
       "inbound": [
         "tests/test_architecture_contract_gate.py"
       ],
-      "lines": 519,
+      "lines": 577,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -19166,7 +19166,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 653,
     "tracked_python_files": 1023,
-    "tracked_python_lines": 342192
+    "tracked_python_lines": 342459
   },
   "warnings": []
 }

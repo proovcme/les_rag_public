@@ -357,3 +357,54 @@ def _resolve(res):
             "UNOWNED_PRICE_SOURCE",
         }
     )
+
+
+def test_rejects_artifact_revision_built_from_model_supplied_parent(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/workbook_tool_service.py",
+        """
+async def _build(args, ctx):
+    normalized = dict(args)
+    return ArtifactRevisionRequest(
+        artifact_kind="lsr_workbook",
+        file_path=normalized["file_path"],
+        parent_revision_id=normalized["parent_revision_id"],
+    )
+""",
+    )
+    assert "DOCUMENT_LINEAGE_UNOWNED" in codes
+
+
+def test_allows_code_resolved_document_lineage(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/workbook_tool_service.py",
+        """
+def _packaging_parent(ctx, *, tool_name, attachment_id, explicit):
+    return (
+        ctx.checkpoints.last_completed_revision(
+            session_id=ctx.session_id,
+            attachment_id=attachment_id,
+            tool_name=tool_name,
+        ),
+        "session_lineage",
+    )
+
+
+async def _build(args, ctx):
+    normalized = dict(args)
+    parent, _source = _packaging_parent(
+        ctx,
+        tool_name="build_lsr_workbook",
+        attachment_id=normalized["attachment_id"],
+        explicit=normalized["parent_revision_id"],
+    )
+    return ArtifactRevisionRequest(
+        artifact_kind="lsr_workbook",
+        file_path=normalized["file_path"],
+        parent_revision_id=parent,
+    )
+""",
+    )
+    assert "DOCUMENT_LINEAGE_UNOWNED" not in codes

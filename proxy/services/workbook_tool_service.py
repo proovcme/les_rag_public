@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Mapping
 
 from proxy.services.artifact_revision_service import (
+    ArtifactNotFoundError,
     ArtifactRevisionRequest,
     ArtifactRevisionStore,
 )
@@ -363,6 +364,48 @@ async def _call_adapter(
     return generated
 
 
+def _packaging_parent(
+    ctx: WorkbookExecutionContext,
+    *,
+    tool_name: str,
+    attachment_id: str,
+    explicit: Any,
+) -> tuple[str | None, str]:
+    """Resolve which revision this delivery continues, and why.
+
+    The revision chain belongs to the application, not to the model: the caller
+    that packages the next decision set for the same source document must extend
+    the same downloadable file.  An explicit parent (the durable research job's
+    recorded packaging lineage) wins.  Otherwise the newest revision this chat
+    session already delivered for the same attachment is used, which covers the
+    routes that produce a file before any research job exists.  Scoping by
+    ``session_id`` keeps the build 812 guarantee that a new chat does not reopen
+    another chat's document.
+
+    A parent that is no longer in the artifact store is dropped instead of
+    failing delivery: the user keeps the file, and ``tool_calls`` says which link
+    was missing.
+    """
+    value = str(explicit or "").strip()
+    if value:
+        return value, "explicit"
+    try:
+        candidate = ctx.checkpoints.last_completed_revision(
+            session_id=ctx.session_id,
+            attachment_id=attachment_id,
+            tool_name=tool_name,
+        )
+    except Exception:  # noqa: BLE001 - lineage is an improvement, never a blocker
+        return None, "checkpoint_store_unavailable"
+    if not candidate:
+        return None, "first_revision"
+    try:
+        ctx.artifacts.get_revision(candidate)
+    except ArtifactNotFoundError:
+        return None, "parent_missing_from_store"
+    return candidate, "session_lineage"
+
+
 async def _build_workbook(
     tool_name: str, artifact_kind: str, args: Mapping[str, Any], ctx: WorkbookExecutionContext,
 ) -> dict[str, Any]:
@@ -480,6 +523,13 @@ async def _build_workbook(
         }
         if normalized.get("draft"):
             tool_call_meta["draft"] = True
+        parent_revision_id, parent_source = _packaging_parent(
+            ctx,
+            tool_name=tool_name,
+            attachment_id=normalized["attachment_id"],
+            explicit=normalized["parent_revision_id"],
+        )
+        tool_call_meta["parent_revision_source"] = parent_source
         revision = ctx.artifacts.create_revision(ArtifactRevisionRequest(
             artifact_kind=artifact_kind,
             file_path=generated_path,
@@ -495,7 +545,7 @@ async def _build_workbook(
             decision_checkpoint_id=checkpoint.checkpoint_id,
             missing=missing,
             blockers=blockers,
-            parent_revision_id=normalized["parent_revision_id"],
+            parent_revision_id=parent_revision_id,
         ))
         completed = ctx.checkpoints.complete(checkpoint.checkpoint_id, revision.revision_id)
         payload = {

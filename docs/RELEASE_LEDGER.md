@@ -1,5 +1,32 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**0.31.88 / 816 (28.09, выпущен на локальную установку владельца):** идентичность документа переведена
+из модели в приложение (`AGENTS.md` — приёмочный инвариант № 2). Причина — живой прогон 815 на
+пользовательском ВОР 318 строк: пакет первого прохода опубликован до появления research job,
+события `workbook_packaged` нет, второй проход начал **второй** artifact вместо revision 2 того же
+документа (`art_839329a1` rev 1 + `art_85ffba25` rev 1..6 вместо одной цепочки). Родителя revision
+теперь разрешает код: `workbook_tool_service._packaging_parent` — явный `parent_revision_id` →
+новейшая завершённая revision этого `session_id` по `workflow_checkpoints`
+(`workflow_checkpoint_service.last_completed_revision`) → первая revision; отсутствующий родитель и
+сбой хранилища не блокируют доставку, источник пишется в `tool_calls[].parent_revision_source`.
+Область — `session_id`, поэтому гарантия 812 сохранена. Новый гейт `DOCUMENT_LINEAGE_UNOWNED`,
+регрессии `test_continuation_without_explicit_parent_stays_one_document` и
+`test_another_chat_session_packages_its_own_document`, доки ADR-16 / MODULE_INDEX / CODE_MAP /
+skills-smeta. Миграций нет (`session_id` уже был колонкой). Статус: механическая коррекция — живая
+приёмка продолжения, рестарта и большой матрицы на этой сборке ещё выполняется; профессиональная
+правильность ЛСР этим не доказывается.
+
+**0.31.87 / 815 (28.09, установлено и прогоняется живьём):** ADR-16 — систематический сбор кандидатов
+на сметном пути в коде (`lsr_candidate_query_service`, `query_provenance ∈ original|derived|model`,
+факторы `LES_LSR_SYSTEM_CANDIDATE_QUERIES`/`_MAX`), плюс цена из карточки нормы перестала молча
+подменять ценовую базу (`UNOWNED_PRICE_SOURCE`, `PRICE_BASIS_SILENT_DEFAULT`). Живой прогон
+пользовательского ВОР (attachment `read_a0d5dc536600`, job `wrj_5bde6b32`) показал: 100 % учёт
+структуры источника, но `norms_selected=0` при `norm_missing=25` + `norm_unsubstantiated=44`
+(все работы остаются с открытым вопросом), предварительная сумма 9 676 197,61 в первом проходе и
+0,00 в последующих при растущем числе рассчитанных позиций (24 → 58), и `price_basis` не хранится
+ни в метаданных artifact, ни в durable-трассе. Это зафиксировано как открытые блокеры приёмки, а не
+как готовность.
+
 **0.31.86 / 814 (28.09, локальное тестирование):** По запросу владельца добавлены официальные сплит-формы ФГИС ЦС за III квартал 2026 для Москвы (зона 191, период 427) и Санкт-Петербурга (зона 206, период 427) в постоянную Windows-базу `LES/data/price_base`. Каждая книга содержит 281 630 записей; текущая цена есть у 281 562 записей Москвы и 281 500 записей Санкт-Петербурга. Проверены регион и период в заголовках исходных XLSX, независимые SHA-256 файлов, все прямые цены и вычисления база × индекс; исходники и receipt сохранены в `price_base/sources/2026-q3`. IV квартал отсутствует в опубликованных периодах обеих зон на дату проверки и не подменяется III кварталом. Книги доступны по именам `moskva_3kv2026` и `sankt-peterburg_3kv2026`; прежняя книга II квартала сохранена. Повторный release-gate выявил обращение теста free-chat к локальному реестру вместо тестового resolver; тест теперь использует один изолированный resolver на обеих границах, без изменения production-кода. Это поставка для самостоятельных испытаний владельца, а не доказательство полного нормативного покрытия произвольного ВОР.
 
 **0.31.86 / 814 (25.09 prepared; 28.09 installed locally for owner testing):** Mechanical integrity fixes on the existing model-owned path: restored-session history now repaints before restoring its last completed XLSX link; chat VOR XLSX extraction reads all tabular worksheets with physical sheet-row locators, reports missing cached formula quantities as blockers, and accepts the standard `Quantity` header; LSR readiness cannot declare a default pricebook fully priced when the requested city/period is unspecified or the book is absent, and a material-only result with zero authored works remains incomplete. RIM audit now orders revisions by append sequence; equal timestamps no longer reshuffle stages. No norm or price is synthesized and model/RAG inference code is unchanged. Final canonical gate: **1483 passed, 20 skipped**, after both generated-map synchronization and a reproduced RIM ordering failure were corrected; version, compile, architecture, collect-only and smeta release baseline (49,818 norms/504,891 resources/281,223 price rows) passed. Live norm-selection and customer-file acceptance remain separate mandatory evidence before customer handoff.

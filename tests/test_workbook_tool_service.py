@@ -177,9 +177,9 @@ def test_terminal_model_status_binds_selected_norm_without_quality_overlay(monke
 
 
 def _context(tmp_path: Path, *, key: str = "key-1", decision: str = "decision-1",
-             lsr_adapter=None) -> WorkbookExecutionContext:
+             lsr_adapter=None, session: str = "session-1") -> WorkbookExecutionContext:
     return WorkbookExecutionContext(
-        session_id="session-1",
+        session_id=session,
         idempotency_key=key,
         model_decision_revision=decision,
         profile_revision_id="profile-1",
@@ -852,6 +852,87 @@ async def test_pause_then_complete_packages_final_revision_into_same_chain(tmp_p
     draft_meta = draft_ctx.artifacts.get_revision(draft["artifact"]["revision_id"])
     assert draft_meta.tool_calls[0]["draft"] is True
     assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_continuation_without_explicit_parent_stays_one_document(tmp_path):
+    # Live defect on the installed 815 build (job wrj_5bde6b32, customer ВОР with
+    # 388 work locators): the first package was written before the research job
+    # existed, so the durable packaging lineage had nothing to chain from and the
+    # second package opened a second document (art_839329a1 revision 1, then
+    # art_85ffba25 revision 1) instead of revision 2 of the first one.
+    # Document identity belongs to the application: a new decision set packaged
+    # for the same attachment in the same chat continues the same file.
+    meta = _attachment(tmp_path)
+    calls = 0
+
+    async def adapter(_path, _args, output_path, _progress):
+        nonlocal calls
+        calls += 1
+        _source_workbook(output_path)
+        return {"file_path": output_path, "missing": [], "blockers": [], "source_rows": 2}
+
+    first_ctx = _context(tmp_path, key="key-first", decision="decision-first", lsr_adapter=adapter)
+    first = await build_lsr_workbook(
+        {
+            "attachment_id": meta["attachment_id"],
+            "decisions": _durable_decisions(69),
+            "draft": True,
+        },
+        first_ctx,
+    )
+    second_ctx = _context(
+        tmp_path, key="key-second", decision="decision-second", lsr_adapter=adapter
+    )
+    second = await build_lsr_workbook(
+        {
+            "attachment_id": meta["attachment_id"],
+            "decisions": _durable_decisions(83),
+            "draft": True,
+        },
+        second_ctx,
+    )
+
+    assert first["artifact"]["parent_revision_id"] is None
+    assert first["artifact"]["revision_no"] == 1
+    assert second["artifact"]["artifact_id"] == first["artifact"]["artifact_id"]
+    assert second["artifact"]["revision_no"] == 2
+    assert second["artifact"]["parent_revision_id"] == first["artifact"]["revision_id"]
+    revision = second_ctx.artifacts.get_revision(second["artifact"]["revision_id"])
+    assert revision.tool_calls[0]["parent_revision_source"] == "session_lineage"
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_another_chat_session_packages_its_own_document(tmp_path):
+    # Build 812 boundary stays intact: automatic chaining is scoped to the chat
+    # that owns the document, so a new chat never reopens someone else's file.
+    meta = _attachment(tmp_path)
+
+    async def adapter(_path, _args, output_path, _progress):
+        _source_workbook(output_path)
+        return {"file_path": output_path, "missing": [], "blockers": [], "source_rows": 2}
+
+    first = await build_lsr_workbook(
+        {"attachment_id": meta["attachment_id"], "decisions": _durable_decisions(3)},
+        _context(tmp_path, key="key-a", decision="decision-a", lsr_adapter=adapter),
+    )
+    other = await build_lsr_workbook(
+        {"attachment_id": meta["attachment_id"], "decisions": _durable_decisions(4)},
+        _context(
+            tmp_path,
+            key="key-b",
+            decision="decision-b",
+            lsr_adapter=adapter,
+            session="session-2",
+        ),
+    )
+
+    assert other["artifact"]["artifact_id"] != first["artifact"]["artifact_id"]
+    assert other["artifact"]["revision_no"] == 1
+    assert other["artifact"]["parent_revision_id"] is None
+    revision = other["artifact"]
+    assert revision["tool_calls"][0]["parent_revision_source"] == "first_revision"
 
 
 @pytest.mark.asyncio

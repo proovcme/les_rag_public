@@ -193,3 +193,30 @@ class WorkflowCheckpointService:
                 return existing
             raise CheckpointConflict("checkpoint already completed with another artifact")
         return self.get(checkpoint_id)
+
+    def last_completed_revision(
+        self, *, session_id: str, attachment_id: str, tool_name: str,
+    ) -> str | None:
+        """Newest revision this chat session already delivered for this attachment.
+
+        Document identity belongs to the application, not to the model: a caller
+        that packages the next decision set for the same source document in the
+        same chat gets a revision of the same downloadable file, even when the
+        earlier revision was written by a route that never recorded packaging
+        lineage on the research job.  Scoping by ``session_id`` keeps the build
+        812 guarantee that a new chat does not pick up another chat's document.
+        """
+        if not (session_id and attachment_id and tool_name):
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT artifact_revision_id FROM workflow_checkpoints
+                   WHERE session_id=? AND attachment_id=? AND tool_name=?
+                     AND status='complete' AND artifact_revision_id IS NOT NULL
+                   ORDER BY updated_at DESC, rowid DESC LIMIT 1""",
+                (session_id, attachment_id, tool_name),
+            ).fetchone()
+        if row is None:
+            return None
+        revision_id = str(row["artifact_revision_id"] or "").strip()
+        return revision_id or None
