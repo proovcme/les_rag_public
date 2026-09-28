@@ -82,6 +82,20 @@ EXPLICIT_PRICEBOOK_PATHS = frozenset(
 WORKBOOK_PACKAGING_MODULE = "proxy/services/workbook_tool_service.py"
 DOCUMENT_LINEAGE_RESOLVER = "_packaging_parent"
 
+# Task 2026-09-28 § 7: a price basis the operator never sees is a silent default
+# seen from the other end.  The chat-side projection is the single copy shared by
+# the stored history row, the readiness block and the tool result handed back to
+# the model, and it is a whitelist by construction — which is how build 816 lost
+# the basis, the price holes and the reversed-operation rows on the way to the
+# «Выберите регион и уровень цен» bubble.  Both carriers are therefore pinned.
+BASIS_CARRIER_MODULES = (
+    WORKBOOK_PACKAGING_MODULE,
+    "proxy/services/chat_evidence_application_service.py",
+)
+OPERATOR_FIELDS_MUST_REACH_CHAT = frozenset(
+    {"price_basis", "price_gaps", "norm_conflicts"}
+)
+
 # A rate that nobody chose may still be calculated, but only under the label the
 # readiness state, the price gaps and the confirmed/preliminary split key on.
 # Dropping that label would silently return the defect ADR-16 § 7 closes: a
@@ -90,6 +104,20 @@ UNOWNED_PRICE_SOURCES = {
     # PriceTrace source token -> the action label that must accompany it
     "card_price": "card_price_without_basis",
 }
+
+# Task 2026-09-28 § 11 № 6: НР/СП copied off the norm card is money with no owner.
+# The trace service names the owner, the workbook adapter turns that name into one
+# operator question per position.  Both halves can regress silently and both are
+# the same defect: a label the adapter has never heard of makes ``_nr_sp_gap``
+# return nothing, and a collection that stopped calling it drops the question —
+# either way the position closes and the estimate is announced without asking who
+# owns the accrual rate.
+ACCRUAL_OWNERSHIP_MODULE = "proxy/services/rim_lsr_trace_service.py"
+ACCRUAL_OWNERSHIP_DICT = "nr_sp_ownership"
+ACCRUAL_QUESTION_MODULE = "proxy/services/lsr_workbook_adapter_service.py"
+ACCRUAL_GAP_FUNCTION = "_nr_sp_gap"
+ACCRUAL_GAP_COLLECTION_FUNCTION = "collect_lsr_price_gaps"
+ACCRUAL_LABELS = frozenset({"nr_sp_without_basis", "nr_sp_unresolved"})
 
 # Existing direct transports are migration debt, pinned by exact path + function.
 # New callsites must use ContextGovernor instead of expanding this baseline.
@@ -432,6 +460,130 @@ def _document_lineage_violations(relative: str, tree: ast.AST) -> Iterable[Archi
             )
 
 
+def _basis_carrier_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Task 2026-09-28 § 7: the basis and its questions must reach the operator.
+
+    Build 816 computed everything correctly and still could not show the bubble:
+    the adapter's ``price_basis``, ``price_gaps`` and ``norm_conflicts`` were
+    dropped by the two carriers between the calculation and the chat answer, so
+    ``dimensions.prices.basis`` stayed empty and the GUI projector had nothing to
+    render.  A whitelist that forgets a field is exactly this defect, so the
+    whitelist itself is now checked.
+    """
+    if relative not in BASIS_CARRIER_MODULES:
+        return
+    strings = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    missing = sorted(OPERATOR_FIELDS_MUST_REACH_CHAT - strings)
+    if missing:
+        yield ArchitectureViolation(
+            "BASIS_QUESTIONS_NOT_CARRIED",
+            relative,
+            1,
+            "carrier drops " + ", ".join(missing) + " — the estimate would report a "
+            "draft that asks no question, and the price-basis bubble could never open",
+        )
+
+
+def _accrual_label_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Task 2026-09-28 § 11 № 6: an accrual rate without an owner stays a question.
+
+    The trace service records who owns НР/СП, the workbook adapter converts that
+    ownership into one operator question per position.  A label invented on the
+    trace side is invisible to the adapter, and a collection that no longer calls
+    the gap builder drops the question — in both cases the position closes with
+    money nobody may claim to have chosen.
+    """
+    if relative == ACCRUAL_OWNERSHIP_MODULE:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            names = [
+                item.id
+                for item in node.targets
+                if isinstance(item, ast.Name) and item.id == ACCRUAL_OWNERSHIP_DICT
+            ]
+            subscripted = any(
+                isinstance(item, ast.Subscript)
+                and isinstance(item.value, ast.Name)
+                and item.value.id == ACCRUAL_OWNERSHIP_DICT
+                and isinstance(item.slice, ast.Constant)
+                and item.slice.value == "label"
+                for item in node.targets
+            )
+            pairs: list[tuple[int, str]] = []
+            if subscripted and isinstance(node.value, ast.Constant):
+                pairs.append((node.lineno, str(node.value.value)))
+            if names and isinstance(node.value, ast.Dict):
+                for key, value in zip(node.value.keys, node.value.values):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and key.value == "label"
+                        and isinstance(value, ast.Constant)
+                    ):
+                        pairs.append((node.lineno, str(value.value)))
+            for line, label in pairs:
+                if label in ACCRUAL_LABELS or label == "":
+                    continue
+                yield ArchitectureViolation(
+                    "ACCRUAL_LABEL_NOT_ASKED",
+                    relative,
+                    line,
+                    f"{ACCRUAL_OWNERSHIP_DICT}['label'] = {label!r} is unknown to "
+                    f"{ACCRUAL_QUESTION_MODULE}, so the position would close without "
+                    "asking the operator who owns НР/СП",
+                )
+        return
+
+    if relative != ACCRUAL_QUESTION_MODULE:
+        return
+    known = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    missing = sorted(ACCRUAL_LABELS - known)
+    if missing:
+        yield ArchitectureViolation(
+            "ACCRUAL_LABEL_NOT_ASKED",
+            relative,
+            1,
+            "the adapter does not name " + ", ".join(missing) + ", so an accrual rate "
+            "with no owner would produce no operator question",
+        )
+    collectors = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == ACCRUAL_GAP_COLLECTION_FUNCTION
+    ]
+    if not collectors:
+        yield ArchitectureViolation(
+            "ACCRUAL_LABEL_NOT_ASKED",
+            relative,
+            1,
+            f"{ACCRUAL_GAP_COLLECTION_FUNCTION}() disappeared, so no price gap and no "
+            "accrual question reaches the readiness card",
+        )
+        return
+    called = any(
+        isinstance(node, ast.Call) and _call_name(node) == ACCRUAL_GAP_FUNCTION
+        for collector in collectors
+        for node in ast.walk(collector)
+    )
+    if not called:
+        yield ArchitectureViolation(
+            "ACCRUAL_LABEL_NOT_ASKED",
+            relative,
+            collectors[0].lineno,
+            f"{ACCRUAL_GAP_COLLECTION_FUNCTION}() no longer calls "
+            f"{ACCRUAL_GAP_FUNCTION}(), so НР/СП without an owner would stay unasked",
+        )
+
+
 def _python_violations(root: Path, path: Path, text: str) -> Iterable[ArchitectureViolation]:
     relative = _relative(root, path)
     try:
@@ -441,6 +593,8 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
 
     yield from _adr16_violations(relative, tree)
     yield from _document_lineage_violations(relative, tree)
+    yield from _basis_carrier_violations(relative, tree)
+    yield from _accrual_label_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     if relative == "proxy/services/chat_evidence_application_service.py":
         for function in (

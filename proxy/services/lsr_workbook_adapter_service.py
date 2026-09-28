@@ -29,6 +29,11 @@ _PRICE_SOURCE_LABEL = {
     "needs_machinist_rate": "ставка ЗПМ",
     "needs_fgis_price": "цена эксплуатации машины ФГИС ЦС",
     "card_price_without_basis": "выбранная ценовая книга, КАЦ или подтверждённая цена",
+    # ADR-16 § 7 applied to accruals: a percentage printed in the norm card is
+    # not a basis, and § 11 №6 lists НР and СП among what a known price may not
+    # mask.  Both cases ask the operator instead of answering for them.
+    "nr_sp_without_basis": "нормативное основание (812/пр, 774/пр) или явный выбор ставки",
+    "nr_sp_unresolved": "нормативное основание (812/пр, 774/пр) или явный выбор ставки",
 }
 _QUARTER_RE = re.compile(
     r"(?i)(?P<num>[1-4]|III|II|IV|I)\s*(?:квартал\w*|кв\.?)\s*(?P<year>20\d{2})"
@@ -712,6 +717,87 @@ def describe_lsr_card_prices(
     )
 
 
+def _nr_sp_gap(
+    position: Mapping[str, Any],
+    *,
+    position_label: str,
+    checked_basis: str,
+) -> dict[str, Any] | None:
+    """One operator question per position whose НР/СП rate has no owner.
+
+    Two cases reach the customer's document: the rate was printed in the norm
+    card (ADR-16 § 7: not a basis, so the amount is known but the position stays
+    a draft), and the rate is simply absent (№ 11's «известная цена не маскирует
+    отсутствие НР/СП»).  Neither is answered here — the entry names what was
+    used and who may confirm it.
+    """
+
+    summary = (
+        position.get("summary") if isinstance(position.get("summary"), Mapping) else {}
+    )
+    ownership = (
+        summary.get("nr_sp_ownership")
+        if isinstance(summary.get("nr_sp_ownership"), Mapping)
+        else {}
+    )
+    label = str(ownership.get("label") or "")
+    if label not in _PRICE_SOURCE_LABEL:
+        return None
+    code = str(position.get("code") or "")
+
+    def rate(key: str) -> str:
+        value = ownership.get(key)
+        return (
+            f"{value:g} %"
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else "нет"
+        )
+
+    if label == "nr_sp_without_basis":
+        action_text = (
+            f"НР ({rate('nr_pct')}) и СП ({rate('sp_pct')}) по позиции "
+            f"{position_label or 'без шифра'} взяты из карточки нормы, а не из"
+            " нормативного основания или вашего явного выбора. Подтвердите"
+            " правило начисления или задайте ставки сами — без этого позиция"
+            " остаётся черновиком."
+        )
+    else:
+        candidates = summary.get("nr_sp_trace", {}).get("candidates") if isinstance(
+            summary.get("nr_sp_trace"), Mapping
+        ) else None
+        listing = (
+            f" Подходящих правил в каталоге: {len(candidates)} — нужно одно."
+            if isinstance(candidates, (list, tuple)) and candidates
+            else ""
+        )
+        action_text = (
+            f"Для позиции {position_label or 'без шифра'} начисления НР"
+            f" ({rate('nr_pct')}) и СП ({rate('sp_pct')}) не определены:"
+            " нормативное основание не выбрано, в карточке нормы ставки нет."
+            + listing
+            + " Расчёт без НР и СП не становится полной сметой."
+        )
+    # the readiness projection keeps one entry per distinct resource name, so a
+    # 300-position document would otherwise report a single НР/СП question
+    resource = f"НР и СП ({position_label})" if position_label else "НР и СП"
+    return {
+        "resource": resource,
+        "code": code,
+        "quantity": None,
+        "unit": "% от ФОТ",
+        "price_action": label,
+        "required_source": _PRICE_SOURCE_LABEL[label],
+        "position_code": code,
+        "position_name": str(position.get("name") or ""),
+        "dependent_calculations": [
+            f"итог позиции {position_label or 'без шифра'}",
+            "ФОТ, НР и СП этой позиции",
+        ],
+        "checked_basis": checked_basis,
+        "action": action_text,
+    }
+
+
 def collect_lsr_price_gaps(
     trace: Mapping[str, Any],
     *,
@@ -812,6 +898,13 @@ def collect_lsr_price_gaps(
                         "action": action_text,
                     }
                 )
+            accrual_gap = _nr_sp_gap(
+                position,
+                position_label=position_label,
+                checked_basis=checked_basis,
+            )
+            if accrual_gap is not None:
+                gaps.append(accrual_gap)
     return gaps
 
 

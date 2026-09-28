@@ -30,8 +30,11 @@ from proxy.services.lsr_result_readiness_service import (
 )
 from proxy.services.lsr_workbook_adapter_service import (
     collect_lsr_action_conflicts,
+    collect_lsr_price_gaps,
+    collect_lsr_workbook_gaps,
 )
 from proxy.services.rim_lsr_trace_service import (
+    build_lsr_trace,
     build_lsr_trace_from_visible_rows,
     build_position_trace,
     norm_action_conflict,
@@ -143,10 +146,11 @@ def test_a_row_naming_both_actions_is_not_read_as_a_contradiction():
 
 def test_a_volume_in_pieces_is_not_rescaled_into_the_norm_unit():
     """§ 8 / § 11 № 8: шт → 100 м² needs an authored factor, never a guess."""
-    lsr = build_lsr_trace_from_visible_rows(
-        [_dismantling_row(title="Устройство обрешетки", basis="ГЭСН 12-01-034-02",
-                          norm_code="ГЭСН12-01-034-02", unit="шт")]
-    )
+    rows = [
+        _dismantling_row(title="Устройство обрешетки", basis="ГЭСН 12-01-034-02",
+                         norm_code="ГЭСН12-01-034-02", unit="шт")
+    ]
+    lsr = build_lsr_trace_from_visible_rows(rows)
     binding = lsr["row_bindings"][0]
 
     assert binding["status"] == "needs_input"
@@ -155,6 +159,27 @@ def test_a_volume_in_pieces_is_not_rescaled_into_the_norm_unit():
     assert binding["readiness"]["volume_verified"] is False
     assert lsr["summary"]["calculated_positions"] == 0
     assert lsr["summary"]["confirmed_amount"] == pytest.approx(0.0)
+
+    # the readiness card keeps the row open and says why in the operator's own
+    # terms: no internal status token, and no instruction to "close the norms"
+    # in a document whose norms dimension is already reported as complete (§ 10)
+    missing = collect_lsr_workbook_gaps(lsr)
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=rows,
+        missing=missing,
+        pricing_status=lsr["summary"]["result_status"],
+        calculated_positions=0,
+    )
+    notice = format_lsr_readiness_notice(readiness, filename="LSR.xlsx")
+
+    assert readiness["estimate_complete"] is False
+    assert readiness["gap_states"]["calculation_incomplete"]["count"] == 1
+    assert readiness["dimensions"]["norms"]["complete"] is True
+    assert readiness["dimensions"]["prices"]["complete"] is False
+    assert "ВОР!R5" in notice and "пересчёт" in notice
+    assert "needs_input" not in notice
+    assert "закройте нормы" not in notice
 
 
 def test_a_confirmed_material_price_does_not_hide_a_missing_work_norm():
@@ -311,3 +336,143 @@ def test_a_priced_labour_class_does_not_hide_the_missing_machinist_rate():
     assert summary["completeness_reasons"] == ["price_missing:2-200-01"]
     assert summary["amount_status"] == "partial"
     assert summary["full_amount"] is None
+
+
+def _owned_price_position(**overrides) -> dict[str, object]:
+    """A position in which every resource price already has an owner.
+
+    Nothing is missing except the owner of НР/СП, so a document built from it
+    tests the readiness card and the chat notice rather than the position trace:
+    § 11 № 6 has to hold where the customer reads it, not only inside the sum.
+    """
+    position = {
+        "code": DEMONTADE_NORM,
+        "name": "Монтаж розетки",
+        "unit": "шт",
+        "qty": 10,
+        "resources": [
+            {"kind": "labor", "code": "1-100-36", "name": "ОТ электромонтажник",
+             "unit": "чел.-ч", "per_unit": 4.5, "price": 150.0,
+             "price_confirmed": True,
+             "price_source_ref": "протокол совещания 12.09.2026"},
+            {"kind": "material", "code": "101-0103", "name": "Розетка",
+             "unit": "шт", "per_unit": 1.0, "price": 200.0,
+             "price_confirmed": True,
+             "price_source_ref": "договорная цена 15.09.2026"},
+        ],
+    }
+    position.update(overrides)
+    return position
+
+
+def _row_for(position: dict[str, object], *, locator: str = "ВОР!R5") -> dict[str, object]:
+    """The authored ВОР row behind a position: a real cipher, EXACT, own units."""
+    return {
+        "source_row": locator,
+        "row_role": "work",
+        "title": str(position.get("name") or ""),
+        "basis": str(position.get("code") or ""),
+        "norm_code": str(position.get("code") or ""),
+        "quantity": position.get("qty"),
+        "unit": str(position.get("unit") or ""),
+        "norm_status": "EXACT",
+    }
+
+
+def test_owned_resource_prices_do_not_close_a_position_without_an_accrual_owner():
+    """§ 11 № 6: the document asks about НР/СП even when no price is missing.
+
+    ГЭСНм:11 carries two catalog rules, so the fail-closed catalog refuses to
+    pick one and the percentages printed in the norm card are applied without an
+    owner.  The money is real and stays visible; what must disappear is the claim
+    that the estimate is complete.
+    """
+    lsr = build_lsr_trace([_owned_price_position()])
+    summary = lsr["summary"]
+    gaps = collect_lsr_price_gaps(lsr)
+
+    # every resource has an owner, so the accrual rate is the only open question
+    assert [gap["price_action"] for gap in gaps] == ["nr_sp_without_basis"]
+    assert gaps[0]["resource"] == f"НР и СП ({DEMONTADE_NORM})"
+    assert gaps[0]["required_source"].startswith("нормативное основание")
+    assert summary["total"] > 0.0
+    assert summary["amount_status"] == "partial"
+    assert summary["full_amount"] is None
+
+    rows = [_row_for(_owned_price_position())]
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=rows,
+        missing=[],
+        pricing_status=summary["result_status"],
+        price_gaps=gaps,
+        calculated_positions=1,
+        confirmed_amount=summary["total"],
+        preliminary_amount=0.0,
+    )
+    dimensions = readiness["dimensions"]
+    # the two dimensions that really are closed stay closed
+    assert dimensions["coverage"]["complete"] is True
+    assert dimensions["norms"]["complete"] is True
+    assert dimensions["file"]["status"] == "ready"
+    # and the document is not announced as a finished estimate
+    assert dimensions["prices"]["complete"] is False
+    assert readiness["estimate_complete"] is False
+    notice = format_lsr_readiness_notice(readiness, filename="LSR.xlsx")
+    assert "НР (109 %) и СП (57 %)" in notice
+    assert "из карточки нормы" in notice and "черновиком" in notice
+    assert DEMONTADE_NORM in notice
+
+    # a repeated cipher asks the same question once: a 300-line ВОР of one
+    # operation must not bury the operator under 300 identical lines
+    twice = build_lsr_trace([
+        _owned_price_position(source_row="ВОР!R5"),
+        _owned_price_position(source_row="ВОР!R6"),
+    ])
+    repeated = build_lsr_result_readiness(
+        packaged=True,
+        rows=[
+            _row_for(_owned_price_position(), locator="ВОР!R5"),
+            _row_for(_owned_price_position(), locator="ВОР!R6"),
+        ],
+        missing=[],
+        pricing_status=twice["summary"]["result_status"],
+        price_gaps=collect_lsr_price_gaps(twice),
+        calculated_positions=2,
+    )
+    assert len(collect_lsr_price_gaps(twice)) == 2
+    assert repeated["dimensions"]["prices"]["gap_count"] == 1
+    assert repeated["estimate_complete"] is False
+
+
+def test_an_explicit_accrual_choice_closes_the_same_document():
+    """The second direction: the operator's own rates own the number.
+
+    Without this half the first test would only prove that the readiness card can
+    block forever.  An explicit НР/СП is a decision with an owner, so the same
+    resources and the same cipher produce a complete estimate.
+    """
+    position = _owned_price_position(nr_pct=100, sp_pct=60)
+    lsr = build_lsr_trace([position])
+    summary = lsr["summary"]
+
+    assert collect_lsr_price_gaps(lsr) == []
+    assert summary["flags"] == []
+    assert summary["result_status"] == "priced_final"
+    assert summary["full_amount"] == summary["total"]
+
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[_row_for(position)],
+        missing=[],
+        pricing_status=summary["result_status"],
+        price_gaps=[],
+        calculated_positions=1,
+        confirmed_amount=summary["total"],
+        preliminary_amount=0.0,
+    )
+    assert readiness["dimensions"]["prices"]["complete"] is True
+    assert readiness["estimate_complete"] is True
+    assert format_lsr_readiness_notice(readiness, filename="LSR.xlsx").startswith(
+        "ЛСР собрана."
+    )

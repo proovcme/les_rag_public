@@ -563,6 +563,10 @@ async def _build_workbook(
             "norms_status",
             "price_gaps",
             "price_basis",
+            # the adapter flags rows whose own wording names the opposite
+            # operation; without this key the question dies here and the
+            # operator never sees it in chat (task § 11 №8)
+            "norm_conflicts",
             "calculated_positions",
             "confirmed_amount",
             "preliminary_amount",

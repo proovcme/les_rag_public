@@ -16,7 +16,7 @@ def _rows():
     ]
 
 
-def test_gap_states_expose_four_named_buckets():
+def test_gap_states_expose_the_named_buckets():
     readiness = build_lsr_result_readiness(
         packaged=True,
         rows=_rows(),
@@ -28,11 +28,21 @@ def test_gap_states_expose_four_named_buckets():
         preliminary_amount=500.0,
     )
     states = readiness["gap_states"]
+    # Since build 815 the not-ready states are five: a cipher that IS written but
+    # has no evidence behind it is kept apart from "no norm at all" (ADR-16 § 6).
     assert set(states) == {
-        "norm_missing", "price_missing", "calculation_incomplete", "formula_cache_uncached",
+        "norm_missing",
+        "norm_unsubstantiated",
+        "price_missing",
+        "calculation_incomplete",
+        "formula_cache_uncached",
     }
     # one work has no confirmed norm
     assert states["norm_missing"]["count"] >= 1
+    # a chosen cipher without cited evidence is its own state, never folded into
+    # norm_missing nor silently counted as applicable
+    assert states["norm_unsubstantiated"]["count"] == 0
+    assert "применимость" in states["norm_unsubstantiated"]["meaning"]
     # one resource has no price, but its norm is kept
     assert states["price_missing"]["count"] >= 1
     # 2 works, only 1 calculated -> 1 position still unpriced by the calculator

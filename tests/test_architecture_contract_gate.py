@@ -408,3 +408,127 @@ async def _build(args, ctx):
 """,
     )
     assert "DOCUMENT_LINEAGE_UNOWNED" not in codes
+
+
+def test_rejects_a_carrier_that_drops_the_operator_questions(tmp_path: Path) -> None:
+    """The 816 defect: identifiers survived, the basis and its questions did not."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def safe_workbook_history_projection(payload):
+    safe = {"schema": payload["schema"], "status": payload["status"]}
+    safe["missing"] = list(payload.get("missing") or [])
+    return safe
+""",
+    )
+    assert "BASIS_QUESTIONS_NOT_CARRIED" in codes
+
+
+def test_accepts_a_carrier_that_keeps_basis_gaps_and_conflicts(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def safe_workbook_history_projection(payload):
+    safe = {"schema": payload["schema"], "status": payload["status"]}
+    safe["price_basis"] = dict(payload.get("price_basis") or {})
+    for field in ("price_gaps", "norm_conflicts"):
+        safe[field] = list(payload.get(field) or [])
+    return safe
+""",
+    )
+    assert "BASIS_QUESTIONS_NOT_CARRIED" not in codes
+
+
+def test_rejects_an_accrual_label_the_adapter_has_never_heard_of(tmp_path: Path) -> None:
+    """A new ownership label the gap builder does not know closes the position."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/rim_lsr_trace_service.py",
+        """
+def build_position_trace(position):
+    nr_sp_ownership = {"label": "", "nr_source": "explicit"}
+    if nr_source == "norm_card":
+        nr_sp_ownership["label"] = "nr_sp_taken_for_granted"
+    return nr_sp_ownership
+""",
+    )
+    assert "ACCRUAL_LABEL_NOT_ASKED" in codes
+
+
+def test_accepts_the_two_owned_accrual_labels(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/rim_lsr_trace_service.py",
+        """
+def build_position_trace(position):
+    nr_sp_ownership = {"label": "", "nr_source": "explicit"}
+    if nr_source == "norm_card":
+        nr_sp_ownership["label"] = "nr_sp_without_basis"
+    if nr_pct is None:
+        nr_sp_ownership["label"] = "nr_sp_unresolved"
+    return nr_sp_ownership
+""",
+    )
+    assert "ACCRUAL_LABEL_NOT_ASKED" not in codes
+
+
+def test_rejects_a_price_gap_collection_that_drops_the_accrual_question(
+    tmp_path: Path,
+) -> None:
+    """The adapter may name the label and still forget to ask about it."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_workbook_adapter_service.py",
+        """
+_PRICE_SOURCE_LABEL = {
+    "nr_sp_without_basis": "нормативное основание или явный выбор ставки",
+    "nr_sp_unresolved": "нормативное основание или явный выбор ставки",
+}
+
+
+def _nr_sp_gap(position):
+    return {"resource": "НР и СП"}
+
+
+def collect_lsr_price_gaps(trace):
+    return [
+        {"resource": str(row.get("code"))}
+        for row in trace.get("rows") or []
+    ]
+""",
+    )
+    assert "ACCRUAL_LABEL_NOT_ASKED" in codes
+
+
+def test_accepts_a_price_gap_collection_that_asks_about_the_accrual_rate(
+    tmp_path: Path,
+) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_workbook_adapter_service.py",
+        """
+_PRICE_SOURCE_LABEL = {
+    "nr_sp_without_basis": "нормативное основание или явный выбор ставки",
+    "nr_sp_unresolved": "нормативное основание или явный выбор ставки",
+}
+
+
+def _nr_sp_gap(position):
+    return {"resource": "НР и СП"}
+
+
+def collect_lsr_price_gaps(trace):
+    gaps = [{"resource": str(row.get("code"))} for row in trace.get("rows") or []]
+    for position in trace.get("positions") or []:
+        accrual_gap = _nr_sp_gap(position)
+        if accrual_gap is not None:
+            gaps.append(accrual_gap)
+    return gaps
+""",
+    )
+    assert "ACCRUAL_LABEL_NOT_ASKED" not in codes

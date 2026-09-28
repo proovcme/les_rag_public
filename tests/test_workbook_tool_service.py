@@ -1157,3 +1157,94 @@ def test_failed_packaging_payload_survives_the_history_projection():
     assert projected["status"] == "failed"
     assert projected["error_type"] == "MemoryError"
     assert projected["memory_pressure"] is True
+
+
+@pytest.mark.asyncio
+async def test_packaging_publishes_the_basis_and_conflicts_the_operator_must_answer(
+    tmp_path,
+):
+    """Task § 7 / § 11 №8: what the calculation found has to leave the tool result.
+
+    A live run on build 816 proved the opposite: the adapter computed the price
+    basis and the reversed-action rows, but the chat-side projection kept neither,
+    so the readiness block reported an empty basis and «Выберите регион и уровень
+    цен» could never be shown.  This test pins the whole carrying chain that the
+    chat route uses: adapter result → tool payload → harvest.
+    """
+
+    from proxy.services.chat_evidence_application_service import (
+        harvest_workbook_tool_result,
+    )
+
+    meta = _attachment(tmp_path)
+    basis = {
+        "match": "unspecified",
+        "requested": "",
+        "requested_region": "",
+        "requested_region_origin": "не указан",
+        "contradictions": [],
+        "actual_book": "ФЕР-2022-01",
+        "actual_region": "г. Санкт-Петербург и область",
+        "actual_quarter": "",
+        "origin": "",
+        "available_books": ["ФЕР-2022-01", "ТЕР-2022-78"],
+        "note": "Ценовая база в запросе и исходнике не указана.",
+    }
+    gaps = [
+        {
+            "resource": "Кабель ВВГнг(А)-LS 3х2,5",
+            "code": "01.7.07.24-0010",
+            "quantity": 92,
+            "unit": "м",
+            "price_action": "price_missing",
+            "required_source": "КАЦ",
+            "action": "Задайте цену для Кабель ВВГнг(А)-LS 3х2,5 (01.7.07.24-0010).",
+        }
+    ]
+    conflicts = [
+        {
+            "locator": "АР!R9",
+            "code": "ГЭСНм8-02-101-01",
+            "row_action": "Демонтаж",
+            "norm_action": "Монтаж",
+        }
+    ]
+
+    async def adapter(_path, _args, output_path, _progress):
+        _source_workbook(output_path)
+        return {
+            "file_path": output_path,
+            "source_rows": 1,
+            "missing": ["price_missing:01.7.07.24-0010"],
+            "blockers": [],
+            "pricing_status": "priced_partial",
+            "norms_status": "norms_selected_unverified",
+            "price_gaps": gaps,
+            "price_basis": basis,
+            "norm_conflicts": conflicts,
+            "calculated_positions": 0,
+            "confirmed_amount": 0.0,
+            "preliminary_amount": 0.0,
+        }
+
+    result = await build_lsr_workbook(
+        {
+            "attachment_id": meta["attachment_id"],
+            "decisions": _durable_decisions(1),
+        },
+        _context(
+            tmp_path,
+            key="key-basis",
+            decision="decision-basis",
+            lsr_adapter=adapter,
+        ),
+    )
+
+    assert result["status"] in {"complete", "partial"}
+    assert result["price_basis"]["match"] == "unspecified"
+    assert result["norm_conflicts"] == conflicts
+
+    harvested = harvest_workbook_tool_result(result)
+    assert harvested["price_basis"] == basis
+    assert harvested["price_gaps"] == gaps
+    assert harvested["norm_conflicts"] == conflicts

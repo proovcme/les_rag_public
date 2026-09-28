@@ -65,8 +65,12 @@ def test_smeta_stolp_quantity_conflict_form_blocks_priced_final():
 def test_smeta_direct_prompt_leaves_estimation_strategy_to_model():
     prompt = build_mode_system_prompt("smeta_direct")
 
-    assert "Модель выбирает работы, нормы, аналоги, покрытия и цены" in prompt
-    assert "код только исполняет, проверяет, считает и экспортирует" in prompt
+    # The two positive phrases are the current ownership sentence in
+    # prompt_registry_service/skill_snippet_registry: strategy stays with the
+    # model, code only reads/computes/exports.  Renaming that sentence must
+    # fail here rather than let the estimate path silently re-own the choice.
+    assert "Модель связывает и принимает предметные решения" in prompt
+    assert "предметное решение за модель они не выбирают" in prompt
     assert "основной метод оценки" not in prompt
     assert "таблица двух оценок" not in prompt.lower()
     assert "маршрут поиска нормы" not in prompt.lower()

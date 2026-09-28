@@ -3417,6 +3417,155 @@ def test_workbook_projection_keeps_bounded_conflict_diagnostics():
     assert safe["blockers"] == []
 
 
+def _lsr_tool_result_with_basis() -> dict:
+    """One realistic ``build_lsr_workbook`` result for the carrying chain."""
+
+    return {
+        "schema": "les.workbook_tool_result.v1",
+        "tool": "build_lsr_workbook",
+        "status": "partial",
+        "pricing_status": "priced_partial",
+        "norms_status": "norms_selected_unverified",
+        "missing": ["price_missing:01.7.07.24-0010"],
+        "blockers": [],
+        "calculated_positions": 0,
+        "confirmed_amount": 0.0,
+        "preliminary_amount": 0.0,
+        "price_basis": {
+            "requested": "",
+            "requested_region": "",
+            "requested_region_origin": "не указан",
+            "contradictions": [],
+            "actual_book": "sankt-peterburg_2kv2026",
+            "actual_region": "Санкт-Петербург",
+            "actual_quarter": "",
+            "origin": "",
+            "available_books": ["sankt-peterburg_2kv2026", "msk_3kv2026"],
+            "match": "unspecified",
+            "note": "Ценовая база в запросе и исходнике не указана.",
+        },
+        "price_gaps": [
+            {
+                "resource": "Кабель ВВГнг(А)-LS 3х2,5",
+                "code": "01.7.07.24-0010",
+                "quantity": 92,
+                "unit": "м",
+                "price_action": "price_missing",
+                "required_source": "КАЦ",
+                "action": (
+                    "Задайте цену для Кабель ВВГнг(А)-LS 3х2,5 (01.7.07.24-0010) "
+                    "в позиции 01.7.07.24-0010. Количество 92 м. Источник: КАЦ."
+                ),
+            }
+        ],
+        "norm_conflicts": [
+            {
+                "locator": "АР!R9",
+                "code": "ГЭСНм8-02-101-01",
+                "row_action": "Демонтаж",
+                "norm_action": "Монтаж",
+            }
+        ],
+        "artifact": {
+            "artifact_id": "art-1",
+            "revision_id": "rev-2",
+            "revision_no": 2,
+            "download_url": "/api/artifacts/rev-2/download",
+            "source_scope": ["attachment:read_123456abcdef"],
+            "decision_checkpoint_id": "cp-1",
+            "filename": "lsr.xlsx",
+            "artifact_kind": "lsr_workbook",
+        },
+        "checkpoint": {"checkpoint_id": "cp-1", "status": "complete"},
+        "source": {"attachment_id": "read_123456abcdef", "sha256": "a" * 64},
+    }
+
+
+def test_projected_basis_and_conflicts_open_the_chat_readiness_block():
+    """Task § 7 / § 10: the draft has to ask the questions it is blocked by.
+
+    Build 816 shipped the readiness, the prompt and the projector, yet a live
+    run of the big ВОР carried ``dimensions.prices.basis == {}`` because the
+    history projection listed only identifiers.  This test walks the exact chain
+    the chat route uses — projection → harvest → readiness → visible notice —
+    and fails if any link drops the basis, the price holes or the reversed
+    operation rows again.
+    """
+
+    harvested = service.harvest_workbook_tool_result(_lsr_tool_result_with_basis())
+    assert harvested["price_basis"]["match"] == "unspecified"
+    assert harvested["price_gaps"][0]["code"] == "01.7.07.24-0010"
+    assert harvested["norm_conflicts"][0]["locator"] == "АР!R9"
+
+    readiness = service.build_lsr_result_readiness(
+        packaged=True,
+        rows=[
+            {
+                "source_row": "АР!R9",
+                "title": "Прокладка кабеля",
+                "unit": "м",
+                "quantity": 92,
+                "norm_code": "ГЭСНм8-02-101-01",
+                "norm_status": "EXACT",
+            }
+        ],
+        missing=list(harvested.get("missing") or []),
+        pricing_status=str(harvested.get("pricing_status") or ""),
+        price_gaps=list(harvested.get("price_gaps") or []),
+        norm_conflicts=list(harvested.get("norm_conflicts") or []),
+        price_basis=dict(harvested.get("price_basis") or {}),
+    )
+
+    prices = readiness["dimensions"]["prices"]
+    assert prices["basis"]["match"] == "unspecified"
+    assert prices["complete"] is False
+    assert prices["gaps"][0]["resource"] == "Кабель ВВГнг(А)-LS 3х2,5"
+    norm_kinds = {
+        str(item.get("kind") or "")
+        for item in readiness["dimensions"]["norms"]["gaps"]
+    }
+    assert "reversed_action" in norm_kinds
+
+    notice = service.format_lsr_readiness_notice(readiness, filename="lsr.xlsx")
+    assert "Ценовая база" in notice
+
+    from sovushka.pages.chat import lsr_price_basis_prompt
+
+    prompt = lsr_price_basis_prompt(prices["basis"], books=("sankt-peterburg_2kv2026",))
+    assert prompt["visible"] is True
+    assert prompt["match"] == "unspecified"
+
+
+def test_projected_basis_and_gaps_stay_bounded():
+    """The same projection is the tool result the model reads back, so it is capped."""
+
+    raw = _lsr_tool_result_with_basis()
+    raw["price_gaps"] = [
+        {
+            "resource": f"Ресурс {index}",
+            "code": f"01.7.07.24-{index:04d}",
+            "action": "Длинный вопрос оператору. " * 80,
+        }
+        for index in range(120)
+    ]
+    raw["price_basis"]["available_books"] = [f"book-{index}" for index in range(200)]
+    raw["norm_conflicts"] = [
+        {"locator": f"АР!R{index}", "row_action": "Демонтаж", "norm_action": "Монтаж"}
+        for index in range(120)
+    ]
+
+    safe = service.safe_workbook_history_projection(raw)
+
+    assert len(safe["price_gaps"]) <= 40
+    assert len(safe["norm_conflicts"]) <= 40
+    assert len(safe["price_gaps"][0]["action"]) <= 400
+    assert len(safe["price_basis"]["available_books"]) <= 40
+    assert safe["price_basis"]["match"] == "unspecified"
+    payload = json.dumps(safe, ensure_ascii=False)
+    assert "private" not in payload
+    assert len(payload) < 120_000
+
+
 from proxy.services.attachment_source_catalog_service import (
     AttachmentSourceCatalog,
     CatalogRow,

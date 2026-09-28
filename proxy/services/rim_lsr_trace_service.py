@@ -643,33 +643,74 @@ def build_position_trace(
     )
     authored_nr = position.get("nr_pct") if position.get("nr_pct") not in (None, "") else None
     authored_sp = position.get("sp_pct") if position.get("sp_pct") not in (None, "") else None
+    # An accrual rate needs an owner the same way a price does (ADR-16 § 7):
+    # the operator's own number, or a rule the fail-closed catalog could pick
+    # unambiguously.  A percentage printed inside the norm card belongs to
+    # neither owner, so it may still be calculated but never silently closes
+    # the position -- § 11 №6 lists НР and СП among the things a known price
+    # must not mask.
+    nr_source = ""
+    sp_source = ""
     if authored_nr is not None:
         nr_pct: float | None = _f(authored_nr)
         nr_ready = True
+        nr_source = "explicit"
     elif str(nr_sp.get("status") or "").startswith("resolved") and nr_sp.get("nr_pct") not in (None, ""):
         nr_pct = _f(nr_sp.get("nr_pct"))
         nr_ready = True
+        nr_source = "catalog"
     elif (norm or {}).get("nr_pct") not in (None, ""):
         nr_pct = _f((norm or {}).get("nr_pct"))
         nr_ready = True
+        nr_source = "norm_card"
     else:
         nr_pct = None
         nr_ready = False
     if authored_sp is not None:
         sp_pct: float | None = _f(authored_sp)
         sp_ready = True
+        sp_source = "explicit"
     elif str(nr_sp.get("status") or "").startswith("resolved") and nr_sp.get("sp_pct") not in (None, ""):
         sp_pct = _f(nr_sp.get("sp_pct"))
         sp_ready = True
+        sp_source = "catalog"
     elif (norm or {}).get("sp_pct") not in (None, ""):
         sp_pct = _f((norm or {}).get("sp_pct"))
         sp_ready = True
+        sp_source = "norm_card"
     else:
         sp_pct = None
         sp_ready = False
     if not nr_ready or not sp_ready:
         flags.append("НР/СП не разрешены по виду работ: нужен нормативный источник/явный выбор")
         completeness_reasons.append("nr_sp_unresolved")
+    nr_sp_ownership = {
+        "label": "",
+        "nr_pct": nr_pct,
+        "sp_pct": sp_pct,
+        "nr_source": nr_source,
+        "sp_source": sp_source,
+        "catalog_status": str(nr_sp.get("status") or ""),
+        "basis": str(nr_sp.get("basis") or ""),
+        "rule_id": str(nr_sp.get("rule_id") or ""),
+    }
+    if nr_source == "norm_card" or sp_source == "norm_card":
+        # named exactly like the resource-level card price so every channel that
+        # shows an unowned number shows this one too
+        nr_sp_ownership["label"] = "nr_sp_without_basis"
+        rates = ", ".join(
+            f"{label} {value:g} %"
+            for label, value in (("НР", nr_pct), ("СП", sp_pct))
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        )
+        flags.append(
+            "НР/СП взяты из карточки нормы"
+            + (f" ({rates})" if rates else "")
+            + ", а не из нормативного основания или явного выбора оператора"
+        )
+        completeness_reasons.append("nr_sp_without_basis")
+    elif not nr_ready or not sp_ready:
+        nr_sp_ownership["label"] = "nr_sp_unresolved"
 
     detail_rows: dict[str, list[dict[str, Any]]] = {"labor": [], "machine": [], "machinist": [], "material": []}
     sums = {"labor": 0.0, "machine": 0.0, "machinist": 0.0, "material": 0.0}
@@ -951,6 +992,9 @@ def build_position_trace(
             "flags": flags,
             "norm_source_integrity": norm_source_integrity,
             "nr_sp_trace": nr_sp,
+            # the owner of the accrual rate, so the file and the chat can name
+            # a card-written НР/СП as the open question it is
+            "nr_sp_ownership": nr_sp_ownership,
             "fsem_trace": fsem_trace,
         },
     }

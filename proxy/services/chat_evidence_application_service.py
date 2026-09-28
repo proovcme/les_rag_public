@@ -620,6 +620,45 @@ def _chat_workbook_filename(
     return workbook_download_filename(artifact_kind=kind)
 
 
+#: ADR-16 § 7: the price basis the calculation actually used, the per-resource
+#: price holes and the reversed-action rows are questions the operator has to be
+#: able to answer.  They travel from the workbook tool result into chat history,
+#: the readiness block and the GUI, so they are copied whole — but bounded,
+#: because the same projection is what the model gets back as the tool result.
+_HISTORY_BASIS_TEXT_LIMIT = 2000
+_HISTORY_BASIS_GAP_TEXT_LIMIT = 400
+_HISTORY_BASIS_ITEMS = 40
+
+
+def _bounded_history_value(
+    value: Any,
+    *,
+    text_limit: int = _HISTORY_BASIS_TEXT_LIMIT,
+    depth: int = 0,
+) -> Any:
+    """Copy one tool field into chat history without letting it grow unbounded."""
+
+    if isinstance(value, Mapping):
+        if depth >= 3:
+            return {}
+        return {
+            str(key)[:64]: _bounded_history_value(
+                item, text_limit=text_limit, depth=depth + 1
+            )
+            for key, item in list(value.items())[:40]
+        }
+    if isinstance(value, (list, tuple, set)):
+        if depth >= 3:
+            return []
+        return [
+            _bounded_history_value(item, text_limit=text_limit, depth=depth + 1)
+            for item in list(value)[:_HISTORY_BASIS_ITEMS]
+        ]
+    if isinstance(value, bool) or isinstance(value, (int, float)) or value is None:
+        return value
+    return str(value)[:text_limit]
+
+
 def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str, Any]:
     """Retain only workbook identifiers that the chat UI can safely use."""
     result = payload if isinstance(payload, dict) else {}
@@ -644,6 +683,21 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
             safe[field] = [str(value)[:500] for value in values[:100]] if isinstance(values, list) else []
         if safe.get("status") == "complete" and (safe["missing"] or safe["blockers"]):
             safe["status"] = "partial"
+        # The basis and the concrete price / operation questions are not extras of
+        # the file: without them a draft asks for nothing, and «Выберите регион и
+        # уровень цен» could never appear on this route (ADR-16 § 7, task § 7).
+        basis = result.get("price_basis")
+        if isinstance(basis, Mapping) and basis:
+            safe["price_basis"] = _bounded_history_value(basis)
+        for field in ("price_gaps", "norm_conflicts"):
+            values = result.get(field)
+            if not isinstance(values, list) or not values:
+                continue
+            safe[field] = [
+                _bounded_history_value(item, text_limit=_HISTORY_BASIS_GAP_TEXT_LIMIT)
+                for item in values[:_HISTORY_BASIS_ITEMS]
+                if isinstance(item, Mapping)
+            ]
     artifact = selected(
         result.get("artifact"),
         (
@@ -723,6 +777,9 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         "missing": list(result.get("missing") or []),
         "price_gaps": list(result.get("price_gaps") or []),
         "price_basis": dict(result.get("price_basis") or {}),
+        # rows the calculation itself flags as naming the opposite operation:
+        # readiness turns each into one concrete question (task § 11 №8)
+        "norm_conflicts": list(result.get("norm_conflicts") or []),
         "blockers": list(result.get("blockers") or []),
     }
 

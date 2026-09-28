@@ -294,3 +294,77 @@ def test_header_note_labels_a_resource_that_has_no_name_at_all():
     assert "ресурс — 1800 руб./шт, строки ВОР!R7" in note
     assert ".." not in note
     assert " ; " not in note
+
+
+CARD_ACCRUAL_CODE = "ГЭСНм11-04-028-01"  # ГЭСНм:11 keeps two catalog rules
+CATALOG_ACCRUAL_CODE = "ГЭСН12-01-034-02"  # ГЭСН:12 has exactly one catalog rule
+
+
+def _owned_labor_resources() -> list[dict[str, object]]:
+    """Labour whose rate has an owner, so НР/СП are the only open question."""
+    return [
+        {
+            "kind": "labor",
+            "code": LABOR,
+            "name": "Средний разряд работы 3.6",
+            "unit": "чел.-ч",
+            "per_unit": 10.0,
+            "price": 400.0,
+            "price_confirmed": True,
+            "price_source_ref": "протокол совещания 12.09.2026",
+        }
+    ]
+
+
+def test_accrual_rate_read_off_the_norm_card_keeps_the_position_draft():
+    """§ 11 № 6: known resource prices must not mask НР/СП without an owner.
+
+    ГЭСНм:11 carries two catalog rules, so the fail-closed catalog refuses to
+    choose.  The percentages printed inside the card still produce money — a
+    draft is not a zero — but nobody owns them, so the position stays partial
+    and the operator is told which two numbers are unowned.
+    """
+    trace = build_position_trace(
+        {"code": CARD_ACCRUAL_CODE, "qty": 1.0, "resources": _owned_labor_resources()}
+    )
+    summary = trace["summary"]
+    ownership = summary["nr_sp_ownership"]
+
+    assert ownership["catalog_status"] == "ambiguous"
+    assert ownership["nr_source"] == "norm_card"
+    assert ownership["sp_source"] == "norm_card"
+    assert ownership["label"] == "nr_sp_without_basis"
+    assert (ownership["nr_pct"], ownership["sp_pct"]) == (109.0, 57.0)
+    assert (summary["nr_pct"], summary["sp_pct"]) == (109.0, 57.0)
+    assert summary["total"] > 0.0
+    assert summary["amount_status"] == "partial"
+    assert summary["full_amount"] is None
+    assert summary["completeness_reasons"] == ["nr_sp_without_basis"]
+    assert [
+        flag for flag in summary["flags"]
+        if "НР/СП" in str(flag) and "карточк" in str(flag)
+    ]
+
+
+def test_accrual_rate_needs_a_rule_or_the_operator_and_both_close_the_position():
+    """Both directions: a unique catalog rule and an explicit choice are owners."""
+    from_catalog = build_position_trace(
+        {"code": CATALOG_ACCRUAL_CODE, "qty": 1.0, "resources": _owned_labor_resources()}
+    )
+    by_operator = build_position_trace(
+        {
+            "code": CARD_ACCRUAL_CODE,
+            "qty": 1.0,
+            "nr_pct": 100,
+            "sp_pct": 60,
+            "resources": _owned_labor_resources(),
+        }
+    )
+
+    assert by_operator["summary"]["nr_sp_ownership"]["nr_source"] == "explicit"
+    for trace in (from_catalog, by_operator):
+        summary = trace["summary"]
+        assert summary["nr_sp_ownership"]["label"] == ""
+        assert summary["completeness_reasons"] == []
+        assert summary["amount_status"] == "complete"
+        assert summary["full_amount"] == summary["total"]

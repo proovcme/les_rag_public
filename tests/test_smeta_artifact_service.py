@@ -395,11 +395,15 @@ def test_smeta_artifact_prefers_rim_trace_when_model_selected_norm_code():
 
     assert artifact is not None
     assert artifact["rim_lsr_form"]["schema"] == "lsr_rim_trace_form_v1"
-    assert artifact["rim_lsr_form"]["amount_total"] == 11_896.35
-    assert artifact["rim_lsr_form"]["is_priced_final"] is True
+    # 11 998.07 = ОЗП 3750.23 (ставка ОТ из карточки) + ЗПМ 490.00 + ЭМ 640.59
+    # + М 78.47 (оба из книги цен) + НР 109 % и СП 57 % от ФОТ; разбор суммы —
+    # в tests/test_rim_trace_xlsx.py.  Ставка ОТ не имеет источника, поэтому
+    # артефакт обязан назвать позицию черновиком, а не финальной стоимостью.
+    assert artifact["rim_lsr_form"]["amount_total"] == 11_998.07
+    assert artifact["rim_lsr_form"]["is_priced_final"] is False
     assert artifact["rim_lsr_form"]["rows"][0]["basis"] == "ГЭСН12-01-034-02"
     assert artifact["model_lsr_form"]["amount_total"] == 61_000
-    assert "11 896 руб." in artifact["content"]
+    assert "11 998 руб." in artifact["content"]
 
 
 def test_compact_smeta_answer_shows_checked_trace_lsr_without_model_placeholders(monkeypatch):
@@ -417,7 +421,7 @@ def test_compact_smeta_answer_shows_checked_trace_lsr_without_model_placeholders
 
     assert artifact is not None
     assert compact.startswith("ЛСР РИМ сформирована по расчетной трассе")
-    assert "11 896 руб." in compact
+    assert "11 998 руб." in compact
     assert "Приложение № 3" in compact
     assert "Сметная стоимость в текущем уровне цен всего" in compact
     assert "**ВСЕГО по смете**" in compact
@@ -438,7 +442,7 @@ def test_smeta_artifact_trace_does_not_invent_norms_for_unbound_rows():
 
     assert artifact is not None
     assert artifact["rim_lsr_form"]["schema"] == "lsr_rim_trace_form_v1"
-    assert artifact["rim_lsr_form"]["amount_total"] == 11_896.35
+    assert artifact["rim_lsr_form"]["amount_total"] == 11_998.07
     assert artifact["rim_lsr_form"]["finality"] == "priced_partial"
     assert len(artifact["rim_lsr_form"]["rows"]) == 2
     assert artifact["rim_lsr_form"]["rows"][1]["title"] == "Работа без выбранного шифра"
@@ -472,11 +476,11 @@ def test_smeta_artifact_keeps_calculated_rows_when_source_rows_are_partial():
     artifact = build_smeta_artifact(answer, question=question)
 
     assert artifact is not None
-    assert artifact["rim_lsr_form"]["amount_total"] == 11_896.35
+    assert artifact["rim_lsr_form"]["amount_total"] == 11_998.07
     assert artifact["rim_lsr_form"]["finality"] == "priced_partial"
     assert len(artifact["rim_lsr_form"]["rows"]) == 2
     assert artifact["rim_lsr_form"]["rows"][0]["basis"] == "ГЭСН12-01-034-02"
-    assert artifact["rim_lsr_form"]["rows"][0]["amount"] == 11_896.35
+    assert artifact["rim_lsr_form"]["rows"][0]["amount"] == 11_998.07
     assert artifact["rim_lsr_form"]["rows"][1]["basis"] == "нужен подбор нормы"
     assert artifact["rim_lsr_form"]["rows"][1]["amount"] == 0.0
     summary = artifact["rim_lsr_form"]["trace"]["summary"]

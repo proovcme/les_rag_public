@@ -98,6 +98,14 @@ desktop и mobile smoke, keyboard/focus проверки и записи в `MOD
 (`sov-ui-source-chip`, `sov-ui-section-detail`, `sov-lsr-field-help`). Новый
 примитив и новые CSS-значения не вводятся, переменных окружения не добавлено.
 
+**Build 817:** тот блок на живом маршруте рабочей книги ничего не показывал, и
+дело было не в UI: `safe_workbook_history_projection` перечисляла идентификаторы
+и теряла `price_basis`, `price_gaps`, `norm_conflicts`, поэтому
+`dimensions.prices.basis` приходил пустым, а проектор пузырика видит только
+`unspecified` / `mismatch` / `no_book`. Перенос полей закрыт на стороне сервиса
+(см. ADR-16 § 7 и gate-код `BASIS_QUESTIONS_NOT_CARRIED`); UI-слой, примитивы и
+CSS не менялись — блок появляется ровно там, где его описывает абзац 814.
+
 **Build 769:** пауза первого прохода не typing «Сборка продолжается» и не
 ETA; пузырь говорит, что черновик в «Файлы», модель стоит. Новый примитив
 не вводится.

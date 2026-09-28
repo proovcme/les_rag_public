@@ -32,5 +32,5 @@ def test_rim_trace_uses_reconciled_full_fsem():
     trace = rim.build_position_trace(
         {"code": "ГЭСН12-01-034-02", "qty": 0.61}, pricebook=book, k_ozp=1.0, k_em=1.0
     )
-    assert trace["summary"]["total"] == 11896.35
+    assert trace["summary"]["total"] == 11998.07  # разбор суммы по компонентам — test_rim_trace_xlsx, EXPECTED_TOTAL
     assert trace["summary"]["fsem_trace"]["status"] == "reconciled"

@@ -1,8 +1,12 @@
 """Тест рендерера РИМ-трассы в XLSX по форме Приложения 3 к 421/пр.
 
 Рендерер из ГОТОВОЙ трассы, не калькулятор → числа те же, что в build_position_trace.
-Эталон ГЭСН12-01-034-02 @ 0.61 → summary.total == 11896.35 после полной
-детализации ОТм через ФСЭМ (тот же trace, что сервис/endpoint-тесты).
+Эталон ГЭСН12-01-034-02 @ 0.61 после полной детализации ОТм через ФСЭМ
+(тот же trace, что сервис/endpoint-тесты) — см. EXPECTED_TOTAL ниже: сумма
+пересобрана 28.09.2026 по компонентам и доказана каждой строкой трассы.
+Позиция остаётся черновиком (ставка ОТ из карточки нормы помечена
+card_price_without_basis), поэтому форма подписывает итог «Известная
+стоимость позиции», а не «Всего по позиции».
 """
 
 import asyncio
@@ -14,7 +18,22 @@ from proxy.services import rim_trace_xlsx_service as rim_xlsx
 
 
 CODE = "ГЭСН12-01-034-02"
-EXPECTED_TOTAL = 11896.35
+# Эталон пересобран 28.09.2026 и проверен по компонентам трассы (книга цен
+# sankt-peterburg_2kv2026, правило начислений nrsp-12 = Приказ 812/пр п.12 и
+# Приказ 774/пр п.12, НР 109 % и СП 57 % оба от ФОТ):
+#   ОЗП 3750.23 (ОТ(ЗТ) 7.8934 чел.-ч × 475.11 руб./чел.-ч; ставка взята из
+#                карточки нормы и помечена card_price_without_basis)
+# + ЗПМ 490.00  (ОТм(ЗТм) fgis_current)                     = ФОТ 4240.23
+# + ЭМ  640.59 (машины fgis_current, разделение по графе 8)
+# + М    78.47 (гвозди fgis_base_index)                     = прямые 4959.29
+# + НР 4621.85 + СП 2416.93 (оба от ФОТ)                    = итого 11998.07
+# Прежний эталон 11896.35 записан в ba3d9e1e (11.07.2026) и не восстанавливается
+# из подписанных компонентов текущей трассы; файл не входил в CURRENT_TESTS,
+# поэтому расхождение не останавливало гейт.
+EXPECTED_TOTAL = 11998.07
+DRAFT_TOTAL_LABEL = "Известная стоимость позиции"
+DRAFT_SUMMARY_LABEL = "ИЗВЕСТНАЯ РАССЧИТАННАЯ ЧАСТЬ БЕЗ НДС"
+COMPLETE_TOTAL_LABEL = "Всего по позиции"
 
 
 def _trace():
@@ -33,6 +52,45 @@ def _lsr_trace():
     return rim.build_lsr_trace(positions, pricebook=book, name="Смета на кровлю")
 
 
+def _closed_trace():
+    """Та же позиция, но ставка ОТ имеет источник, а не только карточку нормы.
+
+    Черновик и закрытая позиция дают один и тот же денежный итог: право на
+    число меняет подписи формы, а не деньги.
+    """
+    from proxy.services.gesn_service import get_norm
+
+    resources = [dict(r) for r in (get_norm(CODE) or {}).get("resources") or []]
+    for res in resources:
+        if str(res.get("kind")) == "labor":
+            res["price"] = 475.11
+            res["price_source_ref"] = "ФГИС ЦС, 2кв2026, строка оплаты труда рабочих"
+    return rim.build_position_trace(
+        {"code": CODE, "qty": 0.61, "resources": resources},
+        pricebook=la._resolve_book(None), k_ozp=1.0, k_em=1.0,
+    )
+
+
+def test_closed_position_is_named_by_the_completed_form(tmp_path):
+    """Закрытая позиция подписывается «Всего по позиции», черновик — нет.
+
+    Пара к test_render_produces_valid_xlsx: пока ставка ОТ не имеет источника,
+    итог остаётся известной рассчитанной частью; та же сумма после закрытия
+    цены получает полную форму, и деньги при этом не меняются.
+    """
+    import openpyxl
+
+    trace = _closed_trace()
+    assert trace["summary"]["completeness_reasons"] == []
+    assert trace["summary"]["full_amount"] == EXPECTED_TOTAL
+    assert trace["rows"][-1]["label"] == COMPLETE_TOTAL_LABEL
+    out = rim_xlsx.render_trace_xlsx(trace, tmp_path / "closed.xlsx")
+    ws = openpyxl.load_workbook(out).active
+    txt = " ".join(str(c.value) for row in ws.iter_rows() for c in row if c.value)
+    assert COMPLETE_TOTAL_LABEL in txt and DRAFT_TOTAL_LABEL not in txt
+    assert "Сметная стоимость" in txt
+
+
 def test_render_produces_valid_xlsx(tmp_path):
     import openpyxl
 
@@ -42,7 +100,8 @@ def test_render_produces_valid_xlsx(tmp_path):
     ws = openpyxl.load_workbook(out).active
     assert "ЛСР" in ws.title or "Прил" in ws.title
     # XLSX теперь редактируемый: итог позиции — формула, immutable число остаётся в JSON trace.
-    total_row = next(row for row in ws.iter_rows() if row[2].value == "Всего по позиции")
+    # Незакрытая ставка ОТ => черновик, и итог подписан как известная (рассчитанная) часть.
+    total_row = next(row for row in ws.iter_rows() if row[2].value == DRAFT_TOTAL_LABEL)
     assert str(total_row[11].value).startswith("=SUM(")
 
 
@@ -55,7 +114,10 @@ def test_appendix3_rim_header_and_graphs_present(tmp_path):
     assert "Приложение № 3" in txt and "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ" in txt and "Сметная стоимость" in txt
     assert "Обоснование" in txt and "Наименование работ и затрат" in txt
     assert "Индекс" in txt and "Сметная стоимость в текущем уровне цен всего" in txt
-    assert "Всего по позиции" in txt and "ОТ(ЗТ)" in txt and "ЭМ" in txt
+    # черновик не называет себя сметной стоимостью: шапка пишет «Стоимость
+    # рассчитанной части», а итог позиции — «Известная стоимость позиции»
+    assert "Стоимость рассчитанной части" in txt
+    assert DRAFT_TOTAL_LABEL in txt and "ОТ(ЗТ)" in txt and "ЭМ" in txt
     assert "Составлен ресурсно-индексным методом (РИМ)" in txt
 
 
@@ -118,9 +180,11 @@ def test_render_lsr_multi_position_form(tmp_path):
     assert "Приложение № 3" in txt and "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ" in txt
     assert "Раздел 1. Кровля" in txt and "Раздел 2. Прочее" in txt
     assert "Итого по разделу 1" in txt and "Итого по разделу 2" in txt
-    assert "ВСЕГО по смете" in txt
+    # обе позиции черновые (ставка ОТ из карточки), поэтому общий свод не может
+    # называться «ВСЕГО по смете» — он подписан известной рассчитанной частью
+    assert DRAFT_SUMMARY_LABEL in txt
     # общий итог — формула по позициям, а не застывшая константа.
-    total_row = next(row for row in ws.iter_rows() if row[2].value == "ВСЕГО по смете без НДС")
+    total_row = next(row for row in ws.iter_rows() if row[2].value == DRAFT_SUMMARY_LABEL)
     assert str(total_row[11].value).startswith("=SUM(")
     assert lsr["summary"]["total"] == 2 * EXPECTED_TOTAL
 
@@ -147,10 +211,11 @@ def test_render_lsr_single_section_omits_section_header(tmp_path):
     lsr = rim.build_lsr_trace([{"code": CODE, "qty": 0.61}], pricebook=book)
     out = rim_xlsx.render_lsr_xlsx(lsr, tmp_path / "one.xlsx")
     txt = " ".join(str(c.value) for row in openpyxl.load_workbook(out).active.iter_rows() for c in row if c.value)
-    # один безымянный раздел → без «Раздел 1», но «ВСЕГО по смете» есть
+    # один безымянный раздел → без «Раздел 1», но общий свод есть; черновик
+    # подписывается известной рассчитанной частью, а не «ВСЕГО по смете»
     assert "Раздел 1" not in txt
-    assert "ВСЕГО по смете" in txt
-    assert "Всего по позиции" in txt
+    assert DRAFT_SUMMARY_LABEL in txt
+    assert DRAFT_TOTAL_LABEL in txt
 
 
 def test_lsr_header_uses_passed_source_metadata_and_review_issues_are_readable(tmp_path):

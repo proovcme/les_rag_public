@@ -162,13 +162,43 @@ def _structured_price_gaps(
     return gaps
 
 
-def _unbound_locators(missing: Sequence[str]) -> list[str]:
-    locators: list[str] = []
+# ``collect_lsr_workbook_gaps`` encodes an open row as ``row:<locator>:<status>``.
+# The status is an internal code, so the readiness notice never prints it: the
+# operator sees which professional question keeps the row uncalculated.  Naming
+# the row's own status also keeps the prices line from ordering the operator to
+# "close the norms" in a document whose norms dimension says "complete"
+# (task § 10: one revision, one status, one wording).
+_ROW_STATUS_LABEL = {
+    "needs_input": "нужен авторский пересчёт единицы в единицу нормы",
+    "missing_quantity": "объём не задан",
+    "norm_not_found": "шифр не найден в нормативной базе",
+    "norm_selection_required": "норма не выбрана",
+    "unresolved": "роль строки не определена",
+}
+_ROW_STATUS_FALLBACK = "строка не рассчитана"
+
+
+def _unbound_rows(missing: Sequence[str]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
     for item in missing:
         text = _text(item)
-        if text.startswith("row:"):
-            locators.append(text.split(":", 1)[-1].strip())
-    return locators
+        if not text.startswith("row:"):
+            continue
+        parts = [part.strip() for part in text.split(":")]
+        locator = parts[1] if len(parts) > 1 else ""
+        status = parts[2] if len(parts) > 2 else ""
+        if not locator or (locator, status) in seen:
+            continue
+        seen.add((locator, status))
+        rows.append(
+            {
+                "locator": locator,
+                "status": status,
+                "reason": _ROW_STATUS_LABEL.get(status, _ROW_STATUS_FALLBACK),
+            }
+        )
+    return rows
 
 
 def classify_norm_gap(row: Mapping[str, Any]) -> str:
@@ -364,7 +394,7 @@ def build_lsr_result_readiness(
     basis_info = dict(price_basis or {})
     basis_match = _text(basis_info.get("match"))
     basis_note = _text(basis_info.get("note"))
-    unbound = _unbound_locators(missing)
+    unbound = _unbound_rows(missing)
     priced_complete = (
         not structured_prices
         and _text(pricing_status) in {"", "priced_final"}
@@ -495,9 +525,12 @@ def build_lsr_result_readiness(
             f"{_preview([str(item.get('resource') or '') for item in structured_prices])}."
         )
     elif unbound:
+        unbound_labels = [f"{row['locator']} — {row['reason']}" for row in unbound]
         prices_action = (
-            "Сначала закройте нормы у строк "
-            f"{_preview(unbound)}, затем пересоберите файл без модели."
+            "Не рассчитаны строки: "
+            f"{_preview(unbound_labels)}. "
+            "Пересоберите файл без модели после их закрытия; принятые нормы "
+            "и цены повторно не пересматриваются."
         )
     else:
         prices_action = (
