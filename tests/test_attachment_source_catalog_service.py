@@ -3,6 +3,111 @@ from pathlib import Path
 from proxy.services import attachment_source_catalog_service as service
 
 
+def _write_sheet(tmp_path, rows, *, title="Лист1"):
+    from openpyxl import Workbook
+
+    path = tmp_path / "ВОР header strip.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = title
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+    return path
+
+
+def test_header_strip_naming_a_total_column_binds_the_quantity(tmp_path):
+    """A сметная header row whose money column is named «(итого)» is a header.
+
+    Regression for the customer's ВОР: the column labels
+    «Материал (итого), руб. без НДС» / «Стоимость (итого)…» made the *header row
+    itself* match the subtotal marker, and the subtotal rule ran first.  The whole
+    workbook then had no header row at all, so nothing bound: the quantity column
+    stayed unknown and every work row fell back to "any number in the row" -- the
+    item number («1.2»), which turned the model's correct quantity into
+    ``source_quantity_mismatch`` on every row.
+    """
+
+    catalog = service.load_tabular_source_catalog(
+        _write_sheet(
+            tmp_path,
+            [
+                ["№ п/п", "Наименование работ", "Ед.изм.", "Кол-во",
+                 "Материал (итого), руб. без НДС", "Примечание"],
+                ["1.2", "Демонтаж перегородок из газоблоков", "м2", 98.6,
+                 "=E11*D11", None],
+            ],
+        )
+    )
+    header = catalog.lookup("Лист1!R1")
+    assert header.row_classification == "header"
+    assert header.classification_reason == "column_header_marker"
+
+    row = catalog.lookup("Лист1!R2")
+    assert row.quantity_column_known is True
+    assert row.header_quantity == 98.6
+    # the item number is no longer offered as the quantity of the work row
+    assert service.quantity_candidates(row) == (98.6,)
+    # the labels travel as data, so a consumer can tell «Кол-во» from a money column
+    assert "Кол-во" in [label for _column, label in row.column_headers]
+    assert "98.6 [Кол-во]" in row.line
+
+    # the model's own quantity against that source: accepted, and a wrong one refused
+    assert service.compare_model_row_to_catalog(
+        {"source_row": "Лист1!R2", "quantity": 98.6, "unit": "м2"}, catalog
+    ) == []
+    assert service.compare_model_row_to_catalog(
+        {"source_row": "Лист1!R2", "quantity": 1.2, "unit": "м2"}, catalog
+    ) == ["source_quantity_mismatch:Лист1!R2"]
+
+
+def test_subtotal_rows_keep_their_class(tmp_path):
+    """Looking for the header strip first does not re-label a real total line.
+
+    A total either carries a resolved number, or its money cells are formulas --
+    which the shape test rejects, because a column strip is a row of *names*.  The
+    last assertion is the one that matters: a total caption that mentions a column
+    name must not become the governing header for the rows below it, or those rows
+    lose their quantity column again.
+    """
+
+    catalog = service.load_tabular_source_catalog(
+        _write_sheet(
+            tmp_path,
+            [
+                ["№ п/п", "Наименование работ", "Ед.изм.", "Кол-во"],
+                ["1.1", "Монтаж перегородки", "м2", 41],
+                ["ИТОГО по смете, руб. с НДС", 125000, None, None],
+                ["Итого по разделу «Наименование работ»", "=SUBTOTAL(9,D9:D40)", None, None],
+                ["1.2", "Монтаж облицовки", "м2", 87.6, None, None],
+            ],
+        )
+    )
+    assert catalog.lookup("Лист1!R3").row_classification == "subtotal"
+    assert catalog.lookup("Лист1!R4").row_classification == "subtotal"
+    below = catalog.lookup("Лист1!R5")
+    assert below.row_classification == "work"
+    assert below.quantity_column_known is True
+    assert below.header_quantity == 87.6
+    assert service.quantity_candidates(below) == (87.6,)
+
+
+def test_numberless_prose_row_is_not_read_as_a_header_strip(tmp_path):
+    """A single text cell that happens to contain a column word stays a note."""
+
+    catalog = service.load_tabular_source_catalog(
+        _write_sheet(
+            tmp_path,
+            [
+                ["№ п/п", "Наименование работ", "Ед.изм.", "Кол-во"],
+                ["Работа выполнена по наименованию из проекта"],
+            ],
+        )
+    )
+    assert catalog.lookup("Лист1!R1").row_classification == "header"
+    assert catalog.lookup("Лист1!R2").row_classification == "note"
+
+
 def test_pdf_markdown_catalog_has_stable_locators_and_only_work_rows(monkeypatch, tmp_path):
     source = tmp_path / "ВОР монтаж БАП.pdf"
     source.write_bytes(b"%PDF-fixture")

@@ -172,6 +172,22 @@ class CatalogRow:
         return self.row_classification in {"work", "ambiguous"}
 
 
+def _looks_like_column_header_strip(values: Sequence[str]) -> bool:
+    """Shape test for a column-header strip: several labels, none an expression.
+
+    «no number anywhere» alone would not separate a header from a subtotal line,
+    because the money cells of a сметная total are formulas («=SUBTOTAL(9,G9:G108)»)
+    that resolve to no number either.  A header strip is a row of *names*: more than
+    one cell, and no computed cell among them.  No word list is involved, so the
+    test holds for any sheet layout rather than for one customer's captions.
+    """
+
+    cells = [str(text or "").strip() for text in values if str(text or "").strip()]
+    if len(cells) < 2:
+        return False
+    return not any(cell.startswith("=") for cell in cells)
+
+
 def _classify_row(
     values: Sequence[str],
     numbers: Sequence[float],
@@ -187,12 +203,27 @@ def _classify_row(
         for number in numbers
         if not (float(number).is_integer() and int(number) == excel_row)
     ]
+    # The column-header strip is recognised FIRST, before the subtotal rule, and by
+    # its shape.  The order was the defect: a сметная sheet names its money columns
+    # «Материал (итого), руб.» / «Стоимость (итого)…», so the header row itself
+    # contains a subtotal word, and claiming it as a subtotal left the customer's
+    # workbook without a single header row.  Nothing then bound: ``header_quantity``
+    # stayed None and the quantity column stayed unknown, so every work row fell back
+    # to "any number in the row" -- on this ВОР the item number («1.2», «1.3»), which
+    # turned every correct model quantity into ``source_quantity_mismatch`` and made
+    # the service-column filter unable to tell a money column from a subject one.
+    # A genuine total line is not lost by looking first: it either carries a resolved
+    # number or its cells are formulas, which the shape test rejects.
+    if (
+        not numbers
+        and _looks_like_column_header_strip(values)
+        and any(marker in folded for marker in _HEADER_MARKERS)
+    ):
+        return "header", "column_header_marker", 0.95, ()
     if any(marker in folded for marker in _SUBTOTAL_MARKERS):
         return "subtotal", "subtotal_marker", 0.98, ()
     if any(folded.startswith(marker) for marker in _SECTION_MARKERS):
         return "section", "section_marker", 0.95, ()
-    if any(marker in folded for marker in _HEADER_MARKERS) and not numbers:
-        return "header", "column_header_marker", 0.95, ()
     if not numbers:
         return ("note", "text_without_quantity", 0.85, ()) if has_text else (
             "empty", "no_significant_values", 1.0, ()

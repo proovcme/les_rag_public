@@ -446,3 +446,87 @@ def test_without_a_character_budget_the_count_cap_still_bounds_the_packet(
     queries = candidate_queries_for_rows(rows, cap=5, report=report)
     assert len(queries) == 1
     assert report["deferred_by_char_budget"] == []
+
+
+# ------------------------------------------------------- blocker § 2 R7 (827)
+
+
+def _write_vor_like_sheet(tmp_path, header, rows):
+    """Write a workbook shaped like the customer's, read back by the real loader.
+
+    Every fixture above hand-builds ``column_headers``, so none of them can fail
+    for the reason build 826 failed for: on the customer's file no row was ever
+    labelled a header strip at all — each sheet's header names a total column, and
+    the subtotal rule claimed the row first — so the filter had no label to test.
+    This helper goes through ``load_tabular_source_catalog``, so it exercises the
+    classification and the header binding as well as the query filter.
+    """
+
+    from openpyxl import Workbook
+
+    from proxy.services.attachment_source_catalog_service import load_tabular_source_catalog
+
+    path = tmp_path / "ВОР 827.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "СКС"
+    sheet.append(["Ведомость объемов работ"])
+    sheet.append(header)
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+    return load_tabular_source_catalog(path, original_name=path.name)
+
+
+def test_a_header_strip_naming_a_total_column_reaches_the_query_filter(tmp_path) -> None:
+    """§ 2 end to end on the production loader: cost columns stay out of the query.
+
+    A header label containing «итого» is still a column header, so the loader binds
+    the strip and the candidate author then drops the cost cells it governs.  The
+    assertion that matters is the one that was false on build 826: the money of the
+    customer's own spreadsheet reached every «дословный исходный текст строки»
+    query, because nothing had been bound to say which column it was.
+    """
+
+    catalog = _write_vor_like_sheet(
+        tmp_path,
+        [
+            "№ п/п",
+            "Наименование работ",
+            "Ед.изм.",
+            "Кол-во",
+            "Материал (итого), руб. без НДС",
+            "Работа (итого), руб. без НДС",
+            "Стоимость (итого), руб. без НДС",
+            "Примечание",
+        ],
+        [
+            [1.1, "Прокладка кабеля ВВГнг(А)-LS 3х2,5 в коробе", "м", 146,
+             1250.5, 2400.0, 3650.5, ""],
+            [None, "Итого по всем разделам, руб.", None, None,
+             1250.5, 2400.0, 3650.5, None],
+        ],
+    )
+
+    row = catalog.lookup("СКС!R3")
+    assert row is not None
+    assert dict(row.column_headers).get(4) == "Кол-во"
+    # The real total row keeps its own class: naming a total column in the header
+    # strip must not turn sums into headers, and vice versa.
+    assert catalog.lookup("СКС!R4").row_classification == "subtotal"
+
+    report: dict = {}
+    queries = candidate_queries_for_rows([row], cap=10, report=report)
+    assert queries
+    for item in queries:
+        assert "Прокладка кабеля ВВГнг(А)-LS 3х2,5 в коробе" in item.text
+        assert "1250.5" not in item.text
+        assert "2400" not in item.text
+        assert "3650.5" not in item.text
+        assert "Стоимость" not in item.text
+    filtered = report["source_text_filter"]
+    assert filtered["rows_with_cell_metadata"] == 1
+    # the running number plus the three cost columns the header strip names
+    assert filtered["cells_dropped_service_column"] == 4
+    # the quantity is stated as an explicit characteristic, not as a bare figure
+    assert any("146 [Кол-во]" in item.text for item in queries)

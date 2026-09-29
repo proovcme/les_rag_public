@@ -2855,7 +2855,7 @@
         "tests/test_lsr_candidate_query_service.py",
         "tests/test_rim_lsr_trace_service.py"
       ],
-      "lines": 832,
+      "lines": 863,
       "module": "proxy.services.attachment_source_catalog_service",
       "outbound": [
         "backend/converter.py",
@@ -9099,7 +9099,7 @@
     },
     {
       "inbound": [],
-      "lines": 33,
+      "lines": 138,
       "module": "tests.test_attachment_source_catalog_service",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py"
@@ -11094,7 +11094,7 @@
     },
     {
       "inbound": [],
-      "lines": 448,
+      "lines": 532,
       "module": "tests.test_lsr_candidate_query_service",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -19242,7 +19242,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 657,
     "tracked_python_files": 1027,
-    "tracked_python_lines": 351585
+    "tracked_python_lines": 351805
   },
   "warnings": []
 }
