@@ -136,6 +136,29 @@ LSR_BASIS_SUFFIX_BUILDER = "_lsr_basis_suffix"
 LSR_BASIS_VISIBILITY_FLAG = "basis_visible"
 LSR_BASIS_MATCHED_STATE = "exact"
 
+# A refusal to choose and an absent book are two different answers, and only the
+# derivation that looked at the whole source text knows which one it gave.  Build
+# 822 answered the live cell ``B3_bap_pdf`` — task says Москва, the object address
+# inside the PDF says Санкт-Петербург — with «Запрошенная ценовая база … локально
+# не найдена» over an installed ``moskva_3kv2026``.  The carrier and the summary
+# live in one module, so the gate keeps them wired together.
+BASIS_REFUSAL_MODULE = "proxy/services/lsr_workbook_adapter_service.py"
+BASIS_REFUSAL_DERIVER = "explicit_estimate_pricebook"
+BASIS_REFUSAL_SUMMARY = "summarize_lsr_price_basis"
+BASIS_REFUSAL_CARRIED_ARGS = (
+    "basis_contradictions",
+    "basis_refusal",
+    "basis_candidates",
+)
+BASIS_REFUSAL_DERIVER_KEYS = (
+    "contradicting_regions",
+    "contradicting_quarters",
+    "refusal",
+    "matching_books",
+)
+#: what may only be said about a basis that really is not in the catalogue
+BASIS_REFUSAL_ABSENT_PHRASE = "локально не найдена"
+
 # A rate that nobody chose may still be calculated, but only under the label the
 # readiness state, the price gaps and the confirmed/preliminary split key on.
 # Dropping that label would silently return the defect ADR-16 § 7 closes: a
@@ -884,6 +907,137 @@ def _lsr_basis_notice_violations(relative: str, tree: ast.AST) -> Iterable[Archi
             )
 
 
+def _basis_refusal_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """ADR-16 § 7 with the live 823 evidence from matrix cell ``B3_bap_pdf``.
+
+    A task that names Москва and a source document whose own object address names
+    Санкт-Петербург is a *refusal to choose*, while a named period nobody has a
+    book for is a *missing basis*. The first is decided by
+    ``explicit_estimate_pricebook``, which reads the whole source text; the answer
+    the operator reads is written by ``summarize_lsr_price_basis``, which only sees
+    what the call site hands it. Build 822 had the first right and the second
+    wrong: «локально не найдена» over an installed ``moskva_3kv2026``, which is a
+    false statement about the local catalogue (§ 7, «не объявляй всю базу
+    отсутствующей»). The three links of that seam are checked together.
+    """
+
+    if relative != BASIS_REFUSAL_MODULE:
+        return
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    deriver = functions.get(BASIS_REFUSAL_DERIVER)
+    if deriver is not None:
+        written: set[str] = set()
+        for node in ast.walk(deriver):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Subscript)
+                        and isinstance(target.slice, ast.Constant)
+                        and isinstance(target.slice.value, str)
+                    ):
+                        written.add(target.slice.value)
+            elif isinstance(node, ast.Dict):
+                written.update(
+                    key.value
+                    for key in node.keys
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                )
+        missing = [name for name in BASIS_REFUSAL_DERIVER_KEYS if name not in written]
+        if missing:
+            yield ArchitectureViolation(
+                "CONTRADICTED_BASIS_ANNOUNCED_ABSENT",
+                relative,
+                deriver.lineno,
+                f"{BASIS_REFUSAL_DERIVER}() no longer hands back what it refused "
+                f"({', '.join(missing)}): the refusal is computed here and dies "
+                "here, and the operator is told the base does not exist",
+            )
+    summary = functions.get(BASIS_REFUSAL_SUMMARY)
+    if summary is not None:
+        accepted = {
+            item.arg
+            for item in (*summary.args.posonlyargs, *summary.args.args, *summary.args.kwonlyargs)
+            if item.arg
+        }
+        unwired = [name for name in BASIS_REFUSAL_CARRIED_ARGS if name not in accepted]
+        if unwired:
+            yield ArchitectureViolation(
+                "CONTRADICTED_BASIS_ANNOUNCED_ABSENT",
+                relative,
+                summary.lineno,
+                f"{BASIS_REFUSAL_SUMMARY}() takes no "
+                + ", ".join(unwired)
+                + ": it cannot tell a refused choice from an absent book",
+            )
+        for node in ast.walk(summary):
+            if not (
+                isinstance(node, ast.If)
+                and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name)
+                and node.test.left.id == "pricebook"
+            ):
+                continue
+            guarded = min(
+                (
+                    item.lineno
+                    for item in ast.walk(node)
+                    if isinstance(item, ast.If)
+                    and any(
+                        name.id in {"contradictions", "refusal"}
+                        for name in ast.walk(item.test)
+                        if isinstance(name, ast.Name)
+                    )
+                ),
+                default=0,
+            )
+            announced = min(
+                (
+                    item.lineno
+                    for item in ast.walk(node)
+                    if isinstance(item, ast.Constant)
+                    and isinstance(item.value, str)
+                    and BASIS_REFUSAL_ABSENT_PHRASE in item.value
+                ),
+                default=0,
+            )
+            if announced and not (guarded and guarded < announced):
+                yield ArchitectureViolation(
+                    "CONTRADICTED_BASIS_ANNOUNCED_ABSENT",
+                    relative,
+                    node.lineno,
+                    "the no-basis answer states «"
+                    + BASIS_REFUSAL_ABSENT_PHRASE
+                    + "» without first deciding whether the explicit sources "
+                    "contradict each other: a refused choice is reported as an "
+                    "absent price book",
+                )
+            break
+    for call in (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and _call_name(node).split(".")[-1] == BASIS_REFUSAL_SUMMARY
+    ):
+        passed = {item.arg for item in call.keywords if item.arg}
+        unwired = [
+            name for name in BASIS_REFUSAL_CARRIED_ARGS if name not in passed
+        ]
+        if unwired:
+            yield ArchitectureViolation(
+                "CONTRADICTED_BASIS_ANNOUNCED_ABSENT",
+                relative,
+                call.lineno,
+                f"{BASIS_REFUSAL_SUMMARY}() is called without "
+                + ", ".join(unwired)
+                + "=: the derivation knew which bases it was shown and which "
+                "installed books agree with them, and the operator is not told",
+            )
+
+
 def _accrual_label_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
     """Task 2026-09-28 § 11 № 6: an accrual rate without an owner stays a question.
 
@@ -1054,6 +1208,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     yield from _basis_carrier_violations(relative, tree)
     yield from _document_basis_violations(relative, tree)
     yield from _lsr_basis_notice_violations(relative, tree)
+    yield from _basis_refusal_violations(relative, tree)
     yield from _accrual_label_violations(relative, tree)
     yield from _book_price_unit_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}

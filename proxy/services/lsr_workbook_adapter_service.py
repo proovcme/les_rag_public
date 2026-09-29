@@ -270,6 +270,26 @@ def _document_basis_fields(document_basis: object) -> dict[str, str]:
     }
 
 
+def _books_consistent_with(
+    stems: Sequence[str],
+    region_token: str,
+    quarter_token: str,
+) -> list[str]:
+    """Which installed books agree with the parts of the basis that were named.
+
+    A part nobody named is not a mismatch: an operator who named only a subject
+    is one question away from a book, and that is a different answer from a
+    subject and a period that no installed book covers.
+    """
+
+    return [
+        stem
+        for stem in stems
+        if (not region_token or _region_in_text(stem) == region_token)
+        and (not quarter_token or _quarter_token(stem) == quarter_token)
+    ]
+
+
 def explicit_estimate_pricebook(
     *,
     requested_book: str = "",
@@ -315,10 +335,23 @@ def explicit_estimate_pricebook(
         "reason": "",
         "requested_region": "",
         "requested_quarter": "",
+        "requested_region_origin": "",
         "basis_binding": "",
         "available_books": stems,
         "inherited_from_document": "",
         "document_basis_note": "",
+        # which names each explicit source actually gave, kept for the operator
+        # answer: refusing to choose between two named subjects is right, telling
+        # the operator that the requested book «does not exist locally» is not.
+        "contradicting_regions": [],
+        "contradicting_quarters": [],
+        # …and which of the four reasons this function can leave the book empty
+        # it actually hit, with the books that agree with the part the operator
+        # did name. Without them the answer can only say «не найдена» — over a
+        # catalogue that does hold the named subject (ADR-16 § 7, live 823
+        # evidence ``B3_bap_pdf`` and ``B4_eom_pdf``).
+        "refusal": "",
+        "matching_books": [],
     }
     if requested_book.strip():
         result["origin"] = "параметр расчёта"
@@ -334,6 +367,7 @@ def explicit_estimate_pricebook(
         return result
     if not stems:
         result["reason"] = "локально нет ни одной доступной ценовой книги"
+        result["refusal"] = "no_local_books"
         return result
 
     named: list[tuple[str, str]] = []
@@ -362,12 +396,21 @@ def explicit_estimate_pricebook(
             quarters.add(token)
     if len(regions) > 1:
         result["reason"] = "регион назван по-разному в задаче, исходнике или параметре"
+        result["contradicting_regions"] = sorted(regions)
+        result["refusal"] = "contradiction"
         return result
     if len(quarters) > 1:
         result["reason"] = "период цен назван по-разному в задаче, исходнике или параметре"
+        result["contradicting_quarters"] = sorted(quarters)
+        result["refusal"] = "contradiction"
         return result
     result["requested_region"] = next(iter(regions)) if regions else ""
     result["requested_quarter"] = next(iter(quarters)) if quarters else ""
+    if len(regions) == 1 and region_origin:
+        # § 7 asks the answer to name the *source* of the basis, and only this
+        # loop knows whether the subject came from the task, the text of the
+        # source document or its file name.
+        result["requested_region_origin"] = f"выведено из: {region_origin}"
     result["basis_binding"] = " ".join(
         part
         for part in (
@@ -450,23 +493,34 @@ def explicit_estimate_pricebook(
                 )
             )
             result["reason"] = result["document_basis_note"]
+            result["refusal"] = "ambiguous_catalog" if matches else "no_matching_book"
+            result["matching_books"] = matches
             return result
     if not regions and not quarters:
         result["reason"] = (
             "в задаче и исходнике явно не названы ни субъект, ни период — "
             "книга по умолчанию не подставляется"
         )
+        result["refusal"] = "nothing_named"
         return result
     if not regions:
         result["reason"] = (
             "в явном тексте назван период, но не назван (или не распознан) "
             "субъект — книгу не подставляют молча"
         )
+        result["refusal"] = "unnamed_subject"
+        result["matching_books"] = _books_consistent_with(
+            stems, "", result["requested_quarter"]
+        )
         return result
     if not quarters:
         result["reason"] = (
             "в явном тексте назван субъект, но не назван квартал и год — "
             "книгу не подставляют молча"
+        )
+        result["refusal"] = "unnamed_period"
+        result["matching_books"] = _books_consistent_with(
+            stems, result["requested_region"], ""
         )
         return result
 
@@ -490,8 +544,11 @@ def explicit_estimate_pricebook(
             "среди доступных книг нет книги для названных субъекта и периода; "
             "запрошенную базу не подменяют другой книгой"
         )
+        result["refusal"] = "no_matching_book"
         return result
     result["reason"] = "для названных субъекта и периода подходит несколько книг"
+    result["refusal"] = "ambiguous_catalog"
+    result["matching_books"] = matches
     return result
 
 
@@ -510,6 +567,9 @@ def summarize_lsr_price_basis(
     basis_binding: str = "",
     document_basis_note: str = "",
     inherited_from_document: str = "",
+    basis_contradictions: Sequence[str] = (),
+    basis_refusal: str = "",
+    basis_candidates: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Bind the requested and the actually applied price basis; mismatches stay visible.
 
@@ -522,6 +582,18 @@ def summarize_lsr_price_basis(
     document was already priced in), so the chosen basis is visible instead of
     implied; ``available_books`` lists the installed identifiers whenever no book
     could be bound (ADR-16 § 7).
+
+    ``basis_contradictions`` carries the contradictions the price-basis derivation
+    already refused to resolve, named as ``"регион: Москва, Санкт-Петербург"``, and
+    ``basis_refusal`` names which no-book state the derivation actually reached
+    (``contradiction``, ``unnamed_period``, ``unnamed_subject``,
+    ``ambiguous_catalog``, ``no_matching_book``, ``nothing_named``) with
+    ``basis_candidates`` listing the installed books that agree with the part the
+    operator did name. The derivation sees the whole source text while this
+    function sees only the fields that survive into it, so a refusal here must not
+    be re-worded into "the requested book does not exist" — the book may well be
+    installed, and the real reason may be that two sources name different subjects
+    or that one half of the basis was never named (ADR-16 § 7).
     """
 
     requested_parts: list[str] = []
@@ -585,6 +657,10 @@ def summarize_lsr_price_basis(
         contradictions.append("регион: " + ", ".join(sorted(requested_regions)))
     if len(quarter_tokens) > 1:
         contradictions.append("период цен: " + ", ".join(sorted(quarter_tokens)))
+    for carried in basis_contradictions or ():
+        label = str(carried or "").strip()
+        if label and label not in contradictions:
+            contradictions.append(label)
     requested_quarter = next(iter(quarter_tokens)) if len(quarter_tokens) == 1 else ""
     document_note = str(document_basis_note or "").strip()
     document_origin = str(inherited_from_document or "").strip()
@@ -606,8 +682,77 @@ def summarize_lsr_price_basis(
         if visible_books
         else " Локально нет ни одной доступной ценовой книги."
     )
+    # The books that agree with the part of the basis the operator *did* name.
+    # Listing them is what keeps an incomplete choice from being reported as an
+    # absent price book (live 823 evidence: «Санкт-Петербург» answered with
+    # «локально не найдена» over two installed Saint-Petersburg books).
+    candidates = [
+        str(stem).strip()
+        for stem in (basis_candidates or ())
+        if str(stem or "").strip()
+    ]
+    candidate_hint = (
+        " Для названной части базы подходят книги: " + ", ".join(candidates[:20]) + "."
+        if candidates
+        else ""
+    )
+    partial_line = (
+        "Назовите недостающую часть базы явно — субъект (или ценовую зону) и "
+        "квартал с годом — либо выберите книгу из списка."
+    )
+    refusal = str(basis_refusal or "").strip()
 
     if pricebook is None:
+        if contradictions:
+            # Refusing to choose between two named subjects is the correct
+            # mechanic; naming the *reason* is the part that was missing. The
+            # books those subjects price in are installed, so "not found" would
+            # be a false statement about the local catalogue (ADR-16 § 7).
+            reason_line = (
+                "Явные источники называют разную ценовую базу ("
+                + "; ".join(contradictions)
+                + "), поэтому книга не выбрана: молча выбирать одно из двух "
+                "нельзя. Назовите базу одним явным способом — параметром "
+                "расчёта, регионом и периодом в задаче или подтверждением "
+                "оператора." + available_hint
+            )
+        elif refusal == "unnamed_period":
+            reason_line = (
+                "Ценовая база названа не полностью: субъект — "
+                f"«{region_text or requested_label}», период (квартал и год) — нет. "
+                "Молча выбирать период нельзя."
+                + candidate_hint
+                + (available_hint if not candidates else "")
+                + " "
+                + partial_line
+            )
+        elif refusal == "unnamed_subject":
+            reason_line = (
+                "Ценовая база названа не полностью: период — "
+                f"«{requested_label}», субъект (или ценовая зона) — не назван или "
+                "не распознан. Молча выбирать субъект нельзя."
+                + candidate_hint
+                + (available_hint if not candidates else "")
+                + " "
+                + partial_line
+            )
+        elif refusal == "ambiguous_catalog":
+            reason_line = (
+                f"Для названной базы «{requested_label}» подходит несколько книг: "
+                + ", ".join(candidates or visible_books[:20])
+                + ". Молча выбирать одну из них нельзя — укажите книгу параметром "
+                "расчёта или подтверждением оператора."
+            )
+        elif requested_label:
+            reason_line = (
+                f"Запрошенная ценовая база «{requested_label}» локально не найдена "
+                f"и не подменена другой книгой.{available_hint}"
+            )
+        else:
+            reason_line = (
+                "Ценовая база не задана явно, поэтому книга не выбрана и цены "
+                "не подставлены молча." + available_hint
+            )
         return {
             "requested": requested_label,
             "requested_region": region_text,
@@ -622,15 +767,10 @@ def summarize_lsr_price_basis(
             "requested_book": book_request,
             "requested_basis_present": bool(requested_label),
             "match": "no_book",
+            "refusal": refusal,
+            "matching_books": candidates,
             "note": (
-                (
-                    f"Запрошенная ценовая база «{requested_label}» локально не найдена "
-                    f"и не подменена другой книгой.{available_hint}"
-                    if requested_label
-                    else
-                    f"Ценовая база не задана явно, поэтому книга не выбрана и цены "
-                    f"не подставлены молча.{available_hint}"
-                )
+                reason_line
                 + (" " + document_note if document_note else "")
                 + " Расчёт без книги остаётся черновиком: считаются подтверждённые"
                 " оператором цены, цены КАЦ и помеченные цены из карточек нормы."
@@ -1196,7 +1336,14 @@ async def build_lsr_workbook_from_decisions(
         requested_region_origin=(
             "параметр расчёта"
             if requested_region
-            else ("наследие документа" if inherited_basis else "")
+            else (
+                "наследие документа"
+                if inherited_basis
+                # …and when nobody passed a region as a parameter, only the
+                # derivation knows whether the subject stands in the task, in the
+                # text of the source file or in its name (§ 7: name the source).
+                else str(basis_choice["requested_region_origin"] or "")
+            )
         ),
         operator_confirmation=basis_confirmation,
         pricebook_origin=str(basis_choice["origin"] or ""),
@@ -1204,6 +1351,18 @@ async def build_lsr_workbook_from_decisions(
         basis_binding=str(basis_choice["basis_binding"] or ""),
         document_basis_note=str(basis_choice["document_basis_note"] or ""),
         inherited_from_document=inherited_basis,
+        basis_contradictions=(
+            ["регион: " + ", ".join(basis_choice["contradicting_regions"])]
+            if basis_choice["contradicting_regions"]
+            else []
+        )
+        + (
+            ["период цен: " + ", ".join(basis_choice["contradicting_quarters"])]
+            if basis_choice["contradicting_quarters"]
+            else []
+        ),
+        basis_refusal=str(basis_choice["refusal"] or ""),
+        basis_candidates=basis_choice["matching_books"],
     )
     progress("model_decisions", 0, len(decisions))
     overlays = args.get("confirmed_data") if isinstance(args.get("confirmed_data"), Mapping) else None

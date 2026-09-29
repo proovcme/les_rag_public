@@ -1042,3 +1042,142 @@ def format_lsr_readiness_notice(readiness, *, filename=""):
 """,
     )
     assert "APPLIED_BASIS_NOT_NAMED" not in codes
+
+
+#: every link of the seam that answers «why is no book applied», wired together
+BASIS_REFUSAL_MODULE = "proxy/services/lsr_workbook_adapter_service.py"
+
+BASIS_REFUSAL_DERIVER = '''
+def explicit_estimate_pricebook(**kwargs):
+    result = {
+        "pricebook": "",
+        "contradicting_regions": [],
+        "contradicting_quarters": [],
+        "refusal": "",
+        "matching_books": [],
+    }
+    if len(regions) > 1:
+        result["contradicting_regions"] = sorted(regions)
+        result["refusal"] = "contradiction"
+        return result
+    if len(quarters) > 1:
+        result["contradicting_quarters"] = sorted(quarters)
+        result["refusal"] = "contradiction"
+        return result
+    if not quarters:
+        result["refusal"] = "unnamed_period"
+        result["matching_books"] = [stem for stem in stems if region_of(stem) == region]
+        return result
+    matches = [stem for stem in stems if agrees(stem, region, quarter)]
+    if not matches:
+        result["refusal"] = "no_matching_book"
+        return result
+    if len(matches) > 1:
+        result["refusal"] = "ambiguous_catalog"
+        result["matching_books"] = matches
+        return result
+    result["pricebook"] = matches[0]
+    return result
+'''
+
+BASIS_REFUSAL_ANSWER = '''
+def summarize_lsr_price_basis(
+    *, pricebook=None, basis_contradictions=(), basis_refusal="", basis_candidates=()
+):
+    contradictions = list(basis_contradictions or ())
+    candidates = [str(item) for item in (basis_candidates or ())]
+    refusal = str(basis_refusal or "")
+    if pricebook is None:
+        if contradictions:
+            return {"note": "Явные источники называют разную ценовую базу"}
+        if refusal == "unnamed_period":
+            return {"note": "Субъект назван, периода нет. Подходят книги: " + ", ".join(candidates)}
+        if refusal == "no_matching_book":
+            return {"note": "Запрошенная ценовая база локально не найдена"}
+        return {"note": "Ценовая база не задана явно"}
+    return {"note": "Ценовая база совпадает с запросом"}
+
+
+def build(args):
+    choice = explicit_estimate_pricebook(**args)
+    return summarize_lsr_price_basis(
+        pricebook=None,
+        basis_contradictions=(
+            ["регион: " + ", ".join(choice["contradicting_regions"])]
+            if choice["contradicting_regions"]
+            else []
+        ),
+        basis_refusal=choice["refusal"],
+        basis_candidates=choice["matching_books"],
+    )
+'''
+
+#: what the answer looks like when it stops asking which refusal it received
+BASIS_REFUSAL_GUARDS = '''        if contradictions:
+            return {"note": "Явные источники называют разную ценовую базу"}
+        if refusal == "unnamed_period":
+            return {"note": "Субъект назван, периода нет. Подходят книги: " + ", ".join(candidates)}
+        if refusal == "no_matching_book":
+'''
+
+
+def test_rejects_a_refusal_the_derivation_keeps_to_itself(tmp_path: Path) -> None:
+    """§ 7: the module that refuses has to say what it refused between."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        BASIS_REFUSAL_MODULE,
+        '''
+def explicit_estimate_pricebook(**kwargs):
+    result = {"pricebook": "", "origin": ""}
+    if len(regions) > 1:
+        result["reason"] = "регион назван по-разному"
+        return result
+    return result
+'''
+        + BASIS_REFUSAL_ANSWER,
+    )
+    assert "CONTRADICTED_BASIS_ANNOUNCED_ABSENT" in codes
+
+
+def test_rejects_a_refused_choice_reported_as_an_absent_book(tmp_path: Path) -> None:
+    """The live 823 defect itself: «локально не найдена» over an installed book."""
+
+    assert BASIS_REFUSAL_GUARDS in BASIS_REFUSAL_ANSWER
+    codes = _adr16_probe(
+        tmp_path,
+        BASIS_REFUSAL_MODULE,
+        BASIS_REFUSAL_DERIVER
+        + BASIS_REFUSAL_ANSWER.replace(BASIS_REFUSAL_GUARDS, "        if False:\n"),
+    )
+    assert "CONTRADICTED_BASIS_ANNOUNCED_ABSENT" in codes
+
+
+def test_rejects_a_call_site_that_forgets_what_was_refused(tmp_path: Path) -> None:
+    """Correct derivation and correct summary are still free to be unwired."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        BASIS_REFUSAL_MODULE,
+        BASIS_REFUSAL_DERIVER
+        + BASIS_REFUSAL_ANSWER.replace(
+            '''        basis_refusal=choice["refusal"],
+        basis_candidates=choice["matching_books"],
+''',
+            "",
+        ),
+    )
+    assert "CONTRADICTED_BASIS_ANNOUNCED_ABSENT" in codes
+
+
+def test_accepts_a_refusal_carried_from_the_derivation_to_the_answer(
+    tmp_path: Path,
+) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        BASIS_REFUSAL_MODULE,
+        BASIS_REFUSAL_DERIVER + BASIS_REFUSAL_ANSWER,
+    )
+    assert "CONTRADICTED_BASIS_ANNOUNCED_ABSENT" not in codes
+
+

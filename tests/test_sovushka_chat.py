@@ -2546,12 +2546,64 @@ def test_price_basis_prompt_shows_city_and_zone_as_different_things():
         "Город и ценовая зона — не одно и то же: противоречие показано, а не "
         "разрешено кодом." in text
     )
-    assert "В запросе названо несколько регионов: Москва, Санкт-Петербург." in text
+    assert "Явные источники называют разный регион: Москва, Санкт-Петербург." in text
     assert "не та, что запрошена" in text
     assert "применена вместо запрошенной" in prompt["books"][0]["flag_note"]
     # Machine tokens are translated at the UI boundary.
     assert "II квартал 2026, IV квартал 2026" in text
     assert "2:2026" not in text
+
+
+def test_price_basis_card_shows_a_refused_choice_as_a_refusal():
+    """Live 823 evidence, cell ``B3_bap_pdf`` — the card and the note agree.
+
+    The task names Москва III/2026 while the object address inside the PDF names
+    Санкт-Петербург. The derivation refuses to pick a side, which is correct; the
+    card built from that same payload must then say *why* nothing was applied.
+    It may not claim the region was never named, and it may not claim a base is
+    absent while ``moskva_3kv2026`` sits in the list it is showing (ADR-16 § 7,
+    § 10).
+    """
+
+    from proxy.services.lsr_workbook_adapter_service import (
+        explicit_estimate_pricebook,
+        summarize_lsr_price_basis,
+    )
+
+    catalog = ["sankt-peterburg_2kv2026", "sankt-peterburg_3kv2026", "moskva_3kv2026"]
+    task = "Собери ЛСР по Москве, цены III квартала 2026"
+    source = (
+        "Ведомость объёмов работ\n"
+        "Объект: г. Санкт-Петербург, Выборгский район, ул. Парадная, д. 1"
+    )
+    choice = explicit_estimate_pricebook(
+        question_text=task, source_text=source, source_name="bap.pdf",
+        pricebooks=catalog,
+    )
+    basis = summarize_lsr_price_basis(
+        question_text=task,
+        pricebook=None,
+        requested_region=choice["requested_region"],
+        available_books=choice["available_books"],
+        basis_binding=choice["basis_binding"],
+        basis_refusal=choice["refusal"],
+        basis_candidates=choice["matching_books"],
+        basis_contradictions=(
+            ["регион: " + ", ".join(choice["contradicting_regions"])]
+            if choice["contradicting_regions"]
+            else []
+        ),
+    )
+    prompt = chat_page.lsr_price_basis_prompt(basis, books=catalog)
+    text = "\n".join(prompt["lines"])
+
+    assert prompt["visible"] is True
+    assert prompt["state_label"] == "Ценовая книга не применена"
+    assert "Явные источники называют разный регион: Москва, Санкт-Петербург." in text
+    assert "Регион в запросе не назван" not in text
+    assert "среди доступных локальных книг нет" not in text
+    assert "не найдена" not in prompt["technical"]["note"]
+    assert {book["identifier"] for book in prompt["books"]} == set(catalog)
 
 
 def test_price_basis_choice_is_an_ordinary_chat_formulation():

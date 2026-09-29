@@ -166,8 +166,13 @@ def _book_for_path(path: str) -> _Book:
     return _Book(quarter)
 
 
-@pytest.mark.asyncio
-async def test_adapter_keeps_draft_and_binds_only_after_confirmation(tmp_path, monkeypatch):
+def _stub_the_calculator(monkeypatch, tmp_path) -> dict:
+    """Record what the adapter hands the calculation engine and the renderer.
+
+    The installed catalogue must not decide these assertions, so the catalog is
+    the module ``CATALOG`` and every book is built from its file name.
+    """
+
     captured: dict = {}
 
     def calculate(_rows, **kwargs):
@@ -197,6 +202,12 @@ async def test_adapter_keeps_draft_and_binds_only_after_confirmation(tmp_path, m
         lambda *a, **k: [str(tmp_path / f"{stem}.parquet") for stem in CATALOG],
     )
     monkeypatch.setattr(fgis_price_service, "get_pricebook", _book_for_path)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_adapter_keeps_draft_and_binds_only_after_confirmation(tmp_path, monkeypatch):
+    captured = _stub_the_calculator(monkeypatch, tmp_path)
 
     decisions = [
         {
@@ -268,3 +279,210 @@ def test_unnamed_basis_note_refuses_the_silent_default():
     assert summary["match"] == "no_book"
     assert summary["requested_basis_present"] is False
     assert "книга не выбрана" in summary["note"]
+
+
+#: the shape that produced the live defect: a task that names one subject and a
+#: source document whose own object address names another
+CONTRADICTED_TASK = "Собери ЛСР по Москве, цены III квартала 2026"
+CONTRADICTED_SOURCE = (
+    "Ведомость объёмов работ\n"
+    "Объект: г. Санкт-Петербург, Выборгский район, ул. Парадная, д. 1\n"
+    "Заказчик: тест"
+)
+
+
+def _refused_choice(**overrides):
+    kwargs = {
+        "question_text": CONTRADICTED_TASK,
+        "source_text": CONTRADICTED_SOURCE,
+        "source_name": "bap.pdf",
+        "pricebooks": CATALOG,
+    }
+    kwargs.update(overrides)
+    return _choice(**kwargs)
+
+
+def test_a_refused_basis_names_the_two_subjects_instead_of_a_missing_book():
+    """ADR-16 § 7 with the live 823 evidence from matrix cell ``B3_bap_pdf``.
+
+    Refusing to pick between Москва (the task) and Санкт-Петербург (the object
+    address inside the PDF) is the correct mechanic, and it was already in place.
+    What the operator actually read on build 822 was «Запрошенная ценовая база
+    „3 квартал 2026" локально не найдена» — a false statement about the local
+    catalogue, because ``moskva_3kv2026`` is installed and simply was not chosen.
+    """
+
+    result = _refused_choice()
+    assert result["pricebook"] == ""
+    assert result["refusal"] == "contradiction"
+    assert result["contradicting_regions"] == ["Москва", "Санкт-Петербург"]
+    assert result["contradicting_quarters"] == []
+    assert "moskva_3kv2026" in result["available_books"]
+
+    summary = summarize_lsr_price_basis(
+        question_text=CONTRADICTED_TASK,
+        pricebook=None,
+        pricebook_name="",
+        available_books=result["available_books"],
+        basis_binding=result["basis_binding"],
+        basis_refusal=result["refusal"],
+        basis_candidates=result["matching_books"],
+        basis_contradictions=(
+            ["регион: " + ", ".join(result["contradicting_regions"])]
+            if result["contradicting_regions"]
+            else []
+        ),
+    )
+    assert summary["match"] == "no_book"
+    assert summary["refusal"] == "contradiction"
+    assert summary["contradictions"] == ["регион: Москва, Санкт-Петербург"]
+    assert "разную ценовую базу" in summary["note"]
+    assert "регион: Москва, Санкт-Петербург" in summary["note"]
+    assert "молча выбирать одно из двух" in summary["note"]
+    # the installed catalogue is neither announced as missing nor hidden
+    assert "не найдена" not in summary["note"]
+    assert "не задана явно" not in summary["note"]
+    assert "moskva_3kv2026" in summary["note"]
+    assert summary["available_books"] == CATALOG
+
+
+def test_a_half_named_basis_names_the_books_it_is_missing_a_period_for():
+    """The other live 823 sentence, from cell ``B4_eom_pdf``.
+
+    The task said «ценовую базу я не назвал», the document names Санкт-Петербург
+    and no quarter. The adapter answered «Запрошенная ценовая база
+    „Санкт-Петербург" локально не найдена» while two Saint-Petersburg books are
+    installed — what is missing is the period, and the operator has to be told
+    exactly that, with the books that already fit (ADR-16 § 7).
+    """
+
+    result = _choice(
+        question_text="Собери ЛСР по прикреплённому документу, цены не подставляй молча",
+        source_text="Ориентир стоимости работ\nОбъект: г. Санкт-Петербург, ул. Парковая",
+        source_name="eom.pdf",
+    )
+    assert result["pricebook"] == ""
+    assert result["refusal"] == "unnamed_period"
+    assert result["requested_region"] == "Санкт-Петербург"
+    assert result["requested_region_origin"] == "выведено из: исходник"
+    assert result["matching_books"] == ["sankt-peterburg_2kv2026", "sankt-peterburg_3kv2026"]
+
+    summary = summarize_lsr_price_basis(
+        question_text="Собери ЛСР по прикреплённому документу, цены не подставляй молча",
+        pricebook=None,
+        requested_region=result["requested_region"],
+        requested_region_origin=result["requested_region_origin"],
+        available_books=result["available_books"],
+        basis_binding=result["basis_binding"],
+        basis_refusal=result["refusal"],
+        basis_candidates=result["matching_books"],
+    )
+    note = summary["note"]
+    assert summary["match"] == "no_book"
+    assert summary["refusal"] == "unnamed_period"
+    assert "период (квартал и год) — нет" in note
+    assert "sankt-peterburg_2kv2026" in note and "sankt-peterburg_3kv2026" in note
+    assert "не найдена" not in note
+    # the source of the subject is stated, not implied (the task named no base)
+    assert summary["requested_region_origin"] == "выведено из: исходник"
+
+
+def test_a_period_that_really_is_absent_is_still_called_absent():
+    """The negative control: the honest refusal must not swallow the real gap.
+
+    A named subject and period that no installed book covers is a *missing*
+    basis, and the note has to keep saying so — otherwise the fix would replace
+    one blanket statement with another.
+    """
+
+    result = _choice(question_text="Собери ЛСР по Москве, цены IV квартала 2026")
+    assert result["pricebook"] == ""
+    assert result["contradicting_regions"] == []
+    assert result["contradicting_quarters"] == []
+    assert result["refusal"] == "no_matching_book"
+    assert result["matching_books"] == []
+    summary = summarize_lsr_price_basis(
+        question_text="Собери ЛСР по Москве, цены IV квартала 2026",
+        pricebook=None,
+        available_books=result["available_books"],
+        basis_binding=result["basis_binding"],
+        basis_refusal=result["refusal"],
+        basis_candidates=result["matching_books"],
+        basis_contradictions=[],
+    )
+    assert summary["contradictions"] == []
+    assert "локально не найдена" in summary["note"]
+    assert "Доступные книги" in summary["note"]
+
+
+@pytest.mark.asyncio
+async def test_the_adapter_carries_its_own_refusal_into_the_operator_note(
+    tmp_path, monkeypatch
+):
+    """The seam the 822 summary could not see.
+
+    ``explicit_estimate_pricebook`` reads the whole source text, while
+    ``summarize_lsr_price_basis`` receives only the fields the adapter passes on
+    — so the derivation was right and the delivered answer was wrong in the same
+    call. This proves the value crosses that seam rather than being recomputed.
+    """
+
+    captured = _stub_the_calculator(monkeypatch, tmp_path)
+    built = await build_lsr_workbook_from_decisions(
+        tmp_path / "bap.pdf",
+        {
+            "decisions": [
+                {
+                    "source_row": "ВОР!R4",
+                    "title": "Прокладка кабеля NYM 3x2.5 в траншее",
+                    "unit": "м",
+                    "quantity": 120,
+                    "norm_code": "ТЕРр08-02-118-01",
+                }
+            ],
+            "question": CONTRADICTED_TASK,
+            "_source_text": CONTRADICTED_SOURCE,
+        },
+        tmp_path / "lsr.xlsx",
+        lambda *_a: None,
+    )
+    assert built["pricebook"] == ""
+    assert captured["pricebook"] is None
+    basis = built["price_basis"]
+    assert basis["match"] == "no_book"
+    assert basis["refusal"] == "contradiction"
+    assert basis["contradictions"] == ["регион: Москва, Санкт-Петербург"]
+    assert "разную ценовую базу" in basis["note"]
+    assert "не найдена" not in basis["note"]
+    # the same sentence is what the delivered file prints on its header (§ 10)
+    assert captured["meta"]["price_basis_note"] == basis["note"]
+    assert "не найдена" not in captured["meta"]["price_basis_note"]
+
+    half_named = await build_lsr_workbook_from_decisions(
+        tmp_path / "eom.pdf",
+        {
+            "decisions": [
+                {
+                    "source_row": "БОР!R7",
+                    "title": "Устройство стяжки цементно-песчаной",
+                    "unit": "м2",
+                    "quantity": 240,
+                    "norm_code": "ТЕРр11-01-013-02",
+                }
+            ],
+            "question": "Собери ЛСР по прикреплённому документу, цены не подставляй молча",
+            "_source_text": (
+                "Ориентир стоимости работ\n"
+                "Объект: г. Санкт-Петербург, ул. Парковая, д. 12"
+            ),
+        },
+        tmp_path / "lsr-2.xlsx",
+        lambda *_a: None,
+    )
+    second = half_named["price_basis"]
+    assert second["match"] == "no_book"
+    assert second["refusal"] == "unnamed_period"
+    assert second["matching_books"] == ["sankt-peterburg_2kv2026", "sankt-peterburg_3kv2026"]
+    assert "период (квартал и год) — нет" in second["note"]
+    assert "не найдена" not in second["note"]
+    assert second["requested_region_origin"] == "выведено из: исходник"

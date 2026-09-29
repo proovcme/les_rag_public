@@ -1514,7 +1514,15 @@ def pricebook_chat_formulation(book: dict[str, Any]) -> str:
 
 
 def _price_basis_contradiction_lines(items: Any) -> list[str]:
-    """Translate backend contradiction tokens into Russian operator lines."""
+    """Translate backend contradiction tokens into Russian operator lines.
+
+    A contradiction is not always «in the request»: the price-basis derivation
+    compares the task, the text of the source document and the calculation
+    parameter, and hands over the pair it refused to resolve in
+    ``price_basis.contradictions``.  The wording therefore names the explicit
+    sources rather than the chat turn, and still shows the conflict instead of
+    silently picking one side (ADR-16 § 7).
+    """
 
     lines: list[str] = []
     for raw in list(items or []):
@@ -1527,19 +1535,19 @@ def _price_basis_contradiction_lines(items: Any) -> list[str]:
         if kind == "регион" and values:
             lines.append(
                 PRICE_BASIS_CITY_VS_ZONE_NOTE
-                + " В запросе названо несколько регионов: "
+                + " Явные источники называют разный регион: "
                 + ", ".join(values) + "."
             )
         elif kind == "период цен" and values:
             lines.append(
-                "В запросе названо несколько периодов цен: "
+                "Явные источники называют разные периоды цен: "
                 + ", ".join(_pricebook_period_phrase(item) for item in values)
                 + "."
             )
         else:
             readable = ", ".join(_pricebook_period_phrase(item) for item in values)
             lines.append(
-                "Противоречие в запросе: "
+                "Противоречие в явных параметрах базы: "
                 + (f"{head.strip()}: {readable}" if readable else text)
                 + "."
             )
@@ -1616,6 +1624,16 @@ def lsr_price_basis_prompt(
     region = str(payload.get("requested_region") or "").strip()
     origin = str(payload.get("requested_region_origin") or "").strip()
     derived = origin.casefold().startswith("выведено из")
+    contradiction_items = [
+        str(item or "").strip() for item in (payload.get("contradictions") or [])
+    ]
+    # A subject the derivation refused to choose between is still a named
+    # subject: the contradiction line below lists both, and «регион не назван»
+    # in the same card would state the opposite of what the operator can read
+    # two lines further down (§ 10 — one state per surface).
+    region_contradicted = any(
+        item.casefold().startswith("регион:") for item in contradiction_items
+    )
     if region and derived:
         lines.append(
             PRICE_BASIS_REGION_DERIVED_NOTE.format(
@@ -1629,7 +1647,7 @@ def lsr_price_basis_prompt(
             if origin and origin.casefold() != "не указан"
             else PRICE_BASIS_REGION_NOTE.format(value=region)
         )
-    else:
+    elif not region_contradicted:
         lines.append(PRICE_BASIS_REGION_UNNAMED_NOTE)
 
     applied_identifier = str(payload.get("actual_book") or "").strip()
