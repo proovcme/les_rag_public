@@ -3090,7 +3090,7 @@
         "tests/test_stall_completion_23.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 9135,
+      "lines": 9218,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4787,7 +4787,7 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_stall_bound_25.py"
       ],
-      "lines": 893,
+      "lines": 913,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7454,7 +7454,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 1750,
+      "lines": 1817,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8886,7 +8886,7 @@
     },
     {
       "inbound": [],
-      "lines": 845,
+      "lines": 1044,
       "module": "tests.test_architecture_contract_gate",
       "outbound": [
         "tools/architecture_contract_gate.py"
@@ -11161,7 +11161,7 @@
     },
     {
       "inbound": [],
-      "lines": 630,
+      "lines": 825,
       "module": "tests.test_lsr_price_basis_continuation",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -11203,7 +11203,7 @@
     },
     {
       "inbound": [],
-      "lines": 432,
+      "lines": 529,
       "module": "tests.test_lsr_result_readiness_service",
       "outbound": [
         "proxy/services/lsr_result_readiness_service.py"
@@ -14807,7 +14807,7 @@
       "inbound": [
         "tests/test_architecture_contract_gate.py"
       ],
-      "lines": 999,
+      "lines": 1192,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -19200,7 +19200,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 654,
     "tracked_python_files": 1024,
-    "tracked_python_lines": 346210
+    "tracked_python_lines": 347064
   },
   "warnings": []
 }

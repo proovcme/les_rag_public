@@ -430,3 +430,100 @@ def test_finished_and_fully_closed_job_offers_no_action_at_all() -> None:
     assert readiness["actions"] == []
     assert readiness["document"]["state"] == "ready"
     assert readiness["document"]["download_url"] == "/api/artifacts/rev_final/download"
+
+def test_a_completed_result_names_the_price_book_it_was_priced_in() -> None:
+    """Task 2026-09-28 § 7: every result shows its effective basis and its book.
+
+    Build 822's chat card said «Ценовая база совпадает с запросом» and nothing
+    more, while the delivered XLSX printed «Книга цен: sankt-peterburg_3kv2026»
+    on its own header line — the § 10 contradiction: reading only the chat, the
+    operator could not tell which book the file was priced in.
+    """
+
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[{
+            "source_row": "ВОР!R4",
+            "norm_code": "ГЭСН14-03-001-01",
+            "norm_status": "EXACT",
+            "row_role": "work",
+        }],
+        pricing_status="priced_final",
+        catalog_work_count=1,
+        price_basis={
+            "requested": "3 квартал 2026",
+            "actual_quarter": "3 квартал 2026 г.",
+            "actual_book": "sankt-peterburg_3kv2026",
+            "match": "exact",
+            "origin": "выведено из: задача + задача (единственная подходящая книга)",
+            "note": (
+                "Ценовая база совпадает с запросом: 3 квартал 2026 г. "
+                "(Санкт-Петербург). Источник выбора базы: выведено из: задача + задача "
+                "(единственная подходящая книга)."
+            ),
+        },
+    )
+
+    notice = format_lsr_readiness_notice(readiness, filename="ЛСР.xlsx")
+    assert notice.startswith("ЛСР собрана. Файл: ЛСР.xlsx.")
+    assert "Ценовая база совпадает с запросом: 3 квартал 2026 г." in notice
+    assert "Книга цен: sankt-peterburg_3kv2026." in notice
+
+
+def test_an_inherited_basis_is_named_once_with_the_document_revision() -> None:
+    """§ 4 + § 7: a continuation states the basis it kept and the book behind it."""
+
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[{
+            "source_row": "ВОР!R4",
+            "norm_code": "ГЭСН14-03-001-01",
+            "norm_status": "EXACT",
+            "row_role": "work",
+        }],
+        pricing_status="priced_final",
+        catalog_work_count=1,
+        price_basis={
+            "requested": "3 квартал 2026",
+            "actual_book": "sankt-peterburg_3kv2026",
+            "match": "exact",
+            "origin": "наследие документа: rev_596c2f577120",
+            "note": (
+                "Ценовая база этого документа сохранена: Санкт-Петербург "
+                "3 квартал 2026 г. Книга цен: sankt-peterburg_3kv2026. "
+                "Унаследовано из уже посчитанного документа: rev_596c2f577120."
+            ),
+        },
+    )
+
+    notice = format_lsr_readiness_notice(readiness, filename="ЛСР.xlsx")
+    assert "Ценовая база этого документа сохранена" in notice
+    assert "rev_596c2f577120" in notice
+    # the identifier is printed, never twice for the same book
+    assert notice.count("sankt-peterburg_3kv2026") == 1
+
+
+def test_a_partial_result_still_names_the_book_it_priced_the_rows_in() -> None:
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[
+            {
+                "source_row": "ВОР!R4",
+                "norm_code": "ГЭСН14-03-001-01",
+                "norm_status": "EXACT",
+                "row_role": "work",
+            },
+            {"source_row": "ВОР!R7", "norm_code": "", "norm_status": "MISSING", "row_role": "work"},
+        ],
+        pricing_status="priced_final",
+        catalog_work_count=2,
+        price_basis={
+            "actual_book": "sankt-peterburg_3kv2026",
+            "match": "exact",
+            "note": "Ценовая база совпадает с запросом: 3 квартал 2026 г.",
+        },
+    )
+
+    notice = format_lsr_readiness_notice(readiness, filename="ЛСР.xlsx")
+    assert notice.startswith("ЛСР собрана частично.")
+    assert "Книга цен: sankt-peterburg_3kv2026." in notice

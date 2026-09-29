@@ -34,6 +34,7 @@ from proxy.services import fgis_price_service
 from proxy.services import chat_evidence_application_service as carrier
 from proxy.services.chat_evidence_application_service import (
     document_price_basis_arguments,
+    document_priced_basis,
     model_packaging_document_basis,
     model_packaging_record_arguments,
     workbook_document_price_basis,
@@ -628,3 +629,197 @@ def test_a_replaced_file_under_the_same_attachment_inherits_nothing(tmp_path, mo
         )["job_id"]
         == job["job_id"]
     )
+
+
+# --------------------------------------------------------------------------- #
+# the seam build 822's live matrix broke: a continuation is a *new research* of
+# the same document, and the basis belongs to the document, not to the research
+# --------------------------------------------------------------------------- #
+CONTINUATION_QUESTION = "Продолжи это же задание по тому же прикреплённому документу."
+
+
+def _continuation_research(service: WorkbookResearchJobService):
+    return service.begin_or_resume(
+        service.identity(
+            session_id="session-2",
+            attachment_id="read_123456abcdef",
+            source_sha256="a" * 64,
+            dataset_ids=["smeta"],
+            profile_revision_id="factory",
+            model_identity="qwen-35b",
+            question=CONTINUATION_QUESTION,
+        )
+    )
+
+
+def test_a_continuation_research_reads_the_basis_its_document_was_priced_in(tmp_path):
+    # Live on the installed 822: «ВОР — Общая по Каменке» revision 1 bound
+    # ``sankt-peterburg_3kv2026`` and recorded it, then the continuation reply
+    # opened its own job for the same attachment and every revision it packaged
+    # reported «Ценовая база не задана явно».  The writer was right; the read was
+    # scoped to the run instead of to the document.
+    service, job = _job_events(tmp_path)
+    continuation = _continuation_research(service)
+    assert continuation["job_id"] != job["job_id"]
+    assert (
+        workbook_document_price_basis(
+            service.list_events(continuation["job_id"]), tool="build_lsr_workbook"
+        )
+        == {}
+    )
+
+    carried = workbook_document_price_basis(
+        service.document_packaging_events(
+            attachment_id="read_123456abcdef", source_sha256="a" * 64
+        ),
+        tool="build_lsr_workbook",
+    )
+    assert carried["pricebook"] == "sankt-peterburg_3kv2026"
+    assert carried["revision_id"] == "rev_1"
+
+    args = workbook_packaging_args(
+        packaging_tool="build_lsr_workbook",
+        attachment_id="read_123456abcdef",
+        question=CONTINUATION_QUESTION,
+        decisions=[{"source_row": "ВОР!R4", "title": "Монтаж", "unit": "м", "quantity": 1}],
+        operator_overrides={},
+        document_price_basis=carried,
+    )
+    assert args["document_price_basis"]["pricebook"] == "sankt-peterburg_3kv2026"
+    from proxy.services.structured_extract import validate as validate_json_schema
+    from proxy.services.workbook_tool_service import BUILD_LSR_WORKBOOK
+
+    assert validate_json_schema(args, BUILD_LSR_WORKBOOK.input_schema) == []
+
+
+def test_the_model_route_falls_back_to_the_document_when_its_run_has_no_basis(
+    tmp_path, monkeypatch
+):
+    service, _job = _job_events(tmp_path)
+    continuation = _continuation_research(service)
+    monkeypatch.setattr(carrier, "WorkbookResearchJobService", lambda *a, **k: service)
+
+    # the continuation research of the same attachment: it priced nothing itself, and
+    # `latest()` hands exactly this job dict to the model route
+    found = service.get(continuation["job_id"])
+    assert found["identity"]["attachment_id"] == "read_123456abcdef"
+    assert not (found.get("document") or {}).get("price_basis")
+    assert found["job_id"] == continuation["job_id"]
+
+    carried = model_packaging_document_basis(found)
+    assert carried["pricebook"] == "sankt-peterburg_3kv2026"
+    assert carried["revision_id"] == "rev_1"
+
+
+
+def test_document_priced_basis_is_the_one_rule_both_routes_share(tmp_path, monkeypatch):
+    service, _job = _job_events(tmp_path)
+    _continuation_research(service)
+    monkeypatch.setattr(carrier, "WorkbookResearchJobService", lambda *a, **k: service)
+
+    assert document_priced_basis(attachment_id="") == {}
+    assert document_priced_basis(attachment_id="read_000000000000") == {}
+    carried = document_priced_basis(
+        attachment_id="read_123456abcdef", source_sha256="a" * 64
+    )
+    assert carried["pricebook"] == "sankt-peterburg_3kv2026"
+    # the same answer every turn of the same document, so the routes cannot drift
+    assert document_priced_basis(
+        attachment_id="read_123456abcdef", source_sha256="a" * 64
+    ) == carried
+
+
+def test_the_document_read_crosses_researches_but_never_documents(tmp_path):
+    service, first_job = _job_events(tmp_path)
+    other = service.begin_or_resume(
+        service.identity(
+            session_id="session-9",
+            attachment_id="read_ffffffffffff",
+            source_sha256="b" * 64,
+            dataset_ids=["smeta"],
+            profile_revision_id="factory",
+            model_identity="qwen-35b",
+            question="Собери ЛСР по Москве",
+        )
+    )
+    service.record_packaging(
+        other["job_id"],
+        tool="build_lsr_workbook",
+        revision_id="rev_moscow",
+        draft=False,
+        price_basis={
+            "actual_book": "moskva_3kv2026",
+            "actual_region": "Москва",
+            "actual_quarter": "3 квартал 2026 г.",
+            "match": "exact",
+        },
+    )
+
+    events = service.document_packaging_events(
+        attachment_id="read_123456abcdef", source_sha256="a" * 64
+    )
+    assert [str(e["payload"].get("revision_id")) for e in events] == ["rev_1"]
+    assert {str(e["job_id"]) for e in events} == {first_job["job_id"]}
+    assert workbook_document_price_basis(events, tool="build_lsr_workbook")[
+        "pricebook"
+    ] == "sankt-peterburg_3kv2026"
+    # the second attachment keeps its own book: one document never lends a basis
+    # to another (§ 7 names *the* book of *this* result)
+    assert workbook_document_price_basis(
+        service.document_packaging_events(
+            attachment_id="read_ffffffffffff", source_sha256="b" * 64
+        ),
+        tool="build_lsr_workbook",
+    )["pricebook"] == "moskva_3kv2026"
+
+
+def test_a_replaced_file_under_the_same_attachment_lends_no_basis(tmp_path, monkeypatch):
+    # § 9: the source a document was priced in is immutable for it.  A different
+    # file under the same attachment id starts its own history and inherits nothing.
+    service, _job = _job_events(tmp_path)
+    monkeypatch.setattr(carrier, "WorkbookResearchJobService", lambda *a, **k: service)
+
+    assert (
+        service.document_packaging_events(
+            attachment_id="read_123456abcdef", source_sha256="c" * 64
+        )
+        == []
+    )
+    assert (
+        document_priced_basis(attachment_id="read_123456abcdef", source_sha256="c" * 64)
+        == {}
+    )
+    # an identity that recorded no hash at all is still this document's history
+    assert document_priced_basis(attachment_id="read_123456abcdef")["pricebook"] == (
+        "sankt-peterburg_3kv2026"
+    )
+
+
+def test_the_newest_priced_revision_of_the_document_wins(tmp_path):
+    service, first_job = _job_events(tmp_path)
+    continuation = _continuation_research(service)
+    service.record_packaging(
+        continuation["job_id"],
+        tool="build_lsr_workbook",
+        revision_id="rev_2",
+        draft=True,
+        parent_revision_id="rev_1",
+        price_basis={
+            "actual_book": "leningradskaya_oblast_3kv2026",
+            "actual_region": "Ленинградская область",
+            "actual_quarter": "3 квартал 2026 г.",
+            "match": "exact",
+        },
+    )
+
+    events = service.document_packaging_events(
+        attachment_id="read_123456abcdef", source_sha256="a" * 64
+    )
+    assert {str(e["payload"].get("revision_id")) for e in events} == {"rev_1", "rev_2"}
+    carried = workbook_document_price_basis(events, tool="build_lsr_workbook")
+    # the operator moved the document to the regional book in the second research;
+    # the document is priced in *that* book now, and the next turn continues in it
+    assert carried["pricebook"] == "leningradskaya_oblast_3kv2026"
+    assert carried["region"] == "Ленинградская область"
+    assert first_job["job_id"] != continuation["job_id"]
+

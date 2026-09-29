@@ -411,6 +411,42 @@ def workbook_document_price_basis(
     return {**newest, "revision_id": chosen_in}
 
 
+def document_priced_basis(
+    *,
+    attachment_id: str,
+    source_sha256: str = "",
+    tool: str = "build_lsr_workbook",
+) -> dict[str, Any]:
+    """The basis the *document* was last priced in, wherever that was recorded.
+
+    One rule for every route that packages a revision of an already-priced document
+    (§ 10: the routes must not disagree about one document): the basis is read from
+    the durable packaging history of the attachment, not from the job this reply
+    happens to run.  A continuation opens a new research job — its durable identity
+    covers the question — while the document stays one artifact, so a job-scoped read
+    returned the estimate to an unchosen basis on the turn right after the one that
+    chose it (build 822, live ``B0_camenka``: revision 1 priced in
+    ``sankt-peterburg_3kv2026`` under one job, revisions 2..5 reporting «no_book»
+    under the next).
+    """
+
+    aid = str(attachment_id or "").strip()
+    if not aid:
+        return {}
+    try:
+        events = WorkbookResearchJobService().document_packaging_events(
+            attachment_id=aid,
+            source_sha256=str(source_sha256 or "").strip(),
+        )
+    except Exception as error:  # noqa: BLE001 - durability degrades visibly
+        logger.warning(
+            "[WORKBOOK] document basis read across researches failed: %s",
+            type(error).__name__,
+        )
+        return {}
+    return workbook_document_price_basis(events, tool=str(tool or ""))
+
+
 def workbook_research_job_for_document(
     *,
     attachment_id: str,
@@ -457,6 +493,14 @@ def model_packaging_document_basis(job: Mapping[str, Any] | None) -> dict[str, A
     so the three routes cannot drift apart and disagree about the basis of one
     document (§ 10).  An unpriced earlier revision stored nothing, and an
     empty record keeps the question open instead of answering it (§ 7).
+
+    The job that the current reply runs is only the fast path: when it carries no
+    priced revision — a continuation always opens a fresh research of the same
+    attachment, because the durable job identity covers the question — the basis is
+    read from the packaging history of the *document* (`document_priced_basis`).
+    Without that second read the fix for the 820 defect only survived inside a
+    single research, which is exactly what build 822's live ``B0_camenka`` proved it
+    does not.
     """
 
     if not isinstance(job, Mapping):
@@ -465,7 +509,15 @@ def model_packaging_document_basis(job: Mapping[str, Any] | None) -> dict[str, A
     basis = document.get("price_basis")
     if not isinstance(basis, Mapping) or not basis:
         basis = job.get("price_basis")
-    return document_price_basis_arguments(basis)
+    record = document_price_basis_arguments(basis)
+    if record:
+        return record
+    identity = job.get("identity") if isinstance(job.get("identity"), Mapping) else {}
+    return document_priced_basis(
+        attachment_id=str(identity.get("attachment_id") or job.get("attachment_id") or ""),
+        source_sha256=str(identity.get("source_sha256") or ""),
+        tool=str(job.get("packaging_tool") or "build_lsr_workbook"),
+    )
 
 
 def model_packaging_record_arguments(
@@ -8444,6 +8496,27 @@ async def _execute_chat_evidence_application(
                                     durable_decisions=bool(durable_packaging_rows),
                                 )
                             )
+                        # The basis is a property of the document, its lineage here is a
+                        # property of this research: sequences restart per job, so only
+                        # the basis read crosses the research boundary (§ 7), while the
+                        # replay guard keeps its own job's chronology.
+                        document_basis_events: list[dict[str, Any]] = []
+                        if research_job_service is not None and attachment_id:
+                            document_basis_events = (
+                                research_job_service.document_packaging_events(
+                                    attachment_id=attachment_id,
+                                    source_sha256=str(
+                                        getattr(
+                                            source_catalog, "source_file_sha256", ""
+                                        )
+                                        or ""
+                                    ),
+                                )
+                            )
+                        if not document_basis_events:
+                            # a document nothing has packaged yet reads its own job —
+                            # the same answer, one query less of the whole store
+                            document_basis_events = list(packaging_events)
                         for packaging_tool in packaging_tools:
                             packaging_parent = (
                                 packaging_settled[packaging_tool]
@@ -8456,7 +8529,7 @@ async def _execute_chat_evidence_application(
                             # reply, so «добери нормы» cannot silently return the
                             # estimate to an unchosen basis.
                             inherited_basis = workbook_document_price_basis(
-                                packaging_events, tool=packaging_tool
+                                document_basis_events, tool=packaging_tool
                             )
                             workbook_call = {
                                 "tool": packaging_tool,
@@ -8530,7 +8603,17 @@ async def _execute_chat_evidence_application(
                                             tool=packaging_tool,
                                             revision_id=str(artifact["revision_id"]),
                                             draft=packaging_is_draft,
-                                            parent_revision_id=packaging_parent,
+                                            # the packager answers with the revision this
+                                            # one was really built on, and that answer
+                                            # crosses researches: a job-scoped hint is
+                                            # empty for the first revision of a new
+                                            # research of an already-priced document,
+                                            # which left a hole in the durable chain
+                                            # (build 822, live B0_camenka revision 2).
+                                            parent_revision_id=(
+                                                str(artifact.get("parent_revision_id") or "")
+                                                or packaging_parent
+                                            ),
                                             # the basis belongs to this document as
                                             # much as its revision chain does: the
                                             # next turn inherits it from here (§ 4).

@@ -119,6 +119,22 @@ PRICED_PACKAGING_TOOL = "build_lsr_workbook"
 WORKBOOK_TOOL_EXECUTOR_CALL = "workbook_tool_executor"
 MODEL_PACKAGING_BASIS_READER = "model_packaging_document_basis"
 MODEL_PACKAGING_EVENT_BUILDER = "model_packaging_record_arguments"
+#: …and it is read back across *every* research of that document: a continuation
+#: reply opens a new job (the durable identity covers the question), so a basis the
+#: next job never wrote has to come from the document's own history (build 822,
+#: live ``B0_camenka``: revisions 2..5 reported no book over a priced document).
+DOCUMENT_BASIS_SCOPE_EVENTS = "document_packaging_events"
+DOCUMENT_BASIS_SCOPE_READER = "document_priced_basis"
+
+# Task 2026-09-28 § 7: the operator's own result line has to name the basis the
+# estimate was computed in and the identifier of the price book.  Build 822 spoke
+# about a basis only when it was wrong, so «ЛСР собрана частично…» carried no book
+# while the delivered XLSX printed «Книга цен: …» — two surfaces, one document (§ 10).
+LSR_BASIS_NOTICE_MODULE = "proxy/services/lsr_result_readiness_service.py"
+LSR_BASIS_NOTICE_FORMATTER = "format_lsr_readiness_notice"
+LSR_BASIS_SUFFIX_BUILDER = "_lsr_basis_suffix"
+LSR_BASIS_VISIBILITY_FLAG = "basis_visible"
+LSR_BASIS_MATCHED_STATE = "exact"
 
 # A rate that nobody chose may still be calculated, but only under the label the
 # readiness state, the price gaps and the confirmed/preliminary split key on.
@@ -554,6 +570,42 @@ def _document_basis_violations(relative: str, tree: ast.AST) -> Iterable[Archite
         ]
         if not builders:
             return
+        model_basis = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == MODEL_PACKAGING_BASIS_READER
+        ]
+        # Checked ahead of the rest of this branch: build 822 failed on the route
+        # where the *model* asked for the file, and that route can carry a basis
+        # perfectly well while still reading only the job it was handed.
+        if model_basis:
+            if not any(
+                isinstance(node, ast.Call)
+                and _call_name(node) == DOCUMENT_BASIS_ARG_KEEPER
+                for node in ast.walk(model_basis[0])
+            ):
+                yield ArchitectureViolation(
+                    "PACKAGING_ROUTE_NOT_DURABLE",
+                    relative,
+                    model_basis[0].lineno,
+                    f"{MODEL_PACKAGING_BASIS_READER}() parses a basis on its own instead of "
+                    f"reusing {DOCUMENT_BASIS_ARG_KEEPER}(): two routes would disagree about "
+                    "the basis of one document",
+                )
+            if not any(
+                isinstance(node, ast.Call)
+                and _call_name(node).split(".")[-1] == DOCUMENT_BASIS_SCOPE_READER
+                for node in ast.walk(model_basis[0])
+            ):
+                yield ArchitectureViolation(
+                    "DOCUMENT_BASIS_READ_AT_JOB_SCOPE",
+                    relative,
+                    model_basis[0].lineno,
+                    f"{MODEL_PACKAGING_BASIS_READER}() reads only the job it was given: "
+                    f"without {DOCUMENT_BASIS_SCOPE_READER}() the route where the model asks "
+                    "for the file repeats the 822 failure on the next continuation",
+                )
         reader_called = any(
             isinstance(node, ast.Call) and _call_name(node) == DOCUMENT_BASIS_READER
             for node in ast.walk(tree)
@@ -620,25 +672,20 @@ def _document_basis_violations(relative: str, tree: ast.AST) -> Iterable[Archite
                 f"the model-authored packaging call does not build its durable event "
                 f"through {MODEL_PACKAGING_EVENT_BUILDER}()",
             )
-        model_basis = [
+        for call in (
             node
             for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == MODEL_PACKAGING_BASIS_READER
-        ]
-        if model_basis and not any(
-            isinstance(node, ast.Call)
-            and _call_name(node) == DOCUMENT_BASIS_ARG_KEEPER
-            for node in ast.walk(model_basis[0])
+            if isinstance(node, ast.Call) and _call_name(node) == DOCUMENT_BASIS_READER
         ):
-            yield ArchitectureViolation(
-                "PACKAGING_ROUTE_NOT_DURABLE",
-                relative,
-                model_basis[0].lineno,
-                f"{MODEL_PACKAGING_BASIS_READER}() parses a basis on its own instead of "
-                f"reusing {DOCUMENT_BASIS_ARG_KEEPER}(): two routes would disagree about "
-                "the basis of one document",
-            )
+            if not _basis_events_read_across_researches(tree, call):
+                yield ArchitectureViolation(
+                    "DOCUMENT_BASIS_READ_AT_JOB_SCOPE",
+                    relative,
+                    call.lineno,
+                    f"{DOCUMENT_BASIS_READER}() is handed the events of one research job: "
+                    "a continuation is a new job over the same document, so the basis the "
+                    "first research recorded would be read as «no basis»",
+                )
         return
     if relative == DOCUMENT_BASIS_REPACK_MODULE:
         strings = {
@@ -690,6 +737,151 @@ def _document_basis_violations(relative: str, tree: ast.AST) -> Iterable[Archite
             f"{DOCUMENT_BASIS_RECORDER}() does not persist the price basis beside the "
             "revision, so a restart or a continuation has nothing to inherit",
         )
+    scope_readers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == DOCUMENT_BASIS_SCOPE_EVENTS
+    ]
+    if not scope_readers:
+        return
+    scope_text = " ".join(
+        node.value
+        for node in ast.walk(scope_readers[0])
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    )
+    if "attachment_id" not in scope_text or "workbook_research_jobs" not in scope_text:
+        yield ArchitectureViolation(
+            "DOCUMENT_BASIS_READ_AT_JOB_SCOPE",
+            relative,
+            scope_readers[0].lineno,
+            f"{DOCUMENT_BASIS_SCOPE_EVENTS}() does not gather the researches of one "
+            "attachment: under that name a single job would still answer «no basis» to "
+            "the continuation that opened the next one",
+        )
+
+
+def _basis_events_read_across_researches(tree: ast.AST, call: ast.Call) -> bool:
+    """True when this basis read is fed the packaging events of the *document*.
+
+    ``workbook_document_price_basis()`` answers from whatever event list it is
+    handed, so the seam is the caller's source: the packaging history of the
+    attachment (``document_packaging_events()``), not the events of the job this
+    reply happens to run (``list_events(job_id)``).
+    """
+
+    argument = call.args[0] if call.args else next(
+        (item.value for item in call.keywords if item.arg in {"events", "packaging_events"}),
+        None,
+    )
+    if isinstance(argument, ast.Call):
+        return _call_name(argument).split(".")[-1] == DOCUMENT_BASIS_SCOPE_EVENTS
+    if isinstance(argument, ast.Name):
+        assigned: list[ast.expr | None] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == argument.id
+                for target in node.targets
+            ):
+                assigned.append(node.value)
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                if node.target.id == argument.id:
+                    assigned.append(node.value)
+        if not assigned:
+            # nothing in this module writes the name: not this check's business
+            return True
+        return any(
+            DOCUMENT_BASIS_SCOPE_EVENTS in _read_source_names(value) for value in assigned
+        )
+    return True
+
+
+def _read_source_names(value: ast.expr | None) -> set[str]:
+    """Trailing call names this assignment could have been built from."""
+
+    if value is None:
+        return set()
+    return {
+        _call_name(node).split(".")[-1]
+        for node in ast.walk(value)
+        if isinstance(node, ast.Call)
+    }
+
+
+def _lsr_basis_notice_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Task 2026-09-28 § 7: the operator's own line names the basis it was priced in.
+
+    Build 822 told the operator everything about a basis that had gone wrong and
+    nothing about one that had been applied, so «ЛСР собрана частично…» carried no
+    book while the very file it announced printed «Книга цен: …» on its header.  § 10
+    asks those two surfaces to agree, so the notice names the applied basis and the
+    identifier of the book that produced it.
+    """
+
+    if relative != LSR_BASIS_NOTICE_MODULE:
+        return
+    formatters = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == LSR_BASIS_NOTICE_FORMATTER
+    ]
+    if not formatters:
+        return
+    formatter = formatters[0]
+    visibility = [
+        node
+        for node in ast.walk(formatter)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == LSR_BASIS_VISIBILITY_FLAG
+            for target in node.targets
+        )
+    ]
+    if not visibility:
+        yield ArchitectureViolation(
+            "APPLIED_BASIS_NOT_NAMED",
+            relative,
+            formatter.lineno,
+            f"{LSR_BASIS_NOTICE_FORMATTER}() has no {LSR_BASIS_VISIBILITY_FLAG} decision at "
+            "all: the result line would not say which price basis it was computed in",
+        )
+    else:
+        for compare in (
+            node
+            for node in ast.walk(visibility[0].value)
+            if isinstance(node, ast.Compare)
+            and isinstance(node.ops[0], ast.In)
+            and isinstance(node.comparators[0], (ast.Set, ast.List, ast.Tuple))
+        ):
+            states = {
+                item.value
+                for item in compare.comparators[0].elts
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            }
+            if states and LSR_BASIS_MATCHED_STATE not in states:
+                yield ArchitectureViolation(
+                    "APPLIED_BASIS_NOT_NAMED",
+                    relative,
+                    visibility[0].lineno,
+                    f"{LSR_BASIS_VISIBILITY_FLAG} enumerates only the broken states "
+                    f"({', '.join(sorted(states))}): an applied {LSR_BASIS_MATCHED_STATE} "
+                    "basis stays unnamed in the chat over a file that names its book",
+                )
+    for call in (
+        node
+        for node in ast.walk(formatter)
+        if isinstance(node, ast.Call)
+        and _call_name(node).split(".")[-1] == LSR_BASIS_SUFFIX_BUILDER
+    ):
+        if len(call.args) < 3 and not any(item.arg == "book" for item in call.keywords):
+            yield ArchitectureViolation(
+                "APPLIED_BASIS_NOT_NAMED",
+                relative,
+                call.lineno,
+                f"{LSR_BASIS_SUFFIX_BUILDER}() is called without the price book "
+                "identifier: § 7 asks every result to name the book it was priced in",
+            )
 
 
 def _accrual_label_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
@@ -861,6 +1053,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     yield from _document_lineage_violations(relative, tree)
     yield from _basis_carrier_violations(relative, tree)
     yield from _document_basis_violations(relative, tree)
+    yield from _lsr_basis_notice_violations(relative, tree)
     yield from _accrual_label_violations(relative, tree)
     yield from _book_price_unit_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}

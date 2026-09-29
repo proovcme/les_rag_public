@@ -772,14 +772,34 @@ def build_lsr_result_readiness(
     }
 
 
-def _lsr_basis_suffix(match: str, note: str) -> str:
-    """Explicit price-basis line; the code never silently reconciles periods."""
+def _lsr_basis_suffix(match: str, note: str, book: str = "") -> str:
+    """Explicit price-basis line; the code never silently reconciles periods.
 
-    if not note:
-        return ""
+    Task 2026-09-28 § 7 asks *every* result for the basis it was computed in, its
+    source and the identifier of the price book, so a basis that was applied
+    correctly is stated as plainly as one that was not.  Naming only the broken
+    case made build 822 answer «Период «3 квартал 2026 года» … отсутствует, цены не
+    рассчитаны» in the same turn in which the code had bound ``sankt-peterburg_3kv2026``
+    and printed a preliminary amount: the operator could not see, from the chat
+    alone, which book the file was priced in — while the delivered XLSX said so on
+    its own header line («Книга цен: …»), which is the § 10 contradiction this closes.
+    """
+
+    body = _text(note)
+    book_id = _text(book)
+    book_bit = f" Книга цен: {book_id}." if book_id and book_id not in body else ""
     if match == "mismatch":
-        return " Ценовая база не совпадает с запрошенной. " + note
-    return " Ценовая база: " + note
+        return " Ценовая база не совпадает с запрошенной." + (
+            f" {body}" if body else ""
+        ) + book_bit
+    if not body:
+        return f" Ценовая база: Книга цен: {book_id}." if book_id else ""
+    if body.startswith("Ценовая база"):
+        # the projection already words itself («Ценовая база совпадает с запросом: …»,
+        # «Ценовая база этого документа сохранена …»); repeating the label only
+        # made the line harder to read.
+        return f" {body}{book_bit}"
+    return f" Ценовая база: {body}{book_bit}"
 
 
 def format_lsr_readiness_notice(
@@ -807,11 +827,11 @@ def format_lsr_readiness_notice(
     )
     basis_match = _text(basis_dim.get("match"))
     basis_note = _text(basis_dim.get("note"))
-    basis_visible = bool(basis_note) and basis_match in {
-        "mismatch",
-        "unspecified",
-        "no_book",
-    }
+    basis_book = _text(basis_dim.get("actual_book"))
+    # § 7: the basis is named whether it matched, was inherited, contradicted the
+    # request or could not be bound at all — silence about a good basis is still a
+    # result that does not show what it was computed in.
+    basis_visible = bool(basis_note or basis_book)
     counts = payload.get("counts") if isinstance(payload.get("counts"), Mapping) else {}
     declared_count = int(counts.get("declared_gaps") or 0)
     if (
@@ -823,7 +843,7 @@ def format_lsr_readiness_notice(
     ):
         done_line = f"ЛСР собрана.{file_bit}".strip()
         if basis_visible:
-            done_line += _lsr_basis_suffix(basis_match, basis_note)
+            done_line += _lsr_basis_suffix(basis_match, basis_note, basis_book)
         return done_line
     parts = [f"ЛСР собрана частично.{file_bit}".strip()]
     if counts:
@@ -871,7 +891,7 @@ def format_lsr_readiness_notice(
             f"{_text(prices_dim.get('action'))}".strip()
         )
     if basis_visible:
-        parts.append(_lsr_basis_suffix(basis_match, basis_note).strip())
+        parts.append(_lsr_basis_suffix(basis_match, basis_note, basis_book).strip())
     if declared_count:
         parts.append(
             f"Пробелов, закрытых приложением без решения модели: {declared_count}. "

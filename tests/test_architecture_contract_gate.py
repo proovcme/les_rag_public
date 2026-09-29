@@ -843,3 +843,202 @@ _PRICE_SOURCE_LABEL = {
 """,
     )
     assert "BOOK_PRICE_UNIT_UNCHECKED" not in codes
+
+
+def test_rejects_a_basis_read_scoped_to_one_research(tmp_path: Path) -> None:
+    """The 822 live defect: recorded correctly, inherited only inside one research."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def _package(service, job_id, attachment_id, tool, decisions):
+    events = service.list_events(job_id)
+    basis = workbook_document_price_basis(events, tool=tool)
+    return workbook_packaging_args(
+        packaging_tool=tool,
+        attachment_id=attachment_id,
+        question="Продолжи это же задание",
+        decisions=decisions,
+        operator_overrides={},
+        document_price_basis=basis,
+    )
+""",
+    )
+    assert "DOCUMENT_BASIS_READ_AT_JOB_SCOPE" in codes
+
+
+def test_accepts_a_basis_read_over_the_documents_researches(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def _package(service, job_id, attachment_id, tool, decisions):
+    events = service.list_events(job_id)
+    document_events = service.document_packaging_events(attachment_id=attachment_id)
+    basis = workbook_document_price_basis(document_events, tool=tool)
+    return workbook_packaging_args(
+        packaging_tool=tool,
+        attachment_id=attachment_id,
+        question="Продолжи это же задание",
+        decisions=decisions,
+        operator_overrides={},
+        document_price_basis=basis,
+    )
+""",
+    )
+    assert "DOCUMENT_BASIS_READ_AT_JOB_SCOPE" not in codes
+
+
+def test_rejects_a_model_route_that_only_reads_the_job_it_was_given(
+    tmp_path: Path,
+) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def model_packaging_document_basis(job):
+    document = job.get("document") or {}
+    return document_price_basis_arguments(document.get("price_basis"))
+
+
+def _package(job, tool, decisions):
+    basis = model_packaging_document_basis(job)
+    return workbook_packaging_args(
+        packaging_tool=tool,
+        attachment_id="read_1",
+        question="Продолжи это же задание",
+        decisions=decisions,
+        operator_overrides={},
+        document_price_basis=basis,
+    )
+""",
+    )
+    assert "DOCUMENT_BASIS_READ_AT_JOB_SCOPE" in codes
+
+
+def test_accepts_a_model_route_that_falls_back_to_the_document(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def model_packaging_document_basis(job):
+    document = job.get("document") or {}
+    record = document_price_basis_arguments(document.get("price_basis"))
+    if record:
+        return record
+    return document_priced_basis(attachment_id="read_1")
+
+
+def _package(job, tool, decisions):
+    basis = model_packaging_document_basis(job)
+    return workbook_packaging_args(
+        packaging_tool=tool,
+        attachment_id="read_1",
+        question="Продолжи это же задание",
+        decisions=decisions,
+        operator_overrides={},
+        document_price_basis=basis,
+    )
+""",
+    )
+    assert "DOCUMENT_BASIS_READ_AT_JOB_SCOPE" not in codes
+
+
+def test_rejects_a_document_event_read_that_still_keys_on_the_job(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/workbook_research_job_service.py",
+        """
+def record_packaging(job_id, *, tool, revision_id, draft, price_basis=None):
+    return _append(job_id, {"price_basis": price_basis})
+
+
+def document_packaging_events(job_id):
+    return list_events(job_id)
+""",
+    )
+    assert "DOCUMENT_BASIS_READ_AT_JOB_SCOPE" in codes
+
+
+def test_accepts_a_document_event_read_over_the_researches_of_one_attachment(
+    tmp_path: Path,
+) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/workbook_research_job_service.py",
+        """
+def record_packaging(job_id, *, tool, revision_id, draft, price_basis=None):
+    return _append(job_id, {"price_basis": price_basis})
+
+
+def document_packaging_events(*, attachment_id, source_sha256=""):
+    rows = execute(
+        "SELECT rowid, job_id, identity_json FROM workbook_research_jobs"
+        " ORDER BY updated_at DESC"
+    )
+    return [
+        event
+        for row in rows
+        if row.identity.get("attachment_id") == attachment_id
+        for event in events_of(row.job_id)
+    ]
+""",
+    )
+    assert "DOCUMENT_BASIS_READ_AT_JOB_SCOPE" not in codes
+
+
+def test_rejects_a_notice_that_names_only_a_broken_basis(tmp_path: Path) -> None:
+    """§ 7: an applied basis is a result the operator has to be able to read."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_result_readiness_service.py",
+        """
+def format_lsr_readiness_notice(readiness, *, filename=""):
+    basis_note = "Ценовая база совпадает с запросом: 3 квартал 2026 г."
+    basis_match = "exact"
+    basis_visible = bool(basis_note) and basis_match in {
+        "mismatch",
+        "unspecified",
+        "no_book",
+    }
+    if not basis_visible:
+        return "ЛСР собрана."
+    return _lsr_basis_suffix(basis_match, basis_note)
+""",
+    )
+    assert "APPLIED_BASIS_NOT_NAMED" in codes
+
+
+def test_rejects_a_notice_that_drops_the_price_book_identifier(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_result_readiness_service.py",
+        """
+def format_lsr_readiness_notice(readiness, *, filename=""):
+    basis_note = "Ценовая база совпадает с запросом"
+    basis_match = "exact"
+    basis_visible = bool(basis_note)
+    return _lsr_basis_suffix(basis_match, basis_note) if basis_visible else ""
+""",
+    )
+    assert "APPLIED_BASIS_NOT_NAMED" in codes
+
+
+def test_accepts_a_notice_that_names_the_applied_basis_and_its_book(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/lsr_result_readiness_service.py",
+        """
+def format_lsr_readiness_notice(readiness, *, filename=""):
+    basis_note = "Ценовая база совпадает с запросом: 3 квартал 2026 г."
+    basis_match = "exact"
+    basis_book = "sankt-peterburg_3kv2026"
+    basis_visible = bool(basis_note or basis_book)
+    if not basis_visible:
+        return "ЛСР собрана."
+    return _lsr_basis_suffix(basis_match, basis_note, basis_book)
+""",
+    )
+    assert "APPLIED_BASIS_NOT_NAMED" not in codes

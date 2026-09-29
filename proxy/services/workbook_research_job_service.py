@@ -516,6 +516,68 @@ class WorkbookResearchJobService:
             )
         return events
 
+    def document_packaging_events(
+        self,
+        *,
+        attachment_id: str,
+        source_sha256: str = "",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """``workbook_packaged`` events of *this document*, across every research of it.
+
+        A continuation is a new research of the same attachment: the durable identity
+        of a job covers ``question_sha256``, so «добери нормы» opens its own ``job_id``
+        while the downloadable document stays one artifact (§ 4).  Reading the basis
+        out of the current job alone therefore asked the operator to choose the price
+        basis again on the very next turn — build 822's live matrix on ``B0_camenka``
+        recorded ``sankt-peterburg_3kv2026`` under revision 1's job and found nothing
+        in the job that packaged revisions 2..5, so those files printed «Ценовая база
+        не задана явно» over a document that had been priced in a book.  The document,
+        not the run, owns its basis (§ 7), so this read is scoped to the document: same
+        attachment, same source hash, every job that researched it, oldest event first.
+        """
+
+        aid = str(attachment_id or "").strip()
+        if not aid:
+            return []
+        digest = str(source_sha256 or "").strip()
+        limit_n = max(1, min(int(limit or 200), 500))
+        ordered: list[tuple[str, int, int, dict[str, Any]]] = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT rowid, job_id, identity_json FROM workbook_research_jobs"
+                " ORDER BY updated_at DESC LIMIT ?",
+                (limit_n,),
+            ).fetchall()
+            for row in rows:
+                identity = json.loads(str(row["identity_json"] or "{}") or "{}")
+                if not isinstance(identity, dict):
+                    continue
+                if str(identity.get("attachment_id") or "") != aid:
+                    continue
+                if digest and str(identity.get("source_sha256") or "").strip() not in {
+                    "",
+                    digest,
+                }:
+                    # the file behind this attachment was replaced: nothing a pricing
+                    # of the old one decided carries over to the new one (§ 9).
+                    continue
+                job_id = str(row["job_id"])
+                research_order = int(row["rowid"])
+                for event in self._events(conn, job_id, "workbook_packaged"):
+                    event["job_id"] = job_id
+                    ordered.append((
+                        str(event.get("created_at") or ""),
+                        research_order,
+                        int(event.get("sequence") or 0),
+                        event,
+                    ))
+        # ``sequence`` restarts per research job, so the document's chronology is the
+        # chronology of its events; two events written in the same second are ordered
+        # by the research they belong to, oldest research first.
+        ordered.sort(key=lambda item: item[:3])
+        return [item[3] for item in ordered]
+
     def record_packaging(
         self,
         job_id: str,
@@ -1464,7 +1526,7 @@ class WorkbookResearchJobService:
         conn: sqlite3.Connection, job_id: str, event_type: str
     ) -> list[dict[str, Any]]:
         rows = conn.execute(
-            "SELECT sequence,event_type,payload_json FROM workbook_research_events"
+            "SELECT sequence,event_type,payload_json,created_at FROM workbook_research_events"
             " WHERE job_id=? AND event_type=? ORDER BY sequence",
             (str(job_id), str(event_type)),
         ).fetchall()
@@ -1478,6 +1540,11 @@ class WorkbookResearchJobService:
                 {
                     "sequence": int(row["sequence"]),
                     "event_type": str(row["event_type"]),
+                    # the moment the event itself was written: a document read that
+                    # spans researches orders by this, because ``sequence`` restarts
+                    # per job and a research created in the same second as its
+                    # predecessor would otherwise sort by the wrong clock.
+                    "created_at": str(row["created_at"] or ""),
                     "payload": payload if isinstance(payload, Mapping) else {},
                 }
             )
