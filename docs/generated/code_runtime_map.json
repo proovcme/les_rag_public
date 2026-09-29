@@ -5059,7 +5059,7 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_model_answer_table_service.py"
       ],
-      "lines": 100,
+      "lines": 101,
       "module": "proxy.services.model_answer_table_service",
       "outbound": [
         "proxy/__init__.py",
@@ -19277,7 +19277,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 658,
     "tracked_python_files": 1029,
-    "tracked_python_lines": 352450
+    "tracked_python_lines": 352451
   },
   "warnings": []
 }
