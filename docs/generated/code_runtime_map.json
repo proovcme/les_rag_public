@@ -3083,6 +3083,7 @@
         "tests/test_lsr_packet_integrity.py",
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_scheduler_starvation_824.py",
+        "tests/test_model_rag_query_declaration.py",
         "tests/test_notebook_study_chat_policy.py",
         "tests/test_packaging_recovery_service.py",
         "tests/test_pool_completion_alignment_24.py",
@@ -6422,7 +6423,7 @@
         "tests/test_candidate_acceptance_service.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 430,
+      "lines": 443,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -11631,6 +11632,17 @@
         "proxy/services/typed_memory_projection_service.py"
       ],
       "path": "tests/test_model_preset_workflow_parity.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 423,
+      "module": "tests.test_model_rag_query_declaration",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py"
+      ],
+      "path": "tests/test_model_rag_query_declaration.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -19228,9 +19240,9 @@
     "product_reachable": 358,
     "registered_api_routes": 338,
     "runtime_support": 11,
-    "test_or_tool_only": 656,
-    "tracked_python_files": 1026,
-    "tracked_python_lines": 351149
+    "test_or_tool_only": 657,
+    "tracked_python_files": 1027,
+    "tracked_python_lines": 351585
   },
   "warnings": []
 }

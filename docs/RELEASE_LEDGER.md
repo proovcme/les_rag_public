@@ -79,10 +79,16 @@ Tests: `tests/test_model_rag_query_declaration.py` (17, новый файл, в�
 `UNIT_TESTS`), `tests/test_lsr_candidate_query_service.py` (15 → 22),
 `tests/test_chat_evidence_application_service.py` (+2, 143 collected),
 `tests/test_attachment_source_catalog_service.py` (включён в `UNIT_TESTS`);
-`make test-unit` — 683 passed / 2 skipped. Полный `make test` — 1722 passed и одно
-падение: устаревшая `docs/CODE_RUNTIME_MAP.md` (строки двух сервисов и новый
-тест-файл), регенерирована `tools/code_runtime_map.py`, после регенерации
-`tests/test_code_runtime_map.py` — 11 passed. Реестр runtime-факторов: новый
+`make test-unit` — 683 passed / 2 skipped, `make verify` — 1762 collected зелёный.
+Полный `make test` прошёл в два замера и оба падения были картой, а не кодом: первый
+дал 1722 passed / 1 failed, потому что `docs/CODE_RUNTIME_MAP.md` устарела от строк
+этой правки; после регенерации полный гейт на уже закоммиченном дереве дал
+1741 passed / 1 failed — новый тест-файл стал отслеживаться git только коммитом, и
+счётчик отслеживаемых Python-файлов сдвинулся 1026 → 1027. Карта регенерирована
+вторично (`tools/code_runtime_map.py`), `tests/test_code_runtime_map.py` — 11 passed.
+Третий замер на финальном дереве: полный `make test` — 1742 passed / 20 skipped, зелёный
+(`stage_b/live_826/test_826_final.log`), и `make verify` после регенерации — 1762 collected,
+зелёный (`stage_b/live_826/verify_826_after_map_refresh.log`). Ни один тест не ослаблен. Реестр runtime-факторов: новый
 фактор зарегистрирован (`runtime_config_registry_service`), меняется со
 следующего запроса без рестарта и виден в Совушке.
 Docs: `docs/ADR-16-systematic-candidate-retrieval.md`,
