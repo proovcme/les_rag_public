@@ -15,6 +15,13 @@ These tests pin the fix at the four levels that each lost the basis on its own:
 * the adapter — the book the calculator receives and the header the file shows;
 * the durable seam — the basis written when a revision is packaged and read back
   by the next turn, which is where the live continuation actually lost it.
+
+Build 822 adds the two levels that only a code review of the shipped 821 exposed:
+the seam has to hold on *every* route that can hand the packager a file (§ 5),
+including the one where the model asks for it itself, and the provenance an
+inherited record carries must not grow with every turn, because the record is
+part of the packaging call's arguments and the arguments decide its identity
+(§ 10, § 11 № 9).
 """
 from __future__ import annotations
 
@@ -24,16 +31,21 @@ from pathlib import Path
 import pytest
 
 from proxy.services import fgis_price_service
+from proxy.services import chat_evidence_application_service as carrier
 from proxy.services.chat_evidence_application_service import (
     document_price_basis_arguments,
+    model_packaging_document_basis,
+    model_packaging_record_arguments,
     workbook_document_price_basis,
     workbook_packaging_args,
+    workbook_research_job_for_document,
 )
 from proxy.services.lsr_workbook_adapter_service import (
     build_lsr_workbook_from_decisions,
     explicit_estimate_pricebook,
     summarize_lsr_price_basis,
 )
+from proxy.services.packaging_recovery_service import describe_packaging_document
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 
 CATALOG = [
@@ -417,3 +429,202 @@ def test_events_written_before_the_basis_was_recorded_invent_nothing(tmp_path):
         "binding": "",
         "revision_id": "",
     }
+
+
+# --------------------------------------------------------------------------- #
+# build 822: the provenance stays the choice, and the model-authored packaging
+# route carries the same seam the code-owned one does
+# --------------------------------------------------------------------------- #
+def _packaged(service, job_id, revision, book, region, quarter, *, parent="", draft=True):
+    service.record_packaging(
+        job_id,
+        tool="build_lsr_workbook",
+        revision_id=revision,
+        draft=draft,
+        parent_revision_id=parent,
+        price_basis={
+            "actual_book": book,
+            "actual_region": region,
+            "actual_quarter": quarter,
+            "match": "exact",
+        },
+    )
+
+
+SPB = ("sankt-peterburg_3kv2026", "Город Санкт-Петербург", "3 квартал 2026 г.")
+MSK = ("moskva_3kv2026", "Город Москва", "3 квартал 2026 г.")
+
+
+def test_repeated_packaging_of_the_same_basis_sends_identical_arguments(tmp_path):
+    # The inherited record is part of the packaging call's arguments, and the
+    # arguments decide the call's identity.  A record that grew with every turn
+    # made a replay of a finished job look like a new request, which is how a
+    # re-opened document could be written a second time (§ 11 № 9).
+    service, job = _job_events(tmp_path)
+    events = service.list_events(job["job_id"])
+    original = workbook_document_price_basis(events)
+    assert original["revision_id"] == "rev_1"
+
+    _packaged(service, job["job_id"], "rev_2", *SPB, parent="rev_1")
+    _packaged(service, job["job_id"], "rev_3", *SPB, parent="rev_2")
+    after = workbook_document_price_basis(service.list_events(job["job_id"]))
+
+    assert after == original
+    assert after["pricebook"] == "sankt-peterburg_3kv2026"
+
+
+def test_the_provenance_moves_only_when_the_basis_moves(tmp_path):
+    service, job = _job_events(tmp_path)
+    _packaged(service, job["job_id"], "rev_2", *SPB, parent="rev_1")
+    _packaged(service, job["job_id"], "rev_3", *MSK, parent="rev_2")
+    moved = workbook_document_price_basis(service.list_events(job["job_id"]))
+    assert moved["pricebook"] == "moskva_3kv2026"
+    # the operator chose Moscow in revision 3 — the label says so, and stays put
+    assert moved["revision_id"] == "rev_3"
+    assert moved["region"] == "Город Москва"
+
+    _packaged(service, job["job_id"], "rev_4", *MSK, parent="rev_3")
+    again = workbook_document_price_basis(service.list_events(job["job_id"]))
+    assert again == moved
+
+
+def test_the_card_and_the_continuation_name_the_same_provenance(tmp_path):
+    # One document, one story across the surfaces (§ 10): the readiness card
+    # reads the same packaging history through its own projection.
+    service, job = _job_events(tmp_path)
+    _packaged(service, job["job_id"], "rev_2", *SPB, parent="rev_1")
+    events = service.list_events(job["job_id"])
+    document = describe_packaging_document(events, status="paused")
+    carried = workbook_document_price_basis(events)
+    assert document["price_basis"]["pricebook"] == carried["pricebook"]
+    assert document["price_basis"]["revision_id"] == carried["revision_id"] == "rev_1"
+
+
+def test_a_model_authored_packaging_call_inherits_the_documents_basis():
+    # The model owns which tool to call; the document owns the basis its own
+    # revisions were priced in (§ 4).
+    job = {
+        "job_id": "wrj_1",
+        "status": "paused",
+        "document": {"price_basis": dict(DOCUMENT_BASIS)},
+    }
+    assert model_packaging_document_basis(job) == DOCUMENT_BASIS
+    # an unpriced revision stored nothing: the question stays open (§ 7)
+    assert model_packaging_document_basis(
+        {"job_id": "wrj_1", "document": {"price_basis": {"pricebook": ""}}}
+    ) == {}
+    assert model_packaging_document_basis({}) == {}
+    assert model_packaging_document_basis(None) == {}
+
+
+def test_a_model_authored_revision_records_its_own_packaging_event():
+    harvested = {
+        "artifact": {"revision_id": "rev_m2", "parent_revision_id": "rev_m1"},
+        "price_basis": {
+            "actual_book": SPB[0],
+            "actual_region": SPB[1],
+            "actual_quarter": SPB[2],
+            "match": "exact",
+        },
+    }
+    draft = model_packaging_record_arguments(
+        job={"job_id": "wrj_1", "status": "running"},
+        tool="build_lsr_workbook",
+        harvested=harvested,
+    )
+    assert draft == {
+        "job_id": "wrj_1",
+        "tool": "build_lsr_workbook",
+        "revision_id": "rev_m2",
+        "draft": True,
+        "parent_revision_id": "rev_m1",
+        "price_basis": harvested["price_basis"],
+    }
+    # the revision of a finished research is the document, not another draft
+    final = model_packaging_record_arguments(
+        job={"job_id": "wrj_1", "status": "complete"},
+        tool="build_lsr_workbook",
+        harvested=harvested,
+    )
+    assert final["draft"] is False
+    # nothing delivered, or no durable document to write to, records nothing
+    assert model_packaging_record_arguments(
+        job={}, tool="build_lsr_workbook", harvested=harvested
+    ) == {}
+    assert model_packaging_record_arguments(
+        job={"job_id": "wrj_1"}, tool="build_lsr_workbook", harvested={"artifact": {}}
+    ) == {}
+
+
+def test_a_model_packaged_revision_is_what_the_next_turn_inherits(tmp_path):
+    # The whole seam of the second route, end to end: the event the model
+    # packaging writes is read back by the same reader the code-owned route uses.
+    service, job = _job_events(tmp_path)
+    harvested = {
+        "artifact": {"revision_id": "rev_model", "parent_revision_id": "rev_1"},
+        "price_basis": {
+            "actual_book": SPB[0],
+            "actual_region": SPB[1],
+            "actual_quarter": SPB[2],
+            "match": "exact",
+            "inherited_from_document": "rev_1",
+        },
+    }
+    event = model_packaging_record_arguments(
+        job={"job_id": job["job_id"], "status": "paused"},
+        tool="build_lsr_workbook",
+        harvested=harvested,
+    )
+    service.record_packaging(event.pop("job_id"), **event)
+
+    carried = workbook_document_price_basis(service.list_events(job["job_id"]))
+    assert carried["pricebook"] == "sankt-peterburg_3kv2026"
+    assert carried["revision_id"] == "rev_1"
+    args = workbook_packaging_args(
+        packaging_tool="build_lsr_workbook",
+        attachment_id="read_123456abcdef",
+        question="Добери нормы по остальным строкам",
+        decisions=[{"source_row": "ВОР!R4", "title": "Монтаж", "unit": "м", "quantity": 1}],
+        operator_overrides={},
+        document_price_basis=carried,
+    )
+    assert args["document_price_basis"] == carried
+
+
+def test_a_replaced_file_under_the_same_attachment_inherits_nothing(tmp_path, monkeypatch):
+    # The lookup is read-only: a model-authored turn must not create a checkpoint
+    # it does not own, and it must not inherit from a file that was replaced
+    # under the same attachment id (§ 9).
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(
+        service.identity(
+            session_id="session-1",
+            attachment_id="read_123456abcdef",
+            source_sha256="a" * 64,
+            dataset_ids=["smeta"],
+            profile_revision_id="factory",
+            model_identity="qwen-35b",
+            question="Собери ЛСР",
+        )
+    )
+    monkeypatch.setattr(carrier, "WorkbookResearchJobService", lambda *a, **k: service)
+
+    assert workbook_research_job_for_document(attachment_id="") == {}
+    # the same attachment id holding a different file is a different document
+    assert (
+        workbook_research_job_for_document(
+            attachment_id="read_123456abcdef", source_sha256="b" * 64
+        )
+        == {}
+    )
+    found = workbook_research_job_for_document(
+        attachment_id="read_123456abcdef", source_sha256="a" * 64
+    )
+    assert found["job_id"] == job["job_id"]
+    # a regenerated UI session still finds its own document (§ 9)
+    assert (
+        workbook_research_job_for_document(
+            attachment_id="read_123456abcdef", source_sha256=""
+        )["job_id"]
+        == job["job_id"]
+    )

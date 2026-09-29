@@ -3080,6 +3080,7 @@
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_lsr_norm_applicability.py",
         "tests/test_lsr_packet_integrity.py",
+        "tests/test_lsr_price_basis_continuation.py",
         "tests/test_notebook_study_chat_policy.py",
         "tests/test_packaging_recovery_service.py",
         "tests/test_pool_completion_alignment_24.py",
@@ -3089,7 +3090,7 @@
         "tests/test_stall_completion_23.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 8963,
+      "lines": 9135,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4035,6 +4036,7 @@
         "tests/test_kac_service.py",
         "tests/test_lsr_assembly_service.py",
         "tests/test_lsr_group_resource_specificity.py",
+        "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_price_basis_explicit.py",
         "tests/test_smeta_chat_service.py",
         "tests/test_sovushka_chat.py",
@@ -4823,6 +4825,7 @@
         "proxy/services/workbook_tool_service.py",
         "tests/test_finalization_defects_782.py",
         "tests/test_lsr_disguised_gaps.py",
+        "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_price_basis_explicit.py",
         "tests/test_lsr_price_ownership.py",
         "tests/test_rim_lsr_trace_service.py",
@@ -5446,10 +5449,11 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/workbook_research_job_service.py",
         "proxy/services/workbook_tool_service.py",
+        "tests/test_lsr_price_basis_continuation.py",
         "tests/test_packaging_recovery_service.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 319,
+      "lines": 336,
       "module": "proxy.services.packaging_recovery_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6950,6 +6954,7 @@
         "proxy/services/trusted_executor_service.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_extract_service.py",
+        "tests/test_lsr_price_basis_continuation.py",
         "tests/test_structured_extract.py",
         "tests/test_workbook_tool_service.py",
         "tools/extract_bench.py"
@@ -7442,6 +7447,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "sovushka/pages/chat.py",
         "tests/test_finalization_defects_782.py",
+        "tests/test_lsr_price_basis_continuation.py",
         "tests/test_packaging_recovery_service.py",
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_sovushka_chat.py",
@@ -7467,6 +7473,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/tool_harness_service.py",
         "tests/test_chat_evidence_application_service.py",
+        "tests/test_lsr_price_basis_continuation.py",
         "tests/test_vor_route_columns_23.py",
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
@@ -8879,7 +8886,7 @@
     },
     {
       "inbound": [],
-      "lines": 717,
+      "lines": 845,
       "module": "tests.test_architecture_contract_gate",
       "outbound": [
         "tools/architecture_contract_gate.py"
@@ -11149,6 +11156,23 @@
         "proxy/services/chat_evidence_application_service.py"
       ],
       "path": "tests/test_lsr_packet_integrity.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 630,
+      "module": "tests.test_lsr_price_basis_continuation",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/fgis_price_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
+        "proxy/services/packaging_recovery_service.py",
+        "proxy/services/structured_extract.py",
+        "proxy/services/workbook_research_job_service.py",
+        "proxy/services/workbook_tool_service.py"
+      ],
+      "path": "tests/test_lsr_price_basis_continuation.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -14783,7 +14807,7 @@
       "inbound": [
         "tests/test_architecture_contract_gate.py"
       ],
-      "lines": 934,
+      "lines": 999,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -19174,9 +19198,9 @@
     "product_reachable": 358,
     "registered_api_routes": 338,
     "runtime_support": 11,
-    "test_or_tool_only": 653,
-    "tracked_python_files": 1023,
-    "tracked_python_lines": 345198
+    "test_or_tool_only": 654,
+    "tracked_python_files": 1024,
+    "tracked_python_lines": 346210
   },
   "warnings": []
 }

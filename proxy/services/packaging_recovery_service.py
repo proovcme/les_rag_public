@@ -104,6 +104,7 @@ def describe_packaging_document(
     packaged_tools: set[str] = set()
     final_basis: dict[str, Any] = {}
     last_basis: dict[str, Any] = {}
+    first_for_book: dict[str, str] = {}
     for event in events or ():
         if not isinstance(event, Mapping):
             continue
@@ -126,6 +127,7 @@ def describe_packaging_document(
         packaged_tools.add(event_tool or tool)
         recorded = _recorded_price_basis(payload, revision_id)
         if recorded:
+            first_for_book.setdefault(recorded["pricebook"], revision_id)
             last_basis = recorded
         if bool(payload.get("draft")):
             draft_revision = revision_id
@@ -155,6 +157,21 @@ def describe_packaging_document(
             "Финальный документ ещё не упакован из сохранённых решений."
         )
 
+    basis = final_basis or last_basis
+    if basis:
+        # The revision that first bound this book is the one the operator chose.
+        # Stamping the newest revision that re-priced it would make the label
+        # grow on every turn, and because the repack route sends this record as
+        # a tool argument the same document would read as a different request on
+        # a replay.  The chat continuation inherits its provenance from the very
+        # same rule, so the card, the file header and the arguments agree (§ 10).
+        basis = {
+            **basis,
+            "revision_id": first_for_book.get(
+                str(basis.get("pricebook") or ""), str(basis.get("revision_id") or "")
+            ),
+        }
+
     return {
         "schema": SCHEMA,
         "state": state,
@@ -167,7 +184,7 @@ def describe_packaging_document(
         # there is one, otherwise the last revision that bound a book.  A
         # continuation turn inherits it instead of re-deriving it from its own
         # text (task 2026-09-28 § 4).
-        "price_basis": final_basis or last_basis,
+        "price_basis": basis,
         "packaged": bool(final_revision) or bool(draft_revision),
         "needs_document": needs_document,
         "recovery_reason": recovery_reason,

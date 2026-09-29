@@ -485,6 +485,134 @@ def _package(service, job_id, tool, decisions):
     assert "DOCUMENT_BASIS_NOT_CARRIED" not in codes
 
 
+def test_rejects_a_packaging_route_that_delivers_a_file_without_recording_it(
+    tmp_path: Path,
+) -> None:
+    """The model may call the packager — the document still has to keep its history."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def workbook_packaging_args(**kwargs):
+    return kwargs
+
+
+def workbook_document_price_basis(events, *, tool=""):
+    return {}
+
+
+async def _route(workbook_tool_executor, tool, decisions):
+    basis = workbook_document_price_basis([], tool=tool)
+    args = workbook_packaging_args(
+        packaging_tool=tool,
+        attachment_id="att",
+        question="Добери нормы",
+        decisions=decisions,
+        operator_overrides={},
+        document_price_basis=basis,
+    )
+    payload = await workbook_tool_executor({"tool": tool, "args": args}, {}, None)
+    return payload
+""",
+    )
+    assert "PACKAGING_ROUTE_NOT_DURABLE" in codes
+
+
+def test_accepts_a_packaging_route_that_records_what_it_delivered(
+    tmp_path: Path,
+) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def workbook_packaging_args(**kwargs):
+    return kwargs
+
+
+def workbook_document_price_basis(events, *, tool=""):
+    return {}
+
+
+def document_price_basis_arguments(basis):
+    return dict(basis or {})
+
+
+def model_packaging_document_basis(job):
+    return document_price_basis_arguments((job or {}).get("document", {}))
+
+
+def model_packaging_record_arguments(**kwargs):
+    return kwargs
+
+
+async def _route(workbook_tool_executor, service, job, tool, decisions):
+    basis = workbook_document_price_basis([], tool=tool)
+    args = workbook_packaging_args(
+        packaging_tool=tool,
+        attachment_id="att",
+        question="Добери нормы",
+        decisions=decisions,
+        operator_overrides={},
+        document_price_basis=basis,
+    )
+    payload = await workbook_tool_executor({"tool": tool, "args": args}, {}, None)
+    event = model_packaging_record_arguments(
+        job=job, tool=tool, harvested=payload.get("harvested") or {}
+    )
+    job_id = event.pop("job_id")
+    service.record_packaging(job_id, **event)
+    # and the code-owned pass over the same document records its own event
+    service.record_packaging(args["attachment_id"], tool=tool)
+    return payload
+""",
+    )
+    assert "PACKAGING_ROUTE_NOT_DURABLE" not in codes
+
+
+def test_rejects_a_model_route_that_parses_a_basis_on_its_own(
+    tmp_path: Path,
+) -> None:
+    """Two parsers of one contract drift: the card and the file would disagree."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def workbook_packaging_args(**kwargs):
+    return kwargs
+
+
+def workbook_document_price_basis(events, *, tool=""):
+    return {}
+
+
+def model_packaging_document_basis(job):
+    return {"pricebook": (job or {}).get("document", {}).get("book", "")}
+
+
+def model_packaging_record_arguments(**kwargs):
+    return kwargs
+
+
+async def _route(workbook_tool_executor, service, job, tool, decisions):
+    args = workbook_packaging_args(
+        packaging_tool=tool,
+        attachment_id="att",
+        question="Добери нормы",
+        decisions=decisions,
+        operator_overrides={},
+        document_price_basis=workbook_document_price_basis([], tool=tool),
+    )
+    payload = await workbook_tool_executor({"tool": tool, "args": args}, {}, None)
+    service.record_packaging("job", tool=tool)
+    service.record_packaging("job2", tool=tool)
+    return payload
+""",
+    )
+    assert "PACKAGING_ROUTE_NOT_DURABLE" in codes
+
+
 def test_rejects_a_job_that_never_stores_the_basis_it_packaged(tmp_path: Path) -> None:
     codes = _adr16_probe(
         tmp_path,

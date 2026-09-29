@@ -366,9 +366,19 @@ def workbook_document_price_basis(
     принятые решения»).  Only a basis that bound a book is carried forward: an
     earlier revision that stayed without a book asked a question, and repeating
     that question is not the same as answering it.
+
+    The book, subject and period are read from the newest revision that bound
+    one — that is what the document is priced in now — while ``revision_id``
+    names the revision in which that book was *first* chosen, which is what the
+    operator actually selected and what the file has to say (§ 7).  Stamping the
+    newest revision instead made the inherited record grow on every turn, and
+    because the record is part of the packaging call's arguments it changed that
+    call's identity too: a replay of a finished job then read as a different
+    request and wrote a second copy of the same document (§ 11 № 9).
     """
 
-    latest: dict[str, Any] = {}
+    newest: dict[str, Any] = {}
+    first_for_book: dict[str, str] = {}
     for event in events or ():
         if not isinstance(event, Mapping):
             continue
@@ -387,9 +397,114 @@ def workbook_document_price_basis(
         record = document_price_basis_arguments(
             {**dict(basis), "revision_id": str(payload.get("revision_id") or "")}
         )
-        if record:
-            latest = record
-    return latest
+        if not record:
+            continue
+        if record["revision_id"]:
+            first_for_book.setdefault(record["pricebook"], record["revision_id"])
+        newest = record
+    if not newest:
+        return {}
+    # the revision that *chose* this book, not the newest one that re-priced it:
+    # this record is part of the packaging call's arguments, and arguments decide
+    # the call's identity, so a replay of a finished job has to send the same one.
+    chosen_in = first_for_book.get(newest["pricebook"]) or newest["revision_id"]
+    return {**newest, "revision_id": chosen_in}
+
+
+def workbook_research_job_for_document(
+    *,
+    attachment_id: str,
+    source_sha256: str = "",
+) -> dict[str, Any]:
+    """The durable research job this very attachment was researched in, or ``{}``.
+
+    Read-only on purpose.  A model-authored packaging turn must not create a
+    checkpoint it does not own — the sheet pass begins the durable job itself,
+    and a half-owned row would offer «Продолжить» on a research that never
+    started.  The attachment is the key rather than the session because a UI
+    restart regenerates the session id while the document, and the basis it was
+    already priced in, stay the same (task 2026-09-28 § 9).  A different source
+    hash under the same attachment id means the file was replaced, so nothing is
+    inherited from the research of the old one.
+    """
+
+    aid = str(attachment_id or "").strip()
+    if not aid:
+        return {}
+    try:
+        job = WorkbookResearchJobService().latest(attachment_id=aid)
+    except Exception as error:  # noqa: BLE001 - durability degrades visibly
+        logger.warning(
+            "[WORKBOOK] durable job lookup for a model-packaged revision failed: %s",
+            type(error).__name__,
+        )
+        return {}
+    if not isinstance(job, Mapping):
+        return {}
+    digest = str(source_sha256 or "").strip()
+    identity = job.get("identity") if isinstance(job.get("identity"), Mapping) else {}
+    if digest and str(identity.get("source_sha256") or "").strip() not in {"", digest}:
+        return {}
+    return dict(job)
+
+
+def model_packaging_document_basis(job: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The basis a model-authored packaging call has to continue in.
+
+    The model decides *which* tool to run; the document still decides which
+    region, period and book its own revisions were priced in (§ 4).  This reads
+    the same durable projection the readiness card and the no-model repack use,
+    so the three routes cannot drift apart and disagree about the basis of one
+    document (§ 10).  An unpriced earlier revision stored nothing, and an
+    empty record keeps the question open instead of answering it (§ 7).
+    """
+
+    if not isinstance(job, Mapping):
+        return {}
+    document = job.get("document") if isinstance(job.get("document"), Mapping) else {}
+    basis = document.get("price_basis")
+    if not isinstance(basis, Mapping) or not basis:
+        basis = job.get("price_basis")
+    return document_price_basis_arguments(basis)
+
+
+def model_packaging_record_arguments(
+    *,
+    job: Mapping[str, Any] | None,
+    tool: str,
+    harvested: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """What the durable packaging event of a model-authored revision says.
+
+    ``{}`` when there is nothing to write: no job, or no revision delivered.
+    A route that produced a file but left no ``workbook_packaged`` event is the
+    hole this closes — the next continuation then has no basis to inherit and
+    the document silently returns to an unchosen price basis (§ 4), and the
+    revision chain loses a parent (§ 11 № 9).  ``draft`` follows the job's own
+    state: a revision of a research that has not finished is an intermediate
+    one, never the finished document.
+    """
+
+    if not isinstance(job, Mapping) or not isinstance(harvested, Mapping):
+        return {}
+    job_id = str(job.get("job_id") or "").strip()
+    artifact = (
+        harvested.get("artifact")
+        if isinstance(harvested.get("artifact"), Mapping)
+        else {}
+    )
+    revision_id = str(artifact.get("revision_id") or "").strip()
+    if not job_id or not revision_id:
+        return {}
+    return {
+        "job_id": job_id,
+        "tool": str(tool),
+        "revision_id": revision_id,
+        "draft": str(job.get("status") or "") not in {"complete", "failed"},
+        # the parent the packager actually built on, not a guessed one
+        "parent_revision_id": str(artifact.get("parent_revision_id") or ""),
+        "price_basis": harvested.get("price_basis"),
+    }
 
 
 def terminal_research_packaging_rows(
@@ -5898,6 +6013,7 @@ async def _execute_chat_evidence_application(
                             for call in calls:
                                 tool_loop_stage = "tool_execution"
                                 tool_name = str(call.get("tool") or "")
+                                model_packaging_job: dict[str, Any] = {}
                                 if (
                                     tool_name in {"build_lsr_workbook", "build_vor_workbook"}
                                     and canonical_execution_mode is CanonicalRouteMode.ACTIVE
@@ -5906,6 +6022,40 @@ async def _execute_chat_evidence_application(
                                     async def workbook_progress(event: dict[str, Any]) -> None:
                                         if token_sink is not None:
                                             await token_sink({"event": "tool_progress", "data": event})
+
+                                    # § 4 holds on the route where the model itself
+                                    # asked for the file: the model chooses *which*
+                                    # tool runs, the document still carries the
+                                    # region, period and book its own revisions were
+                                    # priced in.  Without this the first packaging
+                                    # of a document could happen here, leave no
+                                    # durable basis behind, and every later
+                                    # continuation would report «Ценовая база не
+                                    # задана явно» over a priced file.
+                                    if tool_name == "build_lsr_workbook":
+                                        model_packaging_job = (
+                                            workbook_research_job_for_document(
+                                                attachment_id=str(
+                                                    getattr(req, "attachment_id", None) or ""
+                                                ),
+                                                source_sha256=str(
+                                                    getattr(
+                                                        source_catalog,
+                                                        "source_file_sha256",
+                                                        "",
+                                                    )
+                                                    or ""
+                                                ),
+                                            )
+                                        )
+                                        carried_basis = model_packaging_document_basis(
+                                            model_packaging_job
+                                        )
+                                        call_args = call.get("args")
+                                        if carried_basis and isinstance(call_args, dict):
+                                            call_args.setdefault(
+                                                "document_price_basis", carried_basis
+                                            )
 
                                     payload = await workbook_tool_executor(
                                         call,
@@ -5996,6 +6146,28 @@ async def _execute_chat_evidence_application(
                                 selector_source_map = answer_source_map
                                 harvested = harvest_workbook_tool_result(safe_payload)
                                 if harvested:
+                                    # The revision this turn delivered belongs to
+                                    # the document's own history, whoever asked for
+                                    # it: recorded here, the next continuation
+                                    # inherits its basis and its parent instead of
+                                    # starting a second chain (§ 4, § 11 № 9).
+                                    durable_event = model_packaging_record_arguments(
+                                        job=model_packaging_job,
+                                        tool=tool_name,
+                                        harvested=harvested,
+                                    )
+                                    if durable_event:
+                                        try:
+                                            WorkbookResearchJobService().record_packaging(
+                                                str(durable_event.pop("job_id")),
+                                                **durable_event,
+                                            )
+                                        except Exception as record_error:  # noqa: BLE001 - durability degrades visibly
+                                            logger.warning(
+                                                "[WORKBOOK] model-packaged revision not "
+                                                "recorded: %s",
+                                                type(record_error).__name__,
+                                            )
                                     workbook_chat_meta = harvested
                                     stop_reason = "workbook_complete"
                                     break

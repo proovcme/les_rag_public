@@ -115,6 +115,10 @@ DOCUMENT_BASIS_READER = "workbook_document_price_basis"
 DOCUMENT_BASIS_ARG_KEEPER = "document_price_basis_arguments"
 DOCUMENT_BASIS_RECORDER = "record_packaging"
 PRICED_PACKAGING_TOOL = "build_lsr_workbook"
+#: the seam the route where the model itself asks for the file has to use
+WORKBOOK_TOOL_EXECUTOR_CALL = "workbook_tool_executor"
+MODEL_PACKAGING_BASIS_READER = "model_packaging_document_basis"
+MODEL_PACKAGING_EVENT_BUILDER = "model_packaging_record_arguments"
 
 # A rate that nobody chose may still be calculated, but only under the label the
 # readiness state, the price gaps and the confirmed/preliminary split key on.
@@ -574,6 +578,67 @@ def _document_basis_violations(relative: str, tree: ast.AST) -> Iterable[Archite
                     f"packaging call built without {DOCUMENT_BASIS_PACKAGING_ARG}= — the "
                     "priced continuation would lose the region and period it must reuse",
                 )
+        # Task 2026-09-28 § 5, § 11 № 9: the seam belongs to the document, not to
+        # whichever route asked for the file.  The model is allowed to call the
+        # packager itself under the ACTIVE canonical route, and that call site
+        # delivered a priced ЛСР while writing no ``workbook_packaged`` event:
+        # a document first packaged there had nothing to inherit, so its next
+        # continuation reported «Ценовая база не задана явно» over a priced file.
+        executors = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == WORKBOOK_TOOL_EXECUTOR_CALL
+        ]
+        recorders = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _call_name(node).split(".")[-1] == DOCUMENT_BASIS_RECORDER
+        ]
+        # one durable event per packaging route: the code-owned sheet pass and
+        # the model-authored call are two routes over one document.
+        if executors and len(recorders) < len(executors) + len(builders):
+            yield ArchitectureViolation(
+                "PACKAGING_ROUTE_NOT_DURABLE",
+                relative,
+                executors[-1].lineno,
+                f"a route executes {PRICED_PACKAGING_TOOL} through "
+                f"{WORKBOOK_TOOL_EXECUTOR_CALL}() without recording its own "
+                f"{DOCUMENT_BASIS_RECORDER}() event: the file exists but the "
+                "document carries no basis and no revision parent",
+            )
+        if executors and not any(
+            isinstance(node, ast.Call)
+            and _call_name(node) == MODEL_PACKAGING_EVENT_BUILDER
+            for node in ast.walk(tree)
+        ):
+            yield ArchitectureViolation(
+                "PACKAGING_ROUTE_NOT_DURABLE",
+                relative,
+                executors[-1].lineno,
+                f"the model-authored packaging call does not build its durable event "
+                f"through {MODEL_PACKAGING_EVENT_BUILDER}()",
+            )
+        model_basis = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == MODEL_PACKAGING_BASIS_READER
+        ]
+        if model_basis and not any(
+            isinstance(node, ast.Call)
+            and _call_name(node) == DOCUMENT_BASIS_ARG_KEEPER
+            for node in ast.walk(model_basis[0])
+        ):
+            yield ArchitectureViolation(
+                "PACKAGING_ROUTE_NOT_DURABLE",
+                relative,
+                model_basis[0].lineno,
+                f"{MODEL_PACKAGING_BASIS_READER}() parses a basis on its own instead of "
+                f"reusing {DOCUMENT_BASIS_ARG_KEEPER}(): two routes would disagree about "
+                "the basis of one document",
+            )
         return
     if relative == DOCUMENT_BASIS_REPACK_MODULE:
         strings = {
