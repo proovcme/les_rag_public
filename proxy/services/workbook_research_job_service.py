@@ -1,4 +1,15 @@
-"""Durable packet checkpoints for the active model-owned workbook path."""
+"""Durable packet checkpoints for the active model-owned workbook path.
+
+The store also owns the difference between "this packet was set aside" and "this
+run stopped": every pause records which guard wrote it (``pause_kind``), and only
+an operator stop, a cancellation or the per-run budget may stop a document —
+build 823 read any pause as a stop and abandoned eight sheets of the customer's
+ВОР behind two dead rows of sheet АР (blocker file
+``QWEN_BLOCKERS_AFTER_823_2026-09-29.md`` § 1).  Per-sheet deferrals and the
+per-locator offer history live here too, so a restarted process continues the
+same queue instead of re-offering rows the model already gave up on, and a row
+that was never put to the model cannot be closed as "the model produced nothing".
+"""
 from __future__ import annotations
 
 import hashlib
@@ -51,7 +62,61 @@ _EXTRA_COLUMNS = {
     # reported the very same one.
     "stall_fingerprint": "TEXT NOT NULL DEFAULT ''",
     "stall_occurrences": "INTEGER NOT NULL DEFAULT 0",
+    # Blocker file § 1 (29.09), build 823: which guard wrote the current pause.
+    # ``stalled``/``held_retry_exhausted`` set a single PACKET aside; ``run_budget``,
+    # ``operator`` and ``cancelled`` end the RUN.  The sheet-pass loop used to read
+    # the pause itself as the stop signal, so the first hard sheet ended the whole
+    # document: on the customer ВОР seven runs in a row stopped on АР and 278 of
+    # the 295 outstanding rows were never put to the model at all.
+    "pause_kind": "TEXT NOT NULL DEFAULT ''",
+    # Durable memory of the packets that were set aside, keyed by locator.  Without
+    # it a restart re-offered the same dead rows first, which is the "repeat the
+    # same set without new data" the blocker forbids.  A deferral is released when
+    # the job gained evidence since it was written (``evidence_watermark``) or when
+    # an operator reopens the locator.
+    "deferrals_json": "TEXT NOT NULL DEFAULT '{}'",
 }
+
+# Guard kinds that set ONE packet aside and let the run go on with the next
+# sheet.  The vocabulary is deliberately short: ``record_packet`` writes
+# ``stalled``/``held_retry_exhausted``/``run_budget``, ``pause`` writes
+# ``run_end``/``cancelled``, ``reopen_locators`` writes ``refine`` and
+# ``finish_with_declared_gaps`` writes ``starved_scheduler``/``declared_gaps_partial``.
+PACKET_DEFERRAL_PAUSE_KINDS = frozenset({"stalled", "held_retry_exhausted"})
+
+
+def _pause_defers_one_packet(row: sqlite3.Row) -> bool:
+    """Is the stored pause only a guard setting ONE packet aside?
+
+    The narrow, fail-closed form of the question: a pause written by older code
+    (empty ``pause_kind``), by an unknown future guard, or by an operator is never
+    read as "keep working".
+    """
+
+    if str(row["status"] or "") != "paused":
+        return False
+    keys = row.keys()
+    if "pause_kind" not in keys:
+        return False
+    return str(row["pause_kind"] or "") in PACKET_DEFERRAL_PAUSE_KINDS
+
+
+def _pause_stops_the_run(row: sqlite3.Row) -> bool:
+    """Does the current pause end the run, or only set one packet aside?
+
+    On the customer's 377-row ВОР the sheet-pass loop read the guard pause as a
+    stop signal, broke out of the sheet loop at АР and left eight sheets with zero
+    offers (``stage_b/live_823/b1_plateau_trace_823.json``: 278 of the 295
+    outstanding rows were never put to the model).  Only a pause that names the
+    single packet it gave up on lets the run go on to the next sheet.
+    """
+
+    status = str(row["status"] or "")
+    if status == "cancelled" or bool(row["cancel_requested"]):
+        return True
+    if status != "paused":
+        return False
+    return not _pause_defers_one_packet(row)
 
 # Directive §4 / §1: bounded, orthogonal stall detection thresholds.
 _STALL_THRESHOLD = 2          # consecutive packets with no substantive progress
@@ -429,7 +494,7 @@ class WorkbookResearchJobService:
                     conn.execute(
                         """UPDATE workbook_research_jobs
                         SET status='running',cancel_requested=0,
-                            stall_count=0,stall_reason='',
+                            stall_count=0,stall_reason='',pause_kind='',
                             run_round_count=0,held_attempts=0,held_fingerprint='',
                             updated_at=CURRENT_TIMESTAMP
                         WHERE job_id=?""",
@@ -798,6 +863,13 @@ class WorkbookResearchJobService:
             new_status = "paused" if should_auto_pause else str(row["status"])
             if not should_auto_pause:
                 new_phase = "packets"
+                # A guard pause that only set one packet aside is not a stop.  The
+                # run went on and just recorded another packet, so the durable
+                # status says what is actually true — the document is being worked.
+                # Leaving it "paused" would make the next per-packet guard test read
+                # an unlabelled pause and abort the run at the second sheet.
+                if _pause_defers_one_packet(row):
+                    new_status = "running"
             elif pause_kind == "run_budget":
                 new_phase = "run_budget"
             else:
@@ -807,7 +879,7 @@ class WorkbookResearchJobService:
                 SET status=?,phase=?,sheet_name=?,packet_json=?,accepted_rows_json=?,
                     evidence_json=?,omitted_json=?,remaining_json=?,held_packet_json=?,
                     stall_count=?,round_count=?,stall_reason=?,
-                    run_round_count=?,held_fingerprint=?,held_attempts=?,
+                    run_round_count=?,held_fingerprint=?,held_attempts=?,pause_kind=?,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE job_id=?""",
                 (
@@ -826,6 +898,7 @@ class WorkbookResearchJobService:
                     new_run,
                     held_fp,
                     new_held_attempts,
+                    pause_kind if should_auto_pause else "",
                     job_id,
                 ),
             )
@@ -1226,16 +1299,25 @@ class WorkbookResearchJobService:
             overlays = _json_object(row, "operator_overrides_json")
             for locator in wanted:
                 overlays.pop(locator, None)
+            # An operator who reopens a row also lifts the packet deferral that
+            # had set it aside; otherwise the next run would skip the very row the
+            # operator asked to revisit.
+            deferrals = _json_object(row, "deferrals_json")
+            released = [locator for locator in wanted if locator in deferrals]
+            for locator in released:
+                deferrals.pop(locator, None)
             conn.execute(
                 """UPDATE workbook_research_jobs
                 SET status='paused',phase='refine',accepted_rows_json=?,remaining_json=?,
-                    operator_overrides_json=?,cancel_requested=0,
+                    operator_overrides_json=?,deferrals_json=?,
+                    pause_kind='refine',cancel_requested=0,
                     stall_fingerprint='',stall_occurrences=0,updated_at=CURRENT_TIMESTAMP
                 WHERE job_id=?""",
                 (
                     json.dumps(kept, ensure_ascii=False),
                     json.dumps(remaining, ensure_ascii=False),
                     json.dumps(overlays, ensure_ascii=False),
+                    json.dumps(deferrals, ensure_ascii=False),
                     job_id,
                 ),
             )
@@ -1295,7 +1377,7 @@ class WorkbookResearchJobService:
                 """UPDATE workbook_research_jobs
                 SET status='paused',phase=?,cancel_requested=0,remaining_json=?,
                     held_packet_json=?,stall_fingerprint=?,stall_occurrences=?,
-                    updated_at=CURRENT_TIMESTAMP
+                    pause_kind=?,updated_at=CURRENT_TIMESTAMP
                 WHERE job_id=?""",
                 (
                     str(phase),
@@ -1303,6 +1385,7 @@ class WorkbookResearchJobService:
                     json.dumps(held_payload, ensure_ascii=False),
                     fingerprint,
                     occurrences,
+                    "cancelled" if str(phase) == "cancelled" else "run_end",
                     job_id,
                 ),
             )
@@ -1338,6 +1421,155 @@ class WorkbookResearchJobService:
             return True
         return str(job.get("status") or "") in {"paused", "cancelled"}
 
+    def run_should_stop(self, job_id: str) -> bool:
+        """Whether the sheet-pass run in progress must end right now.
+
+        This is a narrower question than :meth:`should_cancel`, which every other
+        surface keeps using to ask "is this job no longer being worked" (a paused
+        job is, from outside).  Inside the run, the product-internal stall guard
+        pauses the record for ONE packet while the rest of the document still
+        deserves work: on the live customer ВОР the run read the pause as a stop,
+        broke out of the sheet loop at АР and left eight sheets with zero offers
+        (``stage_b/live_823/b1_plateau_trace_823.json``: 278 of 295 outstanding
+        rows were never put to the model).  Only the per-run budget, an operator
+        stop and a cancellation end the run.
+        """
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)
+            ).fetchone()
+            if row is None:
+                raise WorkbookResearchJobError("workbook research job not found")
+            return _pause_stops_the_run(row)
+
+    def defer_locators(
+        self,
+        job_id: str,
+        *,
+        sheet: str,
+        locators: Sequence[str],
+        reason: str,
+        offers: int = 0,
+    ) -> dict[str, Any]:
+        """Set rows aside durably so a restart does not start from them again.
+
+        The deferral remembers how much evidence the job held when it was written.
+        A later run that gained evidence (a new card, a new cached query) releases
+        it, because the blocker's rule is "do not repeat the same set without new
+        data", not "never revisit a hard row".
+        """
+
+        wanted = [str(item).strip() for item in locators if str(item).strip()]
+        if not wanted:
+            return self.get(job_id)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)
+            ).fetchone()
+            if row is None:
+                raise WorkbookResearchJobError("workbook research job not found")
+            if str(row["status"]) in TERMINAL_STATUSES:
+                return self._row(row)
+            deferrals = _json_object(row, "deferrals_json")
+            watermark = self._evidence_watermark(row)
+            for locator in wanted:
+                deferrals[locator] = {
+                    "sheet": str(sheet or ""),
+                    "reason": str(reason or ""),
+                    "offers": int(offers or 0),
+                    "evidence_watermark": watermark,
+                }
+            conn.execute(
+                """UPDATE workbook_research_jobs
+                SET deferrals_json=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=?""",
+                (json.dumps(deferrals, ensure_ascii=False), str(job_id)),
+            )
+            self._append_event(
+                conn,
+                job_id,
+                "locators_deferred",
+                {
+                    "schema": "les.packet-deferral.v1",
+                    "sheet": str(sheet or ""),
+                    "locators": wanted,
+                    "count": len(wanted),
+                    "reason": str(reason or ""),
+                    "offers": int(offers or 0),
+                    "evidence_watermark": watermark,
+                },
+            )
+        return self.get(job_id)
+
+    def still_deferred(
+        self,
+        job_id: str,
+        *,
+        sheet: str,
+        release_on_new_evidence: bool = True,
+    ) -> list[str]:
+        """Rows of ``sheet`` that a previous run set aside and that stay aside.
+
+        Released when the job has gained evidence since the deferral (or when the
+        caller passes ``release_on_new_evidence=False``); an operator reopen of the
+        locator clears it outright in :meth:`reopen_locators`.
+        """
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)
+            ).fetchone()
+            if row is None:
+                raise WorkbookResearchJobError("workbook research job not found")
+            deferrals = _json_object(row, "deferrals_json")
+            if not deferrals:
+                return []
+            watermark = self._evidence_watermark(row)
+            wanted_sheet = str(sheet or "")
+            held: list[str] = []
+            released: list[str] = []
+            for locator, entry in list(deferrals.items()):
+                if not isinstance(entry, Mapping):
+                    continue
+                if str(entry.get("sheet") or "") != wanted_sheet:
+                    continue
+                before = int(entry.get("evidence_watermark") or 0)
+                if release_on_new_evidence and watermark > before:
+                    released.append(locator)
+                    continue
+                held.append(locator)
+            if released:
+                for locator in released:
+                    deferrals.pop(locator, None)
+                conn.execute(
+                    """UPDATE workbook_research_jobs
+                    SET deferrals_json=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=?""",
+                    (json.dumps(deferrals, ensure_ascii=False), str(job_id)),
+                )
+                self._append_event(
+                    conn,
+                    job_id,
+                    "deferrals_released",
+                    {
+                        "schema": "les.packet-deferral.v1",
+                        "sheet": wanted_sheet,
+                        "locators": sorted(released),
+                        "count": len(released),
+                        "evidence_watermark": watermark,
+                        "because": "новое evidence с момента отложения",
+                    },
+                )
+        return sorted(held)
+
+    @staticmethod
+    def _evidence_watermark(row: sqlite3.Row) -> int:
+        """Monotone "has the job seen anything new" marker: cards + cached queries."""
+
+        evidence = _json_list(row, "evidence_json")
+        cache = _json_object(row, "query_cache_json")
+        return len(evidence) + len(cache)
+
     def finish(self, job_id: str, *, status: str, phase: str = "complete") -> dict[str, Any]:
         if status == "cancelled":
             return self.pause(job_id, phase="cancelled")
@@ -1361,6 +1593,7 @@ class WorkbookResearchJobService:
         gap_rows: Sequence[Mapping[str, Any]],
         reason: str = "",
         attempts: int = 0,
+        offers_by_locator: Mapping[str, int] | None = None,
     ) -> dict[str, Any]:
         """Close the rows no model offer ever produced, without lying about the rest.
 
@@ -1369,6 +1602,15 @@ class WorkbookResearchJobService:
         and only the locators with NO decision at all are appended, through
         :func:`declared_gap_decision`, as positions that state the absence of a
         solution.
+
+        ``offers_by_locator`` is the durable per-row offer ledger (derived from
+        ``packet_checkpoint`` events).  When it is supplied, a row the model was
+        never asked about is NOT closed with the sentence "the model produced no
+        solution after N offers" - that cause would be a lie about a row that
+        never reached the model, and declaring it would let a scheduler defect
+        masquerade as a finished document.  Such rows stay in ``remaining``, the
+        job stays resumable with ``pause_kind='starved_scheduler'``, and the count
+        is reported in the ``gaps_declared`` event and on ``stall_guard``.
 
         Whether the job also becomes ``complete`` depends on the *global*
         remainder, not on the stalled sheet.  On the live customer ВОР a pass
@@ -1402,18 +1644,35 @@ class WorkbookResearchJobService:
                     text = text[len("LOCATOR:"):].strip()
                 return text.upper()
 
+            def _offer_of(locator: str) -> int | None:
+                if offers_by_locator is None:
+                    return None
+                text = str(locator or "").strip()
+                if text.upper().startswith("LOCATOR:"):
+                    text = text[len("LOCATOR:"):].strip()
+                for key, value in offers_by_locator.items():
+                    if str(key).strip().upper() == text.upper():
+                        return int(value or 0)
+                return 0
+
             decided = {
                 _plain(item)
                 for item in existing_rows
                 if isinstance(item, Mapping) and _plain(item)
             }
             declared: list[dict[str, Any]] = []
+            unoffered: list[str] = []
             for raw in gap_rows or ():
                 if not isinstance(raw, Mapping):
                     continue
                 payload = dict(raw)
                 locator = str(payload.get("source_row") or "").strip()
                 if not locator or _plain(payload) in decided:
+                    continue
+                if _offer_of(locator) == 0:
+                    # Never put to the model: a technical gap of the scheduler,
+                    # not a professional verdict, and it keeps the job resumable.
+                    unoffered.append(locator)
                     continue
                 payload["operation_id"] = _new_operation_id()
                 payload["revision"] = 1
@@ -1425,28 +1684,34 @@ class WorkbookResearchJobService:
                     conn, str(job_id), payload["operation_id"], 1, "declared_gap", payload, None
                 )
             closed = {_plain(item) for item in declared}
+            kept_open = {str(item).replace("LOCATOR:", "").strip().upper() for item in unoffered}
             still_open = [
                 str(loc)
                 for loc in _json_list(row, "remaining_json")
                 if str(loc).strip()
                 and str(loc).replace("LOCATOR:", "").strip().upper() not in closed
-            ]
+                and str(loc).replace("LOCATOR:", "").strip().upper() not in kept_open
+            ] + [str(loc) for loc in unoffered]
             completed = not still_open
             phase = "declared_gaps" if (declared and completed) else (
                 "research_complete" if completed else "packets"
+            )
+            pause_kind = "" if completed else (
+                "starved_scheduler" if unoffered else "declared_gaps_partial"
             )
             conn.execute(
                 """UPDATE workbook_research_jobs
                 SET status=?,phase=?,accepted_rows_json=?,remaining_json=?,
                     stall_count=0,stall_reason='',stall_fingerprint='',
                     stall_occurrences=0,run_round_count=0,held_attempts=0,
-                    held_packet_json='{}',updated_at=CURRENT_TIMESTAMP
+                    held_packet_json='{}',pause_kind=?,updated_at=CURRENT_TIMESTAMP
                 WHERE job_id=?""",
                 (
                     "complete" if completed else "paused",
                     phase,
                     json.dumps(existing_rows, ensure_ascii=False),
                     json.dumps(still_open, ensure_ascii=False),
+                    pause_kind,
                     str(job_id),
                 ),
             )
@@ -1465,6 +1730,10 @@ class WorkbookResearchJobService:
                         "model_called": False,
                         "job_completed": completed,
                         "still_remaining": len(still_open),
+                        # Fail-closed visibility: rows the loop never reached are
+                        # reported apart and do NOT count toward completion.
+                        "unoffered_open": len(unoffered),
+                        "unoffered_locators": [str(item) for item in unoffered][:80],
                     },
                 )
             if completed:
@@ -1778,6 +2047,15 @@ class WorkbookResearchJobService:
                 "run_round_count": int(row["run_round_count"] or 0) if "run_round_count" in row.keys() else 0,
                 "held_attempts": int(row["held_attempts"] or 0) if "held_attempts" in row.keys() else 0,
                 "reason": str(row["stall_reason"] or "") if "stall_reason" in row.keys() else "",
+                # Which guard wrote the current pause: a packet set aside is not a
+                # run that stopped, and the two must never share one label here.
+                "pause_kind": (
+                    str(row["pause_kind"] or "") if "pause_kind" in row.keys() else ""
+                ),
+                "run_stops": _pause_stops_the_run(row),
+                "deferred_locators": len(
+                    _json_object(row, "deferrals_json") if "deferrals_json" in row.keys() else {}
+                ),
                 "threshold": _STALL_THRESHOLD,
                 "run_packet_budget": _RUN_PACKET_BUDGET,
                 "held_max_attempts": _HELD_PACKET_MAX_ATTEMPTS,

@@ -1826,16 +1826,67 @@ def finalize_actual_retrieval_emptiness(
     }
 
 
+def model_rag_row_carries_no_decision(row: Any) -> bool:
+    """True when a parsed row states no norm verdict and no role at all.
+
+    Blocker file § 1/§ 2 (29.09): an answer cut by ``finish_reason=length`` leaves
+    the final table row half written — the locator and maybe the title are there,
+    the columns that carry the decision are not.  Saving such a row as a model
+    decision turns a technical read failure into what the customer reads as
+    «модель решила, что нормы нет», which is exactly the confusion the blocker
+    forbids.  A deliberate ``MISSING``/``нет`` verdict is a decision and stays.
+    """
+
+    if not isinstance(row, Mapping):
+        return False
+    for name in (
+        "row_role",
+        "norm_code",
+        "norm_status",
+        "open_gap",
+        "analogue",
+        "coverage",
+        "clarification",
+    ):
+        if str(row.get(name) or "").strip():
+            return False
+    return not (row.get("resources") or row.get("evidence_refs"))
+
+
+def truncated_tail_locator(rows: Sequence[Any], *, truncated: bool) -> str:
+    """Locator of the answer's last row, but only when the cut left it empty.
+
+    Order in ``rows`` is the order the model wrote, so the at-risk row is the last
+    one.  Anything else in a truncated answer already carries a decision and is
+    kept: dropping decided rows would lose real work over a formatting defect.
+    """
+
+    if not truncated or not rows:
+        return ""
+    last = rows[-1]
+    if not isinstance(last, Mapping) or not model_rag_row_carries_no_decision(last):
+        return ""
+    return str(last.get("source_row") or "").strip()
+
+
 def sheet_pass_keep_rows(
     rows: Sequence[Mapping[str, Any]],
     *,
     sheet: str,
     catalog: AttachmentSourceCatalog,
     errors: Sequence[str],
+    drop_locator: str = "",
 ) -> list[dict[str, Any]]:
-    """Keep this sheet's rows that passed per-pass Qx.Hy/quantity checks."""
+    """Keep this sheet's rows that passed per-pass Qx.Hy/quantity checks.
+
+    ``drop_locator`` is the unread-tail locator of a cut-off answer: it is not
+    saved as a decision, so it stays in the sheet's outstanding pool and the next
+    packet puts it to the model again instead of the document shipping a row that
+    was never actually read.
+    """
 
     wanted = str(sheet or "").strip()
+    unwanted = str(drop_locator or "").strip().upper()
     on_sheet: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, Mapping):
@@ -1848,6 +1899,11 @@ def sheet_pass_keep_rows(
         else:
             # Keep the raw answer in history, but a partial/unknown locator
             # cannot become an accepted source decision or a workbook row.
+            continue
+        if unwanted and unwanted in {
+            str(payload.get("source_row") or "").strip().upper(),
+            str(getattr(catalog_row, "locator", "") or "").strip().upper(),
+        }:
             continue
         on_sheet.append(payload)
     work_count = sum(1 for row in on_sheet if model_rag_row_kind(row) == "work")
@@ -1955,11 +2011,137 @@ def settled_source_keys(rows, catalog):
     )
 
 
+def research_run_stopped(job: Any) -> tuple[bool, bool, str]:
+    """``(does_the_run_stop, is_it_a_cancellation, pause_kind)`` for a live job.
+
+    Blocker file § 1, build 823: the sheet-pass loop asked "is this job paused" and
+    treated every pause as a stop, so a packet guard that gave up on two dead rows
+    of АР ended the run for the whole document and eight sheets behind it were never
+    offered.  The durable job now names which guard wrote the pause, and only the
+    per-run budget, an operator stop or a cancellation stops the run.
+    """
+
+    if not isinstance(job, Mapping):
+        return False, False, ""
+    guard = job.get("stall_guard") or {}
+    if not isinstance(guard, Mapping):
+        guard = {}
+    cancelled = bool(job.get("cancel_requested")) or str(job.get("status") or "") == "cancelled"
+    return bool(guard.get("run_stops")), cancelled, str(guard.get("pause_kind") or "")
+
+
+def sheet_pass_state(
+    catalog: AttachmentSourceCatalog | None,
+    sheet: str,
+    rows: Sequence[Any],
+    *,
+    offered_this_pass: Sequence[str] = (),
+    offer_counts: Mapping[str, int] | None = None,
+    deferred: Sequence[str] = (),
+    unread_tail: Sequence[str] = (),
+    deferred_search: Sequence[str] = (),
+) -> dict[str, Any]:
+    """One sheet's rows split into the states blocker § 1 demands be kept apart.
+
+    «ещё не предложено модели», «ответ не прочитан/обрезан», «решение сохранено с
+    предметным пробелом», «требуется уточнение», «отложенный дополнительный поиск»
+    are five different facts about different rows.  Reporting them under the single
+    «stalled» label is what let a scheduler gap be read as a professional verdict —
+    and what let a finished-looking summary hide rows the model never saw.
+    """
+
+    work = catalog_sheet_work_locators(catalog, sheet) if catalog is not None else []
+    settled = settled_source_keys(rows, catalog) if catalog is not None else set()
+    complete = (
+        structurally_complete_source_keys(rows, catalog) if catalog is not None else set()
+    )
+    seen = {str(item).strip() for item in offered_this_pass if str(item).strip()}
+    durable = {
+        str(key).strip(): max(0, int(value or 0))
+        for key, value in (offer_counts or {}).items()
+        if str(key).strip()
+    }
+    never_offered = [
+        locator
+        for locator in work
+        if locator not in settled
+        and locator not in seen
+        and durable.get(locator, 0) == 0
+    ]
+    wanted_sheet = str(sheet or "").strip()
+    clarification: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if not str(row.get("open_gap") or "").strip():
+            continue
+        raw = row.get("source_row")
+        found = catalog.lookup(raw) if catalog is not None else None
+        if found is not None and found.sheet != wanted_sheet:
+            continue
+        locator = str(getattr(found, "locator", "") or "") or str(raw or "").strip()
+        if locator and locator not in clarification:
+            clarification.append(locator)
+    return {
+        "schema": "les.sheet-pass-states.v1",
+        "sheet": wanted_sheet,
+        "work_rows": len(work),
+        "decided": len([locator for locator in work if locator in settled]),
+        "decided_with_gap": len([
+            locator for locator in work if locator in settled and locator not in complete
+        ]),
+        "never_offered": len(never_offered),
+        "never_offered_locators": never_offered[:80],
+        "needs_clarification": len(clarification),
+        "needs_clarification_locators": clarification[:80],
+        "unread_tail": sorted({str(item).strip() for item in unread_tail if str(item).strip()}),
+        "deferred_rows": sorted({str(item).strip() for item in deferred if str(item).strip()}),
+        "deferred_search_rows": sorted(
+            {str(item).strip() for item in deferred_search if str(item).strip()}
+        ),
+        "outstanding": len([locator for locator in work if locator not in settled]),
+    }
+
+
+def starved_locators(
+    unfinished: Sequence[str],
+    offer_counts: Mapping[str, int],
+    *,
+    ever_offered: Sequence[str] = (),
+) -> list[str]:
+    """Outstanding rows the model was never put to even once.
+
+    Blocker file § 1: a repeated GLOBAL remainder does not prove that every row in
+    it was offered on every pass — the live 823 job carried 278 outstanding rows
+    with a zero offer count behind 17 rows the model had actually seen.  Closing
+    such a row with «решение модели не получено после N предложений» would be a
+    lie about a row that never reached the model, and declaring it would let a
+    scheduler defect pass as a finished document.
+    """
+
+    seen = {
+        str(key).strip().upper()
+        for key, value in (offer_counts or {}).items()
+        if str(key).strip() and int(value or 0) > 0
+    }
+    seen |= {
+        str(item).strip().upper()
+        for item in ever_offered
+        if str(item).strip()
+    }
+    return [
+        str(locator).strip()
+        for locator in unfinished
+        if str(locator).strip() and str(locator).strip().upper() not in seen
+    ]
+
+
 def declared_gap_rows(
     catalog: AttachmentSourceCatalog | None,
     locators: Sequence[str],
     *,
     offers: int,
+    offers_by_locator: Mapping[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Durable positions for source rows no model offer ever resolved.
 
@@ -1967,6 +2149,10 @@ def declared_gap_rows(
     choice: every row keeps the source title the catalog rendered and gets an
     ``open_gap`` that says in plain Russian that the model produced no solution
     after ``offers`` offers.  No cipher, no price and no volume is invented.
+
+    ``offers_by_locator`` is the durable per-row offer ledger.  When it is
+    supplied, each closed row names how often *that row* was put to the model
+    rather than the number of resumes the whole document happened to take.
     """
 
     from proxy.services.workbook_research_job_service import declared_gap_decision
@@ -1975,15 +2161,24 @@ def declared_gap_rows(
         normalize_unit,
     )
 
-    reason = (
-        f"Решение модели не получено после {int(offers)} предложений; "
-        "строка закрыта приложением как пробел, норма и цена не подобраны."
-    )
+    def _reason_for(offer_count: int) -> str:
+        return (
+            f"Решение модели не получено после {int(offer_count)} предложений; "
+            "строка закрыта приложением как пробел, норма и цена не подобраны."
+        )
+
+    ledger = {
+        str(key).strip().upper(): int(value or 0)
+        for key, value in (offers_by_locator or {}).items()
+        if str(key).strip()
+    }
     rows: list[dict[str, Any]] = []
     for raw in locators:
         locator = str(raw or "").strip()
         if not locator:
             continue
+        offer_count = ledger.get(locator.upper(), int(offers or 0))
+        reason = _reason_for(max(1, offer_count))
         line = ""
         unit = ""
         quantity: Any = None
@@ -2010,7 +2205,7 @@ def declared_gap_rows(
                 quantity=quantity,
                 row_classification=classification,
                 reason=reason,
-                attempts=offers,
+                attempts=max(1, offer_count),
             )
         )
     return rows
@@ -6494,6 +6689,10 @@ async def _execute_chat_evidence_application(
                         (research_job or {}).get("omitted") or ()
                     )
                     research_cancelled = False
+                    # Which guard stopped the run, when one did.  Reported apart from
+                    # `research_cancelled` so a per-run budget is never shown as an
+                    # operator cancellation.
+                    run_stop_kinds: list[str] = []
                     sheet_query_cache: dict[str, list[dict[str, Any]]] = {
                         str(key): [
                             dict(item)
@@ -6580,13 +6779,25 @@ async def _execute_chat_evidence_application(
                         ]
                         sheet_pass_names = ()
                       for sheet_index, sheet_name in enumerate(sheet_pass_names, start=1):
-                        if (
-                            research_job_service is not None
-                            and research_job is not None
-                            and research_job_service.should_cancel(research_job["job_id"])
-                        ):
-                            research_cancelled = True
-                            break
+                        if research_job_service is not None and research_job is not None:
+                            research_job = research_job_service.get(research_job["job_id"])
+                            run_stops, cancelled_now, stop_kind = research_run_stopped(research_job)
+                            if run_stops:
+                                # Only the per-run budget, an operator stop or a
+                                # cancellation ends the document.  A guard pause that
+                                # set one packet aside used to be read as a stop here,
+                                # and the customer's ВОР stopped at АР with eight
+                                # sheets never offered.
+                                research_cancelled = research_cancelled or cancelled_now
+                                run_stop_kinds.append(stop_kind or "unlabelled_pause")
+                                logger.warning(
+                                    "[SHEET_PASS] run stops before sheet=%s kind=%s "
+                                    "remaining=%s",
+                                    sheet_name,
+                                    stop_kind or "unlabelled_pause",
+                                    len(research_job.get("remaining") or ()),
+                                )
+                                break
                         # Same definition of outstanding as the terminal rule
                         # below, otherwise the loop re-offers decided rows on the
                         # first sheet and never reaches the next one.
@@ -6620,6 +6831,37 @@ async def _execute_chat_evidence_application(
                             )
                             packet_attempts = packet_attempt_seed(checkpoint_events)
                             offer_counts = packet_offer_counts(checkpoint_events)
+                        # A packet that a previous run gave up on stays set aside
+                        # across a restart.  Blocker § 1 asks for both halves: do not
+                        # repeat the same dead set without new data, and do not let it
+                        # hold back the rows of the other sheets.  The service lifts a
+                        # deferral itself as soon as the job gained evidence.
+                        deferred_here: list[str] = []
+                        if (
+                            research_job_service is not None
+                            and isinstance(research_job, Mapping)
+                            and research_job.get("job_id")
+                        ):
+                            deferred_here = research_job_service.still_deferred(
+                                str(research_job["job_id"]), sheet=sheet_name
+                            )
+                        if deferred_here:
+                            exhausted_locators.update(deferred_here)
+                            remaining = [
+                                locator
+                                for locator in remaining
+                                if locator not in exhausted_locators
+                            ]
+                            logger.info(
+                                "[SHEET_PASS] %s rows of sheet=%s stay deferred from "
+                                "the previous run",
+                                len(deferred_here),
+                                sheet_name,
+                            )
+                        # Rows this sheet dropped because the model answer was cut
+                        # before the decision columns were written (blocker § 1: a
+                        # technical read failure is not «нет нормы»).
+                        unread_tail_rows: list[str] = []
                         locator_research_round: dict[str, int] = {}
                         inner = 0
                         deferred_query_hits: list[tuple[str, Sequence[Any]]] = []
@@ -6643,15 +6885,26 @@ async def _execute_chat_evidence_application(
                             )
                             stored_held = {}
                         while remaining:
-                            if (
-                                research_job_service is not None
-                                and research_job is not None
-                                and research_job_service.should_cancel(
-                                    research_job["job_id"]
+                            if research_job_service is not None and research_job is not None:
+                                research_job = research_job_service.get(research_job["job_id"])
+                                run_stops, cancelled_now, stop_kind = research_run_stopped(
+                                    research_job
                                 )
-                            ):
-                                research_cancelled = True
-                                break
+                                if run_stops:
+                                    # Same rule as the sheet-level test: the guard
+                                    # paused this job over one packet, so the run
+                                    # finishes this sheet's deferral bookkeeping and
+                                    # stops only for a budget/operator/cancel reason.
+                                    research_cancelled = research_cancelled or cancelled_now
+                                    run_stop_kinds.append(stop_kind or "unlabelled_pause")
+                                    logger.warning(
+                                        "[SHEET_PASS] run stops mid sheet=%s kind=%s "
+                                        "packet_rows=%s",
+                                        sheet_name,
+                                        stop_kind or "unlabelled_pause",
+                                        len(remaining),
+                                    )
+                                    break
                             reuse_hits = list(deferred_query_hits)
                             deferred_query_hits = []
                             if reuse_hits:
@@ -6677,6 +6930,9 @@ async def _execute_chat_evidence_application(
                                 packet_attempts.setdefault(fingerprint, 1)
                                 inner += 1
                                 cited_before = structurally_complete_source_keys(
+                                    accumulated_rows, source_catalog
+                                )
+                                settled_before = settled_source_keys(
                                     accumulated_rows, source_catalog
                                 )
                                 pass_evidence = selector_evidence_payload(
@@ -6710,6 +6966,9 @@ async def _execute_chat_evidence_application(
                                 packet_attempts[fingerprint] = packet_attempts.get(fingerprint, 0) + 1
                                 inner += 1
                                 cited_before = structurally_complete_source_keys(
+                                    accumulated_rows, source_catalog
+                                )
+                                settled_before = settled_source_keys(
                                     accumulated_rows, source_catalog
                                 )
                                 await _emit_row_progress(
@@ -7126,12 +7385,29 @@ async def _execute_chat_evidence_application(
                                 finish_reason=last_finish,
                                 answer_truncated=last_truncated,
                             )
+                            tail_locator = truncated_tail_locator(
+                                pass_rows, truncated=last_truncated
+                            )
                             kept = sheet_pass_keep_rows(
                                 pass_rows,
                                 sheet=sheet_name,
                                 catalog=source_catalog,
                                 errors=pass_errors,
+                                drop_locator=tail_locator,
                             )
+                            if tail_locator:
+                                # Addressed handling of the unread tail (blocker § 2):
+                                # the cut row is put to the model again, it is not
+                                # saved as a decision and not reported as «нет нормы».
+                                unread_tail_rows.append(tail_locator)
+                                logger.warning(
+                                    "[SHEET_PASS] answer cut at finish_reason=%s; "
+                                    "row=%s of sheet=%s has no decision columns and "
+                                    "stays outstanding",
+                                    last_finish,
+                                    tail_locator,
+                                    sheet_name,
+                                )
                             accumulated_rows = merge_model_rag_rows(
                                 accumulated_rows,
                                 kept,
@@ -7139,6 +7415,12 @@ async def _execute_chat_evidence_application(
                             )
                             if pass_answer:
                                 answer_parts.append(pass_answer)
+                            cited_after = structurally_complete_source_keys(
+                                accumulated_rows, source_catalog
+                            )
+                            settled_after = settled_source_keys(
+                                accumulated_rows, source_catalog
+                            )
                             retrieval_trace["tool_loop"]["passes"].append(
                                 {
                                     "sheet": sheet_name,
@@ -7163,6 +7445,9 @@ async def _execute_chat_evidence_application(
                                     "row_errors": list(pass_errors),
                                     "finish_reason": last_finish,
                                     "truncated": last_truncated,
+                                    "unread_tail_row": tail_locator,
+                                    "newly_decided": len(settled_after - settled_before),
+                                    "newly_complete": len(cited_after - cited_before),
                                 }
                             )
                             remaining = remaining_sheet_work_locators(
@@ -7205,10 +7490,15 @@ async def _execute_chat_evidence_application(
                                     )
                                 )
                                 held_packet = []
-                            cited_after = structurally_complete_source_keys(
-                                accumulated_rows, source_catalog
-                            )
-                            made_progress = bool(cited_after - cited_before)
+                            # One definition of progress for the guard and for the
+                            # packet pool.  Judging progress only by the strict
+                            # completeness metric counted a row the model had decided
+                            # but that keeps a quality gap as zero progress, while that
+                            # same row had already left the pool for good: a healthy
+                            # sheet then looked stalled and nothing behind it was
+                            # reached.  `settled_after` is literally the set the pool
+                            # subtracts below, so the two can never disagree again.
+                            made_progress = bool(settled_after - settled_before)
                             if not made_progress and not defer_query_packet:
                                 if (
                                     packet_attempts[fingerprint]
@@ -7220,6 +7510,27 @@ async def _execute_chat_evidence_application(
                                         for locator in remaining
                                         if locator not in exhausted_locators
                                     ]
+                                    # Blocker § 1: set aside exactly this packet and
+                                    # carry that decision across a restart, so the next
+                                    # run does not begin from the same dead rows while
+                                    # the unseen elements of the other sheets are
+                                    # worked.  The deferral lifts itself once the job
+                                    # gains evidence or an operator reopens a row.
+                                    if (
+                                        research_job_service is not None
+                                        and research_job is not None
+                                    ):
+                                        research_job = research_job_service.defer_locators(
+                                            research_job["job_id"],
+                                            sheet=sheet_name,
+                                            locators=packet,
+                                            reason=(
+                                                f"без предметного решения за "
+                                                f"{int(packet_attempts[fingerprint])} "
+                                                f"предложения(й)"
+                                            ),
+                                            offers=int(packet_attempts[fingerprint]),
+                                        )
                             held_payload = (
                                 {
                                     "sheet": sheet_name,
@@ -7287,12 +7598,66 @@ async def _execute_chat_evidence_application(
                                     remaining=remaining,
                                     held_packet=held_payload,
                                 )
+                            # Blocker § 1 wants the whole chain readable from one
+                            # trace: response -> parsed -> kept -> durable merge ->
+                            # settled keys -> packet pool -> stall guard.  The guard
+                            # half is only known after the durable write, so it is
+                            # stamped onto the pass entry that produced it.
+                            if retrieval_trace["tool_loop"]["passes"]:
+                                durable_rows = 0
+                                guard_now: Mapping[str, Any] = {}
+                                if isinstance(research_job, Mapping):
+                                    durable_rows = len(
+                                        research_job.get("accepted_rows") or ()
+                                    )
+                                    guard_value = research_job.get("stall_guard")
+                                    if isinstance(guard_value, Mapping):
+                                        guard_now = guard_value
+                                retrieval_trace["tool_loop"]["passes"][-1].update(
+                                    {
+                                        "pool_remaining": len(remaining),
+                                        "pool_deferred": len(exhausted_locators),
+                                        "durable_rows": durable_rows,
+                                        "stall_count": int(
+                                            guard_now.get("stall_count") or 0
+                                        ),
+                                        "pause_kind": str(
+                                            guard_now.get("pause_kind") or ""
+                                        ),
+                                        "run_stops": bool(guard_now.get("run_stops")),
+                                    }
+                                )
                             if defer_query_packet:
                                 continue
                             if not made_progress:
                                 continue
                             if not remaining:
                                 break
+                        # Blocker § 1: the sheet reports which state each outstanding
+                        # row is in, so a row the scheduler never reached is visible as
+                        # that fact and is never counted as "the model decided".
+                        retrieval_trace.setdefault("sheet_states", {})[sheet_name] = (
+                            sheet_pass_state(
+                                source_catalog,
+                                sheet_name,
+                                accumulated_rows,
+                                offered_this_pass=tuple(offered_locators),
+                                offer_counts=offer_counts,
+                                deferred=tuple(exhausted_locators),
+                                unread_tail=tuple(unread_tail_rows),
+                                deferred_search=tuple(held_packet),
+                            )
+                        )
+                        never_reached = (
+                            retrieval_trace["sheet_states"][sheet_name]["never_offered"]
+                        )
+                        if never_reached:
+                            logger.warning(
+                                "[SHEET_PASS] sheet=%s still has %s rows never put to "
+                                "the model (run stopped early or pool exhausted)",
+                                sheet_name,
+                                never_reached,
+                            )
                     except asyncio.CancelledError:
                         logger.warning("[SHEET_PASS] cancelled; preserving accepted packets")
                         research_cancelled = True
@@ -7326,16 +7691,33 @@ async def _execute_chat_evidence_application(
                                 # A cancelled run stays resumable: the operator
                                 # stopped it, so nothing here may close rows the
                                 # model never saw.  An identical GLOBAL remainder
-                                # reported by consecutive resumes is different:
-                                # those exact rows have already been offered on
-                                # every pass since, so the loop has no other
-                                # outcome and must terminate with declared gaps.
+                                # reported by consecutive resumes can terminate — but
+                                # only for the rows the durable checkpoints prove were
+                                # actually put to the model.  Blocker § 1 (29.09)
+                                # forbids the old inference from the repeated remainder
+                                # that "every row must have been offered on every pass":
+                                # on build 823 the plateau carried 278 rows with a zero
+                                # offer count behind 17 the model had really seen.
                                 guard = research_job.get("stall_guard") or {}
                                 repeats = int(guard.get("remainder_repeats") or 0)
                                 bound = int(guard.get("terminal_bound") or 0)
+                                offer_ledger = packet_offer_counts(
+                                    research_job_service.list_events(
+                                        research_job["job_id"],
+                                        event_type="packet_checkpoint",
+                                    )
+                                )
+                                starved = starved_locators(
+                                    unfinished_locators, offer_ledger
+                                )
+                                closable = [
+                                    locator
+                                    for locator in unfinished_locators
+                                    if locator not in set(starved)
+                                ]
                                 if (
                                     not research_cancelled
-                                    and unfinished_locators
+                                    and closable
                                     and bound > 0
                                     and repeats >= bound
                                 ):
@@ -7344,27 +7726,55 @@ async def _execute_chat_evidence_application(
                                             research_job["job_id"],
                                             gap_rows=declared_gap_rows(
                                                 source_catalog,
-                                                unfinished_locators,
+                                                closable,
                                                 offers=repeats + 1,
+                                                offers_by_locator=offer_ledger,
                                             ),
                                             reason=str(guard.get("reason") or ""),
                                             attempts=repeats + 1,
+                                            offers_by_locator=offer_ledger,
                                         )
                                     )
                                     retrieval_trace["declared_gaps"] = {
                                         "schema": "les.declared-gaps.v1",
-                                        "count": len(unfinished_locators),
+                                        "count": len(closable),
                                         "offers": repeats + 1,
                                         "model_called": False,
-                                        "locators": [
-                                            str(item) for item in unfinished_locators
+                                        "locators": [str(item) for item in closable][:80],
+                                        # A technical gap of the scheduler stays open
+                                        # and is named as such; declaring it would make
+                                        # an unfinished document look finished.
+                                        "left_open_never_offered": len(starved),
+                                        "left_open_locators": [
+                                            str(item) for item in starved
                                         ][:80],
                                     }
                                     logger.info(
                                         "[STALL_BOUND] closing %s rows as declared "
-                                        "gaps after %s identical remainders",
-                                        len(unfinished_locators),
+                                        "gaps after %s identical remainders; %s rows "
+                                        "stay open (never put to the model)",
+                                        len(closable),
                                         repeats,
+                                        len(starved),
+                                    )
+                                elif starved:
+                                    retrieval_trace["scheduler_gap"] = {
+                                        "schema": "les.scheduler-gap.v1",
+                                        "rows_never_offered": len(starved),
+                                        "locators": [str(item) for item in starved][:80],
+                                        "cause": str(guard.get("reason") or ""),
+                                        "pause_kind": str(guard.get("pause_kind") or ""),
+                                        "meaning": (
+                                            "строки не предложены модели — "
+                                            "технический пробел планировщика, "
+                                            "а не отсутствие нормы"
+                                        ),
+                                    }
+                                    logger.warning(
+                                        "[SCHEDULER_GAP] %s outstanding rows were never "
+                                        "put to the model; they stay open instead of "
+                                        "being declared as gaps",
+                                        len(starved),
                                     )
                             else:
                                 research_job = research_job_service.finish(

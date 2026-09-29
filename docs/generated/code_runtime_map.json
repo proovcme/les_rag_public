@@ -3090,7 +3090,7 @@
         "tests/test_stall_completion_23.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 9218,
+      "lines": 9628,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -7455,7 +7455,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 1817,
+      "lines": 2095,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -19202,7 +19202,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 654,
     "tracked_python_files": 1024,
-    "tracked_python_lines": 347805
+    "tracked_python_lines": 348493
   },
   "warnings": []
 }
