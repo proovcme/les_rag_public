@@ -16,6 +16,12 @@ import json
 import re
 from typing import Any, Mapping, Sequence
 
+from proxy.services.model_answer_table_service import (
+    is_divider_cell,
+    opens_as_table,
+    table_cells,
+)
+
 
 QUALITY_GATE_SCHEMA = "les.lsr-norm-quality-gate.v1"
 MAX_RESEARCH_ROUNDS_PER_LOCATOR = 3
@@ -641,20 +647,14 @@ def strip_self_score(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _cells(line: str) -> list[str]:
-    stripped = line.strip()
-    if not stripped.startswith("|"):
-        return []
-    inner = stripped[1:-1] if stripped.endswith("|") else stripped[1:]
-    return [item.strip() for item in inner.split("|")]
+    # The same table contract the decision reader uses: outer pipes are optional in
+    # markdown and the model's own [Источник N] mark may sit in front of a line.
+    # Cells stay verbatim either way (task § 3, one internal contract).
+    return table_cells(line)
 
 
 def _divider_cell(value: str) -> bool:
-    candidate = value.strip()
-    if candidate.startswith(":"):
-        candidate = candidate[1:]
-    if candidate.endswith(":"):
-        candidate = candidate[:-1]
-    return len(candidate) >= 2 and set(candidate) == {"-"}
+    return is_divider_cell(value)
 
 
 def _map_quality_headers(header: Sequence[str]) -> list[str]:
@@ -729,6 +729,11 @@ def parse_quality_table(raw: str) -> list[dict[str, Any]]:
         while cursor < len(lines):
             values = _cells(lines[cursor])
             if not values:
+                break
+            if len(values) < len(header) - 1 and not opens_as_table(lines[cursor]):
+                # A table row may drop its final empty cells; a line much narrower
+                # than the table and not opened as a row is prose, and the table
+                # ends there instead of turning a sentence into a verdict.
                 break
             aligned = align_quality_row_values(len(header), values)
             if aligned is None:

@@ -98,6 +98,11 @@ from proxy.services.saferag_service import (
 )
 from proxy.services.table_query_service import maybe_answer_table_query
 from proxy.services.memory_port import get_memory_port
+from proxy.services.model_answer_table_service import (
+    is_divider_cell,
+    opens_as_table,
+    table_cells,
+)
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from proxy.services.packaging_recovery_service import (
     release_memory_for_packaging,
@@ -3311,12 +3316,13 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         normalized = " ".join(value.replace("**", "").strip().split()).casefold()
         return header_fields.get(normalized, "")
 
+    # Table lines are read through one shared contract (task § 3): the model's own
+    # presentation — a pipe-opened line, a line opened without the optional outer
+    # pipes, or a line carrying the mandated [Источник N] mark glued in front of it
+    # — is the same table.  Cells come back verbatim; nothing here decides what a
+    # cell means.
     def cells(line: str) -> list[str]:
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            return []
-        inner = stripped[1:-1] if stripped.endswith("|") else stripped[1:]
-        return [item.strip() for item in inner.split("|")]
+        return table_cells(line)
 
     def number(value: str) -> int | float | None:
         normalized = value.replace("\u00a0", "").replace(" ", "").replace(",", ".")
@@ -3354,12 +3360,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         }
 
     def divider_cell(value: str) -> bool:
-        candidate = value.strip()
-        if candidate.startswith(":"):
-            candidate = candidate[1:]
-        if candidate.endswith(":"):
-            candidate = candidate[:-1]
-        return len(candidate) >= 3 and set(candidate) == {"-"}
+        return is_divider_cell(value)
 
     def evidence_refs(value: str) -> list[str]:
         return extract_model_evidence_refs(value)
@@ -3522,6 +3523,13 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         while row_index < len(lines):
             values = cells(lines[row_index])
             if not values:
+                break
+            if len(values) < len(header) - 1 and not opens_as_table(lines[row_index]):
+                # The outer pipes are optional, so a prose line that happens to hold
+                # a pipe also splits.  A row may drop its final empty cells (markdown
+                # pads them), but a line this much narrower than the table and not
+                # opened as a table row is prose: the table ends there instead of
+                # inventing a decision out of a sentence.
                 break
             if len(values) != len(header):
                 values = align_row_values(values) or []

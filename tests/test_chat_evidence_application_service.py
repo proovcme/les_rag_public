@@ -14,6 +14,7 @@ import pytest
 from proxy.routers import chat
 from proxy.services import chat_evidence_application_service as service
 from proxy.services.chat_attachment_service import preserve_read_attachment
+from proxy.services.model_answer_table_service import citation_mark_length
 from proxy.services.tool_harness_service import ToolHarness
 from proxy.services.web_research_config_service import WebResearchConfig
 
@@ -672,7 +673,19 @@ def test_model_rag_result_does_not_infer_rows_from_prose():
     assert service.parse_model_rag_result(answer) is None
 
 
-def test_model_rag_result_rejects_ambiguous_short_dividers():
+def test_model_rag_result_reads_tables_whose_divider_uses_short_dashes():
+    """One alignment dash is markdown, not an ambiguous answer (task § 1, § 3).
+
+    Build 8007b38a raised the divider minimum to three dashes, and the installed
+    store then held two real model answers in the ``|:--|`` style whose whole
+    decision table the reader threw away: chat row 53 (38 rows, ВОР!R4…ВОР!R41)
+    and, in a different shape, chat row 330.  Blocker § 1 is explicit that an
+    unread answer is a technical defect and must not be reported as "no norm",
+    and § 3 requires the reader to keep the fields the model did present.  The
+    unambiguous part of a table is the header mapping plus a divider that marks a
+    separator in every column — the dash count is presentation.
+    """
+
     answer = """**Инженерный вердикт:** цены не найдены, строки всё равно ниже.
 
 | № | source_row | section | title | unit | quantity | norm_code | analogue | coverage | coefficient | evidence_refs |
@@ -683,7 +696,105 @@ def test_model_rag_result_rejects_ambiguous_short_dividers():
 
     parsed = service.parse_model_rag_result(answer)
 
-    assert parsed is None
+    assert parsed is not None
+    visible, rows = parsed
+    assert visible == answer
+    assert [row["source_row"] for row in rows] == ["ВОР!R4", "ВОР!R5"]
+    assert rows[0]["norm_code"] == "ГЭСНм08-03-609-02"
+    assert rows[0]["evidence_refs"] == ["Q1.H2"]
+    # An empty cell stays empty: the reader does not fill a decision in.
+    assert "norm_code" not in rows[1]
+
+
+def test_model_rag_result_reads_a_table_marked_by_the_models_own_citation():
+    """A [Источник N] mark glued to a table line is presentation, not a lost row.
+
+    The prompt itself orders the model to cite with ``[Источник N]`` numbers, and
+    the installed 35B sometimes writes that mark in front of the table it opens
+    with.  Chat row 506 is exactly that answer: the header line began with
+    ``[Источник 1] |``, so the reader returned None and the two decisions the
+    model made for АР!R49 and АР!R64 never reached the document.  Reading the
+    table must not touch the authored answer or a single cell value, and a bracket
+    that is not a citation stays inside its cell.
+    """
+
+    answer = (
+        "[Источник 1] | source_row | row_role | work_row | title | unit | quantity "
+        "| norm_code | norm_status | open_gap | evidence_refs |\n"
+        "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n"
+        "| АР!R49 | work | АР!R49 | Кабель-канал 40x40 мм | м | 24 "
+        "| ГЭСН15-04-007-08 | ANALOGUE_CANDIDATE | [Q4.H1] аналог по составу | Q4.H1 |\n"
+        "| АР!R64 | work | АР!R64 | Розетка двойная | шт | 6 "
+        "| ГЭСН34-01-016-02 | ANALOGUE_CANDIDATE | Совпадает единица | Q5.H1 |\n"
+    )
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    visible, rows = parsed
+    assert visible == answer
+    assert [row["source_row"] for row in rows] == ["АР!R49", "АР!R64"]
+    assert [row["norm_code"] for row in rows] == ["ГЭСН15-04-007-08", "ГЭСН34-01-016-02"]
+    assert [row["norm_status"] for row in rows] == ["ANALOGUE_CANDIDATE", "ANALOGUE_CANDIDATE"]
+    assert [row["evidence_refs"] for row in rows] == [["Q4.H1"], ["Q5.H1"]]
+    # The citation mark only opened the line; a bracket inside a cell is kept as
+    # the model wrote it, so no model content disappears with the prefix.
+    assert rows[0]["open_gap"].startswith("[Q4.H1]")
+
+
+def test_model_rag_result_reads_tables_written_without_outer_pipes():
+    """The outer pipes are optional in markdown (chat row 330).
+
+    That answer opened most of its per-section tables as
+    ``source_row | row_role | …`` with a ``--- | --- | …`` rule under it, and the
+    reader stopped at the first line without a leading pipe, so every section below
+    the first table was never read.  A prose line that merely contains a pipe is
+    still not a row: a line narrower than the table and not opened as one ends the
+    table instead of being padded into a decision.
+    """
+
+    answer = (
+        "| source_row | title | unit | norm_code |\n"
+        "|---|---|---|---|\n"
+        "| АР!R23 | Штукатурка существующих колонн | м2 | ГЭСН15-02-026-03 |\n"
+        "\n"
+        "ПТ!R9: Автоматическое пожаротушение и внутренний противопожарный водопровод\n"
+        "source_row | row_role | work_row | title | unit | quantity | norm_code "
+        "| norm_status | open_gap | evidence_refs\n"
+        "--- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n"
+        "ПТ!R9 | header | ПТ!R9 | Автоматическое пожаротушение |  |  |  |  "
+        "| Раздел, не требует монтажной нормы | \n"
+        "ПТ!R10: эта строка — пояснение, а не позиция таблицы\n"
+    )
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    _visible, rows = parsed
+    assert [row["source_row"] for row in rows] == ["АР!R23", "ПТ!R9"]
+    assert rows[1]["row_role"] == "header"
+    assert rows[1]["open_gap"] == "Раздел, не требует монтажной нормы"
+
+
+def test_model_rag_result_keeps_a_non_citation_bracket_as_a_cell():
+    """Only the citation mark is stripped, never a value the model put in brackets."""
+
+    assert citation_mark_length("[Q4.H1] | source_row | title |") == 0
+    assert citation_mark_length("[Источник 12] | source_row | title |") == len(
+        "[Источник 12]"
+    )
+    # A handle that opens a line is a cell, so the row carries one column more than
+    # the header and the reader reports ambiguity instead of relabelling the model's
+    # own text.
+    answer = (
+        "| source_row | title | unit | norm_code |\n"
+        "|---|---|---|---|\n"
+        "| [Q4.H1] | Кабель | м | ГЭСН15-04-007-08 |\n"
+    )
+    parsed = service.parse_model_rag_result(answer)
+    assert parsed is not None
+    assert parsed[1][0]["source_row"] == "[Q4.H1]"
+
 
 
 def test_model_rag_result_rejects_noncontract_norm_header():

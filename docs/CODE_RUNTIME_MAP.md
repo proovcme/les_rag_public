@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1027 |
-| Строк Python | 352111 |
-| PRODUCT_REACHABLE | 358 |
+| Python-файлов под git | 1029 |
+| Строк Python | 352450 |
+| PRODUCT_REACHABLE | 359 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 657 |
+| TEST_OR_TOOL_ONLY | 658 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 338 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 10379 | 19 |
+| proxy/services/chat_evidence_application_service.py | 10387 | 19 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7626 | 7 |
 | proxy/routers/chat.py | 4658 | 42 |
@@ -48,7 +48,7 @@
 | proxy/services/rim_lsr_trace_service.py | 2221 | 17 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2044 | 4 |
-| proxy/services/lsr_norm_quality_gate_service.py | 2031 | 5 |
+| proxy/services/lsr_norm_quality_gate_service.py | 2036 | 6 |
 | proxy/smeta_core/norm_browser.py | 1703 | 13 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
