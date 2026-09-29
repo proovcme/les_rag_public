@@ -546,6 +546,26 @@ model HTTP callsites вне ContextGovernor, запрет фиктивной ж�
   встречаться как константы, `collect_lsr_price_gaps` обязан существовать и
   вызывать `_nr_sp_gap`: иначе ставка, списанная с карточки, снова выглядела бы
   принятой, а вопрос оператору за неё никто не задавал бы.
+- `OFFER_LEDGER_READ_AT_JOB_SCOPE` — ledger предложений обязан читаться по
+  lineage документа, а не по одному исследованию (блок-лист
+  `QWEN_BLOCKERS_AFTER_823_2026-09-29.md` § 1: «Состояние очереди/попыток
+  сохранять при рестарте», «Не повторять один и тот же набор без новых
+  данных/evidence»). Проверяются три звена того же шва, что и у базы ценования,
+  потому что рвётся он тем же способом. В
+  `proxy/services/chat_evidence_application_service.py` каждый вызов
+  `packet_offer_counts` / `packet_attempt_seed` обязан кормиться
+  `list_events_with_lineage` (через прямое выражение или через присваивание в
+  той же области видимости), а не `list_events(job_id)` и не памятью цикла. В
+  `proxy/services/workbook_research_job_service.py` `list_events_with_lineage`
+  обязана вызывать `lineage_job_ids`, `lineage_job_ids` — читать колонку
+  `continues_job_id`, `begin_or_resume` — вызывать `_inherit_document_progress`,
+  а `_inherit_document_progress` — писать `continues_job_id`. Без любого из них
+  продолжение «Продолжи это же задание…» — это новый job с нулевой историей
+  предложений, и ровно так оно и было на живом 824: 282 уже решённые строки
+  клиентского ВОР ушли модели повторно, 32 отложенные строки были переотложены,
+  417 закешированных запросов переизданы и 463 evidence-записи пересчитаны, а
+  документ прирос четырьмя строками за 42 минуты
+  (`stage_b/live_824/b1_lineage_824_continuation_final.json`).
 
 ## Приёмка
 

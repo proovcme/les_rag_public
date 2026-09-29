@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1024 |
-| Строк Python | 348493 |
+| Python-файлов под git | 1025 |
+| Строк Python | 349528 |
 | PRODUCT_REACHABLE | 358 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 654 |
+| TEST_OR_TOOL_ONLY | 655 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 338 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 9628 | 16 |
+| proxy/services/chat_evidence_application_service.py | 9641 | 17 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7626 | 7 |
 | proxy/routers/chat.py | 4658 | 42 |
@@ -44,9 +44,9 @@
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2450 | 15 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
+| proxy/services/workbook_research_job_service.py | 2288 | 11 |
 | proxy/services/rim_lsr_trace_service.py | 2221 | 17 |
 | mlx_host.py | 2216 | 2 |
-| proxy/services/workbook_research_job_service.py | 2095 | 10 |
 | proxy/services/estimate_harness_service.py | 2044 | 4 |
 | proxy/services/lsr_norm_quality_gate_service.py | 2031 | 5 |
 | proxy/smeta_core/norm_browser.py | 1703 | 13 |

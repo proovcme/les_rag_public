@@ -126,6 +126,27 @@ MODEL_PACKAGING_EVENT_BUILDER = "model_packaging_record_arguments"
 DOCUMENT_BASIS_SCOPE_EVENTS = "document_packaging_events"
 DOCUMENT_BASIS_SCOPE_READER = "document_priced_basis"
 
+# Blocker 2026-09-29 § 1: «Состояние очереди/попыток сохранять при рестарте» and
+# «Не повторять один и тот же набор без новых данных/evidence» speak about the
+# *document*, not about one research row.  «Продолжи это же задание…» changes the
+# question and the question digest is part of the durable identity, so it opens a
+# new job — and a new job that reads its offer ledger from its own checkpoints
+# starts that ledger at zero.  Measured live on build 824 over the customer's ВОР
+# (``stage_b/live_824/b1_lineage_824_continuation.json``): 177 rows the previous
+# research had already decided were put to the model again, all 32 rows it had
+# deferred were re-offered, 275 cached queries re-issued and 277 evidence records
+# re-derived.  Three links of one seam, each of which can reopen that hole alone:
+# the loop that reads the ledger, the reader that spans the lineage, and the
+# writer that carries the document's state into the next research of it.
+OFFER_LEDGER_HELPERS = frozenset({"packet_offer_counts", "packet_attempt_seed"})
+OFFER_LEDGER_LINEAGE_READER = "list_events_with_lineage"
+OFFER_LEDGER_SINGLE_JOB_READER = "list_events"
+DOCUMENT_LINEAGE_WALKER = "lineage_job_ids"
+CONTINUATION_LINEAGE_COLUMN = "continues_job_id"
+CONTINUATION_PROGRESS_WRITER = "_inherit_document_progress"
+CONTINUATION_PROGRESS_RESUMER = "begin_or_resume"
+PACKET_CHECKPOINT_EVENT = "packet_checkpoint"
+
 # Task 2026-09-28 § 7: the operator's own result line has to name the basis the
 # estimate was computed in and the identifier of the price book.  Build 822 spoke
 # about a basis only when it was wrong, so «ЛСР собрана частично…» carried no book
@@ -545,6 +566,167 @@ def _document_lineage_violations(relative: str, tree: ast.AST) -> Iterable[Archi
                 "parent_revision_id taken straight from tool arguments instead of"
                 " the code-owned lineage resolver",
             )
+
+
+def _continuation_lineage_violations(
+    relative: str, tree: ast.AST
+) -> Iterable[ArchitectureViolation]:
+    """Blocker § 1: the next research of a document continues its queue.
+
+    Three links of one seam — the loop that counts offers, the reader that has to
+    span the document's lineage, and the writer that carries the durable state into
+    the research that continues it.  Any one of them can restart the ledger at zero
+    silently, and on build 824 they did: a continuation turn over the customer's ВОР
+    put 282 rows the previous research had already decided back to the model,
+    re-offered all 32 deferred rows, re-issued 417 cached queries and re-derived 463
+    evidence records, and added four rows to the document in 42 minutes
+    (``stage_b/live_824/b1_lineage_824_continuation_final.json``).
+    """
+
+    if relative == DOCUMENT_BASIS_CARRIER_MODULE:
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+            helper = _call_name(call).split(".")[-1]
+            if helper not in OFFER_LEDGER_HELPERS:
+                continue
+            assigned = _reader_assignments(_function_scope(call, parents))
+            readers: list[ast.Call] = []
+            for argument in [*call.args, *(keyword.value for keyword in call.keywords)]:
+                if isinstance(argument, ast.Call):
+                    readers.append(argument)
+                elif isinstance(argument, ast.Name):
+                    readers.extend(assigned.get(argument.id, ()))
+            if not readers:
+                yield ArchitectureViolation(
+                    "OFFER_LEDGER_READ_AT_JOB_SCOPE",
+                    relative,
+                    call.lineno,
+                    f"{helper}() is fed from no durable event read: a counter that "
+                    "lives in the loop restarts on every turn, so «не повторять один "
+                    "и тот же набор без новых данных» cannot be enforced at all",
+                )
+                continue
+            if not any(
+                _call_name(reader).split(".")[-1] == OFFER_LEDGER_LINEAGE_READER
+                for reader in readers
+            ):
+                yield ArchitectureViolation(
+                    "OFFER_LEDGER_READ_AT_JOB_SCOPE",
+                    relative,
+                    call.lineno,
+                    f"{helper}() reads the {PACKET_CHECKPOINT_EVENT} events of one "
+                    "research job: «Продолжи это же задание…» opens a new job "
+                    "over the same document, so its offer history starts at zero and "
+                    "rows the previous research already decided go back to the model",
+                )
+        return
+
+    if relative != DOCUMENT_BASIS_STORAGE_MODULE:
+        return
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    lineage_reader = functions.get(OFFER_LEDGER_LINEAGE_READER)
+    if lineage_reader is None:
+        yield ArchitectureViolation(
+            "OFFER_LEDGER_READ_AT_JOB_SCOPE",
+            relative,
+            1,
+            f"the durable store exposes no {OFFER_LEDGER_LINEAGE_READER}(), so every "
+            "offer ledger of a continuation is read from the one row it was given",
+        )
+    else:
+        called = {
+            _call_name(node).split(".")[-1]
+            for node in ast.walk(lineage_reader)
+            if isinstance(node, ast.Call)
+        }
+        if DOCUMENT_LINEAGE_WALKER not in called:
+            yield ArchitectureViolation(
+                "OFFER_LEDGER_READ_AT_JOB_SCOPE",
+                relative,
+                lineage_reader.lineno,
+                f"{OFFER_LEDGER_LINEAGE_READER}() does not walk "
+                f"{DOCUMENT_LINEAGE_WALKER}(): under that name it would still return "
+                "the events of a single research job",
+            )
+    walker = functions.get(DOCUMENT_LINEAGE_WALKER)
+    if walker is not None and not _mentions(walker, CONTINUATION_LINEAGE_COLUMN):
+        yield ArchitectureViolation(
+            "OFFER_LEDGER_READ_AT_JOB_SCOPE",
+            relative,
+            walker.lineno,
+            f"{DOCUMENT_LINEAGE_WALKER}() never reads the "
+            f"{CONTINUATION_LINEAGE_COLUMN} column, so the chain it walks is invented "
+            "instead of the one the continuation was recorded from",
+        )
+    resumer = functions.get(CONTINUATION_PROGRESS_RESUMER)
+    if resumer is not None:
+        called = {
+            _call_name(node).split(".")[-1]
+            for node in ast.walk(resumer)
+            if isinstance(node, ast.Call)
+        }
+        if CONTINUATION_PROGRESS_WRITER not in called:
+            yield ArchitectureViolation(
+                "OFFER_LEDGER_READ_AT_JOB_SCOPE",
+                relative,
+                resumer.lineno,
+                f"{CONTINUATION_PROGRESS_RESUMER}() starts a new research without "
+                f"{CONTINUATION_PROGRESS_WRITER}(): the document's decisions, "
+                "evidence, query cache and deferrals stay on the previous row",
+            )
+    writer = functions.get(CONTINUATION_PROGRESS_WRITER)
+    if writer is not None and not _mentions(writer, CONTINUATION_LINEAGE_COLUMN):
+        yield ArchitectureViolation(
+            "OFFER_LEDGER_READ_AT_JOB_SCOPE",
+            relative,
+            writer.lineno,
+            f"{CONTINUATION_PROGRESS_WRITER}() carries progress without recording "
+            f"{CONTINUATION_LINEAGE_COLUMN}, so the next continuation cannot tell "
+            "which research it continues and the ledger cannot be read across it",
+        )
+
+
+def _reader_assignments(scope: ast.AST) -> dict[str, list[ast.Call]]:
+    """``events = service.list_events_with_lineage(…)`` — what a name was bound to.
+
+    The loop reads the ledger once and passes the variable to both helpers, so the
+    seam has to be followed through the binding instead of only through literals.
+    """
+
+    assigned: dict[str, list[ast.Call]] = {}
+    for node in ast.walk(scope):
+        targets: list[ast.AST] = []
+        value: ast.AST | None = None
+        if isinstance(node, ast.Assign):
+            targets, value = list(node.targets), node.value
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets, value = [node.target], node.value
+        if not isinstance(value, ast.Call):
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                assigned.setdefault(target.id, []).append(value)
+    return assigned
+
+
+def _mentions(node: ast.AST, token: str) -> bool:
+    for item in ast.walk(node):
+        if isinstance(item, ast.Constant) and isinstance(item.value, str):
+            if token in item.value:
+                return True
+        elif isinstance(item, ast.Attribute) and item.attr == token:
+            return True
+        elif isinstance(item, ast.Name) and item.id == token:
+            return True
+    return False
 
 
 def _basis_carrier_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
@@ -1205,6 +1387,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
 
     yield from _adr16_violations(relative, tree)
     yield from _document_lineage_violations(relative, tree)
+    yield from _continuation_lineage_violations(relative, tree)
     yield from _basis_carrier_violations(relative, tree)
     yield from _document_basis_violations(relative, tree)
     yield from _lsr_basis_notice_violations(relative, tree)

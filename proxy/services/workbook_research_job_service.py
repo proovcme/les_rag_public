@@ -9,6 +9,18 @@ build 823 read any pause as a stop and abandoned eight sheets of the customer's
 per-locator offer history live here too, so a restarted process continues the
 same queue instead of re-offering rows the model already gave up on, and a row
 that was never put to the model cannot be closed as "the model produced nothing".
+
+A chat continuation is a *research of the same document*, not a fresh document:
+the question is part of the durable identity, so every «Продолжи это же задание…»
+turn opened a new row that started the queue again at the first sheet (live on
+build 824: 177 already-decided rows put to the model again, all 32 deferred rows
+re-offered and 18 of those deferrals dropped, 275 cached queries re-issued and 277
+evidence records re-derived).  :meth:`WorkbookResearchJobService.begin_or_resume`
+therefore inherits a document's durable state into the next research of it —
+decisions, evidence, query cache, deferrals, the held packet and the outstanding
+remainder — while the run-scoped guard counters start fresh, and
+:meth:`WorkbookResearchJobService.list_events_with_lineage` reads the offer ledger
+across that chain instead of restarting it at zero.
 """
 from __future__ import annotations
 
@@ -75,6 +87,12 @@ _EXTRA_COLUMNS = {
     # the job gained evidence since it was written (``evidence_watermark``) or when
     # an operator reopens the locator.
     "deferrals_json": "TEXT NOT NULL DEFAULT '{}'",
+    # Blocker file § 1 (29.09), build 824: the research a continuation turn picked
+    # up where this one's durable progress was inherited FROM.  A chat turn is a
+    # new identity (its question is part of the digest), so without a lineage the
+    # next turn re-opened the queue at the first sheet and re-offered rows the model
+    # had already decided.  '' means this job is the first research of its document.
+    "continues_job_id": "TEXT NOT NULL DEFAULT ''",
 }
 
 # Guard kinds that set ONE packet aside and let the run go on with the next
@@ -477,6 +495,12 @@ class WorkbookResearchJobService:
                     (job_id, digest, identity_json),
                 )
                 self._append_event(conn, job_id, "started", {"schema": SCHEMA})
+                # A new question over a document this app has already researched is a
+                # continuation, not a fresh start: pick the durable progress up.
+                inherited = self._inherit_document_progress(
+                    conn, job_id=job_id, identity=identity
+                )
+                prior_elapsed = float(inherited.get("parent_elapsed_seconds") or 0.0)
             else:
                 job_id = str(row["job_id"])
                 if str(row["identity_json"]) != identity_json:
@@ -509,6 +533,168 @@ class WorkbookResearchJobService:
         job = self.get(job_id)
         job["prior_elapsed_seconds"] = prior_elapsed
         return job
+
+    def _inherit_document_progress(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        job_id: str,
+        identity: WorkbookResearchIdentity,
+    ) -> dict[str, Any]:
+        """Carry a document's durable research state into the next research of it.
+
+        Blocker file ``QWEN_BLOCKERS_AFTER_823_2026-09-29.md`` § 1 states two rules
+        together: «Состояние очереди/попыток сохранять при рестарте» and «Не повторять
+        один и тот же набор без новых данных/evidence».  The sheet-pass half of both
+        was fixed in 824 (a guard pause no longer ends the document, and the offer
+        ledger is read from the durable checkpoints).  The live customer ВОР then
+        broke the other half: «Продолжи это же задание по тому же прикреплённому
+        документу.» is a different *question*, and the question digest is part of the
+        job identity, so the continuation opened a new row whose queue started again
+        at sheet СВОДНАЯ/АР and re-measured the document from scratch.  Measured on the
+        live customer ВОР by ``stage_b/b1_continuation_lineage_probe_825.py``
+        (``stage_b/live_824/b1_lineage_824_continuation.json``): of the parent's 284
+        decided rows the continuation put **177 already-decided rows back to the
+        model**, re-offered **all 32** rows it had deferred, dropped **18 of those 32**
+        deferrals, re-issued **275** queries the document had already cached and
+        re-derived **277** evidence records it already held — while its own sheet
+        queue never got past СКС, short of the ЭОМ the first research had reached.
+
+        The scope is the *document*, exactly as § 7/§ 9 already scope its price
+        basis: same attachment, same source hash.  A replaced file under the same
+        attachment inherits nothing, and a regenerated UI session does not lose the
+        state it is continuing.  What carries is the state the scheduler reads —
+        decided rows, evidence, omitted rows, the query cache, the packet still held,
+        the outstanding remainder and the deferrals — while the run-scoped guard
+        counters (``run_round_count``, ``stall_count``, ``held_attempts``) start
+        fresh, because a continuation is a new run with a new budget.
+
+        A deferral keeps its meaning by being re-based to the inherited evidence
+        watermark: it stays set aside until *this* continuation gathers evidence the
+        document had not seen, which is the "without new data" the blocker names.
+        """
+
+        parent = conn.execute(
+            "SELECT * FROM workbook_research_jobs"
+            " WHERE json_extract(identity_json,'$.attachment_id')=?"
+            "   AND json_extract(identity_json,'$.source_sha256')=?"
+            "   AND job_id<>?"
+            " ORDER BY rowid DESC LIMIT 1",
+            (identity.attachment_id, identity.source_sha256, str(job_id)),
+        ).fetchone()
+        if parent is None:
+            return {}
+        accepted = _json_list(parent, "accepted_rows_json")
+        evidence = _json_list(parent, "evidence_json")
+        omitted = _json_list(parent, "omitted_json")
+        cache = _json_object(parent, "query_cache_json")
+        deferrals = _json_object(parent, "deferrals_json")
+        held = _json_object(parent, "held_packet_json")
+        remaining = _json_list(parent, "remaining_json")
+        if not (accepted or evidence or omitted or cache or deferrals):
+            # nothing was decided, cached or set aside: there is no progress to lose.
+            return {}
+        watermark = len(evidence) + len(cache)
+        rebased: dict[str, Any] = {}
+        for locator, entry in deferrals.items():
+            if not isinstance(entry, Mapping):
+                continue
+            carried = dict(entry)
+            carried["inherited_from_job"] = str(parent["job_id"])
+            carried["evidence_watermark"] = watermark
+            rebased[str(locator)] = carried
+        conn.execute(
+            """UPDATE workbook_research_jobs
+            SET accepted_rows_json=?,evidence_json=?,omitted_json=?,
+                query_cache_json=?,deferrals_json=?,held_packet_json=?,
+                remaining_json=?,continues_job_id=?,updated_at=CURRENT_TIMESTAMP
+            WHERE job_id=?""",
+            (
+                json.dumps(accepted, ensure_ascii=False),
+                json.dumps(evidence, ensure_ascii=False),
+                json.dumps(omitted, ensure_ascii=False),
+                json.dumps(cache, ensure_ascii=False),
+                json.dumps(rebased, ensure_ascii=False),
+                json.dumps(held, ensure_ascii=False),
+                json.dumps(remaining, ensure_ascii=False),
+                str(parent["job_id"]),
+                str(job_id),
+            ),
+        )
+        parent_identity = _json_object(parent, "identity_json")
+        payload = {
+            "schema": "les.progress-inherited.v1",
+            "from_job": str(parent["job_id"]),
+            "parent_status": str(parent["status"] or ""),
+            "parent_sheet": str(parent["sheet_name"] or ""),
+            # Named apart because a continuation that carries another model's or
+            # another profile's decisions across it must be visible in the trace.
+            "parent_model_identity": str(parent_identity.get("model_identity") or ""),
+            "parent_profile_revision_id": str(
+                parent_identity.get("profile_revision_id") or ""
+            ),
+            "continuation_model_identity": str(identity.model_identity or ""),
+            "continuation_profile_revision_id": str(identity.profile_revision_id or ""),
+            "decided_rows": len(accepted),
+            "evidence_records": len(evidence),
+            "omitted_rows": len(omitted),
+            "cached_queries": len(cache),
+            "deferrals": len(rebased),
+            "remaining_rows": len(remaining),
+            "evidence_watermark": watermark,
+            "guard_counters_reset": True,
+            # The document's already-spent time belongs to the continuation's ETA:
+            # a resumed run is not measured from the second this turn started.
+            "parent_elapsed_seconds": self.elapsed_seconds_between(
+                str(parent["created_at"] or ""), str(parent["updated_at"] or "")
+            ),
+        }
+        self._append_event(conn, job_id, "progress_inherited", payload)
+        return payload
+
+    def lineage_job_ids(self, job_id: str) -> list[str]:
+        """This research and every research of the same document it continued from.
+
+        Oldest first, so reading the chain reads the document's history in the order
+        it happened.  Bounded because the chain is walked, not indexed.
+        """
+
+        chain = [str(job_id)]
+        with self._connect() as conn:
+            for _ in range(32):
+                row = conn.execute(
+                    "SELECT continues_job_id FROM workbook_research_jobs WHERE job_id=?",
+                    (chain[-1],),
+                ).fetchone()
+                if row is None:
+                    break
+                parent = str(row["continues_job_id"] or "").strip()
+                if not parent or parent in chain:
+                    break
+                chain.append(parent)
+        return list(reversed(chain))
+
+    def list_events_with_lineage(
+        self, job_id: str, event_type: str = ""
+    ) -> list[dict[str, Any]]:
+        """Durable events of this research *and* of the researches it continued from.
+
+        The offer ledger and the packet attempt numbers are built from
+        ``packet_checkpoint`` events.  Read per job they restart at zero on every
+        continuation turn, which is the "same set offered again without new data"
+        § 1 forbids; read across the lineage they keep the fairness memory of the
+        document.  Every event belongs to the job that wrote it and says so here, so
+        no history is duplicated or rewritten.
+        """
+
+        chain = self.lineage_job_ids(job_id)
+        events: list[dict[str, Any]] = []
+        for step in chain:
+            for event in self.list_events(step, event_type):
+                if len(chain) > 1:
+                    event["job_id"] = step
+                events.append(event)
+        return events
 
     @staticmethod
     def elapsed_seconds_between(created_at: str, updated_at: str) -> float:
@@ -1998,6 +2184,13 @@ class WorkbookResearchJobService:
         return {
             "schema": SCHEMA,
             "job_id": str(row["job_id"]),
+            # Which research of the same document this one continued from ('' when it
+            # is the first).  Reported so a continuation never looks like fresh work.
+            "continues_job_id": (
+                str(row["continues_job_id"] or "")
+                if "continues_job_id" in row.keys()
+                else ""
+            ),
             "status": status,
             "phase": str(row["phase"]),
             "sheet": str(row["sheet_name"]),

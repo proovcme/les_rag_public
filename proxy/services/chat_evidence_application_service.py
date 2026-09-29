@@ -6825,9 +6825,15 @@ async def _execute_chat_evidence_application(
                             # to the model, which is what keeps the rotation across
                             # the pass boundary instead of restarting it at the head
                             # of the sheet.
-                            checkpoint_events = research_job_service.list_events(
+                            #
+                            # Read across the document's lineage, not just this row:
+                            # «Продолжи это же задание…» is a new research identity,
+                            # and counting its offers from zero re-offered rows the
+                            # previous research had already decided 14 times over
+                            # (blocker § 1, live on build 824).
+                            checkpoint_events = research_job_service.list_events_with_lineage(
                                 str(research_job["job_id"]),
-                                event_type="packet_checkpoint",
+                                "packet_checkpoint",
                             )
                             packet_attempts = packet_attempt_seed(checkpoint_events)
                             offer_counts = packet_offer_counts(checkpoint_events)
@@ -7702,9 +7708,9 @@ async def _execute_chat_evidence_application(
                                 repeats = int(guard.get("remainder_repeats") or 0)
                                 bound = int(guard.get("terminal_bound") or 0)
                                 offer_ledger = packet_offer_counts(
-                                    research_job_service.list_events(
+                                    research_job_service.list_events_with_lineage(
                                         research_job["job_id"],
-                                        event_type="packet_checkpoint",
+                                        "packet_checkpoint",
                                     )
                                 )
                                 starved = starved_locators(
@@ -7785,6 +7791,13 @@ async def _execute_chat_evidence_application(
                         retrieval_trace["workbook_research_job"] = {
                             "schema": "les.workbook-research-job.v1",
                             "job_id": research_job["job_id"],
+                            # Which research of the same document this turn continued
+                            # from ('' on a first run), so an answer that arrives with
+                            # 305 decisions already on the row can be told apart from
+                            # one whose model produced 305 decisions in this turn.
+                            "continues_job_id": str(
+                                research_job.get("continues_job_id") or ""
+                            ),
                             "status": research_job["status"],
                             "phase": research_job["phase"],
                             "resumable": bool(research_job.get("resumable")),

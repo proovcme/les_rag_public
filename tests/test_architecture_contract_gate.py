@@ -1181,3 +1181,132 @@ def test_accepts_a_refusal_carried_from_the_derivation_to_the_answer(
     assert "CONTRADICTED_BASIS_ANNOUNCED_ABSENT" not in codes
 
 
+
+
+# ── blocker § 1 (29.09): a continuation continues its document's offer ledger ──
+
+CONTINUATION_CARRIER = "proxy/services/chat_evidence_application_service.py"
+CONTINUATION_STORE = "proxy/services/workbook_research_job_service.py"
+
+#: the reader the loop needs; every store-module fixture has to answer for it,
+#: because without it every ledger of a continuation is job-scoped by definition.
+LINEAGE_READER_OK = """
+    def list_events_with_lineage(self, job_id, event_type=""):
+        events = []
+        for step in self.lineage_job_ids(job_id):
+            events.extend(self.list_events(step, event_type))
+        return events
+
+    def lineage_job_ids(self, job_id):
+        row = self._read(f"SELECT continues_job_id FROM jobs WHERE job_id=?", job_id)
+        return [job_id, str(row["continues_job_id"])]
+"""
+
+
+def _loop_that_reads_its_ledger(reader: str) -> str:
+    return f"""
+def _sheet_pass(research_job_service, research_job):
+    checkpoint_events = research_job_service.{reader}(
+        str(research_job["job_id"]), "packet_checkpoint"
+    )
+    return (
+        packet_attempt_seed(checkpoint_events),
+        packet_offer_counts(checkpoint_events),
+    )
+"""
+
+
+def test_rejects_an_offer_ledger_counted_from_one_research_job(tmp_path: Path) -> None:
+    """The live 824 failure: the continuation restarts the document at zero offers."""
+
+    codes = _adr16_probe(tmp_path, CONTINUATION_CARRIER, _loop_that_reads_its_ledger("list_events"))
+    assert "OFFER_LEDGER_READ_AT_JOB_SCOPE" in codes
+
+
+def test_accepts_an_offer_ledger_counted_across_the_documents_lineage(
+    tmp_path: Path,
+) -> None:
+    codes = _adr16_probe(
+        tmp_path, CONTINUATION_CARRIER, _loop_that_reads_its_ledger("list_events_with_lineage")
+    )
+    assert "OFFER_LEDGER_READ_AT_JOB_SCOPE" not in codes
+
+
+def test_rejects_a_ledger_helper_fed_from_memory(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        CONTINUATION_CARRIER,
+        """
+def _sheet_pass(seen_locators):
+    return packet_offer_counts(seen_locators), packet_attempt_seed(seen_locators)
+""",
+    )
+    assert "OFFER_LEDGER_READ_AT_JOB_SCOPE" in codes
+
+
+def test_rejects_a_lineage_reader_that_reads_one_job(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        CONTINUATION_STORE,
+        """
+class WorkbookResearchJobService:
+    def list_events_with_lineage(self, job_id, event_type=""):
+        return self.list_events(job_id, event_type)
+""",
+    )
+    assert "OFFER_LEDGER_READ_AT_JOB_SCOPE" in codes
+
+
+def test_accepts_a_lineage_reader_that_walks_the_chain(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        CONTINUATION_STORE,
+        "class WorkbookResearchJobService:\n" + LINEAGE_READER_OK,
+    )
+    assert "OFFER_LEDGER_READ_AT_JOB_SCOPE" not in codes
+
+
+def test_rejects_a_research_started_without_inheriting_the_document(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        CONTINUATION_STORE,
+        """
+class WorkbookResearchJobService:
+"""
+        + LINEAGE_READER_OK
+        + """
+    def begin_or_resume(self, identity):
+        return self._insert(identity)
+
+    def _inherit_document_progress(self, conn, *, job_id, identity):
+        conn.execute("UPDATE jobs SET accepted_rows_json=? WHERE job_id=?", (job_id,))
+        return {}
+""",
+    )
+    assert "OFFER_LEDGER_READ_AT_JOB_SCOPE" in codes
+
+
+def test_accepts_a_research_that_carries_and_records_the_documents_state(
+    tmp_path: Path,
+) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        CONTINUATION_STORE,
+        """
+class WorkbookResearchJobService:
+"""
+        + LINEAGE_READER_OK
+        + """
+    def begin_or_resume(self, identity):
+        self._insert(identity)
+        return self._inherit_document_progress(self._conn, job_id=identity.job_id, identity=identity)
+
+    def _inherit_document_progress(self, conn, *, job_id, identity):
+        conn.execute(
+            "UPDATE jobs SET accepted_rows_json=?, continues_job_id=? WHERE job_id=?",
+            (job_id, identity.parent, job_id),
+        )
+        return {}
+""",
+    )
+    assert "OFFER_LEDGER_READ_AT_JOB_SCOPE" not in codes
