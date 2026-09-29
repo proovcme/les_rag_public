@@ -264,6 +264,28 @@ def book_unit_conflict_note(res: dict[str, Any], book_unit: str) -> str:
     )
 
 
+PRICE_ACTION_LABELS = {
+    "needs_kac": "нужен КАЦ",
+    "needs_labor_rate": "нужна ставка ОЗП",
+    "needs_machinist_rate": "нужна ставка ЗПМ",
+    "needs_fgis_price": "нужна цена эксплуатации машины",
+    "card_price_without_basis": "цена из карточки нормы, основания нет",
+    "unresolved_resource_group": "групповой ресурс, нужен конкретный ресурс книги",
+    BOOK_UNIT_CONFLICT_ACTION: "цена книги отклонена: единицы не совпадают",
+}
+
+
+def price_action_label(action: Any, source: Any = "") -> str:
+    """The operator's wording for one price-ladder outcome (§ 4, tracker #56).
+
+    One home for these names: the flag the calculator raises and the column of the
+    delivered check sheet must not drift into two vocabularies for one hole, and a
+    file that only says «нет цены» hides which of КАЦ, ОЗП, ЗПМ or СПЭК is missing.
+    """
+
+    return PRICE_ACTION_LABELS.get(str(action or source or ""), "нужна цена")
+
+
 def _first_value(row: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         if key in row and row.get(key) not in (None, ""):
@@ -498,6 +520,269 @@ class PriceTrace:
 #: "which resource", not "how much" — and reporting it as ``needs_price`` would ask
 #: the operator for a number they cannot legitimately give (task 2026-09-29 § 3).
 RESOURCE_GROUP_ACTION = "unresolved_resource_group"
+
+#: Task 2026-09-29 § 4: an open position answers one of two different questions, and
+#: the calculator's own reason tags say which.  «price_missing:…» and
+#: «card_price_without_basis:…» are money — the structure is built and only the price
+#: (or its owner) is missing.  Any other tag is the structure itself; «action_conflict:»
+#: is neither, it is the double-counting question the operator has to settle.  One
+#: place splits them, so the check sheet, the readiness count and the sum agree.
+PRICE_REASON_PREFIXES = ("price_missing:", "card_price_without_basis:")
+CONFLICT_REASON_PREFIXES = ("action_conflict:",)
+
+#: The operator-confirmed-price note explains *how* a finished position got its money;
+#: it is not a hole in the calculation.  Counting it as a gap flag made a document whose
+#: every operation is fully priced read ``priced_partial`` in one consumer while the
+#: projection of the same rows answered «позиция полностью рассчитана=да» in another
+#: (§ 4 / § 10 — one meaning in every consumer).  The note stays in ``flags`` so every
+#: surface can still print it; only the status decision treats it as informational.
+OPERATOR_PRICE_NOTE_PREFIX = "итог позиции взят по подтверждённой цене оператора"
+
+
+def is_informational_flag(flag: Any) -> bool:
+    """Does this calculator flag describe how the money was taken, not what is open?"""
+
+    return str(flag or "").startswith(OPERATOR_PRICE_NOTE_PREFIX)
+
+
+def gap_flags(flags: Any) -> list[Any]:
+    """The part of a flag list that says something is still missing."""
+
+    return [flag for flag in (flags or []) if not is_informational_flag(flag)]
+
+
+def is_price_reason(reason: Any) -> bool:
+    return str(reason or "").startswith(PRICE_REASON_PREFIXES)
+
+
+def is_conflict_reason(reason: Any) -> bool:
+    return str(reason or "").startswith(CONFLICT_REASON_PREFIXES)
+
+
+#: The seven questions task 2026-09-29 § 4 names for one operation, in the order both
+#: consumers print them.  ``volume_verified`` travels beside them because Directive 2.2
+#: treats the volume as its own independent question; it is listed after the seven so a
+#: reader can tell the contract apart from the extra check.
+OPERATION_READINESS_FIELDS = (
+    "source_accounted",
+    "operation_defined",
+    "norm_selected",
+    "applicability_substantiated",
+    "structure_calculated",
+    "known_amount_present",
+    "position_calculated",
+    "volume_verified",
+)
+
+
+#: Each of the seven questions, worded once for the operator, with what its open
+#: state means.  The «Проверка» sheet, the remarks block of the delivered file and the
+#: readiness card all read these words, so one question is phrased one way in the whole
+#: document (§ 4 / § 10).
+OPERATION_QUESTIONS = (
+    ("source_accounted", "источник учтён", "строка исходного ВОР не дошла до ревизии"),
+    ("operation_defined", "работа определена",
+     "роль строки не объявлена: это работа, материал, машина или заголовок"),
+    ("norm_selected", "шифр выбран", "позиция стоит без выбранной нормы"),
+    ("applicability_substantiated", "применимость обоснована",
+     "шифр назван, но приведённая карточка нормы его не подтверждает"),
+    ("structure_calculated", "расчёт структуры построен",
+     "состав позиции не собран: ресурсы, единицы или начисления не закрыты"),
+    ("known_amount_present", "известная стоимость есть",
+     "в позиции нет ни одного посчитанного рубля"),
+    ("position_calculated", "позиция полностью рассчитана",
+     "итог позиции не сведён, расчёт открыт"),
+    # Directive 2.2 keeps the volume as its own question beside § 4's seven, so the
+    # sheet and the remarks block state it too instead of folding it into the money.
+    ("volume_verified", "объём проверен",
+     "количество или единица строки не сверены с исходником"),
+)
+
+
+def row_projection(binding: Mapping[str, Any]) -> dict[str, Any]:
+    """The one revision projection of one row: identity, role, decision, seven answers.
+
+    The «Проверка» sheet and the readiness card read this, and nothing else, so the
+    same operation cannot be «шифр выбран=да» in the file and unselected in the chat
+    (§ 10).
+    Identity comes from the stable operation ids the revision already carries; no
+    field is invented here — every value is what the row's own readiness said.
+    """
+
+    readiness = binding.get("readiness")
+    readiness = readiness if isinstance(readiness, Mapping) else {}
+    position = binding.get("position")
+    position = position if isinstance(position, Mapping) else {}
+    source_row = binding.get("source_row")
+    source_row = source_row if isinstance(source_row, Mapping) else {}
+    return {
+        "locator": str(binding.get("row") or ""),
+        "work_id": str(binding.get("work_id") or position.get("work_id") or ""),
+        "operation_id": str(position.get("op_key") or ""),
+        # § 4: the number the position carries in the delivered document, how many
+        # operations the revision built on this one source row, and which operation a
+        # supply line belongs to — the link an operator needs to find the row in the
+        # file and to see that one line is not one position.
+        "position_no": binding.get("position_no"),
+        "locator_operations": int(binding.get("locator_operations") or 1),
+        "parent_locator": str(
+            position.get("work_row")
+            or source_row.get("work_row")
+            or binding.get("work_row")
+            or ""
+        ),
+        "covered_by_work_id": str(binding.get("covered_by_work_id") or ""),
+        "row_role": str(
+            binding.get("row_role") or readiness.get("row_role") or ""
+        ),
+        "status": str(binding.get("status") or ""),
+        "norm_code": str(binding.get("code") or ""),
+        "norm_status": str(binding.get("norm_status") or ""),
+        **{name: readiness.get(name) for name in OPERATION_READINESS_FIELDS},
+        "prices_provided": readiness.get("prices_provided"),
+        "open_reasons": list(readiness.get("open_reasons") or []),
+        # § 4: how the operator's own money became the position's sum, in the
+        # calculator's words.  Flags never reach the delivered file, so without this
+        # field an operator who answered «100 рублей за единицу» cannot see in the
+        # ЛСР which unit that price was multiplied by.
+        "price_note": str(binding.get("price_note") or ""),
+        "binding_message": str(binding.get("message") or ""),
+    }
+
+
+def operation_open_questions(
+    projection: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(blockers, warnings) for the delivered file, read off the rows' own answers.
+
+    Task 2026-09-29 § 4 (tracker #54, #60): the «Общие замечания и незакрытые позиции»
+    block had no producer at all, so a revision with open rows printed an empty section
+    while the open questions sat in the same rows.  Nothing is judged here — each line
+    names one locator, the question that row left unanswered and the reason the
+    calculator gave.  A heading keeps ``н/п`` answers and therefore produces no remark
+    (§ 4: its absent applicability is not a defect).
+    """
+
+    blockers: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    closed_statuses = {"bound", "resource_linked", "structure_accounted"}
+    for item in projection:
+        locator = str(item.get("locator") or "") or "?"
+        work_id = str(item.get("work_id") or "")
+        status = str(item.get("status") or "")
+        # § 4: a remark has to be findable in the document.  The locator names the
+        # source line, the position number names the line of the delivered ЛСР, and a
+        # supply line states the operation it belongs to — an operator reading
+        # «строка А!R37» without that link cannot tell which of two positions on the
+        # same source row is meant.
+        where = f"Строка {locator}"
+        position_no = item.get("position_no")
+        if isinstance(position_no, int) and position_no > 0:
+            where += f" (позиция {position_no})"
+        siblings = int(item.get("locator_operations") or 1)
+        if siblings > 1:
+            where += f", на этой строке {siblings} операции"
+        parent = str(item.get("parent_locator") or "")
+        if parent and parent != locator:
+            where += f", относится к {parent}"
+        reasons = [str(value) for value in (item.get("open_reasons") or [])]
+        money = [value for value in reasons if is_price_reason(value)]
+        conflicts = [value for value in reasons if is_conflict_reason(value)]
+        structural = [
+            value for value in reasons
+            if not is_price_reason(value) and not is_conflict_reason(value)
+        ]
+        if status and status not in closed_statuses:
+            blockers.append(
+                {
+                    "code": locator,
+                    "work_id": work_id,
+                    "field": "status",
+                    "reason": (
+                        f"{where}: {item.get('binding_message') or status} — "
+                        "решение по ней не принято, в расчёт она не входит."
+                    ),
+                }
+            )
+            continue
+        for name, label, meaning in OPERATION_QUESTIONS:
+            if item.get(name) is not False:
+                continue
+            # § 4: an open question names what to do next.  When the only reasons
+            # the calculator left are about money, saying «расчёт открыт» would send
+            # the operator to recalculate a position whose structure is already
+            # built, so that row says the price is what keeps the sum open.
+            detail = meaning
+            if name in {"position_calculated", "known_amount_present"}:
+                if money and not structural:
+                    detail = (
+                        f"структура собрана, не хватает цены ({', '.join(money[:3])})"
+                    )
+                elif conflicts:
+                    detail = (
+                        f"сумма открыта из-за двойного учёта ({', '.join(conflicts[:2])})"
+                    )
+            blockers.append(
+                {
+                    "code": locator,
+                    "work_id": work_id,
+                    "field": name,
+                    "reason": f"{where}: {label} — нет ({detail}).",
+                }
+            )
+        for reason in conflicts:
+            blockers.append(
+                {
+                    "code": locator,
+                    "work_id": work_id,
+                    "field": "double_count",
+                    "reason": (
+                        f"{where}: строка сама называет другую операцию, чем "
+                        f"выбранный шифр ({reason}) — нужен ответ оператора."
+                    ),
+                }
+            )
+        if str(item.get("prices_provided") or "") == "не по базе":
+            warnings.append(
+                {
+                    "code": locator,
+                    "work_id": work_id,
+                    "field": "price_from_norm_card",
+                    "reason": (
+                        f"{where}: цена взята из карточки нормы, а не из "
+                        "выбранной ценовой книги или КАЦ — сумма позиции черновая."
+                    ),
+                }
+            )
+        # § 4: the file states the arithmetic the operator's answer produced, including
+        # the unit it was multiplied by.  This is the calculator's own note, copied,
+        # never recomputed here — a position measured in «100 м2» against a source line
+        # in «м2» is the one place where a flat price can be off by that factor, and an
+        # operator has to be able to see and correct it in the delivered document.
+        price_note = str(item.get("price_note") or "")
+        if price_note:
+            warnings.append(
+                {
+                    "code": locator,
+                    "work_id": work_id,
+                    "field": "operator_price_unit",
+                    "reason": f"{where}: {price_note}.",
+                }
+            )
+        if money:
+            warnings.append(
+                {
+                    "code": locator,
+                    "work_id": work_id,
+                    "field": "price_gaps",
+                    "reason": (
+                        f"{where}: нет цен у {len(money)} ресурса(ов) — "
+                        f"{', '.join(money[:6])}."
+                    ),
+                }
+            )
+    return blockers, warnings
+
 
 
 def resource_group_state(res: Any, pricebook: Any) -> dict[str, Any]:
@@ -934,6 +1219,13 @@ def build_position_trace(
     sums = {"labor": 0.0, "machine": 0.0, "machinist": 0.0, "material": 0.0}
     qty_sums = {"labor": 0.0, "machine": 0.0, "machinist": 0.0, "material": 0.0}
     card_prices: list[dict[str, Any]] = []
+    # Task 2026-09-29 § 4 (tracker #54): the calculator states one decision per
+    # resource it looked at — the same numbers the document prints — so the check
+    # sheet can name each resource with the price fact that settled it.  Reading
+    # the input position instead would show what the model proposed, not what was
+    # priced, and on the visible-rows route the input carries no resources at all
+    # (the norm expands them inside the calculator).
+    resource_decisions: list[dict[str, Any]] = []
 
     for res in resources:
         kind = str(res.get("kind") or "")
@@ -948,12 +1240,7 @@ def build_position_trace(
             if price.action != BOOK_UNIT_CONFLICT_ACTION:
                 # The dedicated note above already names what is missing here, so
                 # the resource is not reported twice with two different wordings.
-                action_label = {
-                    "needs_kac": "нужен КАЦ",
-                    "needs_labor_rate": "нужна ставка ОЗП",
-                    "needs_machinist_rate": "нужна ставка ЗПМ",
-                    "needs_fgis_price": "нужна цена эксплуатации машины",
-                }.get(price.action or price.source, "нужна цена")
+                action_label = price_action_label(price.action, price.source)
                 flags.append(f"{action_label}: {res.get('name','?')} ({res.get('code','—')})")
             completeness_reasons.append(f"price_missing:{res.get('code') or res.get('name') or '?'}")
         elif price.action == "card_price_without_basis":
@@ -977,6 +1264,35 @@ def build_position_trace(
             completeness_reasons.append(
                 f"card_price_without_basis:{res.get('code') or res.get('name') or '?'}"
             )
+        # § 4: which price hole this resource leaves, in the calculator's own words.
+        # A resource priced from the chosen book or КАЦ has none; money that exists
+        # only because the norm card writes it is still a hole (ADR-16 § 7).
+        gap_action = (
+            ""
+            if price.price is not None and price.action != "card_price_without_basis"
+            else str(price.action or price.source or "")
+        )
+        resource_decisions.append(
+            {
+                "kind": kind,
+                "code": str(res.get("code") or ""),
+                "name": str(res.get("name") or ""),
+                "unit": str(res.get("unit") or ""),
+                "per_unit": per_unit,
+                "qty": total_qty,
+                "price": price.price,
+                "cost": cost,
+                "price_action": price.action or "",
+                # § 4 / tracker #56: the decision says which kind of price hole it
+                # left, in the same words the flag above uses, so the file names the
+                # gap instead of only saying that money is missing.
+                "price_gap_kind": price_action_label(gap_action) if gap_action else "",
+                "price_basis": price.basis or "",
+                "price_source": price.source or "",
+                "price_book_unit": price.book_unit or "",
+                "resource_group": str((price.group or {}).get("group") or ""),
+            }
+        )
         if kind not in detail_rows:
             flags.append(f"неизвестный вид ресурса: {kind!r}")
             continue
@@ -1048,16 +1364,37 @@ def build_position_trace(
         total = operator_cost
         full_amount = operator_cost
         position_total_label = "Всего по позиции (цена подтверждена оператором)"
-        flags.append(
-            "итог позиции взят по подтверждённой цене оператора за единицу, "
-            "а не по ресурсному составу нормы"
+        # § 4: the unit the confirmed price was multiplied by has to be in the file.
+        # A position is measured in the norm's unit (often «100 м2»), while the source
+        # ВОР states its own; an operator answering «100 рублей за единицу» without
+        # seeing which unit the document uses would get a sum off by that factor, so
+        # the line names the unit, the quantity it was applied to, and what the source
+        # row stated.  Nothing is recomputed here — the numbers stay the calculator's.
+        unit_note = (
+            f"{OPERATOR_PRICE_NOTE_PREFIX}: {operator_price} ₽ за "
+            f"«{work_unit or '?'}» × {work_qty} = {operator_cost} ₽, а не по ресурсному "
+            "составу нормы"
         )
+        source_qty = _num(position.get("source_quantity"))
+        source_unit = str(position.get("source_unit") or "").strip()
+        if source_unit and source_unit != str(work_unit or "").strip():
+            unit_note += (
+                f"; в исходной строке {source_qty if source_qty is not None else '?'} "
+                f"«{source_unit}» — если цена названа за исходную единицу, её нужно "
+                "переписать в этом количестве"
+            )
+        flags.append(unit_note)
         operator_price_trace = {
             "status": "operator_confirmed_position_price",
             "price": operator_price,
             "qty": work_qty,
             "cost": operator_cost,
             "norm_known": norm_known,
+            # the unit the multiplication used, stated apart from the source unit (§ 4)
+            "unit": str(work_unit or ""),
+            "source_unit": str(position.get("source_unit") or ""),
+            "source_quantity": source_qty,
+            "unit_note": unit_note,
             "source": str(position.get("price_source") or "operator"),
         }
 
@@ -1218,6 +1555,9 @@ def build_position_trace(
             "resource_review_status": resource_review_status,
             "resource_review_reason": resource_review_reason,
             "component_review": component_review,
+            # § 4 (tracker #54): one stated decision per resource the calculator
+            # priced, from the same numbers the document prints.
+            "resource_decisions": resource_decisions,
             "labor_qty": qty_sums["labor"],
             "machinist_qty": qty_sums["machinist"],
             "flags": flags,
@@ -1288,6 +1628,18 @@ def build_lsr_trace(
             2,
         )
 
+    # Task 2026-09-29 § 4: the delivered document numbers its positions continuously
+    # across sections, so the number is stamped on the trace here and the check sheet
+    # can point at the same line of the file the operator opens.  The renderer's own
+    # counter prints the identical sequence — it advances once per «работа» row, and a
+    # position has exactly one — so nothing is numbered twice.
+    position_no = 0
+    for entry in sections:
+        for trace in entry["positions"]:
+            position_no += 1
+            trace["position_no"] = position_no
+            trace["summary"]["position_no"] = position_no
+
     money_keys = ("ozp", "zpm", "machine", "em", "mat", "direct", "fot", "nr", "sp", "total")
     # Directive 2.3: on operator-replaced positions the "total" flows through
     # the estimate; the resource-level components are reference-only and must
@@ -1324,7 +1676,7 @@ def build_lsr_trace(
     summary["known_amount"] = summary["total"]
     summary["full_amount"] = summary["total"] if count and all_positions_complete else None
     summary["amount_status"] = "complete" if summary["full_amount"] is not None else "partial"
-    if count and all_positions_complete and not flags:
+    if count and all_positions_complete and not gap_flags(flags):
         summary["result_status"] = "priced_final"
     elif count:
         summary["result_status"] = "priced_partial"
@@ -1710,8 +2062,14 @@ def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str,
     )
     if str(binding.get("code") or ""):
         norm_selected = True
-    elif explicit_header or (role in {"material", "equipment"} and status == "bound"):
-        norm_selected = None  # a heading or supply line takes no mounting norm
+    elif (
+        explicit_header
+        or (role in {"material", "equipment"} and status == "bound")
+        # § 4: a resource line is priced inside its work and selects no mounting
+        # norm of its own, so «нет» here would be a defect the row cannot answer.
+        or role == "resource"
+    ):
+        norm_selected = None  # a heading, supply or resource line takes no mounting norm
     else:
         norm_selected = False
     authored_status = str(binding.get("norm_status") or "") or (
@@ -1721,15 +2079,21 @@ def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str,
     # it.  A cipher that no cited card carries, or an analogue whose five match
     # fields the model left unproven, stays a candidate: it may show in the
     # draft and in the trace, but it does not make the row applicable.
-    applicability = bool(norm_selected) and (
-        authored_status in _SUBSTANTIATED_NORM_STATUSES
-    ) and not binding.get("action_conflict") and norm_applicability_substantiated(
-        {
-            **dict(row),
-            "norm_status": authored_status,
-            "norm_code": str(binding.get("code") or row.get("norm_code") or ""),
-        }
-    )
+    if norm_selected is None:
+        # Task 2026-09-29 § 4: a heading or a supply line has no mounting decision
+        # to substantiate, so the honest answer is "the question does not apply",
+        # not "нет" — the sheet must not print an absent question as a defect.
+        applicability: Any = None
+    else:
+        applicability = bool(norm_selected) and (
+            authored_status in _SUBSTANTIATED_NORM_STATUSES
+        ) and not binding.get("action_conflict") and norm_applicability_substantiated(
+            {
+                **dict(row),
+                "norm_status": authored_status,
+                "norm_code": str(binding.get("code") or row.get("norm_code") or ""),
+            }
+        )
     if role in {"material", "equipment"} and status not in {
         "unconfirmed_quantity", "missing_quantity",
     }:
@@ -1748,8 +2112,23 @@ def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str,
         "norm_selected": norm_selected,
         "applicability_substantiated": applicability,
         "volume_verified": volume_verified,
-        "position_calculated": bool(binding.get("position")),
+        # § 4: the calculation questions belong to a row that owns a position.  A
+        # heading or a resource line has none of its own, so its answer is «н/п» —
+        # not the «нет» that would count it as an unfinished calculation.
+        "position_calculated": (
+            bool(binding.get("position")) if role not in {"header", "resource"} else None
+        ),
         "prices_provided": None,
+        # Task 2026-09-29 § 4: the seven questions of one operation, kept apart
+        # because each has its own answer.  "The structure is built" says the
+        # resources, units and accruals of the position are accounted; "an amount
+        # is known" says at least part of its money is; "the position is fully
+        # calculated" needs both plus owned prices.  The readiness loop fills them
+        # from the calculator's own completeness reasons, and a row with no
+        # position (a heading) keeps them as "not applicable".
+        "structure_calculated": None,
+        "known_amount_present": None,
+        "row_role": role,
         "header_row": explicit_header,
     }
 
@@ -2174,27 +2553,40 @@ def build_lsr_trace_from_visible_rows(
         ]
     if not bound["positions"]:
         summary["result_status"] = "norm_selection_required"
-    elif summary.get("flags"):
+    elif gap_flags(summary.get("flags") or []):
         summary["result_status"] = "priced_partial"
     else:
         summary["result_status"] = "priced_final"
     visible_by_row = {item.get("source_row"): item for item in visible}
     amounts_by_op: dict[str, dict[str, Any]] = {}
     amounts_by_row: dict[Any, dict[str, Any]] = {}
+    numbers_by_op: dict[str, int] = {}
+    numbers_by_row: dict[Any, int] = {}
+    # § 4: how many operations the revision built on one source row — a locator that
+    # carries two is not one finished position, and the sheet has to show both.
+    operations_per_locator: dict[Any, int] = {}
     for entry in lsr.get("sections") or []:
         for trace in entry.get("positions") or []:
             pos_summary = trace.get("summary") or {}
             op_key = str(trace.get("op_key") or "")
             if op_key:
                 amounts_by_op[op_key] = pos_summary
+                if trace.get("position_no") is not None:
+                    numbers_by_op[op_key] = int(trace["position_no"])
             if trace.get("source_row") is not None:
                 amounts_by_row.setdefault(trace.get("source_row"), pos_summary)
+                if trace.get("position_no") is not None:
+                    numbers_by_row.setdefault(trace.get("source_row"), int(trace["position_no"]))
+                operations_per_locator[trace.get("source_row")] = (
+                    operations_per_locator.get(trace.get("source_row"), 0) + 1
+                )
     conflict_locators = {
         str(item.get("locator") or "") for item in double_count_conflicts(visible)
     }
     kind_counts = {"work": 0, "material": 0, "equipment": 0, "resource": 0, "header": 0, "unresolved": 0}
     selected_norms = 0
     selected_ciphers: set[str] = set()
+    calculated_positions = 0
     confirmed_amount = 0.0
     preliminary_amount = 0.0
     for binding in bound["row_bindings"]:
@@ -2211,12 +2603,26 @@ def build_lsr_trace_from_visible_rows(
                 or amounts_by_row.get(source_row)
                 or {}
             )
+            # § 4: the position number the delivered document prints, and how many
+            # operations the revision built on this one source row.
+            position_number = numbers_by_op.get(op_key) or numbers_by_row.get(source_row)
+            if position_number is not None:
+                binding["position_no"] = int(position_number)
+            binding["locator_operations"] = int(
+                operations_per_locator.get(source_row) or 1
+            )
             amount = _f(pos_summary.get("known_amount", pos_summary.get("total")))
             complete = pos_summary.get("amount_status") == "complete" and pos_summary.get("full_amount") is not None
             _opt = pos_summary.get("operator_price_trace") or {}
             operator_confirmed_price = (
                 isinstance(_opt, Mapping)
                 and _opt.get("status") == "operator_confirmed_position_price"
+            )
+            # § 4: the position's money came from an answer given in the chat, so the
+            # row carries the calculator's own statement of how it was applied (price,
+            # unit, quantity, product, and the unit the source line itself used).
+            binding["price_note"] = (
+                str(_opt.get("unit_note") or "") if operator_confirmed_price else ""
             )
             # Directive 2.2: a position's readiness rests on four independent
             # bases; confirming a price closes only the price question. Norm
@@ -2265,6 +2671,46 @@ def build_lsr_trace_from_visible_rows(
                 else bool(price_ok and conflicts_ok)
             )
             readiness["double_count_conflict"] = str(source_row) in conflict_locators
+            # Task 2026-09-29 § 4: the two calculation questions are separate from
+            # the price question and from each other.  An open reason about money
+            # («price_missing:…», «card_price_without_basis:…») says the structure is
+            # built and the amount is what is missing; any other open reason says the
+            # structure itself is not accounted yet.  A row that arrives as zeros
+            # answers "no known amount" — which is why it was never a calculated
+            # position (tracker #59).
+            open_reasons = [
+                str(item or "") for item in (pos_summary.get("completeness_reasons") or [])
+            ]
+            readiness["structure_calculated"] = not [
+                item
+                for item in open_reasons
+                if not is_price_reason(item) and not is_conflict_reason(item)
+            ]
+            readiness["known_amount_present"] = bool(
+                amount > 0 or pos_summary.get("full_amount") is not None
+            )
+            readiness["position_calculated"] = bool(complete)
+            readiness["open_reasons"] = list(dict.fromkeys(open_reasons))
+            if complete:
+                calculated_positions += 1
+            # Task 2026-09-29 § 4 (tracker #54): the calculator states its resource
+            # review on the position summary, and the check sheet reads it off the row.
+            # Copying the facts the calculator produced (and only those) is what makes
+            # the column real instead of an empty promise.
+            for key in sorted(
+                name
+                for name in pos_summary
+                if str(name).endswith("_review_status") or str(name).endswith("_review_reason")
+            ):
+                binding[key] = pos_summary.get(key)
+            # § 4 (tracker #54): the resources the calculator actually priced travel
+            # with the row, so the check sheet states them on the delivered route
+            # instead of falling back to «н/п» because the input position had none.
+            binding["resource_decisions"] = [
+                dict(entry)
+                for entry in (pos_summary.get("resource_decisions") or [])
+                if isinstance(entry, Mapping)
+            ]
             if preliminary:
                 preliminary_amount = round(preliminary_amount + amount, 2)
             else:
@@ -2280,7 +2726,11 @@ def build_lsr_trace_from_visible_rows(
     summary["kind_counts"] = kind_counts
     summary["selected_norms"] = selected_norms
     summary["selected_norm_ciphers"] = len(selected_ciphers)
-    summary["calculated_positions"] = len(bound["positions"])
+    summary["calculated_positions"] = calculated_positions
+    # Task 2026-09-29 § 4 / tracker #59: a position object is not the same fact as a
+    # calculated position, so the two numbers are reported apart instead of the built
+    # count being labelled "calculated".
+    summary["positions_built"] = len(bound["positions"])
     summary["confirmed_amount"] = confirmed_amount
     summary["preliminary_amount"] = preliminary_amount
     if conflict_locators:
@@ -2292,4 +2742,15 @@ def build_lsr_trace_from_visible_rows(
         if summary.get("result_status") == "priced_final":
             summary["result_status"] = "priced_partial"
     lsr["row_bindings"] = bound["row_bindings"]
+    # Task 2026-09-29 § 4: the revision's single projection of its operations, taken
+    # from the same bindings the «Проверка» sheet prints, so the readiness counts and
+    # the delivered file cannot report two different states for one row.
+    lsr["row_projection"] = [row_projection(item) for item in bound["row_bindings"]]
+    # § 4 (tracker #54): the remarks block of the delivered file is filled from those
+    # same answers instead of being left structurally empty.
+    blockers, warnings = operation_open_questions(lsr["row_projection"])
+    if blockers:
+        lsr["blockers"] = list(lsr.get("blockers") or []) + blockers
+    if warnings:
+        lsr["warnings"] = list(lsr.get("warnings") or []) + warnings
     return lsr

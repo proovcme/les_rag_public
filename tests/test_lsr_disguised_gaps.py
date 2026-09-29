@@ -126,6 +126,8 @@ def test_a_dismantling_row_priced_by_an_installing_norm_stays_an_open_question()
         missing=[],
         pricing_status=summary["result_status"],
         norm_conflicts=conflicts,
+        # § 4: the count is read off the revision's own projection.
+        row_projection=lsr["row_projection"],
         calculated_positions=1,
         confirmed_amount=summary["confirmed_amount"],
         preliminary_amount=summary["preliminary_amount"],
@@ -173,6 +175,8 @@ def test_a_volume_in_pieces_is_not_rescaled_into_the_norm_unit():
         rows=rows,
         missing=missing,
         pricing_status=lsr["summary"]["result_status"],
+        # § 4: the count is read off the revision's own projection.
+        row_projection=lsr["row_projection"],
         calculated_positions=0,
     )
     notice = format_lsr_readiness_notice(readiness, filename="LSR.xlsx")
@@ -233,6 +237,8 @@ def test_a_confirmed_material_price_does_not_hide_a_missing_work_norm():
         rows=rows,
         missing=[],
         pricing_status=summary["result_status"],
+        # § 4: the count is read off the revision's own projection.
+        row_projection=lsr["row_projection"],
         calculated_positions=summary["calculated_positions"],
         confirmed_amount=summary["confirmed_amount"],
         preliminary_amount=summary["preliminary_amount"],
@@ -270,6 +276,8 @@ def test_a_specification_without_operations_asks_for_the_operation_layer():
         pricing_status=summary["result_status"],
         catalog_work_count=2,
         catalog_locators=["СКС!R3", "СКС!R4"],
+        # § 4: the count is read off the revision's own projection.
+        row_projection=lsr["row_projection"],
         calculated_positions=summary["calculated_positions"],
     )
     assert "missing_work_layer" in _gap_kinds(readiness, "norms")

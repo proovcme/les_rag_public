@@ -331,11 +331,20 @@ def build_lsr_result_readiness(
     calculated_positions: int = -1,
     confirmed_amount: float = -1.0,
     preliminary_amount: float = -1.0,
+    row_projection: Sequence[Mapping[str, Any]] = (),
     document_state: str = "",
     download_url: str = "",
     job_status: str = "",
 ) -> dict[str, Any]:
-    """Split technical file readiness from coverage, norms, and prices."""
+    """Split technical file readiness from coverage, norms, and prices.
+
+    ``row_projection`` is the revision's own per-operation projection (task
+    2026-09-29 § 4): the stable identity of each row plus the seven questions the
+    calculator answered for it.  When it is passed, "which works are still not
+    calculated" is read from those rows; when it is not, the count is reported as
+    unknown rather than derived by subtraction, because the subtraction was the
+    defect (§ 4: «Нельзя subtract calculated_positions … из works»).
+    """
 
     work_rows = [dict(row) for row in rows if isinstance(row, Mapping) and _locator(row)]
     # ``job_status`` is the durable state of the research, not of this answer:
@@ -721,18 +730,21 @@ def build_lsr_result_readiness(
             "status": file_status,
             "action": file_action,
         },
+        # Task 2026-09-29 § 4: every open row travels in the payload.  A screen may
+        # show a page of them, but the API and the delivered file are not cut at 80
+        # rows — a truncated list reads as "these are all the gaps" (tracker #56).
         "coverage": {
             "complete": bool(coverage_complete),
             "gap_count": int(coverage.get("gap_count") or 0),
             "accounted": int(coverage.get("accounted") or 0),
             "catalog_count": int(coverage.get("catalog_count") or 0),
-            "gaps": list(coverage.get("gaps") or [])[:80],
+            "gaps": list(coverage.get("gaps") or []),
             "action": coverage_action,
         },
         "norms": {
             "complete": bool(norms_complete),
             "gap_count": len(norm_gaps),
-            "gaps": norm_gaps[:80],
+            "gaps": norm_gaps,
             "action": norms_action,
         },
         "prices": {
@@ -742,8 +754,8 @@ def build_lsr_result_readiness(
                 str(item.get("resource") or "")
                 for item in structured_prices
                 if item.get("resource")
-            ][:40],
-            "gaps": structured_prices[:80],
+            ],
+            "gaps": structured_prices,
             "action": prices_action,
             "basis": basis_info,
         },
@@ -817,13 +829,39 @@ def build_lsr_result_readiness(
         unique_actions.append(item)
 
     # Four distinct not-ready states, grouped explicitly so an empty XLSX
-    # formula cache is never misread as "zero calculated works".  The
-    # authoritative quantity is the application's own calculated_positions.
+    # formula cache is never misread as "zero calculated works".
     works_total = int(counts.get("works") or 0)
-    calc_known = isinstance(calculated_positions, (int, float)) and calculated_positions >= 0
-    calculation_incomplete = (
-        max(0, works_total - int(calculated_positions)) if calc_known else None
-    )
+    projection = [dict(item) for item in row_projection if isinstance(item, Mapping)]
+    projection_work = [
+        item for item in projection if str(item.get("row_role") or "") == "work"
+    ]
+    # Task 2026-09-29 § 4: «Нельзя subtract calculated_positions (включает поставки)
+    # из works, чтобы получить число нерешённых работ».  calculated_positions counts
+    # positions of every role, so works minus it silently absorbs a supply line into
+    # a work answer and can even report zero open works.  The revision's own
+    # projection answers the question per operation; without one, the number is
+    # unknown and is labelled as unknown instead of being guessed.
+    if projection:
+        calculation_incomplete = sum(
+            1
+            for item in projection_work
+            if item.get("position_calculated") is not True
+        )
+        counts["works_with_calculated_position"] = sum(
+            1
+            for item in projection_work
+            if item.get("position_calculated") is True
+        )
+    else:
+        calculation_incomplete = None
+    calc_known = bool(projection)
+    if projection:
+        counts["projected_operations"] = len(projection)
+        # § 10: the file's own rows and the application's count of works are two
+        # measurements of one thing, so both are reported.  A difference is visible to
+        # the operator instead of being resolved by whichever number is prettier.
+        counts["works_projected"] = len(projection_work)
+        counts["works_counted"] = works_total
     gap_states = {
         "norm_missing": {
             "count": sum(
@@ -868,17 +906,21 @@ def build_lsr_result_readiness(
         "calculation_incomplete": {
             "count": calculation_incomplete,
             "meaning": (
-                "Работы без рассчитанной стоимости (итог по позиции не сведён)."
+                "Работы, у которых позиция не посчитана до конца (проекция ревизии по "
+                "каждой операции: структура, известная стоимость, полный расчёт)."
                 if calc_known else
-                "Приложение не передало число рассчитанных позиций."
+                "Приложение не передало проекцию операций; число нерешённых работ не "
+                "выводится вычитанием рассчитанных позиций — они считают и поставки "
+                "тоже (§ 4)."
             ),
         },
         "formula_cache_uncached": {
-            "authoritative": "calculated_positions",
+            "authoritative": "row_projection",
             "meaning": (
                 "Итоги в XLSX — живые формулы СУММ без сохранённого кэша значений; "
                 "их вычисляет пересчёт в Excel/LibreOffice. Пустой кэш формул НЕ равен "
-"нулю рассчитанных работ — опора на расчётные данные приложения."
+                "нулю рассчитанных работ — опора на пословную проекцию ревизии и её "
+                "расчётные данные."
             ),
         },
     }
@@ -892,6 +934,10 @@ def build_lsr_result_readiness(
         "technical_complete": technical_complete,
         "estimate_complete": estimate_complete,
         "counts": counts,
+        # § 4: the same per-operation projection the «Проверка» sheet prints, so the
+        # chat card, the API and the file answer each of the seven questions the same
+        # way for the same row.  Uncut: a screen may paginate it, the payload may not.
+        "row_projection": projection,
         "coverage": coverage,
         "dimensions": dimensions,
         "actions": unique_actions,

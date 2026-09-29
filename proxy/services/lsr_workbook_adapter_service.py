@@ -1487,9 +1487,19 @@ async def build_lsr_workbook_from_decisions(
         "norm_conflicts": collect_lsr_action_conflicts(trace),
         # stage V operator counts: calculated positions and the confirmed /
         # preliminary split of the known amount (code arithmetic, no statuses raised)
+        # Task 2026-09-29 § 4: "calculated" now means the position's own total is
+        # closed, and the count of position objects assembled travels apart in
+        # ``positions_built`` — a row that came in as zeros is not a calculated work.
         "calculated_positions": int(
             (trace.get("summary") or {}).get("calculated_positions") or 0
         ),
+        "positions_built": int(
+            (trace.get("summary") or {}).get("positions_built") or 0
+        ),
+        # § 4: the one projection of the revision's operations, with the seven answers
+        # per row.  Readiness counts open works from it instead of subtracting a
+        # mixed-role position count from the number of works.
+        "row_projection": list(trace.get("row_projection") or []),
         "confirmed_amount": float(
             (trace.get("summary") or {}).get("confirmed_amount") or 0.0
         ),

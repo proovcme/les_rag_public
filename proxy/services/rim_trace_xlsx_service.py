@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional
 
@@ -420,74 +421,168 @@ def _readiness_label(value: Any) -> str:
 
 
 def _review_sheet(wb, lsr: dict[str, Any]) -> None:
-    """Visible decisions/gaps; JSON remains the full immutable trace."""
+    """Visible decisions/gaps; JSON remains the full immutable trace.
+
+    Task 2026-09-29 § 4: every column of this sheet is filled from a decision or a
+    calculation fact the revision already carries — the seven questions of an
+    operation, the analogue's own unanswered match facts, the resources of the
+    position and the reason each one is still open.  Where a route produces no such
+    fact the cell says «н/п», which is a statement about the document, not an
+    invented opinion: a heading has no applicability question, and an empty cell used
+    to be indistinguishable from a broken one (tracker #54).
+    """
+
     from openpyxl.styles import Alignment, Font, PatternFill
+
+    from proxy.services.lsr_norm_quality_gate_service import (
+        MATCH_FIELD_LABELS,
+        is_analogue_norm_status,
+        open_analogue_match_fields,
+    )
+    from proxy.services.rim_lsr_trace_service import (
+        OPERATION_QUESTIONS,
+        PRICE_REASON_PREFIXES,
+        price_action_label,
+    )
 
     ws = wb.create_sheet("Проверка")
     headers = [
-        "Строка", "work_id", "Статус", "Готовность строки", "Норма", "Тип выбора", "Причина выбора",
+        "Строка", "№ позиции", "work_id", "Связь операций", "Статус", "Готовность строки",
+        "Норма", "Тип выбора", "Причина выбора",
         "Ограничения аналога", "Проверка ресурсов", "Решения по ресурсам",
         "Труд", "Машины", "Материалы", "Повторная проверка влияния",
     ]
+    last_column = len(headers)
     ws.append(headers)
     for cell in ws[1]:
         cell.font = Font(bold=True)
         cell.fill = PatternFill("solid", fgColor="D9EAF7")
-    for item in lsr.get("row_bindings") or []:
-        resource_text = "\n".join(
-            f"{entry.get('action')}: {entry.get('resource_code') or entry.get('resource_name')} "
-            f"{entry.get('quantity') if entry.get('quantity') is not None else ''} {entry.get('unit') or ''}; "
-            f"{entry.get('reason') or ''}; основание: {entry.get('basis_ref') or '—'}"
-            for entry in (item.get("resource_bindings") or [])
+    not_produced = "н/п"
+
+    def review_line(binding: Mapping[str, Any], status_key: str, reason_key: str) -> str:
+        """The calculator's own review statement for this row, or «н/п»."""
+
+        return " — ".join(
+            filter(None, [str(binding.get(status_key) or ""), str(binding.get(reason_key) or "")])
+        ) or not_produced
+
+    projected_rows = list(lsr.get("row_projection") or [])
+    for index, item in enumerate(lsr.get("row_bindings") or []):
+        # § 4: the position number and the operation links are read off the revision's
+        # own projection when it is present, so the sheet and the readiness card state
+        # the same identity for the same row.
+        projected = (
+            projected_rows[index]
+            if index < len(projected_rows)
+            and str(projected_rows[index].get("locator") or "") == str(item.get("row") or "")
+            else item
         )
-        ws.append([
-            item.get("row"), item.get("work_id"), item.get("status"),
-            " | ".join(
-                f"{label}={_readiness_label(value)}"
-                for label, value in (
-                    ("операция", (item.get("readiness") or {}).get("operation_defined")),
-                    ("норма", (item.get("readiness") or {}).get("norm_selected")),
-                    ("применимость", (item.get("readiness") or {}).get("applicability_substantiated")),
-                    ("объём", (item.get("readiness") or {}).get("volume_verified")),
-                    ("рассчитана", (item.get("readiness") or {}).get("position_calculated")),
-                    ("цены", (item.get("readiness") or {}).get("prices_provided")),
+        readiness = item.get("readiness") or {}
+        model_row = item.get("source_row")
+        model_row = model_row if isinstance(model_row, Mapping) else {}
+        position = item.get("position")
+        position = position if isinstance(position, Mapping) else {}
+        open_reasons = [str(value) for value in (readiness.get("open_reasons") or [])]
+        # § 4 (tracker #54): the calculator's own per-resource decisions come first,
+        # because they state the price that was actually used.  A route that never
+        # reached the calculator can only show the resources it proposed itself.
+        priced_resources = [
+            entry for entry in (item.get("resource_decisions") or ()) if isinstance(entry, Mapping)
+        ] or [
+            entry for entry in (position.get("resources") or ()) if isinstance(entry, Mapping)
+        ]
+        resource_lines = []
+        for entry in priced_resources:
+            identity = str(entry.get("code") or entry.get("name") or "?")
+            # The calculator names the resource it could not price after the colon of
+            # its own reason tag, so the row states *why* it is still open instead of
+            # leaving the operator to guess which of several prices is missing (§ 4).
+            matched_reason = next((
+                reason for reason in open_reasons
+                if ":" in reason and reason.split(":", 1)[1] == identity
+                and reason.startswith(PRICE_REASON_PREFIXES)
+            ), "")
+            gap_kind = str(entry.get("price_gap_kind") or "")
+            if not gap_kind and matched_reason:
+                # The reason list is the same one the remarks block below prints, so
+                # a row cannot be «цена есть» in one column and open in the other.
+                gap_kind = price_action_label(matched_reason.split(":", 1)[0])
+            if gap_kind:
+                price_note = gap_kind
+            elif entry.get("price_used") is not None or entry.get("price") is not None:
+                price_note = "цена есть"
+            else:
+                price_note = "цена не задана"
+            unit_note = ""
+            if str(entry.get("price_book_unit") or ""):
+                unit_note = f" — единица книги: {entry.get('price_book_unit')}"
+            resource_lines.append(
+                f"{entry.get('kind') or '?'} {identity} "
+                f"{entry.get('qty') if entry.get('qty') is not None else ''} "
+                f"{entry.get('unit') or ''} — {price_note}{unit_note}"
+            )
+        analogue_lines = [
+            str(value) for value in (item.get("analog_limitations") or ()) if str(value).strip()
+        ]
+        chosen_status = item.get("norm_status") or model_row.get("norm_status")
+        if is_analogue_norm_status(chosen_status):
+            analogue_lines += [
+                f"не проверено: {MATCH_FIELD_LABELS.get(field, field)}"
+                for field in open_analogue_match_fields(
+                    {**model_row, "norm_status": chosen_status}
                 )
+            ]
+        # § 4: «связь нескольких операций с одной исходной строкой» has to be visible
+        # in the file — a locator carrying two operations, a supply line attached to a
+        # work, a row covered by another row's cipher.
+        links: list[str] = []
+        siblings = int(projected.get("locator_operations") or 1)
+        if siblings > 1:
+            links.append(f"на строке {siblings} операции")
+        parent = str(projected.get("parent_locator") or item.get("work_row") or "")
+        if parent and parent != str(item.get("row") or ""):
+            links.append(f"относится к {parent}")
+        covered_by = str(projected.get("covered_by_work_id") or item.get("covered_by_work_id") or "")
+        if covered_by:
+            links.append(f"учтена в {covered_by}")
+        operation_id = str(projected.get("operation_id") or "")
+        if operation_id:
+            links.append(operation_id)
+        ws.append([
+            item.get("row"),
+            projected.get("position_no") if projected.get("position_no") else not_produced,
+            item.get("work_id"),
+            "; ".join(links) or not_produced,
+            item.get("status"),
+            " | ".join(
+                [f"{label}={_readiness_label(readiness.get(name))}"
+                 for name, label, _meaning in OPERATION_QUESTIONS]
+                # «цены» is not one of the seven § 4 questions — it is the price
+                # ladder's own statement and stays visible where it was before.
+                + ([f"цены={_readiness_label(readiness.get('prices_provided'))}"]
+                   if readiness.get("prices_provided") is not None else [])
             ),
             item.get("code"),
-            item.get("selection_kind") or ("covered_by " + str(item.get("covered_by_work_id") or "") if item.get("covered_by_work_id") else ""),
-            item.get("reason") or item.get("coverage_reason"),
-            "\n".join(str(value) for value in (item.get("analog_limitations") or [])),
-            " — ".join(filter(None, [
-                str(item.get("resource_review_status") or ""),
-                str(item.get("resource_review_reason") or ""),
-            ])),
-            resource_text,
-            " — ".join(filter(None, [
-                str(item.get("labor_review_status") or ""),
-                str(item.get("labor_review_reason") or ""),
-            ])),
-            " — ".join(filter(None, [
-                str(item.get("machine_review_status") or ""),
-                str(item.get("machine_review_reason") or ""),
-            ])),
-            " — ".join(filter(None, [
-                str(item.get("material_review_status") or ""),
-                str(item.get("material_review_reason") or ""),
-            ])),
-            " — ".join(filter(None, [
-                str(item.get("dominant_review_status") or ""),
-                str(item.get("dominant_review_reason") or ""),
-            ])),
+            item.get("selection_kind") or ("covered_by " + str(item.get("covered_by_work_id")) if item.get("covered_by_work_id") else "")
+            or str(item.get("norm_status") or model_row.get("norm_status") or ""),
+            item.get("reason") or item.get("coverage_reason") or model_row.get("open_gap") or not_produced,
+            "\n".join(analogue_lines) or not_produced,
+            review_line(item, "resource_review_status", "resource_review_reason"),
+            "\n".join(resource_lines) or not_produced,
+            review_line(item, "labor_review_status", "labor_review_reason"),
+            review_line(item, "machine_review_status", "machine_review_reason"),
+            review_line(item, "material_review_status", "material_review_reason"),
+            review_line(item, "dominant_review_status", "dominant_review_reason"),
         ])
     ws.append([])
     ws.append(["Общие замечания и незакрытые позиции"])
     section_row = ws.max_row
-    ws.merge_cells(start_row=section_row, start_column=1, end_row=section_row, end_column=14)
+    ws.merge_cells(start_row=section_row, start_column=1, end_row=section_row, end_column=last_column)
     ws.cell(section_row, 1).font = Font(bold=True)
     ws.cell(section_row, 1).fill = PatternFill("solid", fgColor="FCE4D6")
     ws.append(["Код", "work_id", "Тип", "Сообщение"])
     issue_header_row = ws.max_row
-    ws.merge_cells(start_row=issue_header_row, start_column=4, end_row=issue_header_row, end_column=14)
+    ws.merge_cells(start_row=issue_header_row, start_column=4, end_row=issue_header_row, end_column=last_column)
     for cell in ws[issue_header_row]:
         cell.font = Font(bold=True)
         cell.fill = PatternFill("solid", fgColor="FFF2CC")
@@ -499,17 +594,32 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
         message = str(payload.get("reason") or payload.get("message") or item)
         ws.append([code, work_id, issue_type, message])
         issue_row = ws.max_row
-        ws.merge_cells(start_row=issue_row, start_column=4, end_row=issue_row, end_column=14)
+        ws.merge_cells(start_row=issue_row, start_column=4, end_row=issue_row, end_column=last_column)
         ws.row_dimensions[issue_row].height = max(30, min(90, 15 * (1 + len(message) // 110)))
 
     for item in lsr.get("blockers") or []:
         append_issue(item, "blocker")
     for item in lsr.get("warnings") or []:
         append_issue(item, "warning")
+    if (lsr.get("row_projection")
+            and not (lsr.get("blockers") or lsr.get("warnings"))):
+        # § 4: an empty remarks block reads the same as an unproduced one.  This line
+        # reports only what the file itself decided — the projection left no question
+        # unanswered — together with the calculator's own status, so a finished
+        # document is distinguishable from a section nobody filled in.  No expertise
+        # is claimed here: the status stays the calculator's word.
+        status = str((lsr.get("summary") or {}).get("result_status") or "") or "неизвестен"
+        ws.append([
+            "", "", "note",
+            f"по спроецированным строкам открытых вопросов не осталось: каждая из них "
+            f"ответила на свои вопросы; статус расчёта всей ревизии — {status}.",
+        ])
+        note_row = ws.max_row
+        ws.merge_cells(start_row=note_row, start_column=4, end_row=note_row, end_column=last_column)
+        ws.row_dimensions[note_row].height = 30
     widths = {
-        "A": 28, "B": 16, "C": 22, "D": 24, "E": 14, "F": 50,
-        "G": 48, "H": 42, "I": 55, "J": 38, "K": 38, "L": 38,
-        "M": 42,
+        "A": 28, "B": 10, "C": 16, "D": 34, "E": 22, "F": 70, "G": 14, "H": 50,
+        "I": 48, "J": 42, "K": 55, "L": 38, "M": 38, "N": 38, "O": 42, "P": 42,
     }
     for column, width in widths.items():
         ws.column_dimensions[column].width = width

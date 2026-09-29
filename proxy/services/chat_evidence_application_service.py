@@ -872,6 +872,9 @@ def _chat_workbook_filename(
 _HISTORY_BASIS_TEXT_LIMIT = 2000
 _HISTORY_BASIS_GAP_TEXT_LIMIT = 400
 _HISTORY_BASIS_ITEMS = 40
+#: One projected operation carries identity, the seven readiness answers and its own
+#: open reasons; none of that needs basis-length prose (§ 4).
+_HISTORY_ROW_TEXT_LIMIT = 200
 
 
 def _bounded_history_value(
@@ -903,6 +906,37 @@ def _bounded_history_value(
     return str(value)[:text_limit]
 
 
+#: § 4: the fields of one projected operation the chat layer has to keep.  Identity
+#: (locator / stable operation id), the answers to the seven questions and the reason
+#: tags that explain a «нет» are what the readiness card and the delivered file quote;
+#: the free-text binding message and the norm code are already visible elsewhere, so
+#: they are not copied into every turn's tool observation.
+_HISTORY_ROW_FIELDS = (
+    "locator", "work_id", "operation_id", "row_role", "status",
+    # § 4: identity also carries the position number the document prints and the
+    # links between operations built on one source row — small scalars, kept so a
+    # later turn can point at the same line of the same file.
+    "position_no", "locator_operations", "parent_locator", "covered_by_work_id",
+    "source_accounted", "operation_defined", "norm_selected",
+    "applicability_substantiated", "structure_calculated",
+    "known_amount_present", "position_calculated", "volume_verified",
+    "prices_provided", "open_reasons",
+    # § 4: an operator-confirmed price travels with the line that states which unit it
+    # was multiplied by, so a later turn can correct the unit instead of re-asking.
+    "price_note",
+)
+
+
+def _bounded_row_projection(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy one projected operation whole in identity, bounded in bulk."""
+
+    return {
+        key: _bounded_history_value(row.get(key), text_limit=_HISTORY_ROW_TEXT_LIMIT)
+        for key in _HISTORY_ROW_FIELDS
+        if key in row
+    }
+
+
 def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str, Any]:
     """Retain only workbook identifiers that the chat UI can safely use."""
     result = payload if isinstance(payload, dict) else {}
@@ -918,6 +952,9 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         (
             "schema", "tool", "status", "code", "pricing_status", "norms_status",
             "calculated_positions", "confirmed_amount", "preliminary_amount",
+            # § 4: «сколько позиций построено» and «сколько из них полностью
+            # рассчитано» are two different numbers and must not be conflated here.
+            "positions_built",
             "error_type", "memory_pressure",
         ),
     )
@@ -941,6 +978,18 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
                 _bounded_history_value(item, text_limit=_HISTORY_BASIS_GAP_TEXT_LIMIT)
                 for item in values[:_HISTORY_BASIS_ITEMS]
                 if isinstance(item, Mapping)
+            ]
+        # Task 2026-09-29 § 4: the readiness counters and the «Проверка» sheet read one
+        # per-operation projection, so it survives the history bound *in full*.  A capped
+        # row list would silently change «сколько работ рассчитано», the very number this
+        # task forbids deriving by subtraction.  What is bounded instead is each row's own
+        # bulk — identity, the seven answers, a few reason tags — because this projection
+        # also travels back as the tool observation, and a 300-row document must not crowd
+        # out the rows it describes (§ 2).
+        projection = result.get("row_projection")
+        if isinstance(projection, list) and projection:
+            safe["row_projection"] = [
+                _bounded_row_projection(row) for row in projection if isinstance(row, Mapping)
             ]
     artifact = selected(
         result.get("artifact"),
@@ -1024,6 +1073,9 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         # rows the calculation itself flags as naming the opposite operation:
         # readiness turns each into one concrete question (task § 11 №8)
         "norm_conflicts": list(result.get("norm_conflicts") or []),
+        # § 4: one revision projection, unchanged in row count, is what the readiness
+        # counters and the «Проверка» sheet both read.
+        "row_projection": list(result.get("row_projection") or []),
         "blockers": list(result.get("blockers") or []),
     }
 
@@ -10043,6 +10095,12 @@ async def _execute_chat_evidence_application(
                             ),
                             price_basis=dict(
                                 (workbook_chat_meta or {}).get("price_basis") or {}
+                            ),
+                            # § 4: the count of calculated positions is read off the
+                            # revision's own per-operation projection, never by
+                            # subtracting a number of positions from a number of works.
+                            row_projection=list(
+                                (workbook_chat_meta or {}).get("row_projection") or []
                             ),
                             calculated_positions=(
                                 int((safe_payload or {})["calculated_positions"])

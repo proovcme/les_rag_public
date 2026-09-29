@@ -418,6 +418,9 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             price_gaps=list(harvested.get("price_gaps") or []),
             norm_conflicts=list(harvested.get("norm_conflicts") or []),
             price_basis=dict(harvested.get("price_basis") or {}),
+            # § 4: the per-operation projection is the source of truth for what is
+            # calculated; the count is read off it instead of subtracted from works.
+            row_projection=list(payload.get("row_projection") or []),
             calculated_positions=(
                 int(payload["calculated_positions"])
                 if isinstance(payload.get("calculated_positions"), (int, float))

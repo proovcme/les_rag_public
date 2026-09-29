@@ -4870,32 +4870,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         await _download_file_artifact(url, str(artifact.get("filename") or ""))
 
-    def _rows_from_spreadsheet(data: bytes, kind: str) -> list[dict]:
-        """xlsx/csv байты → list[dict] (первый лист, шапка = первая строка). Лимит 200 строк."""
-        try:
-            if kind == "csv":
-                import csv
-                import io
-                text = data.decode("utf-8-sig", errors="replace")
-                reader = csv.reader(io.StringIO(text), delimiter=";" if ";" in text.split("\n", 1)[0] else ",")
-                table = list(reader)
-            else:
-                import io
-                import openpyxl
-                wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-                ws = wb.active
-                table = [[("" if c is None else str(c)) for c in row]
-                         for row in ws.iter_rows(values_only=True)]
-            if not table:
-                return []
-            headers = [str(h or f"col{i+1}") for i, h in enumerate(table[0])]
-            out = []
-            for row in table[1:201]:
-                vals = (list(row) + [""] * len(headers))[: len(headers)]
-                out.append({headers[i]: vals[i] for i in range(len(headers))})
-            return out
-        except Exception:
-            return []
+    def _rows_from_spreadsheet(data: bytes, kind: str) -> tuple[list[dict], str]:
+        """xlsx/csv байты → (list[dict] первого листа, примечание о просмотре).
+
+        Task 2026-09-29 § 4: the note is what keeps a delivered ЛСР honest in this panel
+        — its totals are live formulas written without a cached value, so a values-only
+        read shows empty money cells and reads as «nothing was calculated».  The preview
+        service prints the formula instead and states where the arithmetic is checked;
+        this screen is never that check.  Лимит 200 строк.
+        """
+        from proxy.services.xlsx_preview_service import spreadsheet_preview
+
+        return spreadsheet_preview(data, kind)
 
     async def _preview_file_artifact(url: str, name: str, kind: str) -> None:
         """Открыть файл-артефакт в живой панели: xlsx/csv → таблица, картинка → image,
@@ -4914,7 +4900,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 ui.notify(last_api_error_text("Не удалось открыть файл"), type="negative")
                 return
             data, _fn = res
-            rows = _rows_from_spreadsheet(data, kind)
+            rows, preview_note = _rows_from_spreadsheet(data, kind)
             artifact_panel.clear()
             with artifact_panel:
                 with ui.card().classes("sov-artifact-card"):
@@ -4925,6 +4911,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                   ).props("no-caps flat dense")
                     if rows:
                         _render_table(rows)
+                        if preview_note:
+                            ui.markdown(preview_note).classes("sov-artifact-markdown")
                     else:
                         ui.markdown("_Пустой файл или не удалось разобрать таблицу._").classes("sov-artifact-markdown")
             return

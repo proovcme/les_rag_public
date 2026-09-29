@@ -1057,7 +1057,12 @@ def test_stage_v_bound_material_without_price_is_not_ready():
     binding = lsr["row_bindings"][0]
     assert binding["status"] == "bound"
     assert binding["readiness"]["norm_selected"] is None
-    assert binding["readiness"]["position_calculated"] is True
+    # § 4: an unpriced supply line is not a finished calculation.  Its structure is
+    # accounted, its known amount is not, so the position answer is «нет» — and the
+    # remark that goes into the file says which of the two is missing.
+    assert binding["readiness"]["structure_calculated"] is True
+    assert binding["readiness"]["known_amount_present"] is False
+    assert binding["readiness"]["position_calculated"] is False
     assert binding["readiness"]["prices_provided"] is False
     assert lsr["summary"]["kind_counts"]["material"] == 1
     assert lsr["summary"]["confirmed_amount"] == 0.0
@@ -1120,9 +1125,10 @@ def test_stage_v_needs_research_bound_stays_preliminary_and_keeps_status():
 def test_stage_v_exact_work_without_a_chosen_price_basis_stays_preliminary():
     """Every readiness base of an EXACT work row, and where its money lands.
 
-    The norm, volume and calculation questions are settled by the row itself.
-    The price question is not: with no ценовая база and no confirmation, the
-    rate is the norm card's, so the amount is preliminary rather than confirmed
+    The norm and volume questions, and the structure of the calculation, are settled
+    by the row itself.  The price question is not: with no ценовая база and no
+    confirmation, the rate is the norm card's, so the amount is preliminary rather
+    than confirmed and the position is not «полностью рассчитана»
     (ADR-16 § 7, acceptance § 12 "no false complete status").  The confirmed
     counterpart is ``test_resources_priced_from_the_chosen_book_are_confirmed_final``.
     """
@@ -1145,14 +1151,20 @@ def test_stage_v_exact_work_without_a_chosen_price_basis_stays_preliminary():
     assert readiness["norm_selected"] is True
     assert readiness["applicability_substantiated"] is True
     assert readiness["volume_verified"] is True
-    assert readiness["position_calculated"] is True
+    # § 4: the structure question and the money question have separate answers.  The
+    # position is built and carries a known amount, but its prices belong to nobody,
+    # so it is not «полностью рассчитана» and is not counted as a calculated position.
+    assert readiness["structure_calculated"] is True
+    assert readiness["known_amount_present"] is True
+    assert readiness["position_calculated"] is False
     assert readiness["prices_provided"] == "не по базе"
     assert readiness["price_from_norm_card"] is True
     assert readiness["price_ok"] is False
     assert lsr["summary"]["confirmed_amount"] == 0.0
     assert lsr["summary"]["preliminary_amount"] == 11813.04
     assert lsr["summary"]["selected_norms"] == 1
-    assert lsr["summary"]["calculated_positions"] == 1
+    assert lsr["summary"]["positions_built"] == 1
+    assert lsr["summary"]["calculated_positions"] == 0
     assert lsr["summary"]["result_status"] == "priced_partial"
 
 
@@ -1191,7 +1203,27 @@ def test_stage_v_counts_are_separate_per_kind():
     assert counts["material"] == 1
     assert counts["resource"] == 1
     assert lsr["summary"]["selected_norms"] == 1
-    assert lsr["summary"]["calculated_positions"] == 2
+    # § 4 / tracker #59: two position rows were built, none of them is fully
+    # calculated, and the two numbers are reported separately instead of one
+    # standing in for the other.
+    assert lsr["summary"]["positions_built"] == 2
+    assert lsr["summary"]["calculated_positions"] == 0
+    # The projection states one role per locator, so a heading or a resource line is
+    # never counted as an unfinished work (§ 4: «заголовки не имеют применимости
+    # "нет" как дефекта»).
+    assert [item["row_role"] for item in lsr["row_projection"]] == [
+        "header", "work", "material", "resource"
+    ]
+    for role, item in zip(
+        ("header", "work", "material", "resource"), lsr["row_projection"], strict=True
+    ):
+        if role in {"header", "resource"}:
+            assert item["norm_selected"] is None
+            assert item["position_calculated"] is None
+            assert not [
+                blocker for blocker in (lsr.get("blockers") or [])
+                if blocker["code"] == item["locator"]
+            ]
 
 
 def test_stage_v_coverage_accounts_header_without_gap():
@@ -1237,10 +1269,27 @@ def test_stage_v_renderer_writes_readiness_column(tmp_path):
     headers = [cell.value for cell in review[1]]
     assert "Готовность строки" in headers
     column = headers.index("Готовность строки") + 1
-    values = [row[column - 1].value for row in review.iter_rows(min_row=2)]
-    text = "\n".join(str(value) for value in values if value)
+    rows = list(review.iter_rows(min_row=2))
+    text = "\n".join(str(row[column - 1].value) for row in rows if row[column - 1].value)
+    # § 4: the sheet prints the seven questions in one wording, and a heading answers
+    # «н/п» where it has no question rather than «нет» as if it were a defect.
     assert "цены=не по базе" in text
-    assert "норма=н/п" in text
+    assert "шифр выбран=н/п" in text
+    assert "применимость обоснована=н/п" in text
+    assert "расчёт структуры построен=да" in text
+    assert "известная стоимость есть=да" in text
+    assert "позиция полностью рассчитана=нет" in text
+    # § 4 (tracker #54, #60): the remarks block below the rows carries the open
+    # questions of this same revision instead of being an empty section.
+    block = "\n".join(
+        str(cell.value)
+        for row in rows
+        for cell in row
+        if cell.value not in (None, "")
+    )
+    assert "Общие замечания и незакрытые позиции" in block
+    assert "позиция полностью рассчитана — нет" in block
+    assert "карточки нормы" in block
 
 
 def test_a_card_resource_identity_reaches_the_operator_without_markup():

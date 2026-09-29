@@ -54,6 +54,17 @@ MATCH_FIELDS = (
     "unit_compatible",
     "composition_covers",
 )
+#: What each match fact asks, in the operator's words.  Task 2026-09-29 § 4: the
+#: «Ограничения аналога» column of the delivered file names the facts an analogue row
+#: left unanswered instead of printing an empty cell — the column had no wording of its
+#: own, so nothing could fill it.
+MATCH_FIELD_LABELS = {
+    "action_match": "совпадает ли действие (монтаж/разборка/устранение)",
+    "object_match": "тот ли объект или конструкция",
+    "condition_match": "те ли условия производства",
+    "unit_compatible": "совместима ли единица измерения",
+    "composition_covers": "покрывает ли состав нормы эту работу",
+}
 SELF_SCORE_FIELDS = ("coverage", "analogue", "note", "norm_status", "verdict")
 
 # Task 2026-09-29 § 3: a row the model leaves not-ready is not one kind of hole.
@@ -245,6 +256,17 @@ _EXACT_APPLICABILITY_STATUSES = frozenset({"EXACT", "EXACT_VERIFIED"})
 _ANALOGUE_APPLICABILITY_STATUSES = frozenset(
     {"ANALOGUE", "ANALOGUE_CANDIDATE", "ANALOGUE_VERIFIED"}
 )
+
+
+def is_analogue_norm_status(value: Any) -> bool:
+    """Did this row choose by analogy?
+
+    One home for the analogue family (§ 10): a consumer that wants to speak about
+    «ограничения аналога» asks this instead of re-listing status tokens, so the
+    sheet and the gate can never disagree about which rows are analogues.
+    """
+
+    return canonicalize_norm_status(value) in _ANALOGUE_APPLICABILITY_STATUSES
 
 
 def citation_record_present(row: Mapping[str, Any] | None) -> bool:

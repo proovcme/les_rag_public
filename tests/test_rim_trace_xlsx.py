@@ -245,8 +245,17 @@ def test_lsr_header_uses_passed_source_metadata_and_review_issues_are_readable(t
     review = wb["Проверка"]
     issue_row = next(row[0].row for row in review.iter_rows() if row[0].value == "warning")
     assert review.cell(issue_row, 4).value.startswith("Длинное профессиональное замечание")
-    # stage V added the "Готовность строки" column, so the review grid is 14 wide
-    assert f"D{issue_row}:N{issue_row}" in {str(value) for value in review.merged_cells.ranges}
+    # the remark cell spans to the last column of the review grid, and that last column
+    # is whatever the sheet's own header row ends at — § 4 added the identity columns
+    # («№ позиции», «Связь операций»), so hard-coding a width here would only re-break
+    # every time the check sheet states one more real fact.
+    last_column_letter = openpyxl.utils.get_column_letter(
+        max(cell.column for cell in review[1] if cell.value not in (None, ""))
+    )
+    assert (
+        f"D{issue_row}:{last_column_letter}{issue_row}"
+        in {str(value) for value in review.merged_cells.ranges}
+    )
     assert review.column_dimensions["A"].width >= 20
 
 

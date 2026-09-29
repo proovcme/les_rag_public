@@ -607,6 +607,10 @@ async def _build_workbook(
             # operator never sees it in chat (task § 11 №8)
             "norm_conflicts",
             "calculated_positions",
+            # § 4: the projection is what the readiness counters are computed from,
+            # so it has to travel with the numbers it explains.
+            "row_projection",
+            "positions_built",
             "confirmed_amount",
             "preliminary_amount",
         ):
