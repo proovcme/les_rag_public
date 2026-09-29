@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1024 |
-| Строк Python | 347064 |
+| Строк Python | 347805 |
 | PRODUCT_REACHABLE | 358 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 654 |
@@ -34,7 +34,7 @@
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | proxy/services/chat_evidence_application_service.py | 9218 | 16 |
-| sovushka/pages/chat.py | 7608 | 7 |
+| sovushka/pages/chat.py | 7626 | 7 |
 | proxy/routers/chat.py | 4658 | 42 |
 | backend/qdrant_adapter.py | 4552 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
@@ -55,10 +55,10 @@
 | sovushka/pages/diag.py | 1602 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
+| proxy/services/lsr_workbook_adapter_service.py | 1453 | 9 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 12 |
-| proxy/services/lsr_workbook_adapter_service.py | 1294 | 8 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |
