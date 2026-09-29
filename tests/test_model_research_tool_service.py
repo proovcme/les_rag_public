@@ -66,7 +66,15 @@ async def test_search_sources_uses_canonical_retriever_and_frozen_scope():
             "document_diversity_k": 2,
         }
     ]
-    assert result.chunks == tuple(_Retrieval().chunks)
+    assert [chunk.content for chunk in result.chunks] == [
+        chunk.content for chunk in _Retrieval().chunks
+    ]
+    # Only one key may be added to a served card's meta: the pool size the search
+    # matched.  Everything the RRF proved about the card still arrives unchanged.
+    assert result.chunks[0].meta == {
+        **_Retrieval().chunks[0].meta,
+        "matched_before_cap": 1,
+    }
     assert result.payload["trace"]["fusion"] == "native_rrf"
     assert result.payload["result"]["hits"][0]["content"] == "Точный фрагмент"
 
@@ -129,6 +137,11 @@ async def test_search_sources_exposes_only_configured_evidence_limit_to_the_mode
     assert len(result.chunks) == 4
     assert result.payload["result"]["count"] == 4
     assert len(result.payload["result"]["hits"]) == 4
+    # Blocker § 2: the cap is what the model may see, not what was found.  A
+    # measurement that counted this list would report found = 4 for every query.
+    assert result.payload["result"]["matched_before_cap"] == 512
+    assert result.payload["result"]["evidence_cap"] == 4
+    assert result.chunks[0].meta["matched_before_cap"] == 512
 
 
 @pytest.mark.asyncio
@@ -181,9 +194,58 @@ async def test_estimator_search_uses_dedicated_smeta_rrf_and_configured_limit():
     assert smeta_calls == [("монтаж контрольного кабеля", 4)]
     assert len(result.chunks) == 4
     assert len(result.payload["result"]["hits"]) == 4
+    # Eight cards matched, four may reach the model: the fifth number is the one
+    # the reader must never take for «найдено».
+    assert result.payload["result"]["matched_before_cap"] == 8
+    assert result.chunks[0].meta["matched_before_cap"] == 8
     assert result.payload["trace"]["rag"]["collection"] == "customer_configured_smeta_cards"
     assert result.payload["result"]["hits"][0]["meta"]["norm_code"] == "ГЭСНм08-02-001-01"
     assert "Состав работы: Монтаж; Проверка" in result.payload["result"]["hits"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_estimator_search_reports_the_fused_pool_not_the_trimmed_cards():
+    """The norm browser already measures its own pool (``fusion_candidates``).
+
+    Blocker § 2 asks for найдено and показано as two numbers, so the search has to
+    carry that pool out of the tool instead of dropping it at the cap: 23 cards
+    were fused, 6 verified ones pass the provenance filter, 4 reach the model.
+    """
+
+    async def general_retrieve(**_kwargs):
+        pytest.fail("smeta search must not read the general les_rag collection")
+
+    service = ModelResearchToolService(
+        retrieve=general_retrieve,
+        frozen_dataset_ids=("smeta-system-dataset",),
+        retrieval_kwargs={},
+        fallback=lambda *_args: pytest.fail("fallback must not run"),
+        smeta_norm_retrieve=lambda _query, *, limit: {
+            "cards": [
+                {
+                    "norm_code": f"ГЭСН01-01-00{index}-01",
+                    "title": f"Карточка {index}",
+                    "source_ref": f"ФСНБ-2022#guid={index}",
+                }
+                for index in range(1, 7)
+            ],
+            "retrieval_trace": {
+                "fusion_candidates": 23,
+                "returned_candidates": 6,
+                "rag": {"status": "ok"},
+            },
+        },
+        model_evidence_k=4,
+    )
+
+    result = await service.execute(
+        {"tool": "search_sources", "args": {"q": "монтаж перегородок"}}
+    )
+
+    assert len(result.chunks) == 4
+    assert result.payload["result"]["count"] == 4
+    assert result.payload["result"]["matched_before_cap"] == 23
+    assert result.payload["result"]["verified_before_cap"] == 6
 
 
 @pytest.mark.asyncio

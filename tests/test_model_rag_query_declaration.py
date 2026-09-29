@@ -209,17 +209,26 @@ def _stub_hit(text: str):
     )
 
 
-def _shown_chunk(query_index: int, query_text: str, hit_index: int):
+def _shown_chunk(
+    query_index: int,
+    query_text: str,
+    hit_index: int,
+    *,
+    matched_before_cap: int | None = None,
+):
+    meta = {
+        "model_query_index": query_index,
+        "model_query_text": query_text,
+        "model_evidence_ref": f"Q{query_index}.H{hit_index}",
+    }
+    if matched_before_cap is not None:
+        meta[service._MATCHED_BEFORE_CAP_META_KEY] = matched_before_cap
     return service._ModelRagEvidenceChunk(
         content=f"Шифр: ГЭСН04-12-00{query_index}-{hit_index:02d} Наименование: монтаж",
         doc_id=f"card-{query_index}-{hit_index}",
         doc_name="les_smeta_norm_cards.v1",
         score=0.9,
-        meta={
-            "model_query_index": query_index,
-            "model_query_text": query_text,
-            "model_evidence_ref": f"Q{query_index}.H{hit_index}",
-        },
+        meta=meta,
     )
 
 
@@ -357,12 +366,95 @@ def test_found_shown_deferred_and_chosen_are_measured_apart_for_one_packet() -> 
     assert measurement["groups"]["model"] == {
         "queries": 1,
         "found": 3,
+        "returned_within_cap": 3,
         "model_visible": 2,
         "not_visible": 1,
         "chosen_rows": 1,
+        "found_from_pre_cap_queries": 0,
     }
     assert measurement["groups"]["original"]["found"] == 1
     assert measurement["compares_only_within_this_packet"] is True
+
+
+def test_found_is_the_matched_pool_and_never_the_evidence_cap() -> None:
+    """Blocker § 2: найдено and показано stop being one number at the cap.
+
+    Every query in the 824, 826 and 827 measurements read ``found = 6``, because
+    the search trimmed its own result to the model-evidence ceiling before the
+    count was taken.  A query that matched 23 cards, was served 6 of them and had
+    2 reach the model has to be recorded as those separate facts, or the loss the
+    cap causes is invisible to every later reader.
+    """
+
+    query = "Монтаж перегородок из гипсовых плит по металлическому каркасу"
+    hits = tuple(
+        _shown_chunk(1, query, index, matched_before_cap=23) for index in range(1, 7)
+    )
+    measurement = service.model_rag_query_measurement(
+        query_provenance={query: "original"},
+        pass_hits=[(query, hits)],
+        evidence_chunks=list(hits[:2]),
+        omitted_refs=["Q1.H3"],
+        kept_rows=[{"evidence_refs": ["Q1.H1"]}],
+    )
+    row = measurement["queries"][0]
+    assert row["found"] == 23
+    assert row["returned_within_cap"] == 6
+    assert row["model_visible"] == 2
+    assert row["not_visible"] == 21
+    assert row["cards_omitted"] == 1
+    assert row["chosen_rows"] == 1
+    assert row["found_basis"] == "pre_cap_pool"
+    group = measurement["groups"]["original"]
+    assert group["found"] == 23
+    assert group["returned_within_cap"] == 6
+    assert group["found_from_pre_cap_queries"] == 1
+
+    # Reader-side bookkeeping only: what the model reads is the same card text it
+    # read before this figure was carried, so no prompt byte depends on it.
+    rendered, _chunks, _refs = service.build_model_rag_evidence_groups(
+        [(query, hits)],
+        max_chars=60_000,
+        hits_per_query=6,
+    )
+    assert service._MATCHED_BEFORE_CAP_META_KEY not in "\n".join(rendered)
+    assert sum(1 for line in "\n".join(rendered).splitlines() if line.startswith("[Q1.H")) == 6
+
+
+def test_a_query_without_a_pool_figure_says_so_instead_of_claiming_the_cap() -> None:
+    """A cached record written before the pool was carried stays honest.
+
+    ``found`` falls back to the served list, but ``found_basis`` names that
+    fallback, so nobody can read 6 as «в базе только 6 карточек».  A query whose
+    real pool is smaller than the cap is a different fact and gets its own label,
+    otherwise the two would be indistinguishable in every later report.
+    """
+
+    query = "Прокладка кабеля NYM 3x2.5 в коробе"
+    measurement = service.model_rag_query_measurement(
+        query_provenance={query: "model"},
+        pass_hits=[(query, (_shown_chunk(1, query, 1), _shown_chunk(1, query, 2)))],
+        evidence_chunks=[],
+        kept_rows=[],
+    )
+    row = measurement["queries"][0]
+    assert row["found"] == 2
+    assert row["returned_within_cap"] == 2
+    assert row["found_basis"] == "pool_not_reported"
+    assert measurement["groups"]["model"]["found_from_pre_cap_queries"] == 0
+
+    small_pool = service.model_rag_query_measurement(
+        query_provenance={query: "model"},
+        pass_hits=[(query, (
+            _shown_chunk(1, query, 1, matched_before_cap=2),
+            _shown_chunk(1, query, 2, matched_before_cap=2),
+        ))],
+        evidence_chunks=[],
+        kept_rows=[],
+    )
+    assert small_pool["queries"][0]["found"] == 2
+    assert small_pool["queries"][0]["returned_within_cap"] == 2
+    assert small_pool["queries"][0]["found_basis"] == "pool_within_cap"
 
 
 def test_several_packets_accumulate_their_counts_separately() -> None:
@@ -398,6 +490,53 @@ def test_several_packets_accumulate_their_counts_separately() -> None:
     assert rollup["deferred_wholly_queries"] == 1
     # Each figure still carries its own name: no single loss number was produced.
     assert not any(key in rollup for key in ("loss", "lost", "missing"))
+
+
+def test_a_deferred_query_is_measured_as_found_but_not_shown() -> None:
+    """Blocker § 2: «отложено» is a measured state, never read as absence.
+
+    The 827 live turn never happened to trim a whole query, so this wires the
+    real budget selector to the measurement: what fits is shown, the rest is
+    deferred whole with its own card count intact, and the two stay separate
+    numbers.
+    """
+
+    first = "Монтаж шкафа управления ШУН-Р"
+    second = "Прокладка кабеля NYM 3x2.5 в коробе"
+    hits = [
+        (query, tuple(_shown_chunk(index, query, 1, matched_before_cap=23)
+                      for _ in range(1)))
+        for index, query in enumerate((first, second), start=1)
+    ]
+    included, leftover, omitted = service.select_model_rag_query_hits_for_budget(
+        hits,
+        max_chars=1,
+        hits_per_query=6,
+    )
+    # A budget that cannot pay for a second query defers it whole; only the first
+    # query's own cards were trimmed.
+    assert [query for query, _hits in leftover] == [second]
+    assert all(ref.startswith("Q1.") for ref in omitted)
+    measurement = service.model_rag_query_measurement(
+        query_provenance={first: "model", second: "original"},
+        pass_hits=hits,
+        leftover_query_hits=leftover,
+        evidence_chunks=[chunk for _query, group in included for chunk in group],
+        omitted_refs=omitted,
+        kept_rows=[],
+    )
+    rows = {row["query_text"]: row for row in measurement["queries"]}
+    deferred = rows[second]
+    assert deferred["deferred_wholly"] is True
+    assert deferred["found"] == 23
+    assert deferred["model_visible"] == 0
+    assert deferred["not_visible"] == 23
+    assert rows[first]["deferred_wholly"] is False
+    rollup: dict = {"packets": 0, "groups": {}}
+    service.merge_query_measurement(rollup, measurement)
+    assert rollup["deferred_wholly_queries"] == 1
+    # Deferral is its own figure; it never turns into "nothing was found".
+    assert rollup["groups"]["original"]["found"] == 23
 
 
 def test_separated_answer_lines_keep_their_reason_counts() -> None:

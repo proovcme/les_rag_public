@@ -46,6 +46,33 @@ def _chunk_payload(chunk: Any) -> dict[str, Any]:
     return payload
 
 
+#: Blocker § 2 (29.09): «раздельно измерять найдено/показано/отложено/выбрано».
+#: The pool a search matched is a different number from the cards the model
+#: evidence cap lets through, and the two retrievers already report the pool —
+#: the dedicated norm browser as ``fusion_candidates``, the canonical RRF as
+#: ``merged_count``.  It is recorded under this key on every served chunk so the
+#: per-query measurement can name found and shown apart.  A truncation that
+#: happens before the count is taken is what made «найдено» read as the ceiling.
+MATCHED_BEFORE_CAP_META_KEY = "matched_before_cap"
+
+
+def _pre_cap_match_count(trace: Mapping[str, Any], matched: int) -> int:
+    """How many candidates the search found, before any model-facing cap."""
+
+    for key in ("fusion_candidates", "merged_count"):
+        value = trace.get(key)
+        if isinstance(value, (int, float)) and int(value) > 0:
+            return max(int(value), matched)
+    return matched
+
+
+def _stamp_pre_cap_match_count(chunks: tuple[Any, ...], matched: int) -> None:
+    for chunk in chunks:
+        meta = getattr(chunk, "meta", None)
+        if isinstance(meta, dict):
+            meta[MATCHED_BEFORE_CAP_META_KEY] = int(matched)
+
+
 class ModelResearchToolService:
     """Execute model tools without allowing `search_sources` to leave native RRF."""
 
@@ -120,6 +147,9 @@ class ModelResearchToolService:
 
             cards_verified = [card for card in cards_all if _has_normative_provenance(card)]
             dropped_unverified = len(cards_all) - len(cards_verified)
+            # What the norm search matched is recorded before the model-evidence
+            # cap trims it, so «найдено» and «показано» stay two numbers.
+            matched_before_cap = _pre_cap_match_count(trace, len(cards_all))
             # `degraded_sparse_only` is a documented functional state: the additive
             # dense channel is down but exact/FTS cards from the typed base remain.
             # Those verified cards still reach the model, yet the search is reported
@@ -135,7 +165,12 @@ class ModelResearchToolService:
                         "operation": "smeta_norm_native_rrf",
                             "inputs": [{"q": query, "limit": self._model_evidence_k}],
                         "status": "blocked",
-                        "result": {"hits": [], "count": 0},
+                        "result": {
+                            "hits": [],
+                            "count": 0,
+                            "matched_before_cap": matched_before_cap,
+                            "evidence_cap": self._model_evidence_k,
+                        },
                         "sources": [],
                         "missing": ["dedicated smeta native RRF is not ready"],
                         "warnings": [],
@@ -172,6 +207,7 @@ class ModelResearchToolService:
                         "norm_code": str(card.get("norm_code") or ""),
                         "measure_unit": str(card.get("measure_unit") or ""),
                         "source_ref": str(card.get("source_ref") or ""),
+                        MATCHED_BEFORE_CAP_META_KEY: int(matched_before_cap),
                     },
                 )
                 for index, card in enumerate(cards)
@@ -209,7 +245,13 @@ class ModelResearchToolService:
                     "operation": "smeta_norm_native_rrf",
                     "inputs": [{"q": query, "limit": self._model_evidence_k}],
                     "status": effective_status,
-                    "result": {"hits": hits, "count": len(hits)},
+                    "result": {
+                        "hits": hits,
+                        "count": len(hits),
+                        "matched_before_cap": matched_before_cap,
+                        "verified_before_cap": len(cards_verified),
+                        "evidence_cap": self._model_evidence_k,
+                    },
                     "sources": [
                         {
                             "doc_name": hit["doc_name"],
@@ -234,8 +276,11 @@ class ModelResearchToolService:
             document_diversity_k=self._document_diversity_k,
             **self._retrieval_kwargs,
         )
-        chunks = tuple(retrieval.chunks)[: self._model_evidence_k]
+        all_chunks = tuple(retrieval.chunks)
+        chunks = all_chunks[: self._model_evidence_k]
         trace = dict(retrieval.payload())
+        matched_before_cap = _pre_cap_match_count(trace, len(all_chunks))
+        _stamp_pre_cap_match_count(chunks, matched_before_cap)
         hits = [_chunk_payload(chunk) for chunk in chunks]
         sources = [
             {
@@ -252,7 +297,12 @@ class ModelResearchToolService:
             "operation": "native_rrf",
             "inputs": [{"q": query, "dataset_ids": list(self._dataset_ids)}],
             "status": "ok" if hits else "missing",
-            "result": {"hits": hits, "count": len(hits)},
+            "result": {
+                "hits": hits,
+                "count": len(hits),
+                "matched_before_cap": matched_before_cap,
+                "evidence_cap": self._model_evidence_k,
+            },
             "sources": sources,
             "missing": [] if hits else ["no indexed chunks matched query"],
             "warnings": [],

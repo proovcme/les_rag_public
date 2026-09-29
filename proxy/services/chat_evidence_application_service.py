@@ -624,6 +624,7 @@ def tool_selector_request_payload(
     return payload
 from proxy.services.model_execution_preset_service import ModelExecutionPreset
 from proxy.services.model_research_tool_service import (
+    MATCHED_BEFORE_CAP_META_KEY as _MATCHED_BEFORE_CAP_META_KEY,
     ModelResearchToolService,
     retrieve_smeta_norm_cards,
 )
@@ -2860,6 +2861,26 @@ def declared_query_trace(declared: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _matched_before_cap(hits: Sequence[Any]) -> int:
+    """Pool size the search reported, carried on the served cards' own meta.
+
+    Zero means the figure did not reach this reader — a record cached before the
+    figure existed, or a query that matched nothing so no card carried it — and
+    ``found_basis`` says which, instead of quietly presenting the ceiling as the
+    corpus or an unreported pool as a small one.
+    """
+
+    matched = 0
+    for hit in hits:
+        meta = getattr(hit, "meta", None)
+        if meta is None and isinstance(hit, Mapping):
+            meta = hit.get("meta")
+        value = (meta or {}).get(_MATCHED_BEFORE_CAP_META_KEY) if isinstance(meta, Mapping) else None
+        if isinstance(value, (int, float)) and int(value) > matched:
+            matched = int(value)
+    return matched
+
+
 def model_rag_query_measurement(
     *,
     declared_queries: Sequence[Mapping[str, Any]] = (),
@@ -2879,6 +2900,12 @@ def model_rag_query_measurement(
     numbers never collapse into a single figure, and the group roll-up sums each
     of them separately per provenance.  Nothing here judges a norm — a query with
     no visible card is a retrieval fact, not «нет нормы».
+
+    «Найдено» is the pool the search matched, which the evidence cap then trims:
+    counting the trimmed list would make found and shown the same number for
+    every query (the 824/826/827 measurements all read ``found = 6``).  So the
+    row carries ``returned_within_cap`` next to ``found``, and ``found_basis``
+    names which of the two the figure is.
     """
 
     def folded(text: Any) -> str:
@@ -2928,7 +2955,16 @@ def model_rag_query_measurement(
         query = str(raw_query or "").strip()
         query_key = folded(query)
         provenance = _model_rag_query_provenance(query_provenance, query)
-        found = len(list(raw_hits or ()))
+        hits = list(raw_hits or ())
+        returned = len(hits)
+        matched = _matched_before_cap(hits)
+        found = matched if matched >= returned else returned
+        if matched > returned:
+            basis = "pre_cap_pool"
+        elif matched > 0:
+            basis = "pool_within_cap"
+        else:
+            basis = "pool_not_reported"
         shown = shown_by_query.get(query_key, 0)
         row = {
             "query_text": query,
@@ -2940,6 +2976,8 @@ def model_rag_query_measurement(
                 declared_by_text.get(query_key, {}).get("attribution") or ""
             ),
             "found": found,
+            "found_basis": basis,
+            "returned_within_cap": returned,
             "model_visible": shown,
             "not_visible": max(0, found - shown),
             "deferred_wholly": query_key in deferred_wholly,
@@ -2949,11 +2987,19 @@ def model_rag_query_measurement(
         rows.append(row)
         group = groups.setdefault(
             provenance,
-            {"queries": 0, "found": 0, "model_visible": 0, "not_visible": 0,
-             "chosen_rows": 0},
+            {"queries": 0, "found": 0, "returned_within_cap": 0, "model_visible": 0,
+             "not_visible": 0, "chosen_rows": 0, "found_from_pre_cap_queries": 0},
         )
         group["queries"] += 1
-        for key in ("found", "model_visible", "not_visible", "chosen_rows"):
+        if row["found_basis"] == "pre_cap_pool":
+            group["found_from_pre_cap_queries"] += 1
+        for key in (
+            "found",
+            "returned_within_cap",
+            "model_visible",
+            "not_visible",
+            "chosen_rows",
+        ):
             group[key] += int(row[key])
     return {
         "schema": "les.query-measurement.v1",
@@ -3030,13 +3076,22 @@ def merge_query_measurement(
     packets = int(rollup.get("packets") or 0) + 1
     rollup["packets"] = packets
     groups = rollup.setdefault("groups", {})
+    summed = (
+        "queries",
+        "found",
+        "returned_within_cap",
+        "model_visible",
+        "not_visible",
+        "chosen_rows",
+        "found_from_pre_cap_queries",
+    )
     for provenance, counters in (measurement.get("groups") or {}).items():
         group = groups.setdefault(
             str(provenance),
-            {"queries": 0, "found": 0, "model_visible": 0, "not_visible": 0,
-             "chosen_rows": 0},
+            {"queries": 0, "found": 0, "returned_within_cap": 0, "model_visible": 0,
+             "not_visible": 0, "chosen_rows": 0, "found_from_pre_cap_queries": 0},
         )
-        for key in ("queries", "found", "model_visible", "not_visible", "chosen_rows"):
+        for key in summed:
             group[key] += int(counters.get(key) or 0)
     rollup["deferred_wholly_queries"] = int(
         rollup.get("deferred_wholly_queries") or 0
