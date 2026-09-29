@@ -226,6 +226,27 @@ def workbook_packaging_tool(profile_tools: Sequence[str], question: str) -> list
     return []
 
 
+def document_price_basis_arguments(basis: object) -> dict[str, Any]:
+    """The five contract strings of a basis a document was already priced in.
+
+    Nothing is invented: a record without a bound book yields ``{}``, because an
+    earlier revision that stayed unpriced asked a question — repeating that
+    question is not the same as answering it (§ 7).
+    """
+    if not isinstance(basis, Mapping):
+        return {}
+    book = str(basis.get("pricebook") or basis.get("actual_book") or "").strip()
+    if not book:
+        return {}
+    return {
+        "pricebook": book,
+        "region": str(basis.get("region") or basis.get("actual_region") or "").strip(),
+        "quarter": str(basis.get("quarter") or basis.get("actual_quarter") or "").strip(),
+        "binding": str(basis.get("binding") or "").strip(),
+        "revision_id": str(basis.get("revision_id") or "").strip(),
+    }
+
+
 def workbook_packaging_args(
     *,
     packaging_tool: str,
@@ -235,6 +256,7 @@ def workbook_packaging_args(
     operator_overrides: Mapping[str, Any] | None,
     draft: bool = False,
     parent_revision_id: str | None = None,
+    document_price_basis: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build contract-valid args for the sheet-pass auto-packaging call.
 
@@ -246,6 +268,11 @@ def workbook_packaging_args(
     final call keeps the identity it had before durable packaging existed, a
     paused intermediate is explicitly marked, and a terminal repack continues
     the same revision chain.
+
+    ``document_price_basis`` is the same code-owned continuation for the money:
+    the region, period and book this document was already priced in, read from
+    the durable packaging history rather than from the wording of the new reply
+    (§ 4).  Only the priced packager accepts it.
     """
     args: dict[str, Any] = {
         "attachment_id": attachment_id,
@@ -254,6 +281,9 @@ def workbook_packaging_args(
     }
     if packaging_tool == "build_lsr_workbook":
         args["confirmed_data"] = dict(operator_overrides or {})
+        basis = document_price_basis_arguments(document_price_basis)
+        if basis:
+            args["document_price_basis"] = basis
     if draft:
         args["draft"] = True
     if parent_revision_id:
@@ -321,6 +351,45 @@ def workbook_packaging_lineage(
         ):
             settled[tool] = str(payload.get("parent_revision_id") or "") or built_on
     return parents, settled
+
+
+def workbook_document_price_basis(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    tool: str = "build_lsr_workbook",
+) -> dict[str, Any]:
+    """The price basis this document was last actually priced in.
+
+    Read from the job's own ``workbook_packaged`` events, so a continuation turn
+    inherits the operator's own choice instead of re-deriving it from the text of
+    the new reply (§ 4: «реплика "добери нормы" … не обнуляет регион, квартал или
+    принятые решения»).  Only a basis that bound a book is carried forward: an
+    earlier revision that stayed without a book asked a question, and repeating
+    that question is not the same as answering it.
+    """
+
+    latest: dict[str, Any] = {}
+    for event in events or ():
+        if not isinstance(event, Mapping):
+            continue
+        if str(event.get("event_type") or event.get("event") or "") != "workbook_packaged":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            payload = event.get("data")
+        if not isinstance(payload, Mapping):
+            continue
+        if tool and str(payload.get("tool") or "") != tool:
+            continue
+        basis = payload.get("price_basis")
+        if not isinstance(basis, Mapping):
+            continue
+        record = document_price_basis_arguments(
+            {**dict(basis), "revision_id": str(payload.get("revision_id") or "")}
+        )
+        if record:
+            latest = record
+    return latest
 
 
 def terminal_research_packaging_rows(
@@ -8192,12 +8261,14 @@ async def _execute_chat_evidence_application(
                         # with its own identity so a re-open serves the same file.
                         packaging_parents: dict[str, str] = {}
                         packaging_settled: dict[str, str | None] = {}
+                        packaging_events: list[dict[str, Any]] = []
                         if research_job_service is not None and research_job is not None:
+                            packaging_events = research_job_service.list_events(
+                                str(research_job.get("job_id") or "")
+                            )
                             packaging_parents, packaging_settled = (
                                 workbook_packaging_lineage(
-                                    research_job_service.list_events(
-                                        str(research_job.get("job_id") or "")
-                                    ),
+                                    packaging_events,
                                     durable_decisions=bool(durable_packaging_rows),
                                 )
                             )
@@ -8206,6 +8277,14 @@ async def _execute_chat_evidence_application(
                                 packaging_settled[packaging_tool]
                                 if packaging_tool in packaging_settled
                                 else packaging_parents.get(packaging_tool)
+                            )
+                            # § 4: the region, period and book this document was
+                            # already priced in are read from its own durable
+                            # packaging history, not from the wording of this
+                            # reply, so «добери нормы» cannot silently return the
+                            # estimate to an unchosen basis.
+                            inherited_basis = workbook_document_price_basis(
+                                packaging_events, tool=packaging_tool
                             )
                             workbook_call = {
                                 "tool": packaging_tool,
@@ -8221,6 +8300,7 @@ async def _execute_chat_evidence_application(
                                     ).get("operator_overrides"),
                                     draft=packaging_is_draft,
                                     parent_revision_id=packaging_parent,
+                                    document_price_basis=inherited_basis,
                                 ),
                             }
                             execution_context = {
@@ -8279,6 +8359,10 @@ async def _execute_chat_evidence_application(
                                             revision_id=str(artifact["revision_id"]),
                                             draft=packaging_is_draft,
                                             parent_revision_id=packaging_parent,
+                                            # the basis belongs to this document as
+                                            # much as its revision chain does: the
+                                            # next turn inherits it from here (§ 4).
+                                            price_basis=harvested.get("price_basis"),
                                         )
                                     except Exception as record_error:  # noqa: BLE001 - lineage hint is best-effort
                                         logger.warning(

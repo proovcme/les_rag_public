@@ -96,6 +96,26 @@ OPERATOR_FIELDS_MUST_REACH_CHAT = frozenset(
     {"price_basis", "price_gaps", "norm_conflicts"}
 )
 
+# Task 2026-09-28 § 4, § 7: the region and period a document was priced in belong
+# to that document, not to the wording of the next reply.  Build 820 priced
+# revision 1 of «ВОР — Общая по Каменке» in sankt-peterburg_3kv2026 and revisions
+# 2..6 of the same document in nothing at all, because every turn re-derived the
+# basis from its own question text — live proof in
+# ``stage_b/live_820/basis_continuation/basis_continuation.json``.  Three modules
+# close that hole and any one of them can reopen it silently: the job that stores
+# the basis with the packaged revision, the carrier that reads it back into the
+# next packaging call, and the repack route that rebuilds the file without a model.
+DOCUMENT_BASIS_STORAGE_MODULE = "proxy/services/workbook_research_job_service.py"
+DOCUMENT_BASIS_CARRIER_MODULE = "proxy/services/chat_evidence_application_service.py"
+DOCUMENT_BASIS_REPACK_MODULE = "proxy/routers/chat.py"
+DOCUMENT_BASIS_PACKAGING_ARG = "document_price_basis"
+DOCUMENT_BASIS_EVENT_KEY = "price_basis"
+DOCUMENT_BASIS_ARGS_BUILDER = "workbook_packaging_args"
+DOCUMENT_BASIS_READER = "workbook_document_price_basis"
+DOCUMENT_BASIS_ARG_KEEPER = "document_price_basis_arguments"
+DOCUMENT_BASIS_RECORDER = "record_packaging"
+PRICED_PACKAGING_TOOL = "build_lsr_workbook"
+
 # A rate that nobody chose may still be calculated, but only under the label the
 # readiness state, the price gaps and the confirmed/preliminary split key on.
 # Dropping that label would silently return the defect ADR-16 § 7 closes: a
@@ -512,6 +532,101 @@ def _basis_carrier_violations(relative: str, tree: ast.AST) -> Iterable[Architec
         )
 
 
+def _document_basis_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Task 2026-09-28 § 4, § 7: a continuation keeps the basis of its document.
+
+    The basis is data the operator chose once, so it has to be stored with the
+    packaged revision and read back from there.  Re-deriving it from the text of
+    the new reply is the 820 defect: «Продолжи это же задание…» names no region
+    and no quarter, and the next six revisions printed «Ценовая база не задана
+    явно» over a document that had already been priced.
+    """
+    if relative == DOCUMENT_BASIS_CARRIER_MODULE:
+        builders = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _call_name(node) == DOCUMENT_BASIS_ARGS_BUILDER
+        ]
+        if not builders:
+            return
+        reader_called = any(
+            isinstance(node, ast.Call) and _call_name(node) == DOCUMENT_BASIS_READER
+            for node in ast.walk(tree)
+        )
+        if not reader_called:
+            yield ArchitectureViolation(
+                "DOCUMENT_BASIS_NOT_CARRIED",
+                relative,
+                builders[0].lineno,
+                f"{DOCUMENT_BASIS_ARGS_BUILDER}() is called without reading the basis "
+                f"back through {DOCUMENT_BASIS_READER}()",
+            )
+            return
+        for call in builders:
+            if not any(
+                item.arg == DOCUMENT_BASIS_PACKAGING_ARG for item in call.keywords
+            ):
+                yield ArchitectureViolation(
+                    "DOCUMENT_BASIS_NOT_CARRIED",
+                    relative,
+                    call.lineno,
+                    f"packaging call built without {DOCUMENT_BASIS_PACKAGING_ARG}= — the "
+                    "priced continuation would lose the region and period it must reuse",
+                )
+        return
+    if relative == DOCUMENT_BASIS_REPACK_MODULE:
+        strings = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        if PRICED_PACKAGING_TOOL not in strings:
+            return
+        recorder_called = any(
+            isinstance(node, ast.Call)
+            and _call_name(node) in {DOCUMENT_BASIS_ARG_KEEPER, DOCUMENT_BASIS_READER}
+            for node in ast.walk(tree)
+        )
+        if DOCUMENT_BASIS_PACKAGING_ARG not in strings or not recorder_called:
+            yield ArchitectureViolation(
+                "DOCUMENT_BASIS_NOT_CARRIED",
+                relative,
+                1,
+                f"the no-model repack packages {PRICED_PACKAGING_TOOL} without "
+                f"{DOCUMENT_BASIS_PACKAGING_ARG}: a rebuilt file would re-ask, or quietly "
+                "drop, the basis the document was priced in",
+            )
+        return
+    if relative != DOCUMENT_BASIS_STORAGE_MODULE:
+        return
+    recorders = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == DOCUMENT_BASIS_RECORDER
+    ]
+    if not recorders:
+        return
+    stored = any(
+        argument.arg == DOCUMENT_BASIS_EVENT_KEY
+        for argument in recorders[0].args.kwonlyargs + recorders[0].args.args
+    )
+    keyed = DOCUMENT_BASIS_EVENT_KEY in {
+        node.value
+        for node in ast.walk(recorders[0])
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    if not (stored and keyed):
+        yield ArchitectureViolation(
+            "DOCUMENT_BASIS_NOT_CARRIED",
+            relative,
+            recorders[0].lineno,
+            f"{DOCUMENT_BASIS_RECORDER}() does not persist the price basis beside the "
+            "revision, so a restart or a continuation has nothing to inherit",
+        )
+
+
 def _accrual_label_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
     """Task 2026-09-28 § 11 № 6: an accrual rate without an owner stays a question.
 
@@ -680,6 +795,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     yield from _adr16_violations(relative, tree)
     yield from _document_lineage_violations(relative, tree)
     yield from _basis_carrier_violations(relative, tree)
+    yield from _document_basis_violations(relative, tree)
     yield from _accrual_label_violations(relative, tree)
     yield from _book_price_unit_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}

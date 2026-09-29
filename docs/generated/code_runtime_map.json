@@ -1661,7 +1661,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4637,
+      "lines": 4658,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -3089,7 +3089,7 @@
         "tests/test_stall_completion_23.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 8879,
+      "lines": 8963,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4828,7 +4828,7 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 1139,
+      "lines": 1294,
       "module": "proxy.services.lsr_workbook_adapter_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5449,7 +5449,7 @@
         "tests/test_packaging_recovery_service.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 274,
+      "lines": 319,
       "module": "proxy.services.packaging_recovery_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7448,7 +7448,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_workbook_research_job_service.py"
       ],
-      "lines": 1705,
+      "lines": 1750,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7471,7 +7471,7 @@
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 630,
+      "lines": 669,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8345,7 +8345,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 7578,
+      "lines": 7608,
       "module": "sovushka.pages.chat",
       "outbound": [
         "backend/rag_config.py",
@@ -8879,7 +8879,7 @@
     },
     {
       "inbound": [],
-      "lines": 607,
+      "lines": 717,
       "module": "tests.test_architecture_contract_gate",
       "outbound": [
         "tools/architecture_contract_gate.py"
@@ -13654,7 +13654,7 @@
     },
     {
       "inbound": [],
-      "lines": 2635,
+      "lines": 2660,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -14522,7 +14522,7 @@
     },
     {
       "inbound": [],
-      "lines": 1164,
+      "lines": 1218,
       "module": "tests.test_workbook_research_job_service",
       "outbound": [
         "proxy/services/workbook_research_job_service.py"
@@ -14783,7 +14783,7 @@
       "inbound": [
         "tests/test_architecture_contract_gate.py"
       ],
-      "lines": 818,
+      "lines": 934,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -19176,7 +19176,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 653,
     "tracked_python_files": 1023,
-    "tracked_python_lines": 344474
+    "tracked_python_lines": 345198
   },
   "warnings": []
 }

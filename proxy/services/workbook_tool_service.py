@@ -76,6 +76,20 @@ _LSR_INPUT_SCHEMA = {
         "confirmed_data": _LSR_CONFIRMED_DATA_SCHEMA,
         # stage D: explicit user/model pricebook request (GUI chat path)
         "pricebook": {"type": "string"},
+        # Task 2026-09-28 § 4: the basis this very document was already priced
+        # in, replayed by code on a continuation turn so «продолжи» cannot zero
+        # out the region and quarter. Server-owned, never model-authored.
+        "document_price_basis": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "pricebook": {"type": "string"},
+                "region": {"type": "string"},
+                "quarter": {"type": "string"},
+                "binding": {"type": "string"},
+                "revision_id": {"type": "string"},
+            },
+        },
     },
 }
 
@@ -255,6 +269,19 @@ def _normalized_args(args: Mapping[str, Any], *, allowed_args: set[str]) -> dict
                 if locator and isinstance(value, Mapping):
                     payload[locator] = dict(value)
         normalized["confirmed_data"] = payload
+    if "document_price_basis" in allowed_args:
+        # Server-owned continuation of the basis (§ 4).  Only the five known
+        # strings survive; an unknown key or a non-string value is dropped, so
+        # nothing can smuggle a basis in through this field, and a book that is
+        # not installed cannot be bound by it either (explicit_only=True).
+        stored = normalized.get("document_price_basis")
+        fields = {
+            key: str(stored.get(key) or "").strip()
+            for key in ("pricebook", "region", "quarter", "binding", "revision_id")
+        } if isinstance(stored, Mapping) else {}
+        normalized["document_price_basis"] = (
+            fields if any(fields.values()) else {}
+        )
     return normalized
 
 
@@ -523,6 +550,18 @@ async def _build_workbook(
         }
         if normalized.get("draft"):
             tool_call_meta["draft"] = True
+        applied_basis = (
+            generated.get("price_basis")
+            if isinstance(generated.get("price_basis"), Mapping)
+            else {}
+        )
+        inherited_from = str(applied_basis.get("inherited_from_document") or "").strip()
+        if inherited_from:
+            # § 4 evidence the other way round: the artifact itself says which
+            # revision's basis this delivery continued, so a reader of the file
+            # can tell a preserved choice from a re-derived one.
+            tool_call_meta["price_basis_inherited_from"] = inherited_from
+            tool_call_meta["pricebook"] = str(applied_basis.get("actual_book") or "")
         parent_revision_id, parent_source = _packaging_parent(
             ctx,
             tool_name=tool_name,

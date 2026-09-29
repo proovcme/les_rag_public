@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1023 |
-| Строк Python | 344474 |
+| Строк Python | 345198 |
 | PRODUCT_REACHABLE | 358 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 653 |
@@ -33,9 +33,9 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| proxy/services/chat_evidence_application_service.py | 8879 | 15 |
-| sovushka/pages/chat.py | 7578 | 7 |
-| proxy/routers/chat.py | 4637 | 42 |
+| proxy/services/chat_evidence_application_service.py | 8963 | 15 |
+| sovushka/pages/chat.py | 7608 | 7 |
+| proxy/routers/chat.py | 4658 | 42 |
 | backend/qdrant_adapter.py | 4552 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3927 | 3 |
@@ -48,7 +48,7 @@
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2044 | 4 |
 | proxy/services/lsr_norm_quality_gate_service.py | 2031 | 5 |
-| proxy/services/workbook_research_job_service.py | 1705 | 9 |
+| proxy/services/workbook_research_job_service.py | 1750 | 9 |
 | proxy/smeta_core/norm_browser.py | 1703 | 13 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
@@ -58,10 +58,10 @@
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 12 |
+| proxy/services/lsr_workbook_adapter_service.py | 1294 | 7 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |
-| proxy/services/lsr_workbook_adapter_service.py | 1139 | 7 |
 
 ## Сметный монолит: фактические потребители
 

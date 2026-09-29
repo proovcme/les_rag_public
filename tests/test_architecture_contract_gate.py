@@ -442,6 +442,116 @@ def safe_workbook_history_projection(payload):
     assert "BASIS_QUESTIONS_NOT_CARRIED" not in codes
 
 
+def test_rejects_a_packaging_call_that_loses_the_documents_basis(tmp_path: Path) -> None:
+    """The 820 defect: the continuation re-derived the basis from its own text."""
+
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def _package(service, job_id, tool, decisions):
+    events = service.list_events(job_id)
+    basis = workbook_document_price_basis(events, tool=tool)
+    return workbook_packaging_args(
+        packaging_tool=tool,
+        attachment_id="att",
+        question="Продолжи это же задание",
+        decisions=decisions,
+        operator_overrides={},
+    )
+""",
+    )
+    assert "DOCUMENT_BASIS_NOT_CARRIED" in codes
+
+
+def test_accepts_a_packaging_call_that_reuses_the_documents_basis(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """
+def _package(service, job_id, tool, decisions):
+    events = service.list_events(job_id)
+    basis = workbook_document_price_basis(events, tool=tool)
+    return workbook_packaging_args(
+        packaging_tool=tool,
+        attachment_id="att",
+        question="Продолжи это же задание",
+        decisions=decisions,
+        operator_overrides={},
+        document_price_basis=basis,
+    )
+""",
+    )
+    assert "DOCUMENT_BASIS_NOT_CARRIED" not in codes
+
+
+def test_rejects_a_job_that_never_stores_the_basis_it_packaged(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/workbook_research_job_service.py",
+        """
+class Service:
+    def record_packaging(self, job_id, *, tool, revision_id, draft):
+        return self._append_event(
+            "workbook_packaged",
+            {"tool": tool, "revision_id": revision_id, "draft": draft},
+        )
+""",
+    )
+    assert "DOCUMENT_BASIS_NOT_CARRIED" in codes
+
+
+def test_accepts_a_job_that_stores_the_basis_with_its_revision(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/services/workbook_research_job_service.py",
+        """
+class Service:
+    def record_packaging(self, job_id, *, tool, revision_id, draft, price_basis=None):
+        basis = _packaged_price_basis(price_basis)
+        return self._append_event(
+            "workbook_packaged",
+            {"tool": tool, "revision_id": revision_id, "draft": draft,
+             "price_basis": basis},
+        )
+""",
+    )
+    assert "DOCUMENT_BASIS_NOT_CARRIED" not in codes
+
+
+def test_rejects_a_repack_route_that_rebuilds_the_priced_file_blind(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/routers/chat.py",
+        """
+async def repack_lsr(req):
+    args = {
+        "attachment_id": req.attachment_id,
+        "decisions": req.decisions,
+        "parent_revision_id": parent,
+    }
+    return await execute("build_lsr_workbook", args)
+""",
+    )
+    assert "DOCUMENT_BASIS_NOT_CARRIED" in codes
+
+
+def test_accepts_a_repack_route_that_carries_the_basis_without_a_model(tmp_path: Path) -> None:
+    codes = _adr16_probe(
+        tmp_path,
+        "proxy/routers/chat.py",
+        """
+async def repack_lsr(req, job):
+    args = {"attachment_id": req.attachment_id, "decisions": req.decisions}
+    basis = document_price_basis_arguments(job["document"]["price_basis"])
+    if basis:
+        args["document_price_basis"] = basis
+    return await execute("build_lsr_workbook", args)
+""",
+    )
+    assert "DOCUMENT_BASIS_NOT_CARRIED" not in codes
+
+
 def test_rejects_an_accrual_label_the_adapter_has_never_heard_of(tmp_path: Path) -> None:
     """A new ownership label the gap builder does not know closes the position."""
 

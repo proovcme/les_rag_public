@@ -39,6 +39,32 @@ REPACK_ACTION: dict[str, str] = {
 _DOCUMENT_STATES = {"ready", "draft_only", "pending", "none"}
 
 
+def _recorded_price_basis(
+    payload: Mapping[str, Any],
+    revision_id: str,
+) -> dict[str, Any]:
+    """The basis this packaged revision was priced in, if the event carries one.
+
+    Events written before build 821 store no basis; they yield ``{}``, so an old
+    document simply has nothing to inherit and the operator is asked as before.
+    """
+
+    basis = payload.get("price_basis")
+    if not isinstance(basis, Mapping):
+        return {}
+    book = str(basis.get("pricebook") or basis.get("actual_book") or "").strip()
+    if not book:
+        return {}
+    return {
+        "pricebook": book,
+        "region": str(basis.get("region") or basis.get("actual_region") or "").strip(),
+        "quarter": str(basis.get("quarter") or basis.get("actual_quarter") or "").strip(),
+        "binding": str(basis.get("binding") or "").strip(),
+        "match": str(basis.get("match") or "").strip(),
+        "revision_id": str(revision_id or ""),
+    }
+
+
 def _env_flag(name: str) -> str:
     try:
         return str(os.environ.get(name) or "").strip()
@@ -76,6 +102,8 @@ def describe_packaging_document(
     final_revision = ""
     draft_revision = ""
     packaged_tools: set[str] = set()
+    final_basis: dict[str, Any] = {}
+    last_basis: dict[str, Any] = {}
     for event in events or ():
         if not isinstance(event, Mapping):
             continue
@@ -96,10 +124,15 @@ def describe_packaging_document(
         if event_tool and event_tool != tool:
             continue
         packaged_tools.add(event_tool or tool)
+        recorded = _recorded_price_basis(payload, revision_id)
+        if recorded:
+            last_basis = recorded
         if bool(payload.get("draft")):
             draft_revision = revision_id
         else:
             final_revision = revision_id
+            if recorded:
+                final_basis = recorded
 
     terminal = str(status or "").strip().casefold() in {"complete", "failed"}
     if final_revision:
@@ -130,6 +163,11 @@ def describe_packaging_document(
         "artifact_kind": artifact_kind,
         "final_revision_id": final_revision,
         "draft_revision_id": draft_revision,
+        # The basis the document itself carries: the finished revision's when
+        # there is one, otherwise the last revision that bound a book.  A
+        # continuation turn inherits it instead of re-deriving it from its own
+        # text (task 2026-09-28 § 4).
+        "price_basis": final_basis or last_basis,
         "packaged": bool(final_revision) or bool(draft_revision),
         "needs_document": needs_document,
         "recovery_reason": recovery_reason,
@@ -166,6 +204,13 @@ def packaging_recovery_payload(
             str(item) for item in (job.get("remaining") or ()) if str(item).strip()
         ],
         "state": str(document.get("state") or ""),
+        # The basis travels with the repair payload so a rebuild of the saved
+        # decisions stays priced in the book the document already used.
+        "price_basis": (
+            document.get("price_basis")
+            if isinstance(document.get("price_basis"), Mapping)
+            else {}
+        ),
         "recovery_reason": str(document.get("recovery_reason") or ""),
         "actions": [dict(item) for item in (document.get("actions") or ()) if isinstance(item, Mapping)],
     }

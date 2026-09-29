@@ -1032,9 +1032,63 @@ def test_record_packaging_events_keep_last_revision_per_tool(tmp_path) -> None:
         "revision_id": "rev_final",
         "draft": False,
         "parent_revision_id": "",
+        # an unpriced revision records an empty basis rather than omitting the
+        # key: a reader can then tell "nothing was bound" from "old event shape"
+        "price_basis": {},
     }
     assert latest["build_vor_workbook"]["revision_id"] == "rev_vor"
     assert latest["build_vor_workbook"]["draft"] is True
+
+
+def test_record_packaging_stores_the_basis_that_revision_was_priced_in(tmp_path) -> None:
+    # Task 2026-09-28 § 4/§ 7: the region+period a document was priced in is a
+    # property of that document, so it is stored durably beside its lineage and
+    # the job answers with it — otherwise a restart loses the basis.
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.record_packaging(
+        job["job_id"],
+        tool="build_lsr_workbook",
+        revision_id="rev_1",
+        draft=False,
+        price_basis={
+            "actual_book": "sankt-peterburg_3kv2026",
+            "actual_region": "Санкт-Петербург",
+            "actual_quarter": "3 квартал 2026 г.",
+            "match": "exact",
+        },
+    )
+
+    events = service.list_events(job["job_id"], event_type="workbook_packaged")
+    assert events[-1]["payload"]["price_basis"] == {
+        "pricebook": "sankt-peterburg_3kv2026",
+        "region": "Санкт-Петербург",
+        "quarter": "3 квартал 2026 г.",
+        "binding": "Санкт-Петербург 3 квартал 2026 г.",
+        "match": "exact",
+        "inherited_from": "",
+    }
+    assert service.get(job["job_id"])["price_basis"]["pricebook"] == (
+        "sankt-peterburg_3kv2026"
+    )
+
+
+def test_record_packaging_does_not_invent_a_basis_from_an_unpriced_revision(
+    tmp_path,
+) -> None:
+    # A draft packaged without a book must not become the document's basis: the
+    # question stays open instead of being answered by a non-existent pricebook.
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    job = service.begin_or_resume(_identity(service))
+    service.record_packaging(
+        job["job_id"],
+        tool="build_lsr_workbook",
+        revision_id="rev_draft",
+        draft=True,
+        price_basis={"actual_book": "", "match": "no_book", "note": "нет книги"},
+    )
+
+    assert service.get(job["job_id"])["price_basis"] == {}
 
 
 def test_record_packaging_keeps_parent_revision_and_sequence(tmp_path) -> None:

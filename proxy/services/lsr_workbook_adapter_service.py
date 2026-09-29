@@ -240,6 +240,36 @@ def visible_pricebook_stems() -> list[str]:
         return []
 
 
+def _document_basis_fields(document_basis: object) -> dict[str, str]:
+    """Normalise the basis an earlier revision of this same document was priced in.
+
+    The record is what the durable packaging history stored, so a continuation
+    reads the operator's own choice back instead of re-deriving it from the text
+    of the new reply (task 2026-09-28 § 4).  Nothing is invented here: a record
+    with no subject and no period yields an empty dict, and an empty dict changes
+    the caller's behaviour not at all.
+    """
+
+    if not isinstance(document_basis, Mapping):
+        return {}
+    book = str(document_basis.get("pricebook") or "").strip()
+    region = str(document_basis.get("region") or "").strip()
+    quarter = str(document_basis.get("quarter") or "").strip()
+    binding = str(document_basis.get("binding") or "").strip()
+    revision = str(document_basis.get("revision_id") or "").strip()
+    if not (book or region or quarter or binding):
+        return {}
+    return {
+        "book": book,
+        "region": region,
+        "region_token": _region_in_text(region) or _region_in_text(book),
+        "quarter": quarter,
+        "quarter_token": _quarter_token(quarter) or _quarter_token(book),
+        "binding": binding,
+        "revision": revision,
+    }
+
+
 def explicit_estimate_pricebook(
     *,
     requested_book: str = "",
@@ -248,6 +278,7 @@ def explicit_estimate_pricebook(
     question_text: str = "",
     source_text: str = "",
     source_name: str = "",
+    document_basis: object = None,
     pricebooks: Sequence[object] | None = None,
 ) -> dict[str, Any]:
     """Bind a price book only when the basis is explicit (ADR-16 § 7).
@@ -259,6 +290,16 @@ def explicit_estimate_pricebook(
     returns an empty book with the visible list of what is installed, so the
     estimate stays a draft and the operator is asked — the configured default is
     not allowed to price an estimate nobody chose.
+
+    ``document_basis`` is the fourth, deliberately weakest origin: the basis this
+    very document was already priced in, read back from the durable packaging
+    history.  A continuation turn («добери нормы», «продолжи») names no subject
+    and no period of its own, and § 4 forbids it from zeroing out what the
+    document already chose; § 7 forbids binding anything that is not explicit.
+    The record therefore applies only to the parts this turn leaves unnamed, it
+    never overrides a basis the operator re-names, and a re-named basis that no
+    longer matches the catalog stays a visible question instead of falling back
+    to the stored book.
     """
 
     stems = [
@@ -276,6 +317,8 @@ def explicit_estimate_pricebook(
         "requested_quarter": "",
         "basis_binding": "",
         "available_books": stems,
+        "inherited_from_document": "",
+        "document_basis_note": "",
     }
     if requested_book.strip():
         result["origin"] = "параметр расчёта"
@@ -333,6 +376,81 @@ def explicit_estimate_pricebook(
         )
         if part
     ).strip()
+    document = _document_basis_fields(document_basis)
+    if document:
+        inherited: list[str] = []
+        if not result["requested_region"] and document["region_token"]:
+            result["requested_region"] = document["region_token"]
+            inherited.append("субъект")
+        if not result["requested_quarter"] and document["quarter_token"]:
+            result["requested_quarter"] = document["quarter_token"]
+            inherited.append("период")
+        if inherited:
+            result["inherited_from_document"] = document["revision"]
+            # The label has to read as the basis actually applied: a part this
+            # turn named itself may differ from the one the document stored.
+            if "период" in inherited:
+                quarter_label = document["quarter"] or _quarter_phrase(
+                    result["requested_quarter"]
+                )
+            else:
+                quarter_label = _quarter_phrase(" ".join(text for _, text in named))
+            result["basis_binding"] = (
+                " ".join(
+                    part
+                    for part in (result["requested_region"], quarter_label)
+                    if part
+                ).strip()
+                or document["binding"]
+            )
+            inherited_label = ", ".join(inherited)
+            inherited_phrase = (
+                "он не назван" if len(inherited) == 1 else "они не названы"
+            )
+            if len(inherited) == 2 and document["book"] and document["book"] in stems:
+                # Nothing in this turn contradicts the record: continue in exactly
+                # the book the document was already priced in.
+                result["pricebook"] = document["book"]
+                result["origin"] = "наследие документа" + (
+                    f" (ревизия {document['revision']})" if document["revision"] else ""
+                )
+                result["reason"] = (
+                    "текущая реплика не называла ни субъекта, ни периода; сохранена "
+                    "база, в которой этот документ уже посчитан"
+                )
+                return result
+            matches = [
+                stem
+                for stem in stems
+                if _region_in_text(stem) == result["requested_region"]
+                and _quarter_token(stem) == result["requested_quarter"]
+            ]
+            if len(matches) == 1:
+                result["pricebook"] = matches[0]
+                result["origin"] = "наследие документа: " + inherited_label
+                result["reason"] = (
+                    "часть базы в этой реплике не названа и взята из уже посчитанного "
+                    "документа; совпала ровно одна книга"
+                )
+                result["document_basis_note"] = (
+                    f"Унаследовано из уже посчитанного документа: {inherited_label} — "
+                    f"в этой реплике {inherited_phrase}."
+                )
+                return result
+            result["document_basis_note"] = (
+                f"Унаследовано из уже посчитанного документа: {inherited_label} — "
+                f"в этой реплике {inherited_phrase}. Для базы "
+                "«" + (result["basis_binding"] or document["book"]) + "» "
+                + (
+                    "среди установленных книг нет книги, и её молча не подменяют "
+                    "другой — выберите доступную книгу или назовите субъект и период "
+                    "явно."
+                    if not matches
+                    else "подходит несколько книг; выбор не делают молча."
+                )
+            )
+            result["reason"] = result["document_basis_note"]
+            return result
     if not regions and not quarters:
         result["reason"] = (
             "в задаче и исходнике явно не названы ни субъект, ни период — "
@@ -390,6 +508,8 @@ def summarize_lsr_price_basis(
     pricebook_origin: str = "",
     available_books: Sequence[object] = (),
     basis_binding: str = "",
+    document_basis_note: str = "",
+    inherited_from_document: str = "",
 ) -> dict[str, Any]:
     """Bind the requested and the actually applied price basis; mismatches stay visible.
 
@@ -398,9 +518,10 @@ def summarize_lsr_price_basis(
     reported, and only an operator confirmation can accept an alternative basis.
 
     ``pricebook_origin`` states which explicit source the applied book came from
-    (parameter, operator confirmation, or a unique derived match), so the chosen
-    basis is visible instead of implied; ``available_books`` lists the installed
-    identifiers whenever no book could be bound (ADR-16 § 7).
+    (parameter, operator confirmation, a unique derived match, or the basis this
+    document was already priced in), so the chosen basis is visible instead of
+    implied; ``available_books`` lists the installed identifiers whenever no book
+    could be bound (ADR-16 § 7).
     """
 
     requested_parts: list[str] = []
@@ -465,6 +586,8 @@ def summarize_lsr_price_basis(
     if len(quarter_tokens) > 1:
         contradictions.append("период цен: " + ", ".join(sorted(quarter_tokens)))
     requested_quarter = next(iter(quarter_tokens)) if len(quarter_tokens) == 1 else ""
+    document_note = str(document_basis_note or "").strip()
+    document_origin = str(inherited_from_document or "").strip()
 
     confirmation = (
         operator_confirmation if isinstance(operator_confirmation, Mapping) else None
@@ -494,6 +617,7 @@ def summarize_lsr_price_basis(
             "actual_region": "",
             "actual_quarter": "",
             "origin": "",
+            "inherited_from_document": document_origin,
             "available_books": visible_books,
             "requested_book": book_request,
             "requested_basis_present": bool(requested_label),
@@ -507,6 +631,7 @@ def summarize_lsr_price_basis(
                     f"Ценовая база не задана явно, поэтому книга не выбрана и цены "
                     f"не подставлены молча.{available_hint}"
                 )
+                + (" " + document_note if document_note else "")
                 + " Расчёт без книги остаётся черновиком: считаются подтверждённые"
                 " оператором цены, цены КАЦ и помеченные цены из карточек нормы."
                 " Выберите книгу из списка выше или внесите цены через подтверждённые данные."
@@ -529,10 +654,23 @@ def summarize_lsr_price_basis(
         checks.append(False)
     if checks and all(checks):
         match = "exact"
-        note = f"Ценовая база совпадает с запросом: {actual_label} ({subject_label})."
         origin_label = str(pricebook_origin or "").strip()
-        if origin_label:
-            note += f" Источник выбора базы: {origin_label}."
+        if document_origin:
+            # § 4: a continuation that names nothing must not read as if nobody
+            # ever chose a basis — the document keeps the one it was priced in.
+            note = (
+                f"Ценовая база этого документа сохранена: {actual_label} "
+                f"({subject_label}); текущая реплика её не называла, поэтому она "
+                "не обнулена."
+            )
+            if origin_label:
+                note += f" Источник выбора базы: {origin_label}."
+        else:
+            note = f"Ценовая база совпадает с запросом: {actual_label} ({subject_label})."
+            if origin_label:
+                note += f" Источник выбора базы: {origin_label}."
+        if document_note:
+            note += " " + document_note
     elif checks:
         match = "mismatch"
         note = (
@@ -577,9 +715,10 @@ def summarize_lsr_price_basis(
         "actual_region": actual_region,
         "actual_quarter": actual_quarter,
         "origin": str(pricebook_origin or ""),
+        "inherited_from_document": document_origin,
         "available_books": visible_books,
         "match": match,
-        "note": note,
+        "note": note + (" " + document_note if document_note else ""),
     }
 
 
@@ -1012,6 +1151,8 @@ async def build_lsr_workbook_from_decisions(
     ).strip()
     # ADR-16 § 7: only an explicit basis may bind a book. The configured default
     # is not allowed to price an estimate whose region and period nobody chose.
+    # Task 2026-09-28 § 4 adds the weakest accepted origin: the basis this very
+    # document was already priced in, read back from its durable packaging history.
     basis_choice = explicit_estimate_pricebook(
         requested_book=requested_pricebook,
         operator_book=operator_book,
@@ -1019,6 +1160,11 @@ async def build_lsr_workbook_from_decisions(
         question_text=str(args.get("question") or ""),
         source_text=source_text,
         source_name=source_name,
+        document_basis=(
+            args.get("document_price_basis")
+            if isinstance(args.get("document_price_basis"), Mapping)
+            else None
+        ),
     )
     pricebook_path = fgis_price_service.resolve_pricebook_path(
         basis_choice["pricebook"] or None, explicit_only=True
@@ -1033,22 +1179,31 @@ async def build_lsr_workbook_from_decisions(
         source_text=source_text,
         source_name=source_name,
     )
+    inherited_basis = str(basis_choice["inherited_from_document"] or "")
     price_basis = summarize_lsr_price_basis(
-        requested_book=requested_pricebook or operator_book,
+        requested_book=(
+            requested_pricebook
+            or operator_book
+            or (basis_choice["pricebook"] if inherited_basis else "")
+        ),
         source_price_level=identity["price_level"],
         question_text=str(args.get("question") or ""),
         pricebook=pricebook,
         pricebook_name=pricebook_name,
-        requested_region=requested_region,
+        requested_region=(
+            requested_region or str(basis_choice["requested_region"] or "")
+        ),
         requested_region_origin=(
             "параметр расчёта"
             if requested_region
-            else ""
+            else ("наследие документа" if inherited_basis else "")
         ),
         operator_confirmation=basis_confirmation,
         pricebook_origin=str(basis_choice["origin"] or ""),
         available_books=basis_choice["available_books"],
         basis_binding=str(basis_choice["basis_binding"] or ""),
+        document_basis_note=str(basis_choice["document_basis_note"] or ""),
+        inherited_from_document=inherited_basis,
     )
     progress("model_decisions", 0, len(decisions))
     overlays = args.get("confirmed_data") if isinstance(args.get("confirmed_data"), Mapping) else None

@@ -1353,6 +1353,14 @@ PRICE_BASIS_NO_LOCAL_BOOKS_NOTE = (
 )
 PRICE_BASIS_AVAILABLE_TITLE = "Доступные ценовые книги локально — выберите одну:"
 PRICE_BASIS_CHOICE_LABEL = "Вставить выбор в запрос"
+# § 7 (задача 2026-09-28): продолжение того же документа не является ни выбором
+# оператора заново, ни «базой по умолчанию».  Оно показывает эффективную базу,
+# её идентификатор и источник — спокойно, без будки выбора.
+PRICE_BASIS_CONTINUED_NOTE = (
+    "Ценовая база продолжена за документом: {label} (книга «{book}»). "
+    "Текущая реплика её не называла — база сохранена из уже посчитанной "
+    "ревизии {revision}, а не выбрана молча."
+)
 PRICE_BASIS_BOOK_FLAG_NOTES = {
     "system_pick": "подставлена системой",
     "mismatched": "применена вместо запрошенной",
@@ -1563,6 +1571,7 @@ def lsr_price_basis_prompt(
         "state_tone": ("error" if match == "mismatch" else "warn") if visible else "muted",
         "lines": [],
         "books": [],
+        "confirmed_line": "",
         "available_title": PRICE_BASIS_AVAILABLE_TITLE,
         "empty_note": PRICE_BASIS_NO_LOCAL_BOOKS_NOTE,
         "technical": {
@@ -1572,6 +1581,23 @@ def lsr_price_basis_prompt(
         },
     }
     if not visible:
+        revision = str(payload.get("inherited_from_document") or "").strip()
+        applied_identifier = str(payload.get("actual_book") or "").strip()
+        if match == "exact" and revision and applied_identifier:
+            described = describe_pricebook_identifier(applied_identifier)
+            label = " · ".join(
+                part
+                for part in (
+                    str(payload.get("actual_region") or "").strip()
+                    or str(described.get("region") or ""),
+                    str(payload.get("actual_quarter") or "").strip()
+                    or str(described.get("period") or ""),
+                )
+                if part
+            ) or applied_identifier
+            projected["confirmed_line"] = PRICE_BASIS_CONTINUED_NOTE.format(
+                label=label, book=applied_identifier, revision=revision
+            )
         return projected
 
     identifiers = (
@@ -5383,6 +5409,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             )
             if basis_prompt["visible"]:
                 _render_price_basis_prompt(basis_prompt)
+            elif basis_prompt.get("confirmed_line"):
+                ui.label(str(basis_prompt["confirmed_line"])).classes(
+                    "sov-ui-section-detail"
+                )
             fields: dict[str, Any] = {}
             with ui.row().classes("w-full gap-2 flex-wrap sov-lsr-actions"):
                 for item in spec.get("actions") or []:

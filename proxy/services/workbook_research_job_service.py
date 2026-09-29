@@ -227,6 +227,37 @@ def _decision_content_sha(item: Mapping[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _packaged_price_basis(price_basis: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Compact the basis one packaged revision was priced in for durable storage.
+
+    Only what a later revision has to inherit is kept: the applied book, its
+    subject and period, the human-readable label, and whether it was itself
+    inherited.  A revision without a bound book stores nothing — its question is
+    re-asked, never silently answered by the next pass.
+    """
+    if not isinstance(price_basis, Mapping):
+        return {}
+    book = str(price_basis.get("actual_book") or price_basis.get("pricebook") or "").strip()
+    if not book:
+        return {}
+    region = str(
+        price_basis.get("actual_region") or price_basis.get("region") or ""
+    ).strip()
+    quarter = str(
+        price_basis.get("actual_quarter") or price_basis.get("quarter") or ""
+    ).strip()
+    return {
+        "pricebook": book,
+        "region": region,
+        "quarter": quarter,
+        "binding": " ".join(part for part in (region, quarter) if part).strip(),
+        "match": str(price_basis.get("match") or "").strip(),
+        "inherited_from": str(
+            price_basis.get("inherited_from_document") or ""
+        ).strip(),
+    }
+
+
 def _new_operation_id() -> str:
     return f"op_{uuid4().hex[:16]}"
 
@@ -493,13 +524,20 @@ class WorkbookResearchJobService:
         revision_id: str,
         draft: bool,
         parent_revision_id: str | None = None,
+        price_basis: Mapping[str, Any] | None = None,
     ) -> int:
         """Durable trace of a packaged workbook revision for this job.
 
         The next packaging pass reads these events to keep the downloadable
         document in one revision chain: draft revisions while the job is
         paused, the final revision once the job is terminal.
+
+        ``price_basis`` is stored beside the lineage because it belongs to the
+        same document: the region, period and book the revision was actually
+        priced in.  A continuation turn that names no basis reads it back
+        instead of asking the operator to choose again (task 2026-09-28 § 4).
         """
+        basis = _packaged_price_basis(price_basis)
         with self._connect() as conn:
             return self._append_event(
                 conn,
@@ -510,6 +548,7 @@ class WorkbookResearchJobService:
                     "revision_id": str(revision_id),
                     "draft": bool(draft),
                     "parent_revision_id": str(parent_revision_id or ""),
+                    "price_basis": basis,
                 },
             )
 
@@ -1390,6 +1429,10 @@ class WorkbookResearchJobService:
         job["document"] = describe_packaging_document(
             events, status=str(job.get("status") or "")
         )
+        # ADR-16 § 7 asks every surface for the same basis; § 10 for one state.
+        # The job answers with the basis its own packaged document carries.
+        basis = job["document"].get("price_basis")
+        job["price_basis"] = dict(basis) if isinstance(basis, Mapping) else {}
         if job["document"]["needs_document"]:
             job["document_recovery"] = packaging_recovery_payload(job, job["document"])
         return job
@@ -1534,6 +1577,8 @@ class WorkbookResearchJobService:
         job["document"] = describe_packaging_document(
             events, status=str(job.get("status") or "")
         )
+        basis = job["document"].get("price_basis")
+        job["price_basis"] = dict(basis) if isinstance(basis, Mapping) else {}
         if job["document"]["needs_document"]:
             job["document_recovery"] = packaging_recovery_payload(job, job["document"])
         return job

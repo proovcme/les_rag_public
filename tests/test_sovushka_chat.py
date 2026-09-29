@@ -2429,6 +2429,31 @@ def test_price_basis_prompt_keeps_a_resolved_basis_out_of_the_card():
     assert chat_page.lsr_price_basis_prompt(None, books=())["visible"] is False
 
 
+def test_price_basis_prompt_shows_a_continued_basis_with_its_source():
+    """§ 7: a basis this turn never named is still an effective basis to show."""
+
+    prompt = chat_page.lsr_price_basis_prompt(
+        {
+            "match": "exact",
+            "actual_book": "sankt-peterburg_3kv2026",
+            "actual_region": "Город Санкт-Петербург",
+            "actual_quarter": "3 квартал 2026 г.",
+            "inherited_from_document": "rev_c3ba0286",
+        },
+        books=("sankt-peterburg_2kv2026",),
+    )
+    assert prompt["visible"] is False
+    assert "3 квартал 2026 г." in prompt["confirmed_line"]
+    assert "sankt-peterburg_3kv2026" in prompt["confirmed_line"]
+    assert "rev_c3ba0286" in prompt["confirmed_line"]
+    assert "не выбрана молча" in prompt["confirmed_line"]
+    # a basis the turn itself asked for keeps the card quiet, as before
+    assert chat_page.lsr_price_basis_prompt(
+        {"match": "exact", "actual_book": "sankt-peterburg_3kv2026"},
+        books=("sankt-peterburg_3kv2026",),
+    )["confirmed_line"] == ""
+
+
 def test_price_basis_prompt_separates_requested_from_actually_used():
     """An unselected basis is named as the system's pick, never as a decision."""
 

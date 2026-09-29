@@ -34,6 +34,7 @@ from proxy.services.chat_evidence_application_service import (
     harvest_workbook_tool_result,
     run_chat_evidence_application,
     compact_estimator_draft_rows,
+    document_price_basis_arguments,
     workbook_packaging_lineage,
 )
 from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
@@ -302,6 +303,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     job_id = str(req.job_id or "").strip()
     remaining: list[str] = []
     overlays: dict[str, dict[str, Any]] = {}
+    job: dict[str, Any] = {}
     if job_id:
         try:
             job = WorkbookResearchJobService().get(job_id)
@@ -337,16 +339,28 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         raise HTTPException(400, "attachment_id is required")
     if not decisions:
         raise HTTPException(400, "saved model decisions are required")
+    # A rebuild of saved decisions has to price them in the basis this document
+    # already carries (§ 4); the durable document projection is the source, so
+    # the file does not depend on how the button was reached.
+    document_block = (job or {}).get("document") if isinstance(job, dict) else None
+    inherited_basis = document_price_basis_arguments(
+        (document_block or {}).get("price_basis")
+        if isinstance(document_block, dict)
+        else None
+    )
+    repack_args: dict[str, Any] = {
+        "attachment_id": attachment_id,
+        "question": str(req.question or ""),
+        "decisions": decisions,
+        "confirmed_data": overlays,
+    }
+    if inherited_basis:
+        repack_args["document_price_basis"] = inherited_basis
     payload, traces = await execute_workbook_with_bounded_retry(
         _execute_chat_workbook_tool,
         {
             "tool": "build_lsr_workbook",
-            "args": {
-                "attachment_id": attachment_id,
-                "question": str(req.question or ""),
-                "decisions": decisions,
-                "confirmed_data": overlays,
-            },
+            "args": repack_args,
         },
         {
             "session_id": str(req.session_id or ""),
@@ -369,7 +383,11 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         try:
             service = WorkbookResearchJobService()
             _parents, settled = workbook_packaging_lineage(
-                service.list_events(job_id, "workbook_packaged"),
+                # Every event, not only the packaging ones: a settled final
+                # revision is one written after the last decision-changing
+                # event, and filtering those out would read as "nothing ever
+                # changed" and let a re-open settle too eagerly.
+                service.list_events(job_id),
                 durable_decisions=str(job.get("status") or "") == "complete",
             )
             service.record_packaging(
@@ -378,6 +396,9 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
                 revision_id=str(artifact["revision_id"]),
                 draft=str(job.get("status") or "") != "complete",
                 parent_revision_id=settled.get("build_lsr_workbook", ""),
+                # the rebuilt file is the document's newest basis; store it so a
+                # later continuation inherits it instead of asking again (§ 4)
+                price_basis=harvested.get("price_basis"),
             )
             artifact["document_state"] = service.document_state(job_id)
         except (WorkbookResearchJobError, OSError) as error:
