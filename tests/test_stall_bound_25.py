@@ -18,6 +18,8 @@ price, no title the source does not have.
 from __future__ import annotations
 
 from proxy.services.lsr_result_readiness_service import format_lsr_readiness_notice
+from tests.lsr_citation_support import cited_all
+
 from proxy.services.workbook_research_job_service import (
     STALL_TERMINAL_OCCURRENCES,
     WorkbookResearchJobService,
@@ -326,7 +328,7 @@ def test_no_declared_gaps_keeps_the_plain_complete_notice(tmp_path):
 
     readiness = build_lsr_result_readiness(
         packaged=True,
-        rows=job["accepted_rows"],
+        rows=cited_all(job["accepted_rows"]),
         catalog_locators=["АР!R9"],
         catalog_work_count=1,
     )

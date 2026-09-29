@@ -487,6 +487,58 @@ class PriceTrace:
     #: was rejected for naming another unit.  The row's own unit is column 4, so
     #: an operator reading the question sees both sides of the conflict.
     book_unit: str = ""
+    #: Concrete resources of the price-book group this row names, filled only for
+    #: ``unresolved_resource_group`` (task 2026-09-29 § 3).  It is a listing, never
+    #: a choice: the first price of a group is not the group's price.
+    group: Optional[Mapping[str, Any]] = None
+
+
+#: A norm resource that names a price-book group rather than one member of it.
+#: The book has money for the family and no money for the position, so the hole is
+#: "which resource", not "how much" — and reporting it as ``needs_price`` would ask
+#: the operator for a number they cannot legitimately give (task 2026-09-29 § 3).
+RESOURCE_GROUP_ACTION = "unresolved_resource_group"
+
+
+def resource_group_state(res: Any, pricebook: Any) -> dict[str, Any]:
+    """Group state of one resource row, or ``{}`` when there is nothing to choose.
+
+    One home for the rule, because both LSR calculators read the same book and a
+    document may not get two sums (§ 10): the assembly engine and the РИМ trace both
+    ask this function and both stop on the same row.  A book that does not implement
+    ``resource_group`` (a stub in a test, an older cached object) reports no group
+    rather than a fabricated one, so the row keeps its previous ``needs_price`` hole.
+    """
+
+    if pricebook is None or not isinstance(res, Mapping):
+        return {}
+    code = str(res.get("code") or "").strip()
+    if not code:
+        return {}
+    resolver = getattr(pricebook, "resource_group", None)
+    if not callable(resolver):
+        return {}
+    try:
+        state = resolver(code)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(state, Mapping):
+        return {}
+    if str(state.get("state") or "") != RESOURCE_GROUP_ACTION:
+        return {}
+    return dict(state)
+
+
+def resource_group_note(res: Any, state: Mapping[str, Any]) -> str:
+    """One operator-readable line: the family is priced, the member is not chosen."""
+
+    code = str((state or {}).get("group") or "").strip() or "?"
+    total = int((state or {}).get("total") or 0)
+    unit = str(res.get("unit") or "").strip() or "без единицы"
+    return (
+        f"групповой ресурс {code}: книга цен даёт {total} конкретных ресурсов этой группы, "
+        f"позиция в «{unit}» требует выбрать один; первая цена группы не берётся"
+    )
 
 
 def _missing_price_action(res: dict[str, Any]) -> str:
@@ -605,6 +657,21 @@ def _resolve_price_trace(
             basis=BOOK_UNIT_CONFLICT_ACTION,
             action=BOOK_UNIT_CONFLICT_ACTION,
             book_unit=book_unit_conflict,
+        )
+
+    group = resource_group_state(res, pricebook)
+    if group:
+        # The chosen book prices this family and the position names no member of it.
+        # The honest hole is "which resource", not "how much": a price asked here would
+        # be answered with whichever row the book happens to list first (§ 3).  The
+        # concrete resources travel with the question so the answer is a choice.
+        return PriceTrace(
+            price=None,
+            source=RESOURCE_GROUP_ACTION,
+            basis=RESOURCE_GROUP_ACTION,
+            action=RESOURCE_GROUP_ACTION,
+            book_unit=book_unit_conflict,
+            group=group,
         )
 
     action = _missing_price_action(res)
@@ -941,6 +1008,13 @@ def build_position_trace(
                     "price_book_unit": price.book_unit,
                     "price_source_ref": res.get("price_source_ref") or "",
                     "resource_binding": res.get("resource_binding") or {},
+                    # § 3: a group reference arrives at the operator with the concrete
+                    # resources of the book attached, because the answer to it is a
+                    # choice of one of them and not a number.
+                    "price_resource_group": str((price.group or {}).get("group") or ""),
+                    "price_resource_candidates": list(
+                        (price.group or {}).get("members") or []
+                    ),
                 },
             )
         )

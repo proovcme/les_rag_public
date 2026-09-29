@@ -1,13 +1,16 @@
 """ADR-16 § 6 / § 11: a written cipher is a choice, not a substantiated choice.
 
-Mechanical proof for two mandatory regressions:
+Mechanical proof for three mandatory regressions:
 
 * «norm_code с evidence другого шифра не даёт подтверждённой применимости» —
   the citation the model itself wrote can contradict the cipher it authored, and
   readiness plus the XLSX trace must both say so;
 * «ANALOGUE_CANDIDATE без обоснования не закрывает готовность» — an analogue
   stays a question until the five match facts the model was asked for are all
-  answered, because prose in ``extra_ops`` is not evidence.
+  answered, because prose in ``extra_ops`` is not evidence;
+* task 2026-09-29 § 3 «не извлекать „подтверждение" из одной метки EXACT» — a
+  cipher the model named without any cited card carrying it is an open choice,
+  while a row from a route that showed no cards at all is not accused of one.
 
 Nothing here asks the model for anything: the inputs are the row payloads the
 application already persists.
@@ -15,8 +18,11 @@ application already persists.
 
 from proxy.services.chat_evidence_application_service import row_evidence_provenance_check
 from proxy.services.lsr_norm_quality_gate_service import (
+    applicability_gap_kind,
+    citation_record_present,
     cited_cipher_matches_evidence,
     ciphers_compatible,
+    exact_citation_ungrounded,
     looks_like_cipher,
     norm_applicability_substantiated,
     open_analogue_match_fields,
@@ -194,7 +200,13 @@ def test_readiness_reports_an_unsubstantiated_analogue_to_the_operator() -> None
 
 
 def test_trace_and_readiness_give_one_verdict_for_one_row() -> None:
-    """§ 10: the XLSX trace column and the readiness card cannot disagree."""
+    """§ 10: the XLSX trace column and the readiness card cannot disagree.
+
+    § 3 (2026-09-29) is what the three EXACT shapes below pin: a row that cites a
+    card naming its cipher is a grounded decision, a row that cites a card naming
+    another one is a wrong link, and a bare «EXACT» with no citation is neither —
+    it is the label, and the label is not the confirmation.
+    """
 
     def readiness_for(status: str, **fields: str) -> dict:
         model_row = {
@@ -213,15 +225,97 @@ def test_trace_and_readiness_give_one_verdict_for_one_row() -> None:
         }
         return {
             "trace": _row_readiness(binding, model_row)["applicability_substantiated"],
-            "card": not classify_norm_gap(model_row),
+            "card": classify_norm_gap(model_row),
         }
 
-    assert readiness_for("ANALOGUE_CANDIDATE") == {"trace": False, "card": False}
-    assert readiness_for("ANALOGUE_CANDIDATE", **MATCH_YES) == {"trace": True, "card": True}
-    assert readiness_for("EXACT") == {"trace": True, "card": True}
-    contradicted = {
+    def verdicts(status: str, gap_kind: str, **fields: str) -> None:
+        """One row, one verdict: the trace boolean is False exactly for a gap kind."""
+
+        assert readiness_for(status, **fields) == {"trace": not gap_kind, "card": gap_kind}
+
+    verdicts("ANALOGUE_CANDIDATE", "analogue_needs_confirmation")
+    verdicts("ANALOGUE_CANDIDATE", "", **MATCH_YES)
+    # The model named a cipher and cited a card, but no cited card names it.
+    verdicts("EXACT", "cipher_without_cited_card", **{
+        "_evidence_check": _check("ГЭСН 10-01-001-05", {"Q1.H1": ""})
+    })
+    verdicts("EXACT", "cipher_not_in_cited_evidence", **{
         "_evidence_check": {
             "code_not_in_refs": True, "citation_checkable": True, "cited_ciphers": ["10-02-000-01"],
         }
+    })
+    # The positive case: the model cited the card whose body names that cipher.
+    verdicts("EXACT", "", **{
+        "_evidence_check": _check("ГЭСН 10-01-001-05", {"Q1.H1": "ГЭСН 10-01-001-05"})
+    })
+    # A row from a route that showed no cards at all has no citation to be grounded
+    # in; asking for one would be the «скрытое поле» § 3 forbids.
+    assert readiness_for("EXACT") == {"trace": True, "card": ""}
+
+
+def test_an_exact_cipher_without_a_cited_card_stays_an_open_choice() -> None:
+    """§ 3: «не извлекать подтверждение из одной метки EXACT».
+
+    The label is what the model asserts; the cited card is what grounds it.  When
+    the packet was bound and the row's own citation names no card carrying that
+    cipher, readiness asks the operator about the choice instead of printing the
+    token as a confirmation — and the same row cannot be quietly priced as final.
+    """
+
+    ungrounded = {
+        "source_row": "ВОР!R5",
+        "row_role": "work",
+        "norm_code": "ГЭСН 10-01-001-05",
+        "norm_status": "EXACT",
+        "_evidence_check": _check("ГЭСН 10-01-001-05", {"Q1.H1": ""}),
     }
-    assert readiness_for("EXACT", **contradicted) == {"trace": False, "card": False}
+
+    assert citation_record_present(ungrounded) is True
+    assert exact_citation_ungrounded(ungrounded) is True
+    assert applicability_gap_kind(ungrounded) == "cipher_without_cited_card"
+    assert norm_applicability_substantiated(ungrounded) is False
+
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=[ungrounded],
+        pricing_status="priced_final",
+        calculated_positions=1,
+        catalog_work_count=1,
+        catalog_locators=["ВОР!R5"],
+    )
+
+    gaps = readiness["dimensions"]["norms"]["gaps"]
+    assert [gap["kind"] for gap in gaps] == ["cipher_without_cited_card"]
+    assert "ни одна приведённая карточка его не называет" in gaps[0]["action"]
+    assert "код ссылку не дорисовывает" in gaps[0]["action"]
+    assert readiness["dimensions"]["norms"]["complete"] is False
+    assert readiness["gap_states"]["norm_unsubstantiated"]["count"] == 1
+    # The money gate reads the same verdict as the card (§ 10).
+    assert _row_readiness(
+        {"code": "ГЭСН 10-01-001-05", "norm_status": "EXACT", "row_role": "work",
+         "status": "bound", "position": {"op_key": "x"}},
+        ungrounded,
+    )["applicability_substantiated"] is False
+
+
+def test_a_row_from_a_route_without_cards_is_not_accused_of_a_wrong_link() -> None:
+    """The chat panel of visible rows performs no retrieval, so it has no citation.
+
+    Absence of the record is not evidence of a bad choice, and readiness must not
+    turn it into «неправильная ссылка» — but it must also not *say* the norm was
+    confirmed by a card.  Measured on the installed store, 1081 of 1082
+    cipher-bearing durable ``EXACT`` rows carry the record, so this branch covers
+    the route, not a loophole around the citation question.
+    """
+
+    row = {
+        "source_row": "ВОР!R5",
+        "row_role": "work",
+        "norm_code": "ГЭСН 10-01-001-05",
+        "norm_status": "EXACT",
+    }
+
+    assert citation_record_present(row) is False
+    assert exact_citation_ungrounded(row) is False
+    assert applicability_gap_kind(row) == ""
+    assert cited_cipher_matches_evidence(row) is None

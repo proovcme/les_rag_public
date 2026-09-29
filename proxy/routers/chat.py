@@ -3402,6 +3402,8 @@ def _estimate_positions(r: dict) -> list[dict[str, Any]]:
 
 def _format_harness_artifact(r: dict) -> str:
     """Полная сметная расшифровка для панели артефактов."""
+    from proxy.services.rim_lsr_trace_service import RESOURCE_GROUP_ACTION
+
     if r.get("total_status") != "complete":
         computed = [p for p in (r.get("computed") or []) if isinstance(p, dict)]
         if not computed:
@@ -3534,6 +3536,10 @@ def _format_harness_artifact(r: dict) -> str:
                 source = "нужна ставка ЗПМ"
             elif res.get("price_action") == "needs_fgis_price":
                 source = "нужна цена машины"
+            elif res.get("price_action") == RESOURCE_GROUP_ACTION:
+                # § 3: the family is priced, the member is not named.  Saying "нужна
+                # цена" here would ask for a number the book already has six of.
+                source = "групповой ресурс: назовите конкретный ресурс книги"
             lines.append(
                 f"| {_resource_kind_label(str(res.get('kind') or ''))} "
                 f"| {res.get('code') or '—'} "

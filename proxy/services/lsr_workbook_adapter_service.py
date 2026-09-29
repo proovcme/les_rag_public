@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping, Sequence
 from proxy.services import fgis_price_service
 from proxy.services.rim_lsr_trace_service import (
     BOOK_UNIT_CONFLICT_ACTION,
+    RESOURCE_GROUP_ACTION,
     build_lsr_trace_from_visible_rows,
     format_ruble_amount,
 )
@@ -42,6 +43,10 @@ _PRICE_SOURCE_LABEL = {
     # for a КАЦ would send the operator to look for a price they already have: the
     # open question is the unit (task 2026-09-28 § 8, § 11 № 8).
     BOOK_UNIT_CONFLICT_ACTION: "цена за единицу ресурса в позиции",
+    # Task 2026-09-29 § 3: the book prices the family, the position names no member.
+    # Calling this "подтверждённая цена" would ask for a number when what is open is
+    # a choice, and the first price of the group is not the group's price.
+    RESOURCE_GROUP_ACTION: "конкретный ресурс из группы в выбранной ценовой книге",
 }
 _QUARTER_RE = re.compile(
     r"(?i)(?P<num>[1-4]|III|II|IV|I)\s*(?:квартал\w*|кв\.?)\s*(?P<year>20\d{2})"
@@ -1177,6 +1182,36 @@ def collect_lsr_price_gaps(
                         + (f" {unit}." if unit else " эту единицу.")
                         + " Отсутствие цены не отменяет норму."
                     )
+                elif action == RESOURCE_GROUP_ACTION:
+                    # § 3: the book prices this family and the position names no member
+                    # of it, so the open question is which resource, not how much.  The
+                    # concrete resources are listed with their own units and prices; the
+                    # first of them is never applied by the code.
+                    group_code = str(meta.get("price_resource_group") or "").strip() or code
+                    candidates = list(meta.get("price_resource_candidates") or [])
+                    listed = ", ".join(
+                        f"{item.get('code')} «{item.get('name')}» "
+                        f"({item.get('unit')}, "
+                        f"{format_ruble_amount(item.get('price_current_eff'), exact=True)} руб.)"
+                        for item in candidates[:6]
+                    )
+                    more = (
+                        f" и ещё {len(candidates) - 6}"
+                        if len(candidates) > 6 else ""
+                    )
+                    action_text = (
+                        f"Для {name}{code_tail}{position_tail} указан групповой ресурс "
+                        f"{group_code}: в выбранной ценовой базе у него "
+                        f"{len(candidates)} конкретных ресурсов"
+                        + (f" — {listed}{more}." if listed else ".")
+                        + " Назовите ресурс его кодом; первую цену группы расчёт не берёт."
+                        + (
+                            f" Проверенная ценовая база: {checked_basis}."
+                            if checked_basis
+                            else ""
+                        )
+                        + " Пока ресурс не назван, позиция остаётся без стоимости."
+                    )
                 else:
                     named = f"Задайте цену для {name}{code_tail}{position_tail}"
                     action_text = (
@@ -1207,6 +1242,20 @@ def collect_lsr_price_gaps(
                         ],
                         "checked_basis": checked_basis,
                         "action": action_text,
+                        # § 3: a group question travels with the concrete resources it
+                        # offers, so the answer is a named code and not a bare number.
+                        **(
+                            {
+                                "resource_group": str(
+                                    meta.get("price_resource_group") or ""
+                                ).strip(),
+                                "resource_candidates": list(
+                                    meta.get("price_resource_candidates") or []
+                                ),
+                            }
+                            if action == RESOURCE_GROUP_ACTION
+                            else {}
+                        ),
                     }
                 )
             accrual_gap = _nr_sp_gap(

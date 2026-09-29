@@ -10,12 +10,13 @@ from proxy.services.lsr_source_coverage_service import (
     inferred_row_role,
 )
 from proxy.services.lsr_norm_quality_gate_service import (
-    canonicalize_norm_status,
-    cited_cipher_matches_evidence,
-    open_analogue_match_fields,
+    MODEL_GAP_REASONS,
+    applicability_gap_kind,
+    gap_reason_of,
 )
 from proxy.services.rim_lsr_trace_service import (
     BOOK_UNIT_CONFLICT_ACTION,
+    RESOURCE_GROUP_ACTION,
     format_ruble_amount,
 )
 
@@ -60,12 +61,12 @@ _CHOSEN_STATUSES = frozenset(
 _OPEN_STATUSES = frozenset(
     {"MISSING", "NEEDS_RESEARCH", "CONFLICT", "UNVERIFIED", ""}
 )
-# Kept apart from ``_CHOSEN_STATUSES`` on purpose: an analogue is a candidate the
-# operator still has to confirm, so it may appear in a draft but never in the
-# closed set without its own substantiation (ADR-16 § 6, § 11 № 4).
-_ANALOGUE_STATUSES = frozenset(
-    {"ANALOGUE", "ANALOGUE_CANDIDATE", "ANALOGUE_VERIFIED"}
-)
+# Which chosen status still needs what is kept in one place: the analogue question
+# is a candidate the operator has to confirm, so it may appear in a draft but never
+# in the closed set without its own substantiation (ADR-16 § 6, § 11 № 4).  That
+# rule, and the EXACT citation rule beside it, live in
+# ``lsr_norm_quality_gate_service.applicability_gap_kind`` — the same function the
+# XLSX trace column reads, so one row cannot get two verdicts (§ 10).
 _PRICE_SOURCE_LABEL = {
     "needs_kac": "КАЦ или выбранная ценовая книга",
     "needs_labor_rate": "ставка ОЗП",
@@ -78,6 +79,11 @@ _PRICE_SOURCE_LABEL = {
     # would call the hole "подтверждённая цена" and the operator would confirm a
     # number without noticing that the unit is what is really open.
     BOOK_UNIT_CONFLICT_ACTION: "цена за единицу ресурса в позиции, книга даёт шифр в другой",
+    # Task 2026-09-29 § 3: a group resource the book prices but the position has not
+    # specified.  Without this line the readiness card would call the hole "подтверждённая
+    # цена" and ask for a number, while what is open is which member of the family the
+    # document means — and the first price of a group is not the group's price.
+    RESOURCE_GROUP_ACTION: "конкретный ресурс группы из выбранной ценовой книги",
 }
 
 
@@ -145,6 +151,12 @@ def _structured_price_gaps(
             "position_name",
             "dependent_calculations",
             "checked_basis",
+            # § 3: a group question is useless without the members it offers, and the
+            # delivered sheet is the only place the operator reads the question.
+            "resource_group",
+            "resource_candidates",
+            "resources",
+            "resource_total",
         ):
             if item.get(key) not in (None, "", [], {}):
                 gap[key] = item[key]
@@ -224,6 +236,14 @@ def classify_norm_gap(row: Mapping[str, Any]) -> str:
     if status in _OPEN_STATUSES or code.casefold() in _ABSENT_CODES:
         if status == "CONFLICT":
             return "conflict"
+        # Task 2026-09-29 § 3: an open row is not one kind of hole.  The model may
+        # name which of the two causes that live inside its own answer applies —
+        # the source line carries too little, or the cards it read all fail to fit.
+        # The reason decides whose question the row becomes (the customer's or the
+        # estimate engineer's); it never closes the row and code never invents one.
+        reason = gap_reason_of(row)
+        if reason in MODEL_GAP_REASONS:
+            return reason
         if status == "NEEDS_RESEARCH":
             return "needs_research"
         return "missing_norm"
@@ -231,16 +251,66 @@ def classify_norm_gap(row: Mapping[str, Any]) -> str:
         return "open_status"
     if not code:
         return "missing_norm"
-    # ADR-16 § 6: a written cipher is a choice, not yet a substantiated choice.
-    # Two structural facts can still contradict the model's own token: the cards
-    # it cited hold a different cipher, or it called the row an analogue while
-    # leaving its match facts unproven.  Neither may close the readiness.
-    if cited_cipher_matches_evidence(row) is False:
-        return "cipher_not_in_cited_evidence"
-    if canonicalize_norm_status(status) in _ANALOGUE_STATUSES:
-        if open_analogue_match_fields(row):
-            return "analogue_needs_confirmation"
-    return ""
+    # ADR-16 § 6 / task 2026-09-29 § 3: a written cipher is a choice, not yet a
+    # substantiated choice.  The causes are distinguished by ``applicability_gap_kind``
+    # — the same function the XLSX trace column reads, so one row cannot get two
+    # different verdicts (§ 10): a citation naming another cipher, a token with no
+    # card behind it, or an analogue whose five match facts were left unproven.
+    return applicability_gap_kind(row)
+
+
+def _own_words(row: Mapping[str, Any], *, limit: int = 180) -> str:
+    """The model's own ``open_gap`` sentence, quoted and nothing rewritten.
+
+    § 3 asks that a rejection reason be kept, and § 2 that the professional sense
+    not be re-authored by code: the token says which kind of hole this is, the
+    operator still reads the model's own explanation of it.
+    """
+
+    text = " ".join(_text(row.get("open_gap") or row.get("note")).split())
+    if not text:
+        return ""
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "…"
+    return f": {text}"
+
+
+def gap_reason_action(
+    kind: str,
+    locator: str,
+    row: Mapping[str, Any],
+    *,
+    research_finished: bool,
+) -> str:
+    """The operator question one declared reason raises (§ 3, § 11).
+
+    The two causes a model may name need different answers, and neither is
+    «continue searching»: a line whose own text is too thin is closed by the
+    customer adding the characteristic, a line whose candidates were read and
+    rejected is closed by the estimate engineer's professional decision.  Once the
+    research is finished the second half has to say so, because «Продолжить» no
+    longer reopens anything.
+    """
+
+    words = _own_words(row)
+    finished_tail = (
+        " Строка объявлена пробелом в листе «Проверка»; «Продолжить» для "
+        "завершённого задания её не считает."
+        if research_finished
+        else ""
+    )
+    if kind == "insufficient_source_data":
+        return (
+            f"Строка {locator}: исходных сведений не хватает, чтобы выбрать норму"
+            f"{words}. Их добавляет человек: уточните характеристику строки — "
+            "код данных не додумывает и норму не выбирает." + finished_tail
+        )
+    return (
+        f"Строка {locator}: предложенные карточки не подходят"
+        f"{words}. Это решение сметчика, а не новый поиск: подтвердите обоснованный "
+        "аналог, измените исходную строку или откажитесь от работы; код норму не "
+        "подставит." + finished_tail
+    )
 
 
 def build_lsr_result_readiness(
@@ -305,11 +375,21 @@ def build_lsr_result_readiness(
             if isinstance(gap, Mapping)
         ]
     norm_gaps: list[dict[str, str]] = []
+    unbound = _unbound_rows(missing)
+    # One row, one question (§ 10), asked by the hardest fact available: the
+    # calculation layer already proved this cipher is absent from the normative
+    # base, which outranks "the label carried no citation" — the citation would not
+    # have made an unknown cipher known.
+    base_absent_locators = {
+        _text(item.get("locator")) for item in unbound if item.get("status") == "norm_not_found"
+    }
     for row in work_rows:
         kind = classify_norm_gap(row)
         if not kind:
             continue
         locator = _locator(row)
+        if kind == "cipher_without_cited_card" and locator in base_absent_locators:
+            continue
         if kind == "conflict":
             action = (
                 f"Проверьте применимость выбранного шифра {_norm_code(row) or 'без кода'} "
@@ -332,6 +412,14 @@ def build_lsr_result_readiness(
                 "приведённых карточек: подтвердите норму или укажите другую "
                 "карточку; код шифр не подменяет."
             )
+        elif kind == "cipher_without_cited_card":
+            action = (
+                f"Строка {locator}: шифр {_norm_code(row)} назван, но ни одна "
+                "приведённая карточка его не называет — метка EXACT без ссылки на "
+                "карточку остаётся необоснованным выбором. Укажите карточку этой "
+                "нормы в evidence_refs или измените решение; код ссылку не "
+                "дорисовывает и норму не выбирает."
+            )
         elif kind == "analogue_needs_confirmation":
             action = (
                 f"Строка {locator} выбрана аналогом ({_norm_code(row) or 'шифр не назван'}), "
@@ -339,12 +427,40 @@ def build_lsr_result_readiness(
                 "измерения и составу работ не подтверждено: аналог не закрывает "
                 "позицию без вашего решения."
             )
+        elif kind in MODEL_GAP_REASONS:
+            action = gap_reason_action(
+                kind, locator, row, research_finished=research_finished
+            )
         else:
             action = (
                 f"Модель должна выбрать норму для строки {locator} "
                 "или явно оставить пропуск. Код шифр не подставляет."
             )
         norm_gaps.append({"locator": locator, "kind": kind, "action": action})
+    # Task 2026-09-29 § 3: an unknown cipher is the third cause of an unready norm,
+    # and the calculation layer already knows it (``norm_not_found``).  It used to be
+    # reported only under «Цены» as an uncalculated row, which asked the operator for
+    # a price on a line whose шифр the base does not hold.  One row, one question
+    # (§ 10): the norm question is asked here, and the prices line stops repeating it.
+    cipher_absent = [item for item in unbound if item.get("status") == "norm_not_found"]
+    already_asked = {_text(gap.get("locator")) for gap in norm_gaps}
+    for item in cipher_absent:
+        locator = _text(item.get("locator"))
+        if not locator or locator in already_asked:
+            continue
+        already_asked.add(locator)
+        norm_gaps.append(
+            {
+                "locator": locator,
+                "kind": "cipher_not_in_base",
+                "action": (
+                    f"Строка {locator}: названный шифр не найден в нормативной базе. "
+                    "Это пробел нормы, а не цены: подтвердите шифр по карточке или "
+                    "выберите другую норму; код в базу не обращается и шифр не меняет."
+                ),
+            }
+        )
+    unbound_priced = [item for item in unbound if item.get("status") != "norm_not_found"]
     for locator in remaining:
         gap_kind = "structure_incomplete" if locator in cited else "unprocessed"
         if research_finished:
@@ -403,7 +519,6 @@ def build_lsr_result_readiness(
     basis_info = dict(price_basis or {})
     basis_match = _text(basis_info.get("match"))
     basis_note = _text(basis_info.get("note"))
-    unbound = _unbound_rows(missing)
     priced_complete = (
         not structured_prices
         and _text(pricing_status) in {"", "priced_final"}
@@ -533,8 +648,11 @@ def build_lsr_result_readiness(
             "Задайте подтверждённые цены: "
             f"{_preview([str(item.get('resource') or '') for item in structured_prices])}."
         )
-    elif unbound:
-        unbound_labels = [f"{row['locator']} — {row['reason']}" for row in unbound]
+    elif unbound_priced:
+        # ``norm_not_found`` rows are asked about once, under «Нормы» (§ 3 / § 10):
+        # telling the operator to set a price on a cipher the base does not hold
+        # would be a second, wrong question about the same row.
+        unbound_labels = [f"{row['locator']} — {row['reason']}" for row in unbound_priced]
         prices_action = (
             "Не рассчитаны строки: "
             f"{_preview(unbound_labels)}. "
@@ -710,25 +828,35 @@ def build_lsr_result_readiness(
         "norm_missing": {
             "count": sum(
                 1 for g in norm_gaps
-                if g.get("kind") in {"missing_norm", "needs_research", "conflict"}
+                if g.get("kind") in {
+                    "missing_norm",
+                    "needs_research",
+                    "conflict",
+                    "cipher_not_in_base",
+                }
             ),
             "meaning": (
                 "Нет подтверждённой нормы: модель не выбрала шифр или норма не найдена."
             ),
         },
         # Kept apart from norm_missing: here a cipher IS written, and the missing
-        # thing is the evidence behind it (ADR-16 § 6, § 10).
+        # thing is the evidence behind it (ADR-16 § 6, § 10).  A first-pass EXACT
+        # that cites no card holding that cipher belongs to this group, not to
+        # norm_missing — task 2026-09-29 § 3 forbids reading the token alone as a
+        # confirmation.
         "norm_unsubstantiated": {
             "count": sum(
                 1 for g in norm_gaps
                 if g.get("kind") in {
                     "cipher_not_in_cited_evidence",
+                    "cipher_without_cited_card",
                     "analogue_needs_confirmation",
                 }
             ),
             "meaning": (
                 "Шифр выбран, но его применимость не подтверждена: карточки цитат "
-                "содержат другой шифр, либо аналог оставлен без проверки совпадений."
+                "содержат другой шифр, ссылка на карточку отсутствует, либо аналог "
+                "оставлен без проверки совпадений."
             ),
         },
         "price_missing": {

@@ -5,15 +5,18 @@ not be able to mistake the empty XLSX formula cache for zero calculated works �
 application's calculated_positions is the authoritative figure."""
 from __future__ import annotations
 
+from tests.lsr_citation_support import cited_all
+
 from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
 
 
 def _rows():
-    return [
+    # The work row carries the citation record the application stores for it (§ 3).
+    return cited_all([
         {"source_row": "СКС!R2", "row_role": "work",
          "norm_code": "ГЭСН12-01-034-02", "norm_status": "EXACT"},
         {"source_row": "СКС!R3", "row_role": "work", "norm_code": "", "norm_status": "MISSING"},
-    ]
+    ])
 
 
 def test_gap_states_expose_the_named_buckets():

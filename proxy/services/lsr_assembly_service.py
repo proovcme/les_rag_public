@@ -27,8 +27,11 @@ from proxy.services import fsem_machinist_service as fsem
 from proxy.services import stesnennost_service as st
 from proxy.services.rim_lsr_trace_service import (
     BOOK_UNIT_CONFLICT_ACTION,
+    RESOURCE_GROUP_ACTION,
     book_price_unit_conflict,
     book_unit_conflict_note,
+    resource_group_note,
+    resource_group_state,
 )
 
 # Справочник «машина→машинист» (ОТм/ЗПМ) вынесен в config/domain/fsem_machinist.yaml
@@ -86,7 +89,13 @@ def _rejected_book_unit(res: dict[str, Any], pricebook) -> str:
 def _resource_price(
     res: dict[str, Any], pricebook, kac_map: dict[str, float]
 ) -> tuple[Optional[float], str]:
-    """Цена единицы ресурса + источник. (price, source) | (None, 'missing')."""
+    """Цена единицы ресурса + источник. (price, source) | (None, 'missing').
+
+    A third outcome is possible and is not a price (§ 3): the code names a price-book
+    group whose members the book does price.  Returning ``missing`` there would ask
+    for a number, and the number given would silently belong to one member of the
+    family while the position still has no such unit.
+    """
     if res.get("price") not in (None, ""):
         return _f(res.get("price")), "manual"
     code = str(res.get("code") or "").strip()
@@ -101,6 +110,10 @@ def _resource_price(
         p = kac_map.get(_norm_name(res.get("name")))
         if p is not None:
             return _f(p), "kac"
+    if resource_group_state(res, pricebook):
+        # Same rule as the РИМ trace, read from the same helper, so the two
+        # engines stop on the same row instead of producing two sums (§ 10).
+        return None, RESOURCE_GROUP_ACTION
     return None, "missing"
 
 
@@ -130,12 +143,32 @@ def _resolve_nr_sp_for_position(position: dict[str, Any]) -> tuple[float, float,
     return _f(rs.get("nr_pct")), _f(rs.get("sp_pct")), rs
 
 
-def _price_requirement(res: dict[str, Any]) -> dict[str, Any]:
-    """Что нужно добрать, если цена ресурса не найдена."""
+def _price_requirement(res: dict[str, Any], pricebook=None) -> dict[str, Any]:
+    """Что нужно добрать, если цена ресурса не найдена.
+
+    A group reference is answered before the kind ladder, because its hole is a
+    missing *member*, not a missing number: asking "нужна цена" for a family the book
+    already prices would send the operator to confirm an amount that belongs to one
+    resource out of many (§ 3).
+    """
     kind = str(res.get("kind") or "")
     code = str(res.get("code") or "").strip()
     name = str(res.get("name") or "").strip() or "ресурс"
     unit = str(res.get("unit") or "").strip()
+    group = resource_group_state(res, pricebook)
+    if group:
+        return {
+            "action": RESOURCE_GROUP_ACTION,
+            "resource_kind": kind,
+            "resource_code": code,
+            "resource_group": str(group.get("group") or ""),
+            "resource_name": name,
+            "resource_unit": unit,
+            "resource_total": int(group.get("total") or 0),
+            "resources": list(group.get("members") or []),
+            "truncated": bool(group.get("truncated")),
+            "message": resource_group_note(res, group),
+        }
     if kind == "material":
         action = "needs_kac"
         human = f"нужен КАЦ: {name}"
@@ -245,7 +278,7 @@ def compute_position(
         rejected_book_unit = _rejected_book_unit(res, pricebook)
         price, src = _resource_price(res, pricebook, kac_map)
         if price is None:
-            req = _price_requirement(res)
+            req = _price_requirement(res, pricebook)
             if rejected_book_unit:
                 # The book was consulted and refused: asking for a КАЦ price would
                 # send the operator to look for a price the book already has, while

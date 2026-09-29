@@ -1,3 +1,5 @@
+from tests.lsr_citation_support import cited_all
+
 from proxy.services.lsr_result_readiness_service import (
     build_lsr_result_readiness,
     format_lsr_readiness_notice,
@@ -48,12 +50,12 @@ def test_readiness_failed_file_asks_repack_without_model() -> None:
 def test_complete_result_has_no_operator_gap_actions() -> None:
     readiness = build_lsr_result_readiness(
         packaged=True,
-        rows=[{
+        rows=cited_all([{
             "source_row": "PDF!R2",
             "norm_code": "ГЭСНм10-01-001-01",
             "norm_status": "EXACT",
             "row_role": "work",
-        }],
+        }]),
         pricing_status="priced_final",
         catalog_work_count=1,
     )
@@ -102,7 +104,7 @@ def test_stage_v_readiness_reports_composition_and_amounts() -> None:
     """§6: works / materials / equipment / norms / calculated counts are shown separately."""
     readiness = build_lsr_result_readiness(
         packaged=True,
-        rows=[
+        rows=cited_all([
             {"source_row": "СКС!R1", "row_role": "header", "title": "Раздел"},
             {
                 "source_row": "СКС!R2",
@@ -111,7 +113,7 @@ def test_stage_v_readiness_reports_composition_and_amounts() -> None:
                 "norm_status": "EXACT",
             },
             {"source_row": "СКС!R3", "row_role": "material", "work_row": "СКС!R2"},
-        ],
+        ]),
         pricing_status="priced_partial",
         calculated_positions=2,
         confirmed_amount=1000.0,
@@ -230,14 +232,14 @@ def test_durable_draft_only_document_is_never_announced_as_ready() -> None:
     # estimate, and calling it ready would hide the only available repair.
     readiness = build_lsr_result_readiness(
         packaged=True,
-        rows=[
+        rows=cited_all([
             {
                 "source_row": "АР!R11",
                 "norm_code": "ГЭСНр1-01-001",
                 "norm_status": "EXACT",
                 "row_role": "work",
             }
-        ],
+        ]),
         pricing_status="priced_final",
         catalog_work_count=1,
         document_state="draft_only",
@@ -251,14 +253,14 @@ def test_durable_draft_only_document_is_never_announced_as_ready() -> None:
 def test_durable_pending_document_keeps_the_repair_offered() -> None:
     readiness = build_lsr_result_readiness(
         packaged=True,
-        rows=[
+        rows=cited_all([
             {
                 "source_row": "АР!R11",
                 "norm_code": "ГЭСНр1-01-001",
                 "norm_status": "EXACT",
                 "row_role": "work",
             }
-        ],
+        ]),
         pricing_status="priced_final",
         catalog_work_count=1,
         document_state="pending",
@@ -281,14 +283,14 @@ def test_ready_document_is_reported_separately_from_outstanding_actions() -> Non
 
     readiness = build_lsr_result_readiness(
         packaged=True,
-        rows=[
+        rows=cited_all([
             {
                 "source_row": "АР!R11",
                 "norm_code": "ГЭСНр1-01-001",
                 "norm_status": "EXACT",
                 "row_role": "work",
             }
-        ],
+        ]),
         pricing_status="priced_final",
         catalog_work_count=1,
         document_state="ready",
@@ -304,7 +306,14 @@ def test_ready_document_is_reported_separately_from_outstanding_actions() -> Non
 
 
 def _vor_rows() -> list[dict]:
-    return [
+    """One closed work row and one open one, with the citation the app stores.
+
+    ``norm_status`` alone no longer closes a row (§ 3): the EXACT row carries the
+    ``_evidence_check`` record that ``bind_row_evidence_ids`` writes in production,
+    so this fixture says "the model chose this norm from this card".
+    """
+
+    return cited_all([
         {
             "source_row": "АР!R11",
             "norm_code": "ГЭСНр1-01-001",
@@ -317,7 +326,7 @@ def _vor_rows() -> list[dict]:
             "norm_status": "NEEDS_RESEARCH",
             "row_role": "work",
         },
-    ]
+    ])
 
 
 def test_finished_research_never_offers_the_continue_gesture() -> None:
@@ -412,14 +421,14 @@ def test_finished_and_fully_closed_job_offers_no_action_at_all() -> None:
 
     readiness = build_lsr_result_readiness(
         packaged=True,
-        rows=[
+        rows=cited_all([
             {
                 "source_row": "АР!R11",
                 "norm_code": "ГЭСНр1-01-001",
                 "norm_status": "EXACT",
                 "row_role": "work",
             }
-        ],
+        ]),
         pricing_status="priced_final",
         catalog_work_count=1,
         document_state="ready",
@@ -442,12 +451,12 @@ def test_a_completed_result_names_the_price_book_it_was_priced_in() -> None:
 
     readiness = build_lsr_result_readiness(
         packaged=True,
-        rows=[{
+        rows=cited_all([{
             "source_row": "ВОР!R4",
             "norm_code": "ГЭСН14-03-001-01",
             "norm_status": "EXACT",
             "row_role": "work",
-        }],
+        }]),
         pricing_status="priced_final",
         catalog_work_count=1,
         price_basis={
@@ -475,12 +484,12 @@ def test_an_inherited_basis_is_named_once_with_the_document_revision() -> None:
 
     readiness = build_lsr_result_readiness(
         packaged=True,
-        rows=[{
+        rows=cited_all([{
             "source_row": "ВОР!R4",
             "norm_code": "ГЭСН14-03-001-01",
             "norm_status": "EXACT",
             "row_role": "work",
-        }],
+        }]),
         pricing_status="priced_final",
         catalog_work_count=1,
         price_basis={

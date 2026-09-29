@@ -82,6 +82,41 @@ class LsrRowsTraceRequest(BaseModel):
     meta: Optional[dict[str, Any]] = None
 
 
+def _book_stems() -> list[str]:
+    """Names the operator may put in ``book`` — read-only listing, nothing chosen."""
+    from pathlib import Path
+
+    from proxy.services import fgis_price_service as fps
+
+    try:
+        return [Path(path).stem for path in fps.available_pricebooks()]
+    except Exception:
+        return []
+
+
+def _book_identity(pricebook: Any, requested: str) -> dict[str, str]:
+    """Which book answered: the region/quarter it carries, not just the string sent in.
+
+    ``book`` may be empty while the system still resolves a book, so the identity is read
+    off the loaded book itself — otherwise the operator would be told "the default" and
+    shown prices from a named quarter with no way to tie them to it.
+    """
+
+    return {
+        "requested": str(requested or ""),
+        "region": str(getattr(pricebook, "region", "") or ""),
+        "quarter": str(getattr(pricebook, "quarter", "") or ""),
+    }
+
+
+def _no_book_message(book: str) -> str:
+    available = ", ".join(_book_stems()) or "нет ни одной книги цен"
+    return (
+        f"книга цен {book!r} не найдена; доступны: {available}. "
+        "Книга не выбирается молча — назовите её тем именем, что признаёт документ."
+    )
+
+
 @router.get("/stesnennost/conditions")
 async def stesn_conditions(_user=Depends(require_user)):
     """Каталог условий стеснённости (коэф. к ОЗП/ЭМ) — из config/domain/stesnennost.yaml."""
@@ -136,6 +171,67 @@ async def smeta_norm_browse(
         table=table,
         limit=limit,
     )
+
+
+@router.get("/resources/group")
+async def lsr_pricebook_resource_group(
+    code: str = Query(..., min_length=1, description="шифр ресурса или группы из нормы"),
+    unit: str = Query("", description="единица позиции, для которой ищется цена"),
+    book: str = Query("", description="имя книги цен; пусто — выбранная система"),
+    limit: int = Query(40, ge=1, le=500),
+    _user=Depends(require_user),
+):
+    """Read-only state of one resource reference in the price book (§ 3).
+
+    A group row is not a missing price and not a priced row: the book prices the family
+    but not the member the position needs, so somebody has to name the member.  This
+    route shows the concrete resources with their own units and prices and binds none of
+    them — «первая цена группы» stays exactly where the calculators put it.
+    """
+    pricebook = await asyncio.to_thread(la._resolve_book, book or None)
+    if pricebook is None:
+        raise HTTPException(400, _no_book_message(book))
+    state = await asyncio.to_thread(pricebook.resource_group, code, limit=limit)
+    res = {"code": code, "unit": unit}
+    group = state if str(state.get("state") or "") == rim.RESOURCE_GROUP_ACTION else {}
+    return {
+        "schema": "lsr_pricebook_resource_state_v1",
+        "book": _book_identity(pricebook, book),
+        "selection_owner": "model_or_user",
+        "price_binding": "not_selected",
+        "state": state,
+        "note": rim.resource_group_note(res, group) if group else "",
+        "books": _book_stems(),
+    }
+
+
+@router.get("/resources/browse")
+async def lsr_pricebook_resource_browse(
+    q: str = Query(..., min_length=1, description="наименование ресурса или его шифр"),
+    book: str = Query(""),
+    limit: int = Query(20, ge=1, le=200),
+    _user=Depends(require_user),
+):
+    """Read-only lexical candidates from the price book (§ 3 working path).
+
+    Ranking keys are evidence only (exact code, resource-code shape, phrase, token
+    coverage) — the route never declares one candidate applicable, and a bound price
+    still comes from a model or operator naming the code.
+    """
+    pricebook = await asyncio.to_thread(la._resolve_book, book or None)
+    if pricebook is None:
+        raise HTTPException(400, _no_book_message(book))
+    rows = await asyncio.to_thread(pricebook.browse, q, limit=limit)
+    return {
+        "schema": "lsr_pricebook_resource_browse_v1",
+        "query": q,
+        "book": _book_identity(pricebook, book),
+        "selection_owner": "model_or_user",
+        "price_binding": "not_selected",
+        "returned_candidates": len(rows),
+        "resources": rows,
+        "books": _book_stems(),
+    }
 
 
 @router.post("/assemble")

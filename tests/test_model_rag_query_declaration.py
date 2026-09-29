@@ -104,6 +104,98 @@ def test_a_narrative_line_the_frozen_list_never_know_is_still_not_a_query() -> N
     assert service._NARRATIVE_QUERY_PREFIXES is before
 
 
+#: Query 1 of 3 as the installed build 829 executed it on the customer's ВОР
+#: (stage_b/live_829/b2_query_measurement_829.json, 29.09 20:51, chat row 509).  It
+#: searched, returned a pool of 24 cards and showed 6, and answered no row.
+_LIVE_829_TASK_ECHO = (
+    "Прочитал приложенный материал целиком. Сформуировал поисковые запросы к выбранным "
+    "датасетам, необходимые для подбора evidence по всем фактическим строкам исходного "
+    "материала."
+)
+_LIVE_829_REAL_QUERY = (
+    "АР!R49 - Открытый потолок. Обеспыливающая покраска открытого потолка "
+    "(в том числе и инженерных систем)"
+)
+
+
+def test_the_model_handing_its_own_task_back_is_not_executed_as_a_query() -> None:
+    """§ 2: «разделять запросы и сопровождающий ответ» on the line the live run showed.
+
+    The rule is an echo of the instruction this call sent, which the app authors, so
+    the set is closed by construction; the frozen Russian prefix list stays untouched
+    and the real query of the same answer is executed with its wording unchanged.
+    """
+
+    instruction = service.sheet_pass_query_instruction(
+        {"mode": "estimator"}, sheet="АР", sheet_index=1, sheet_count=2
+    )
+    declared = service.read_declared_query_list(
+        _LIVE_829_TASK_ECHO + "\n" + _LIVE_829_REAL_QUERY + "\n",
+        packet_locators=["АР!R49"],
+        instruction=instruction,
+    )
+    assert [item.text for item in declared["queries"]] == [_LIVE_829_REAL_QUERY]
+    assert declared["accompanying_answer"] == [
+        {"line": _LIVE_829_TASK_ECHO, "reason": "restates_the_task_instruction"}
+    ]
+    assert declared["queries"][0].attribution == "address_written"
+
+
+def test_the_task_echo_needs_no_instruction_passed_to_be_caught() -> None:
+    """The task statements the module authors are the floor, so no call site is naked."""
+
+    assert (
+        service.declared_query_rejection_reason(_LIVE_829_TASK_ECHO, "plain")
+        == "restates_the_task_instruction"
+    )
+    assert _query_texts(_LIVE_829_TASK_ECHO) == []
+
+
+def test_a_query_that_merely_shares_words_with_the_task_still_runs() -> None:
+    """Where the echo rule stops: an operation query, and the labels the prompt quotes.
+
+    These lines carry a contiguous run of the task text of at most five words — below
+    the measured boundary — and dropping them would be exactly the displacement § 2
+    forbids («шум… не должны вытеснять кандидатов конкретной операции»).
+    """
+
+    for line in (
+        "Прокладка кабеля",  # the phrase the format contract itself uses as its example
+        "Системный подбор по атрибутам этой строки: СКУД!R11 Офис №19",
+        "Тип 2. Открытый потолок. Обеспыливающая покраска открытого потолка "
+        "(в том числе и инженерных систем)",
+        "Монтаж перегородки из ГКЛ по всем фактическим помещениям",
+        "Пол дощатый",  # the morphology trap the 828 measure recorded
+    ):
+        assert service.restates_the_task_instruction(line) is False, line
+        assert service.is_model_rag_search_query_line(line) is True, line
+
+
+def test_the_frozen_narrative_list_did_not_grow_to_pay_for_this() -> None:
+    """§ 2, first sentence: the Russian prefix list is not how this was fixed."""
+
+    assert service._NARRATIVE_QUERY_PREFIXES == (
+        "слушай ",
+        "слушайте ",
+        "коллега,",
+        "коллега ",
+        "что я делаю",
+        "я сейчас ",
+        "я делаю ",
+        "жду подтверждения",
+        "вот список",
+        "сейчас сформирую",
+        "это все запросы",
+    )
+
+
+def test_the_prompt_names_the_line_the_reader_separates() -> None:
+    """Prompt and reader state one contract: a restated task is the accompanying answer."""
+
+    assert "повторяет это самое задание" in service._MODEL_RAG_QUERY_FORMAT_CONTRACT
+    assert service._MODEL_RAG_QUERY_FORMAT_CONTRACT in service._TASK_ECHO_INSTRUCTIONS
+
+
 def test_a_query_with_a_source_address_is_attributed_to_that_address() -> None:
     """§ 2: «указывать запросам операции/адреса, к которым они относятся»."""
 
@@ -557,6 +649,7 @@ def test_separated_answer_lines_keep_their_reason_counts() -> None:
         "shorter_than_a_query",
         "heading_line",
         "label_line_without_query",
+        "restates_the_task_instruction",
         "narrative_answer_line",
     }
     assert [item.text for item in declared["queries"]] == ["Монтаж шкафа управления"]

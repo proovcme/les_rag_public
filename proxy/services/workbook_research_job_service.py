@@ -273,29 +273,46 @@ def _decision_key(item: Mapping[str, Any]) -> tuple[str, str]:
     return locator, inferred_row_role(item) or "work"
 
 
-_VOLATILE_DECISION_FIELDS = {
-    # Identity / version bookkeeping (never part of the "what did the operator
-    # actually decide" content fingerprint).
-    "operation_id",
-    "revision",
-    "revision_origin",
-    "content_sha256",
-    # Directive 2.1: a note, evidence-ref drift or status transition does not
-    # by itself introduce a new paid operation. Keeping these out of the
-    # content digest lets merge_model_rag_rows dedup such redeliveries while
-    # still distinguishing operations that differ in locator, role, title,
-    # norm_code, unit or quantity.
-    "note",
-    "evidence_refs",
-    "status",
-    # Directive §3 (23.09): open_gap is the model's free-text explanation of a
-    # remaining gap (why no norm applies), not a billable decision. When a
-    # paused job resumes and the model re-proposes the same source row with the
-    # same role/title/norm fields but a reworded open_gap, the digest must stay
-    # stable so record_packet dedups the redelivery instead of appending a
-    # duplicate durable decision for one source position.
-    "open_gap",
-}
+_IDENTITY_DECISION_FIELDS = frozenset(
+    {
+        # Identity / version bookkeeping (never part of the "what did the operator
+        # actually decide" content fingerprint, and never refreshed from a redelivery:
+        # the durable revision chain belongs to the store, not to the answer).
+        "operation_id",
+        "revision",
+        "revision_origin",
+        "content_sha256",
+    }
+)
+# Task 2026-09-29 § 3: these fields explain a decision that is already on the record.
+# ``gap_reason`` joins them because declaring *why* a row stays open is not a new paid
+# operation — and if the reader refused to refresh it, a continuation that finally
+# names «нет подходящего кандидата» would be dropped as "same packet, nothing
+# changed", leaving the model with a field the prompt promises and the store keeps
+# nowhere.  One list feeds both the digest exclusion and the in-place refresh, so the
+# prompt, the reader and the durable record cannot drift apart.
+_EXPLANATORY_DECISION_FIELDS = frozenset(
+    {
+        # Directive 2.1: a note, evidence-ref drift or status transition does not
+        # by itself introduce a new paid operation. Keeping these out of the
+        # content digest lets merge_model_rag_rows dedup such redeliveries while
+        # still distinguishing operations that differ in locator, role, title,
+        # norm_code, unit or quantity.
+        "note",
+        "evidence_refs",
+        "status",
+        # Directive §3 (23.09): open_gap is the model's free-text explanation of a
+        # remaining gap (why no norm applies), not a billable decision. When a
+        # paused job resumes and the model re-proposes the same source row with the
+        # same role/title/norm fields but a reworded open_gap, the digest must stay
+        # stable so record_packet dedups the redelivery instead of appending a
+        # duplicate durable decision for one source position.
+        "open_gap",
+        "gap_reason",
+    }
+)
+_VOLATILE_DECISION_FIELDS = _IDENTITY_DECISION_FIELDS | _EXPLANATORY_DECISION_FIELDS
+DECISION_REFRESH_FIELDS = tuple(sorted(_EXPLANATORY_DECISION_FIELDS))
 
 
 def _decision_content_sha(item: Mapping[str, Any]) -> str:

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.lsr_citation_support import cited
+
 from proxy.services.chat_evidence_application_service import (
     merge_model_rag_rows,
     validate_model_rag_result_structure,
@@ -35,7 +37,9 @@ def _work_row(locator: str, title: str, **overrides):
         "norm_status": "MISSING",
     }
     row.update(overrides)
-    return row
+    # A row that names a cipher carries the citation record the application stores
+    # for it; readiness no longer accepts the status token on its own (§ 3).
+    return cited(row)
 
 
 def _supply_row(locator: str, title: str, **overrides):

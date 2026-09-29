@@ -13,6 +13,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
 from backend.runtime_paths import mutable_path
@@ -1344,7 +1345,11 @@ _TABULAR_LSR_VOLUME_INSTRUCTION = (
     "реально возвращённой работы с row_role=work, а не на шифр или материал. "
     "Выбранный по карточке шифр и Qx.Hy перенеси в norm_code и evidence_refs "
     "итоговой строки; упоминания только в пояснении недостаточно. Если "
-    "работу нельзя определить, верни unresolved с конкретным open_gap."
+    "работу нельзя определить, верни unresolved с конкретным open_gap. Строке, "
+    "оставленной не готовой (NEEDS_RESEARCH или MISSING), добавь колонку gap_reason: "
+    "insufficient_source_data, если сведений исходной строки не хватает для выбора "
+    "нормы, или no_suitable_candidate, если просмотренные карточки не подходят. "
+    "Как именно не хватает или не подходит — пиши своими словами в open_gap."
 )
 _MODEL_RAG_QUERY_INSTRUCTION = (
     "Прочитай приложенный материал целиком. Сформулируй поисковые "
@@ -1383,7 +1388,10 @@ _MODEL_RAG_QUERY_FORMAT_CONTRACT = (
     + ") — любой из этих видов читается как один запрос, номер и маркер списка "
     "отбрасываются, текст запроса остаётся дословным. Сопровождающий ответ "
     "(вступление, пояснение, заключение) допустим только отдельными строками: он "
-    "не будет выполнен как запрос и сохраняется с причиной отклонения. Если "
+    "не будет выполнен как запрос и сохраняется с причиной отклонения. Строка, "
+    "которая повторяет это самое задание (что именно ты собираешься искать), — "
+    "сопровождающий ответ, а не запрос: запрос называет предмет и работу строки "
+    "исходника. Если "
     "запрос относится к конкретной строке листа, укажи её адрес в начале строки "
     "(например «СКС!R12 — Прокладка кабеля»); адрес код читает как указатель, а "
     "не как часть формулировки."
@@ -1672,7 +1680,13 @@ def merge_model_rag_rows(
             key = (alias, role, digest)
             seen_keys.add(key)
             by_key.setdefault(key, row)
-    _volatile_refresh = ("note", "evidence_refs", "status")
+    from proxy.services.workbook_research_job_service import DECISION_REFRESH_FIELDS
+
+    # One shared list with the durable store: what the digest treats as
+    # explanatory is exactly what a redelivery may refresh in place.  Keeping the
+    # two in sync by import is the point — a field the prompt announces but this
+    # tuple forgets could never reach the record after a continuation (§ 3).
+    _volatile_refresh = DECISION_REFRESH_FIELDS
     for row in incoming:
         if not isinstance(row, Mapping):
             continue
@@ -2693,7 +2707,107 @@ def _strip_declared_query_markers(line: str) -> tuple[str, str]:
     return text, form
 
 
-def declared_query_rejection_reason(text: str, marker_form: str) -> str:
+# ------------------------------------------------------------------ task echo
+#
+# Blocker § 2: «Не дополнять бесконечно список русских префиксов.  Согласовать формат
+# объявленных запросов в prompt, reader и адаптере; поддержать обычный текстовый вывод
+# используемого провайдера.  Разделять запросы и сопровождающий ответ; сохранять причины
+# отклонения.»  The live measure on the installed build 829 (29.09 20:51) named the one
+# leg still broken: a line about the search was executed *as* a search, on this turn and
+# in 3 of the 35 model-authored queries the document has ever stored.  The stored corpus
+# says what those lines are — the model handing its own task back to it:
+#
+#   «Прочитал приложенный материал целиком. Сформуировал поисковые запросы к выбранным
+#    датасетам, необходимые для подбора evidence по всем фактическим строкам…»
+#
+# which is the instruction this very call sent, restated in the first person past.  So
+# the key is not a Russian phrase the code has to recognise — it is the task text the app
+# authored, which is a closed set by construction and says nothing about how any model
+# words a sentence.  The quantity is a long *contiguous* run of that text inside the
+# candidate: sharing one word is ordinary language, and a two-word query is never
+# rejected on it.  The thresholds are the ones the measure found (see
+# ``stage_b/b2_narration_rule_measure_830.py``): at a run of 7 content words covering 45
+# % of the line, 3 of the 3 stored narration cases are caught, the 51 distinct noise
+# lines the reader had executed are caught, and 0 lines that name an operation or a
+# cipher go with them — while the code-authored candidate label the prompt itself quotes
+# («Системный подбор по атрибутам этой строки: …», longest run 5) still runs.
+
+#: The measured boundary between "this line repeats its task" and "this line searches".
+_TASK_ECHO_MIN_RUN = 7
+_TASK_ECHO_MIN_SHARE = 0.45
+_TASK_ECHO_STEM_CHARS = 5
+_TASK_ECHO_MIN_TOKEN_CHARS = 3
+_TASK_ECHO_MAX_RUN = 24
+#: The task statements every query-declaration call sends, quoted from the prompt side
+#: so the reader cannot be documented on one end and implemented on the other.
+_TASK_ECHO_INSTRUCTIONS = (
+    _MODEL_RAG_QUERY_INSTRUCTION,
+    _MODEL_RAG_QUERY_FORMAT_CONTRACT,
+    _MODEL_RAG_QUERY_REPAIR_INSTRUCTION,
+)
+_WORD_STEM_RE = re.compile(r"[а-яёa-z0-9]+", re.IGNORECASE)
+
+
+def task_instruction_tokens(text: str) -> list[str]:
+    """Words of a line, in order, reduced to a fixed-length stem.
+
+    Truncation rather than morphology on purpose: «Сформулируй» and the model's own
+    «Сформуировал» have to fall on one token, or the rule would depend on the model
+    quoting its task correctly — which the stored corpus shows it does not.
+    """
+
+    return [
+        word[:_TASK_ECHO_STEM_CHARS]
+        for word in _WORD_STEM_RE.findall(str(text or "").lower())
+        if len(word) >= _TASK_ECHO_MIN_TOKEN_CHARS
+    ]
+
+
+@lru_cache(maxsize=64)
+def _task_instruction_grams(texts: tuple[str, ...]) -> tuple[frozenset, ...]:
+    """n-gram index of the task text, one set per run length, built once per variant."""
+
+    layers: list[frozenset] = []
+    for size in range(1, _TASK_ECHO_MAX_RUN + 1):
+        index: set[tuple[str, ...]] = set()
+        for text in texts:
+            tokens = task_instruction_tokens(text)
+            for start in range(len(tokens) - size + 1):
+                index.add(tuple(tokens[start : start + size]))
+        layers.append(frozenset(index))
+    return tuple(layers)
+
+
+def task_instruction_echo(text: str, instruction: str = "") -> tuple[int, float]:
+    """Longest contiguous run of the sent task inside a line, and its share of the line."""
+
+    tokens = task_instruction_tokens(text)
+    if not tokens:
+        return 0, 0.0
+    texts = _TASK_ECHO_INSTRUCTIONS
+    if instruction:
+        texts = texts + (str(instruction),)
+    layers = _task_instruction_grams(texts)
+    for size in range(min(_TASK_ECHO_MAX_RUN, len(tokens)), 0, -1):
+        layer = layers[size - 1]
+        for start in range(len(tokens) - size + 1):
+            if tuple(tokens[start : start + size]) in layer:
+                return size, size / len(tokens)
+    return 0, 0.0
+
+
+def restates_the_task_instruction(text: str, instruction: str = "") -> bool:
+    """True when the line is the task handed back rather than a question to search."""
+
+    run, share = task_instruction_echo(text, instruction)
+    return run >= _TASK_ECHO_MIN_RUN and share >= _TASK_ECHO_MIN_SHARE
+
+
+def declared_query_rejection_reason(
+    text: str,
+    marker_form: str,
+    instruction: str = "",
+) -> str:
     """Why a line is the accompanying answer rather than a query; "" means query.
 
     Every rule is structural.  The frozen narrative list stays last so that an
@@ -2715,6 +2829,8 @@ def declared_query_rejection_reason(text: str, marker_form: str) -> str:
         return "heading_line"
     if _LABEL_ONLY_RE.match(text):
         return "label_line_without_query"
+    if restates_the_task_instruction(text, instruction):
+        return "restates_the_task_instruction"
     if any(folded.startswith(prefix) for prefix in _NARRATIVE_QUERY_PREFIXES_FROZEN):
         return "narrative_answer_line"
     return ""
@@ -2755,6 +2871,7 @@ def read_declared_query_list(
     finish_reason: str = "",
     packet_locators: Sequence[str] = (),
     row_literals: Mapping[str, str] | None = None,
+    instruction: str = "",
 ) -> dict[str, Any]:
     """Apply the declared-query contract to one model answer.
 
@@ -2763,6 +2880,11 @@ def read_declared_query_list(
     discarded), ``unread_tail`` (the query a cut answer left behind) and
     ``answer_cut``.  Nothing is rewritten and nothing is invented: a line that is
     not a query stays in the record with the structural reason for that.
+
+    ``instruction`` is the task text this answer was written for.  It is compared
+    against, not parsed: a line that hands that task back is the accompanying
+    answer (blocker § 2), and the caller that sent the prompt is the only place
+    that knows what it said.
     """
 
     wanted = {str(item).strip().upper() for item in packet_locators if str(item).strip()}
@@ -2778,7 +2900,7 @@ def read_declared_query_list(
     accompanying: list[dict[str, str]] = []
     for line in complete_lines:
         text, marker_form = _strip_declared_query_markers(line)
-        reason = declared_query_rejection_reason(text, marker_form)
+        reason = declared_query_rejection_reason(text, marker_form, instruction)
         if reason:
             accompanying.append({"line": text or line.strip(), "reason": reason})
             continue
@@ -3149,7 +3271,7 @@ def _unwrap_model_rag_query_lines(raw: str) -> list[str]:
     return queries
 
 
-def is_model_rag_search_query_line(line: str) -> bool:
+def is_model_rag_search_query_line(line: str, instruction: str = "") -> bool:
     """One line of a declared-query answer: query, or accompanying text.
 
     Delegated to the same structural rules :func:`read_declared_query_list` uses,
@@ -3157,10 +3279,13 @@ def is_model_rag_search_query_line(line: str) -> bool:
     """
 
     text, marker_form = _strip_declared_query_markers(line)
-    return not declared_query_rejection_reason(text, marker_form)
+    return not declared_query_rejection_reason(text, marker_form, instruction)
 
 
-def classify_model_rag_query_lines(raw: str) -> tuple[list[str], list[str]]:
+def classify_model_rag_query_lines(
+    raw: str,
+    instruction: str = "",
+) -> tuple[list[str], list[str]]:
     """Split an answer into executable queries and the accompanying answer text.
 
     The rejected half keeps its structural reason in
@@ -3168,7 +3293,7 @@ def classify_model_rag_query_lines(raw: str) -> tuple[list[str], list[str]]:
     only need the texts.
     """
 
-    declared = read_declared_query_list(raw)
+    declared = read_declared_query_list(raw, instruction=instruction)
     return (
         [item.text for item in declared["queries"]],
         [str(row.get("line") or "") for row in declared["accompanying_answer"]],
@@ -3254,6 +3379,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "вид поставки": "supply_kind",
         "open_gap": "open_gap",
         "открытый вопрос": "open_gap",
+        "gap_reason": "gap_reason",
+        "причина пробела": "gap_reason",
         "conversion_factor": "conversion_factor",
         "коэффициент перевода": "conversion_factor",
         "conversion_source": "conversion_source",
@@ -3609,6 +3736,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "supply_kind": "supply_kind",
         "open_gap": "open_gap",
         "открытый вопрос": "open_gap",
+        "gap_reason": "gap_reason",
+        "причина пробела": "gap_reason",
         "conversion_factor": "conversion_factor",
         "conversion_source": "conversion_source",
         "calc_quantity": "calc_quantity",
@@ -3738,6 +3867,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "supply_kind": "supply_kind",
         "open_gap": "open_gap",
         "открытый вопрос": "open_gap",
+        "gap_reason": "gap_reason",
+        "причина пробела": "gap_reason",
         "conversion_factor": "conversion_factor",
         "conversion_source": "conversion_source",
         "calc_quantity": "calc_quantity",
@@ -6454,7 +6585,7 @@ async def _execute_chat_evidence_application(
                         )
                         t_llm += time.time() - t_query_model
                         model_queries, rejected_model_queries = classify_model_rag_query_lines(
-                            query_text
+                            query_text, query_instruction
                         )
                         if model_queries:
                             break
@@ -7710,6 +7841,7 @@ async def _execute_chat_evidence_application(
                                             ),
                                             packet_locators=[str(item) for item in packet],
                                             row_literals=packet_row_literals,
+                                            instruction=query_directive,
                                         )
                                         query_answer_cut = bool(
                                             declared_now.get("answer_cut")
@@ -9237,6 +9369,14 @@ async def _execute_chat_evidence_application(
                                 ]
                                 if model_research_tools is None:
                                     return LsrResearchRoundResult(rows=list(rows_to_check))
+                                # The echo comparison (blocker § 2) is made against the
+                                # task statement only.  The rejected-cipher tail this call
+                                # also sends is packet data: a query that repeats a row's
+                                # wording is what the prompt asks for, so it must not be
+                                # mistaken for the model handing its task back.
+                                research_queries_task = lsr_research_query_instruction(
+                                    round_index
+                                )
                                 query_messages, query_packet = govern_inference_messages(
                                     preset=execution_preset,
                                     profile_prefix=(
@@ -9288,7 +9428,7 @@ async def _execute_chat_evidence_application(
                                     allow_stream=False,
                                 )
                                 queries, _rejected = classify_model_rag_query_lines(
-                                    query_text
+                                    query_text, research_queries_task
                                 )
                                 hits: list[tuple[str, Sequence[Any]]] = []
                                 hit_ids: list[str] = []

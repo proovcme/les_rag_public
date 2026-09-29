@@ -119,6 +119,52 @@ def _is_resource_code(code: str) -> bool:
     return bool(re.fullmatch(r"\d{2}(?:\.\d+)+-\d+", normalize_code(code)))
 
 
+# ─────────────────────────────────────────
+# ГРУППА ОДНОРОДНЫХ РЕСУРСОВ
+# ─────────────────────────────────────────
+#
+# A norm composition names a resource either concretely («01.1.01.01-0002» — one
+# brick, one price) or as a group («01.1.01.01» — the family the concrete members
+# belong to).  The second form is not a missing price and must never be reported
+# as one: the book has money for the family, but the *unit* of the position is
+# undecided until a member is named.  Task 2026-09-29 § 3 asks for that state to
+# be explicit, for a read-only path to the concrete resources of the book, and for
+# the ban on taking the first price of a group to stay only a guard — with the
+# members listed, a person or the model has something to choose from.
+
+_RESOURCE_GROUP_RE = re.compile(r"\d{2}(?:\.\d+)+")
+
+#: Closed states of a resource reference; see ``PriceBook.resource_group``.
+RESOURCE_GROUP_STATES = frozenset(
+    {"resolved", "unresolved_resource_group", "no_book_row"}
+)
+UNRESOLVED_RESOURCE_GROUP = "unresolved_resource_group"
+
+
+def is_resource_group_reference(code: Any) -> bool:
+    """True when the code names a group of homogeneous resources, not a member."""
+
+    text = normalize_code(code)
+    return bool(text) and bool(_RESOURCE_GROUP_RE.fullmatch(text))
+
+
+def resource_group_prefix(code: Any) -> str:
+    """The group a resource code belongs to, member tail cut off.
+
+    «01.1.01.01-0002» → «01.1.01.01»; «01.1.01.01» → itself; a norm cipher such as
+    «10-02-016-06» or free text → ``""``, because nothing in the price book is grouped
+    under it and calling it a group would invent a resource family.
+    """
+
+    text = normalize_code(code)
+    if not text:
+        return ""
+    if is_resource_group_reference(text):
+        return text
+    head = text.rsplit("-", 1)[0]
+    return head if is_resource_group_reference(head) else ""
+
+
 def _looks_like_code(value: Any) -> bool:
     return bool(_CODE_RE.search(str(value or "")))
 
@@ -346,6 +392,78 @@ class PriceBook:
 
     def lookup_many(self, codes: Iterable[str]) -> dict[str, Optional[dict[str, Any]]]:
         return {c: self.lookup(c) for c in codes}
+
+    def resource_group(
+        self, code: Any, *, limit: int = 40
+    ) -> dict[str, Any]:
+        """Read-only state of one resource reference: priced, a group, or absent.
+
+        Three closed states, and the whole point of the method is that they are not
+        collapsed into one "no price" hole:
+
+        * ``resolved`` — the book has this exact code, so there is nothing to choose;
+        * ``unresolved_resource_group`` — the code names a family the book does price,
+          but no member of it, so the position has no unit of measure for the money yet;
+        * ``no_book_row`` — the code is not in the book and is not a group either.
+
+        The member list is the concrete resources of the price book, in code order, with
+        their own units and prices.  Nothing here selects one: the first row of a group is
+        not the group's price, and an amount built on it would be a sum the document never
+        asked for.  A model or an operator names the member; the code only shows the door.
+        """
+
+        requested = str(code or "").strip()
+        prefix = resource_group_prefix(requested)
+        if prefix and self.lookup(requested) is not None:
+            return {
+                "state": "resolved",
+                "requested": requested,
+                "group": prefix,
+                "members": [],
+                "total": 0,
+                "truncated": False,
+            }
+        if not prefix:
+            return {
+                "state": "no_book_row",
+                "requested": requested,
+                "group": "",
+                "members": [],
+                "total": 0,
+                "truncated": False,
+            }
+        cap = max(1, int(limit))
+        members: list[dict[str, Any]] = []
+        total = 0
+        for rec in self._rows:
+            member = normalize_code(rec.get("code"))
+            if not member.startswith(prefix):
+                continue
+            rest = member[len(prefix):]
+            # «01.1.01» must not swallow «01.1.010»: a group boundary is a separator,
+            # not a shared prefix of digits.
+            if not rest or rest[0] not in ".-":
+                continue
+            total += 1
+            if len(members) < cap:
+                members.append({
+                    "code": str(rec.get("code") or ""),
+                    "name": str(rec.get("name") or ""),
+                    "unit": str(rec.get("unit") or ""),
+                    "price_base": rec.get("price_base"),
+                    "price_current": rec.get("price_current"),
+                    "price_current_eff": rec.get("price_current_eff"),
+                    "group_no": str(rec.get("group_no") or ""),
+                    "group_name": str(rec.get("group_name") or ""),
+                })
+        return {
+            "state": UNRESOLVED_RESOURCE_GROUP if total else "no_book_row",
+            "requested": requested,
+            "group": prefix,
+            "members": members,
+            "total": total,
+            "truncated": total > len(members),
+        }
 
 
 DEFAULT_PRICE_ROOT = mutable_path("data/price_base")

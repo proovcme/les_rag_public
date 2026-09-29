@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.lsr_citation_support import cited
+
 from proxy.services.lsr_result_readiness_service import (
     build_lsr_result_readiness,
     format_lsr_readiness_notice,
@@ -75,7 +77,9 @@ def _dismantling_row(**overrides) -> dict[str, object]:
         "norm_status": "EXACT",
     }
     row.update(overrides)
-    return row
+    # «EXACT» is the model's claim; the record of the card it cited is what
+    # readiness and the money gate accept as its basis (§ 3).
+    return cited(row)
 
 
 def test_the_reversal_is_read_from_the_two_texts_that_are_already_in_the_row():
@@ -367,7 +371,7 @@ def _owned_price_position(**overrides) -> dict[str, object]:
 
 def _row_for(position: dict[str, object], *, locator: str = "ВОР!R5") -> dict[str, object]:
     """The authored ВОР row behind a position: a real cipher, EXACT, own units."""
-    return {
+    return cited({
         "source_row": locator,
         "row_role": "work",
         "title": str(position.get("name") or ""),
@@ -376,7 +380,7 @@ def _row_for(position: dict[str, object], *, locator: str = "ВОР!R5") -> dict
         "quantity": position.get("qty"),
         "unit": str(position.get("unit") or ""),
         "norm_status": "EXACT",
-    }
+    })
 
 
 def test_owned_resource_prices_do_not_close_a_position_without_an_accrual_owner():

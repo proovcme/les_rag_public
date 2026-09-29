@@ -56,6 +56,56 @@ MATCH_FIELDS = (
 )
 SELF_SCORE_FIELDS = ("coverage", "analogue", "note", "norm_status", "verdict")
 
+# Task 2026-09-29 § 3: a row the model leaves not-ready is not one kind of hole.
+# Which kind it is decides *who* answers next: the normative base (a cipher that is
+# not in it), the model's own citation (a шифр its referenced cards never showed),
+# the analogue's match facts (an unsubstantiated analogue), the source document
+# (the row does not carry enough to choose) or the estimate engineer (the cards
+# were read and none fits).  The first three are structural facts the code can read
+# off evidence it already holds, so they stay code-derived.  Only the last two are
+# things the model knows from inside its own answer, and those two are what a model
+# may declare below — never a verdict, never a cipher, just the reason an open row is
+# open.  An undeclared reason stays the plain open status it was before; the code
+# does not guess a cause it was not given, and it never raises a verdict from one.
+MODEL_GAP_REASONS = frozenset({"insufficient_source_data", "no_suitable_candidate"})
+GAP_REASON_FIELD = "gap_reason"
+_GAP_REASON_ALIASES = {
+    "insufficient_source_data": "insufficient_source_data",
+    "insufficient source data": "insufficient_source_data",
+    "недостаточные исходные сведения": "insufficient_source_data",
+    "недостаточно исходных данных": "insufficient_source_data",
+    "нет исходных данных": "insufficient_source_data",
+    "no_suitable_candidate": "no_suitable_candidate",
+    "no suitable candidate": "no_suitable_candidate",
+    "нет подходящего кандидата": "no_suitable_candidate",
+    "нет подходящей нормы": "no_suitable_candidate",
+    "подходящая норма не найдена": "no_suitable_candidate",
+}
+
+
+def normalize_gap_reason(value: Any) -> str:
+    """Closed model-declarable reason for an open row; anything else stays unspoken.
+
+    Exact-cell equality, the same rule ``canonicalize_norm_status`` follows: the
+    aliases exist because a live answer writes this column in Russian, not because
+    prose may be classified.  A sentence is not a reason token — the model's own
+    words belong in ``open_gap`` and are shown verbatim, while the token says which
+    professional question the row raises.
+    """
+
+    marker = _fold(value)
+    if not marker:
+        return ""
+    return _GAP_REASON_ALIASES.get(marker, "")
+
+
+def gap_reason_of(row: Mapping[str, Any] | None) -> str:
+    """The declared reason on a durable row, canonicalised, or ``""``."""
+
+    payload = row if isinstance(row, Mapping) else {}
+    return normalize_gap_reason(payload.get(GAP_REASON_FIELD))
+
+
 _STATUS_ALIASES = {
     "exact": "EXACT",
     "точная": "EXACT",
@@ -134,6 +184,11 @@ _QUALITY_HEADER_FIELDS = {
     "вердикт": "norm_status",
     "norm_status": "norm_status",
     "статус нормы": "norm_status",
+    # § 3: the reason an open row is open has to survive the table, so the column
+    # the prompt announces must be a header the reader maps.
+    "gap_reason": "gap_reason",
+    "причина пробела": "gap_reason",
+    "причина": "gap_reason",
     "action_match": "action_match",
     "object_match": "object_match",
     "condition_match": "condition_match",
@@ -192,24 +247,63 @@ _ANALOGUE_APPLICABILITY_STATUSES = frozenset(
 )
 
 
-def cited_cipher_matches_evidence(row: Mapping[str, Any] | None) -> bool | None:
-    """Is the authored cipher the cipher of the cards the model actually cited?
+def citation_record_present(row: Mapping[str, Any] | None) -> bool:
+    """Were cards ever put in front of the answer that authored this cipher?
 
-    ``None`` means the payload carries no citation check, or its cited cards
-    name no cipher at all: nothing is known either way and the caller must not
-    read that as agreement — or as contradiction.  A ``False`` is a structural
-    contradiction the code can see, and ADR-16 § 6 forbids laundering it into
-    confirmed applicability: the model may claim ``EXACT`` for a cipher its own
-    references never showed.
+    ``bind_row_evidence_ids`` writes ``_evidence_check`` for every cipher-bearing
+    model row, so the record's presence means a retrieval happened and the model
+    named (or failed to name) the card it chose.  Its absence means the row came
+    from a route without retrieval at all — the chat panel of «видимые строки» —
+    where demanding a citation would ask the answer for a field it cannot carry
+    (§ 3: «не требовать от модели скрытых полей, не предусмотренных её реальным
+    ответом»).  Measured on the installed store: 1 081 of 1 082 durable cipher-
+    bearing ``EXACT`` rows carry the record.
+    """
+
+    payload = row if isinstance(row, Mapping) else {}
+    return isinstance(payload.get("_evidence_check"), Mapping)
+
+
+def cited_ciphers_of(row: Mapping[str, Any] | None) -> list[str]:
+    """Ciphers named by the cards the model actually cited.
+
+    Recomputed from the stored ``cited`` card list rather than read from
+    ``citation_checkable``: that flag was written by whichever build produced the
+    row, and packets stored before it existed carry the cards without the verdict.
+    Recomputing keeps an *absent* fact from being silently read as agreement —
+    measured on the installed store, 440 of 1082 cipher-bearing ``EXACT`` rows
+    were in that shape, and 280 of them cite a different cipher outright.
     """
 
     payload = row if isinstance(row, Mapping) else {}
     check = payload.get("_evidence_check")
     if not isinstance(check, Mapping):
+        return []
+    cards = [
+        str(item.get("card") or "")
+        for item in (check.get("cited") or ())
+        if isinstance(item, Mapping)
+    ] or [str(item or "") for item in (check.get("cited_ciphers") or ())]
+    return [card for card in cards if looks_like_cipher(card)]
+
+
+def cited_cipher_matches_evidence(row: Mapping[str, Any] | None) -> bool | None:
+    """Is the authored cipher the cipher of the cards the model actually cited?
+
+    ``None`` means the payload carries no citation check, it cites no card at all,
+    or none of the cited cards names a cipher: nothing is known either way and the
+    caller must not read that as agreement — or as contradiction.  A ``False`` is a
+    structural contradiction the code can see, and ADR-16 § 6 forbids laundering it
+    into confirmed applicability: the model may claim ``EXACT`` for a cipher its own
+    references never showed.
+    """
+
+    payload = row if isinstance(row, Mapping) else {}
+    code = authored_norm_code(payload.get("norm_code") or payload.get("code"))
+    cards = cited_ciphers_of(payload)
+    if not code or not cards:
         return None
-    if check.get("citation_checkable") is False:
-        return None
-    return not bool(check.get("code_not_in_refs"))
+    return any(ciphers_compatible(code, card) for card in cards)
 
 
 def open_analogue_match_fields(row: Mapping[str, Any] | None) -> tuple[str, ...]:
@@ -223,25 +317,84 @@ def open_analogue_match_fields(row: Mapping[str, Any] | None) -> tuple[str, ...]
     )
 
 
+def exact_citation_ungrounded(row: Mapping[str, Any] | None) -> bool:
+    """Cards were offered for this cipher, and none of them names it.
+
+    Distinct from a contradiction: there the model pointed at a card that says
+    something else («неправильная ссылка»); here its answer carries the token and no
+    card behind it.  Both are visible in the row's own payload, so neither asks the
+    model for a field it did not already have.
+    """
+
+    payload = row if isinstance(row, Mapping) else {}
+    if not citation_record_present(payload):
+        return False
+    return cited_cipher_matches_evidence(payload) is None
+
+
+APPLICABILITY_GAP_KINDS = (
+    "cipher_not_in_cited_evidence",
+    "cipher_without_cited_card",
+    "analogue_needs_confirmation",
+)
+
+
+def applicability_gap_kind(row: Mapping[str, Any] | None) -> str:
+    """The structural reason a written cipher is not yet substantiated, or ``""``.
+
+    One home on purpose (§ 10): the XLSX trace column and the readiness gap card
+    read the same verdict, so they cannot disagree about the same row.
+    """
+
+    payload = row if isinstance(row, Mapping) else {}
+    if not authored_norm_code(payload.get("norm_code") or payload.get("code")):
+        return ""
+    if cited_cipher_matches_evidence(payload) is False:
+        return "cipher_not_in_cited_evidence"
+    status = canonicalize_norm_status(payload.get("norm_status"))
+    if status in _ANALOGUE_APPLICABILITY_STATUSES:
+        return "analogue_needs_confirmation" if open_analogue_match_fields(payload) else ""
+    if status == "EXACT_VERIFIED":
+        # The verifier's own answer carries the five match facts; that is its
+        # contract, and it stands in for the first-pass citation.
+        if match_fields_for_exact(payload) or not exact_citation_ungrounded(payload):
+            return ""
+    if status == "EXACT" or status == "EXACT_VERIFIED":
+        return "cipher_without_cited_card" if exact_citation_ungrounded(payload) else ""
+    return ""
+
+
 def norm_applicability_substantiated(row: Mapping[str, Any] | None) -> bool:
     """Whether a row's norm choice carries evidence, not just a status token.
 
-    ADR-16 § 6: the model decides applicability, but its declaration is only
-    accepted when the cited cards really hold that cipher and — for an analogue —
-    when all five match fields say ``yes``.  Free text («подходит по сути»,
-    ``extra_ops``, a note) is explicitly not a substantiation: the first-pass
-    contract says such explanations do not put the row into the calculation.
+    ADR-16 § 6 / task 2026-09-29 § 3: a written ``EXACT`` is a claim, and one token
+    is not the confirmation of it.  What confirms it is a fact the code can see in
+    the model's *own* answer — the card it was shown and cited, whose body names
+    that cipher.  The citation column is announced in the first-pass instruction
+    («обязательно укажи точную evidence_refs Qx.Hy выбранной карточки»), so nothing
+    here asks the model for a hidden field; the five match facts are deliberately
+    *not* demanded at this stage because the measured first-pass answers carry them
+    in 17 of 9 452 rows, and a check the real answer cannot make is a check that
+    only pretends to discriminate.
+
+    An analogue is a different question and keeps its own rule: all five match
+    facts, because an analogue by definition claims a transfer the model must
+    substantiate.  ``EXACT_VERIFIED`` is the independent verifier's answer, whose
+    contract is the match fields plus empty contradictions.  Free text
+    («подходит по сути», ``extra_ops``, a note) is never a substantiation.
+
+    A row produced by a route that showed no cards at all — the chat panel of
+    visible rows — has no citation to be grounded in, and is left as it was: the
+    question there is the operator's, not a missing field in a retrieval answer.
     """
 
     payload = row if isinstance(row, Mapping) else {}
     if not authored_norm_code(payload.get("norm_code") or payload.get("code")):
         return False
-    if cited_cipher_matches_evidence(payload) is False:
-        return False
     status = canonicalize_norm_status(payload.get("norm_status"))
-    if status in _ANALOGUE_APPLICABILITY_STATUSES:
-        return not open_analogue_match_fields(payload)
-    return status in _EXACT_APPLICABILITY_STATUSES
+    if status not in _EXACT_APPLICABILITY_STATUSES | _ANALOGUE_APPLICABILITY_STATUSES:
+        return False
+    return not applicability_gap_kind(payload)
 
 
 def parse_norm_components(value: Any) -> list[dict[str, Any]]:
@@ -1665,6 +1818,14 @@ def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: st
         "отдельной проверки, а не твоего первого ответа. "
         "MISSING означает, что norm_code не выбран. Отсутствие цены здесь не оценивай: "
         "если norm_code заполнен, не используй MISSING только из-за отсутствующей цены. "
+        "Для строки, которую ты оставляешь не готовой (NEEDS_RESEARCH или MISSING), укажи "
+        "колонку gap_reason одним из двух токенов: insufficient_source_data — сведений "
+        "исходной строки не хватает, чтобы выбрать норму (напиши в open_gap, каких именно), "
+        "или no_suitable_candidate — карточки просмотрены и ни одна не подходит (напиши в "
+        "open_gap, что именно не подошло). Другие причины не выдумывай и не выбирай: "
+        "шифр не существует в базе, ссылка противоречит твоим же карточкам или аналог "
+        "не обоснован — это код видит по своим проверкам сам. Свои слова оставляй в open_gap "
+        "дословно; gap_reason вердикт не повышает и норму не выбирает. "
         "action_match/object_match/condition_match/unit_compatible/composition_covers — "
         "только yes/no/unknown. Пояснения вроде «подходит по сути» можно писать в extra_ops, "
         "но они не включают строку в расчёт. Не выводи JSON и не ограничивай число строк. "
