@@ -113,6 +113,7 @@ from proxy.services.lsr_candidate_query_service import (
     candidate_queries_for_packet,
     dropped_ungrounded_queries,
     merge_candidate_queries,
+    row_literal_text,
 )
 from proxy.services.lsr_norm_quality_gate_service import (
     LsrResearchRoundResult,
@@ -1352,17 +1353,44 @@ _MODEL_RAG_QUERY_INSTRUCTION = (
 )
 _MODEL_RAG_QUERY_REPAIR_INSTRUCTION = (
     "Предыдущий ответ не содержал поисковых строк. Верни только поисковые "
-    "запросы к датасетам, каждый с новой строки. Без обращения, плана и "
+    "запросы к датасетам в формате, описанном выше: каждый с новой строки, "
+    "обычным текстом или пунктом списка. Без обращения, плана и "
     "подтверждения. Нормы пока не выбирай."
 )
 _MODEL_RAG_QUERY_VOLUME_HINT = (
     "Пустые ценовые колонки исходника не ищи. Запросы — по работам и "
     "измерителям строк, не по прайсу."
 )
+#: The marker spellings the prompt names and the reader strips.  One tuple feeds
+#: both sides, so the declared-query contract cannot be documented on one end and
+#: implemented on the other (``test_declaration_prompt_and_reader_agree``).
+_DECLARED_QUERY_MARKER_EXAMPLES = ("1.", "1)", "-", "*", "•", "—")
+#: The one format contract, quoted to the model and implemented by
+#: :func:`read_declared_query_list`.  Blocker § 2 (29.09) asked for prompt, reader
+#: and adapter to agree instead of growing a list of Russian phrases: every form
+#: named here is accepted structurally, whatever model produced it.
+_MODEL_RAG_QUERY_FORMAT_CONTRACT = (
+    "Формат ответа: каждый поисковый запрос — отдельной строкой, формулировку "
+    "строки исходника не меняй. Строка может быть обычным текстом или пунктом "
+    "списка ("
+    + ", ".join(_DECLARED_QUERY_MARKER_EXAMPLES)
+    + ") — любой из этих видов читается как один запрос, номер и маркер списка "
+    "отбрасываются, текст запроса остаётся дословным. Сопровождающий ответ "
+    "(вступление, пояснение, заключение) допустим только отдельными строками: он "
+    "не будет выполнен как запрос и сохраняется с причиной отклонения. Если "
+    "запрос относится к конкретной строке листа, укажи её адрес в начале строки "
+    "(например «СКС!R12 — Прокладка кабеля»); адрес код читает как указатель, а "
+    "не как часть формулировки."
+)
 _ROW_PACKET_MIN = 8
 _ROW_PACKET_TARGET = 10
 _ROW_PACKET_MAX = 12
 _ROW_PACKET_MAX_ATTEMPTS = 2
+#: One declaration call, then at most one repair and at most one continuation.
+#: The ceiling bounds the orchestration, never the reading: a query list the
+#: model cut off at ``finish_reason=length`` is finished by asking for exactly the
+#: unread tail, which is a second call, not a second guess at the model's intent.
+_MAX_SHEET_PASS_QUERY_CALLS = 3
 
 
 def profile_uses_model_driven_retrieval(
@@ -1467,9 +1495,13 @@ def bind_tabular_estimator_profile(
 
 
 def model_rag_query_instruction(profile_snapshot: dict[str, Any] | None) -> str:
-    """Search-query call contract; empty VOR prices are not a price-list search."""
+    """Search-query call contract; empty VOR prices are not a price-list search.
 
-    parts = [_MODEL_RAG_QUERY_INSTRUCTION]
+    The format paragraph is the same constant the reader implements, so a change
+    to one side is a change to the other by construction.
+    """
+
+    parts = [_MODEL_RAG_QUERY_INSTRUCTION, _MODEL_RAG_QUERY_FORMAT_CONTRACT]
     snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
     if (
         str(snapshot.get("mode") or "").strip().casefold() == "estimator"
@@ -1512,7 +1544,8 @@ def sheet_pass_query_instruction(
         "Другие листы манифеста будут отдельными шагами; не составляй запросы по ним."
         + "\nКроме твоих запросов система гарантированно добавляет два запроса на "
         "каждую строку листа: дословный текст строки и тот же текст с явно указанными "
-        "в исходнике атрибутами (раздел листа, написанный шифр). Такие запросы помечены "
+        "в исходнике атрибутами (раздел листа, подписанный столбец, написанный шифр). "
+        "Такие запросы помечены "
         "в доказательственной части как «дословный исходный текст строки» или «системный "
         "подбор по атрибутам этой строки». Это только кандидаты: выбирать норму, оценивать "
         "её применимость и отклонять всех предложенных кандидатов решаешь ты. Отсутствие "
@@ -2570,6 +2603,449 @@ _QUERY_PROVENANCE_HEADER_LABELS = {
 _MIN_MODEL_RAG_EVIDENCE_BODY_CHARS = 400
 _LENGTH_FINISH_REASONS = {"length", "max_tokens", "length_truncated"}
 
+# ---------------------------------------------------------------- blocker §  2
+#
+# The declared-query contract: one format, stated in the prompt, implemented here
+# and used by the adapter, so the three cannot drift.  Nothing below grows a list
+# of Russian phrases.  Whether a line of an answer is a query is a structural
+# question — is it a list item, a label, or the accompanying text — and the answer
+# is the same whatever model produced it, which is what «поддержать обычный
+# текстовый вывод используемого провайдера» asks for.
+
+#: Below this a stripped line is not a query but a fragment of the answer.
+_MIN_DECLARED_QUERY_CHARS = 3
+_BULLETED_LINE_RE = re.compile(r"^[-*+\u2013\u2014\u2022\u2192>]\s+")
+#: ``1.``/``1)``/``(1)``/``1]`` may run into the text, but never into another
+#: digit or a decimal separator: «2.5 мм кабеля» is a query, not item 2.
+_NUMBERED_LINE_RE = re.compile(
+    r"^(?:\(?\d{1,3}[.)\]](?![\d.,])\s*|\d{1,3}-\s+|№\s*\d{1,3}[:.)\s](?!\d)\s*)"
+)
+_HEADING_LINE_RE = re.compile(r"^#{1,6}\s+")
+_BOLD_WRAPPER_RE = re.compile(r"^(?:\*\*|__)(?P<body>.+?)(?:\*\*|__)$")
+_TABLE_RULE_RE = re.compile(r"^\|?[\s:|-]{2,}\|?$")
+_LABEL_ONLY_RE = re.compile(r"^[^\n]{1,80}:\s*$")
+_LOCATOR_TOKEN_RE = re.compile(
+    r"[А-Яа-яA-Za-z][А-Яа-яA-Za-z0-9_.-]{0,24}!R\d+", re.IGNORECASE
+)
+#: The narrative prefixes the reader has carried since build 8xx.  Frozen on
+#: purpose: it separates an accompanying answer from a query, and a line it does
+#: not know is now classified structurally instead of needing a new entry.
+_NARRATIVE_QUERY_PREFIXES_FROZEN = _NARRATIVE_QUERY_PREFIXES
+
+
+@dataclass(frozen=True)
+class DeclaredQuery:
+    """One query as the model declared it: text verbatim, structure understood."""
+
+    text: str
+    marker_form: str  # "plain" | "numbered" | "bulleted" | "heading" | "wrapped"
+    addresses: tuple[str, ...] = ()
+    attribution: str = ""  # "address_written" | "literal_matches_row" | ""
+
+    def as_trace_dict(self) -> dict[str, Any]:
+        return {
+            "query_text": self.text,
+            "marker_form": self.marker_form,
+            "addresses": list(self.addresses),
+            "attribution": self.attribution,
+        }
+
+
+def _strip_declared_query_markers(line: str) -> tuple[str, str]:
+    """Presentation only: list markers, emphasis and heading marks come off.
+
+    Returns ``(text, marker_form)``.  The query wording itself is never touched —
+    blocker § 2, «не переписывать профессиональный смысл запроса кодом» — and the
+    marker form is reported so a reader can see which output style was used.
+    """
+
+    text = " ".join(str(line or "").split()).strip()
+    form = "plain"
+    for _round in range(3):
+        before = text
+        if _HEADING_LINE_RE.match(text):
+            text = _HEADING_LINE_RE.sub("", text, count=1).strip()
+            form = "heading"
+            continue
+        bold = _BOLD_WRAPPER_RE.match(text)
+        if bold:
+            text = bold.group("body").strip()
+            form = "wrapped"
+            continue
+        numbered = _NUMBERED_LINE_RE.match(text)
+        if numbered:
+            text = text[numbered.end() :].strip()
+            form = "numbered"
+            continue
+        if _BULLETED_LINE_RE.match(text):
+            text = text[1:].strip()
+            form = "bulleted"
+            continue
+        if text != before:
+            continue
+        break
+    return text, form
+
+
+def declared_query_rejection_reason(text: str, marker_form: str) -> str:
+    """Why a line is the accompanying answer rather than a query; "" means query.
+
+    Every rule is structural.  The frozen narrative list stays last so that an
+    answer line it recognises is still separated — but a differently worded
+    preamble no longer has to be added to it to be handled: it fails to look like
+    a list item and is judged by shape.
+    """
+
+    if not text:
+        return "empty_after_presentation_markers"
+    if _TABLE_RULE_RE.match(text):
+        return "table_rule_line"
+    folded = " ".join(text.split()).casefold()
+    if folded in _NARRATIVE_QUERY_EXACT:
+        return "conversational_acknowledgement"
+    if len(text) < _MIN_DECLARED_QUERY_CHARS:
+        return "shorter_than_a_query"
+    if marker_form == "heading":
+        return "heading_line"
+    if _LABEL_ONLY_RE.match(text):
+        return "label_line_without_query"
+    if any(folded.startswith(prefix) for prefix in _NARRATIVE_QUERY_PREFIXES_FROZEN):
+        return "narrative_answer_line"
+    return ""
+
+
+def declared_query_addresses(text: str) -> tuple[str, ...]:
+    """Source addresses the model itself wrote into the query line."""
+
+    return tuple(dict.fromkeys(
+        match.upper() for match in _LOCATOR_TOKEN_RE.findall(str(text or ""))
+    ))
+
+
+def split_declared_query_tail(
+    lines: Sequence[str],
+    *,
+    finish_reason: str = "",
+) -> tuple[list[str], str]:
+    """Complete lines, plus the line a cut-off answer left unread.
+
+    ``finish_reason=length`` means the provider stopped mid-generation, so the
+    last line may be truncated.  Executing it could search for half a phrase and
+    reading the list as complete could leave queries unmade, so the line is taken
+    out of the list, kept verbatim, and handed back to the model to finish
+    (blocker § 2: «Finish_reason=length требует адресной обработки непрочитанного
+    хвоста»).  An answer that ended normally keeps all of its lines.
+    """
+
+    items = [str(line or "").strip() for line in lines if str(line or "").strip()]
+    if not items or not finish_reason_is_length(finish_reason):
+        return items, ""
+    return items[:-1], items[-1]
+
+
+def read_declared_query_list(
+    raw: str,
+    *,
+    finish_reason: str = "",
+    packet_locators: Sequence[str] = (),
+    row_literals: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Apply the declared-query contract to one model answer.
+
+    Returns ``queries`` (:class:`DeclaredQuery`), ``accompanying_answer``
+    (``[{"line", "reason"}]`` — separated and kept, never executed, never
+    discarded), ``unread_tail`` (the query a cut answer left behind) and
+    ``answer_cut``.  Nothing is rewritten and nothing is invented: a line that is
+    not a query stays in the record with the structural reason for that.
+    """
+
+    wanted = {str(item).strip().upper() for item in packet_locators if str(item).strip()}
+    literals = {
+        str(locator).strip().upper(): " ".join(str(text or "").casefold().split())
+        for locator, text in (row_literals or {}).items()
+        if str(locator or "").strip()
+    }
+    complete_lines, unread_tail = split_declared_query_tail(
+        _unwrap_model_rag_query_lines(raw), finish_reason=finish_reason
+    )
+    queries: list[DeclaredQuery] = []
+    accompanying: list[dict[str, str]] = []
+    for line in complete_lines:
+        text, marker_form = _strip_declared_query_markers(line)
+        reason = declared_query_rejection_reason(text, marker_form)
+        if reason:
+            accompanying.append({"line": text or line.strip(), "reason": reason})
+            continue
+        written = declared_query_addresses(text)
+        attribution = ""
+        if written:
+            # The model's own pointer is kept verbatim even when it names a row
+            # outside this packet: an address the packet does not contain is a
+            # fact to measure, not a reason to rewrite the query.
+            attribution = (
+                "address_written"
+                if not wanted or all(item in wanted for item in written)
+                else "address_outside_packet"
+            )
+        elif literals:
+            folded = " ".join(text.casefold().split())
+            matched = sorted(
+                locator
+                for locator, literal in literals.items()
+                if literal and (literal in folded or folded in literal)
+            )
+            if matched:
+                attribution = "literal_matches_row"
+                known = [item for item in matched if not wanted or item in wanted]
+                written = tuple(known or matched)
+        folded_text = " ".join(text.casefold().split())
+        if any(
+            " ".join(item.text.casefold().split()) == folded_text for item in queries
+        ):
+            continue
+        queries.append(
+            DeclaredQuery(
+                text=text,
+                marker_form=marker_form,
+                addresses=written,
+                attribution=attribution,
+            )
+        )
+    return {
+        "schema": "les.declared-query-list.v1",
+        "queries": queries,
+        "accompanying_answer": accompanying,
+        "unread_tail": unread_tail,
+        "answer_cut": bool(finish_reason_is_length(finish_reason)),
+        "finish_reason": str(finish_reason or ""),
+    }
+
+
+def declared_query_continuation_instruction(
+    received: Sequence[str],
+    unread_tail: str,
+) -> str:
+    """Ask for exactly the unread remainder — not for a fresh list.
+
+    The already-received queries are named so the model does not repeat them, and
+    the cut line is quoted verbatim so the model finishes the query it was
+    writing instead of answering a different question.
+    """
+
+    already = "; ".join(str(item) for item in list(received)[-40:]) or "нет"
+    return (
+        "Предыдущий список поисковых запросов оборван на середине строки. "
+        f"Оборванная строка: «{unread_tail or '—'}». "
+        f"Уже получены запросы: {already}. "
+        "Допиши оборванную строку и верни только оставшиеся поисковые запросы "
+        "к датасетам, каждый с новой строки. Не повторяй уже полученные запросы, "
+        "не перефразируй их и не выбирай нормы."
+    )
+
+
+def declared_query_trace(declared: Mapping[str, Any]) -> dict[str, Any]:
+    """Serializable form of one declared-query answer for the durable trace."""
+
+    payload = dict(declared or {})
+    return {
+        "schema": "les.declared-query-list.v1",
+        "queries": [
+            item.as_trace_dict() if isinstance(item, DeclaredQuery) else dict(item)
+            for item in (payload.get("queries") or [])
+        ],
+        "accompanying_answer": list(payload.get("accompanying_answer") or []),
+        "unread_tail": str(payload.get("unread_tail") or ""),
+        "answer_cut": bool(payload.get("answer_cut")),
+        "finish_reason": str(payload.get("finish_reason") or ""),
+    }
+
+
+def model_rag_query_measurement(
+    *,
+    declared_queries: Sequence[Mapping[str, Any]] = (),
+    query_provenance: Mapping[str, str] | None = None,
+    query_addresses: Mapping[str, Sequence[str]] | None = None,
+    pass_hits: Sequence[tuple[str, Sequence[Any]]],
+    leftover_query_hits: Sequence[tuple[str, Sequence[Any]]] = (),
+    evidence_chunks: Sequence[Any] = (),
+    omitted_refs: Sequence[str] = (),
+    kept_rows: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    """Per-query found / shown / deferred / chosen for ONE packet, kept apart.
+
+    Blocker § 2 (29.09) forbids comparing an aggregate ``found`` across packets
+    with the ``model_visible`` of one later call as if it were one loss, so this
+    measures a single packet: every executed query gets its own row, the four
+    numbers never collapse into a single figure, and the group roll-up sums each
+    of them separately per provenance.  Nothing here judges a norm — a query with
+    no visible card is a retrieval fact, not «нет нормы».
+    """
+
+    def folded(text: Any) -> str:
+        return " ".join(str(text or "").casefold().split())
+
+    declared_by_text = {
+        folded(item.get("query_text")): dict(item)
+        for item in declared_queries
+        if folded(item.get("query_text"))
+    }
+    alias_to_query: dict[str, str] = {}
+    shown_by_query: dict[str, int] = {}
+    for chunk in evidence_chunks:
+        meta = getattr(chunk, "meta", {}) or {}
+        query_key = folded(meta.get("model_query_text"))
+        if not query_key:
+            continue
+        shown_by_query[query_key] = shown_by_query.get(query_key, 0) + 1
+        alias = str(meta.get("model_evidence_ref") or "").strip().upper()
+        if alias and alias not in alias_to_query:
+            alias_to_query[alias] = query_key
+    chosen_by_query: dict[str, int] = {}
+    for row in kept_rows:
+        counted: set[str] = set()
+        for ref in row.get("evidence_refs") or ():
+            query_key = alias_to_query.get(str(ref).strip().upper(), "")
+            if query_key and query_key not in counted:
+                counted.add(query_key)
+                chosen_by_query[query_key] = chosen_by_query.get(query_key, 0) + 1
+    deferred_wholly = {folded(query) for query, _hits in leftover_query_hits}
+    omitted_by_query: dict[str, int] = {}
+    for ref in omitted_refs or ():
+        alias = str(ref).strip().upper()
+        query_key = alias_to_query.get(alias, "")
+        if not query_key:
+            match = re.match(r"^Q(\d+)(?:\.H\d+)?$", alias)
+            if match:
+                index = int(match.group(1))
+                if 0 < index <= len(pass_hits):
+                    query_key = folded(pass_hits[index - 1][0])
+        if query_key:
+            omitted_by_query[query_key] = omitted_by_query.get(query_key, 0) + 1
+
+    rows: list[dict[str, Any]] = []
+    groups: dict[str, dict[str, int]] = {}
+    for raw_query, raw_hits in pass_hits:
+        query = str(raw_query or "").strip()
+        query_key = folded(query)
+        provenance = _model_rag_query_provenance(query_provenance, query)
+        found = len(list(raw_hits or ()))
+        shown = shown_by_query.get(query_key, 0)
+        row = {
+            "query_text": query,
+            "query_provenance": provenance,
+            "addresses": list(query_addresses.get(query, ()))
+            if query_addresses
+            else list(declared_by_text.get(query_key, {}).get("addresses") or ()),
+            "attribution": str(
+                declared_by_text.get(query_key, {}).get("attribution") or ""
+            ),
+            "found": found,
+            "model_visible": shown,
+            "not_visible": max(0, found - shown),
+            "deferred_wholly": query_key in deferred_wholly,
+            "cards_omitted": omitted_by_query.get(query_key, 0),
+            "chosen_rows": chosen_by_query.get(query_key, 0),
+        }
+        rows.append(row)
+        group = groups.setdefault(
+            provenance,
+            {"queries": 0, "found": 0, "model_visible": 0, "not_visible": 0,
+             "chosen_rows": 0},
+        )
+        group["queries"] += 1
+        for key in ("found", "model_visible", "not_visible", "chosen_rows"):
+            group[key] += int(row[key])
+    return {
+        "schema": "les.query-measurement.v1",
+        "queries": rows,
+        "groups": groups,
+        "compares_only_within_this_packet": True,
+    }
+
+
+def declared_query_attempt_plan(
+    *,
+    declared: Mapping[str, Any],
+    already_declared: Sequence[str],
+    phase: str,
+    attempts_remaining: int,
+) -> tuple[str, str]:
+    """Decide the next query call from one declared answer, or stop.
+
+    Two and only two follow-ups exist, which is what keeps a cut list from
+    turning into an unbounded retry loop (blocker § 1: «увеличение времени/попыток
+    само по себе не исправление»):
+
+      * ``continuation`` — the answer stopped mid-line at ``finish_reason=length``,
+        so exactly that unread line is asked for, once;
+      * ``repair`` — nothing at all was declared, so the format contract is
+        restated, once.
+
+    A tail is never chased twice and a declared list is never re-asked, so a model
+    that answered is never prompted again for the same answer.
+    """
+
+    if attempts_remaining <= 0:
+        return "", ""
+    unread_tail = str(declared.get("unread_tail") or "")
+    if unread_tail and phase != "continuation":
+        return (
+            "continuation",
+            declared_query_continuation_instruction(already_declared, unread_tail),
+        )
+    if not already_declared and phase != "repair":
+        return "repair", _MODEL_RAG_QUERY_REPAIR_INSTRUCTION
+    return "", ""
+
+
+def rejected_reason_counts(
+    rejected: Sequence[Mapping[str, str]],
+) -> dict[str, int]:
+    """How many lines were separated for each structural reason.
+
+    The count is the answer to «сохранять причины отклонения»: a reader can see
+    that the model wrote prose, not that it declared nothing, without any of the
+    rejected lines being discarded.
+    """
+
+    counts: dict[str, int] = {}
+    for row in rejected:
+        reason = str((row or {}).get("reason") or "unspecified")
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def merge_query_measurement(
+    rollup: dict[str, Any],
+    measurement: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Add one packet's separate counts to a sheet/run roll-up, number by number.
+
+    A packet count is carried alongside the sums because blocker § 2 rules out
+    reading a multi-packet ``found`` against one packet's ``model_visible`` as a
+    single loss: the roll-up stays a per-packet average-friendly structure, and
+    every figure keeps its own name.
+    """
+
+    packets = int(rollup.get("packets") or 0) + 1
+    rollup["packets"] = packets
+    groups = rollup.setdefault("groups", {})
+    for provenance, counters in (measurement.get("groups") or {}).items():
+        group = groups.setdefault(
+            str(provenance),
+            {"queries": 0, "found": 0, "model_visible": 0, "not_visible": 0,
+             "chosen_rows": 0},
+        )
+        for key in ("queries", "found", "model_visible", "not_visible", "chosen_rows"):
+            group[key] += int(counters.get(key) or 0)
+    rollup["deferred_wholly_queries"] = int(
+        rollup.get("deferred_wholly_queries") or 0
+    ) + sum(1 for row in measurement.get("queries") or () if row.get("deferred_wholly"))
+    rollup["cards_omitted"] = int(rollup.get("cards_omitted") or 0) + sum(
+        int(row.get("cards_omitted") or 0) for row in measurement.get("queries") or ()
+    )
+    return rollup
+
 
 def _unwrap_model_rag_query_lines(raw: str) -> list[str]:
     """Strip fences and explicit wrappers; do not invent replacement queries."""
@@ -2614,27 +3090,29 @@ def _unwrap_model_rag_query_lines(raw: str) -> list[str]:
 
 
 def is_model_rag_search_query_line(line: str) -> bool:
-    """Reject conversational preamble; keep the remaining model-authored search lines."""
+    """One line of a declared-query answer: query, or accompanying text.
 
-    folded = " ".join(str(line or "").split()).casefold()
-    if not folded:
-        return False
-    if folded in _NARRATIVE_QUERY_EXACT:
-        return False
-    return not any(folded.startswith(prefix) for prefix in _NARRATIVE_QUERY_PREFIXES)
+    Delegated to the same structural rules :func:`read_declared_query_list` uses,
+    so the historical helper and the contract cannot disagree about a line.
+    """
+
+    text, marker_form = _strip_declared_query_markers(line)
+    return not declared_query_rejection_reason(text, marker_form)
 
 
 def classify_model_rag_query_lines(raw: str) -> tuple[list[str], list[str]]:
-    """Split unwrapped lines into executable queries and rejected narrative."""
+    """Split an answer into executable queries and the accompanying answer text.
 
-    accepted: list[str] = []
-    rejected: list[str] = []
-    for query in _unwrap_model_rag_query_lines(raw):
-        if is_model_rag_search_query_line(query):
-            accepted.append(query)
-        else:
-            rejected.append(query)
-    return accepted, rejected
+    The rejected half keeps its structural reason in
+    :func:`read_declared_query_list`; this pair-shaped view stays for callers that
+    only need the texts.
+    """
+
+    declared = read_declared_query_list(raw)
+    return (
+        [item.text for item in declared["queries"]],
+        [str(row.get("line") or "") for row in declared["accompanying_answer"]],
+    )
 
 
 def parse_model_rag_queries(raw: str) -> list[str]:
@@ -3297,16 +3775,44 @@ def _model_rag_capped_hits(raw_hits: Sequence[Any], hits_per_query: int) -> list
     return list(raw_hits)[: max(1, int(hits_per_query))]
 
 
+def _query_address_list(
+    query_addresses: Mapping[str, Sequence[str]] | None,
+    query: str,
+) -> tuple[str, ...]:
+    """The source addresses this query was declared against, if any.
+
+    Looked up on the same case-folded key :func:`_model_rag_query_provenance`
+    uses, so a query cannot be attributed to one row in the header and to another
+    in the budget calculation.
+    """
+
+    if not query_addresses:
+        return ()
+    folded = " ".join(str(query or "").casefold().split())
+    for key, value in query_addresses.items():
+        if " ".join(str(key or "").casefold().split()) == folded:
+            return tuple(str(item) for item in (value or ()) if str(item or "").strip())
+    return ()
+
+
 def _model_rag_query_header(
     query_index: int,
     query: str,
     provenance: str = "model",
+    addresses: Sequence[str] = (),
 ) -> str:
     text = str(query or "").strip()
     label = _QUERY_PROVENANCE_HEADER_LABELS.get(
         str(provenance or "model").strip().casefold(), ""
     )
     base = f"[Поисковый запрос Q{query_index}] {text}"
+    # Blocker § 2: a query states which source rows it answers for.  Only
+    # addresses the model itself wrote are rendered — a row the code matched by
+    # text similarity stays in the trace, because telling the model "this query is
+    # about АР!R7" would be the code steering the search it is meant to judge.
+    known = [str(item).strip() for item in (addresses or ()) if str(item or "").strip()]
+    if known:
+        base += " [строки: " + ", ".join(known) + "]"
     return f"{base} {label}" if label else base
 
 
@@ -3367,6 +3873,7 @@ async def _execute_system_candidate_queries(
     query_provenance: dict[str, str],
     retrieval_trace: dict[str, Any],
     hits_per_query: int,
+    query_addresses: dict[str, list[str]] | None = None,
 ) -> int:
     """Append the ADR-16 code-authored candidate groups after the model's own.
 
@@ -3374,6 +3881,12 @@ async def _execute_system_candidate_queries(
     ``B0_DIRECT`` live-comparison baseline, and never before the model has had
     its own queries executed.  Every query is tagged with its provenance, so a
     missing tag is impossible on this path rather than defaulted.
+
+    ``query_addresses`` (optional) additionally records which source row a
+    code-authored candidate was built from — the candidate knows its own locator,
+    so the model can see the operation a query stands for instead of guessing it
+    from the wording.  Without the map the attribution still reaches the trace
+    through ``executed[].source_row``; only the rendered header omits it.
     """
 
     for query in model_queries:
@@ -3431,6 +3944,10 @@ async def _execute_system_candidate_queries(
             cache_updates[str(query)] = records
         pass_hits.append((query, hits))
         query_provenance[query] = candidate.provenance
+        if query_addresses is not None and str(candidate.locator or "").strip():
+            known_addresses = query_addresses.setdefault(str(query), [])
+            if candidate.locator not in known_addresses:
+                known_addresses.append(str(candidate.locator))
         executed.append(candidate.as_trace_dict())
         added += 1
     sheet_trace = trace["sheets"].setdefault(
@@ -3452,6 +3969,7 @@ async def _execute_system_candidate_queries(
     for key in (
         "skipped_without_source_text",
         "deferred_by_cap",
+        "deferred_by_char_budget",
         "deferred_by_search_block",
         "not_in_source_catalog",
     ):
@@ -3460,6 +3978,17 @@ async def _execute_system_candidate_queries(
             deferred[key] = sorted({*(deferred.get(key) or []), *map(str, items)})
     if built_report.get("limit_reached"):
         deferred["cap"] = built_report.get("cap")
+    # The source-text filter reports per packet, so its counters have to add up
+    # across a sheet: blocker § 2 asks what a row's text left out, and a total
+    # taken from the last packet would understate every earlier one.
+    filter_now = built_report.get("source_text_filter")
+    if isinstance(filter_now, Mapping):
+        filter_trace = sheet_trace.setdefault("source_text_filter", {})
+        for key, value in filter_now.items():
+            filter_trace[key] = int(filter_trace.get(key) or 0) + int(value or 0)
+        filter_trace["packets"] = int(filter_trace.get("packets") or 0) + 1
+        filter_trace["char_budget"] = int(built_report.get("char_budget") or 0)
+        filter_trace["chars_used_last_packet"] = int(built_report.get("chars_used") or 0)
     if blocked:
         sheet_trace["search_blocked"] = blocked
     return added
@@ -3477,6 +4006,7 @@ def model_rag_evidence_header_chars(
     hits_per_query: int,
     query_offset: int = 0,
     query_provenance: Mapping[str, str] | None = None,
+    query_addresses: Mapping[str, Sequence[str]] | None = None,
 ) -> int:
     """Character tax of query and hit headers, matching grouped evidence layout."""
 
@@ -3491,6 +4021,7 @@ def model_rag_evidence_header_chars(
                 query_index,
                 str(raw_query or ""),
                 _model_rag_query_provenance(query_provenance, raw_query),
+                _query_address_list(query_addresses, raw_query),
             )
         )
         segment_count += 1
@@ -3526,6 +4057,7 @@ def select_model_rag_query_hits_for_budget(
     hits_per_query: int,
     query_offset: int = 0,
     query_provenance: Mapping[str, str] | None = None,
+    query_addresses: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[
     list[tuple[str, Sequence[Any]]],
     list[tuple[str, Sequence[Any]]],
@@ -3555,6 +4087,7 @@ def select_model_rag_query_hits_for_budget(
             hits_per_query=hits_per_query,
             query_offset=query_offset,
             query_provenance=query_provenance,
+            query_addresses=query_addresses,
         )
         if tax <= max_chars:
             taken = count
@@ -3575,6 +4108,7 @@ def select_model_rag_query_hits_for_budget(
                 hits_per_query=hits_per_query,
                 query_offset=query_offset,
                 query_provenance=query_provenance,
+                query_addresses=query_addresses,
             )
             <= max_chars
         ):
@@ -3597,6 +4131,7 @@ def build_model_rag_evidence_groups(
     evidence_namespace: str = "",
     query_offset: int = 0,
     query_provenance: Mapping[str, str] | None = None,
+    query_addresses: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[list[str], list[_ModelRagEvidenceChunk], list[str]]:
     """Keep query headers; omit leftover queries and cards rather than crash."""
 
@@ -3606,6 +4141,7 @@ def build_model_rag_evidence_groups(
         hits_per_query=hits_per_query,
         query_offset=query_offset,
         query_provenance=query_provenance,
+        query_addresses=query_addresses,
     )
     omitted_refs = list(omitted_refs)
     omitted_refs.extend(
@@ -3620,6 +4156,7 @@ def build_model_rag_evidence_groups(
 
     prepared: list[tuple[int, str, str, list[tuple[int, Any, str, str]]]] = []
     prepared_provenance: dict[int, str] = {}
+    prepared_addresses: dict[int, tuple[str, ...]] = {}
     source_index = 0
     fixed_chars = 0
     segment_count = 0
@@ -3628,7 +4165,10 @@ def build_model_rag_evidence_groups(
     ):
         query = str(raw_query or "").strip()
         provenance = _model_rag_query_provenance(query_provenance, query)
-        query_header = _model_rag_query_header(query_index, query, provenance)
+        addresses = _query_address_list(query_addresses, query)
+        query_header = _model_rag_query_header(
+            query_index, query, provenance, addresses
+        )
         hits: list[tuple[int, Any, str, str]] = []
         fixed_chars += len(query_header)
         segment_count += 1
@@ -3641,6 +4181,7 @@ def build_model_rag_evidence_groups(
             segment_count += 1
         prepared.append((query_index, query_header, query, hits))
         prepared_provenance[query_index] = provenance
+        prepared_addresses[query_index] = addresses
 
     fixed_chars += max(0, segment_count - 1) * 2
 
@@ -3716,6 +4257,9 @@ def build_model_rag_evidence_groups(
                 {
                     "model_query_index": query_index,
                     "model_query_text": query,
+                    "model_query_addresses": list(
+                        prepared_addresses.get(query_index, ())
+                    ),
                     "model_hit_index": hit_index,
                     "model_evidence_ref": alias,
                     "query_provenance": prepared_provenance.get(query_index, "model"),
@@ -6685,6 +7229,10 @@ async def _execute_chat_evidence_application(
                     last_finish = ""
                     last_truncated = False
                     pass_rejected: list[str] = []
+                    # Blocker § 2: a line separated from the query list keeps the
+                    # structural reason it was separated for, so "the model wrote
+                    # prose" and "the model declared nothing" stay different facts.
+                    pass_rejected_reasons: list[dict[str, str]] = []
                     pass_omitted: list[str] = list(
                         (research_job or {}).get("omitted") or ()
                     )
@@ -6991,36 +7539,55 @@ async def _execute_chat_evidence_application(
                                 )
                                 selector_evidence = pass_evidence
                                 query_text = ""
-                                model_queries = []
+                                model_queries: list[str] = []
+                                declared_queries: list[dict[str, Any]] = []
+                                declared_seen: set[str] = set()
                                 rejected_now: list[str] = []
+                                rejected_reasons_now: list[dict[str, str]] = []
+                                rejected_seen: set[str] = set()
+                                query_calls: list[dict[str, Any]] = []
+                                query_answer_cut = False
+                                unread_query_tail = ""
+                                pass_query_addresses: dict[str, list[str]] = {}
                                 packet_round = max(
                                     (locator_research_round.get(str(item), 0) for item in packet),
                                     default=0,
                                 )
-                                query_instructions = [
-                                    sheet_pass_query_instruction(
-                                        profile_snapshot,
-                                        sheet=sheet_name,
-                                        sheet_index=sheet_index,
-                                        sheet_count=sheet_count,
-                                        research_round=packet_round,
-                                    ),
-                                    (
-                                        sheet_pass_query_instruction(
-                                            profile_snapshot,
-                                            sheet=sheet_name,
-                                            sheet_index=sheet_index,
-                                            sheet_count=sheet_count,
-                                            research_round=packet_round,
-                                        )
-                                        + "\n\n"
-                                        + _MODEL_RAG_QUERY_REPAIR_INSTRUCTION
-                                    ),
-                                ]
+                                query_base_instruction = sheet_pass_query_instruction(
+                                    profile_snapshot,
+                                    sheet=sheet_name,
+                                    sheet_index=sheet_index,
+                                    sheet_count=sheet_count,
+                                    research_round=packet_round,
+                                )
+                                query_directive = query_base_instruction
+                                query_phase = "declare"
+                                # Blocker § 2: a query is attributed to the row it
+                                # answers for by reading it against the same literal
+                                # row text the candidate author quotes, so the query
+                                # and the source cannot disagree about an operation.
+                                packet_row_literals: dict[str, str] = {}
+                                for packet_locator in packet:
+                                    packet_row = source_catalog.lookup(str(packet_locator))
+                                    if packet_row is None:
+                                        continue
+                                    packet_row_literals[str(packet_locator)] = row_literal_text(
+                                        packet_row
+                                    )
                                 try:
-                                    for query_attempt, query_instruction in enumerate(
-                                        query_instructions, start=1
+                                    for query_attempt in range(
+                                        1, _MAX_SHEET_PASS_QUERY_CALLS + 1
                                     ):
+                                        query_purpose = (
+                                            "model_rag_sheet_queries"
+                                            if query_phase == "declare"
+                                            else (
+                                                "model_rag_sheet_query_continuation"
+                                                if query_phase == "continuation"
+                                                else "model_rag_sheet_query_repair"
+                                            )
+                                        )
+                                        query_instruction = query_directive
                                         query_messages, query_packet = govern_inference_messages(
                                             preset=execution_preset,
                                             profile_prefix=(
@@ -7048,11 +7615,7 @@ async def _execute_chat_evidence_application(
                                         retrieval_trace["context_governor"]["calls"].append(
                                             context_packet_trace(
                                                 query_packet,
-                                                purpose=(
-                                                    "model_rag_sheet_queries"
-                                                    if query_attempt == 1
-                                                    else "model_rag_sheet_query_repair"
-                                                ),
+                                                purpose=query_purpose,
                                             )
                                         )
                                         query_body = {
@@ -7070,18 +7633,99 @@ async def _execute_chat_evidence_application(
                                         t_query_model = time.time()
                                         query_text, query_usage = await _sheet_pass_llm(
                                             query_body,
-                                            purpose=(
-                                                "model_rag_sheet_queries"
-                                                if query_attempt == 1
-                                                else "model_rag_sheet_query_repair"
-                                            ),
+                                            purpose=query_purpose,
                                         )
                                         t_llm += time.time() - t_query_model
-                                        model_queries, rejected_now = (
-                                            classify_model_rag_query_lines(query_text)
+                                        # One reader for the declared-query contract:
+                                        # the prompt states the format, this adapter
+                                        # reads it, and nothing re-splits the answer a
+                                        # second time with different rules.
+                                        declared_now = read_declared_query_list(
+                                            query_text,
+                                            finish_reason=llm_usage_finish_reason(
+                                                query_usage
+                                            ),
+                                            packet_locators=[str(item) for item in packet],
+                                            row_literals=packet_row_literals,
                                         )
-                                        if model_queries:
+                                        query_answer_cut = bool(
+                                            declared_now.get("answer_cut")
+                                        )
+                                        unread_query_tail = str(
+                                            declared_now.get("unread_tail") or ""
+                                        )
+                                        for declared_item in declared_now["queries"]:
+                                            folded_query = " ".join(
+                                                str(declared_item.text).casefold().split()
+                                            )
+                                            if folded_query in declared_seen:
+                                                continue
+                                            declared_seen.add(folded_query)
+                                            declared_queries.append(
+                                                declared_item.as_trace_dict()
+                                            )
+                                            model_queries.append(str(declared_item.text))
+                                            if declared_item.attribution in {
+                                                "address_written",
+                                                "address_outside_packet",
+                                            } and declared_item.addresses:
+                                                # Only the model's own pointer reaches
+                                                # the header; a row matched by text
+                                                # similarity stays in the trace, so the
+                                                # code never tells the model which
+                                                # operation a query "really" belongs to.
+                                                pass_query_addresses[
+                                                    str(declared_item.text)
+                                                ] = list(declared_item.addresses)
+                                        for rejected_row in declared_now["accompanying_answer"]:
+                                            rejected_line = str(rejected_row.get("line") or "")
+                                            if not rejected_line or rejected_line in rejected_seen:
+                                                continue
+                                            rejected_seen.add(rejected_line)
+                                            rejected_now.append(rejected_line)
+                                            rejected_reasons_now.append(dict(rejected_row))
+                                        query_calls.append(
+                                            {
+                                                "attempt": query_attempt,
+                                                "purpose": query_purpose,
+                                                "finish_reason": str(
+                                                    declared_now.get("finish_reason") or ""
+                                                ),
+                                                "declared": len(declared_now["queries"]),
+                                                "rejected": len(
+                                                    declared_now["accompanying_answer"]
+                                                ),
+                                                "completion_tokens": int(
+                                                    (query_usage or {}).get(
+                                                        "completion_tokens"
+                                                    )
+                                                    or 0
+                                                ),
+                                            }
+                                        )
+                                        # Blocker § 2: a list cut at
+                                        # finish_reason=length gets one targeted call
+                                        # for the unread line.  The queries already
+                                        # received are still executed and the cut line
+                                        # is quoted back verbatim, so no half-read
+                                        # query is searched and no unmade query is read
+                                        # as "the model decided nothing".
+                                        next_phase, next_suffix = declared_query_attempt_plan(
+                                            declared=declared_now,
+                                            already_declared=model_queries,
+                                            phase=query_phase,
+                                            attempts_remaining=(
+                                                _MAX_SHEET_PASS_QUERY_CALLS - query_attempt
+                                            ),
+                                        )
+                                        if not next_phase:
                                             break
+                                        query_phase = next_phase
+                                        query_directive = (
+                                            query_base_instruction
+                                            + "\n\n"
+                                            + next_suffix
+                                        )
                                 except ContextRequiredSectionOverflow as context_error:
                                     logger.warning(
                                         "[SHEET_PASS] query overflow sheet=%s: %s",
@@ -7090,6 +7734,7 @@ async def _execute_chat_evidence_application(
                                     )
                                     break
                                 pass_rejected.extend(rejected_now)
+                                pass_rejected_reasons.extend(rejected_reasons_now)
                                 if not model_queries:
                                     break
                                 any_sheet_queries = True
@@ -7171,6 +7816,7 @@ async def _execute_chat_evidence_application(
                                     hits_per_query=int(
                                         retrieval_limits["model_evidence_k"]
                                     ),
+                                    query_addresses=pass_query_addresses,
                                 )
                                 if candidate_added:
                                     logger.info(
@@ -7255,6 +7901,7 @@ async def _execute_chat_evidence_application(
                                     hits_per_query=retrieval_limits["model_evidence_k"],
                                     query_offset=0,
                                     query_provenance=pass_query_provenance,
+                                    query_addresses=pass_query_addresses,
                                 )
                             )
                             pass_omitted.extend(trim_omitted)
@@ -7290,6 +7937,7 @@ async def _execute_chat_evidence_application(
                                         + f":a{packet_attempts[fingerprint]}"
                                     ),
                                     query_provenance=pass_query_provenance,
+                                    query_addresses=pass_query_addresses,
                                 )
                             sheet_pass_evidence_chunks.extend(model_evidence_chunks)
                             pass_omitted.extend(omitted_now)
@@ -7427,6 +8075,27 @@ async def _execute_chat_evidence_application(
                             settled_after = settled_source_keys(
                                 accumulated_rows, source_catalog
                             )
+                            # Blocker § 2: найдено / показано / отложено / выбрано
+                            # measured for this packet alone, then added to the run
+                            # roll-up one number at a time.
+                            query_measurement = model_rag_query_measurement(
+                                declared_queries=declared_queries,
+                                query_provenance=pass_query_provenance,
+                                query_addresses=pass_query_addresses,
+                                pass_hits=pass_hits,
+                                leftover_query_hits=leftover_query_hits,
+                                evidence_chunks=model_evidence_chunks,
+                                omitted_refs=omitted_now,
+                                kept_rows=kept,
+                            )
+                            merge_query_measurement(
+                                retrieval_trace.setdefault(
+                                    "query_measurement",
+                                    {"schema": "les.query-measurement-rollup.v1",
+                                     "packets": 0, "groups": {}},
+                                ),
+                                query_measurement,
+                            )
                             retrieval_trace["tool_loop"]["passes"].append(
                                 {
                                     "sheet": sheet_name,
@@ -7440,6 +8109,12 @@ async def _execute_chat_evidence_application(
                                     "packet_locators": list(packet),
                                     "packet_attempt": packet_attempts[fingerprint],
                                     "queries": model_queries,
+                                    "declared_queries": declared_queries,
+                                    "query_calls": query_calls,
+                                    "query_answer_cut": query_answer_cut,
+                                    "unread_query_tail": unread_query_tail,
+                                    "rejected_query_reasons": list(rejected_reasons_now),
+                                    "query_measurement": query_measurement,
                                     "shown_queries": len(included_hits),
                                     "leftover_queries": len(leftover_query_hits),
                                     "leftover_query_texts": [
@@ -7819,6 +8494,14 @@ async def _execute_chat_evidence_application(
                     answer = "\n\n".join(part.strip() for part in answer_parts if part.strip())
                     answer_finish_reason = last_finish
                     rejected_model_queries = pass_rejected
+                    # Separated accompanying answer, with the reason each line got
+                    # separated: never executed, never thrown away (blocker § 2).
+                    retrieval_trace["declared_query_rejections"] = {
+                        "schema": "les.declared-query-rejections.v1",
+                        "count": len(pass_rejected_reasons),
+                        "reasons": rejected_reason_counts(pass_rejected_reasons),
+                        "lines": list(pass_rejected_reasons)[:200],
+                    }
                     omitted_evidence_refs = pass_omitted
                     crag_status = "MODEL_OUTPUT"
                     cited_all = cited_source_row_keys(accumulated_rows, source_catalog)

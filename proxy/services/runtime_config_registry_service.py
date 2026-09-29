@@ -123,6 +123,19 @@ _FACTOR_PRESENTATION = {
         ),
         "category": "smeta",
     },
+    "LES_LSR_SYSTEM_CANDIDATE_MAX_CHARS": {
+        "label": "Бюджет символов системных запросов на пакет",
+        "help_text": (
+            "Технический предел суммарной длины поисковых запросов, которые "
+            "система добавляет к запросам модели для одного пакета строк. Строка, "
+            "кандидат которой не поместился в бюджет, остаётся отложенной и видна "
+            "в трассировке (system_candidate_queries → deferred → "
+            "deferred_by_char_budget), а не как «норма отсутствует». Увеличивать "
+            "его смысла нет: запросы расходуются по кругу между строками пакета. "
+            "Действует со следующего запроса, перезапуск не нужен."
+        ),
+        "category": "smeta",
+    },
 }
 _EXPLICIT_FACTOR_DEFAULTS = {
     # Web factors are read through an injected Mapping; numeric admission

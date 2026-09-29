@@ -2855,7 +2855,7 @@
         "tests/test_lsr_candidate_query_service.py",
         "tests/test_rim_lsr_trace_service.py"
       ],
-      "lines": 820,
+      "lines": 832,
       "module": "proxy.services.attachment_source_catalog_service",
       "outbound": [
         "backend/converter.py",
@@ -3078,6 +3078,7 @@
         "tests/test_chat_profile_runtime.py",
         "tests/test_finalization_defects_782.py",
         "tests/test_live_workbook_acceptance_contract.py",
+        "tests/test_lsr_continuation_lineage_825.py",
         "tests/test_lsr_norm_applicability.py",
         "tests/test_lsr_packet_integrity.py",
         "tests/test_lsr_price_basis_continuation.py",
@@ -3091,7 +3092,7 @@
         "tests/test_stall_completion_23.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 9641,
+      "lines": 10324,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4747,7 +4748,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_lsr_candidate_query_service.py"
       ],
-      "lines": 385,
+      "lines": 646,
       "module": "proxy.services.lsr_candidate_query_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7449,6 +7450,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "sovushka/pages/chat.py",
         "tests/test_finalization_defects_782.py",
+        "tests/test_lsr_continuation_lineage_825.py",
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_scheduler_starvation_824.py",
         "tests/test_packaging_recovery_service.py",
@@ -9409,7 +9411,7 @@
     },
     {
       "inbound": [],
-      "lines": 4660,
+      "lines": 4690,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -11091,13 +11093,25 @@
     },
     {
       "inbound": [],
-      "lines": 226,
+      "lines": 448,
       "module": "tests.test_lsr_candidate_query_service",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
         "proxy/services/lsr_candidate_query_service.py"
       ],
       "path": "tests/test_lsr_candidate_query_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 413,
+      "module": "tests.test_lsr_continuation_lineage_825",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/workbook_research_job_service.py"
+      ],
+      "path": "tests/test_lsr_continuation_lineage_825.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -19214,9 +19228,9 @@
     "product_reachable": 358,
     "registered_api_routes": 338,
     "runtime_support": 11,
-    "test_or_tool_only": 655,
-    "tracked_python_files": 1025,
-    "tracked_python_lines": 349528
+    "test_or_tool_only": 656,
+    "tracked_python_files": 1026,
+    "tracked_python_lines": 351149
   },
   "warnings": []
 }

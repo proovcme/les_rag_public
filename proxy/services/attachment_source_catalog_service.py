@@ -159,6 +159,11 @@ class CatalogRow:
     hidden_sheet: bool = False
     header_quantity: float | None = None
     quantity_column_known: bool = False
+    # ``(column, governing header label)`` for the cells of this row, kept as data
+    # next to the labelled ``line``.  A consumer that must tell a subject-matter
+    # column from a service column (totals, money, numbering) needs the label as a
+    # field, not re-parsed out of the ``"<value> [<label>]"`` text.
+    column_headers: tuple[tuple[int, str], ...] = ()
 
     def is_work_row(self) -> bool:
         # Ambiguous rows remain in the completeness denominator.  The catalog
@@ -295,6 +300,7 @@ def _bind_column_headers(rows: Sequence[CatalogRow]) -> list[CatalogRow]:
             continue
         parts: list[str] = []
         header_quantity: float | None = None
+        labels: dict[int, str] = {}
         for cell in row.cells:
             label = headers.get(cell.column, "")
             number = _cell_number(cell)
@@ -303,6 +309,8 @@ def _bind_column_headers(rows: Sequence[CatalogRow]) -> list[CatalogRow]:
                 if label and number is not None
                 else cell.display_value
             )
+            if cell.column not in labels:
+                labels[cell.column] = label
             if quantity_col is not None and cell.column == quantity_col:
                 header_quantity = number
         if not parts:
@@ -314,6 +322,10 @@ def _bind_column_headers(rows: Sequence[CatalogRow]) -> list[CatalogRow]:
                 line=f"{row.locator}: " + " | ".join(parts),
                 header_quantity=header_quantity,
                 quantity_column_known=quantity_col is not None,
+                # The labels stay as data next to the labelled ``line`` so a
+                # consumer can tell *which* header governs a cell instead of
+                # re-parsing prose brackets (see CatalogRow.column_headers).
+                column_headers=tuple(sorted(labels.items())),
             )
         )
     return bound

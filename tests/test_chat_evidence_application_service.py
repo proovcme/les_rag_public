@@ -4457,6 +4457,7 @@ def _run_adr16(*, variant="B1_CANDIDATE", mode="estimator", status="ok", tools=N
     pass_hits: list[tuple[str, tuple]] = [(query, ()) for query in model_queries]
     trace: dict = {}
     provenance: dict[str, str] = {}
+    addresses: dict[str, list[str]] = {}
     cache_updates: dict[str, list] = {}
     added = asyncio.run(
         service._execute_system_candidate_queries(
@@ -4474,6 +4475,7 @@ def _run_adr16(*, variant="B1_CANDIDATE", mode="estimator", status="ok", tools=N
             query_provenance=provenance,
             retrieval_trace=trace,
             hits_per_query=6,
+            query_addresses=addresses,
         )
     )
     return {
@@ -4482,6 +4484,7 @@ def _run_adr16(*, variant="B1_CANDIDATE", mode="estimator", status="ok", tools=N
         "pass_hits": pass_hits,
         "trace": trace,
         "provenance": provenance,
+        "addresses": addresses,
         "cache_updates": cache_updates,
     }
 
@@ -4518,6 +4521,33 @@ def test_adr16_estimator_sheet_pass_adds_tagged_candidate_groups() -> None:
     assert {item["query_provenance"] for item in sheet_trace["executed"]} == {"original", "derived"}
     assert all(item["source_row"] == "СКС!R5" for item in sheet_trace["executed"])
     assert all(item["ungrounded_tokens"] == [] for item in sheet_trace["executed"])
+
+
+def test_a_candidate_query_carries_the_row_it_was_built_from() -> None:
+    """Blocker § 2: every query says which source row it stands for.
+
+    A code-authored candidate knows its own locator, so the adapter can show the
+    address instead of letting the model guess which operation the query is for.
+    The model's own query is left without an invented address.
+    """
+
+    result = _run_adr16()
+    original, derived = result["tools"].calls
+    assert result["addresses"] == {original: ["СКС!R5"], derived: ["СКС!R5"]}
+    assert "кабель NYM" not in result["addresses"]
+
+
+def test_a_packet_deferred_by_the_character_budget_stays_visible(monkeypatch) -> None:
+    """"Отложено by a technical bound is recorded, never read as «нет нормы»."""
+
+    monkeypatch.setenv("LES_LSR_SYSTEM_CANDIDATE_MAX_CHARS", "1")
+    result = _run_adr16()
+    assert result["added"] == 0
+    sheet_trace = result["trace"]["system_candidate_queries"]["sheets"]["СКС"]
+    assert sheet_trace["deferred"]["deferred_by_char_budget"] == ["СКС!R5"]
+    assert sheet_trace["source_text_filter"]["rows_in_packet"] == 1
+    assert sheet_trace["source_text_filter"]["packets"] == 1
+    assert "СКС!R5" not in sheet_trace["deferred"].get("skipped_without_source_text", [])
 
 
 def test_adr16_candidate_hits_are_cached_like_model_hits() -> None:

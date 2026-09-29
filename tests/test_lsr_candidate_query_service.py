@@ -5,10 +5,19 @@ These are the mechanical guarantees behind
 the source row already says, every query keeps its provenance, a query that would
 invent semantics is dropped instead of repaired, and the model's own queries are
 never replaced.
+
+Blocker § 2 added two further guarantees measured here: a system query carries the
+row's relevant source text and its explicitly written characteristics — not the
+workbook's totals, service columns and formula pointers — and neither the query cap
+nor the character budget may let one long row dump displace the candidates of the
+other operations in the packet.
 """
 from __future__ import annotations
 
-from proxy.services.attachment_source_catalog_service import CatalogRow
+from proxy.services.attachment_source_catalog_service import (
+    CatalogCell,
+    CatalogRow,
+)
 from proxy.services.lsr_candidate_query_service import (
     CandidateQuery,
     candidate_queries_enabled_for_turn,
@@ -37,6 +46,60 @@ def _row(
         line=f"{locator}: {line}",
         numbers=(),
         section_context=section,
+    )
+
+
+def _row_with_headers(
+    pairs: tuple[tuple[str, str], ...],
+    **kwargs: object,
+) -> CatalogRow:
+    """Build a row exactly as ``_bind_column_headers`` leaves it.
+
+    Each pair is ``(governing header label, cell text)``.  A formula cell is
+    written ``"=POINTER|cached value"`` so the fixture states both the pointer the
+    workbook holds and the value cached for it.
+    """
+
+    cells: list[CatalogCell] = []
+    headers: dict[int, str] = {}
+    for index, (label, value) in enumerate(pairs, 1):
+        headers[index] = label
+        formula = ""
+        cached: object = None
+        display = value
+        if value.startswith("=") and "|" in value:
+            formula, cached_text = value.split("|", 1)
+            display = formula
+            cached = cached_text
+        letter = chr(ord("A") + index - 1)
+        cells.append(
+            CatalogCell(
+                coordinate=f"{letter}12",
+                column=index,
+                raw_value=cached if formula else display,
+                display_value=display,
+                data_type="f" if formula else "s",
+                number_format="",
+                formula=formula,
+                cached_formula_value=cached,
+            )
+        )
+    locator = str(kwargs.pop("locator", "СКС!R12"))
+    line = " | ".join(
+        f"{cell.display_value} [{headers[cell.column]}]" if headers.get(cell.column)
+        else cell.display_value
+        for cell in cells
+    )
+    return CatalogRow(
+        locator=locator,
+        sheet=str(kwargs.pop("sheet", "СКС")),
+        excel_row=12,
+        values=tuple(cell.display_value for cell in cells),
+        line=f"{locator}: {line}",
+        numbers=(),
+        cells=tuple(cells),
+        column_headers=tuple(sorted(headers.items())),
+        section_context=str(kwargs.pop("section", "")),
     )
 
 
@@ -224,3 +287,162 @@ def test_disabled_switch_defers_the_whole_packet_instead_of_dropping_it() -> Non
     assert candidate_queries_for_rows(rows, cap=0, report=report) == []
     assert report["deferred_by_cap"] == ["СКС!R1"]
     assert report["authored"] == 0
+
+
+# ---------------------------------------------------------------- blocker § 2 R5
+
+
+def _vor_row(locator: str = "СКС!R12", **kwargs: object) -> CatalogRow:
+    """One row of a real ВОР layout: numbering, name, unit, quantity, totals."""
+
+    return _row_with_headers(
+        (
+            ("№ п/п", "7"),
+            ("Наименование работ", "Прокладка кабеля NYM 3x2.5 в трубе ПНД"),
+            ("Ед. изм.", "м"),
+            ("Кол-во", "300"),
+            ("Стоимость, руб. итого", "=АР!$G$111|125000"),
+            ("Масса, т", "0,42"),
+        ),
+        locator=locator,
+        **kwargs,
+    )
+
+
+def test_service_columns_and_formula_pointers_never_enter_a_system_query() -> None:
+    """§ 2: «релевантный исходный текст и явные характеристики, а не строку с
+    формулами итоговой стоимости и служебными колонками»."""
+
+    queries = candidate_queries_for_rows([_vor_row()], cap=10)
+    assert queries
+    for item in queries:
+        assert "АР!" not in item.text  # the pointer itself, never its text
+        assert "125000" not in item.text  # the total, in any form
+        assert "Итого" not in item.text.casefold()
+        assert "Стоимость" not in item.text
+        # what the search needs stays: the wording, the size and the unit.
+        assert "Прокладка кабеля NYM 3x2.5 в трубе ПНД" in item.text
+        assert "300" in item.text
+        assert "м" in item.text
+    report: dict = {}
+    candidate_queries_for_rows([_vor_row()], cap=10, report=report)
+    filtered = report["source_text_filter"]
+    # Two service columns in the row: the running number and the cost total.
+    assert filtered["cells_dropped_service_column"] == 2
+    assert filtered["cells_dropped_formula"] == 0
+    assert filtered["cells_total"] == 6
+
+
+def test_an_unresolved_formula_pointer_drops_only_itself() -> None:
+    """A cached value survives as a figure; an unresolvable pointer leaves nothing.
+
+    Neither case may reach the model as ``=АР!$G$111``: that string points inside
+    the customer's own workbook and carries no subject matter for a norm search.
+    """
+
+    resolved = _row_with_headers(
+        (("Наименование", "Сборка щита"), ("Кол-во", "=АР!$G$111|12"))
+    )
+    unresolved = _row_with_headers(
+        (("Наименование", "Сборка щита"), ("Кол-во", "=АР!$G$112|"))
+    )
+    assert [
+        item.text for item in candidate_queries_for_rows([resolved], cap=10)
+        if item.provenance == "original"
+    ] == ["Сборка щита | 12"]
+    report: dict = {}
+    queries = candidate_queries_for_rows([unresolved], cap=10, report=report)
+    assert [item.text for item in queries if item.provenance == "original"] == [
+        "Сборка щита"
+    ]
+    assert report["source_text_filter"]["cells_dropped_formula"] == 1
+
+
+def test_bare_figures_carry_their_header_only_on_the_derived_query() -> None:
+    """"300" is not a characteristic until the source names what it counts.
+
+    ``original`` stays the row's literal text word-for-word; ``derived`` is where
+    the governing column header is attached, and it is still only source text.
+    """
+
+    queries = candidate_queries_for_rows([_vor_row()], cap=10)
+    original = next(item for item in queries if item.provenance == "original")
+    derived = next(item for item in queries if item.provenance == "derived")
+    assert "300 [Кол-во]" not in original.text
+    assert "300 [Кол-во]" in derived.text
+    assert "0,42 [Масса, т]" in derived.text
+    for item in (original, derived):
+        assert token_grounding_violations(
+            item.text, " ".join(item.source_fields)
+        ) == ()
+
+
+def test_a_row_without_cell_metadata_keeps_its_line_verbatim() -> None:
+    """The filter cannot inspect a pasted row, so it must not narrow it either.
+
+    Dropping a column the code cannot see would silently delete subject matter;
+    the report says which path ran instead of pretending the row was filtered.
+    """
+
+    row = _row(line="Монтаж шкафа | Итого: 125 000")
+    report: dict = {}
+    queries = candidate_queries_for_rows([row], cap=10, report=report)
+    assert [item.text for item in queries] == ["Монтаж шкафа | Итого: 125 000"]
+    assert report["source_text_filter"]["rows_with_cell_metadata"] == 0
+    assert report["source_text_filter"]["rows_in_packet"] == 1
+
+
+# ---------------------------------------------------------------- blocker § 2 R6
+
+
+def test_every_row_gets_its_original_before_any_row_gets_its_derived() -> None:
+    """A cap is per packet, not per row: 5 slots must reach 5 operations."""
+
+    rows = [
+        _row(
+            locator=f"СКС!R{index}",
+            line=f"Монтаж элемента {index}",
+            section="Раздел 4. Наружные сети",
+        )
+        for index in range(1, 11)
+    ]
+    queries = candidate_queries_for_rows(rows, cap=5)
+    assert [item.provenance for item in queries] == ["original"] * 5
+    assert len({item.locator for item in queries}) == 5
+
+
+def test_a_long_row_dump_cannot_starve_the_short_rows_behind_it(monkeypatch) -> None:
+    """§ 2: «шум или длинные запросы не должны вытеснять кандидатов операции».
+
+    The count cap alone could not express this: one 400-character dump is a single
+    query.  With a character budget the dump is the thing that waits, it is named
+    by its locator, and every short row behind it still reaches the model.
+    """
+
+    monkeypatch.setenv("LES_LSR_SYSTEM_CANDIDATE_MAX_CHARS", "400")
+    dump = _row(locator="СКС!R1", line="Монтаж элемента " + ("состав и условия " * 40))
+    short_rows = [
+        _row(locator=f"СКС!R{index}", line=f"Монтаж узла {index}")
+        for index in range(2, 10)
+    ]
+    report: dict = {}
+    queries = candidate_queries_for_rows([dump, *short_rows], cap=50, report=report)
+
+    assert dump.locator not in {item.locator for item in queries}
+    assert {item.locator for item in queries} == {item.locator for item in short_rows}
+    assert report["deferred_by_char_budget"] == [dump.locator]
+    assert report["limit_reached"] is True
+    assert report["chars_used"] <= 400
+    # Deferred by a budget is not "no norm": the row itself stays in the packet.
+    assert dump.locator in report["deferred_by_cap"]
+
+
+def test_without_a_character_budget_the_count_cap_still_bounds_the_packet(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LES_LSR_SYSTEM_CANDIDATE_MAX_CHARS", "0")
+    rows = [_row(locator="СКС!R1", line="Монтаж элемента " + ("длинный " * 60))]
+    report: dict = {}
+    queries = candidate_queries_for_rows(rows, cap=5, report=report)
+    assert len(queries) == 1
+    assert report["deferred_by_char_budget"] == []
