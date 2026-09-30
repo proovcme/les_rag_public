@@ -108,7 +108,7 @@ from proxy.services.workbook_research_job_service import WorkbookResearchJobServ
 from proxy.services.packaging_recovery_service import (
     release_memory_for_packaging,
     packaging_recovery_payload,
-    describe_packaging_document,
+    workbook_document_from_events,
 )
 from proxy.services.lsr_result_readiness_service import (
     build_lsr_result_readiness,
@@ -1141,7 +1141,7 @@ def _turn_document_state(
             events = []
         else:
             return str(
-                describe_packaging_document(events, status=status).get("state") or ""
+                workbook_document_from_events(events, status=status).get("state") or ""
             )
     files = [dict(item) for item in workbook_files or () if isinstance(item, Mapping)]
     if not files:
@@ -4913,8 +4913,16 @@ def format_lsr_packaged_notice(
     missing: Sequence[str] = (),
     blockers: Sequence[str] = (),
     readiness: Mapping[str, Any] | None = None,
+    artifact_kind: str = "lsr_workbook",
 ) -> str:
     """Visible packaging outcome next to the workbook link."""
+
+    if artifact_kind == "vor_workbook":
+        notice = f"ВОР сформирован. Файл: {filename}." if filename else "ВОР сформирован."
+        questions = list((readiness or {}).get("open_questions") or [])
+        if questions:
+            notice += f" Открытые вопросы по исходнику: {len(questions)}. Проверьте замечания в ответе."
+        return notice
 
     if isinstance(readiness, Mapping) and readiness.get("dimensions"):
         return format_lsr_readiness_notice(readiness, filename=filename)
@@ -10259,6 +10267,20 @@ async def _execute_chat_evidence_application(
                                 else -1.0
                             ),
                         )
+                        packaged_kind = str(((workbook_chat_meta or {}).get("artifact") or {}).get("artifact_kind") or "lsr_workbook")
+                        if packaged_kind == "vor_workbook":
+                            vor_questions = [
+                                error for error in model_result_errors
+                                if str(error).startswith(("source_", "invalid_source_row", "duplicate_source_row"))
+                            ]
+                            lsr_readiness = {
+                                "schema": "les.vor-result-readiness.v1",
+                                "artifact_kind": "vor_workbook",
+                                "technical_complete": bool(workbook_files) and not remaining_locators and not vor_questions,
+                                "remaining_locators": remaining_locators,
+                                "catalog_work_count": len(source_catalog.work_locators()) if source_catalog else 0,
+                                "open_questions": vor_questions,
+                            }
                         retrieval_trace["result_readiness"] = lsr_readiness
                         if isinstance(workbook_chat_meta, dict):
                             artifact_meta = workbook_chat_meta.get("artifact")
@@ -10301,6 +10323,7 @@ async def _execute_chat_evidence_application(
                                 missing=harvested_missing,
                                 blockers=harvested_blockers,
                                 readiness=lsr_readiness,
+                                artifact_kind=packaged_kind,
                             )
                             packaging_warnings.extend(harvested_missing)
                             packaging_warnings.extend(harvested_blockers)

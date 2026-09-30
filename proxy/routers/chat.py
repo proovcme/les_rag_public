@@ -37,6 +37,7 @@ from proxy.services.chat_evidence_application_service import (
     document_price_basis_arguments,
     task_document_price_basis,
     workbook_packaging_lineage,
+    workbook_packaging_args,
 )
 from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
 from proxy.services.workbook_research_job_service import (
@@ -344,6 +345,9 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     # already carries (§ 4); the durable document projection is the source, so
     # the file does not depend on how the button was reached.
     document_block = (job or {}).get("document") if isinstance(job, dict) else None
+    repack_tool = str((document_block or {}).get("tool") or "build_lsr_workbook")
+    if repack_tool not in {"build_lsr_workbook", "build_vor_workbook"}:
+        raise HTTPException(400, "unsupported saved workbook tool")
     inherited_basis = document_price_basis_arguments(
         (document_block or {}).get("price_basis")
         if isinstance(document_block, dict)
@@ -351,21 +355,26 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     )
     task_context = job.get("task_context") or {}
     inherited_basis = task_document_price_basis(job, inherited_basis)
-    repack_args: dict[str, Any] = {
-        "attachment_id": attachment_id,
-        "question": str(req.question or (
+    repack_args = workbook_packaging_args(
+        packaging_tool=repack_tool,
+        attachment_id=attachment_id,
+        question=str(req.question or (
             "Пересобери ЛСР из сохранённых решений" if inherited_basis
             else task_context.get("original_question") or ""
         )),
-        "decisions": decisions,
-        "confirmed_data": overlays,
-    }
-    if inherited_basis:
+        decisions=decisions,
+        operator_overrides=overlays,
+        parent_revision_id=(
+            (document_block or {}).get("final_revision_id")
+            if repack_tool == "build_vor_workbook" else None
+        ),
+    )
+    if inherited_basis and repack_tool == "build_lsr_workbook":
         repack_args["document_price_basis"] = inherited_basis
     payload, traces = await execute_workbook_with_bounded_retry(
         _execute_chat_workbook_tool,
         {
-            "tool": "build_lsr_workbook",
+            "tool": repack_tool,
             "args": repack_args,
         },
         {
@@ -398,10 +407,14 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             )
             service.record_packaging(
                 job_id,
-                tool="build_lsr_workbook",
+                tool=repack_tool,
                 revision_id=str(artifact["revision_id"]),
                 draft=str(job.get("status") or "") != "complete",
-                parent_revision_id=settled.get("build_lsr_workbook", ""),
+                parent_revision_id=(
+                    _parents.get(repack_tool, "")
+                    if repack_tool == "build_vor_workbook"
+                    else settled.get(repack_tool, "")
+                ),
                 # the rebuilt file is the document's newest basis; store it so a
                 # later continuation inherits it instead of asking again (§ 4)
                 price_basis=harvested.get("price_basis"),
@@ -410,7 +423,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         except (WorkbookResearchJobError, OSError) as error:
             logger.warning("[REPACK] packaging event not recorded: %s", type(error).__name__)
         harvested["artifact"] = artifact
-    if isinstance(artifact, dict):
+    if isinstance(artifact, dict) and repack_tool == "build_lsr_workbook":
         artifact["draft_rows"] = compact_estimator_draft_rows(decisions)
         readiness = build_lsr_result_readiness(
             packaged=bool(artifact.get("download_url")),

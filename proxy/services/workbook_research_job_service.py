@@ -37,8 +37,8 @@ from uuid import uuid4
 from proxy.config import META_DB_PATH
 from proxy.services.lsr_source_coverage_service import inferred_row_role
 from proxy.services.packaging_recovery_service import (
-    describe_packaging_document,
     packaging_recovery_payload,
+    workbook_document_from_events,
 )
 
 SCHEMA = "les.workbook-research-job.v1"
@@ -2000,7 +2000,7 @@ class WorkbookResearchJobService:
             # not hold this job.
             raise WorkbookResearchJobError("workbook research job not found")
         job = self._row(row)
-        job["document"] = describe_packaging_document(
+        job["document"] = workbook_document_from_events(
             events, status=str(job.get("status") or "")
         )
         # ADR-16 § 7 asks every surface for the same basis; § 10 for one state.
@@ -2029,7 +2029,7 @@ class WorkbookResearchJobService:
             if row is None:
                 raise WorkbookResearchJobError("workbook research job not found")
             events = self._events(conn, str(job_id), "workbook_packaged")
-        return describe_packaging_document(
+        return workbook_document_from_events(
             events, status=str(row["status"] or "")
         )
 
@@ -2153,7 +2153,7 @@ class WorkbookResearchJobService:
         if found is None:
             return None
         job = self._row(found)
-        job["document"] = describe_packaging_document(
+        job["document"] = workbook_document_from_events(
             events, status=str(job.get("status") or "")
         )
         basis = job["document"].get("price_basis")

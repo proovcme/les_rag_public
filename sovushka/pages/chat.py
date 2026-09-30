@@ -5661,6 +5661,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             if url not in _file_artifacts:
                 new_xlsx_names.append(item["filename"])
             _register_file_artifact(item["filename"], url, "xlsx", rebuild=False)
+        if artifact.get("artifact_kind") == "vor_workbook":
+            _lsr_card_state.clear()
+            _rebuild_files_artifacts_panel()
+            return
         readiness = artifact.get("result_readiness")
         if not isinstance(readiness, dict):
             trace = (meta or {}).get("retrieval_trace") if isinstance(meta, dict) else {}

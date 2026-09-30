@@ -476,6 +476,16 @@ def test_model_rag_result_decoder_has_no_regex_or_language_router():
     assert "row_schema" not in source
 
 
+def test_vor_notice_does_not_require_norms_or_prices():
+    notice = service.format_lsr_packaged_notice(
+        filename="ВОР.xlsx", artifact_kind="vor_workbook",
+        pricing_status="norm_selection_required", norms_status="model_norms_partial",
+        readiness={"schema":"les.vor-result-readiness.v1", "open_questions":[]},
+    )
+    assert notice == "ВОР сформирован. Файл: ВОР.xlsx."
+    assert "ЛСР" not in notice
+
+
 def test_model_inline_assignments_keep_explicit_decisions_and_decimal_comma():
     answer = "ВК!R41: source_row=ВК!R41, row_role=work, work_row=ВК!R41, title=Монтаж изделия, исполнение A, unit=шт, quantity=2,5, norm_code=CUSTOM-41, norm_status=ANALOGUE_CANDIDATE, open_gap=Нужна проверка комплектации, evidence_refs=Q2.H3"
     parsed = service.parse_model_rag_result(answer)

@@ -75,6 +75,27 @@ def _env_flag(name: str) -> str:
 # --------------------------------------------------------------------------- #
 # durable document state
 # --------------------------------------------------------------------------- #
+def workbook_document_from_events(
+    events: Iterable[Mapping[str, Any]], *, status: str = ""
+) -> dict[str, Any]:
+    """Use the tool recorded by this job, without treating a VOR as a missing LSR."""
+    records = list(events or [])
+    tool = "build_lsr_workbook"
+    for event in records:
+        if not isinstance(event, Mapping):
+            continue
+        if str(event.get("event") or event.get("event_type") or "") != "workbook_packaged":
+            continue
+        payload = event.get("data") or event.get("payload") or {}
+        candidate = payload.get("tool") if isinstance(payload, Mapping) else None
+        if candidate in {"build_lsr_workbook", "build_vor_workbook"}:
+            tool = candidate
+    return describe_packaging_document(
+        records, status=status, tool=tool,
+        artifact_kind="vor_workbook" if tool == "build_vor_workbook" else "lsr_workbook",
+    )
+
+
 def describe_packaging_document(
     events: Iterable[Mapping[str, Any]],
     *,

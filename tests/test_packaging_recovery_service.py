@@ -10,7 +10,22 @@ from proxy.services.packaging_recovery_service import (
     packaging_recovery_payload,
     release_memory_for_packaging,
     reset_packaging_fault,
+    workbook_document_from_events,
 )
+
+
+def test_vor_job_recovers_its_actual_workbook_kind():
+    document = workbook_document_from_events([{
+        "event": "workbook_packaged", "data": {
+            "tool": "build_vor_workbook", "revision_id": "rev_vor", "draft": False,
+        },
+    }, {
+        "event": "packet_accepted", "data": {"tool": "build_lsr_workbook"},
+    }], status="complete")
+    assert document["state"] == "ready"
+    assert document["artifact_kind"] == "vor_workbook"
+    assert document["tool"] == "build_vor_workbook"
+    assert document["final_revision_id"] == "rev_vor"
 
 
 def _packaged(revision_id: str, *, draft: bool = False, tool: str = "build_lsr_workbook"):
@@ -306,6 +321,44 @@ def test_failed_repack_leaves_the_job_repairable(tmp_path, monkeypatch) -> None:
     assert service.get(job["job_id"])["document"]["needs_document"] is True
 
 
+def test_vor_repack_preserves_document_type_and_revision_lineage(tmp_path, monkeypatch):
+    import asyncio
+
+    from proxy.routers import chat as chat_router
+
+    service, job = _finished_job_without_document(tmp_path)
+    service.record_packaging(
+        job["job_id"], tool="build_vor_workbook", revision_id="rev_vor_first", draft=False,
+    )
+    calls = []
+    packaging = _fake_packaging(None, "rev_vor_second")
+
+    async def capture(executor, call, request_context, progress_sink, **kwargs):
+        from proxy.services.workbook_tool_service import BUILD_VOR_WORKBOOK
+
+        assert set(call["args"]) <= set(BUILD_VOR_WORKBOOK.input_schema["properties"])
+        calls.append(call)
+        return await packaging(executor, call, request_context, progress_sink, **kwargs)
+
+    monkeypatch.setattr(chat_router, "WorkbookResearchJobService", lambda: service)
+    monkeypatch.setattr(chat_router, "execute_workbook_with_bounded_retry", capture)
+    answer = asyncio.run(chat_router.repack_lsr_without_model(
+        chat_router.LsrRepackRequest(session_id="session-1", job_id=job["job_id"]), _user=None,
+    ))
+    assert answer["model_called"] is False
+    assert calls[0]["tool"] == "build_vor_workbook"
+    assert calls[0]["args"]["parent_revision_id"] == "rev_vor_first"
+    artifact = answer["harvested"]["artifact"]
+    assert artifact["artifact_kind"] == "vor_workbook"
+    assert artifact["document_state"]["state"] == "ready"
+    assert "result_readiness" not in artifact  # no LSR norm/price requirements
+    stored = service.get(job["job_id"])["document"]
+    assert stored["tool"] == "build_vor_workbook"
+    assert stored["final_revision_id"] == "rev_vor_second"
+    events = service.list_events(job["job_id"], "workbook_packaged")
+    assert events[-1]["payload"]["parent_revision_id"] == "rev_vor_first"
+
+
 def _fake_packaging(_real, revision_id: str, *, failed: bool = False):
     """Stand in for the packaging call; the saved decisions are what matter."""
 
@@ -333,7 +386,7 @@ def _fake_packaging(_real, revision_id: str, *, failed: bool = False):
                     "artifact_id": "art_1",
                     "revision_id": revision_id,
                     "revision_no": 2,
-                    "artifact_kind": "lsr_workbook",
+                    "artifact_kind": "vor_workbook" if call.get("tool") == "build_vor_workbook" else "lsr_workbook",
                     "byte_size": 1024,
                     "sha256": "c" * 64,
                     "download_url": f"/api/artifacts/{revision_id}/download",
