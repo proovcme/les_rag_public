@@ -2750,6 +2750,7 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "coverage",
             "coefficient",
             "evidence_refs",
+            "evidence_bindings",
             "norm_status",
             "action_match",
             "object_match",
@@ -3204,6 +3205,7 @@ def model_rag_query_measurement(
     evidence_chunks: Sequence[Any] = (),
     omitted_refs: Sequence[str] = (),
     kept_rows: Sequence[Mapping[str, Any]] = (),
+    query_offset: int = 0,
 ) -> dict[str, Any]:
     """Per-query found / shown / deferred / chosen for ONE packet, kept apart.
 
@@ -3256,7 +3258,7 @@ def model_rag_query_measurement(
         if not query_key:
             match = re.match(r"^Q(\d+)(?:\.H\d+)?$", alias)
             if match:
-                index = int(match.group(1))
+                index = int(match.group(1)) - max(0, query_offset)
                 if 0 < index <= len(pass_hits):
                     query_key = folded(pass_hits[index - 1][0])
         if query_key:
@@ -4484,12 +4486,13 @@ def select_model_rag_query_hits_for_budget(
     query_offset: int = 0,
     query_provenance: Mapping[str, str] | None = None,
     query_addresses: Mapping[str, Sequence[str]] | None = None,
+    require_card_bodies: bool = False,
 ) -> tuple[
     list[tuple[str, Sequence[Any]]],
     list[tuple[str, Sequence[Any]]],
     list[str],
 ]:
-    """Prefix whose headers fit; leftover queries stay whole for the next packet.
+    """Prefix whose evidence fits; leftover queries stay whole for the next packet.
 
     Technical orchestration only: query text and hit order are unchanged. If even
     the first query's hit headers exceed the budget, keep the query identity and
@@ -4515,12 +4518,21 @@ def select_model_rag_query_hits_for_budget(
             query_provenance=query_provenance,
             query_addresses=query_addresses,
         )
+        if require_card_bodies:
+            tax += sum(
+                _model_rag_required_body_chars(hit, _MIN_MODEL_RAG_EVIDENCE_BODY_CHARS)
+                for _query, hits in items[:count] for hit in hits
+            )
         if tax <= max_chars:
             taken = count
             continue
         break
     if taken:
         return items[:taken], items[taken:], []
+    if require_card_bodies:
+        # No professional verdict can be based on headers alone. Preserve the
+        # entire query for a visible capacity pause, not a silent no-data answer.
+        return [], items, []
 
     query, hits = items[0]
     query_index = max(0, query_offset) + 1
@@ -4546,6 +4558,60 @@ def select_model_rag_query_hits_for_budget(
             f"Q{query_index}.H{hit_index}" for hit_index in range(1, len(hits) + 1)
         ]
     return [(query, tuple(kept_hits))], items[1:], omitted_refs
+
+
+def _model_rag_required_body_chars(hit: Any, minimum: int) -> int:
+    body = str(getattr(hit, "content", "") or "").strip()
+    prefix = (getattr(hit, "meta", {}) or {}).get("minimum_evidence_body_chars")
+    floor = prefix + 1 if isinstance(prefix, int) and not isinstance(prefix, bool) and prefix > 0 else 0
+    return min(len(body), max(0, minimum, floor))
+
+
+def model_rag_evidence_page_state(
+    *, sheet: str, packet: Sequence[str],
+    leftover_query_hits: Sequence[tuple[str, Sequence[Any]]], query_offset: int,
+    query_provenance: Mapping[str, str], query_addresses: Mapping[str, Sequence[str]],
+) -> dict[str, Any]:
+    """Durable transport cursor, independent of the model's professional verdict."""
+    queries = [str(query) for query, _hits in leftover_query_hits if str(query).strip()]
+    if not queries:
+        return {}
+    return {
+        "sheet": sheet, "locators": list(packet), "queries": queries,
+        "query_offset": query_offset,
+        "query_provenance": {q: query_provenance.get(q, "model") for q in queries},
+        "query_addresses": {q: list(query_addresses.get(q, ())) for q in queries},
+    }
+
+
+def model_rag_prior_page_context(
+    rows: Sequence[Mapping[str, Any]], evidence_chunks: Sequence[Any],
+) -> tuple[dict[str, Any], list[Any]]:
+    """Replay authored rows and exactly their cited cards; never choose a norm."""
+    cited = {
+        str(identity) for row in rows
+        for identity in (row.get("evidence_bindings") or {}).values()
+    }
+    retained = []
+    seen = set()
+    for chunk in evidence_chunks:
+        identity = str((getattr(chunk, "meta", {}) or {}).get("global_evidence_id") or "")
+        if identity in cited and identity not in seen:
+            retained.append(chunk)
+            seen.add(identity)
+    return {
+        "prior_model_decisions": compact_estimator_draft_rows(list(rows)),
+        "previously_shown_cited_evidence": [
+            {"ref": (chunk.meta or {}).get("model_evidence_ref"),
+             "global_evidence_id": (chunk.meta or {}).get("global_evidence_id"),
+             "content": chunk.content} for chunk in retained
+        ],
+        "evidence_continuation_instruction": (
+            "Это следующая страница уже найденных карточек для тех же строк. "
+            "Сохрани корректные прежние решения и их цитаты; учитывай новые карточки. "
+            "Верни все операции этого пакета. Код не изменял предметные решения."
+        ),
+    }, retained
 
 
 def build_model_rag_evidence_groups(
@@ -4627,15 +4693,26 @@ def build_model_rag_evidence_groups(
     required_caps: dict[tuple[int, int], int] = {}
     for query_index, _qh, _q, hits in prepared:
         for hit_index, hit, _sh, body in hits:
-            prefix = (getattr(hit, "meta", {}) or {}).get("minimum_evidence_body_chars")
-            # Typed-card identity/conditions/source must remain whole. Reserve
-            # one character for the truncation mark after that required prefix.
-            floor = prefix + 1 if isinstance(prefix, int) and not isinstance(prefix, bool) and prefix > 0 else 0
-            required_caps[(query_index, hit_index)] = min(len(body), max(min_body, floor))
+            required_caps[(query_index, hit_index)] = _model_rag_required_body_chars(hit, min_body)
     omit_mode = bool(bodies) and any(body_cap < cap for cap in required_caps.values())
 
     included_caps: dict[tuple[int, int], int] = {}
-    if omit_mode:
+    if sum(required_caps.values()) <= body_budget:
+        # Reserve the identity/conditions of *every* card before allocating any
+        # optional resource preview. Greedy full-first allocation hid H2..H6.
+        low, high = 0, max((len(body) for body in bodies), default=0)
+        while low < high:
+            extra = (low + high + 1) // 2
+            used = sum(min(len(body), required_caps[(qi, hi)] + extra)
+                       for qi, _qh, _q, hits in prepared for hi, _hit, _sh, body in hits)
+            if used <= body_budget:
+                low = extra
+            else:
+                high = extra - 1
+        included_caps = {(qi, hi): min(len(body), required_caps[(qi, hi)] + low)
+                         for qi, _qh, _q, hits in prepared for hi, _hit, _sh, body in hits}
+        omit_mode = True  # use the individual reserved caps, with no omitted card
+    elif omit_mode:
         used = 0
         max_rank = max((len(hits) for _qi, _qh, _q, hits in prepared), default=0)
         for rank in range(1, max_rank + 1):
@@ -7956,6 +8033,8 @@ async def _execute_chat_evidence_application(
                         inner = 0
                         deferred_query_hits: list[tuple[str, Sequence[Any]]] = []
                         held_packet: list[str] = []
+                        evidence_query_offset = 0
+                        held_query_context: dict[str, Any] = {}
                         if (
                             str(stored_held.get("sheet") or "") == sheet_name
                             and stored_held.get("queries")
@@ -7963,7 +8042,7 @@ async def _execute_chat_evidence_application(
                             held_packet = [
                                 locator
                                 for locator in (stored_held.get("locators") or [])
-                                if locator in remaining
+                                if source_catalog.lookup(locator) is not None
                             ]
                             deferred_query_hits = restore_query_hits_from_cache(
                                 [
@@ -7973,8 +8052,10 @@ async def _execute_chat_evidence_application(
                                 ],
                                 sheet_query_cache,
                             )
+                            held_query_context = dict(stored_held)
+                            evidence_query_offset = int(stored_held.get("query_offset") or 0)
                             stored_held = {}
-                        while remaining:
+                        while remaining or deferred_query_hits:
                             if research_job_service is not None and research_job is not None:
                                 research_job = research_job_service.get(research_job["job_id"])
                                 run_stops, cancelled_now, stop_kind = research_run_stopped(
@@ -8001,7 +8082,7 @@ async def _execute_chat_evidence_application(
                                 packet = [
                                     locator
                                     for locator in held_packet
-                                    if locator in remaining
+                                    if source_catalog.lookup(locator) is not None
                                 ]
                                 if not packet:
                                     pass_omitted.extend(
@@ -8032,6 +8113,18 @@ async def _execute_chat_evidence_application(
                                     sheet=sheet_name,
                                     remaining_work=packet,
                                 )
+                                prior_page_rows = [row for row in accumulated_rows if str(row.get("source_row") or "") in packet]
+                                prior_page_context, prior_page_chunks = model_rag_prior_page_context(
+                                    prior_page_rows, sheet_pass_evidence_chunks)
+                                if prior_page_rows:
+                                    pass_evidence.append(prior_page_context)
+                                declared_queries = []
+                                query_calls = []
+                                query_answer_cut = False
+                                unread_query_tail = ""
+                                rejected_reasons_now = []
+                                pass_query_provenance = dict(held_query_context.get("query_provenance") or {})
+                                pass_query_addresses = dict(held_query_context.get("query_addresses") or {})
                                 prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
                                 if prior_packet_rows:
                                     pass_evidence.append({
@@ -8047,6 +8140,8 @@ async def _execute_chat_evidence_application(
                                 any_sheet_queries = True
                             else:
                                 held_packet = []
+                                evidence_query_offset = 0
+                                prior_page_chunks = []
                                 packet = adaptive_row_packet(
                                     remaining,
                                     generation_reserve_tokens=(
@@ -8408,6 +8503,11 @@ async def _execute_chat_evidence_application(
                                 sheet_count=sheet_count,
                                 remaining_work=packet,
                             )
+                            question_tail += (
+                                "\nКарточки могут доставляться страницами по ёмкости контекста. "
+                                "Не объявляй поиск исчерпанным по одной странице: найденный хвост "
+                                "будет передан с твоими прежними решениями и цитатами."
+                            )
                             _, fixed_packet = govern_inference_messages(
                                 preset=answer_execution_preset,
                                 profile_prefix=sheet_sys_msg,
@@ -8448,12 +8548,29 @@ async def _execute_chat_evidence_application(
                                     pass_hits,
                                     max_chars=group_max_chars,
                                     hits_per_query=retrieval_limits["model_evidence_k"],
-                                    query_offset=0,
+                                    query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
                                     query_addresses=pass_query_addresses,
+                                    require_card_bodies=True,
                                 )
                             )
                             pass_omitted.extend(trim_omitted)
+                            if not included_hits and leftover_query_hits:
+                                # Preserve a query that cannot fit even one page.
+                                # Capacity is a technical pause, never NO_NORM.
+                                held_query_context = model_rag_evidence_page_state(
+                                    sheet=sheet_name, packet=packet,
+                                    leftover_query_hits=leftover_query_hits,
+                                    query_offset=evidence_query_offset,
+                                    query_provenance=pass_query_provenance,
+                                    query_addresses=pass_query_addresses)
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.pause(
+                                        research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
+                                        held_packet=held_query_context, phase="evidence_capacity")
+                                run_stop_kinds.append("evidence_capacity")
+                                logger.warning("[SHEET_PASS] query cards exceed evidence capacity; sheet=%s budget=%s", sheet_name, group_max_chars)
+                                break
                             if not included_hits:
                                 pass_omitted.extend(
                                     model_rag_query_hit_refs(
@@ -8485,6 +8602,7 @@ async def _execute_chat_evidence_application(
                                         )
                                         + f":a{packet_attempts[fingerprint]}"
                                     ),
+                                    query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
                                     query_addresses=pass_query_addresses,
                                 )
@@ -8525,8 +8643,7 @@ async def _execute_chat_evidence_application(
                                         memory_candidates,
                                         registered=workspace_memory_registered,
                                     ),
-                                    evidence=model_rag_evidence_groups,
-                                    required_evidence=pass_evidence,
+                                    required_evidence=[*pass_evidence, *model_rag_evidence_groups],
                                     source_map=(),
                                     tool_exchange=[],
                                     dialogue=[session_block] if session_block else [],
@@ -8537,6 +8654,16 @@ async def _execute_chat_evidence_application(
                                     sheet_name,
                                     context_error.code,
                                 )
+                                pending_page = model_rag_evidence_page_state(
+                                    sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
+                                    query_offset=evidence_query_offset,
+                                    query_provenance=pass_query_provenance,
+                                    query_addresses=pass_query_addresses)
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.pause(
+                                        research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
+                                        held_packet=pending_page, phase="evidence_capacity")
+                                run_stop_kinds.append("evidence_capacity")
                                 break
                             retrieval_trace["context_governor"]["calls"].append(
                                 context_packet_trace(
@@ -8578,11 +8705,11 @@ async def _execute_chat_evidence_application(
                             if parsed_pass is not None:
                                 _visible, pass_rows = parsed_pass
                             pass_rows = bind_row_evidence_ids(
-                                pass_rows, model_evidence_chunks
+                                pass_rows, [*prior_page_chunks, *model_evidence_chunks]
                             )
                             pass_errors = validate_model_rag_result_structure(
                                 pass_rows,
-                                model_evidence_chunks,
+                                [*prior_page_chunks, *model_evidence_chunks],
                                 expected_source_rows=len(packet),
                                 source_catalog=source_catalog,
                                 source_incomplete_locators=source_incomplete_locators,
@@ -8637,6 +8764,7 @@ async def _execute_chat_evidence_application(
                                 evidence_chunks=model_evidence_chunks,
                                 omitted_refs=omitted_now,
                                 kept_rows=kept,
+                                query_offset=evidence_query_offset,
                             )
                             merge_query_measurement(
                                 retrieval_trace.setdefault(
@@ -8666,6 +8794,7 @@ async def _execute_chat_evidence_application(
                                     "rejected_query_reasons": list(rejected_reasons_now),
                                     "query_measurement": query_measurement,
                                     "shown_queries": len(included_hits),
+                                    "evidence_query_offset": evidence_query_offset,
                                     "leftover_queries": len(leftover_query_hits),
                                     "leftover_query_texts": [
                                         str(query) for query, _hits in leftover_query_hits
@@ -8696,31 +8825,22 @@ async def _execute_chat_evidence_application(
                                 for locator in packet
                                 if locator in remaining
                             ]
-                            defer_query_packet = bool(
-                                leftover_query_hits and still_in_packet
-                            )
+                            # The evidence cursor is independent of settled rows.
+                            # A terminal answer on an early page cannot discard
+                            # cards the model requested but has not received yet.
+                            defer_query_packet = bool(leftover_query_hits)
                             if defer_query_packet:
                                 deferred_query_hits = leftover_query_hits
-                                held_packet = still_in_packet
+                                held_packet = list(packet)
+                                evidence_query_offset += len(included_hits)
                                 logger.warning(
                                     "[SHEET_PASS] defer leftover query headers "
                                     "sheet=%s shown=%s leftover=%s remaining_rows=%s",
                                     sheet_name,
                                     len(included_hits),
                                     len(leftover_query_hits),
-                                    len(still_in_packet),
+                                    len(packet),
                                 )
-                            elif leftover_query_hits:
-                                pass_omitted.extend(
-                                    model_rag_query_hit_refs(
-                                        leftover_query_hits,
-                                        hits_per_query=retrieval_limits[
-                                            "model_evidence_k"
-                                        ],
-                                        query_offset=len(included_hits),
-                                    )
-                                )
-                                held_packet = []
                             # One definition of progress for the guard and for the
                             # packet pool.  Judging progress only by the strict
                             # completeness metric counted a row the model had decided
@@ -8762,19 +8882,13 @@ async def _execute_chat_evidence_application(
                                             ),
                                             offers=int(packet_attempts[fingerprint]),
                                         )
-                            held_payload = (
-                                {
-                                    "sheet": sheet_name,
-                                    "locators": list(still_in_packet),
-                                    "queries": [
-                                        str(query)
-                                        for query, _hits in leftover_query_hits
-                                        if str(query).strip()
-                                    ],
-                                }
-                                if defer_query_packet
-                                else {}
-                            )
+                            held_payload = model_rag_evidence_page_state(
+                                sheet=sheet_name, packet=packet,
+                                leftover_query_hits=leftover_query_hits,
+                                query_offset=evidence_query_offset,
+                                query_provenance=pass_query_provenance,
+                                query_addresses=pass_query_addresses)
+                            held_query_context = held_payload
                             if leftover_query_hits and research_job_service is not None and research_job is not None:
                                 leftover_cache = {
                                     str(query): [durable_research_hit(item) for item in hits]
@@ -8911,6 +9025,11 @@ async def _execute_chat_evidence_application(
                         for locator in source_catalog.work_locators()
                         if locator not in settled_keys
                     ]
+                    pending_transport = set()
+                    pending_held = (research_job or {}).get("held_packet") or {}
+                    if pending_held.get("queries"):
+                        pending_transport.update(pending_held.get("locators") or ())
+                        unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
                     if research_job_service is not None and research_job is not None:
                         if owns_sheet_pass:
                             if research_cancelled or unfinished_locators:
@@ -8944,7 +9063,7 @@ async def _execute_chat_evidence_application(
                                 closable = [
                                     locator
                                     for locator in unfinished_locators
-                                    if locator not in set(starved)
+                                    if locator not in set(starved) and locator not in pending_transport
                                 ]
                                 if (
                                     not research_cancelled

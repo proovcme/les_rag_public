@@ -1027,7 +1027,25 @@ class WorkbookResearchJobService:
             prev_held_attempts = int(row["held_attempts"] or 0) if "held_attempts" in row.keys() else 0
             prev_omitted = _json_list(row, "omitted_json")
             newly_omitted = len(existing_omitted) - len(prev_omitted)
-            progressed = bool(new_revisions) or newly_omitted > 0
+            previous_held = _json_object(row, "held_packet_json")
+            previous_queries = list(previous_held.get("queries") or [])
+            previous_offset = previous_held.get("query_offset")
+            next_offset = held_payload.get("query_offset")
+            delivered_queries = (
+                next_offset - previous_offset
+                if isinstance(previous_offset, int) and isinstance(next_offset, int)
+                else 0
+            )
+            # A shrinking transport queue is not a professional decision and
+            # not a retry. Require the exact suffix/cursor relation so an
+            # unchanged or replaced query list cannot reset the stall guard.
+            evidence_page_progress = bool(
+                previous_queries and 0 < delivered_queries <= len(previous_queries)
+                and str(previous_held.get("sheet") or "") == str(sheet)
+                and list(previous_held.get("locators") or []) == packet
+                and list(held_payload.get("queries") or []) == previous_queries[delivered_queries:]
+            )
+            progressed = bool(new_revisions) or newly_omitted > 0 or evidence_page_progress
 
             new_round = prev_round + 1  # informational cumulative counter only
             new_run = prev_run + 1      # per-run budget (reset by begin_or_resume)
@@ -1158,6 +1176,7 @@ class WorkbookResearchJobService:
                     "remaining_total": len(remaining_locators),
                     "held_queries": len(held_payload.get("queries") or []),
                     "new_revisions": len(new_revisions),
+                    "evidence_page_progress": evidence_page_progress,
                 },
             )
             # Directive §4: emit stall event when auto-paused

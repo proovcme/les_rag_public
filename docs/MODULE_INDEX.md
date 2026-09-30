@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.112 / 840:** `core/chat-evidence` резервирует тела всех
+> карточек запроса до optional previews; хвост evidence не исчезает после
+> терминального ответа строки. Durable cursor и прежние cited cards проходят
+> resume; selected groups mandatory в ContextGovernor. Выбор нормы/решения
+> остаётся модели. Док↔код ✅; [rag-evidence-flow](modules/rag-evidence-flow.md),
+> `model_rag_evidence_page_state`, `model_rag_prior_page_context`,
+> `select_model_rag_query_hits_for_budget`. `core/workbook-research` проверяет
+> точный suffix/cursor, отличая доставку страниц от неизменившегося retry;
+> профессиональное решение не повышается. Six regressions, focused 236
+> passed. Installed comparative gate pending; customer-ready не заявлено.
+
 > **Кандидат 0.31.111 / 839:** `core/tool-harness` передаёт все exact варианты НР/СП
 > для сборника карточки без выбора ставки и путей. `core/chat-profiles` сохраняет
 > `nr_sp_rule_id` в decoder/контексте пересмотра; `core/rim` — в позиции расчёта.

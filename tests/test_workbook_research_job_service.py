@@ -23,6 +23,35 @@ def _identity(service: WorkbookResearchJobService, question: str = "Собери
     )
 
 
+def test_advancing_evidence_cursor_is_delivery_progress_not_a_held_retry(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "pages.sqlite")
+    job = service.begin_or_resume(_identity(service))
+    queries = [f"query {i}" for i in range(12)]
+    decision = {"source_row": "S!R2", "row_role": "work", "norm_status": "MISSING", "open_gap": "authored gap"}
+    job = service.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"],
+                                accepted_rows=[decision], evidence=[], remaining=[],
+                                held_packet={"sheet": "S", "locators": ["S!R2"], "queries": queries, "query_offset": 0})
+    for offset in range(1, 12):
+        # The same decision is retained: no norm/status is promoted to create progress.
+        job = service.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"],
+                                    accepted_rows=[decision], evidence=[], remaining=[],
+                                    held_packet={"sheet": "S", "locators": ["S!R2"],
+                                                 "queries": queries[offset:], "query_offset": offset})
+        assert not job["stall_guard"]["run_stops"]
+        assert job["stall_guard"]["held_attempts"] == 0
+        assert job["stall_guard"]["stall_count"] == 0
+    assert len(job["accepted_rows"]) == 1
+    assert job["accepted_rows"][0]["norm_status"] == "MISSING"
+    # Repeating an identical cursor must still trigger the existing retry guard.
+    for _ in range(10):
+        job = service.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"],
+                                    accepted_rows=[decision], evidence=[], remaining=[], held_packet=job["held_packet"])
+        if job["status"] == "paused":
+            break
+    assert job["status"] == "paused", job["stall_guard"]
+    assert job["stall_guard"]["pause_kind"] == "held_retry_exhausted"
+
+
 def test_pause_resume_keeps_rows_and_skips_cached_queries(tmp_path) -> None:
     service = WorkbookResearchJobService(tmp_path / "meta.db")
     first = service.begin_or_resume(_identity(service))

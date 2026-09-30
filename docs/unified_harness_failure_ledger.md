@@ -1,5 +1,19 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 840: retrieved evidence discarded after an early terminal row
+
+839/838 receipts measure omitted returned norm candidates despite query headers
+fitting. The allocator spent the body budget greedily on full first cards.
+The scheduler then discarded leftover queries when their rows were settled.
+Fix: reserve every card's required body before previews, split whole query
+groups into capacity pages, preserve a durable query cursor independently of
+settled decisions, replay authored rows and their cited evidence. Required
+ContextGovernor groups cannot disappear in final prompt packing. A group
+larger than a page remains a technical capacity pause, not no-data/NO_NORM.
+Six regressions include SQLite restart, evidence-ID preservation and advancing
+cursor versus identical held retry; focused 236 passed. Installed comparison/
+financial acceptance pending, not closed yet.
+
 ## 2026-10-01 — 839: live delivery passes, professional completeness fails
 
 Same original SKS/Qwen35B/r3: B0 210.2 s produced ungrounded citations and

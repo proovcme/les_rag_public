@@ -50,6 +50,82 @@ def test_typed_card_required_prefix_is_complete_in_a_budgeted_model_message():
     assert len("\n\n".join(groups)) <= headers + len(prefix) + 100
 
 
+def test_query_page_reserves_bodies_for_every_candidate_before_optional_preview():
+    hits = [SimpleNamespace(content=f"code-{i}: " + "x" * 3000,
+                            doc_id=str(i), doc_name="cards", score=1,
+                            meta={"minimum_evidence_body_chars": 480}) for i in range(12)]
+    queries = [("first", hits[:6]), ("second", hits[6:])]
+    headers = service.model_rag_evidence_header_chars(queries[:1], hits_per_query=6)
+    budget = headers + 6 * 481 + 100
+    included, deferred, omitted = service.select_model_rag_query_hits_for_budget(
+        queries, max_chars=budget, hits_per_query=6, require_card_bodies=True)
+    assert [q for q, _ in included] == ["first"]
+    assert [q for q, _ in deferred] == ["second"]
+    assert omitted == []
+    groups, chunks, omitted = service.build_model_rag_evidence_groups(
+        included, max_chars=budget, hits_per_query=6)
+    assert [c.doc_id for c in chunks] == [str(i) for i in range(6)]
+    assert all(len(c.content) >= 481 for c in chunks)
+    assert omitted == []
+    assert len("\n\n".join(groups)) <= budget
+
+
+def test_evidence_page_keeps_decided_rows_pending_until_retrieved_tail_is_delivered():
+    held = service.model_rag_evidence_page_state(
+        sheet="other sheet", packet=["other sheet!R17"],
+        leftover_query_hits=[("unaltered model query", [])],
+        query_offset=6, query_provenance={"unaltered model query": "model"},
+        query_addresses={"unaltered model query": ["other sheet!R17"]})
+    assert held["locators"] == ["other sheet!R17"]  # even after a terminal MISSING
+    assert held["queries"] == ["unaltered model query"]
+    assert held["query_offset"] == 6
+    assert held["query_addresses"]["unaltered model query"] == ["other sheet!R17"]
+    assert service.model_rag_evidence_page_state(
+        sheet="other sheet", packet=["other sheet!R17"], leftover_query_hits=[],
+        query_offset=7, query_provenance={}, query_addresses={}) == {}
+
+
+def test_prior_evidence_page_exposes_only_authored_decisions_and_their_exact_cards():
+    rows = [{"source_row": "S!R2", "row_role": "work", "norm_code": "01-02-003-04",
+             "evidence_refs": ["Q1.H6"], "evidence_bindings": {"Q1.H6": "durable-card"}}]
+    card = SimpleNamespace(content="exact previously shown card", doc_name="cards", doc_id="a", score=1,
+                           meta={"global_evidence_id": "durable-card", "model_evidence_ref": "Q1.H6"})
+    other = SimpleNamespace(content="unselected card", meta={"global_evidence_id": "unselected"})
+    payload, retained = service.model_rag_prior_page_context(rows, [card, other])
+    assert retained == [card]
+    assert payload["prior_model_decisions"][0]["norm_code"] == "01-02-003-04"
+    assert payload["prior_model_decisions"][0]["evidence_bindings"] == {"Q1.H6": "durable-card"}
+    assert payload["previously_shown_cited_evidence"][0]["content"] == card.content
+    assert "unselected card" not in json.dumps(payload)
+
+
+def test_page_cursor_and_cached_cards_survive_restart_with_terminal_model_rows(tmp_path):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    svc = WorkbookResearchJobService(tmp_path / "state.sqlite")
+    identity = svc.identity(session_id="test", attachment_id="read_123456abcdef", source_sha256="a" * 64,
+                            dataset_ids=[], profile_revision_id="factory", model_identity="qwen", question="LSR")
+    job = svc.begin_or_resume(identity)
+    held = service.model_rag_evidence_page_state(
+        sheet="S", packet=["S!R2"], leftover_query_hits=[("second query", [])],
+        query_offset=5, query_provenance={"second query": "derived"}, query_addresses={"second query": ["S!R2"]})
+    row = {"source_row": "S!R2", "row_role": "work", "norm_status": "MISSING", "open_gap": "model reason"}
+    svc.record_search_cache(job["job_id"], {"second query": [{"content": "exact card", "meta": {}}]})
+    svc.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"], accepted_rows=[row],
+                      evidence=[], remaining=[], held_packet=held)
+    svc.pause(job["job_id"], remaining=["S!R2"])
+    reopened = WorkbookResearchJobService(tmp_path / "state.sqlite").begin_or_resume(identity)
+    assert reopened["held_packet"] == held
+    assert reopened["accepted_rows"][0]["norm_status"] == "MISSING"
+    assert reopened["accepted_rows"][0]["open_gap"] == "model reason"
+    assert service.restore_query_hits_from_cache(held["queries"], reopened["query_cache"])[0][1][0].content == "exact card"
+
+
+def test_measurement_attributes_omitted_refs_after_page_offset():
+    result = service.model_rag_query_measurement(pass_hits=[("second query", [])],
+                                               omitted_refs=["Q7.H6"], query_offset=6)
+    assert result["queries"][0]["cards_omitted"] == 1
+
+
 
 def test_web_reader_is_visible_only_in_explicit_extended_request_snapshot():
     tools = ["web_search", "web_read", "filesystem_search"]

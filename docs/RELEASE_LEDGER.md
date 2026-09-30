@@ -1,5 +1,24 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.112 / 840 (01.10, Codex):** 839/838 live query measurements
+показали потерю H2..H6: страницы отбирались по размеру заголовков, затем
+полные первые карточки забирали бюджет тел; найденный хвост не доставлялся,
+если строка уже получила терминальный ответ. Теперь minimum bodies всех
+карточек запроса резервируются до previews, overflow остаётся целыми queries.
+Страницы продолжаются независимо от settled rows, без нового поиска/нового
+planner. Cursor/provenance/addresses сохраняются в held_packet; прежние
+решения и их cited evidence передаются вместе с новым input/evidence.
+Selected groups входят в mandatory ContextGovernor evidence; capacity failure
+остаётся возобновляемым техническим пробелом. Нормы/вердикты не выбираются
+кодом. Guard считает точное продвижение cursor/suffix доставкой evidence,
+но тот же неизменившийся cursor остаётся retry; thresholds не повышены.
+Six meaningful regressions, focused 236 passed. Финальный offline gate:
+2006 passed/20 existing opt-in skipped/5 warnings, 183.75 с; compileall и
+2026 collect зелёные, architecture и verify-root зелёные, asset SHA unchanged.
+Dry-run 11 файлов без DIVERGENT, rollback_839_to_840 сохранён.
+Installed B0/B1 и финансовый результат пока pending. 840 не объявлена
+готовой к передаче заказчику; старые ограничения 839 остаются измеренными.
+
 **Установлено 0.31.111 / 839, tested code commit 96db6fa1 (01.10, Codex):**
 alignment 96/96; native-RRF 1/1; basic smoke 9 passed / 1 existing diagnostics
 WARN / 0 failed; recovery ВОР/ЛСР 0.09/0.41 с, identical revision/SHA/calculation
