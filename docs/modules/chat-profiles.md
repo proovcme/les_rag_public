@@ -1,5 +1,31 @@
 # Chat profiles
 
+## 839: основания НР/СП доходят до модели и расчёта
+
+Dedicated norm RAG передаёт все строки установленного каталога НР/СП для
+сборника карточки: rule_id, вид/условия работ, проценты, основание, typed source_ref
+и SHA исходных документов. Пути исходных файлов не передаются. Это exact reader
+каталога, не выбор подходящей ставки, не изменение RRF или применимости нормы.
+Модель выбирает `nr_sp_rule_id` по условиям объекта либо оставляет вопрос.
+`parse_model_rag_result` сохраняет поле в таблице, inline, block и labelled форме;
+`compact_estimator_draft_rows` — в контексте пересмотра. `positions_from_visible_lsr_rows`
+передаёт его штатному `nr_sp_service.resolve`: чужой сборник отклоняется, отсутствие
+выбора при нескольких строках остаётся ambiguous, проценты не угадываются.
+До исправления живой 837 СКС имел две привязанные нормы с nr_sp_unresolved:
+модель не видела варианты, а даже явно возвращённое поле терялось в decoder/adapter.
+Budget renderer сохраняет обязательный prefix shown typed карточки целиком,
+включая источник/условия/основания НР/СП; сокращаться может обзор ресурсов.
+Если prefix не помещается, карточка явно omitted, не частично обоснованная.
+Это не утверждает, что все найденные кандидаты помещаются в один контекст.
+Regression 7 cases failed before, focused related suites 248 passed after.
+Живой финансовый gate и профессиональный выбор остаются отдельной приёмкой.
+Installed 839 evidence: SKS 75/75 but 0 calculated works; PDF LSR has 6 numerical
+positions yet lacks applicability match fields on those EXACT rows. Current
+exact-citation policy accepts same-cipher references without those fields;
+this release does not change that policy or call those sums an expert acceptance.
+PDF VOR still has 3 incomplete unit/quantity rows. See RELEASE_LEDGER/live_839;
+these limitations are retained, not hidden behind offline test counts.
+
 ## 838: наблюдаемая дата и каталог цен до исследования
 
 `model_runtime_facts` добавляет в обязательный profile prefix UTC дату приложения.

@@ -7,6 +7,8 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
+from proxy.services import nr_sp_service
+
 
 @dataclass(frozen=True)
 class ModelResearchToolResult:
@@ -41,6 +43,18 @@ def _norm_card_content(card: Mapping[str, Any]) -> str:
         f"Измеритель: {card.get('measure_unit') or ''}",
         "Состав работы: " + "; ".join(steps) if steps else "Состав работ в карточке не указан.",
     ]
+    if card.get("edition"):
+        parts.append(f"Редакция: {card['edition']}")
+    if card.get("source_ref"):
+        parts.append(f"Источник: {card['source_ref']}")
+    rules = card.get("nr_sp_candidates") or []
+    if rules:
+        parts.append("НР/СП: варианты каталога для сборника; выбор модели по условиям объекта, не готовая ставка:")
+        parts.extend(
+            f"{rule['rule_id']}: {rule['label']}; НР {rule['nr_pct']}%; СП {rule['sp_pct']}%; "
+            f"{rule['basis']}; источник {rule['source_ref']}"
+            for rule in rules
+        )
     resources = [
         item for item in card.get("resource_preview") or []
         if isinstance(item, Mapping) and str(item.get("name") or "").strip()
@@ -53,10 +67,6 @@ def _norm_card_content(card: Mapping[str, Any]) -> str:
             " · ".join(str(item.get(key) or "") for key in ("kind", "code", "name", "unit"))
             for item in resources
         )
-    if card.get("edition"):
-        parts.append(f"Редакция: {card['edition']}")
-    if card.get("source_ref"):
-        parts.append(f"Источник: {card['source_ref']}")
     return "\n".join(parts)
 
 
@@ -208,7 +218,10 @@ class ModelResearchToolService:
                     },
                     retrieval_trace=trace,
                 )
-            cards = cards_verified[: self._model_evidence_k]
+            cards = [
+                {**card, "nr_sp_candidates": nr_sp_service.model_candidates(code=str(card["norm_code"]))}
+                for card in cards_verified[: self._model_evidence_k]
+            ]
             chunks = tuple(
                 _SmetaNormChunk(
                     content=_norm_card_content(card),
@@ -219,13 +232,14 @@ class ModelResearchToolService:
                             key: card[key]
                             for key in (
                                 "norm_key", "edition", "base_type", "work_steps", "resource_count",
-                                "resource_kinds", "resource_preview",
+                                "resource_kinds", "resource_preview", "nr_sp_candidates",
                             )
                             if key in card
                         },
                         "norm_code": str(card.get("norm_code") or ""),
                         "measure_unit": str(card.get("measure_unit") or ""),
                         "source_ref": str(card.get("source_ref") or ""),
+                        "minimum_evidence_body_chars": len(_norm_card_content({**card, "resource_preview": []})),
                         MATCHED_BEFORE_CAP_META_KEY: int(matched_before_cap),
                     },
                 )

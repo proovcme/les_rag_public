@@ -1463,6 +1463,9 @@ _TABULAR_LSR_VOLUME_INSTRUCTION = (
     "norm_status, open_gap, evidence_refs Qx.Hy. Для каждой выбранной нормы также "
     "обязательно верни action_match, object_match, condition_match, unit_compatible, "
     "composition_covers и coverage с обоснованием по той же цитируемой карточке. "
+    "Если карточка показывает варианты НР/СП, выбери применимый по условиям "
+    "объекта и верни его nr_sp_rule_id; если условия неизвестны, оставь поле "
+    "пустым и сформулируй вопрос. Не подставляй ставки по памяти. "
     "Признаки допускают yes, no, unknown; не ставь yes без проверки источником. "
     "Если условия или состав не установлены, явно оставь unknown и назови пробел. "
     "Поля supply_kind, calc_quantity, "
@@ -2765,6 +2768,7 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "calc_quantity",
             "confirmed_price",
             "price_source",
+            "nr_sp_rule_id",
         ):
             if field_name in item:
                 row[field_name] = item[field_name]
@@ -3573,6 +3577,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "подтверждённая цена": "confirmed_price",
         "price_source": "price_source",
         "источник цены": "price_source",
+        "nr_sp_rule_id": "nr_sp_rule_id",
         "norm_code": "norm_code",
         "norm_code (выбранная норма)": "norm_code",
         "norm_code (возможная норма монтажа)": "norm_code",
@@ -3923,6 +3928,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "confirmed_price": "confirmed_price",
         "price_source": "price_source",
         "norm_code": "norm_code",
+        "nr_sp_rule_id": "nr_sp_rule_id",
         "analogue": "analogue",
         "coverage": "coverage",
         "norm_status": "norm_status",
@@ -4101,6 +4107,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "price_source": "price_source",
         "norm_code": "norm_code",
         "шифр нормы": "norm_code",
+        "nr_sp_rule_id": "nr_sp_rule_id",
         "аналог": "analogue",
         "обоснование": "coverage",
         "coverage": "coverage",
@@ -4617,7 +4624,15 @@ def build_model_rag_evidence_groups(
             high = cap - 1
     body_cap = low
     min_body = max(0, int(min_body_chars))
-    omit_mode = bool(bodies) and body_cap < min_body
+    required_caps: dict[tuple[int, int], int] = {}
+    for query_index, _qh, _q, hits in prepared:
+        for hit_index, hit, _sh, body in hits:
+            prefix = (getattr(hit, "meta", {}) or {}).get("minimum_evidence_body_chars")
+            # Typed-card identity/conditions/source must remain whole. Reserve
+            # one character for the truncation mark after that required prefix.
+            floor = prefix + 1 if isinstance(prefix, int) and not isinstance(prefix, bool) and prefix > 0 else 0
+            required_caps[(query_index, hit_index)] = min(len(body), max(min_body, floor))
+    omit_mode = bool(bodies) and any(body_cap < cap for cap in required_caps.values())
 
     included_caps: dict[tuple[int, int], int] = {}
     if omit_mode:
@@ -4631,13 +4646,14 @@ def build_model_rag_evidence_groups(
                 hit_index, _hit, _source_header, body = match
                 ref = f"Q{query_index}.H{hit_index}"
                 full = len(body)
+                required_cap = required_caps[(query_index, hit_index)]
                 if used + full <= body_budget:
                     included_caps[(query_index, hit_index)] = full
                     used += full
                     continue
-                if min_body and full > min_body and used + min_body <= body_budget:
-                    included_caps[(query_index, hit_index)] = min_body
-                    used += min_body
+                if required_cap and full > required_cap and used + required_cap <= body_budget:
+                    included_caps[(query_index, hit_index)] = required_cap
+                    used += required_cap
                     continue
                 omitted_refs.append(ref)
 

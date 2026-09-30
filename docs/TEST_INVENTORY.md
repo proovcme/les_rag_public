@@ -1,5 +1,16 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 839: seven regression cases in `test_model_research_tool_service.py`,
+`test_chat_evidence_application_service.py`, `test_rim_lsr_trace_service.py`
+prove the pre-existing loss of NR/SP options and the authored rule ID.
+They cover all four visible formats, review projection, exact catalog source
+checksums without private paths/selection, calculator forwarding, missing choice
+remaining ambiguous and a foreign-collection choice rejected. A bounded model
+message preserves the complete required typed-card prefix or omits the card;
+it never cuts the legal candidate block midway. Before: 7 failed;
+after: 248 passed across the related tool/chat/RIM/catalog/refinement suites.
+The actual model choice and full customer LSR remain subject to installed live gates.
+
 Build 838: four runtime-facts tests in `test_chat_evidence_application_service.py`
 check a fixed observed date, actual catalog names without private paths, absence
 of code-side price/norm selection, non-estimator isolation, empty catalog, and

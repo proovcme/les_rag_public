@@ -2,6 +2,17 @@
 
 ## Model-owned research loop (0.30.1 / build 635)
 
+С build 839 карточка также предъявляет все exact варианты НР/СП для своего
+сборника через `nr_sp_service.model_candidates`: идентификатор, условия,
+проценты, основание, source_ref и SHA исходных документов. Пути скрыты;
+автоматической ставки/выбора нет. Модель возвращает nr_sp_rule_id по условиям
+либо открытый вопрос. Decoder и visible-row calculator сохраняют этот выбор;
+штатный resolve отклоняет чужое правило и оставляет неоднозначность незакрытой.
+Это устранение потери evidence и поля результата, не предметный выбор кодом.
+`minimum_evidence_body_chars` typed карточки сохраняет её обязательный prefix
+целиком в bounded сообщении; обзор ресурсов может быть явно усечён. Если prefix
+не помещается, карточка отмечается omitted; правило не выбирается вместо модели.
+
 С build 837 dedicated smeta card transport сохраняет `work_steps`,
 `resource_preview`, `resource_count`, `resource_kinds`, edition/base_type и
 norm_key в metadata. Модельный текст также показывает исходные ресурсы с

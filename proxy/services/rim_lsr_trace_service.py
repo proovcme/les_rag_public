@@ -2453,6 +2453,10 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         refs = row.get("evidence_refs")
         if refs:
             position["evidence_refs"] = list(refs) if isinstance(refs, list) else [refs]
+        if row.get("nr_sp_rule_id") not in (None, ""):
+            # Carry the authored choice; resolve() rejects foreign collection IDs.
+            # Missing/ambiguous rules remain open, never a title-based default.
+            position["nr_sp_rule_id"] = row["nr_sp_rule_id"]
         position.update(_model_coefficient_fields(row))
         if (
             position.get("coefficient_application") == "applied"

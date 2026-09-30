@@ -1,5 +1,76 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Установлено 0.31.111 / 839, tested code commit 96db6fa1 (01.10, Codex):**
+alignment 96/96; native-RRF 1/1; basic smoke 9 passed / 1 existing diagnostics
+WARN / 0 failed; recovery ВОР/ЛСР 0.09/0.41 с, identical revision/SHA/calculation
+snapshot, no model call. Offline 2000 passed / 20 existing opt-in skipped.
+Все контрольные прогоны ниже завершены через назначенный FreeToken Qwen35B/r3,
+на исходных разрешённых PDF/XLSX; новый 300+ external run не выполнялся.
+
+- SKS B0 same input/profile/provider: 210.2 с, 137 parsed rows, structural_error,
+  packaged=false. Ссылки Q без H не подтверждают карточки; есть неподтверждённые
+  изменения объёмов. Ложного принятия этой таблицы нет.
+- SKS B1: 442.6 с, 75/75 source accounted, 97 decisions (22 work, 68 material,
+  2 equipment, 5 headers), 0 remaining. Три named NEEDS_RESEARCH кода остаются
+  несовместимыми/непроверенными; 0 bound/calculated works, all money 0.
+  73 coverage gaps (3 missing_work_row, 47 lost_work_link, 23 parent_not_work),
+  69 price gaps. SPb 3q2026 match exact; 76 searches, 19 cache hits. File 82614
+  bytes; downloaded SHA f50325606b7c464e480a83ba258dfaba7022606fcc64706e18faeed757fcb67e.
+- PDF→VOR: 95.2 с, 19/19 accounted, 15 work + 3 unresolved + 1 header;
+  file 7306 bytes. У трёх unresolved строк quantity отсутствует и unit содержит
+  число; вопросы сохранены. Это доставленный черновик, не полный качественный ВОР.
+- PDF→LSR: 95.8 с, 19/19 source accounted, 19 work + 11 material; 6 selected/
+  calculated positions (5 unique ciphers), 37672 bytes. Calculator reports
+  confirmed_amount 159877.35 / preliminary_amount 168218.10, estimate_complete=false.
+  Это денежные поля калькулятора, НЕ независимое подтверждение применимости:
+  шесть EXACT строк имеют совпадающие citations, но не имеют пяти match fields
+  и coverage. Текущий exact-citation contract этого не запрещает; числа не
+  объявляются профессионально принятыми. Open reasons: 9 price_missing,
+  5 coefficient_application_missing, 3 nr_sp_unresolved. Шифры/MISSING/объёмы
+  модели не переписаны кодом.
+
+Retrieval diagnostic via installed API: historical reference-code visibility
+4/4 strict and 4/8 stress at k=6 (5.83 с). Это НЕ applicability gate: например,
+reference ГЭСНм10-04-087-05 назван в typed базе «Комплект коммутационного
+оборудования: центральной станции для городской связи» (компл), поэтому его
+появление по запросу шкафа 42U не доказывает применимость к отдельному шкафу.
+Кроме того, бюджет по-прежнему может исключать часть найденных карточек.
+Commercial-offer pricing и полноценный свежий 300+ документ этим не приняты.
+
+**Вердикт 839: технические гейты и доставка пройдены; профессиональный/финансовый
+gate универсального ВОР→ЛСР НЕ пройден. Customer-ready не объявляется.**
+Evidence: `artifacts/live_839/{sks_baseline,sks_candidate,vor_pdf_fresh,lsr_pdf_fresh,
+recovery,basic_smoke.json,norm_recall_6.json}`. Rollback `artifacts/rollback_838_to_839`.
+
+**Кандидат 0.31.111 / 839 (Codex):** исправлен измеренный разрыв НР/СП в
+обычном model→visible rows→calculator пути: варианты каталога для сборника
+показываются модели с основаниями, а её nr_sp_rule_id сохраняется до resolve().
+Код не выбирает ставку, не меняет проценты, норму или авторский вердикт.
+Чужой rule_id отклоняется; отсутствие выбора при неоднозначности не закрывается.
+Для показанной карточки budget renderer сохраняет полный обязательный prefix
+(шифр/измеритель/состав/источник/варианты НР/СП), не обрезает правовое основание
+вместе с обзором ресурсов. Не поместившиеся карточки отмечаются как omitted.
+До правки 7 регрессионных случаев падают; после focused 248 passed.
+Offline: 2000 passed / 20 existing opt-in skipped / 5 warnings (184.91 с),
+verify compileall + 2020 collected (18.65 с), architecture и verify-root зелёные.
+Установленный live gate pending; финансовая готовность не заявлена.
+Rollback: `artifacts/rollback_838_to_839` (16 product files). Dry-run divergence
+nr_sp_service проверена: runtime = HEAD после нормализации CRLF/LF, иных правок
+нет. Точечное применение этого файла не затирает runtime-only изменения.
+
+**Установлено 0.31.110 / 838, commit 07e03613:** alignment 96/96, native-RRF 1/1,
+basic smoke 9 passed / 1 diagnostics WARN / 0 failed; recovery ВОР/ЛСР 0.08/0.25 с
+с теми же revision/SHA/снимком расчёта, без модели. Свежий direct SKS baseline
+137.7 с больше не отказывается из-за будущей даты/отсутствующей книги: SPb 3q2026
+match exact; файл доставлен, но 72/75 исходных строк, 0 работ, 0 норм и денег.
+Это не пройденная профессиональная приёмка. B1 завершён за 642.1 с: 75/75,
+104 решения (33 работы, 63 материала, 3 оборудования, 5 headers), 1 named
+NEEDS_RESEARCH norm, 0 selected/full-calculated, confirmed 0 / preliminary 69016.20.
+71 coverage gaps (11 missing_work_row, 46 lost_work_link, 14 parent_not_work),
+66 price gaps, 1 nr_sp_unresolved; 202 searches, 1 cache hit, file 82816 bytes.
+Финансовый gate НЕ пройден; отсутствие отказа по дате не доказывает качество норм.
+Evidence: `artifacts/live_838/{recovery,basic_smoke.json,sks_baseline,sks_candidate}`.
+
 **Кандидат 0.31.110 / 838 (30.09, Codex):** свежий direct baseline точного 837
 за 62.3 с вернул unstructured отказ без файла: «3 квартал 2026 года еще не
 наступил», «нет цен». Дата выполнения 30.09.2026, SPb 3q2026 книга установлена.

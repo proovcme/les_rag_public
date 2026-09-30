@@ -19,6 +19,38 @@ from proxy.services.tool_harness_service import ToolHarness
 from proxy.services.web_research_config_service import WebResearchConfig
 
 
+@pytest.mark.parametrize("answer", [
+    "| source_row | title | unit | quantity | norm_code | nr_sp_rule_id |\n"
+    "| --- | --- | --- | --- | --- | --- |\n"
+    "| СКС!R69 | Прокладка труб | м | 1200 | ГЭСНм08-02-409-09 | nrsp-49.3 |",
+    "source_row=СКС!R69, title=Прокладка труб, unit=м, quantity=1200, norm_code=ГЭСНм08-02-409-09, nr_sp_rule_id=nrsp-49.3",
+    "Строка 69\nsource_row: СКС!R69\ntitle: Прокладка труб\nunit: м\nquantity: 1200\nnorm_code: ГЭСНм08-02-409-09\nnr_sp_rule_id: nrsp-49.3",
+    "Строка 69 — Прокладка труб; unit: м; quantity: 1200; norm_code: ГЭСНм08-02-409-09; nr_sp_rule_id: nrsp-49.3",
+])
+def test_model_accrual_rule_survives_visible_formats_and_review_projection(answer):
+    parsed = service.parse_model_rag_result(answer)
+    assert parsed is not None
+    row = parsed[1][0]
+    assert row["nr_sp_rule_id"] == "nrsp-49.3"
+    assert service.compact_estimator_draft_rows([row])[0]["nr_sp_rule_id"] == "nrsp-49.3"
+
+
+def test_typed_card_required_prefix_is_complete_in_a_budgeted_model_message():
+    """Truncated resource previews must not hide the legal candidate block."""
+    prefix = "Шифр: ГЭСНм08-02-409-09\n" + "Условия и основание НР/СП. " * 32 + "nrsp-49.3"
+    hit = SimpleNamespace(content=prefix + "Обзор ресурсов. " * 140,
+                          doc_id="card", doc_name="smeta_norm_cards.v1", score=1,
+                          meta={"minimum_evidence_body_chars": len(prefix)})
+    query_hits = [("прокладка труб", [hit, hit])]
+    headers = service.model_rag_evidence_header_chars(query_hits, hits_per_query=2)
+    groups, chunks, omitted = service.build_model_rag_evidence_groups(
+        query_hits, max_chars=headers + len(prefix) + 100, hits_per_query=2)
+    assert chunks and omitted == ["Q1.H2"]
+    assert all(chunk.content.startswith(prefix) for chunk in chunks)
+    assert len("\n\n".join(groups)) <= headers + len(prefix) + 100
+
+
+
 def test_web_reader_is_visible_only_in_explicit_extended_request_snapshot():
     tools = ["web_search", "web_read", "filesystem_search"]
 

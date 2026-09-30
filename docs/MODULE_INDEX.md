@@ -1,5 +1,19 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.111 / 839:** `core/tool-harness` передаёт все exact варианты НР/СП
+> для сборника карточки без выбора ставки и путей. `core/chat-profiles` сохраняет
+> `nr_sp_rule_id` в decoder/контексте пересмотра; `core/rim` — в позиции расчёта.
+> Missing/foreign choices не закрываются. Док↔код ✅; [chat-profiles](modules/chat-profiles.md),
+> `nr_sp_service.model_candidates`, `_norm_card_content`, `positions_from_visible_lsr_rows`.
+> Budget renderer сохраняет источник и все варианты НР/СП shown карточки целиком.
+> 7 regressions failed before, focused 248 passed after. Installed tested code
+> 96db6fa1: offline 2000 passed/20 opt-in skipped, alignment 96/96, RRF 1/1,
+> basic 9 pass/1 diagnostics WARN/0 fail, recovery same revision/SHA. SKS 75/75,
+> 0 calculated works; PDF→LSR 19/19, 6 calculated, partial, exact match fields
+> absent. PDF→VOR 3 unresolved rows have incomplete quantity/unit cells.
+> Финансовый/профессиональный gate НЕ пройден; [ledger](RELEASE_LEDGER.md),
+> `artifacts/live_839` сохраняют реальные результаты, customer-ready не заявлено.
+
 > **Кандидат 0.31.110 / 838:** `core/chat-profiles` передаёт наблюдаемую UTC дату
 > и bounded каталог файлов цен estimator-модели до query/result. Нет ставок,
 > выбора книги, путей или подтверждения норм. Большой каталог явно частичен;

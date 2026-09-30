@@ -53,6 +53,23 @@ def candidates(*, code: str, path: str | None = None) -> list[dict[str, Any]]:
     ]
 
 
+def model_candidates(*, code: str, path: str | None = None) -> list[dict[str, Any]]:
+    """Expose exact catalog rows as evidence, without paths or a selected rate."""
+    sources = _load(path).get("sources") or {}
+    checksums = {
+        kind: str((sources.get(kind) or {}).get("sha256") or "")
+        for kind in ("nr", "sp")
+    }
+    return [
+        {
+            **{key: rule.get(key) for key in ("rule_id", "label", "nr_pct", "sp_pct", "basis")},
+            "source_ref": f"nr_sp_catalog.v1#rule={rule.get('rule_id') or ''}",
+            "source_sha256": dict(checksums),
+        }
+        for rule in candidates(code=code, path=path)
+    ]
+
+
 def resolve(
     name: str = "",
     *,

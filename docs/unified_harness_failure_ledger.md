@@ -1,5 +1,41 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 839: live delivery passes, professional completeness fails
+
+Same original SKS/Qwen35B/r3: B0 210.2 s produced ungrounded citations and
+source-volume changes (structural_error, no file); B1 442.6 s delivered 75/75
+source accounting but 0 calculated works. Three named norms stay NEEDS_RESEARCH
+with incompatible units/composition, not confirmed by code. 73 linkage gaps and
+69 missing prices remain. Evidence: `artifacts/live_839/sks_{baseline,candidate}`.
+
+PDF→VOR delivered 19 rows in 95.2 s, but 3 unresolved rows have quantity=null
+and numeric unit cells; the model still makes missing norms a VOR question.
+Questions are visible, not silently repaired (`vor_pdf_fresh`). PDF→LSR 95.8 s:
+19 works + 11 supplies, 6 numerical positions, SPb 3q2026 exact basis, partial.
+Six EXACT rows have same-cipher citations but lack match fields/coverage; current
+exact-citation policy marks applicability as substantiated nonetheless. Thus
+reported confirmed_amount 159877.35 is not proof of professional correctness.
+No row/status/quantity is overridden to manufacture a ready document.
+
+Read-only retrieval reference visibility 4/4 strict, 4/8 stress at k=6 is diagnostic,
+not expert truth: the cabinet reference 10-04-087-05 describes a central-station
+communication complex in the typed base. A retrieved code is not its applicability.
+Budget-omitted cards, inter-row linkage, match declarations, VOR volumes and
+commercial-resource pricing remain unclosed. 839 is not customer-ready.
+
+## 2026-09-30 — применимый выбор НР/СП не проходил model→calculator
+
+Live 837 SKS has 2 bound works, both nr_sp_unresolved. Catalog contains multiple
+condition-specific rows, but model-facing norm cards omitted them. Visible result
+decoder, review projection and RIM visible-row adapter also discarded nr_sp_rule_id.
+Seven new regression cases reproduce these losses before the fix. 839 exposes all
+exact collection candidates with source references/checksums and forwards the
+authored ID. No percentage/default/professional choice is introduced by code.
+Budgeted model messages retain the complete required prefix of shown cards;
+others stay explicitly omitted. Missing/foreign choices remain ambiguous/rejected.
+Focused 248 passed after.
+Actual model applicability and financial release gate still require live proof.
+
 ## 2026-09-30 — 837 baseline: ложный будущий период и отсутствие книги
 
 Same original SKS, Qwen35B/r3/profile, SPb IIIq2026. Direct run 62.3 s refused

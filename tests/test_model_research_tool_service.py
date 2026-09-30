@@ -288,6 +288,35 @@ async def test_estimator_card_keeps_source_resource_evidence_without_inventing_c
 
 
 @pytest.mark.asyncio
+async def test_estimator_card_exposes_all_accrual_candidates_without_selecting_one():
+    service = ModelResearchToolService(
+        retrieve=lambda **_: pytest.fail("mixed retrieval must not run"),
+        frozen_dataset_ids=("smeta",), retrieval_kwargs={},
+        fallback=lambda *_: pytest.fail("fallback must not run"),
+        smeta_norm_retrieve=lambda *_args, **_kwargs: {
+            "cards": [{"norm_code": "ГЭСНм08-02-409-09", "title": "Прокладка труб",
+                       "source_ref": "ФСНБ#guid=card"}],
+            "retrieval_trace": {"rag": {"status": "ok"}},
+        },
+    )
+    hit = (await service.execute({"tool": "search_sources", "args": {"q": "прокладка труб"}})).payload["result"]["hits"][0]
+    rules = hit["meta"]["nr_sp_candidates"]
+    required_prefix = hit["content"][:hit["meta"]["minimum_evidence_body_chars"]]
+    assert [rule["rule_id"] for rule in rules] == ["nrsp-49.1", "nrsp-49.2", "nrsp-49.3", "nrsp-52"]
+    for rule in rules:
+        assert rule["rule_id"] in hit["content"]
+        assert rule["rule_id"] in required_prefix and rule["basis"] in required_prefix
+        assert rule["label"] in hit["content"] and rule["basis"] in hit["content"]
+        assert rule["source_ref"].endswith(rule["rule_id"])
+        assert len(rule["source_sha256"]["nr"]) == 64
+        assert len(rule["source_sha256"]["sp"]) == 64
+        assert not any("path" in key for key in rule)
+    assert "выбор модели" in hit["content"]
+    assert "nr_sp_rule_id" not in hit["meta"]
+    assert "/Users/" not in hit["content"]
+
+
+@pytest.mark.asyncio
 async def test_estimator_degraded_dense_serves_verified_cards_but_stays_honest():
     """Dense channel down but the dedicated browser produced exact/FTS cards with
     verified typed-base provenance: they reach the model, yet the search is

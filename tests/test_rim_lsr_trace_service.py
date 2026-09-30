@@ -13,6 +13,28 @@ from proxy.services.rim_lsr_trace_service import (
 CODE = "ГЭСН12-01-034-02"
 
 
+def test_model_accrual_rule_reaches_calculation_without_invented_default(monkeypatch):
+    from proxy.services import gesn_service
+    norm = {"code": "ГЭСНм08-02-409-09", "name": "Прокладка труб", "unit": "100 м", "resources": []}
+    monkeypatch.setattr(gesn_service, "get_norm", lambda *_args, **_kwargs: norm)
+    source = {"source_row": "СКС!R69", "title": "Прокладка труб", "unit": "м", "quantity": 1200,
+              "norm_code": norm["code"], "row_role": "work", "nr_sp_rule_id": "nrsp-49.3"}
+    position = positions_from_visible_lsr_rows([source])["positions"][0]
+    assert position["nr_sp_rule_id"] == "nrsp-49.3"
+    assert position["code"] == source["norm_code"] and position["qty"] == 12
+    summary = build_position_trace(position)["summary"]
+    assert summary["nr_sp_ownership"]["rule_id"] == "nrsp-49.3"
+    assert (summary["nr_pct"], summary["sp_pct"]) == (97, 51)
+    assert "nr_sp_unresolved" not in summary["completeness_reasons"]
+    for rule_id, expected_status in [("", "ambiguous"), ("nrsp-1.1", "rejected")]:
+        row = {**source, "nr_sp_rule_id": rule_id}
+        other = positions_from_visible_lsr_rows([row])["positions"][0]
+        gap = build_position_trace(other)["summary"]
+        assert gap["nr_sp_ownership"]["catalog_status"] == expected_status
+        assert "nr_sp_unresolved" in gap["completeness_reasons"]
+        assert gap["nr_pct"] is None and gap["sp_pct"] is None
+
+
 # ── эталон позиции: карточка основной базы + детерминированная ценовая книга ──
 #
 # Семя `config/domain/gesn_seed.yaml` больше не участвует в production-расчёте
