@@ -43,7 +43,41 @@ def _pick(pool: tuple[str, ...], seed: str) -> str:
     return pool[sum(ord(c) for c in (seed or "x")) % len(pool)]
 
 
-def flavor(answer: str, op: str, *, seed: str = "") -> str:
-    """Короткая ироничная рамка перед фактом. Числа/факты не трогаются. Пустой op → как есть."""
-    opener = _pick(_OPENERS.get(op, ()), seed or (answer[:24] if answer else "x"))
+# Реплики, которые обещают, что перепроверять нечего.  Их можно сказать только над
+# завершённым расчётом (`CalculationStatus.COMPLETE`): над `partial` позиция печатает
+# «известную стоимость позиции» с названными пробелами, а над `unsafe_source` — черновик на
+# нормативной базе в карантине.  Обещание «не перепроверять» против этого было бы не тоном,
+# а неверным статусом документа.
+_REASSURING: dict[str, tuple[str, ...]] = {
+    "assemble": ("Готово, цифры выверены — можешь не перепроверять:",),
+}
+
+# Статусы, которым рамка не положена вовсе: расчёта нет, и «Собрала. Считал код…» над
+# строкой «Норма не найдена. Расчёт не запускался» был бы выдуманным фактом.
+_NO_FRAME: frozenset[str] = frozenset({"not_calculated"})
+
+# Рамка для незавершённого расчёта: язвительность остаётся, обещание — нет.  Формулировка
+# берётся из языка самого документа: `rim_lsr_trace_service` подписывает незакрытую позицию
+# «Известная стоимость позиции», а не «Всего по позиции» — рамка не может спорить с формой.
+# `partial` наступает по любому незакрытому основанию (цена, НР/СП, ФСЭМ, коэффициент), поэтому
+# рамка называет статус, а не причину: причину называет ответ, где она поштучно перечислена.
+_UNFINISHED: dict[tuple[str, str], tuple[str, ...]] = {
+    ("assemble", "partial"): ("Считал код; до итога не всё закрыто — и я это подписываю прямо:",
+                              "Это известная стоимость позиции, а не итог — дальше поштучно:"),
+    ("assemble", "unsafe_source"): ("База в карантине, так что это черновик, а не сумма:",),
+}
+
+
+def flavor(answer: str, op: str, *, seed: str = "", status: str | None = None) -> str:
+    """Короткая ироничная рамка перед фактом. Числа/факты не трогаются. Пустой op → как есть.
+
+    `status` — `CalculationStatus` расчёта, если канал его знает: над незакрытым расчётом
+    реплики-обещания (`_REASSURING`) не произносятся, берётся рамка `_UNFINISHED`, а над
+    `not_calculated` рамка не выдаётся вовсе.  Без `status` поведение прежнее.
+    """
+    pool = _OPENERS.get(op, ())
+    if status is not None and status != "complete":
+        pool = tuple(item for item in pool if item not in _REASSURING.get(op, ()))
+        pool = () if status in _NO_FRAME else (_UNFINISHED.get((op, status), ()) or pool)
+    opener = _pick(pool, seed or (answer[:24] if answer else "x"))
     return f"{opener}\n{answer}" if opener else answer

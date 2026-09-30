@@ -154,9 +154,13 @@ def _answer_assemble(q: str) -> dict[str, Any]:
     qty = _parse_qty(q, code)
     if qty is None:
         return {"answer": f"Норма {code} найдена ({norm.get('name','')}). Укажи объём: "
-                          f"«собери {code} объём <число>».", "operation": "assemble"}
-    measure = re.match(r"\s*(?:\d+(?:[.,]\d+)?)?\s*(.+?)\s*$", str(norm.get("unit") or ""))
-    physical_unit = measure.group(1) if measure else str(norm.get("unit") or "")
+                          f"«собери {code} объём <число>».",
+                "operation": "assemble",
+                "evidence_status": "partial",
+                "calculation_status": "not_calculated"}
+    measure = re.match(r"\s*(\d+(?:[.,]\d+)?)?\s*(.+?)\s*$", str(norm.get("unit") or ""))
+    card_basis = (measure.group(1) or "").replace(",", ".") if measure else ""
+    physical_unit = measure.group(2) if measure else str(norm.get("unit") or "")
     scenario = calculate_scenario(
         [WorkItem(work_id="quick-1", title=str(norm.get("name") or code), quantity=qty, unit=physical_unit)],
         [NormBinding(
@@ -173,15 +177,37 @@ def _answer_assemble(q: str) -> dict[str, Any]:
     positions = [position for section in trace.get("sections") or [] for position in section.get("positions") or []]
     p = positions[0] if positions else {"summary": {}}
     b = p.get("summary") or {}
+    # «объём 61» is the physical volume the operator named, and the calculator already
+    # rescaled it to the card; printing the card's own «100 м2» next to 61 would tell the
+    # operator the money below was counted from 61 cards.  Both units stay visible instead.
+    card_measure_note = (
+        f" (карточка нормы — на {norm.get('unit')})"
+        if card_basis and card_basis != "1"
+        else ""
+    )
+    # Та же сумма в доставленном документе подписана формой иначе: `rim_lsr_trace_service`
+    # пишет «Всего по позиции» только когда `full_amount` закрыт, и «Известная стоимость
+    # позиции» — когда есть незакрытое основание (цена, НР/СП, ФСЭМ, коэффициент).  Чат
+    # печатал «ИТОГО по позиции» в обоих случаях, то есть называл итогом число, которое
+    # строкой ниже сам же помечал пробелом.  Знак берётся у трассы, а не придумывается.
+    amount_status = str(b.get("amount_status") or scenario.calculation_status.value)
+    known = b.get("known_amount")
+    total_label = "Всего по позиции" if amount_status == "complete" else "Известная стоимость позиции"
+    total_amount = known if (amount_status != "complete" and known is not None) else b.get("total")
     lines = [
-        f"{norm.get('name','')} · {code} · объём {qty} {norm.get('unit','')}",
+        f"{norm.get('name','')} · {code} · объём {qty} {physical_unit}{card_measure_note}",
         f"ОЗП {_fmt_num(b.get('ozp'))} + ЭМ {_fmt_num(b.get('em'))} + М {_fmt_num(b.get('mat'))} = "
         f"прямые {_fmt_num(b.get('direct'))}",
         f"ФОТ {_fmt_num(b.get('fot'))} → НР {_fmt_num(b.get('nr'))} + СП {_fmt_num(b.get('sp'))}",
-        f"ИТОГО по позиции: {_fmt_num(b.get('total'))} руб.",
+        f"{total_label}: {_fmt_num(total_amount)} руб.",
     ]
     if b.get("flags"):
         lines.append("⚠ " + "; ".join(str(item) for item in b["flags"]))
+    elif amount_status != "complete":
+        # Незакрытая позиция без ⚠-флага молча выглядела бы готовой: печатаем основания
+        # так, как их называет трасса, а не переводим в свою формулировку.
+        reasons = [str(item) for item in (b.get("completeness_reasons") or []) if str(item)]
+        lines.append("⚠ Позиция закрыта не полностью: " + (", ".join(reasons) or amount_status))
     if scenario.calculation_status.value == "unsafe_source":
         lines.append("⚠ Сумма является непроверенным черновиком: нормативная база в карантине.")
     return {
@@ -223,5 +249,9 @@ def maybe_handle_smeta_query(
     if r is None:
         return None
     r = dict(r)
-    r["answer"] = sovushka_tone.flavor(r["answer"], r.get("operation", ""), seed=q)
+    # Тон обязан знать статус расчёта: без `status` слой мог напечатать «цифры выверены —
+    # можешь не перепроверять» над позицией со статусом `partial`.
+    r["answer"] = sovushka_tone.flavor(
+        r["answer"], r.get("operation", ""), seed=q, status=r.get("calculation_status")
+    )
     return r
