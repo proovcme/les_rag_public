@@ -1,5 +1,10 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.104 / 832:** `core/sovushka-ui` разрешает номера позиций
+> текущей ЛСР через `row_projection`, отклоняет неизвестные/неоднозначные номера
+> до мутации задания, прячет ручной перевод единиц в дополнительный блок.
+> Док↔код ✅; `resolve_lsr_position_selectors`, `test_sovushka_chat.py`.
+
 > **Кандидат 0.31.103 / 831:** `core/chat-profiles` и workbook sheet-pass сохраняют
 > явные параметры задания до первой упаковки (`task_context_json`,
 > `requested_price_basis`, `task_document_price_basis`); исходный пакет передаётся

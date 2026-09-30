@@ -2512,6 +2512,9 @@ def bind_row_evidence_ids(
     alias_to_global: dict[str, str] = {}
     alias_to_card: dict[str, str] = {}
     alias_to_query: dict[str, str] = {}
+    global_to_card: dict[str, str] = {}
+    global_to_query: dict[str, str] = {}
+    ambiguous_aliases: set[str] = set()
     for chunk in evidence_chunks:
         meta = getattr(chunk, "meta", {}) or {}
         alias = str(meta.get("model_evidence_ref") or "").strip().upper()
@@ -2522,8 +2525,17 @@ def bind_row_evidence_ids(
                 str(getattr(chunk, "doc_name", "") or ""),
             )
             alias_to_query[alias] = str(meta.get("model_query_text") or "")
-        if alias and global_id and alias not in alias_to_global:
-            alias_to_global[alias] = global_id
+        if global_id:
+            global_to_card[global_id] = _card_code_from_body(
+                str(getattr(chunk, "content", "") or ""),
+                str(getattr(chunk, "doc_name", "") or ""),
+            )
+            global_to_query[global_id] = str(meta.get("model_query_text") or "")
+        if alias and global_id:
+            if alias in alias_to_global and alias_to_global[alias] != global_id:
+                ambiguous_aliases.add(alias)
+            else:
+                alias_to_global[alias] = global_id
     bound: list[dict[str, Any]] = []
     for row in rows:
         payload = dict(row)
@@ -2535,12 +2547,29 @@ def bind_row_evidence_ids(
         }
         for ref in payload.get("evidence_refs") or ():
             alias = str(ref).strip().upper()
-            global_id = alias_to_global.get(alias, "")
+            global_id = alias_to_global.get(alias, "") if alias not in ambiguous_aliases else ""
             if alias and global_id and alias not in merged:
                 merged[alias] = global_id
         payload["evidence_bindings"] = merged
+        # Q/H handles are packet-local. An already bound row must be checked
+        # against its durable card, not the first same-named handle of another
+        # packet when all sheets are collected for final packaging.
+        cards = dict(alias_to_card)
+        queries = dict(alias_to_query)
+        checkable_bindings = dict(merged)
+        for alias in ambiguous_aliases:
+            cards.pop(alias, None)
+            queries.pop(alias, None)
+        for alias, global_id in merged.items():
+            if global_id in global_to_card:
+                cards[alias] = global_to_card[global_id]
+                queries[alias] = global_to_query[global_id]
+            else:
+                cards.pop(alias, None)
+                queries.pop(alias, None)
+                checkable_bindings.pop(alias, None)
         evidence_check = row_evidence_provenance_check(
-            payload, merged, alias_to_card, alias_to_query
+            payload, checkable_bindings, cards, queries
         )
         if evidence_check is not None:
             payload["_evidence_check"] = evidence_check
@@ -3819,9 +3848,6 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 table_rows.append(row)
             row_index += 1
         header_index = max(row_index, header_index + 1)
-    if table_rows:
-        return str(raw or ""), table_rows
-
     block_fields = {
         "source_row": "source_row",
         "section": "section",
@@ -3856,6 +3882,52 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "coefficient_applies_to": "coefficient_applies_to",
         "evidence_refs": "evidence_refs",
     }
+    # A model can present the same explicit fields on one line instead of in
+    # Markdown cells. Read field delimiters, never infer a decision from prose.
+    # This preserves the live 831 answers that named source_row/title/unit/code
+    # but were silently lost because their presentation was `key=value`.
+    inline_rows: list[dict[str, Any]] = []
+    for line in lines:
+        authored = line.strip()
+        prefix, colon, rest = authored.partition(":")
+        payload = authored if authored.startswith("source_row=") else rest.strip()
+        if not payload.startswith("source_row="):
+            continue
+        boundaries = [(0, "source_row", len("source_row="))]
+        for label in block_fields:
+            for separator in (", ", "; "):
+                marker = separator + label + "="
+                start = 0
+                while (at := payload.find(marker, start)) >= 0:
+                    boundaries.append((at, block_fields[label], at + len(marker)))
+                    start = at + len(marker)
+        boundaries.sort()
+        if len({key for _, key, _ in boundaries}) != len(boundaries):
+            continue  # duplicate field labels make interpretation ambiguous
+        inline: dict[str, Any] = {}
+        for index, (_at, key, value_at) in enumerate(boundaries):
+            end = boundaries[index + 1][0] if index + 1 < len(boundaries) else len(payload)
+            value = payload[value_at:end].strip()
+            if key == "source_row":
+                inline[key] = source_row_identity(value)
+            elif key in numeric_fields:
+                inline[key] = number(value) if number(value) is not None else value
+            elif key == "evidence_refs":
+                inline[key] = evidence_refs(value)
+            else:
+                inline[key] = value
+        if not required_fields.issubset(inline) or not inline.get("source_row"):
+            continue
+        if not authored.startswith("source_row=") and (not colon or prefix.strip() != str(inline["source_row"])):
+            continue  # a conflicting prefix is not a second locator to guess
+        if not inline.get("evidence_refs"):
+            refs = evidence_refs(payload)
+            if refs:
+                inline["evidence_refs"] = refs
+        inline_rows.append(inline)
+    if table_rows or inline_rows:
+        return str(raw or ""), [*table_rows, *inline_rows]
+
     block_rows: list[dict[str, Any]] = []
     current_block: dict[str, Any] | None = None
     invalid_block = False

@@ -1278,12 +1278,12 @@ def _readiness_locators(*groups: Any, limit: int = 16) -> list[str]:
 
 
 LSR_REFINE_FIELD_HELP = (
-    "Какие строки снова отдать модели. Пишите адреса через запятую, как в таблице: "
-    "PDF!R18, PDF!R19. Остальные решения не трогаются."
+    "Укажите номера позиций из текущего файла ЛСР через запятую: 14, 15, 16. "
+    "Повторно проверяются исходные строки этих позиций. Остальные решения сохраняются."
 )
 LSR_LOCATOR_FIELD_HELP = (
-    "Адрес одной строки, куда вносите число. Это не шифр нормы. "
-    "Пример: PDF!R8 — лист исходника PDF, строка 8."
+    "Номер позиции из текущего файла ЛСР, для которой подтверждаете перевод единиц. "
+    "Если на одной исходной строке несколько операций, уточните их в чате."
 )
 LSR_FACTOR_FIELD_HELP = (
     "Во сколько раз пересчитать количество, если единица исходника не совпадает "
@@ -1293,6 +1293,34 @@ LSR_SOURCE_FIELD_HELP = (
     "Откуда взяли коэффициент: упаковка, паспорт, спецификация. "
     "Без этой пометки перевод не принимается."
 )
+
+
+def resolve_lsr_position_selectors(text: str, projection: Any) -> list[str]:
+    """Resolve displayed position numbers through this revision, never Excel row arithmetic."""
+    by_number: dict[str, set[str]] = {}
+    known: set[str] = set()
+    for row in (projection if isinstance(projection, list) else []):
+        if not isinstance(row, dict):
+            continue
+        locator = str(row.get("locator") or row.get("source_row") or "").strip()
+        if not locator:
+            continue
+        known.add(locator)
+        number = str(row.get("position_no") or "").strip()
+        if number:
+            by_number.setdefault(number, set()).add(locator)
+    resolved = []
+    for token in str(text or "").replace(";", ",").split(","):
+        token = token.strip()
+        if not token:
+            continue
+        candidates = by_number.get(token, set()) if token.isdecimal() else ({token} if token in known else set())
+        if len(candidates) != 1:
+            raise ValueError(f"Позиция {token}: номер не найден или неоднозначен в текущей ЛСР. Уточните позицию по её названию в чате.")
+        locator = next(iter(candidates))
+        if locator not in resolved:
+            resolved.append(locator)
+    return resolved
 
 # ── Ценовая база: выбор оператора, а не подстановка кодом ────────────────────
 # ``price_basis.match`` приходит с машины состояниями ``exact`` / ``mismatch`` /
@@ -1783,6 +1811,7 @@ def lsr_readiness_card_spec(readiness: Any) -> dict[str, Any]:
             if isinstance(item, dict)
         ],
         "price_gaps": price_gaps,
+        "row_projection": [dict(row) for row in (payload.get("row_projection") or []) if isinstance(row, dict)],
     }
 
 
@@ -5240,13 +5269,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         await _follow_pending_history_if_needed()
 
     async def _refine_lsr_rows(resume: dict, locators_text: str) -> None:
-        locators = [
-            item.strip()
-            for item in str(locators_text or "").replace(";", ",").split(",")
-            if item.strip()
-        ]
+        try:
+            locators = resolve_lsr_position_selectors(locators_text, resume.get("row_projection"))
+        except ValueError as error:
+            _notify(str(error), type="warning")
+            return
         if not locators:
-            _notify("Укажите адреса строк для уточнения", type="warning")
+            _notify("Укажите номера позиций для уточнения", type="warning")
             return
         job_id = str(resume.get("job_id") or "").strip()
         if not job_id:
@@ -5276,9 +5305,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         factor: str,
         source: str,
     ) -> None:
-        key = str(locator or "").strip()
-        if not key:
-            _notify("Укажите адрес строки", type="warning")
+        try:
+            keys = resolve_lsr_position_selectors(locator, resume.get("row_projection"))
+        except ValueError as error:
+            _notify(str(error), type="warning")
+            return
+        if len(keys) != 1:
+            _notify("Укажите одну позицию", type="warning")
+            return
+        key = keys[0]
+        operations = [row for row in resume.get("row_projection", []) if str(row.get("locator") or row.get("source_row") or "") == key]
+        if len(operations) > 1:
+            _notify("На исходной строке несколько операций. Уточните перевод единиц по названию операции в чате.", type="warning")
             return
         patch: dict[str, Any] = {}
         if str(factor or "").strip():
@@ -5392,6 +5430,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         ui.label(str(technical.get("note"))).classes("sov-ui-section-detail")
 
     def _render_lsr_readiness_card(spec: dict, resume: dict, artifact: dict) -> None:
+        resume = dict(resume, row_projection=spec.get("row_projection") or [])
         with panel(variant="raised", classes="sov-lsr-readiness"):
             detail = (
                 "Технический файл готов"
@@ -5483,29 +5522,30 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             compact=True,
                         )
             fields["refine"] = text_field(
-                label="Строки для уточнения",
-                placeholder="PDF!R18, PDF!R19",
+                label="Позиции для повторной проверки",
+                placeholder="14, 15, 16",
                 classes="w-full",
             )
             ui.label(LSR_REFINE_FIELD_HELP).classes("sov-lsr-field-help")
-            fields["locator"] = text_field(
-                label="Адрес строки",
-                placeholder="PDF!R8",
-                classes="w-full",
-            )
-            ui.label(LSR_LOCATOR_FIELD_HELP).classes("sov-lsr-field-help")
-            fields["factor"] = text_field(
-                label="Коэффициент перевода",
-                placeholder="12",
-                classes="w-full",
-            )
-            ui.label(LSR_FACTOR_FIELD_HELP).classes("sov-lsr-field-help")
-            fields["source"] = text_field(
-                label="Источник перевода",
-                placeholder="упаковка 12 шт",
-                classes="w-full",
-            )
-            ui.label(LSR_SOURCE_FIELD_HELP).classes("sov-lsr-field-help")
+            with ui.expansion("Дополнительно: подтверждение перевода единиц", value=False).classes("w-full"):
+                fields["locator"] = text_field(
+                    label="Номер позиции",
+                    placeholder="14",
+                    classes="w-full",
+                )
+                ui.label(LSR_LOCATOR_FIELD_HELP).classes("sov-lsr-field-help")
+                fields["factor"] = text_field(
+                    label="Сколько единиц нормы в единице исходника",
+                    placeholder="12",
+                    classes="w-full",
+                )
+                ui.label(LSR_FACTOR_FIELD_HELP).classes("sov-lsr-field-help")
+                fields["source"] = text_field(
+                    label="Основание: паспорт, упаковка или спецификация",
+                    placeholder="В упаковке 12 шт., паспорт изделия",
+                    classes="w-full",
+                )
+                ui.label(LSR_SOURCE_FIELD_HELP).classes("sov-lsr-field-help")
             remainder = [
                 str(text)
                 for text in (

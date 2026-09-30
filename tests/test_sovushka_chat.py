@@ -14,6 +14,25 @@ from sovushka.pages import chat as chat_page
 from sovushka.pages import instrumenty as instrumenty_page
 from sovushka.pages import samovar as samovar_page
 from sovushka.pages import volk as volk_page
+
+
+def test_lsr_position_numbers_resolve_through_delivered_revision():
+    projection = [
+        {"position_no": 14, "locator": "ВК!R104", "operation_id": "install"},
+        {"position_no": 15, "locator": "ВК!R104", "operation_id": "supply"},
+        {"position_no": 16, "locator": "АР!R7"},
+    ]
+    assert chat_page.resolve_lsr_position_selectors("14, 15;16", projection) == ["ВК!R104", "АР!R7"]
+    assert chat_page.resolve_lsr_position_selectors("АР!R7", projection) == ["АР!R7"]
+    with pytest.raises(ValueError, match="номер не найден"):
+        chat_page.resolve_lsr_position_selectors("104", projection)
+    with pytest.raises(ValueError, match="неоднозначен"):
+        chat_page.resolve_lsr_position_selectors("14", projection + [{"position_no": 14, "locator": "ВК!R105"}])
+
+
+def test_readiness_preserves_current_position_projection():
+    rows = [{"position_no": 17, "locator": "СКС!R80"}]
+    assert chat_page.lsr_readiness_card_spec({"row_projection": rows})["row_projection"] == rows
 from sovushka.pages.chat import (
     _attachment_chat_payload,
     _attachment_user_suffix,
@@ -481,7 +500,7 @@ def test_chat_ui_splits_lsr_readiness_and_rebuilds_without_model():
     assert "result_readiness" in source
     assert "_rebuild_files_artifacts_panel" in source
     assert "sov-artifacts-scroll" in source
-    assert 'label="Адрес строки"' in source
+    assert 'label="Номер позиции"' in source
     assert "Что осталось закрыть" in source
 
 
@@ -503,7 +522,8 @@ def test_chat_ui_shows_latest_workbook_first_and_explains_lsr_fields():
     assert ordered[1][2] == "Предыдущая ревизия"
     assert "Новый файл в артефактах" in source
     assert "Продолжаю незакрытые строки" in source
-    assert "PDF!R18, PDF!R19" in source
+    assert 'placeholder="14, 15, 16"' in source
+    assert "resolve_lsr_position_selectors" in source
     assert chat_page.LSR_REFINE_FIELD_HELP
     assert chat_page.LSR_LOCATOR_FIELD_HELP
     assert "notify_in_element" in source

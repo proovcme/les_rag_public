@@ -476,6 +476,52 @@ def test_model_rag_result_decoder_has_no_regex_or_language_router():
     assert "row_schema" not in source
 
 
+def test_model_inline_assignments_keep_explicit_decisions_and_decimal_comma():
+    answer = "ВК!R41: source_row=ВК!R41, row_role=work, work_row=ВК!R41, title=Монтаж изделия, исполнение A, unit=шт, quantity=2,5, norm_code=CUSTOM-41, norm_status=ANALOGUE_CANDIDATE, open_gap=Нужна проверка комплектации, evidence_refs=Q2.H3"
+    parsed = service.parse_model_rag_result(answer)
+    assert parsed is not None
+    assert parsed[0] == answer
+    assert parsed[1] == [{
+        "source_row": "ВК!R41", "row_role": "work", "work_row": "ВК!R41",
+        "title": "Монтаж изделия, исполнение A", "unit": "шт", "quantity": 2.5,
+        "norm_code": "CUSTOM-41", "norm_status": "ANALOGUE_CANDIDATE",
+        "open_gap": "Нужна проверка комплектации", "evidence_refs": ["Q2.H3"],
+    }]
+
+
+def test_final_binding_keeps_original_card_across_packet_local_alias_collisions():
+    def chunk(code, identity):
+        return SimpleNamespace(content=f"Шифр: {code}", doc_name="cards", meta={
+            "model_evidence_ref": "Q1.H1", "global_evidence_id": identity,
+            "model_query_text": identity,
+        })
+    first = chunk("ГЭСН01-01-001-01", "first")
+    second = chunk("ГЭСН01-01-001-02", "second")
+    authored = {"source_row": "АР!R7", "norm_code": "ГЭСН01-01-001-02", "evidence_refs": ["Q1.H1"]}
+    saved = service.bind_row_evidence_ids([authored], [second])[0]
+    final = service.bind_row_evidence_ids([saved], [first, second])[0]
+    assert final["norm_code"] == authored["norm_code"]
+    assert final["evidence_bindings"] == {"Q1.H1": "second"}
+    assert final["_evidence_check"]["cited_ciphers"] == ["ГЭСН01-01-001-02"]
+    assert final["_evidence_check"]["code_not_in_refs"] is False
+    unbound = service.bind_row_evidence_ids([authored], [first, second])[0]
+    assert unbound["evidence_bindings"] == {}
+    assert unbound["_evidence_check"]["unresolved_refs"] == ["Q1.H1"]
+    missing = service.bind_row_evidence_ids([saved], [first])[0]
+    assert missing["evidence_bindings"] == {"Q1.H1": "second"}
+    assert missing["_evidence_check"]["unresolved_refs"] == ["Q1.H1"]
+
+
+@pytest.mark.parametrize("answer", [
+    "ВК!R42: source_row=ВК!R41, title=Работа, unit=шт, norm_code=X",
+    "source_row=ВК!R41, title=A, unit=шт, norm_code=X, norm_code=Y",
+    "Предлагаю source_row=ВК!R41, title=Работа, unit=шт, norm_code=X",
+    "source_row=ВК!R41, title=Работа, norm_code=X",
+])
+def test_ambiguous_or_prose_inline_result_is_not_a_decision(answer):
+    assert service.parse_model_rag_result(answer) is None
+
+
 def test_chat_application_does_not_replace_the_configured_model_for_memory_pressure():
     source = inspect.getsource(service._execute_chat_evidence_application)
 

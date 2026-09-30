@@ -3105,7 +3105,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 10648,
+      "lines": 10720,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -8452,7 +8452,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 7620,
+      "lines": 7660,
       "module": "sovushka.pages.chat",
       "outbound": [
         "backend/rag_config.py",
@@ -9552,7 +9552,7 @@
     },
     {
       "inbound": [],
-      "lines": 4801,
+      "lines": 4847,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13969,7 +13969,7 @@
     },
     {
       "inbound": [],
-      "lines": 2712,
+      "lines": 2732,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -19522,7 +19522,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 666,
     "tracked_python_files": 1039,
-    "tracked_python_lines": 358316
+    "tracked_python_lines": 358494
   },
   "warnings": []
 }
