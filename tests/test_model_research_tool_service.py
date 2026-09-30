@@ -249,6 +249,45 @@ async def test_estimator_search_reports_the_fused_pool_not_the_trimmed_cards():
 
 
 @pytest.mark.asyncio
+async def test_estimator_card_keeps_source_resource_evidence_without_inventing_composition():
+    card = {
+        "norm_code": "ГЭСНм99-01-001-01",
+        "norm_key": "norm-key",
+        "title": "Монтаж оборудования",
+        "measure_unit": "шт",
+        "edition": "2022",
+        "base_type": "ГЭСНм",
+        "source_ref": "ФСНБ-2022#guid=norm-key",
+        "work_steps": [],
+        "resource_count": 23,
+        "resource_kinds": {"machine": 2, "material": 20, "labor": 1},
+        "resource_preview": [
+            {"kind": "machine", "code": "91.01.01-001", "name": "Кран", "unit": "маш.-ч"},
+            {"kind": "material", "code": "01.01.01-001", "name": "Крепление", "unit": "шт"},
+        ],
+    }
+    service = ModelResearchToolService(
+        retrieve=lambda **_: pytest.fail("mixed retrieval must not run"),
+        frozen_dataset_ids=("smeta",), retrieval_kwargs={},
+        fallback=lambda *_: pytest.fail("fallback must not run"),
+        smeta_norm_retrieve=lambda *_args, **_kwargs: {
+            "cards": [card], "retrieval_trace": {"rag": {"status": "ok"}},
+        },
+    )
+    result = await service.execute({"tool": "search_sources", "args": {"q": "монтаж оборудования"}})
+    hit = result.payload["result"]["hits"][0]
+    assert "91.01.01-001" in hit["content"] and "Кран" in hit["content"]
+    assert "01.01.01-001" in hit["content"] and "Крепление" in hit["content"]
+    assert "маш.-ч" in hit["content"]
+    assert "ФСНБ-2022#guid=norm-key" in hit["content"]
+    assert "Состав работ в карточке не указан" in hit["content"]
+    assert "показано 2 из 23" in hit["content"]
+    for key in ("work_steps", "resource_count", "resource_kinds", "resource_preview", "edition", "base_type", "norm_key"):
+        assert hit["meta"][key] == card[key]
+    assert not any(key in hit["meta"] for key in ("norm_status", "composition_covers", "selected_code"))
+
+
+@pytest.mark.asyncio
 async def test_estimator_degraded_dense_serves_verified_cards_but_stays_honest():
     """Dense channel down but the dedicated browser produced exact/FTS cards with
     verified typed-base provenance: they reach the model, yet the search is

@@ -31,6 +31,35 @@ def retrieve_smeta_norm_cards(query: str, *, limit: int = 6) -> dict[str, Any]:
     return browse_norms(query, limit=limit)
 
 
+def _norm_card_content(card: Mapping[str, Any]) -> str:
+    """Transport typed evidence; a resource preview is not a work composition."""
+
+    steps = [str(item) for item in card.get("work_steps") or [] if str(item).strip()]
+    parts = [
+        f"Шифр: {card.get('norm_code') or ''}",
+        f"Наименование: {card.get('title') or ''}",
+        f"Измеритель: {card.get('measure_unit') or ''}",
+        "Состав работы: " + "; ".join(steps) if steps else "Состав работ в карточке не указан.",
+    ]
+    resources = [
+        item for item in card.get("resource_preview") or []
+        if isinstance(item, Mapping) and str(item.get("name") or "").strip()
+    ]
+    if resources:
+        count = card.get("resource_count")
+        shown = f"показано {len(resources)} из {count}" if isinstance(count, int) else f"показано {len(resources)}"
+        parts.append(f"Ресурсы нормы (обзор, {shown}; не заменяет состав работ):")
+        parts.extend(
+            " · ".join(str(item.get(key) or "") for key in ("kind", "code", "name", "unit"))
+            for item in resources
+        )
+    if card.get("edition"):
+        parts.append(f"Редакция: {card['edition']}")
+    if card.get("source_ref"):
+        parts.append(f"Источник: {card['source_ref']}")
+    return "\n".join(parts)
+
+
 def _chunk_payload(chunk: Any) -> dict[str, Any]:
     meta = getattr(chunk, "meta", {}) or {}
     payload: dict[str, Any] = {
@@ -182,28 +211,18 @@ class ModelResearchToolService:
             cards = cards_verified[: self._model_evidence_k]
             chunks = tuple(
                 _SmetaNormChunk(
-                    content="\n".join(
-                        part
-                        for part in (
-                            f"Шифр: {card.get('norm_code') or ''}",
-                            f"Наименование: {card.get('title') or ''}",
-                            f"Измеритель: {card.get('measure_unit') or ''}",
-                            (
-                                "Состав работы: "
-                                + "; ".join(
-                                    str(item)
-                                    for item in (card.get("work_steps") or [])
-                                    if str(item).strip()
-                                )
-                                if card.get("work_steps")
-                                else ""
-                            ),
-                        )
-                        if part
-                    ),
+                    content=_norm_card_content(card),
                     doc_name="smeta_norm_cards.v1",
                     score=float(max(len(cards) - index, 1)),
                     meta={
+                        **{
+                            key: card[key]
+                            for key in (
+                                "norm_key", "edition", "base_type", "work_steps", "resource_count",
+                                "resource_kinds", "resource_preview",
+                            )
+                            if key in card
+                        },
                         "norm_code": str(card.get("norm_code") or ""),
                         "measure_unit": str(card.get("measure_unit") or ""),
                         "source_ref": str(card.get("source_ref") or ""),

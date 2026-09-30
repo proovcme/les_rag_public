@@ -266,6 +266,22 @@ def test_existing_estimator_profile_keeps_model_authored_query_workflow_without_
     ) is False
 
 
+def test_sheet_packet_prompts_do_not_request_the_whole_sheet_again():
+    query = service.sheet_pass_query_instruction(
+        {"mode": "estimator"}, sheet="Другой раздел", sheet_index=2, sheet_count=10,
+    )
+    assert "только по исходным строкам текущего пакета" in query
+    assert "Манифест" in query
+    answer = service.sheet_pass_question_tail(
+        "Собери ЛСР", sheet="Другой раздел", sheet_index=2, sheet_count=10,
+        remaining_work=["Другой раздел!R300"],
+    )
+    assert "Другой раздел!R300" in answer
+    assert "по всем строкам ЭТОГО листа" not in answer
+    assert "все строки текущего листа" not in answer
+    assert "все операции строк текущего пакета" in answer
+
+
 def test_only_estimator_model_rag_uses_the_dedicated_smeta_catalog():
     assert service.profile_uses_smeta_norm_retrieval({"mode": "estimator"}) is True
     assert service.profile_uses_smeta_norm_retrieval(
@@ -484,6 +500,38 @@ def test_vor_notice_does_not_require_norms_or_prices():
     )
     assert notice == "ВОР сформирован. Файл: ВОР.xlsx."
     assert "ЛСР" not in notice
+
+
+def test_vor_readiness_keeps_model_open_questions_separate_from_delivery():
+    rows = [{"source_row": "PDF!R25", "row_role": "unresolved", "title": "Коробка",
+             "unit": "шт", "quantity": 8, "open_gap": "Нужно уточнение назначения"}]
+    ready = service.build_vor_result_readiness(
+        rows=rows, has_file=True, remaining_locators=[], catalog_work_count=1,
+        model_errors=[],
+    )
+    assert ready["technical_complete"] is True
+    assert ready["vor_complete"] is False
+    assert ready["open_questions"] == ["Коробка: Нужно уточнение назначения"]
+    assert rows[0]["row_role"] == "unresolved" and rows[0]["quantity"] == 8
+    notice = service.format_lsr_packaged_notice(filename="ВОР.xlsx", artifact_kind="vor_workbook", readiness=ready)
+    assert "Открытые вопросы" in notice
+
+
+def test_vor_readiness_does_not_require_norms_for_complete_work_volumes():
+    ready = service.build_vor_result_readiness(
+        rows=[{"source_row": "Лист!R7", "row_role": "work", "title": "Установка", "unit": "шт", "quantity": 2}],
+        has_file=True, remaining_locators=[], catalog_work_count=1, model_errors=[],
+    )
+    assert ready["vor_complete"] is True and ready["open_questions"] == []
+
+
+def test_vor_readiness_preserves_structural_errors_and_unreached_rows():
+    ready = service.build_vor_result_readiness(
+        rows=[], has_file=True, remaining_locators=["Другой!R3"], catalog_work_count=1,
+        model_errors=["source_missing:Другой!R3", "norm_code_not_found:X"],
+    )
+    assert ready["technical_complete"] is False and ready["vor_complete"] is False
+    assert ready["open_questions"] == ["source_missing:Другой!R3"]
 
 
 def test_model_inline_assignments_keep_explicit_decisions_and_decimal_comma():

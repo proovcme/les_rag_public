@@ -1,5 +1,32 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-30 — 836: доставка исправлена, подбор/финансовый gate не пройден
+
+Initial 837 PDF→VOR: 19/19 source rows, 20 decisions, but 2 authored unresolved
+questions were omitted from VOR readiness (`open_questions=[]`). The source has
+the quantity for both. Short skill now separates VOR volumes from LSR norm
+selection. `build_vor_result_readiness` forwards authored gaps, keeps roles and
+quantities, and distinguishes `technical_complete` delivery from `vor_complete`.
+Evidence: `artifacts/live_837/vor_pdf_fresh`. New live validation is required.
+
+Installed 836 recovery returns the same revisions/SHA/calculation snapshot for
+two identical VOR and LSR requests (0.25 s/8.24 s, no model). Freeform SKS review
+executes ordinary model research and packages a revision in 436.7 s: 75/75
+accounted, 4 selected norms, 0 calculated positions. Two EXACT-authored rows cite
+different norm cards; code correctly does not treat them as confirmed evidence.
+Fresh same-input/same-model B0: 134.1 s, 70/75 accounted, 11 works, 0 selected norms.
+B1: 493.4 s, 75/75, 9 works, 0 selected norms, 0 calculated positions; 63 coverage
+gaps (49 parent_not_work, 12 missing_work_row, 2 lost_work_link). B1 is not a
+quality acceptance: no claim of non-regression in professional content.
+Both use the original SKS SHA and SPb 3q2026 pricebook. Native RRF is healthy
+hybrid with bge-m3; reranking is disabled by runtime policy. Catalog queries
+show poorly relevant first cards. Separately, source-card transport drops
+resource_preview and its source fields: regression proves that loss; 837 repairs
+transport only, without ranking or professional code decisions. Norm applicability,
+resource links, commercial prices and NR/SP remain unaccepted. Evidence:
+`artifacts/live_836/{recovery,sks_baseline,sks_candidate,sks_refinement}` and
+`norm_retrieval_probe.json`. No fresh 300+ acceptance or customer-ready claim.
+
 ## 2026-09-21 — Resume 164: очередь 19/19, файл 4/21, шифры не считались
 
 Job `accepted_rows` first-won per locator, so materials vanished on resume.

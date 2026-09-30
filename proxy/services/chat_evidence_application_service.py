@@ -1698,6 +1698,11 @@ def sheet_pass_query_instruction(
         model_rag_query_instruction(profile_snapshot)
         + f"\nСейчас только лист «{sheet}» ({sheet_index}/{sheet_count}). "
         "Другие листы манифеста будут отдельными шагами; не составляй запросы по ним."
+        + "\nСоставляй запросы только по исходным строкам текущего пакета, "
+        "полностью представленным ниже. Манифест перечисляет адреса документа, "
+        "но не заменяет данные остальных пакетов. Не придумывай их содержание "
+        "и не составляй заново запросы по всему листу. Число операций и запросов "
+        "для представленных строк определяешь ты."
         + "\nКроме твоих запросов система гарантированно добавляет два запроса на "
         "каждую строку листа: дословный текст строки и тот же текст с явно указанными "
         "в исходнике атрибутами (раздел листа, подписанный столбец, написанный шифр). "
@@ -1731,13 +1736,15 @@ def sheet_pass_question_tail(
         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
         f"\nСейчас только лист «{sheet}» ({sheet_index}/{sheet_count}). "
-        "Дай таблицу по всем строкам ЭТОГО листа исходного ВОР. "
+        "Дай таблицу по всем исходным строкам текущего пакета. "
         "Не обрабатывай другие листы манифеста. "
     )
     remaining_clause = (
         remainder
-        + " Ответ должен вместить все строки текущего листа: без вводного обзора "
-        "и итоговых рекомендаций, кратко по одной строке ВОР."
+        + " Ответ должен вместить все операции строк текущего пакета: без вводного "
+        "обзора и итоговых рекомендаций. Число операций определяешь ты; "
+        "одна исходная строка может обосновывать несколько операций. "
+        "Не возвращай строки других пакетов; не придумывай их содержание по манифесту."
     )
     return lsr_result_table_instruction(
         sheet_clause=sheet_clause,
@@ -4950,6 +4957,33 @@ def format_lsr_unstructured_notice(*, sheet_pass_empty: bool = False) -> str:
         "ЛСР не создана: ответ не разобран как таблица строк "
         "(нужны колонки наименования, единицы и шифра)."
     )
+
+
+def build_vor_result_readiness(
+    *, rows: Sequence[Mapping[str, Any]], has_file: bool,
+    remaining_locators: Sequence[str], catalog_work_count: int,
+    model_errors: Sequence[str],
+) -> dict[str, Any]:
+    """Expose authored gaps; delivering a VOR does not establish its completeness."""
+    structural = [str(error) for error in model_errors if str(error).startswith(
+        ("source_", "invalid_source_row", "duplicate_source_row"),
+    )]
+    questions = list(structural)
+    for row in rows:
+        gap = str(row.get("open_gap") or "").strip()
+        unresolved = str(row.get("row_role") or "").strip().casefold() == "unresolved"
+        if not gap and not unresolved:
+            continue
+        title = str(row.get("title") or row.get("source_row") or "Позиция").strip()
+        questions.append(f"{title}: {gap}" if gap else f"{title}: требуется уточнение")
+    questions = list(dict.fromkeys(questions))
+    technical = bool(has_file) and not remaining_locators and not structural
+    return {
+        "schema": "les.vor-result-readiness.v1", "artifact_kind": "vor_workbook",
+        "technical_complete": technical, "vor_complete": technical and not questions,
+        "remaining_locators": list(remaining_locators),
+        "catalog_work_count": int(catalog_work_count), "open_questions": questions,
+    }
 
 
 def format_lsr_packaged_notice(
@@ -10355,18 +10389,12 @@ async def _execute_chat_evidence_application(
                         )
                         packaged_kind = str(((workbook_chat_meta or {}).get("artifact") or {}).get("artifact_kind") or "lsr_workbook")
                         if packaged_kind == "vor_workbook":
-                            vor_questions = [
-                                error for error in model_result_errors
-                                if str(error).startswith(("source_", "invalid_source_row", "duplicate_source_row"))
-                            ]
-                            lsr_readiness = {
-                                "schema": "les.vor-result-readiness.v1",
-                                "artifact_kind": "vor_workbook",
-                                "technical_complete": bool(workbook_files) and not remaining_locators and not vor_questions,
-                                "remaining_locators": remaining_locators,
-                                "catalog_work_count": len(source_catalog.work_locators()) if source_catalog else 0,
-                                "open_questions": vor_questions,
-                            }
+                            lsr_readiness = build_vor_result_readiness(
+                                rows=model_result_rows, has_file=bool(workbook_files),
+                                remaining_locators=remaining_locators,
+                                catalog_work_count=len(source_catalog.work_locators()) if source_catalog else 0,
+                                model_errors=model_result_errors,
+                            )
                         retrieval_trace["result_readiness"] = lsr_readiness
                         if isinstance(workbook_chat_meta, dict):
                             artifact_meta = workbook_chat_meta.get("artifact")

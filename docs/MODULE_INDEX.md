@@ -1,5 +1,19 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.109 / 837:** `core/tool-harness` перестал терять resource_preview
+> и прочие исходные поля typed нормы на пути к модели. `_norm_card_content`
+> явно различает состав работ и ограниченный обзор ресурсов; отсутствующий
+> состав не изобретается. Retrieval/выбор нормы не меняются. Док↔код ✅;
+> [ALGO-tool-harness](ALGO-tool-harness.md), `test_model_research_tool_service.py`.
+> `core/chat-evidence`: query/answer instructions соответствуют текущему пакету,
+> не просят весь лист повторно; множество модельных операций не ограничивается.
+> Regression: `test_sheet_packet_prompts_do_not_request_the_whole_sheet_again`.
+> `core/chat-profiles`: `build_vor_result_readiness` сохраняет авторские вопросы
+> и отделяет `vor_complete` от доставки; короткий skill не требует нормы для
+> известной работы ВОР. [chat-profiles](modules/chat-profiles.md). Док↔код ✅.
+> Live 836: recovery ВОР/ЛСР повторяет revision/SHA/снимок; fresh СКС 75/75
+> учтено, но 0 норм/0 рассчитанных позиций. Финансовый gate не пройден.
+
 > **Кандидат 0.31.108 / 836:** `smeta/workbook-tools` сохраняет
 > `calculation_snapshot` вместе с ревизией. Повторная доставка возвращает те же
 > суммы, price_basis, row_projection и gaps, не считает старый файл заново.

@@ -1,5 +1,18 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 837: `test_estimator_card_keeps_source_resource_evidence_without_inventing_composition`
+in `test_model_research_tool_service.py` reproduces dropped typed resource evidence,
+checks unchanged source fields and explicit missing work composition, and forbids
+invented applicability/selection. Before fix: 1 failed/9 passed; after: tool-service
+and norm-browser suites 42 passed. Financial live acceptance remains separate.
+`test_sheet_packet_prompts_do_not_request_the_whole_sheet_again` reproduces the
+contradictory whole-sheet instruction for a one-row packet; packet/refinement
+and chat tests pass (178). It does not impose a fixed operation count.
+Three `test_vor_readiness_*` in `test_chat_evidence_application_service.py`
+verify preserved authored unresolved gaps, unchanged row roles/quantities,
+independence from norms/prices, and separate delivery/completeness flags.
+This closes live-observed hidden questions in the initial 837 PDF VOR.
+
 Build 836: `test_completed_replay_after_restart_keeps_calculation_snapshot_and_same_file`
 in `test_workbook_tool_service.py` verifies immutable calculation metadata and
 same revision/SHA on replay through a newly created checkpoint/artifact context.

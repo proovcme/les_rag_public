@@ -1,5 +1,39 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.109 / 837 (30.09, Codex):** живой 836 подтвердил восстановление
+ВОР/ЛСР за 0.25/8.24 с: повторные запросы получают прежние revision/SHA и полный
+расчётный снимок, без модели. Свободное замечание выполнено за 436.7 с, 75/75
+строк, новая ревизия 68254 байт; 4 selected norms, 0 calculated positions.
+Свежий сравнительный СКС: B0 134.1 с, 70/75, 11 работ/0 норм; B1 493.4 с,
+75/75, 9 работ/0 норм/0 calculated positions. Это провал финансового gate,
+не готовность к заказчику. Цена SPb 3q2026 выбрана exact, native RRF здоров;
+назвать причиной только цены или GPU нельзя. Inspection выявил потерю
+resource_preview и source fields в model-facing карточке. 837 сохраняет их,
+явно отмечает отсутствие состава работ и не заменяет его ресурсным обзором.
+Нормы/статусы/ранжирование не назначаются кодом. Regression до правки красный.
+Live 836 также показал 55 запросов в пакете одной оставшейся строки: packet
+instruction требовала весь лист. Query/answer instructions теперь ограничивают
+только источник текущим пакетом, не число модельных операций. Regression
+красный до правки; 178 packet/refinement/chat tests и 42 tool/browser tests
+passed после. Финальный полный offline: 1986 passed, 20 существующих opt-in
+skipped, 184.83 с; verify — compileall/2006 collect, architecture-gate и
+verify-root зелёные. Initial installed 837 native-RRF 1/1, basic 9 pass/
+1 diagnostics warn/0 fail, alignment 96/96. Recovery 0.06/0.22 с, same
+revision/SHA/calculation snapshot. Fresh PDF ВОР 134.5 с, 19/19 исходных строк,
+20 решений (17 work/1 material/2 unresolved), 7350 байт. Inspection выявил
+два авторских вопроса при пустом `open_questions`: готовность ВОР теперь
+сохраняет их и различает доставку и `vor_complete`. Короткий skill разделяет
+требования ВОР и ЛСР: отсутствие нормы не делает известную работу ВОР unresolved.
+Роли/вопросы кодом не меняются. Три regression и 190 focused passed.
+Финальный полный gate: 1989 passed/20 существующих opt-in skipped/184.83 с;
+verify compileall/2009 collect, architecture и verify-root зелёные.
+Установленный live gate точного объединённого commit pending.
+
+**Установленная 0.31.108 / 836:** native-RRF 1/1; доставка и уточнение проверены
+на реальных документах. Evidence: `artifacts/live_836/recovery`, `sks_refinement`,
+`sks_baseline`, `sks_candidate`, `norm_retrieval_probe.json`. Финансовый gate
+не закрыт; большой свежий 300+ ВОР не принят.
+
 **Кандидат 0.31.108 / 836:** установленная 835 прошла native-RRF 1/1 и basic
 smoke 9 pass/1 diagnostics warn/0 fail. ВОР восстанавливается за 0.09 с,
 7349 байт/19 строк. Повтор старого repack ЛСР выявил пропущенный контракт:
