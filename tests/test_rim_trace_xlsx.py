@@ -1,12 +1,22 @@
 """Тест рендерера РИМ-трассы в XLSX по форме Приложения 3 к 421/пр.
 
-Рендерер из ГОТОВОЙ трассы, не калькулятор → числа те же, что в build_position_trace.
-Эталон ГЭСН12-01-034-02 @ 0.61 после полной детализации ОТм через ФСЭМ
-(тот же trace, что сервис/endpoint-тесты) — см. EXPECTED_TOTAL ниже: сумма
-пересобрана 28.09.2026 по компонентам и доказана каждой строкой трассы.
-Позиция остаётся черновиком (ставка ОТ из карточки нормы помечена
-card_price_without_basis), поэтому форма подписывает итог «Известная
-стоимость позиции», а не «Всего по позиции».
+Рендерер из ГОТОВОЙ трассы, не калькулятор → проверяется форма: графы 1-12, шапка РИМ,
+подписи итога, лист «Проверка».
+
+Every number this file pins is written down below and recomputable on paper: the resource
+composition of ``ГЭСН12-01-034-02`` as the canonical base card states it (its own шифры,
+units and consumptions) and rates the test itself chooses.  A base card carries no prices at
+all — measured 0 of 63 673 labour rows write one, and its machine and material rows carry
+none — so the card-price branch is reachable only when the test hands the calculator a card
+that states a rate, and the book branch only when the test names the book's rows.  The rates
+here are round on purpose; they are not the money of any region's real ценовая база and not
+the excluded demo seed's either (11 813.04 / 11 998.07 are named as demo artifacts in
+stage_b/live_830/seed_vs_base_reconcile_830.md and nothing below reproduces them).
+
+Позиция закрывается книгой: ставка труда берётся из строки 1-100-25, каждая цена имеет
+владельца, и форма подписывает итог «Всего по позиции».  Черновик проверяется отдельно: та
+же позиция книгой, в которой строки тарифа нет, считает труд ставкой самой карточки, ставка
+помечается ``card_price_without_basis``, а итог остаётся «Известная стоимость позиции».
 """
 
 import asyncio
@@ -18,57 +28,158 @@ from proxy.services import rim_trace_xlsx_service as rim_xlsx
 
 
 CODE = "ГЭСН12-01-034-02"
-# Эталон пересобран 28.09.2026 и проверен по компонентам трассы (книга цен
-# sankt-peterburg_2kv2026, правило начислений nrsp-12 = Приказ 812/пр п.12 и
-# Приказ 774/пр п.12, НР 109 % и СП 57 % оба от ФОТ):
-#   ОЗП 3750.23 (ОТ(ЗТ) 7.8934 чел.-ч × 475.11 руб./чел.-ч; ставка взята из
-#                карточки нормы и помечена card_price_without_basis)
-# + ЗПМ 490.00  (ОТм(ЗТм) fgis_current)                     = ФОТ 4240.23
-# + ЭМ  640.59 (машины fgis_current, разделение по графе 8)
-# + М    78.47 (гвозди fgis_base_index)                     = прямые 4959.29
-# + НР 4621.85 + СП 2416.93 (оба от ФОТ)                    = итого 11998.07
-# Прежний эталон 11896.35 записан в ba3d9e1e (11.07.2026) и не восстанавливается
-# из подписанных компонентов текущей трассы; файл не входил в CURRENT_TESTS,
-# поэтому расхождение не останавливало гейт.
-EXPECTED_TOTAL = 11998.07
+CARD_NAME = "Устройство обрешетки с прозорами из брусков"  # the base card's own name
+CARD_UNIT = "100 м2"  # the base card's own unit
+QTY = 1.0  # one unit of the card: every expectation below is a per-unit product
+NR_PCT, SP_PCT = 109, 57  # the ГЭСН:12 pair of config/domain/nr_sp_catalog.json
+
+# Rates the chosen ценовая база holds for the card's own шифры (test-authored, round).
+BOOK_PRICES = {
+    "1-100-25": 500.00,            # Средний разряд работы 2.5, руб./чел.-ч
+    "91.05.01-017": 900.00,        # Краны башенные 8 т, руб./маш.-ч
+    "91.05.05-015": 1700.00,       # Краны на автомобильном ходу 16 т, руб./маш.-ч
+    "91.14.02-001": 600.00,        # Автомобили бортовые 5 т, руб./маш.-ч
+    "4-100-060": 800.00,           # ОТм 6 разряда, руб./чел.-ч
+    "4-100-040": 600.00,           # ОТм 4 разряда, руб./чел.-ч
+    "01.7.15.06-0111": 90000.00,   # Гвозди строительные, руб./т
+    "11.1.03.01-0076": 25000.00,   # Бруски, руб./м3
+}
+# The rate the card itself states — the branch a base card cannot reach.
+CARD_LABOR_RATE = 480.00
+
+# Позиция, закрытая книгой выше:
+#   ОЗП  6 470,00 = 12,94 чел.-ч × 500,00
+#   ЭМ   1 710,00 = машины 908,00 (0,97×900 + 0,01×1700 + 0,03×600)
+#                              + ЗПМ  802,00 (0,97×800 + 0,01×800 + 0,03×600)
+#   М   10 135,00 = гвозди 0,0015×90 000 + бруски 0,4×25 000
+#   прямые 18 315,00;  ФОТ 7 272,00 = ОЗП + ЗПМ
+#   НР 7 926,48 (109 % от ФОТ) + СП 4 145,04 (57 % от ФОТ)  = итого 30 386,52
+BASE_PRICED_TOTAL = 30386.52
+# Тот же документ книгой без строки тарифа: труд считается ставкой карточки.
+#   ОЗП  6 211,20 = 12,94 × 480,00, остальное как выше
+#   прямые 18 056,20;  ФОТ 7 013,20;  НР 7 644,39 + СП 3 997,52 = итого 29 698,11
+# Ровно тот же итог подписывает и закрытая форма, когда ставка получает владельца:
+# право на число меняет подписи формы, а не деньги.
+CARD_PRICED_TOTAL = 29698.11
 DRAFT_TOTAL_LABEL = "Известная стоимость позиции"
 DRAFT_SUMMARY_LABEL = "ИЗВЕСТНАЯ РАССЧИТАННАЯ ЧАСТЬ БЕЗ НДС"
 COMPLETE_TOTAL_LABEL = "Всего по позиции"
 
 
+def _resources(*, card_labor_rate=None, labor_owner=None):
+    """The composition of ``CODE`` per 100 м2, as the canonical base card states it.
+
+    The шифры, units and consumptions of the labour, machine and material rows are the base
+    card's own (data/smeta_base/les_smeta_base.sqlite).  The machinist lines are the legacy
+    split shape: the base writes a single aggregated «Затраты труда машинистов» row of
+    1,01 маш.-ч, and these three add up to it, so the renderer is tested without letting the
+    ФСЭМ detailer decide the money.  A base card states no rate, so ``card_labor_rate`` is
+    what makes the card-price branch reachable at all.
+    """
+    labor = {"kind": "labor", "code": "1-100-25", "name": "Средний разряд работы 2.5",
+             "unit": "чел.-ч", "per_unit": 12.94}
+    if card_labor_rate is not None:
+        labor["price"] = card_labor_rate
+    if labor_owner:
+        labor["price_source_ref"] = labor_owner
+    return [
+        labor,
+        {"kind": "machine", "code": "91.05.01-017", "name": "Краны башенные, г/п 8 т",
+         "unit": "маш.-ч", "per_unit": 0.97},
+        {"kind": "machinist", "code": "4-100-060", "name": "ОТм 6 разряда",
+         "unit": "чел.-ч", "per_unit": 0.97},
+        {"kind": "machine", "code": "91.05.05-015",
+         "name": "Краны на автомобильном ходу, г/п 16 т",
+         "unit": "маш.-ч", "per_unit": 0.01},
+        {"kind": "machinist", "code": "4-100-060", "name": "ОТм 6 разряда",
+         "unit": "чел.-ч", "per_unit": 0.01},
+        {"kind": "machine", "code": "91.14.02-001", "name": "Автомобили бортовые, г/п до 5 т",
+         "unit": "маш.-ч", "per_unit": 0.03},
+        {"kind": "machinist", "code": "4-100-040", "name": "ОТм 4 разряда",
+         "unit": "чел.-ч", "per_unit": 0.03},
+        {"kind": "material", "code": "01.7.15.06-0111", "name": "Гвозди строительные",
+         "unit": "т", "per_unit": 0.0015},
+        {"kind": "material", "code": "11.1.03.01-0076", "name": "Бруски",
+         "unit": "м3", "per_unit": 0.4},
+    ]
+
+
+class _Book:
+    """Выбранная ценовая база: точный поиск по шифру, строки — BOOK_PRICES выше."""
+
+    def __init__(self, *without) -> None:
+        self._prices = {
+            code: price for code, price in BOOK_PRICES.items() if code not in without
+        }
+
+    def lookup(self, code):
+        price = self._prices.get(str(code or "").strip())
+        return None if price is None else {"price_current": price, "price_current_eff": price}
+
+
+def _position(**overrides) -> dict:
+    position = {
+        "code": CODE, "name": CARD_NAME, "unit": CARD_UNIT, "qty": QTY,
+        "nr_pct": NR_PCT, "sp_pct": SP_PCT,
+    }
+    position.update(overrides)
+    return position
+
+
 def _trace():
-    book = la._resolve_book(None)
+    """Позиция, закрытая выбранной книгой: каждая ставка имеет владельца."""
     return rim.build_position_trace(
-        {"code": CODE, "qty": 0.61}, pricebook=book, k_ozp=1.0, k_em=1.0
+        _position(resources=_resources()), pricebook=_Book(), k_ozp=1.0, k_em=1.0
+    )
+
+
+def _draft_trace():
+    """Тот же документ книгой без строки тарифа: ОЗП остаётся ставкой карточки."""
+    return rim.build_position_trace(
+        _position(resources=_resources(card_labor_rate=CARD_LABOR_RATE)),
+        pricebook=_Book("1-100-25"), k_ozp=1.0, k_em=1.0,
     )
 
 
 def _lsr_trace():
-    book = la._resolve_book(None)
-    positions = [
-        {"code": CODE, "qty": 0.61, "section": "Раздел 1. Кровля"},
-        {"code": CODE, "qty": 0.61, "section": "Раздел 2. Прочее"},
-    ]
-    return rim.build_lsr_trace(positions, pricebook=book, name="Смета на кровлю")
+    return rim.build_lsr_trace(
+        [
+            {**_position(), "section": "Раздел 1. Кровля"},
+            {**_position(), "section": "Раздел 2. Прочее"},
+        ],
+        pricebook=_Book(),
+        name="Смета на кровлю",
+    )
+
+
+def _draft_lsr_trace():
+    def _draft_position(section):
+        return {
+            **_position(resources=_resources(card_labor_rate=CARD_LABOR_RATE)),
+            "section": section,
+        }
+
+    return rim.build_lsr_trace(
+        [_draft_position("Раздел 1. Кровля"), _draft_position("Раздел 2. Прочее")],
+        pricebook=_Book("1-100-25"),
+        name="Смета на кровлю",
+    )
 
 
 def _closed_trace():
     """Та же позиция, но ставка ОТ имеет источник, а не только карточку нормы.
 
-    Черновик и закрытая позиция дают один и тот же денежный итог: право на
-    число меняет подписи формы, а не деньги.
+    Черновик и закрытая позиция дают один и тот же денежный итог (``CARD_PRICED_TOTAL``):
+    право на число меняет подписи формы, а не деньги.
     """
-    from proxy.services.gesn_service import get_norm
-
-    resources = [dict(r) for r in (get_norm(CODE) or {}).get("resources") or []]
-    for res in resources:
-        if str(res.get("kind")) == "labor":
-            res["price"] = 475.11
-            res["price_source_ref"] = "ФГИС ЦС, 2кв2026, строка оплаты труда рабочих"
     return rim.build_position_trace(
-        {"code": CODE, "qty": 0.61, "resources": resources},
-        pricebook=la._resolve_book(None), k_ozp=1.0, k_em=1.0,
+        _position(resources=_resources(
+            card_labor_rate=CARD_LABOR_RATE,
+            labor_owner="ФГИС ЦС, 3кв2026, строка оплаты труда рабочих",
+        )),
+        pricebook=_Book("1-100-25"), k_ozp=1.0, k_em=1.0,
     )
+
 
 
 def test_closed_position_is_named_by_the_completed_form(tmp_path):
@@ -82,7 +193,7 @@ def test_closed_position_is_named_by_the_completed_form(tmp_path):
 
     trace = _closed_trace()
     assert trace["summary"]["completeness_reasons"] == []
-    assert trace["summary"]["full_amount"] == EXPECTED_TOTAL
+    assert trace["summary"]["full_amount"] == CARD_PRICED_TOTAL
     assert trace["rows"][-1]["label"] == COMPLETE_TOTAL_LABEL
     out = rim_xlsx.render_trace_xlsx(trace, tmp_path / "closed.xlsx")
     ws = openpyxl.load_workbook(out).active
@@ -91,10 +202,30 @@ def test_closed_position_is_named_by_the_completed_form(tmp_path):
     assert "Сметная стоимость" in txt
 
 
-def test_render_produces_valid_xlsx(tmp_path):
+def test_the_chosen_base_closes_the_labour_of_the_card(tmp_path):
+    """Строка тарифа в книге → позиция перестаёт быть черновиком.
+
+    Тот же документ и те же ресурсы, только книга держит строку 1-100-25: ОЗП
+    считается 500,00 руб./чел.-ч из базы, итог получает подпись «Всего по
+    позиции», и ни одна ставка карточки не числится деньгами без владельца.
+    """
     import openpyxl
 
     trace = _trace()
+    assert trace["summary"]["full_amount"] == BASE_PRICED_TOTAL
+    assert trace["summary"]["ozp"] == 6470.00
+    assert trace["summary"]["card_priced_resources"] == []
+    assert trace["summary"]["amount_status"] == "complete"
+    out = rim_xlsx.render_trace_xlsx(trace, tmp_path / "priced.xlsx")
+    txt = " ".join(str(c.value) for row in openpyxl.load_workbook(out).active.iter_rows() for c in row if c.value)
+    assert COMPLETE_TOTAL_LABEL in txt and DRAFT_TOTAL_LABEL not in txt
+    assert "1-100-25" in txt
+
+
+def test_render_produces_valid_xlsx(tmp_path):
+    import openpyxl
+
+    trace = _draft_trace()
     out = rim_xlsx.render_trace_xlsx(trace, tmp_path / "trace.xlsx")
     assert out.exists() and out.stat().st_size > 0
     ws = openpyxl.load_workbook(out).active
@@ -108,7 +239,7 @@ def test_render_produces_valid_xlsx(tmp_path):
 def test_appendix3_rim_header_and_graphs_present(tmp_path):
     import openpyxl
 
-    out = rim_xlsx.render_trace_xlsx(_trace(), tmp_path / "t.xlsx")
+    out = rim_xlsx.render_trace_xlsx(_draft_trace(), tmp_path / "t.xlsx")
     txt = " ".join(str(c.value) for row in openpyxl.load_workbook(out).active.iter_rows() for c in row if c.value)
     # форма Приложения 3: шапка РИМ + графы + свод
     assert "Приложение № 3" in txt and "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ" in txt and "Сметная стоимость" in txt
@@ -155,15 +286,21 @@ def test_xlsx_work_row_keeps_official_norm_title_and_source_description(tmp_path
 
 
 def test_endpoint_export_returns_download():
+    """Эндпоинт отдаёт тот же расчёт, что сервис, и файл, который можно скачать.
+
+    Деньги позиции, развёрнутой из канонической базы, зависят от установленной на
+    машине книги (``_resolve_book(None)``), поэтому здесь сверяется контракт «эндпоинт
+    = сервис», а сами суммы закреплены в сервисных тестах на детерминированной книге.
+    """
     from proxy.routers.lsr import RimTraceRequest, lsr_rim_trace_export
 
-    res = asyncio.run(
-        lsr_rim_trace_export(
-            RimTraceRequest(position={"code": CODE, "qty": 0.61}), _user=object()
-        )
-    )
+    position = {"code": CODE, "qty": 0.61}
+    res = asyncio.run(lsr_rim_trace_export(RimTraceRequest(position=position), _user=object()))
+    service = rim.build_position_trace(position, pricebook=la._resolve_book(None))
+
     assert res["code"] == CODE
-    assert res["summary"]["total"] == EXPECTED_TOTAL
+    assert res["summary"]["total"] == service["summary"]["total"]
+    assert res["summary"]["amount_status"] == service["summary"]["amount_status"]
     assert res["download"].startswith("/api/lsr/download?path=rim_trace_")
     assert Path(res["path"]).exists()
 
@@ -171,7 +308,7 @@ def test_endpoint_export_returns_download():
 def test_render_lsr_multi_position_form(tmp_path):
     import openpyxl
 
-    lsr = _lsr_trace()
+    lsr = _draft_lsr_trace()
     out = rim_xlsx.render_lsr_xlsx(lsr, tmp_path / "lsr.xlsx")
     assert out.exists() and out.stat().st_size > 0
     ws = openpyxl.load_workbook(out).active
@@ -180,13 +317,30 @@ def test_render_lsr_multi_position_form(tmp_path):
     assert "Приложение № 3" in txt and "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ" in txt
     assert "Раздел 1. Кровля" in txt and "Раздел 2. Прочее" in txt
     assert "Итого по разделу 1" in txt and "Итого по разделу 2" in txt
-    # обе позиции черновые (ставка ОТ из карточки), поэтому общий свод не может
-    # называться «ВСЕГО по смете» — он подписан известной рассчитанной частью
+    # обе позиции черновые (ставка ОТ не имеет владельца), поэтому общий свод не
+    # может называться «ВСЕГО по смете» — он подписан известной рассчитанной частью
     assert DRAFT_SUMMARY_LABEL in txt
     # общий итог — формула по позициям, а не застывшая константа.
     total_row = next(row for row in ws.iter_rows() if row[2].value == DRAFT_SUMMARY_LABEL)
     assert str(total_row[11].value).startswith("=SUM(")
-    assert lsr["summary"]["total"] == 2 * EXPECTED_TOTAL
+    assert lsr["summary"]["total"] == 2 * CARD_PRICED_TOTAL
+
+
+def test_render_lsr_priced_by_the_base_signs_the_completed_summary(tmp_path):
+    """База закрыла труд → свод сметы подписывается «ВСЕГО по смете без НДС».
+
+    Пара к черновику: те же две позиции, та же форма, только строка тарифа в
+    книге есть — и документ получает подпись завершённого расчёта.
+    """
+    import openpyxl
+
+    lsr = _lsr_trace()
+    out = rim_xlsx.render_lsr_xlsx(lsr, tmp_path / "lsr-priced.xlsx")
+    txt = " ".join(
+        str(c.value) for row in openpyxl.load_workbook(out).active.iter_rows() for c in row if c.value
+    )
+    assert "ВСЕГО по смете без НДС" in txt and DRAFT_SUMMARY_LABEL not in txt
+    assert lsr["summary"]["total"] == 2 * BASE_PRICED_TOTAL
 
 
 def test_render_lsr_prints_all_twelve_graphs_on_one_page_width(tmp_path):
@@ -207,8 +361,10 @@ def test_render_lsr_prints_all_twelve_graphs_on_one_page_width(tmp_path):
 def test_render_lsr_single_section_omits_section_header(tmp_path):
     import openpyxl
 
-    book = la._resolve_book(None)
-    lsr = rim.build_lsr_trace([{"code": CODE, "qty": 0.61}], pricebook=book)
+    lsr = rim.build_lsr_trace(
+        [_position(resources=_resources(card_labor_rate=CARD_LABOR_RATE))],
+        pricebook=_Book("1-100-25"),
+    )
     out = rim_xlsx.render_lsr_xlsx(lsr, tmp_path / "one.xlsx")
     txt = " ".join(str(c.value) for row in openpyxl.load_workbook(out).active.iter_rows() for c in row if c.value)
     # один безымянный раздел → без «Раздел 1», но общий свод есть; черновик
@@ -262,20 +418,21 @@ def test_lsr_header_uses_passed_source_metadata_and_review_issues_are_readable(t
 def test_endpoint_lsr_trace_export_returns_download():
     from proxy.routers.lsr import LsrTraceRequest, lsr_multi_trace_export
 
+    positions = [
+        {"code": CODE, "qty": 0.61, "section": "Раздел 1"},
+        {"code": CODE, "qty": 0.61, "section": "Раздел 2"},
+    ]
     res = asyncio.run(
-        lsr_multi_trace_export(
-            LsrTraceRequest(
-                positions=[
-                    {"code": CODE, "qty": 0.61, "section": "Раздел 1"},
-                    {"code": CODE, "qty": 0.61, "section": "Раздел 2"},
-                ],
-                name="Тест",
-            ),
-            _user=object(),
-        )
+        lsr_multi_trace_export(LsrTraceRequest(positions=positions, name="Тест"), _user=object())
     )
+    service = rim.build_lsr_trace(
+        positions, pricebook=la._resolve_book(None), name="Тест"
+    )
+
     assert res["name"] == "Тест"
-    assert res["summary"]["total"] == 2 * EXPECTED_TOTAL
+    # контракт эндпоинта: он отдаёт расчёт сервиса, а не пересобирает его по-своему
+    assert res["summary"]["total"] == service["summary"]["total"]
+    assert res["summary"]["result_status"] == service["summary"]["result_status"]
     assert len(res["sections"]) == 2
     assert res["download"].startswith("/api/lsr/download?path=lsr_trace_")
     assert Path(res["path"]).exists()

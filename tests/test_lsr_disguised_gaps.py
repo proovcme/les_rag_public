@@ -26,6 +26,7 @@ import pytest
 
 from tests.lsr_citation_support import cited
 
+from proxy.services import gesn_service
 from proxy.services.lsr_result_readiness_service import (
     build_lsr_result_readiness,
     format_lsr_readiness_notice,
@@ -56,6 +57,73 @@ class _Book:
     def lookup(self, code: str):
         price = self._prices.get(str(code).strip())
         return None if price is None else {"price_current": price}
+
+
+def _legacy_demontade_card(**overrides) -> dict[str, object]:
+    """``DEMONTADE_NORM`` as a card that writes its own numbers.
+
+    A card from the canonical base (data/smeta_base/les_smeta_base.sqlite) states the
+    composition and nothing else: this card's own labour row is «Средний разряд работы
+    3,8» (1-100-38) at 0,22 чел.-ч, it carries no price and no ``nr_pct``/``sp_pct``, and
+    the catalog of ГЭСНм:11 holds two rules so it resolves nothing.  The rate and the two
+    accrual percentages below are therefore numbers this test writes onto the card — round
+    and its own, not the money of any region's ценовая база and not the excluded demo
+    seed's, which production no longer merges into the read path.  Serving them as explicit
+    card data is what keeps both defect guards below about ownership rather than about a
+    missing card.
+
+    The name is the installing wording this test needs for the reversal half of the first
+    guard below; the second guard passes the base card's own name
+    («Включение в аппаратуру разъемов штепсельных…»), which names no action at all and so
+    leaves the accrual question the only open one.
+    """
+    card = {
+        "code": DEMONTADE_NORM,
+        "name": "Монтаж розеток, патч-панелей и штепсельных разъемов",
+        "unit": "шт",
+        "nr_pct": 109,
+        "sp_pct": 57,
+        "resources": [
+            {
+                "kind": "labor",
+                "code": "1-100-38",
+                "name": "Средний разряд работы 3,8",
+                "unit": "чел.-ч",
+                "per_unit": 0.22,
+                "price": 500.0,
+            }
+        ],
+    }
+    card.update(overrides)
+    return card
+
+
+def _install_card(monkeypatch, card: dict[str, object]) -> None:
+    """Serve ``card`` for its own шифр, keep the canonical base for every other code."""
+    real_get_norm = gesn_service.get_norm
+
+    def _get_norm(code, *args, **kwargs):
+        if str(code or "").strip() == str(card["code"]):
+            return dict(card)
+        return real_get_norm(code, *args, **kwargs)
+
+    monkeypatch.setattr(gesn_service, "get_norm", _get_norm)
+
+
+#: The unpatched reader, taken at import time before any test can stub it.
+_CANONICAL_GET_NORM = gesn_service.get_norm
+
+
+def _use_canonical_base(monkeypatch) -> None:
+    """Put the verified norm base back on the read path after `_install_card`.
+
+    Both halves of the НР/СП rule are pinned below, and which one the product prints
+    depends only on what the read card states: percentages of its own
+    (``nr_sp_without_basis``) or nothing at all, which is every canonical base card
+    (``nr_sp_unresolved``).  A stub left installed would hide the second spelling.
+    """
+
+    monkeypatch.setattr(gesn_service, "get_norm", _CANONICAL_GET_NORM)
 
 
 def _gap_kinds(readiness: dict, dimension: str) -> list[str]:
@@ -99,8 +167,12 @@ def test_the_reversal_is_read_from_the_two_texts_that_are_already_in_the_row():
     assert norm_action_conflict("Демонтаж розетки", None) == {}
 
 
-def test_a_dismantling_row_priced_by_an_installing_norm_stays_an_open_question():
+def test_a_dismantling_row_priced_by_an_installing_norm_stays_an_open_question(monkeypatch):
     """§ 11 № 8: the money is shown, the applicability claim is not."""
+    # the chosen card names «монтаж» and prices its own labour row — both of those are
+    # card data now (`_legacy_demontade_card()` above); the row's own words stay the real
+    # half of the contradiction
+    _install_card(monkeypatch, _legacy_demontade_card())
     lsr = build_lsr_trace_from_visible_rows([_dismantling_row()])
     binding = lsr["row_bindings"][0]
     summary = lsr["summary"]
@@ -109,10 +181,14 @@ def test_a_dismantling_row_priced_by_an_installing_norm_stays_an_open_question()
     assert binding["action_conflict"]["norm_action"] == "монтаж"
     assert binding["readiness"]["applicability_substantiated"] is False
     assert binding["readiness"]["norm_applicability_ok"] is False
-    # the amount stays visible, and it is preliminary money
-    assert summary["total"] == pytest.approx(5985.0)
+    # the amount stays visible, and it is preliminary money.  2 926,00 = the card's own
+    # 0,22 чел.-ч × 10 шт × its own 500,00 руб./чел.-ч = 1 100,00 прямые, plus НР 109 %
+    # and СП 57 % of that ФОТ (1 199,00 + 627,00) — the two percentages the same card
+    # prints, because the accrual catalog (config/domain/nr_sp_catalog.json) holds two
+    # rules for ГЭСНм:11 and the fail-closed catalog refuses to choose between them.
+    assert summary["total"] == pytest.approx(2926.0)
     assert summary["confirmed_amount"] == pytest.approx(0.0)
-    assert summary["preliminary_amount"] == pytest.approx(5985.0)
+    assert summary["preliminary_amount"] == pytest.approx(2926.0)
     assert summary["result_status"] == "priced_partial"
     assert [
         flag for flag in summary["flags"] if "противоречие операции" in str(flag)
@@ -391,14 +467,29 @@ def _row_for(position: dict[str, object], *, locator: str = "ВОР!R5") -> dict
     })
 
 
-def test_owned_resource_prices_do_not_close_a_position_without_an_accrual_owner():
+def test_owned_resource_prices_do_not_close_a_position_without_an_accrual_owner(monkeypatch):
     """§ 11 № 6: the document asks about НР/СП even when no price is missing.
 
     ГЭСНм:11 carries two catalog rules, so the fail-closed catalog refuses to
     pick one and the percentages printed in the norm card are applied without an
     owner.  The money is real and stays visible; what must disappear is the claim
     that the estimate is complete.
+
+    The same question is pinned twice, because the product spells it two ways: a card
+    that states percentages («nr_sp_without_basis») and a card of the verified base,
+    which states none («nr_sp_unresolved»).  Both leave the position open; only the
+    second is what the installed base gives today.
     """
+    # the card prints 109 % / 57 % as its own accrual rates (a base card prints none);
+    # the name here is the base card's own, so nothing but the accrual owner is open.
+    # The ambiguity itself is real base-catalog data, not a stub.
+    _install_card(
+        monkeypatch,
+        _legacy_demontade_card(
+            name="Включение в аппаратуру разъемов штепсельных, "
+            "количество контактов в разъеме: до 14 шт."
+        ),
+    )
     lsr = build_lsr_trace([_owned_price_position()])
     summary = lsr["summary"]
     gaps = collect_lsr_price_gaps(lsr)
@@ -455,6 +546,56 @@ def test_owned_resource_prices_do_not_close_a_position_without_an_accrual_owner(
     assert len(collect_lsr_price_gaps(twice)) == 2
     assert repeated["dimensions"]["prices"]["gap_count"] == 1
     assert repeated["estimate_complete"] is False
+
+    # The production shape of the same hole: a card of the verified base prints no НР/СП
+    # at all, so nothing is "taken off the card without basis" — the accrual is simply
+    # unresolved, the catalog of ГЭСНм:11 keeps two rules and refuses to pick one, and the
+    # document still asks.  Same fixture, same money, other spelling of the same question.
+    _use_canonical_base(monkeypatch)
+    real = build_lsr_trace([_owned_price_position()])
+    real_summary = real["summary"]
+    real_gaps = collect_lsr_price_gaps(real)
+
+    assert [gap["price_action"] for gap in real_gaps] == ["nr_sp_unresolved"]
+    assert real_gaps[0]["resource"] == f"НР и СП ({DEMONTADE_NORM})"
+    assert real_gaps[0]["required_source"].startswith("нормативное основание")
+    assert real["sections"][0]["positions"][0]["summary"]["nr_sp_ownership"] == {
+        "label": "nr_sp_unresolved",
+        "nr_pct": None,
+        "sp_pct": None,
+        "nr_source": "",
+        "sp_source": "",
+        "catalog_status": "ambiguous",
+        "basis": "",
+        "rule_id": "",
+    }
+    assert real_summary["total"] > 0.0
+    assert real_summary["amount_status"] == "partial"
+    assert real_summary["full_amount"] is None
+
+    real_readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=rows,
+        missing=[],
+        pricing_status=real_summary["result_status"],
+        price_gaps=real_gaps,
+        calculated_positions=1,
+        confirmed_amount=real_summary["total"],
+        preliminary_amount=0.0,
+    )
+    # the same dimensions answer the same way, and the notice names the hole in the
+    # words the product really prints for an unresolved accrual
+    assert real_readiness["dimensions"]["coverage"]["complete"] is True
+    assert real_readiness["dimensions"]["norms"]["complete"] is True
+    assert real_readiness["dimensions"]["prices"]["complete"] is False
+    assert real_readiness["estimate_complete"] is False
+    real_notice = format_lsr_readiness_notice(real_readiness, filename="LSR.xlsx")
+    assert "начисления НР (нет) и СП (нет) не определены" in real_notice
+    assert "нормативное основание не выбрано, в карточке нормы ставки нет" in real_notice
+    assert "Подходящих правил в каталоге: 2 — нужно одно" in real_notice
+    assert "Расчёт без НР и СП не становится полной сметой" in real_notice
+    assert DEMONTADE_NORM in real_notice
+    assert "109 %" not in real_notice
 
 
 def test_an_explicit_accrual_choice_closes_the_same_document():

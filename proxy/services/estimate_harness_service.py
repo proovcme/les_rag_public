@@ -1342,14 +1342,22 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
     if norm is None:
         state["positions"].append({**base_pos, "status": "rejected_norm", "reason": "кода нет в базе ГЭСН"})
         return {"ok": False, "status": "rejected_norm", "error": f"код {code} не в базе"}
-    base_pos["norm_source_kind"] = str(norm.get("_source_kind") or "seed_yaml")
-    base_pos["norm_source_path"] = str(norm.get("_source_path") or "config/domain/gesn_seed.yaml")
+    base_pos["norm_source_kind"] = str(norm.get("_source_kind") or "unknown")
+    base_pos["norm_source_path"] = str(norm.get("_source_path") or "")
     if base_pos["norm_source_kind"] == "structured_sqlite":
         from proxy.smeta_core.integrity import normative_base_integrity
 
         base_pos["norm_source_integrity"] = normative_base_integrity(
             base_path=base_pos["norm_source_path"]
         )
+    elif base_pos["norm_source_kind"] == "seed_yaml":
+        # § 3: a demo card can only be here because the scenario named it.  Its money is
+        # never base-backed: the position carries the origin and stays untrusted.
+        base_pos["norm_source_integrity"] = {
+            "trusted_for_pricing": False,
+            "source_kind": "seed_yaml",
+            "base_path": base_pos["norm_source_path"],
+        }
     norm_profile = _norm_profile_for_code(code, norm)
     norm_card = norm_profile.get("model_card") if isinstance(norm_profile.get("model_card"), dict) else {}
     norm_questions = _unresolved_norm_questions(

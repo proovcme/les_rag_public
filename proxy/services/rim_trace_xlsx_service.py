@@ -516,6 +516,12 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
             unit_note = ""
             if str(entry.get("price_book_unit") or ""):
                 unit_note = f" — единица книги: {entry.get('price_book_unit')}"
+            # § 3: a derived шифр must never read as the card's own.  The ОЗП line of a
+            # norm card names only a разряд, so when the calculator priced it from a
+            # tariff code it worked out, the sheet says where that code came from.
+            derivation = str(entry.get("code_derivation") or "")
+            if derivation:
+                unit_note += f" — {derivation}"
             resource_lines.append(
                 f"{entry.get('kind') or '?'} {identity} "
                 f"{entry.get('qty') if entry.get('qty') is not None else ''} "

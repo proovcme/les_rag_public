@@ -25,12 +25,31 @@ def test_missing_catalog_fails_closed_without_seed(tmp_path):
 
 
 def test_rim_trace_uses_reconciled_full_fsem():
-    from proxy.services import lsr_assembly_service as la
-    from proxy.services import rim_lsr_trace_service as rim
+    """Агрегат «Затраты труда машинистов» расходится на конкретные шифры ОТм.
 
-    book = la._resolve_book(None)
+    Книга — детерминированный двойник из ``tests/test_rim_lsr_trace_service.py``, а не то,
+    что резолвит рантайм: без выбранной книги ФСЭМ не применяет разбор вовсе
+    (``not_applied_without_pricebook``), поэтому и статус, и деньги разборки на книге
+    оператора зависели бы от содержимого ``data/price_base``.
+    """
+    from proxy.services import rim_lsr_trace_service as rim
+    from tests import test_rim_lsr_trace_service as gold
+
     trace = rim.build_position_trace(
-        {"code": "ГЭСН12-01-034-02", "qty": 0.61}, pricebook=book, k_ozp=1.0, k_em=1.0
+        {"code": gold.CODE, "qty": gold.GOLD_QTY}, pricebook=gold._Book(), k_ozp=1.0, k_em=1.0
     )
-    assert trace["summary"]["total"] == 11998.07  # разбор суммы по компонентам — test_rim_trace_xlsx, EXPECTED_TOTAL
-    assert trace["summary"]["fsem_trace"]["status"] == "reconciled"
+    summary = trace["summary"]
+
+    assert summary["fsem_trace"]["status"] == "reconciled"
+    assert summary["fsem_trace"]["machine_count"] == 3
+    assert summary["fsem_trace"]["detailed_machinist_rows"] == 3
+    assert summary["fsem_trace"]["hours"] == 1.01  # the card's aggregate ОТм, fully split
+    # детализация обязательна: без неё ЗПМ — одна агрегатная строка без шифра и без цены,
+    # а с ней ЗПМ считается по ставкам книги, которые названы в строках 4-100-*
+    assert summary["zpm"] == gold.GOLD_ZPM
+    machinist_rows = [row for row in trace["rows"] if row["type"] == "resource_machinist"]
+    assert sorted(str(row["columns"]["2"]) for row in machinist_rows) == [
+        "4-100-040",
+        "4-100-060",
+        "4-100-060",
+    ]

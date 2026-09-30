@@ -189,6 +189,19 @@ UNOWNED_PRICE_SOURCES = {
     "card_price": "card_price_without_basis",
 }
 
+# Task 2026-09-29 § 3 (tracker #63): the two LSR calculators walk ONE price ladder,
+# and the question «does this rate have an owner?» has exactly one implementation.
+# ``lsr_assembly_service._resource_price`` used to return any explicit ``price`` as
+# "manual" before the chosen book was asked, so a norm-card number counted as
+# operator money there while the РИМ trace labelled the same row a draft: one card,
+# two sums, and a ценовая база the operator picked that never reached the position.
+PRICE_OWNERSHIP_LADDER = {
+    "proxy/services/rim_lsr_trace_service.py": "_resolve_price_trace",
+    "proxy/services/lsr_assembly_service.py": "_resource_price",
+}
+PRICE_OWNERSHIP_GUARD_FUNCTION = "price_is_attributed"
+PRICE_OWNERSHIP_UNOWNED_TOKENS = frozenset({"card_price", "CARD_PRICE_SOURCE"})
+
 # Task 2026-09-28 § 8, § 11 № 8: a price book row is a price *per the unit the
 # row states*.  The book answers to a шифр, so an engine that took the number
 # without comparing units could price a position that states «л» off a row that
@@ -1378,6 +1391,68 @@ def _book_price_unit_violations(relative: str, tree: ast.AST) -> Iterable[Archit
             )
 
 
+def _price_ownership_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Task 2026-09-29 § 3 (tracker #63): one ownership question decides a resource price.
+
+    ``PriceBook.lookup`` answers by шифр, and a norm card carries its own rate for the
+    same resource.  Whichever calculator takes that rate first decides whether the
+    operator's chosen base is consulted at all and whether the number reads as confirmed
+    money.  Both ladders therefore have to ask the one question — "does this rate have an
+    owner?" — and keep returning the labelled card source, or the same card becomes two
+    documents (ADR-16 § 7, § 10).
+    """
+
+    function_name = PRICE_OWNERSHIP_LADDER.get(relative)
+    if function_name is None:
+        return
+    scope = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function_name
+        ),
+        None,
+    )
+    if scope is None:
+        yield ArchitectureViolation(
+            "UNOWNED_PRICE_SOURCE_ADOPTED",
+            relative,
+            1,
+            f"{function_name}() is gone, so the price ladder no longer has one home and "
+            "an engine could take a norm-card rate as its first answer",
+        )
+        return
+    called = {
+        _call_name(node).split(".")[-1]
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Call)
+    }
+    if PRICE_OWNERSHIP_GUARD_FUNCTION not in called:
+        yield ArchitectureViolation(
+            "UNOWNED_PRICE_SOURCE_ADOPTED",
+            relative,
+            scope.lineno,
+            f"{function_name}() reads a resource price without asking "
+            f"{PRICE_OWNERSHIP_GUARD_FUNCTION}(), so a number the norm card carries would "
+            "count as operator money and the ценовая база the operator chose would never be asked",
+        )
+    spelled = {
+        node.value
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    } | {node.id for node in ast.walk(scope) if isinstance(node, ast.Name)}
+    if not spelled & PRICE_OWNERSHIP_UNOWNED_TOKENS:
+        yield ArchitectureViolation(
+            "UNOWNED_PRICE_SOURCE_ADOPTED",
+            relative,
+            scope.lineno,
+            f"{function_name}() no longer returns the labelled card-price source, so the "
+            "label the readiness state, the price gaps and the confirmed/preliminary split "
+            "key on would be dropped",
+        )
+
+
 def _python_violations(root: Path, path: Path, text: str) -> Iterable[ArchitectureViolation]:
     relative = _relative(root, path)
     try:
@@ -1394,6 +1469,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     yield from _basis_refusal_violations(relative, tree)
     yield from _accrual_label_violations(relative, tree)
     yield from _book_price_unit_violations(relative, tree)
+    yield from _price_ownership_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     if relative == "proxy/services/chat_evidence_application_service.py":
         for function in (

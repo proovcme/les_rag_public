@@ -8,6 +8,7 @@ from proxy.services.smeta_artifact_service import (
     extract_smeta_tables,
     persist_smeta_artifact_exports,
 )
+from tests.lsr_gold_pricebook import gold_pricebook  # noqa: F401  (фикстура по имени)
 
 
 def test_norm_candidate_artifact_formats_lookup_trace_for_excel_roundtrip(tmp_path):
@@ -383,7 +384,13 @@ def test_smeta_artifact_lsr_uses_one_primary_cost_table_not_duplicate_partial_ls
     assert "Сумма выбранной ЛСР-формы: **2 680 руб.**" not in artifact["content"]
 
 
-def test_smeta_artifact_prefers_rim_trace_when_model_selected_norm_code():
+def test_smeta_artifact_prefers_rim_trace_when_model_selected_norm_code(gold_pricebook):
+    """Модель назвала шифр → артефакт считает трассой и подписывает её своей книгой.
+
+    Деньги берутся не из таблицы модели (её «61 000» остаётся отдельно видимым), а из
+    трассы по книге эталона, которую подставляет фикстура, — поэтому сумма детерминирована
+    и не зависит от того, какая ценовая база установлена у оператора.
+    """
     answer = """
 **ЛСР**
 | № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |
@@ -395,18 +402,22 @@ def test_smeta_artifact_prefers_rim_trace_when_model_selected_norm_code():
 
     assert artifact is not None
     assert artifact["rim_lsr_form"]["schema"] == "lsr_rim_trace_form_v1"
-    # 11 998.07 = ОЗП 3750.23 (ставка ОТ из карточки) + ЗПМ 490.00 + ЭМ 640.59
-    # + М 78.47 (оба из книги цен) + НР 109 % и СП 57 % от ФОТ; разбор суммы —
-    # в tests/test_rim_trace_xlsx.py.  Ставка ОТ не имеет источника, поэтому
-    # артефакт обязан назвать позицию черновиком, а не финальной стоимостью.
-    assert artifact["rim_lsr_form"]["amount_total"] == 11_998.07
+    assert artifact["rim_lsr_form"]["pricebook"] == "sankt-peterburg_2kv2026"
+    # 12 679.40 = ОЗП 4006.37 (7.8934 чел.-ч × 507.56 из книги эталона — карточка сама
+    # называет шифр 1-100-25) + ЗПМ 490.00 + ЭМ 640.59 + М 78.47 + НР 109 % и СП 57 % от
+    # ФОТ; разбор суммы — в tests/test_rim_lsr_trace_service.py (GOLD_*).  Позиция всё ещё
+    # черновик: строки 11.1.03.01-0076 «Бруски обрезные» в книге эталона нет (замер
+    # stage_b/live_830/gold_rebaseline_830.json), и первую цену похожей группы книга
+    # подставлять не вправе — артефакт обязан назвать расчёт незакрытым, а не финальным.
+    assert artifact["rim_lsr_form"]["amount_total"] == 12_679.40
     assert artifact["rim_lsr_form"]["is_priced_final"] is False
+    assert artifact["rim_lsr_form"]["finality"] == "priced_partial"
     assert artifact["rim_lsr_form"]["rows"][0]["basis"] == "ГЭСН12-01-034-02"
     assert artifact["model_lsr_form"]["amount_total"] == 61_000
-    assert "11 998 руб." in artifact["content"]
+    assert "12 679 руб." in artifact["content"]
 
 
-def test_compact_smeta_answer_shows_checked_trace_lsr_without_model_placeholders(monkeypatch):
+def test_compact_smeta_answer_shows_checked_trace_lsr_without_model_placeholders(monkeypatch, gold_pricebook):
     monkeypatch.delenv("LES_SMETA_COMPACT_CHAT_TABLES", raising=False)
     answer = """
 **ЛСР**
@@ -421,7 +432,7 @@ def test_compact_smeta_answer_shows_checked_trace_lsr_without_model_placeholders
 
     assert artifact is not None
     assert compact.startswith("ЛСР РИМ сформирована по расчетной трассе")
-    assert "11 998 руб." in compact
+    assert "12 679 руб." in compact
     assert "Приложение № 3" in compact
     assert "Сметная стоимость в текущем уровне цен всего" in compact
     assert "**ВСЕГО по смете**" in compact
@@ -429,7 +440,7 @@ def test_compact_smeta_answer_shows_checked_trace_lsr_without_model_placeholders
     assert "placeholders" not in compact
 
 
-def test_smeta_artifact_trace_does_not_invent_norms_for_unbound_rows():
+def test_smeta_artifact_trace_does_not_invent_norms_for_unbound_rows(gold_pricebook):
     answer = """
 **ЛСР**
 | № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |
@@ -442,7 +453,7 @@ def test_smeta_artifact_trace_does_not_invent_norms_for_unbound_rows():
 
     assert artifact is not None
     assert artifact["rim_lsr_form"]["schema"] == "lsr_rim_trace_form_v1"
-    assert artifact["rim_lsr_form"]["amount_total"] == 11_998.07
+    assert artifact["rim_lsr_form"]["amount_total"] == 12_679.40
     assert artifact["rim_lsr_form"]["finality"] == "priced_partial"
     assert len(artifact["rim_lsr_form"]["rows"]) == 2
     assert artifact["rim_lsr_form"]["rows"][1]["title"] == "Работа без выбранного шифра"
@@ -460,7 +471,7 @@ def test_smeta_artifact_trace_does_not_invent_norms_for_unbound_rows():
     assert "Примечания: есть незакрытые строки/ресурсные цены/ставки" in compact
 
 
-def test_smeta_artifact_keeps_calculated_rows_when_source_rows_are_partial():
+def test_smeta_artifact_keeps_calculated_rows_when_source_rows_are_partial(gold_pricebook):
     answer = """
 **ЛСР**
 | № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |
@@ -476,11 +487,11 @@ def test_smeta_artifact_keeps_calculated_rows_when_source_rows_are_partial():
     artifact = build_smeta_artifact(answer, question=question)
 
     assert artifact is not None
-    assert artifact["rim_lsr_form"]["amount_total"] == 11_998.07
+    assert artifact["rim_lsr_form"]["amount_total"] == 12_679.40
     assert artifact["rim_lsr_form"]["finality"] == "priced_partial"
     assert len(artifact["rim_lsr_form"]["rows"]) == 2
     assert artifact["rim_lsr_form"]["rows"][0]["basis"] == "ГЭСН12-01-034-02"
-    assert artifact["rim_lsr_form"]["rows"][0]["amount"] == 11_998.07
+    assert artifact["rim_lsr_form"]["rows"][0]["amount"] == 12_679.40
     assert artifact["rim_lsr_form"]["rows"][1]["basis"] == "нужен подбор нормы"
     assert artifact["rim_lsr_form"]["rows"][1]["amount"] == 0.0
     summary = artifact["rim_lsr_form"]["trace"]["summary"]

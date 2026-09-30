@@ -373,9 +373,13 @@ def _collection_id(code: str, norm: dict[str, Any] | None = None) -> str:
 
 @lru_cache(maxsize=1)
 def build_gesn_notebook() -> dict[str, Any]:
+    from proxy.services import gesn_service
     from proxy.services.gesn_service import load_base_norms, load_norms
 
-    norms = {**load_base_norms(), **load_norms()}
+    # § 3: only cards of the main normative base enter the notebook the model reads.
+    # The demo seed joins an explicitly enabled test scenario, never the production corpus.
+    seed = load_norms() if gesn_service.seed_enabled() else {}
+    norms = {**load_base_norms(), **seed}
     grouped: dict[str, dict[str, Any]] = {}
     for code, norm in norms.items():
         display_code = str(norm.get("code") or code)

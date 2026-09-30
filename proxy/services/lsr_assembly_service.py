@@ -11,7 +11,11 @@
 ресурсы приходят на вход (как их выдала бы ГЭСН). Это следующий стык, как импорт ФГИС ЦС.
 
 Виды ресурсов (`kind`): labor (рабочие→ОЗП) · machinist (ОТм→ЗПМ, в ЭМ) · machine (машины→ЭМ) ·
-material (→М). Цена строки: явная `price`, иначе `code`→ФГИС ЦС, иначе material→КАЦ по наименованию.
+material (→М). Цена строки — лестница владения ценой ADR-16 § 7, та же, что в
+`rim_lsr_trace_service`: подтверждённая оператором/с указанием источника (`price_confirmed`,
+`price_source_ref`) → выбранная ценовая база по шифру → КАЦ по наименованию для материалов →
+число, написанное в самой карточке нормы (применяется, но помечается `card_price_without_basis`
+и не становится подтверждённой суммой). Карточное число НИКОГДА не считается ценой оператора.
 """
 
 from __future__ import annotations
@@ -27,15 +31,23 @@ from proxy.services import fsem_machinist_service as fsem
 from proxy.services import stesnennost_service as st
 from proxy.services.rim_lsr_trace_service import (
     BOOK_UNIT_CONFLICT_ACTION,
+    CARD_PRICE_ACTION,
+    CARD_PRICE_SOURCE,
     RESOURCE_GROUP_ACTION,
     book_price_unit_conflict,
     book_unit_conflict_note,
+    price_action_label,
+    price_is_attributed,
     resource_group_note,
     resource_group_state,
 )
 
 # Справочник «машина→машинист» (ОТм/ЗПМ) вынесен в config/domain/fsem_machinist.yaml
 # (fsem_machinist_service, handoff #3). Источник истины — fsem.machine_to_machinist(); не дублируем.
+
+#: Отметка на ресурсе, развёрнутом из карточки нормы: её ставка принадлежит карточке,
+#: а не оператору, поэтому книга цен спрашивается первой (ADR-16 § 7).
+CARD_PRICE_ORIGIN = "norm_card"
 
 _EXPORT_FIELDS = (
     "section", "position_no", "position_code", "position_name", "position_unit", "position_qty",
@@ -66,16 +78,39 @@ def _resolve_book(book: str | None):
     return fps.get_pricebook(path)
 
 
+def _from_norm_card(res: dict[str, Any]) -> bool:
+    """Whether the engine itself expanded this row out of a norm card."""
+
+    return str(res.get("price_origin") or "") == CARD_PRICE_ORIGIN
+
+
+def _card_rate(res: dict[str, Any]) -> bool:
+    """Whether this row's explicit price is the number the norm card itself writes.
+
+    Only a row the engine expanded from a card is known to carry it: `/api/lsr` takes
+    resources with the caller's own rates, and calling those unowned would be the
+    opposite dishonesty.  An operator confirmation or a source reference always makes
+    the number owned, whoever wrote it (ADR-16 § 7).
+    """
+
+    if res.get("price") in (None, "") or price_is_attributed(res):
+        return False
+    return _from_norm_card(res)
+
+
 def _rejected_book_unit(res: dict[str, Any], pricebook) -> str:
     """Unit of a book row this resource matches by шифр but must not be priced by.
 
-    "" means there is nothing to report: the resource carries its own rate (the
-    book is never consulted then), the book has no row, or the row states the
-    same unit.  The decision itself is `book_price_unit_conflict`, the one rule
-    the РИМ trace and this engine share so a document cannot get two sums (§ 10).
+    "" means there is nothing to report: the book was never consulted for this row
+    (a caller's or a confirmed rate), the book has no row, or the row states the same
+    unit.  A rate the norm card itself carries does NOT skip the check — it is applied
+    only after the book refused, so the unit it refused stays named, exactly as on the
+    РИМ trace (`_resolve_price_trace`) (§ 10, § 11 № 8).
     """
 
-    if res.get("price") not in (None, "") or pricebook is None:
+    if res.get("price") not in (None, "") and not _card_rate(res):
+        return ""
+    if pricebook is None:
         return ""
     code = str(res.get("code") or "").strip()
     if not code:
@@ -95,9 +130,20 @@ def _resource_price(
     group whose members the book does price.  Returning ``missing`` there would ask
     for a number, and the number given would silently belong to one member of the
     family while the position still has no such unit.
+
+    The rungs are the ADR-16 § 7 ownership ladder, the same one the РИМ trace walks
+    (`_resolve_price_trace`): a rate with an owner, the chosen book, КАЦ, and only
+    then the number written inside the norm card — which is applied but owns nothing.
+    `price_origin` is what separates the two unowned spellings here: a row expanded
+    from a card (`_CARD_PRICE_ORIGIN`) defers to the book, while a rate the caller
+    handed in stays the caller's own, because /api/lsr's contract has always been
+    "compute with the prices I gave you" and no card is involved.
     """
-    if res.get("price") not in (None, ""):
-        return _f(res.get("price")), "manual"
+    explicit = _f(res.get("price")) if res.get("price") not in (None, "") else None
+    # The same question `_card_rate()` asks, spelled here because the architecture
+    # gate requires the ladder itself to consult it before taking a number (§ 3).
+    if explicit is not None and (price_is_attributed(res) or not _from_norm_card(res)):
+        return explicit, "manual"
     code = str(res.get("code") or "").strip()
     if code and pricebook is not None:
         rec = pricebook.lookup(code)
@@ -110,6 +156,9 @@ def _resource_price(
         p = kac_map.get(_norm_name(res.get("name")))
         if p is not None:
             return _f(p), "kac"
+    if explicit is not None:
+        # Last resort and never a silent one: the card's own number, labelled.
+        return explicit, CARD_PRICE_SOURCE
     if resource_group_state(res, pricebook):
         # Same rule as the РИМ trace, read from the same helper, so the two
         # engines stop on the same row instead of producing two sums (§ 10).
@@ -251,6 +300,7 @@ def compute_position(
     # Норма ГЭСН → ресурсы: если ресурсы не заданы, но есть код — разворачиваем по норме.
     resources = position.get("resources") or []
     norm_source_integrity: dict[str, Any] = {}
+    from_norm_card = False
     if not resources and position.get("code"):
         from proxy.services import gesn_service
 
@@ -261,13 +311,41 @@ def compute_position(
             norm_source_integrity = normative_base_integrity(base_path=str(norm.get("_source_path") or ""))
             if not norm_source_integrity.get("trusted_for_pricing"):
                 flags.append("нормативная база в карантине: semantic integrity gate не пройден")
+        if norm and str(norm.get("_source_kind") or "") == gesn_service.SEED_SOURCE_KIND:
+            # § 3: a demo card is reachable only when a scenario asked for it, and even
+            # then the delivered document has to say that the money came from a demo card.
+            flags.append("норма взята из демо-семени (LES_GESN_SEED_ENABLED/path), не из базы")
+            norm_source_integrity = {
+                "trusted_for_pricing": False,
+                "source_kind": gesn_service.SEED_SOURCE_KIND,
+                "base_path": str(norm.get("_source_path") or ""),
+            }
         expanded = gesn_service.expand_position(position["code"], _f(position.get("qty")))
         if expanded is None:
-            flags.append(f"норма ГЭСН не найдена: {position.get('code')}")
+            # § 3, in the same words the РИМ route uses (§ 10): an absent card is a concrete
+            # gap the operator has to close, not a hole the demo seed is allowed to fill.
+            flags.append(
+                f"норма ГЭСН не найдена в базе: {position.get('code')} "
+                "— карточку не подменяем, расчёт позиции не закрыт"
+            )
         else:
             resources = expanded
+            from_norm_card = True
     resources = [dict(r) for r in resources]
+    if from_norm_card:
+        # ADR-16 § 7: the rate written inside the norm card is not operator money.
+        # Marking where it came from is what lets the ladder ask the chosen base
+        # first here, exactly as `_resolve_price_trace` does on the РИМ route (§ 10).
+        for res in resources:
+            if res.get("price") not in (None, ""):
+                res.setdefault("price_origin", CARD_PRICE_ORIGIN)
     resources, fsem_trace = fsem.enrich_machinists(resources, quantity_field="qty")
+    # § 3: the calculator does not repair a шифр — it reports the one the imported card
+    # already carries, so both engines show the same origin for the same document (§ 10)
+    # and the book stays the only owner of the labour price.
+    from proxy.services import gesn_fgis_service as gfgis
+
+    labor_code_trace = gfgis.labor_code_provenance(resources)
     if fsem_trace.get("status") == "unresolved":
         details = list(fsem_trace.get("reasons") or fsem_trace.get("missing_machine_codes") or [])
         flags.append("ФСЭМ не смог детализировать ОТм: " + "; ".join(str(item) for item in details))
@@ -293,6 +371,14 @@ def compute_position(
             cost = 0.0
         else:
             cost = round(qty * price, 2)
+            if src == CARD_PRICE_SOURCE:
+                # Money exists, but nobody owns the number.  Named with the same
+                # words the РИМ trace and the delivered sheet use, so one card is
+                # never «manual» here and a draft there (§ 4, § 10).
+                flags.append(
+                    f"{price_action_label(CARD_PRICE_ACTION)}: "
+                    f"{res.get('name', '?')} ({res.get('code', '—')})"
+                )
             if rejected_book_unit:
                 # Money exists from another rung of the ladder; the rejected row is
                 # still named so the operator can see the book was checked.
@@ -311,7 +397,15 @@ def compute_position(
             **res,
             "price_used": price,
             "price_source": src,
-            "price_action": price_requirements[-1]["action"] if price is None and price_requirements else "",
+            # the card's label travels with the money it priced, not only with a
+            # row that got no money at all (§ 4: the file names the kind of hole)
+            "price_action": (
+                CARD_PRICE_ACTION
+                if src == CARD_PRICE_SOURCE
+                else price_requirements[-1]["action"]
+                if price is None and price_requirements
+                else ""
+            ),
             "cost": cost,
         })
 
@@ -342,6 +436,10 @@ def compute_position(
         "nr_sp_trace": nr_sp_trace,
         "norm_source_integrity": norm_source_integrity,
         "fsem_trace": fsem_trace,
+        # § 3: the labour шифр the calculator invented from the card's разряд is
+        # recorded, not just used — otherwise the file prices ОЗП from a code the
+        # source document never wrote and says nothing about where it came from.
+        "labor_code_trace": labor_code_trace,
     }
 
 

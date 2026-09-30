@@ -228,10 +228,14 @@ def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict
                 if excluded:
                     facts["excluded_norms_missing_name_or_unit"] = excluded.get("norms_missing_name_or_unit")
         try:
+            from proxy.services import gesn_service
             from proxy.services.gesn_service import load_base_norms, load_norms
 
             facts["base_norms"] = len(load_base_norms())
             facts["seed_norms"] = len(load_norms())
+            # § 3: the seed file exists whether or not this process admits it.  The fact
+            # the operator sees has to say which of the two is true right now.
+            facts["seed_in_production_view"] = bool(gesn_service.seed_enabled())
         except Exception:
             pass
     elif source_id == "fgis_price_base":

@@ -8,11 +8,18 @@
 в сборке (если в норме нет снимка price); ОЗП/ОТм идут тарифом (price).
 
 Два источника норм (объединяются прозрачно):
-- **Семя** `config/domain/gesn_seed.yaml` — демо-норма эталона (выверена под gold-тест).
 - **База** `data/smeta_base/les_smeta_base.sqlite` — runtime-facing structured ГЭСН-2022
   (`norm_key=<base_type>:<bare_code>`), собирается из source parquet ФГИС ЦС. Если базы нет —
-  работаем на source parquet fallback или семени.
-  При совпадении кода **семя побеждает** (эталон остаётся точным).
+  работаем на source parquet fallback.
+- **Семя** `config/domain/gesn_seed.yaml` — демо-нормы. В production НЕ участвует: ни в поиске,
+  ни в расчёте (§ 3). Причина измерена 30.09.2026 (`stage_b/live_830/seed_vs_base_reconcile_830.md`):
+  все 10 демо-карточек уже есть в базе, и семя перекрывало их своими числами — расход труда
+  расходился с базой в разы (ГЭСНм37-01-001-01: 2,15 против 17,5 чел.-ч), шифр труда, выведенный
+  из демо-разряда, совпадал с базовым ровно 1 раз из 10, единица одной карточки противоречила базе
+  (ГЭСНр67-01-001-01: «шт.» против «100 м»), а НР/СП демо-карточек не имели нормативного владельца.
+  Семя включается явно: `path=` в вызове или `LES_GESN_SEED_ENABLED=1` (тестовый сценарий), и
+  помечается `_source_kind = "seed_yaml"`, чтобы расчёт мог назвать подмену, а не молча её принять.
+  Нет карточки в базе — конкретный пробел (`norm_missing`), а не демо-подмена.
 """
 
 from __future__ import annotations
@@ -33,15 +40,60 @@ DEFAULT_UNIFIED_BASE_PATH = mutable_path("data/gesn_base/gesn2022_unified.parque
 DEFAULT_OVERLAY_PATH = mutable_path("data/gesn_base/gesn2022_overlay.parquet")
 DEFAULT_STRUCTURED_BASE_PATH = mutable_path("data/smeta_base/les_smeta_base.sqlite")
 
-# Старые базы могли хранить труд как «Средний разряд работы N,M» без кода.
-# Выводим тарифный код 1-100-NM (эталон: разряд 2,5 → 1-100-25) как fallback; новый FGIS-парсер
-# сохраняет тариф сразу. Машинист-агрегат без разряда → код не выводим (флаг «нет цены»).
-_LABOR_RAZRYAD_RE = re.compile(r"разряд\D*(\d)[.,](\d)")
+# Старые импорты базы могли сохранить труд как «Средний разряд работы N,M» без шифра ресурса.
+# Выводим тарифный код 1-100-NM (эталон: разряд 2,5 → 1-100-25) ровно на этом слое — при чтении
+# официальной базы и при ingestion ФГИС — и помечаем происхождение (`code_derivation`), чтобы
+# доставленный файл называл шифр, выведенный из разряда, а не выданный за шифр карточки.
+# Расчёт позицию не правит: правило читает данные импорта, а не сочиняет их (§ 3).
+# Машинист-агрегат без разряда → код не выводим (флаг «нет цены»).
+
+SEED_ENV_VAR = "LES_GESN_SEED_ENABLED"
+SEED_SOURCE_KIND = "seed_yaml"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def seed_enabled() -> bool:
+    """Участвует ли демо-семя в этом процессе — только по явному включению (§ 3)."""
+
+    return str(os.getenv(SEED_ENV_VAR) or "").strip().lower() in _TRUTHY
 
 
 def _labor_tariff_code(name: Any) -> Optional[str]:
-    m = _LABOR_RAZRYAD_RE.search(str(name or "").lower())
-    return f"1-100-{m.group(1)}{m.group(2)}" if m else None
+    """The tariff шифр an ОЗП line names only by its разряд.
+
+    One rule, one implementation (§ 10: the same meaning in every consumer): the ФГИС
+    ingest applies this helper when it writes the raw layer and the norm readers apply it
+    when they read an imported card.  A second regular expression here would let the norm
+    base, the position trace and the delivered file disagree about which split-form row
+    a разряд designates.
+    """
+
+    from proxy.services.gesn_fgis_service import labor_tariff_code
+
+    return labor_tariff_code(name) or None
+
+
+def _attach_labor_tariff_code(res: dict[str, Any], name: Any) -> None:
+    """Official-import rule: give a codeless ОЗП row the тарифный шифр its разряд names.
+
+    The rule belongs to the readers of imported cards, not to the calculators: a calculator
+    prices what the norm base gives it and never repairs a шифр on the way (§ 3).  The row
+    keeps the origin marked as `code_derivation`, so the trace, the operator question and the
+    «Проверка» sheet can say that the card stated a разряд and not a шифр — the шифр is the
+    reader's inference.
+    Measured 30.09.2026 (`stage_b/live_830/seed_vs_base_reconcile_830.json`): on the
+    installed canonical base 0 of 5 307 codeless labour rows reach this rule, because those
+    rows are aggregates («ЗАТРАТЫ ТРУДА РАБОЧИХ, ВСЕГО: В ТОМ ЧИСЛЕ:») and name no разряд
+    at all; they stay the concrete hole they are.
+    """
+
+    tariff = _labor_tariff_code(name)
+    if not tariff:
+        return
+    res["code"] = tariff
+    from proxy.services.gesn_fgis_service import LABOR_CODE_DERIVATION
+
+    res["code_derivation"] = LABOR_CODE_DERIVATION
 
 # Префикс базы перед шифром. Важно не схлопывать разные базы с одинаковым номером:
 # ГЭСН38-01-001-01 и ГЭСНм38-01-001-01 — разные нормы.
@@ -201,7 +253,12 @@ def _connect_structured_base_readonly(path: Path) -> sqlite3.Connection:
 
 @lru_cache(maxsize=4)
 def load_norms(path: str | None = None) -> dict[str, dict[str, Any]]:
-    """Каталог норм из СЕМЕНИ (yaml) → {нормализованный_код: норма}. Кешируется."""
+    """Каталог норм из СЕМЕНИ (yaml) → {нормализованный_код: норма}. Кешируется.
+
+    Семя — демо-данные: в production его здесь не читают, а читают только когда сценарий
+    назван явно (`path=` или `LES_GESN_SEED_ENABLED=1`). Каждая карточка помечается
+    `_source_kind`, чтобы поиск и расчёт могли назвать демо-подмену (§ 3).
+    """
     import yaml
 
     p = Path(path) if path else DEFAULT_PATH
@@ -210,6 +267,8 @@ def load_norms(path: str | None = None) -> dict[str, dict[str, Any]]:
     for n in data.get("norms", []):
         code = n.get("code")
         if code:
+            n.setdefault("_source_kind", SEED_SOURCE_KIND)
+            n.setdefault("_source_path", str(p))
             out[_norm_key(code)] = n
     return out
 
@@ -251,9 +310,7 @@ def load_structured_base_norms(sqlite_path: str | None = None) -> dict[str, dict
             if row["resource_code"]:
                 res["code"] = row["resource_code"]
             elif row["kind"] == "labor":
-                tc = _labor_tariff_code(row["resource_name"])
-                if tc:
-                    res["code"] = tc
+                _attach_labor_tariff_code(res, row["resource_name"])
             if row["price"] not in (None, ""):
                 res["price"] = row["price"]
             resources_by_key.setdefault(key, []).append(res)
@@ -335,9 +392,7 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
             if rec.get("resource_code"):
                 res["code"] = rec["resource_code"]
             elif rec.get("kind") == "labor":                  # труд без кода → тарифный 1-100-NM по разряду
-                tc = _labor_tariff_code(rec.get("resource_name"))
-                if tc:
-                    res["code"] = tc
+                _attach_labor_tariff_code(res, rec.get("resource_name"))
             if rec.get("price") not in (None, ""):
                 res["price"] = rec["price"]
             norm["resources"].append(res)
@@ -367,13 +422,27 @@ def load_overlay_norms(parquet_path: str | None = None) -> dict[str, dict[str, A
     return load_base_norms(str(path))
 
 
-def _merged_norms(*, path: str | None = None, base_path: str | None = None) -> dict[str, dict[str, Any]]:
-    """База + overlay + семя. Семя побеждает; overlay только закрывает дыры базы."""
+def _merged_norms(
+    *,
+    path: str | None = None,
+    base_path: str | None = None,
+    include_seed: bool | None = None,
+) -> dict[str, dict[str, Any]]:
+    """База + официальный overlay — source of truth расчёта и поиска (§ 3).
+
+    Семя больше не перекрывает базу: `include_seed` (или явный `path=`, или
+    `LES_GESN_SEED_ENABLED=1`) подключает его только в названном тестовом сценарии.
+    Без такого включения демо-карточка не может подменить реальную норму ни в одном
+    из двух production-путей.
+    """
     merged = dict(load_base_norms(base_path))
     if base_path is None:
         for key, norm in load_overlay_norms().items():
             merged.setdefault(key, norm)
-    merged.update(load_norms(path))   # семя поверх базы
+    if include_seed is None:
+        include_seed = path is not None or seed_enabled()
+    if include_seed:
+        merged.update(load_norms(path))
     return merged
 
 
@@ -383,8 +452,9 @@ def get_norm(
     path: str | None = None,
     base_path: str | None = None,
     strict_family: bool = False,
+    include_seed: bool | None = None,
 ) -> Optional[dict[str, Any]]:
-    norms = _merged_norms(path=path, base_path=base_path)
+    norms = _merged_norms(path=path, base_path=base_path, include_seed=include_seed)
     key = _norm_key(code)
     if _has_explicit_base_prefix(code):
         return norms.get(key)
@@ -398,17 +468,28 @@ def get_norm(
     return norms.get(key)
 
 
-def list_norms(path: str | None = None, *, base_path: str | None = None) -> list[dict[str, Any]]:
+def list_norms(
+    path: str | None = None,
+    *,
+    base_path: str | None = None,
+    include_seed: bool | None = None,
+) -> list[dict[str, Any]]:
     return [{"code": n["code"], "name": n.get("name", ""), "unit": n.get("unit", ""),
              "resources": len(n.get("resources", []))}
-            for n in _merged_norms(path=path, base_path=base_path).values()]
+            for n in _merged_norms(
+                path=path, base_path=base_path, include_seed=include_seed).values()]
 
 
 def expand_position(
-    code: str, qty: float, *, path: str | None = None, base_path: str | None = None
+    code: str,
+    qty: float,
+    *,
+    path: str | None = None,
+    base_path: str | None = None,
+    include_seed: bool | None = None,
 ) -> Optional[list[dict[str, Any]]]:
     """Норма + объём → строки ресурсов (qty = per_unit × объём). None — норма не найдена."""
-    norm = get_norm(code, path=path, base_path=base_path)
+    norm = get_norm(code, path=path, base_path=base_path, include_seed=include_seed)
     if norm is None:
         return None
     q = _f(qty)
@@ -422,6 +503,8 @@ def expand_position(
         }
         if r.get("code"):
             line["code"] = r["code"]
+        if r.get("code_derivation"):
+            line["code_derivation"] = r["code_derivation"]
         if r.get("price") not in (None, ""):
             line["price"] = _f(r["price"])
         lines.append(line)

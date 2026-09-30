@@ -13,6 +13,102 @@ from proxy.services.rim_lsr_trace_service import (
 CODE = "ГЭСН12-01-034-02"
 
 
+# ── эталон позиции: карточка основной базы + детерминированная ценовая книга ──
+#
+# Семя `config/domain/gesn_seed.yaml` больше не участвует в production-расчёте
+# (`proxy/services/gesn_service.py::_merged_norms` merged только canonical-базу
+# и оверлей ФГИС), а база цен не несёт вовсе.  Карточка `ГЭСН12-01-034-02`
+# (source `structured_sqlite`, единица «100 м2») даёт нормативные расходы:
+#   labor     1-100-25 «Средний разряд работы 2.5»  12,94 чел.-ч
+#   machine   91.05.01-017 кран башенный 8 т         0,97 маш.-ч
+#   machine   91.05.05-015 кран автомобильный 16 т   0,01 маш.-ч
+#   machine   91.14.02-001 бортовой автомобиль 5 т   0,03 маш.-ч
+#   machinist «Затраты труда машинистов», без шифра  1,01 маш.-ч (ФСЭМ → 4-100-*)
+#   material  01.7.15.06-0111 гвозди строительные    0,0015 т
+#   material  11.1.03.01-0076 бруски обрезные         0,4 м3
+# Цены ниже — строки установленной книги `sankt-peterburg_2kv2026` (замер:
+# `stage_b/live_830/gold_rebaseline_830.json`), зафиксированные здесь, чтобы
+# тесты не зависели от того, какая книга лежит у оператора.
+GOLD_QTY = 0.61
+GOLD_PRICES = {
+    "1-100-25": (507.56, "чел.-ч"),
+    "91.05.01-017": (1048.03, "маш.-ч"),
+    "91.05.05-015": (1644.26, "маш.-ч"),
+    "91.14.02-001": (570.54, "маш.-ч"),
+    # водители машинистов, на которые ФСЭМ детализирует строку «Затраты труда
+    # машинистов» 1,01 маш.-ч при наличии выбранной книги
+    "4-100-040": (596.61, "чел.-ч"),
+    "4-100-060": (801.41, "чел.-ч"),
+    "01.7.15.06-0111": (85761.36, "т"),
+    # 11.1.03.01-0076 «Бруски обрезные…» в книге отсутствует намеренно: этой
+    # строки нет в установленной книге, поэтому ресурс остаётся названной дырой.
+    #
+    # Две строки той же книги для второй эталонной позиции — карточка
+    # «ГЭСНм08-03-575-01» (электромонтаж, «шт»), которую проверяет
+    # tests/test_lsr_assembly_service.py: замер `data/price_base/sankt-peterburg_2kv2026.parquet`
+    # (у болтов `price_current` пустой, а `price_current_eff` = 174,93 × 1,08 = 188,92 —
+    # ровно то, что отдаёт движок сборки по полю `price_current_eff`).
+    "1-100-42": (614.42, "чел.-ч"),
+    "01.7.15.03-0042": (188.92, "кг"),
+}
+
+# Каждый эталонный иток — сумма строк карточки × цены книги, проверенная вручную:
+GOLD_OZP = 4006.37        # 12,94 × 0,61 = 7,8934 чел.-ч × 507,56
+GOLD_MACHINE = 640.59     # 0,5917×1048,03 + 0,0061×1644,26 + 0,0183×570,54
+GOLD_ZPM = 490.00         # 0,0183×596,61 + 0,0061×801,41 + 0,5917×801,41
+GOLD_EM = 1130.59         # ЭМ = машинам 640,59 + ЗПМ 490,00
+GOLD_MAT = 78.47          # 0,0015 × 0,61 = 0,000915 т × 85 761,36
+GOLD_DIRECT = 5215.43     # 4006,37 + 1130,59 + 78,47
+GOLD_FOT = 4496.37        # ОЗП 4006,37 + ЗПМ 490,00
+GOLD_NR = 4901.04         # ФОТ × 109 % (правило каталога nrsp-12, «Приказ 812/пр п.12»)
+GOLD_SP = 2562.93         # ФОТ × 57 %  (правило каталога nrsp-12, «Приказ 774/пр п.12»)
+GOLD_TOTAL = 12679.40     # прямые 5215,43 + НР 4901,04 + СП 2562,93
+GOLD_LABOR_QTY = 7.8934
+GOLD_MACHINIST_QTY = 0.6161
+GOLD_HOLE = "price_missing:11.1.03.01-0076"
+
+# Без выбранной книги позиция обязана сойтись в нуль и назвать каждую дыру:
+# семь строк карточки, семь вопросов оператору (замер `no_book` в
+# `stage_b/live_830/gold_rebaseline_830.json`).
+NO_BASIS_REASONS = [
+    "price_missing:91.14.02-001",
+    "price_missing:91.05.05-015",
+    "price_missing:91.05.01-017",
+    "price_missing:Затраты труда машинистов",
+    "price_missing:1-100-25",
+    "price_missing:01.7.15.06-0111",
+    "price_missing:11.1.03.01-0076",
+]
+
+
+class _Book:
+    """Детерминированная ценовая книга: та же форма, что в `test_lsr_price_ownership`.
+
+    `lookup(code)` отвечает строкой книги целиком, с «unit» — `_resolve_price_trace`
+    сверяет единицу строки с единицей ресурса (`book_price_unit_conflict`), и книга,
+    отвечающая только ценой, этого check не изображает.
+
+    Поле `price_current_eff` дублирует `price_current`, как это делает настоящая
+    конвертация `fgis_price_service` (текущая цена, иначе база × индекс): рутинный
+    движок сборки ЛСР читает именно его, а РИМ-трасса — `price_current`.  Один
+    двойник с обоими полями заведомо даёт двум движкам одну и ту же сумму на одной
+    и той же книге (см. `tests/test_lsr_assembly_service.py`).
+    """
+
+    def __init__(self) -> None:
+        self._prices = dict(GOLD_PRICES)
+
+    def lookup(self, code: str):
+        hit = self._prices.get(str(code).strip())
+        if hit is None:
+            return None
+        return {
+            "price_current": hit[0],
+            "price_current_eff": hit[0],
+            "unit": hit[1],
+        }
+
+
 def test_invalid_conversion_does_not_fall_back_to_pricing_otherwise_valid_quantity():
     from proxy.services.rim_lsr_trace_service import _norm_qty_from_visible_row
 
@@ -31,9 +127,12 @@ def test_bad_numeric_row_preserves_good_row_calculation_and_gap():
     valid = {"source_row": "R1", "row_role": "work", "title": "First",
              "norm_code": CODE, "quantity": 61, "unit": "м2"}
     invalid = {**valid, "source_row": "R2", "conversion_factor": "305 м * 120 шт"}
-    good = build_lsr_trace_from_visible_rows([valid])
-    combined = build_lsr_trace_from_visible_rows([valid, invalid])
+    good = build_lsr_trace_from_visible_rows([valid], pricebook=_Book())
+    combined = build_lsr_trace_from_visible_rows([valid, invalid], pricebook=_Book())
     assert combined["summary"]["total"] == good["summary"]["total"] > 0
+    # The broken row is the only difference between the two revisions, so the one
+    # surviving position is the gold one (base card rows × `_Book` prices).
+    assert combined["summary"]["total"] == GOLD_TOTAL
     assert len(combined["row_bindings"]) == 2
     gap = combined["row_bindings"][1]
     assert gap["status"] == "needs_input"
@@ -45,43 +144,86 @@ def _rows_by_type(trace):
     return {row["type"]: row for row in trace["rows"]}
 
 
-def test_rim_trace_from_gesn_seed_reproduces_gold_position():
-    trace = build_position_trace({"code": CODE, "qty": 0.61})
+def test_rim_trace_from_base_norm_card_reproduces_gold_position():
+    trace = build_position_trace({"code": CODE, "qty": GOLD_QTY}, pricebook=_Book())
     summary = trace["summary"]
 
     assert summary["flags"]
+    # ADR-16 § 7 still bites, just on the other side of the card: the canonical base
+    # carries no prices at all (0 of 63 673 labour rows), so nothing is counted from a
+    # card and the only open flag is the resource the chosen book does not price.
     assert all(
-        str(flag).startswith("цена взята из карточки нормы") for flag in summary["flags"]
+        not str(flag).startswith("цена взята из карточки нормы") for flag in summary["flags"]
     )
-    # ADR-16 § 7: the seed base carries its own rates.  Those numbers still
-    # compute the estimate, but nobody chose them, so the position must be named
-    # and must not report a complete amount.
-    assert {item["name"] for item in summary["card_priced_resources"]}
+    assert all("11.1.03.01-0076" in str(flag) for flag in summary["flags"])
+    assert summary["card_priced_resources"] == []
     assert summary["amount_status"] == "partial"
     assert summary["full_amount"] is None
-    assert summary["ozp"] == 3750.23
-    assert summary["em"] == 992.40
-    assert summary["mat"] == 83.62
-    assert summary["direct"] == 4826.25
-    assert summary["fot"] == 4208.91
-    assert summary["nr"] == 4587.71
-    assert summary["sp"] == 2399.08
-    assert summary["total"] == 11813.04
+    assert summary["completeness_reasons"] == [GOLD_HOLE]
+    assert summary["ozp"] == GOLD_OZP
+    assert summary["em"] == GOLD_EM
+    assert summary["mat"] == GOLD_MAT
+    assert summary["direct"] == GOLD_DIRECT
+    assert summary["fot"] == GOLD_FOT
+    assert summary["nr"] == GOLD_NR
+    assert summary["sp"] == GOLD_SP
+    assert summary["total"] == GOLD_TOTAL
     # нормативные чел.-ч (в шапку многопозиционной формы) — те же, что в групп-строках
-    assert summary["labor_qty"] == 7.8934
-    assert summary["machinist_qty"] > 0
+    assert summary["labor_qty"] == GOLD_LABOR_QTY
+    assert summary["machinist_qty"] == GOLD_MACHINIST_QTY
 
     rows = _rows_by_type(trace)
     assert rows["work"]["columns"]["2"] == CODE
     assert rows["work"]["columns"]["4"] == "100 м2"
     assert rows["work"]["columns"]["7"] == 0.61
-    assert rows["group_labor"]["columns"]["7"] == 7.8934
-    assert rows["group_labor"]["columns"]["12"] == 3750.23
-    assert rows["group_machine"]["columns"]["12"] == 992.4
-    assert rows["group_machinist"]["columns"]["12"] == 458.68
-    assert rows["group_material"]["columns"]["12"] == 83.62
+    assert rows["group_labor"]["columns"]["7"] == GOLD_LABOR_QTY
+    assert rows["group_labor"]["columns"]["12"] == GOLD_OZP
+    assert rows["group_machine"]["columns"]["12"] == GOLD_EM
+    assert rows["group_machinist"]["columns"]["12"] == GOLD_ZPM
+    assert rows["group_material"]["columns"]["12"] == GOLD_MAT
+    # итог позиции — сумма напечатанных колонок, а не отдельное число калькулятора:
+    # прямые = ОЗП+ЭМ+М, ФОТ = ОЗП+ЗПМ, всего = прямые+НР+СП
+    assert rows["direct_total"]["columns"]["12"] == round(GOLD_OZP + GOLD_EM + GOLD_MAT, 2)
+    assert rows["fot"]["columns"]["12"] == round(GOLD_OZP + GOLD_ZPM, 2)
+    assert rows["position_total"]["columns"]["12"] == round(GOLD_DIRECT + GOLD_NR + GOLD_SP, 2)
     assert rows["nr"]["source"] == "Пр/812"
     assert rows["sp"]["source"] == "Пр/774"
+
+
+def test_base_norm_card_without_a_chosen_book_totals_zero_and_names_every_hole():
+    """The intended honest outcome of the new contract: 0, and seven named questions.
+
+    The canonical base carries no prices (labour, machine and material rows alike), so
+    a position calculated from a base card and no ценовая книга must not invent a sum:
+    it lands on 0.0, stays ``partial``, and lists one ``price_missing:<шифр>`` reason per
+    card row with the operator question that closes it.
+    """
+    summary = build_position_trace({"code": CODE, "qty": GOLD_QTY})["summary"]
+
+    assert summary["total"] == 0.0
+    assert summary["direct"] == 0.0
+    assert summary["ozp"] == 0.0
+    assert summary["em"] == 0.0
+    assert summary["mat"] == 0.0
+    assert summary["nr"] == 0.0
+    assert summary["sp"] == 0.0
+    assert summary["amount_status"] == "partial"
+    assert summary["full_amount"] is None
+    assert summary["card_priced_resources"] == []
+    assert summary["completeness_reasons"] == NO_BASIS_REASONS
+    # нормативные количества при этом не теряются: их даёт карточка, а не книга
+    assert summary["labor_qty"] == GOLD_LABOR_QTY
+    assert summary["machinist_qty"] == GOLD_MACHINIST_QTY
+    questions = [str(flag) for flag in summary["flags"]]
+    assert any(flag.startswith("нужна ставка ОЗП: Средний разряд работы 2.5 (1-100-25)")
+               for flag in questions)
+    assert any(flag.startswith("нужен КАЦ: Гвозди строительные (01.7.15.06-0111)")
+               for flag in questions)
+    assert any(flag.startswith("нужна цена эксплуатации машины: Краны башенные")
+               for flag in questions)
+    assert any(flag.startswith("нужна ставка ЗПМ: Затраты труда машинистов (—)")
+               for flag in questions)
+    assert len(questions) == len(NO_BASIS_REASONS)
 
 
 def test_visible_rows_accept_colon_prefixed_norm_codes(monkeypatch):
@@ -211,7 +353,9 @@ def test_visible_rows_convert_piece_dimensions_to_area_norm_qty(monkeypatch):
 
 
 def test_rim_trace_applies_resource_coefficients_by_kind():
-    trace = build_position_trace({"code": CODE, "qty": 0.61}, k_ozp=1.15, k_em=1.15)
+    trace = build_position_trace(
+        {"code": CODE, "qty": GOLD_QTY}, pricebook=_Book(), k_ozp=1.15, k_em=1.15
+    )
     summary = trace["summary"]
     rows = _rows_by_type(trace)
 
@@ -224,11 +368,18 @@ def test_rim_trace_applies_resource_coefficients_by_kind():
     assert machine["columns"]["6"] == 1.15
     assert machinist["columns"]["6"] == 1.15
     assert material["columns"]["6"] == 1.0
-    assert summary["ozp"] > 3750.23
-    assert summary["machine"] > 533.72
-    assert summary["zpm"] > 458.68
-    assert summary["mat"] == 83.62
-    assert summary["total"] > 11813.04
+    # each raised column is the uncoefficiented gold sum × 1,15 (7,8934×1,15 чел.-ч ×
+    # 507,56 = 4607,33; 640,59×1,15 = 736,68; 490,00×1,15 = 563,50)
+    assert summary["ozp"] == 4607.33
+    assert summary["machine"] == 736.68
+    assert summary["zpm"] == 563.50
+    assert summary["ozp"] > GOLD_OZP
+    assert summary["machine"] > GOLD_MACHINE
+    assert summary["zpm"] > GOLD_ZPM
+    # material takes no ОЗП/ЭМ coefficient, so it stays the gold 0,000915 т × 85 761,36
+    assert summary["mat"] == GOLD_MAT
+    assert summary["total"] == 14569.55
+    assert summary["total"] > GOLD_TOTAL
 
 
 def test_rim_trace_preserves_fgis_current_vs_base_index_columns():
@@ -356,6 +507,37 @@ def test_hydrated_norm_resources_are_labor_normalized_at_render_boundary(monkeyp
     assert [row["columns"]["2"] for row in labor_rows] == ["2-100-02", "2-100-03", "2-100-04"]
     assert trace["summary"]["labor_qty"] == 15.6
     assert trace["summary"]["ozp"] == 7800
+    # ADR-16 § 7 on card-carried rates: an explicit resource line with a `price` but
+    # no chosen book still travels through the `card_price` / `card_price_without_basis`
+    # labelling.  The rule (3) re-baseline keeps that label check alive on data which
+    # still triggers it, so the route is not silently retired when the demo seed
+    # becomes test-only.  Every one of the three surviving labour rows was priced
+    # from the norm card, so the position's amount is preliminary and each row is
+    # named by its code both in ``card_priced_resources`` and in the operator flags.
+    # Because the card is marked ``_source_kind == "seed_yaml"``, the engine also
+    # raises the demo-seed integrity flag («норма взята из демо-семени…») alongside
+    # them — a second, orthogonal ADR-16 § 7 check on the same resource line.
+    summary = trace["summary"]
+    assert {item["code"] for item in summary["card_priced_resources"]} == {
+        "2-100-02", "2-100-03", "2-100-04",
+    }
+    assert summary["amount_status"] == "partial"
+    assert summary["full_amount"] is None
+    card_flags = [str(flag) for flag in summary["flags"]
+                  if str(flag).startswith("цена взята из карточки нормы")]
+    assert {flag.rsplit("(", 1)[1].rstrip(")") for flag in card_flags} == {
+        "2-100-02", "2-100-03", "2-100-04",
+    }
+    assert "норма взята из демо-семени (LES_GESN_SEED_ENABLED/path), не из базы" in [
+        str(flag) for flag in summary["flags"]
+    ]
+    assert "normative_source_demo_seed" in summary["completeness_reasons"]
+    card_reasons = {
+        str(reason).split(":", 1)[1]
+        for reason in summary["completeness_reasons"]
+        if str(reason).startswith("card_price_without_basis:")
+    }
+    assert card_reasons == {"2-100-02", "2-100-03", "2-100-04"}
 
 
 def test_build_lsr_trace_multi_position_sections_and_grand_total():
@@ -364,30 +546,28 @@ def test_build_lsr_trace_multi_position_sections_and_grand_total():
         {"code": CODE, "qty": 0.61, "section": "Раздел 1. Кровля"},
         {"code": CODE, "qty": 0.61, "section": "Раздел 2. Прочее"},
     ]
-    lsr = build_lsr_trace(positions, name="Кровля и прочее")
+    lsr = build_lsr_trace(positions, pricebook=_Book(), name="Кровля и прочее")
 
     assert lsr["name"] == "Кровля и прочее"
     assert lsr["summary"]["positions"] == 2
-    # Grouping into sections introduces no new problem: the only flags are the
-    # ADR-16 § 7 card-price ones, one per resource whose rate nobody chose.
+    # Grouping into sections introduces no new problem: the only flags are the one
+    # resource the chosen book does not price (11.1.03.01-0076), one per position.
     assert lsr["summary"]["flags"]
-    assert all(
-        str(flag).startswith("цена взята из карточки нормы") for flag in lsr["summary"]["flags"]
-    )
-    assert lsr["summary"]["total"] == 23626.08  # 2 × 11813.04 — gold позиции сохранён
+    assert all("11.1.03.01-0076" in str(flag) for flag in lsr["summary"]["flags"])
+    assert lsr["summary"]["total"] == 25358.80  # 2 × 12 679,40 — gold позиции сохранён
     # свод суммирует позиции (прямые/ФОТ/НР/СП) — числа считает код, не LLM
-    assert lsr["summary"]["direct"] == round(2 * 4826.25, 2)
-    assert lsr["summary"]["fot"] == round(2 * 4208.91, 2)
-    assert lsr["summary"]["nr"] == round(2 * 4587.71, 2)
-    assert lsr["summary"]["sp"] == round(2 * 2399.08, 2)
-    assert lsr["summary"]["labor_qty"] == round(2 * 7.8934, 6)
+    assert lsr["summary"]["direct"] == round(2 * GOLD_DIRECT, 2)
+    assert lsr["summary"]["fot"] == round(2 * GOLD_FOT, 2)
+    assert lsr["summary"]["nr"] == round(2 * GOLD_NR, 2)
+    assert lsr["summary"]["sp"] == round(2 * GOLD_SP, 2)
+    assert lsr["summary"]["labor_qty"] == round(2 * GOLD_LABOR_QTY, 6)
 
     secs = lsr["sections"]
     assert [s["section"] for s in secs] == ["Раздел 1. Кровля", "Раздел 2. Прочее"]
-    assert secs[0]["total"] == 11813.04 and secs[1]["total"] == 11813.04
+    assert secs[0]["total"] == GOLD_TOTAL and secs[1]["total"] == GOLD_TOTAL
     # каждый раздел несёт полные трассы позиций (для рендера формы)
     assert len(secs[0]["positions"]) == 1
-    assert secs[0]["positions"][0]["summary"]["total"] == 11813.04
+    assert secs[0]["positions"][0]["summary"]["total"] == GOLD_TOTAL
 
 
 def test_build_lsr_trace_groups_same_section_contiguously():
@@ -397,19 +577,19 @@ def test_build_lsr_trace_groups_same_section_contiguously():
         {"code": CODE, "qty": 0.61, "section": "B"},
         {"code": CODE, "qty": 0.61, "section": "A"},
     ]
-    lsr = build_lsr_trace(positions)
+    lsr = build_lsr_trace(positions, pricebook=_Book())
 
     assert [s["section"] for s in lsr["sections"]] == ["A", "B"]
     assert len(lsr["sections"][0]["positions"]) == 2
-    assert lsr["sections"][0]["total"] == round(2 * 11813.04, 2)
-    assert lsr["summary"]["total"] == round(3 * 11813.04, 2)
+    assert lsr["sections"][0]["total"] == round(2 * GOLD_TOTAL, 2)
+    assert lsr["summary"]["total"] == round(3 * GOLD_TOTAL, 2)
 
 
 def test_build_lsr_trace_default_section_when_unspecified():
     # без поля section → один раздел «Без раздела», свод = одна позиция
-    lsr = build_lsr_trace([{"code": CODE, "qty": 0.61}])
+    lsr = build_lsr_trace([{"code": CODE, "qty": 0.61}], pricebook=_Book())
     assert [s["section"] for s in lsr["sections"]] == ["Без раздела"]
-    assert lsr["summary"]["total"] == 11813.04
+    assert lsr["summary"]["total"] == GOLD_TOTAL
 
 
 def test_positions_from_visible_lsr_rows_converts_physical_unit_to_norm_qty():
@@ -449,13 +629,14 @@ def test_lsr_trace_from_visible_rows_builds_priced_trace_from_selected_norms():
                 "section": "Кровля",
             }
         ],
+        pricebook=_Book(),
         name="Видимые строки",
     )
 
     assert lsr["summary"]["result_status"] == "priced_partial"
     assert lsr["summary"]["input_rows"] == 1
     assert lsr["summary"]["bound_rows"] == 1
-    assert lsr["summary"]["total"] == 11813.04
+    assert lsr["summary"]["total"] == GOLD_TOTAL
     assert lsr["sections"][0]["section"] == "Кровля"
 
 
@@ -544,15 +725,16 @@ def test_operator_confirmed_price_makes_the_position_money_confirmed_and_says_so
         "unit": "м2",
         "norm_status": "EXACT",
     }
-    draft = build_lsr_trace_from_visible_rows([row], name="Видимые строки")
+    draft = build_lsr_trace_from_visible_rows([row], pricebook=_Book(), name="Видимые строки")
     confirmed = build_lsr_trace_from_visible_rows(
         [{**row, "confirmed_price": 20000.0, "price_source": "operator"}],
+        pricebook=_Book(),
         name="Видимые строки",
     )
 
     assert draft["summary"]["result_status"] == "priced_partial"
     assert draft["summary"]["confirmed_amount"] == 0.0
-    assert draft["summary"]["preliminary_amount"] == 11813.04
+    assert draft["summary"]["preliminary_amount"] == GOLD_TOTAL
 
     binding = confirmed["row_bindings"][0]
     assert binding["readiness"]["prices_provided"] is True
@@ -578,13 +760,14 @@ def test_named_needs_research_cipher_is_priced_but_not_final():
                 "quality_message": "аналог, требуется ревизия",
             }
         ],
+        pricebook=_Book(),
         name="Видимые строки",
     )
 
     assert lsr["summary"]["result_status"] == "priced_partial"
     assert lsr["summary"]["norms_status"] == "model_norms_partial"
     assert lsr["summary"]["bound_rows"] == 1
-    assert lsr["summary"]["total"] == 11813.04
+    assert lsr["summary"]["total"] == GOLD_TOTAL
     assert lsr["row_bindings"][0]["status"] == "bound"
     assert lsr["row_bindings"][0]["norm_status"] == "NEEDS_RESEARCH"
     assert lsr["row_bindings"][0]["selection_kind"] == "analogue"
@@ -619,15 +802,16 @@ def test_terminal_exact_status_prices_without_independent_verifier():
                 "norm_status": "EXACT",
             }
         ],
+        pricebook=_Book(),
         name="Видимые строки",
     )
 
-    # A terminal EXACT status settles the norm question only.  The rates behind
-    # this total come from the norm card, and ADR-16 § 7 keeps an unowned rate
-    # out of a final document.
+    # A terminal EXACT status settles the norm question only.  The rates behind this
+    # total belong to the chosen book, and ADR-16 § 7 keeps a position whose resource
+    # list still contains a named price hole out of a final document.
     assert lsr["summary"]["result_status"] == "priced_partial"
     assert lsr["summary"]["norms_status"] == "model_norms_selected"
-    assert lsr["summary"]["total"] == 11813.04
+    assert lsr["summary"]["total"] == GOLD_TOTAL
     assert lsr["row_bindings"][0]["status"] == "bound"
     assert lsr["row_bindings"][0]["quality_gate"] == "not_run"
 
@@ -890,9 +1074,11 @@ def test_unconfirmed_unit_change_stays_visible_but_uncalculated():
         "unit": "шт.",
         **_tray_source_stamp(),
     }
-    alone = build_lsr_trace_from_visible_rows([good])
-    combined = build_lsr_trace_from_visible_rows([good, bad])
+    alone = build_lsr_trace_from_visible_rows([good], pricebook=_Book())
+    combined = build_lsr_trace_from_visible_rows([good, bad], pricebook=_Book())
     assert combined["summary"]["total"] == alone["summary"]["total"] > 0
+    # only the gated row is missing from the money: one gold position survives
+    assert combined["summary"]["total"] == GOLD_TOTAL
     gap = next(b for b in combined["row_bindings"] if b["row"] == "СКС!R47")
     assert gap["status"] == "unconfirmed_quantity"
     payload = gap["quantity_gap"]
@@ -1021,7 +1207,8 @@ def test_stage_v_header_row_is_accounted_without_norm_demand():
                 "unit": "м2",
                 "norm_status": "EXACT",
             },
-        ]
+        ],
+        pricebook=_Book(),
     )
     header = next(item for item in lsr["row_bindings"] if item["row"] == "СКС!R1")
     assert header["status"] == "structure_accounted"
@@ -1029,12 +1216,12 @@ def test_stage_v_header_row_is_accounted_without_norm_demand():
     assert header["readiness"]["operation_defined"] is True
     assert header["readiness"]["norm_selected"] is None
     assert lsr["summary"]["kind_counts"]["header"] == 1
-    # a heading adds no flag; the only flags are the unowned norm-card rates
+    # a heading adds no flag; the only flags name the one resource the chosen book
+    # does not price (11.1.03.01-0076), one per calculated position
     assert lsr["summary"]["result_status"] == "priced_partial"
     assert not [flag for flag in lsr["summary"]["flags"] if "СКС!R1" in str(flag)]
-    assert all(
-        str(flag).startswith("цена взята из карточки нормы") for flag in lsr["summary"]["flags"]
-    )
+    assert lsr["summary"]["flags"]
+    assert all("11.1.03.01-0076" in str(flag) for flag in lsr["summary"]["flags"])
     from proxy.services.lsr_result_readiness_service import classify_norm_gap
 
     assert classify_norm_gap(header["source_row"]) == ""
@@ -1106,7 +1293,8 @@ def test_stage_v_needs_research_bound_stays_preliminary_and_keeps_status():
                 "norm_status": "NEEDS_RESEARCH",
                 "quality_message": "аналог, требуется ревизия",
             }
-        ]
+        ],
+        pricebook=_Book(),
     )
     binding = lsr["row_bindings"][0]
     assert binding["status"] == "bound"
@@ -1118,7 +1306,7 @@ def test_stage_v_needs_research_bound_stays_preliminary_and_keeps_status():
     # prices_provided now tracks only the price dimension.
     assert binding["readiness"]["norm_applicability_ok"] is False
     assert lsr["summary"]["confirmed_amount"] == 0.0
-    assert lsr["summary"]["preliminary_amount"] == 11813.04
+    assert lsr["summary"]["preliminary_amount"] == GOLD_TOTAL
     assert lsr["summary"]["result_status"] == "priced_partial"
 
 
@@ -1126,10 +1314,11 @@ def test_stage_v_exact_work_without_a_chosen_price_basis_stays_preliminary():
     """Every readiness base of an EXACT work row, and where its money lands.
 
     The norm and volume questions, and the structure of the calculation, are settled
-    by the row itself.  The price question is not: with no ценовая база and no
-    confirmation, the rate is the norm card's, so the amount is preliminary rather
-    than confirmed and the position is not «полностью рассчитана»
-    (ADR-16 § 7, acceptance § 12 "no false complete status").  The confirmed
+    by the row itself.  The price question is not: the canonical base card states no
+    prices at all, so with no ценовая книга and no confirmation the position carries
+    no money whatsoever — every counted resource is a named hole (ADR-16 § 7,
+    acceptance § 12 "no false complete status").  The priced counterpart is
+    ``test_rim_trace_from_base_norm_card_reproduces_gold_position``, the confirmed
     counterpart is ``test_resources_priced_from_the_chosen_book_are_confirmed_final``.
     """
     lsr = build_lsr_trace_from_visible_rows(
@@ -1152,20 +1341,27 @@ def test_stage_v_exact_work_without_a_chosen_price_basis_stays_preliminary():
     assert readiness["applicability_substantiated"] is True
     assert readiness["volume_verified"] is True
     # § 4: the structure question and the money question have separate answers.  The
-    # position is built and carries a known amount, but its prices belong to nobody,
-    # so it is not «полностью рассчитана» and is not counted as a calculated position.
+    # position is built from the card rows, but no rate has an owner, so there is no
+    # known amount either — the row is not «полностью рассчитана».
     assert readiness["structure_calculated"] is True
-    assert readiness["known_amount_present"] is True
+    assert readiness["known_amount_present"] is False
     assert readiness["position_calculated"] is False
-    assert readiness["prices_provided"] == "не по базе"
-    assert readiness["price_from_norm_card"] is True
+    assert readiness["prices_provided"] is False
+    assert readiness["price_from_norm_card"] is False
     assert readiness["price_ok"] is False
+    # the open questions are the card's seven rows, each named by its шифр
+    assert readiness["open_reasons"] == NO_BASIS_REASONS
+    assert lsr["summary"]["total"] == 0.0
     assert lsr["summary"]["confirmed_amount"] == 0.0
-    assert lsr["summary"]["preliminary_amount"] == 11813.04
+    assert lsr["summary"]["preliminary_amount"] == 0.0
     assert lsr["summary"]["selected_norms"] == 1
     assert lsr["summary"]["positions_built"] == 1
     assert lsr["summary"]["calculated_positions"] == 0
     assert lsr["summary"]["result_status"] == "priced_partial"
+    # the structure survives the missing prices: нормативные quantities are printed
+    position = lsr["sections"][0]["positions"][0]["summary"]
+    assert position["labor_qty"] == GOLD_LABOR_QTY
+    assert position["machinist_qty"] == GOLD_MACHINIST_QTY
 
 
 def test_stage_v_counts_are_separate_per_kind():
@@ -1261,7 +1457,8 @@ def test_stage_v_renderer_writes_readiness_column(tmp_path):
                 "unit": "м2",
                 "norm_status": "EXACT",
             },
-        ]
+        ],
+        pricebook=_Book(),
     )
     out = tmp_path / "lsr.xlsx"
     render_lsr_xlsx(lsr, out)
@@ -1273,7 +1470,9 @@ def test_stage_v_renderer_writes_readiness_column(tmp_path):
     text = "\n".join(str(row[column - 1].value) for row in rows if row[column - 1].value)
     # § 4: the sheet prints the seven questions in one wording, and a heading answers
     # «н/п» where it has no question rather than «нет» as if it were a defect.
-    assert "цены=не по базе" in text
+    # «цены=нет» is the honest wording now: the chosen book prices every card row but
+    # one, and no rate is applied from the card, so there is nothing to call «не по базе».
+    assert "цены=нет" in text
     assert "шифр выбран=н/п" in text
     assert "применимость обоснована=н/п" in text
     assert "расчёт структуры построен=да" in text
@@ -1289,7 +1488,8 @@ def test_stage_v_renderer_writes_readiness_column(tmp_path):
     )
     assert "Общие замечания и незакрытые позиции" in block
     assert "позиция полностью рассчитана — нет" in block
-    assert "карточки нормы" in block
+    assert "price_missing:11.1.03.01-0076" in block
+    assert "нужен КАЦ" in block
 
 
 def test_a_card_resource_identity_reaches_the_operator_without_markup():

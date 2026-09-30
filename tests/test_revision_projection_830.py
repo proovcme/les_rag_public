@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 from openpyxl import load_workbook
 
+from proxy.services import gesn_service
 from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
 from proxy.services.rim_lsr_trace_service import (
     OPERATION_QUESTIONS,
@@ -45,6 +46,59 @@ SUPPLY_ROW = {
     "quantity": 30,
     "unit": "м.п",
 }
+
+WORK_CODE = "ГЭСН12-01-034-02"  # the cipher WORK_ROW cites, once the prefix is folded
+
+
+def _legacy_card() -> dict[str, object]:
+    """The card of ``WORK_CODE`` as a legacy card writes it: every row states its rate.
+
+    The canonical base card of this cipher holds the consumptions, units and шифры below —
+    they are its own rows — and no price at all (measured 0 of 63 673 labour rows in
+    data/smeta_base/les_smeta_base.sqlite write one, and the machine and material rows
+    carry none).  A position built from it therefore has nothing but holes, while this
+    test is about the columns that state the *price decision* per resource.  The rates are
+    round numbers this test writes for itself and the card is served to the calculator as
+    explicit data, because the excluded demo seed (config/domain/gesn_seed.yaml) no longer
+    reaches the read path on any production route.
+    """
+    return {
+        "code": WORK_CODE,
+        "name": "Устройство обрешетки с прозорами из брусков",  # the base card's own name
+        "unit": "100 м2",  # the base card's own unit: 61 м2 of ВОР is 0,61 of it
+        "resources": [
+            {"kind": "labor", "code": "1-100-25", "name": "Средний разряд работы 2.5",
+             "unit": "чел.-ч", "per_unit": 12.94, "price": 480.00},
+            {"kind": "machine", "code": "91.05.01-017", "name": "Краны башенные, г/п 8 т",
+             "unit": "маш.-ч", "per_unit": 0.97, "price": 900.00},
+            {"kind": "machinist", "code": "", "name": "ОТм краны 8 т, разряд 6",
+             "unit": "маш.-ч", "per_unit": 0.97, "price": 800.00},
+            {"kind": "machine", "code": "91.05.05-015",
+             "name": "Краны на автомобильном ходу, 16 т",
+             "unit": "маш.-ч", "per_unit": 0.01, "price": 1700.00},
+            {"kind": "machinist", "code": "", "name": "ОТм краны 16 т, разряд 6",
+             "unit": "маш.-ч", "per_unit": 0.01, "price": 800.00},
+            {"kind": "machine", "code": "91.14.02-001",
+             "name": "Автомобили бортовые, г/п до 5 т",
+             "unit": "маш.-ч", "per_unit": 0.03, "price": 600.00},
+            {"kind": "machinist", "code": "", "name": "ОТм бортовые, разряд 4",
+             "unit": "маш.-ч", "per_unit": 0.03, "price": 600.00},
+            {"kind": "material", "code": "01.7.15.06-0111", "name": "Гвозди строительные",
+             "unit": "т", "per_unit": 0.0015, "price": 90000.00},
+        ],
+    }
+
+
+def _install_card(monkeypatch, card: dict[str, object]) -> None:
+    """Serve ``card`` for its own шифр, keep the canonical base for every other code."""
+    real_get_norm = gesn_service.get_norm
+
+    def _get_norm(code, *args, **kwargs):
+        if str(code or "").strip() == str(card["code"]):
+            return dict(card)
+        return real_get_norm(code, *args, **kwargs)
+
+    monkeypatch.setattr(gesn_service, "get_norm", _get_norm)
 
 
 def _trace(rows):
@@ -194,7 +248,11 @@ def test_the_payload_is_not_cut_at_eighty_open_rows():
     assert readiness["gap_states"]["calculation_incomplete"]["count"] == 120
 
 
-def test_the_check_sheet_fills_its_columns_from_the_trace(tmp_path):
+def test_the_check_sheet_fills_its_columns_from_the_trace(monkeypatch, tmp_path):
+    # the card of WORK_ROW prices its own rows, so the column has a price decision per
+    # resource to print instead of one hole per resource — see `_legacy_card()` for where
+    # these rates come from (the base card of this cipher carries no prices at all)
+    _install_card(monkeypatch, _legacy_card())
     lsr = _trace([
         HEADER_ROW,
         {**WORK_ROW, "norm_status": "ANALOGUE_CANDIDATE"},
@@ -225,6 +283,7 @@ def test_the_check_sheet_fills_its_columns_from_the_trace(tmp_path):
     assert all("цена" in line for line in lines)
     assert {line.split()[0] for line in lines} <= {"labor", "machine", "machinist", "material"}
     # with no ценовая база chosen every rate of this card is the card's own money
+    # (the rates themselves come from the stub card, one line per priced resource)
     assert "цена из карточки нормы, основания нет" in resources
     # a heading answers «н/п» everywhere it has no question
     heading_readiness = column("Готовность строки", heading)

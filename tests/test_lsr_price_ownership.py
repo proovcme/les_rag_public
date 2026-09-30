@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from proxy.services import gesn_service
 from proxy.services import rim_lsr_trace_service
 from proxy.services.lsr_assembly_service import (
     _rejected_book_unit,
@@ -38,8 +39,12 @@ from proxy.services.rim_lsr_trace_service import (
 CODE = "ГЭСН12-01-034-02"
 LABOR = "1-100-36"
 MATERIAL = "01.7.15.06-0111"
-CARD_LABOR_RATE = 475.11
-CARD_MATERIAL_RATE = 91385.06
+# Rates a norm card states for itself.  This test writes them as round numbers on purpose:
+# they are not the money of any region's ценовая база and not the excluded demo seed's, and
+# every sum pinned below is the product of one of them and a consumption the base card
+# really states, so a reader can re-multiply it on paper.
+CARD_LABOR_RATE = 480.00
+CARD_MATERIAL_RATE = 90000.00
 
 
 class _Book:
@@ -79,6 +84,130 @@ def _position(**overrides) -> dict[str, object]:
     position = {"code": CODE, "qty": 1.0, "nr_pct": 0, "sp_pct": 0}
     position.update(overrides)
     return position
+
+
+# ── a card that prices its own rows, built as explicit data ───────────────────
+#
+# The canonical base card of ``CODE`` (data/smeta_base/les_smeta_base.sqlite) states the
+# consumptions, units and тарифный шифры below — they are its own rows — and no price at
+# all: measured 0 of 63 673 labour rows in the base write one, and its machine and material
+# rows carry none either.  A card that prices its own rows is therefore a legacy card shape,
+# and since the demo seed stopped being merged into the read path the tests hand that shape
+# to the calculator as explicit data instead of reaching for
+# config/domain/gesn_seed.yaml (which production no longer reads).  The rates are numbers
+# this test chooses, round so each sum below re-multiplies on paper; they carry no authority
+# beyond the branch they exist to exercise, and they are deliberately not the demo seed's
+# amounts — those are named as artifacts in stage_b/live_830/seed_vs_base_reconcile_830.md.
+
+CARD_MACHINE_RATE = 900.00          # краны башенные 8 т, руб./маш.-ч
+CARD_MACHINIST_RATE_6 = 800.00      # ОТм 6 разряда, руб./чел.-ч
+CARD_MACHINE_RATE_KAC16 = 1700.00   # краны на автомобильном ходу 16 т, руб./маш.-ч
+CARD_MACHINIST_RATE_4 = 600.00      # ОТм 4 разряда, руб./чел.-ч
+CARD_MACHINE_RATE_TRUCK = 600.00    # автомобили бортовые 5 т, руб./маш.-ч
+
+
+def _legacy_card_resources() -> list[dict[str, object]]:
+    """The composition of ``CODE`` with a rate written on every row.
+
+    Quantities, units and шифры are the base card's own rows; the per-machine machinist
+    lines are the legacy split shape (the base writes one aggregated «Затраты труда
+    машинистов» row of 1,01 маш.-ч, these three add up to it).
+    """
+    return [
+        {
+            "kind": "labor",
+            "code": "1-100-25",
+            "name": "Средний разряд работы 2.5",  # the base card's own labour row
+            "unit": "чел.-ч",
+            "per_unit": 12.94,
+            "price": CARD_LABOR_RATE,
+        },
+        {
+            "kind": "machine",
+            "code": "91.05.01-017",
+            "name": "Краны башенные, г/п 8 т",
+            "unit": "маш.-ч",
+            "per_unit": 0.97,
+            "price": CARD_MACHINE_RATE,
+        },
+        {
+            "kind": "machinist",
+            "code": "",
+            "name": "ОТм краны 8 т, разряд 6",
+            "unit": "маш.-ч",
+            "per_unit": 0.97,
+            "price": CARD_MACHINIST_RATE_6,
+        },
+        {
+            "kind": "machine",
+            "code": "91.05.05-015",
+            "name": "Краны на автомобильном ходу, 16 т",
+            "unit": "маш.-ч",
+            "per_unit": 0.01,
+            "price": CARD_MACHINE_RATE_KAC16,
+        },
+        {
+            "kind": "machinist",
+            "code": "",
+            "name": "ОТм краны 16 т, разряд 6",
+            "unit": "маш.-ч",
+            "per_unit": 0.01,
+            "price": CARD_MACHINIST_RATE_6,
+        },
+        {
+            "kind": "machine",
+            "code": "91.14.02-001",
+            "name": "Автомобили бортовые, г/п до 5 т",
+            "unit": "маш.-ч",
+            "per_unit": 0.03,
+            "price": CARD_MACHINE_RATE_TRUCK,
+        },
+        {
+            "kind": "machinist",
+            "code": "",
+            "name": "ОТм бортовые, разряд 4",
+            "unit": "маш.-ч",
+            "per_unit": 0.03,
+            "price": CARD_MACHINIST_RATE_4,
+        },
+        {
+            "kind": "material",
+            "code": MATERIAL,
+            "name": "Гвозди строительные",
+            "unit": "т",
+            "per_unit": 0.0015,
+            "price": CARD_MATERIAL_RATE,
+        },
+    ]
+
+
+def _legacy_card(**overrides) -> dict[str, object]:
+    """A norm card that writes its own numbers: the shape the resolver must label.
+
+    ``_source_kind`` stays unset on purpose.  The card is a legacy card handed to the
+    calculator as data, not the demo seed, so the position is not quarantined as demo
+    material either and the only open question stays the ownership of its money.
+    """
+    card = {
+        "code": CODE,
+        "name": "Устройство обрешетки с прозорами из брусков",  # the base card's own name
+        "unit": "100 м2",  # the base card's own unit: 61 м2 of ВОР is 0,61 of it
+        "resources": _legacy_card_resources(),
+    }
+    card.update(overrides)
+    return card
+
+
+def _install_card(monkeypatch, card: dict[str, object]) -> None:
+    """Serve ``card`` for its own шифр, keep the canonical base for every other code."""
+    real_get_norm = gesn_service.get_norm
+
+    def _get_norm(code, *args, **kwargs):
+        if str(code or "").strip() == str(card["code"]):
+            return dict(card)
+        return real_get_norm(code, *args, **kwargs)
+
+    monkeypatch.setattr(gesn_service, "get_norm", _get_norm)
 
 
 def _resource_rows(trace):
@@ -216,8 +345,11 @@ def test_kac_price_is_an_owner_and_counts_as_confirmed():
     assert collect_lsr_card_prices(lsr) == []
 
 
-def test_unowned_card_money_is_preliminary_and_named_in_every_channel():
+def test_unowned_card_money_is_preliminary_and_named_in_every_channel(monkeypatch):
     """§ 10: the header, the gap list and the sums tell one story."""
+    # the card of CODE that states its own rates, served in place of the priceless base
+    # card — see `_legacy_card()` above for where each of its numbers comes from
+    _install_card(monkeypatch, _legacy_card())
     lsr = build_lsr_trace_from_visible_rows(
         [
             {
@@ -245,20 +377,26 @@ def test_unowned_card_money_is_preliminary_and_named_in_every_channel():
     assert all(item["position_code"] == CODE for item in gaps)
     assert all("из карточки нормы" in item["action"] for item in gaps)
     assert all("Подтвердите" in item["action"] for item in gaps)
-    # money is visible in the document but is not confirmed money
-    assert summary["total"] == pytest.approx(11813.04)
+    # money is visible in the document but is not confirmed money.  12 015,84 = прямые
+    # 4 914,28 (ОЗП 7,8934 чел.-ч × 480,00 + машины 553,88 + ЗПМ 489,22 по своим тарифам +
+    # гвозди 0,000915 т × 90 000,00 — all the stub card's own rates) + НР 109 % и СП 57 % of
+    # ФОТ 4 278,05, which the single ГЭСН:12 rule of the accrual catalog
+    # (config/domain/nr_sp_catalog.json) owns — so the card money is the only hole here.
+    assert summary["total"] == pytest.approx(12015.84)
     assert summary["confirmed_amount"] == pytest.approx(0.0)
     assert summary["preliminary_amount"] == pytest.approx(summary["total"])
     assert summary["result_status"] == "priced_partial"
 
 
-def test_header_note_names_the_card_resource_and_the_rows_it_priced():
+def test_header_note_names_the_card_resource_and_the_rows_it_priced(monkeypatch):
     """§ 7 / § 10: the sentence says which resource, at which rate, on which rows.
 
     Two shapes failed on real data: the label was read from a key the collected
     items do not carry, so the header rendered an empty resource name; and one
     rate that repeated across two ВОР rows read as the same money existing twice.
     """
+    # the same eight card-owned rates, applied to two ВОР rows of one operation
+    _install_card(monkeypatch, _legacy_card())
     lsr = build_lsr_trace_from_visible_rows(
         [
             {
@@ -277,11 +415,13 @@ def test_header_note_names_the_card_resource_and_the_rows_it_priced():
 
     assert "не из ценовой базы, а из карточки нормы" in note
     assert "черновиком" in note
-    # the resource is named by what the operator recognises, with its rate
-    assert "ОТ(ЗТ) средний разряд 2,5 — 475,11 руб." in note
-    assert "Краны башенные, г/п 8 т (91.05.01-017) — 865,44 руб." in note
+    # the resource is named by what the operator recognises, with its rate.  The ОЗП label
+    # carries the тарифный шифр the card row itself states (1-100-25), so the operator can
+    # see which book row would own the money.
+    assert "Средний разряд работы 2.5 (1-100-25) — 480,00 руб." in note
+    assert "Краны башенные, г/п 8 т (91.05.01-017) — 900,00 руб." in note
     # one rate applied to two rows is stated once, and both rows are named
-    assert note.count("ОТ(ЗТ) средний разряд 2,5") == 1
+    assert note.count("Средний разряд работы 2.5") == 1
     assert "ВОР!R3, ВОР!R4" in note
     # the header lists what fits and says how much it left out
     assert "показаны 6 из" in note
@@ -313,6 +453,25 @@ CARD_ACCRUAL_CODE = "ГЭСНм11-04-028-01"  # ГЭСНм:11 keeps two catalog 
 CATALOG_ACCRUAL_CODE = "ГЭСН12-01-034-02"  # ГЭСН:12 has exactly one catalog rule
 
 
+def _accrual_card() -> dict[str, object]:
+    """The card of ``CARD_ACCRUAL_CODE`` that prints its own НР/СП percentages.
+
+    A base card carries no ``nr_pct``/``sp_pct`` at all, so the unowned accrual rates are
+    written into the card here as explicit data — the pair 100 %/40 % is a number this test
+    chooses, while the card's name and unit stay the base card's own.  What stays real base
+    data is the point of the test — the catalog of ГЭСНм:11 holds two rules, so the
+    fail-closed catalog refuses to pick either and nobody owns the card's percentages.
+    """
+    return _legacy_card(
+        code=CARD_ACCRUAL_CODE,
+        name="Включение в аппаратуру разъемов штепсельных, количество контактов в разъеме: до 14 шт.",
+        unit="шт",
+        resources=[],
+        nr_pct=100,
+        sp_pct=40,
+    )
+
+
 def _owned_labor_resources() -> list[dict[str, object]]:
     """Labour whose rate has an owner, so НР/СП are the only open question."""
     return [
@@ -329,7 +488,7 @@ def _owned_labor_resources() -> list[dict[str, object]]:
     ]
 
 
-def test_accrual_rate_read_off_the_norm_card_keeps_the_position_draft():
+def test_accrual_rate_read_off_the_norm_card_keeps_the_position_draft(monkeypatch):
     """§ 11 № 6: known resource prices must not mask НР/СП without an owner.
 
     ГЭСНм:11 carries two catalog rules, so the fail-closed catalog refuses to
@@ -337,6 +496,9 @@ def test_accrual_rate_read_off_the_norm_card_keeps_the_position_draft():
     draft is not a zero — but nobody owns them, so the position stays partial
     and the operator is told which two numbers are unowned.
     """
+    # the card that prints 100 % / 40 % as its own — see `_accrual_card()` above for why
+    # those two numbers have to be card data now instead of base-card data
+    _install_card(monkeypatch, _accrual_card())
     trace = build_position_trace(
         {"code": CARD_ACCRUAL_CODE, "qty": 1.0, "resources": _owned_labor_resources()}
     )
@@ -347,8 +509,8 @@ def test_accrual_rate_read_off_the_norm_card_keeps_the_position_draft():
     assert ownership["nr_source"] == "norm_card"
     assert ownership["sp_source"] == "norm_card"
     assert ownership["label"] == "nr_sp_without_basis"
-    assert (ownership["nr_pct"], ownership["sp_pct"]) == (109.0, 57.0)
-    assert (summary["nr_pct"], summary["sp_pct"]) == (109.0, 57.0)
+    assert (ownership["nr_pct"], ownership["sp_pct"]) == (100.0, 40.0)
+    assert (summary["nr_pct"], summary["sp_pct"]) == (100.0, 40.0)
     assert summary["total"] > 0.0
     assert summary["amount_status"] == "partial"
     assert summary["full_amount"] is None

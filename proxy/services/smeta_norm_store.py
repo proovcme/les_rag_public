@@ -926,10 +926,14 @@ def _resource_projection(norm: dict[str, Any]) -> tuple[int, str, str]:
 
 
 def _build_rows(base_path: str | None = None) -> list[SmetaNormRow]:
+    from proxy.services import gesn_service
     from proxy.services.gesn_service import load_base_norms, load_norms
 
     base_norms = dict(load_base_norms(base_path) or {})
-    seed_norms = dict(load_norms() or {})
+    # § 3: демо-семя — не кандидат на подбор. Пока сценарий его явно не включил, поиск
+    # знает только карточки основной базы; иначе модель могла выбрать демо-норму, которой
+    # нет в нормативном источнике.
+    seed_norms = dict(load_norms() or {}) if gesn_service.seed_enabled() else {}
     composition_cards = _composition_steps_from_cards()
     norm_sources: dict[str, str] = {
         key: str(norm.get("_source_kind") or "base_parquet")

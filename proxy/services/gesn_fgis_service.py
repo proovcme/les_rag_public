@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from backend.runtime_paths import mutable_path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 API = "https://fgiscs.minstroyrf.ru/api/FullTextSearch/SearchEstimatedRates?search="
 CACHE_PARQUET = mutable_path("storage/cache/gesn_fgis/gesn2022_fgis_raw.parquet")
@@ -42,6 +42,48 @@ def _is_real_code(code: Any) -> bool:
 def _derive_labor_code(name: Any) -> str | None:
     m = _RAZRYAD_RE.search(str(name or "").lower())
     return f"1-100-{m.group(1)}{m.group(2)}" if m else None
+
+
+#: Stated on a resource whose ОЗП шифр the card does not carry itself.
+LABOR_CODE_DERIVATION = "тарифный шифр выведен из среднего разряда карточки нормы"
+
+
+def labor_tariff_code(name: Any) -> str:
+    """The ФГИС tariff row a labor card line names only by its разряд, or ``""``.
+
+    This is the module's own stated convention (эталон: разряд 2,5 → 1-100-25), not a
+    new rule: it is what `fetch_and_cache` applies when it writes the raw ФГИС layer.
+    """
+
+    return _derive_labor_code(name) or ""
+
+
+def labor_code_provenance(resources: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Report the ОЗП шифры whose origin the card does not state itself — read-only.
+
+    The derivation itself belongs to the import layer: `_derive_labor_code` runs when the
+    ФГИС raw layer is written and when an imported card is read (`gesn_service`), and those
+    readers stamp `code_derivation` on the row.  A calculator must not invent a шифр while
+    it is pricing (§ 3): the numbers it books have one owner, the norm base or an
+    operator-confirmed price, and the file has to say which.  This function only looks at
+    what the card already carries, so the same origin shows up in the position trace, the
+    summary and the «Проверка» sheet of both engines without either of them mutating data.
+    """
+
+    codes = sorted(
+        {
+            str(res.get("code"))
+            for res in resources or ()
+            if res.get("code_derivation") and res.get("code")
+        }
+    )
+    return {
+        "schema": "labor_code_provenance_v1",
+        "status": "derived_from_import" if codes else "not_needed",
+        "derived": len(codes),
+        "codes": codes,
+        "note": LABOR_CODE_DERIVATION if codes else "",
+    }
 
 
 def _fetch_raw(code: str) -> list[dict[str, Any]]:

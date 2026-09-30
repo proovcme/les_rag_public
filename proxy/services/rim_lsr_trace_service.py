@@ -274,6 +274,13 @@ PRICE_ACTION_LABELS = {
     BOOK_UNIT_CONFLICT_ACTION: "цена книги отклонена: единицы не совпадают",
 }
 
+#: The two tokens the unowned norm-card rate is written with, shared by both LSR
+#: calculators so one card cannot be «manual» money in one engine and a labelled
+#: draft in the other (ADR-16 § 7).  `architecture_contract_gate` keys the pairing
+#: of these two spellings; the literals inside `PriceTrace(...)` stay literal for it.
+CARD_PRICE_SOURCE = "card_price"
+CARD_PRICE_ACTION = "card_price_without_basis"
+
 
 def price_action_label(action: Any, source: Any = "") -> str:
     """The operator's wording for one price-ladder outcome (§ 4, tracker #56).
@@ -839,12 +846,16 @@ def _missing_price_action(res: dict[str, Any]) -> str:
     return "needs_price"
 
 
-def _price_is_attributed(res: dict[str, Any]) -> bool:
+def price_is_attributed(res: dict[str, Any]) -> bool:
     """Whether an explicit resource price has an owner the customer can check.
 
     Only two owners exist: the operator who confirmed the price, and a source
     reference written with it.  A number the imported norm card carries by
     itself belongs to neither (ADR-16 § 7).
+
+    Both LSR calculators ask this one question, so a norm-card rate cannot be
+    counted as operator money by one engine and as an unowned draft by the
+    other (§ 10: one document, one amount).
     """
 
     if res.get("price_confirmed"):
@@ -862,7 +873,7 @@ def _resolve_price_trace(
     explicit = (
         _round(res.get("price")) if res.get("price") not in (None, "") else None
     )
-    if explicit is not None and _price_is_attributed(res):
+    if explicit is not None and price_is_attributed(res):
         return PriceTrace(price=explicit, source="manual", column_10=explicit, basis="explicit_resource_price")
 
     code = str(res.get("code") or "").strip()
@@ -1047,6 +1058,7 @@ def build_position_trace(
             item for item in resources if str(item.get("kind") or "") != "material"
         ]
     from proxy.services import fsem_machinist_service as fsem
+    from proxy.services import gesn_fgis_service as gfgis
 
     if pricebook is not None:
         resources, fsem_trace = fsem.enrich_machinists(resources, quantity_field="per_unit")
@@ -1059,6 +1071,10 @@ def build_position_trace(
             "schema": "fsem_enrichment_v1",
             "status": "not_applied_without_pricebook",
         }
+    # § 3: the calculator reports the labour шифры whose origin the imported card does not
+    # state itself; it never invents one while pricing.  The derivation belongs to the norm
+    # readers (and to the ФГИС ingest), and both engines show the same provenance (§ 10).
+    labor_code_trace = gfgis.labor_code_provenance(resources)
     flags: list[str] = []
     completeness_reasons: list[str] = []
     if fsem_trace.get("status") == "unresolved":
@@ -1073,8 +1089,21 @@ def build_position_trace(
         if not norm_source_integrity.get("trusted_for_pricing"):
             flags.append("нормативная база в карантине: semantic integrity gate не пройден")
             completeness_reasons.append("normative_source_untrusted")
+    if norm and str(norm.get("_source_kind") or "") == gesn_service.SEED_SOURCE_KIND:
+        # § 3: the demo seed is reachable only when a scenario named it explicitly, and
+        # even then the position must not read as base-backed money.
+        flags.append("норма взята из демо-семени (LES_GESN_SEED_ENABLED/path), не из базы")
+        completeness_reasons.append("normative_source_demo_seed")
+        norm_source_integrity = {
+            "trusted_for_pricing": False,
+            "source_kind": gesn_service.SEED_SOURCE_KIND,
+            "base_path": str(norm.get("_source_path") or ""),
+        }
     if position.get("code") and norm is None and not position.get("resources"):
-        flags.append(f"норма ГЭСН не найдена: {position.get('code')}")
+        flags.append(
+            f"норма ГЭСН не найдена в базе: {position.get('code')} "
+            "— карточку не подменяем, расчёт позиции не закрыт"
+        )
         completeness_reasons.append("norm_missing")
     action_conflict = position.get("action_conflict")
     if isinstance(action_conflict, Mapping) and action_conflict:
@@ -1291,6 +1320,7 @@ def build_position_trace(
                 "price_source": price.source or "",
                 "price_book_unit": price.book_unit or "",
                 "resource_group": str((price.group or {}).get("group") or ""),
+                "code_derivation": str(res.get("code_derivation") or ""),
             }
         )
         if kind not in detail_rows:
@@ -1567,6 +1597,7 @@ def build_position_trace(
             # a card-written НР/СП as the open question it is
             "nr_sp_ownership": nr_sp_ownership,
             "fsem_trace": fsem_trace,
+            "labor_code_trace": labor_code_trace,
         },
     }
 

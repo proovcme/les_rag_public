@@ -1,35 +1,54 @@
-"""Движок сборки ЛСР: ресурсы→цены→ОЗП/ЭМ/НР/СП→Всего. Gold — позиция Эталон_кровля."""
+"""Движок сборки ЛСР: ресурсы→цены→ОЗП/ЭМ/НР/СП→Всего.
+
+Арифметика движка проверяется на позициях, которые тест пишет сам: ставки и расходы
+названы прямо в ресурсах, поэтому любой иток ниже пересчитывается на бумаге и не зависит
+ни от карточки нормы, ни от установленной ценовой книги.  Исторический «gold»
+11 813.04 здесь заменён на авторские ставки: это была сумма, которую печатало демо-семя
+``config/domain/gesn_seed.yaml`` (замер — ``stage_b/live_830/seed_vs_base_reconcile_830.md``,
+запрет закреплён в ``tests/test_gesn_seed_is_test_only_830.py``), а не данные проверенной базы.
+Расчёт от реальной карточки базы по детерминированной книге — в
+``tests/test_rim_lsr_trace_service.py`` (``GOLD_*``).
+
+Исключение — позиция, заданная только шифром: её ресурсы разворачиваются из карточки
+базы, а деньги берёт ценовая книга.  Чтобы пин не зависел от того, какая книга лежит у
+оператора, книгу замыкает фикстура ``tests/lsr_gold_pricebook.py``.
+"""
 
 from __future__ import annotations
 
+from proxy.services import lsr_assembly_service as la
 from proxy.services.lsr_assembly_service import assemble, compute_position, export_assembled
+from tests.lsr_gold_pricebook import gold_pricebook  # noqa: F401  (фикстура по имени)
 
-# Эталон_кровля, поз.1 «Устройство обрешётки» — ресурсы агрегатами с фактическими суммами.
+# Агрегированная позиция, которую тест пишет сам: четыре группы ресурсов с явными
+# ставками, объём 1 условная единица формы.  Иток = 5 000 + 1 800 + 200 = 7 000 прямых,
+# ФОТ 5 000 + 800 = 5 800, НР 109 % = 6 322, СП 57 % = 3 306 → 16 628,00.
 GOLD_POS = {
     "code": "ГЭСН12-01-034-02",
     "name": "Устройство обрешётки с прозорами из брусков",
     "unit": "100 м2", "qty": 0.61, "section": "Раздел 1. Монтаж медного отлива. 7-й ярус",
     "nr_pct": 109, "sp_pct": 57,
     "resources": [
-        {"kind": "labor", "name": "ОТ(ЗТ)", "unit": "чел.-ч", "qty": 1, "price": 3750.23},
-        {"kind": "machine", "name": "Машины (краны, автомобиль)", "unit": "маш.-ч", "qty": 1, "price": 533.72},
-        {"kind": "machinist", "name": "ОТм(ЗТм)", "unit": "чел.-ч", "qty": 1, "price": 458.68},
-        {"kind": "material", "name": "Гвозди строительные", "unit": "т", "qty": 1, "price": 83.62},
+        {"kind": "labor", "name": "ОТ(ЗТ)", "unit": "чел.-ч", "qty": 1, "price": 5000.00},
+        {"kind": "machine", "name": "Машины (краны, автомобиль)", "unit": "маш.-ч", "qty": 1, "price": 1000.00},
+        {"kind": "machinist", "name": "ОТм(ЗТм)", "unit": "чел.-ч", "qty": 1, "price": 800.00},
+        {"kind": "material", "name": "Гвозди строительные", "unit": "т", "qty": 1, "price": 200.00},
     ],
 }
+GOLD_TOTAL = 16_628.00
 
 
-def test_gold_position_reproduces_etalon():
+def test_gold_position_is_the_sum_of_its_own_named_rates():
     r = compute_position(GOLD_POS)
     b = r["base"]
-    assert b["ozp"] == 3750.23
-    assert b["em"] == 992.40            # машины 533.72 + ОТм 458.68
-    assert b["mat"] == 83.62
-    assert b["direct"] == 4826.25       # ОЗП + ЭМ + М
-    assert b["fot"] == 4208.91          # ОЗП + ЗПМ
-    assert b["nr"] == 4587.71           # ФОТ × 109%
-    assert b["sp"] == 2399.08           # ФОТ × 57%
-    assert r["total"] == 11813.04       # Всего по позиции — как в эталоне
+    assert b["ozp"] == 5000.00
+    assert b["em"] == 1800.00             # машины 1 000 + ОТм 800
+    assert b["mat"] == 200.00
+    assert b["direct"] == 7000.00         # ОЗП + ЭМ + М
+    assert b["fot"] == 5800.00            # ОЗП + ЗПМ (без стоимости эксплуатации машин)
+    assert b["nr"] == 6322.00             # ФОТ × 109 %
+    assert b["sp"] == 3306.00             # ФОТ × 57 %
+    assert r["total"] == GOLD_TOTAL       # Всего по позиции
     assert r["flags"] == []
 
 
@@ -83,7 +102,7 @@ def test_missing_non_material_prices_are_actionable():
 def test_assemble_rollup():
     res = assemble([GOLD_POS, GOLD_POS])
     assert res["summary"]["positions"] == 2
-    assert res["summary"]["total"] == round(11813.04 * 2, 2)
+    assert res["summary"]["total"] == round(2 * GOLD_TOTAL, 2)
     assert len(res["sections"]) == 1
     assert res["sections"][0]["positions"] == 2
 
@@ -115,7 +134,15 @@ def test_default_pricebook_prefers_spb_over_first_alphabetic(monkeypatch):
     assert chosen["path"] == "/tmp/spb_2kv2026.parquet"
 
 
-def test_assemble_code_only_applies_explicit_nr_sp_rule_from_typed_collection():
+def test_assemble_code_only_applies_explicit_nr_sp_rule_from_typed_collection(gold_pricebook):
+    """Позиция задана шифром: ресурсы — из карточки базы, деньги — из книги фикстуры.
+
+    страж герметичности: `_resolve_book` обязана вернуть книгу эталона, иначе сумма ниже
+    зависела бы от содержимого ``data/price_base`` на машине оператора.
+    """
+
+    assert la._resolve_book("spb_2kv2026") is gold_pricebook
+
     res = assemble([{
         "code": "ГЭСНм08-03-575-01",
         "qty": 1,
@@ -125,10 +152,17 @@ def test_assemble_code_only_applies_explicit_nr_sp_rule_from_typed_collection():
 
     pos = res["positions"][0]
     assert pos["nr_sp_trace"]["rule_id"] == "nrsp-49.3"
-    assert pos["base"]["nr"] == 613.86
-    assert pos["base"]["sp"] == 322.75
-    assert pos["total"] == 1573.24
+    # карточка базы («шт», труд 1,03 чел.-ч + болты 0,02 кг) × строки книги эталона:
+    # ОЗП 1,03 × 614,42 = 632,85; М 0,02 × 188,92 = 3,78; ФОТ = ОЗП (без машин и ОТм).
+    assert pos["base"]["ozp"] == 632.85
+    assert pos["base"]["mat"] == 3.78
+    assert {r["price_source"] for r in pos["resources"]} == {"fgis"}
+    assert pos["base"]["nr"] == 613.86            # ФОТ × 97 % (nrsp-49.3)
+    assert pos["base"]["sp"] == 322.75            # ФОТ × 51 % (nrsp-49.3)
+    assert pos["total"] == 1573.24                # 636,63 прямых + 613,86 + 322,75
     assert res["summary"]["total"] == 1573.24
+    # ни одной дыры: позиция закрыта книгой, и отчёт обязан назвать её закрытой, не черновиком
+    assert res["summary"]["result_status"] == "priced_final"
 
 
 def test_machinist_aggregate_split_by_mapped_machines():
