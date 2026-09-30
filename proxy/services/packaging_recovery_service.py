@@ -215,7 +215,11 @@ def packaging_recovery_payload(
         "job_id": str(job.get("job_id") or ""),
         "session_id": str(identity.get("session_id") or ""),
         "attachment_id": str(identity.get("attachment_id") or ""),
-        "question": str(identity.get("question") or ""),
+        "question": (
+            "Пересобери ЛСР из сохранённых решений"
+            if (job.get("task_context") or {}).get("price_basis")
+            else str((job.get("task_context") or {}).get("original_question") or identity.get("question") or "")
+        ),
         "decision_count": len(decisions),
         "remaining": [
             str(item) for item in (job.get("remaining") or ()) if str(item).strip()

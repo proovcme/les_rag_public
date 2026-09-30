@@ -338,15 +338,9 @@ def _factory_contracts() -> dict[str, dict[str, Any]]:
                 ),
             ),
             "skill": (
-                "# Сметчик по обычному RAG\n\n"
-                "1. Разложи запрос на самостоятельные работы и объёмы.\n"
-                "2. Через общий native RRF найди карточки норм в выбранной сметной базе.\n"
-                "3. При необходимости используй `search_sources` и `read_source` повторно, "
-                "пока не проверены шифр, измеритель и состав работ.\n"
-                "4. Для каждой позиции покажи норму, обоснование, ограничения и пробелы.\n"
-                "5. Не подменяй неподтверждённую норму похожим кодом и не рассчитывай цену "
-                "без ценовых evidence."
-            ),
+                Path(__file__).resolve().parents[2]
+                / "skills" / "smeta" / "references" / "rag-estimator.md"
+            ).read_text(encoding="utf-8"),
             "tools": estimator_tools,
             "model_policy": {"temperature": 0.0},
             "rag_policy": {

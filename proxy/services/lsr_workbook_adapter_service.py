@@ -245,6 +245,23 @@ def visible_pricebook_stems() -> list[str]:
         return []
 
 
+def requested_price_basis(question: str) -> dict[str, str]:
+    """Persist explicit request dimensions even before a book/file exists.
+
+    Ambiguous requests are left to the existing contradiction handling. This
+    parser records operator input; it neither selects a price nor a norm.
+    """
+    regions = _region_candidates(str(question or ""))
+    basis: dict[str, str] = {}
+    if len(regions) == 1:
+        basis["region"] = next(iter(regions))
+    quarter = _quarter_token(str(question or ""))
+    if quarter:
+        number, year = quarter.split(":", 1)
+        basis["quarter"] = f"{number} квартал {year}"
+    return basis
+
+
 def _document_basis_fields(document_basis: object) -> dict[str, str]:
     """Normalise the basis an earlier revision of this same document was priced in.
 
@@ -654,6 +671,7 @@ def summarize_lsr_price_basis(
             _quarter_token(book_request),
             _quarter_token(source_level),
             _quarter_token(question_level),
+            _quarter_token(binding),
         )
         if token
     }

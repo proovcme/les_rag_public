@@ -236,22 +236,51 @@ def workbook_packaging_tool(profile_tools: Sequence[str], question: str) -> list
 def document_price_basis_arguments(basis: object) -> dict[str, Any]:
     """The five contract strings of a basis a document was already priced in.
 
-    Nothing is invented: a record without a bound book yields ``{}``, because an
-    earlier revision that stayed unpriced asked a question — repeating that
-    question is not the same as answering it (§ 7).
+    Explicit request dimensions survive before the first successful packaging,
+    including requests for a period whose price book has not been loaded yet.
     """
     if not isinstance(basis, Mapping):
         return {}
     book = str(basis.get("pricebook") or basis.get("actual_book") or "").strip()
-    if not book:
+    region = str(basis.get("region") or basis.get("actual_region") or "").strip()
+    quarter = str(basis.get("quarter") or basis.get("actual_quarter") or "").strip()
+    if not (book or region or quarter):
         return {}
     return {
         "pricebook": book,
-        "region": str(basis.get("region") or basis.get("actual_region") or "").strip(),
-        "quarter": str(basis.get("quarter") or basis.get("actual_quarter") or "").strip(),
+        "region": region,
+        "quarter": quarter,
         "binding": str(basis.get("binding") or "").strip(),
         "revision_id": str(basis.get("revision_id") or "").strip(),
     }
+
+
+def task_document_price_basis(job: object, previous_basis: object = None) -> dict[str, Any]:
+    """Fill the first-packaging gap using durable operator request dimensions."""
+    basis = document_price_basis_arguments(previous_basis)
+    context = job.get("task_context") or {} if isinstance(job, Mapping) else {}
+    requested = document_price_basis_arguments(context.get("price_basis"))
+    from proxy.services.lsr_workbook_adapter_service import requested_price_basis
+    previous_dimensions = requested_price_basis(
+        " ".join(str(basis.get(key) or "") for key in ("region", "quarter"))
+    )
+    requested_dimensions = requested_price_basis(
+        " ".join(str(requested.get(key) or "") for key in ("region", "quarter"))
+    )
+    changed = any(
+        requested.get(key)
+        and requested_dimensions.get(key, requested[key]) != previous_dimensions.get(key, basis.get(key))
+        for key in ("region", "quarter")
+    )
+    if changed:
+        # An old selected book must not override an explicitly changed period.
+        basis.pop("pricebook", None)
+        basis.pop("binding", None)
+    for key in ("region", "quarter"):
+        if requested.get(key):
+            if changed or not basis.get(key):
+                basis[key] = requested[key]
+    return document_price_basis_arguments(basis)
 
 
 def workbook_packaging_args(
@@ -518,13 +547,13 @@ def model_packaging_document_basis(job: Mapping[str, Any] | None) -> dict[str, A
         basis = job.get("price_basis")
     record = document_price_basis_arguments(basis)
     if record:
-        return record
+        return task_document_price_basis(job, record)
     identity = job.get("identity") if isinstance(job.get("identity"), Mapping) else {}
-    return document_priced_basis(
+    return task_document_price_basis(job, document_priced_basis(
         attachment_id=str(identity.get("attachment_id") or job.get("attachment_id") or ""),
         source_sha256=str(identity.get("source_sha256") or ""),
         tool=str(job.get("packaging_tool") or "build_lsr_workbook"),
-    )
+    ))
 
 
 def model_packaging_record_arguments(
@@ -1227,6 +1256,7 @@ def govern_inference_messages(
     checkpoint: Sequence[ContextObject] = (),
     working_memory: Sequence[ContextObject] = (),
     evidence: Sequence[Any] = (),
+    required_evidence: Sequence[Any] = (),
     source_map: Sequence[Any] = (),
     tool_exchange: Sequence[Any] = (),
     dialogue: Sequence[Any] = (),
@@ -1246,6 +1276,11 @@ def govern_inference_messages(
         ),
         ContextCandidate(ContextKind.CHECKPOINT, tuple(checkpoint)),
         ContextCandidate(ContextKind.WORKING_MEMORY, tuple(working_memory)),
+        ContextCandidate(
+            ContextKind.EVIDENCE,
+            _context_objects("source-required", required_evidence),
+            required=True,
+        ),
         ContextCandidate(ContextKind.EVIDENCE, _context_objects("evidence", evidence)),
         ContextCandidate(ContextKind.SOURCE_MAP, _context_objects("source", source_map)),
         ContextCandidate(ContextKind.TOOL_EXCHANGE, _context_objects("exchange", tool_exchange)),
@@ -1540,6 +1575,16 @@ def overlay_tabular_estimator_snapshot(
         bridges.append(TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE)
     snapshot["effective_capability_bridges"] = bridges
     snapshot["tabular_estimator_path"] = True
+    skill_path = Path(__file__).resolve().parents[2] / "skills" / "smeta" / "references" / "rag-estimator.md"
+    workbook_skill = skill_path.read_text(encoding="utf-8").strip()
+    existing_skill = str(snapshot.get("skill_text") or "").strip()
+    if workbook_skill not in existing_skill:
+        snapshot["skill_text"] = existing_skill + "\n\n" + workbook_skill
+    snapshot["effective_skill_modules"] = [{
+        "path": "skills/smeta/references/rag-estimator.md",
+        "sha256": hashlib.sha256(workbook_skill.encode("utf-8")).hexdigest(),
+        "source": "tabular_attachment_estimator_path_v1",
+    }]
     return snapshot
 
 
@@ -6259,6 +6304,8 @@ async def _execute_chat_evidence_application(
         include_metadata=True,
     )
     attachment_context = str(getattr(req, "attachment_context", "") or "").strip()
+    if (profile_snapshot or {}).get("effective_skill_modules"):
+        retrieval_trace["effective_skill_modules"] = list(profile_snapshot["effective_skill_modules"])
     source_incomplete_locators: list[str] = []
     answer_finish_reason = ""
     model_driven_retrieval = profile_uses_model_driven_retrieval(profile_snapshot)
@@ -7445,8 +7492,13 @@ async def _execute_chat_evidence_application(
                                 ),
                                 question=str(req.question or ""),
                             )
+                            from proxy.services.lsr_workbook_adapter_service import requested_price_basis
                             research_job = research_job_service.begin_or_resume(
-                                research_identity
+                                research_identity,
+                                task_context={
+                                    "original_question": str(req.question or ""),
+                                    "price_basis": requested_price_basis(str(req.question or "")),
+                                },
                             )
                         except Exception as job_error:  # noqa: BLE001 - durability degrades visibly
                             logger.exception(
@@ -7508,9 +7560,10 @@ async def _execute_chat_evidence_application(
                     sheet_count = len(sheet_pass_names)
                     work_total = len(source_catalog.work_locators())
                     session_accepted_start = len(
-                        structurally_complete_source_keys(
+                        settled_source_keys(
                             accumulated_rows, source_catalog
                         )
+                        & set(source_catalog.work_locators())
                     )
                     prior_elapsed = float(
                         (research_job or {}).get("prior_elapsed_seconds") or 0.0
@@ -7520,9 +7573,10 @@ async def _execute_chat_evidence_application(
                         stage: str, *, sheet: str, index: int
                     ) -> None:
                         accepted_now = len(
-                            structurally_complete_source_keys(
+                            settled_source_keys(
                                 accumulated_rows, source_catalog
                             )
+                            & set(source_catalog.work_locators())
                         )
                         counts = sheet_pass_progress_counts(
                             accepted_now=accepted_now,
@@ -7535,6 +7589,10 @@ async def _execute_chat_evidence_application(
                             for key, value in counts.items()
                             if key not in {"completed", "total"}
                         }
+                        extra["structurally_complete"] = len(
+                            structurally_complete_source_keys(accumulated_rows, source_catalog)
+                        )
+                        extra["processed"] = accepted_now
                         await _emit_sheet_progress(
                             sheet_pass_progress_label(
                                 sheet,
@@ -7854,7 +7912,7 @@ async def _execute_chat_evidence_application(
                                                 memory_candidates,
                                                 registered=workspace_memory_registered,
                                             ),
-                                            evidence=pass_evidence,
+                                            required_evidence=pass_evidence,
                                             source_map=selector_source_map,
                                             tool_exchange=(),
                                         )
@@ -8112,7 +8170,7 @@ async def _execute_chat_evidence_application(
                                 request_payload=question_tail,
                                 checkpoint=(),
                                 working_memory=(),
-                                evidence=pass_evidence,
+                                required_evidence=pass_evidence,
                                 source_map=(),
                                 tool_exchange=(),
                                 dialogue=(),
@@ -8223,7 +8281,8 @@ async def _execute_chat_evidence_application(
                                         memory_candidates,
                                         registered=workspace_memory_registered,
                                     ),
-                                    evidence=answer_evidence,
+                                    evidence=model_rag_evidence_groups,
+                                    required_evidence=pass_evidence,
                                     source_map=(),
                                     tool_exchange=[],
                                     dialogue=[session_block] if session_block else [],
@@ -9892,6 +9951,10 @@ async def _execute_chat_evidence_application(
                             inherited_basis = workbook_document_price_basis(
                                 document_basis_events, tool=packaging_tool
                             )
+                            # The durable request exists before the first file. An
+                            # explicit later price request takes precedence over
+                            # an older revision's basis, dimension by dimension.
+                            inherited_basis = task_document_price_basis(research_job, inherited_basis)
                             workbook_call = {
                                 "tool": packaging_tool,
                                 "args": workbook_packaging_args(

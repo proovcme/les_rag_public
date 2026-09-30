@@ -35,6 +35,7 @@ from proxy.services.chat_evidence_application_service import (
     run_chat_evidence_application,
     compact_estimator_draft_rows,
     document_price_basis_arguments,
+    task_document_price_basis,
     workbook_packaging_lineage,
 )
 from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
@@ -348,9 +349,14 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         if isinstance(document_block, dict)
         else None
     )
+    task_context = job.get("task_context") or {}
+    inherited_basis = task_document_price_basis(job, inherited_basis)
     repack_args: dict[str, Any] = {
         "attachment_id": attachment_id,
-        "question": str(req.question or ""),
+        "question": str(req.question or (
+            "Пересобери ЛСР из сохранённых решений" if inherited_basis
+            else task_context.get("original_question") or ""
+        )),
         "decisions": decisions,
         "confirmed_data": overlays,
     }

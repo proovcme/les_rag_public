@@ -6997,7 +6997,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     completed_rows = payload.get("completed")
                     total_rows = payload.get("total")
                     if completed_rows is not None and total_rows is not None:
-                        label = f"{label} · {completed_rows}/{total_rows}"
+                        if payload.get("processed") is not None:
+                            label = f"{label} · обработано {completed_rows}/{total_rows}"
+                            closed = payload.get("structurally_complete")
+                            if closed is not None:
+                                label += f" · нужны уточнения: {max(0, int(completed_rows) - int(closed))}"
+                        else:
+                            label = f"{label} · {completed_rows}/{total_rows}"
                         remaining_n = payload.get("remaining")
                         if remaining_n is not None:
                             try:

@@ -46,6 +46,7 @@ _PRICE_BASIS_KEY = "_price_basis"
 TERMINAL_STATUSES = {"complete", "failed"}
 RESUMABLE_STATUSES = {"running", "paused", "failed", "cancelled"}
 _EXTRA_COLUMNS = {
+    "task_context_json": "TEXT NOT NULL DEFAULT '{}'",
     "remaining_json": "TEXT NOT NULL DEFAULT '[]'",
     "query_cache_json": "TEXT NOT NULL DEFAULT '{}'",
     "held_packet_json": "TEXT NOT NULL DEFAULT '{}'",
@@ -494,7 +495,9 @@ class WorkbookResearchJobService:
             question_sha256=hashlib.sha256(str(question).encode("utf-8")).hexdigest(),
         )
 
-    def begin_or_resume(self, identity: WorkbookResearchIdentity) -> dict[str, Any]:
+    def begin_or_resume(
+        self, identity: WorkbookResearchIdentity, *, task_context: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         digest = identity.digest()
         identity_json = json.dumps(identity.__dict__, ensure_ascii=False, sort_keys=True)
         prior_elapsed = 0.0
@@ -547,6 +550,25 @@ class WorkbookResearchJobService:
                         "resumed",
                         {"from_status": status, "reset_run_budget": True},
                     )
+            if task_context:
+                stored = conn.execute(
+                    "SELECT task_context_json FROM workbook_research_jobs WHERE job_id=?",
+                    (job_id,),
+                ).fetchone()
+                context = _json_object(stored, "task_context_json")
+                if not context.get("original_question"):
+                    context["original_question"] = str(task_context.get("original_question") or "")
+                # Only explicitly named dimensions replace an inherited request.
+                # No default book/period and no model decision are introduced here.
+                basis = dict(context.get("price_basis") or {})
+                for key, value in dict(task_context.get("price_basis") or {}).items():
+                    if value:
+                        basis[key] = value
+                context["price_basis"] = basis
+                conn.execute(
+                    "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
+                    (json.dumps(context, ensure_ascii=False), job_id),
+                )
         job = self.get(job_id)
         job["prior_elapsed_seconds"] = prior_elapsed
         return job
@@ -601,6 +623,12 @@ class WorkbookResearchJobService:
         ).fetchone()
         if parent is None:
             return {}
+        # A refused first model turn can have no decisions yet. Its user's price
+        # request must nevertheless survive the next turn and a process restart.
+        conn.execute(
+            "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
+            (str(parent["task_context_json"] or "{}"), str(job_id)),
+        )
         accepted = _json_list(parent, "accepted_rows_json")
         evidence = _json_list(parent, "evidence_json")
         omitted = _json_list(parent, "omitted_json")
@@ -869,6 +897,18 @@ class WorkbookResearchJobService:
         """
         basis = _packaged_price_basis(price_basis)
         with self._connect() as conn:
+            if basis and str(tool) == "build_lsr_workbook":
+                row = conn.execute(
+                    "SELECT task_context_json FROM workbook_research_jobs WHERE job_id=?",
+                    (str(job_id),),
+                ).fetchone()
+                if row is not None:
+                    context = _json_object(row, "task_context_json")
+                    context["price_basis"] = basis
+                    conn.execute(
+                        "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
+                        (json.dumps(context, ensure_ascii=False), str(job_id)),
+                    )
             return self._append_event(
                 conn,
                 str(job_id),
@@ -2219,6 +2259,7 @@ class WorkbookResearchJobService:
             "query_cache": query_cache,
             "held_packet": held_packet,
             "operator_overrides": operator_overrides,
+            "task_context": _json_object(row, "task_context_json"),
             "identity": identity if isinstance(identity, dict) else {},
             "resumable": status in RESUMABLE_STATUSES and status != "failed",
             "status_dimensions": {
