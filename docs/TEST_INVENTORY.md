@@ -1,5 +1,11 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 838: four runtime-facts tests in `test_chat_evidence_application_service.py`
+check a fixed observed date, actual catalog names without private paths, absence
+of code-side price/norm selection, non-estimator isolation, empty catalog, and
+1000-file bounded rendering with explicit partial inventory. Focused 174 passed.
+This does not establish professional applicability or financial completeness.
+
 Build 837: `test_estimator_card_keeps_source_resource_evidence_without_inventing_composition`
 in `test_model_research_tool_service.py` reproduces dropped typed resource evidence,
 checks unchanged source fields and explicit missing work composition, and forbids

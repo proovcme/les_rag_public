@@ -13,6 +13,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
@@ -5310,6 +5311,32 @@ def initial_selector_context(
     return "" if model_authored_initial_query else rendered_context
 
 
+def model_runtime_facts(
+    profile_snapshot: Mapping[str, Any] | None, *, observed_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Observed clock/catalog, not a choice of price basis or a price assertion."""
+    snapshot = profile_snapshot or {}
+    now = observed_at or datetime.now(timezone.utc)
+    facts: dict[str, Any] = {
+        "schema": "les.model-runtime-facts.v1", "origin": "application",
+        "utc_date": now.astimezone(timezone.utc).date().isoformat(),
+    }
+    if str(snapshot.get("mode") or "").strip().casefold() == "estimator" or profile_uses_tabular_estimator_path(dict(snapshot)):
+        from proxy.services.fgis_price_service import available_pricebooks
+        books = [Path(path).stem for path in available_pricebooks()]
+        visible: list[str] = []
+        used = 0
+        for book in books:
+            size = len(json.dumps(book, ensure_ascii=False)) + 2
+            if used + size <= 2048:
+                visible.append(book)
+                used += size
+        facts["installed_pricebook_files"] = visible
+        facts["installed_pricebook_file_count"] = len(books)
+        facts["pricebook_inventory_complete"] = len(visible) == len(books)
+    return facts
+
+
 def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bool) -> str:
     """Compile the exact per-chat prompt/skill snapshot for grounded generation."""
 
@@ -5319,6 +5346,7 @@ def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bo
     if not prompt:
         prompt = build_mode_system_prompt("rag")
     parts = [prompt]
+    parts.append("Факты выполнения от приложения:\n" + json.dumps(model_runtime_facts(snapshot), ensure_ascii=False))
     if skill:
         parts.append("Активный skill профиля (правила работы, не evidence):\n" + skill)
     if strict:

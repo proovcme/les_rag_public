@@ -1,5 +1,31 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.110 / 838 (30.09, Codex):** свежий direct baseline точного 837
+за 62.3 с вернул unstructured отказ без файла: «3 квартал 2026 года еще не
+наступил», «нет цен». Дата выполнения 30.09.2026, SPb 3q2026 книга установлена.
+До исследования модель не получала этих фактов. `model_runtime_facts` передаёт
+UTC дату и имена файлов typed pricebook catalog в mandatory profile prefix;
+сами ставки/пути не передаются, книга/норма не выбирается. Большой каталог
+ограничен 2048 символами и явно помечен partial; пустой остаётся пустым,
+не-estimator его не читает. Короткий skill использует наблюдение, не дату
+обучения. Four regression tests; focused 174 passed. Полный offline: 1993
+passed, 20 существующих opt-in skipped, 184.94 с; compileall/2013 collect,
+architecture и verify-root зелёные. Установленный live gate 838 pending.
+
+**Установлено 0.31.109 / 837, commit 53862103:** alignment 96/96, native-RRF 1/1,
+basic 9 pass/1 diagnostics warn/0 fail; recovery 0.06/0.22 с без модели,
+same revision/SHA/calculation snapshot. Финальный offline 1989 passed/20
+существующих opt-in skipped/184.83 с, compileall/2009 collect и asset/architecture
+gates зелёные. Fresh СКС B1 505.2 с: 75/75 source rows, 82 решения (9 work,
+66 material/4 header/3 unresolved), 82202 байта, 2 нормы/1 cipher с совпадающими
+citations, 0 calculated positions/0 confirmed/160711.54 preliminary. 70 coverage
+gaps (12 missing_work_row/46 lost_work_link/12 parent_not_work), 66 price gaps,
+2 NR/SP gaps. Финансовый gate не пройден. Evidence:
+`artifacts/live_837/{sks_baseline_complete,sks_candidate_complete,recovery}`.
+Изолированный offline CPU rerank доступен, но 17.76 с cold/9.74 с warm на query
+не улучшил достаточно первый ряд карточек. Runtime policy не изменён; модель
+не скачивалась, зависимости не добавлялись. `norm_rerank_cpu_probe.json`.
+
 **Кандидат 0.31.109 / 837 (30.09, Codex):** живой 836 подтвердил восстановление
 ВОР/ЛСР за 0.25/8.24 с: повторные запросы получают прежние revision/SHA и полный
 расчётный снимок, без модели. Свободное замечание выполнено за 436.7 с, 75/75

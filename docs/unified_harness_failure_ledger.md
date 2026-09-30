@@ -1,5 +1,16 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-30 — 837 baseline: ложный будущий период и отсутствие книги
+
+Same original SKS, Qwen35B/r3/profile, SPb IIIq2026. Direct run 62.3 s refused
+without workbook because the model called IIIq2026 future and the pricebook
+absent, although the execution date and installed catalog contradict it.
+838 exposes observed UTC date and bounded typed catalog filenames in mandatory
+profile prefix, not prices or code-selected applicability. Empty/partial catalog
+remain explicit; non-estimator does not read books; paths are withheld.
+Evidence: `artifacts/live_837/sks_baseline_complete/receipt.json`.
+Financial acceptance remains open: B1 837 has 2 cited norms, 0 full calculations.
+
 ## 2026-09-30 — 836: доставка исправлена, подбор/финансовый gate не пройден
 
 Initial 837 PDF→VOR: 19/19 source rows, 20 decisions, but 2 authored unresolved

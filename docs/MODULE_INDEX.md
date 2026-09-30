@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.110 / 838:** `core/chat-profiles` передаёт наблюдаемую UTC дату
+> и bounded каталог файлов цен estimator-модели до query/result. Нет ставок,
+> выбора книги, путей или подтверждения норм. Большой каталог явно частичен;
+> non-estimator его не читает. Док↔код ✅; `model_runtime_facts`,
+> [chat-profiles](modules/chat-profiles.md), four runtime-facts regression tests.
+> Live 837 СКС: 75/75, 2 нормы с совпадающими citations, 0 полных расчётов;
+> preliminary 160711.54. Финансовая готовность не объявляется.
+
 > **Кандидат 0.31.109 / 837:** `core/tool-harness` перестал терять resource_preview
 > и прочие исходные поля typed нормы на пути к модели. `_norm_card_content`
 > явно различает состав работ и ограниченный обзор ресурсов; отсутствующий

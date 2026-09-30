@@ -534,6 +534,50 @@ def test_vor_readiness_preserves_structural_errors_and_unreached_rows():
     assert ready["open_questions"] == ["source_missing:Другой!R3"]
 
 
+def test_model_runtime_facts_show_the_real_date_and_inventory_without_selecting_prices(monkeypatch):
+    from datetime import datetime, timezone
+    from proxy.services import fgis_price_service
+    monkeypatch.setattr(fgis_price_service, "available_pricebooks", lambda: [
+        "C:/private/Книги/sankt-peterburg_3kv2026.parquet",
+        "C:/private/Книги/Москва 'квартал'.parquet",
+    ])
+    facts = service.model_runtime_facts(
+        {"mode": "estimator"}, observed_at=datetime(2026, 9, 30, 19, 0, tzinfo=timezone.utc),
+    )
+    assert facts["utc_date"] == "2026-09-30"
+    assert facts["installed_pricebook_files"] == ["sankt-peterburg_3kv2026", "Москва 'квартал'"]
+    assert not any(key in facts for key in ("selected_book", "price", "norm_code", "applicability"))
+    assert "private" not in json.dumps(facts)
+    prompt = service.profile_system_prompt({"mode": "estimator", "prompt_text": "Estimate"}, strict=False)
+    assert "sankt-peterburg_3kv2026" in prompt and '"utc_date"' in prompt
+
+
+def test_non_estimator_runtime_facts_do_not_read_pricebooks(monkeypatch):
+    from proxy.services import fgis_price_service
+    monkeypatch.setattr(fgis_price_service, "available_pricebooks", lambda: pytest.fail("non-estimator must not read books"))
+    facts = service.model_runtime_facts({"mode": "search"})
+    assert "utc_date" in facts and "installed_pricebook_files" not in facts
+
+
+def test_empty_pricebook_inventory_is_exposed_without_inventing_a_default(monkeypatch):
+    from proxy.services import fgis_price_service
+    monkeypatch.setattr(fgis_price_service, "available_pricebooks", lambda: [])
+    facts = service.model_runtime_facts({"mode": "estimator"})
+    assert facts["installed_pricebook_files"] == []
+    assert facts["installed_pricebook_file_count"] == 0 and facts["pricebook_inventory_complete"] is True
+
+
+def test_large_pricebook_inventory_is_bounded_and_explicitly_partial(monkeypatch):
+    from proxy.services import fgis_price_service
+    books = [f"C:/catalog/region_{index:04}_price_period_2026.parquet" for index in range(1000)]
+    monkeypatch.setattr(fgis_price_service, "available_pricebooks", lambda: books)
+    facts = service.model_runtime_facts({"mode": "estimator"})
+    assert len(json.dumps(facts["installed_pricebook_files"], ensure_ascii=False)) <= 2048
+    assert facts["installed_pricebook_file_count"] == 1000
+    assert facts["pricebook_inventory_complete"] is False
+    assert set(facts["installed_pricebook_files"]) <= {Path(path).stem for path in books}
+
+
 def test_model_inline_assignments_keep_explicit_decisions_and_decimal_comma():
     answer = "ВК!R41: source_row=ВК!R41, row_role=work, work_row=ВК!R41, title=Монтаж изделия, исполнение A, unit=шт, quantity=2,5, norm_code=CUSTOM-41, norm_status=ANALOGUE_CANDIDATE, open_gap=Нужна проверка комплектации, evidence_refs=Q2.H3"
     parsed = service.parse_model_rag_result(answer)
