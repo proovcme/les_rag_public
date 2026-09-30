@@ -115,7 +115,13 @@ class ArtifactRevisionStore:
                 if parent["artifact_kind"] != request.artifact_kind:
                     raise ArtifactRevisionError("parent artifact kind mismatch")
                 artifact_id = str(parent["artifact_id"])
-                revision_no = int(parent["revision_no"]) + 1
+                # Recovery or a concurrent delivery can still refer to an older
+                # parent. Its provenance stays explicit; the delivery number is
+                # allocated over the whole document under this write lock.
+                revision_no = int(conn.execute(
+                    "SELECT MAX(revision_no) FROM artifact_revisions WHERE artifact_id=?",
+                    (artifact_id,),
+                ).fetchone()[0]) + 1
             else:
                 artifact_id = f"art_{uuid4().hex}"
                 revision_no = 1

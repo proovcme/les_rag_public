@@ -1,5 +1,13 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 835: `test_artifact_revision_service.py` reproduces the installed 834
+duplicate revision-number failure after local repack and concurrent deliveries
+from the same parent. `test_workbook_chat_refinement.py` verifies a freeform
+remark reopens the original document without a model planning handshake,
+preserves all prior decisions and operator confirmations, and forwards all
+five applicability flags and citations. These checks do not prove financial
+readiness; installed model → RAG → XLSX acceptance remains mandatory.
+
 Build 775: table divider width regression preserves both material and work
 rows at one locator for short/equal/long dividers; existing invalid-divider
 and invalid-numeric-cell protections remain covered in

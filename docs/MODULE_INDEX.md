@@ -1,9 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Кандидат 0.31.106 / 834:** `core/chat-profiles` слышит свободное замечание
-> после завершённого задания. Модель выбирает точные адреса для пересмотра;
+> **Кандидат 0.31.107 / 835:** `core/chat-profiles` передаёт свободное замечание
+> в обычный проход исходного документа без обязательного JSON-плана;
 > `reopen_locators(chat_review=…)` хранит прежние строки и подтверждения пользователя.
-> Док↔код ✅; `workbook_chat_review_needed`, `parse_workbook_chat_review`,
+> `smeta/workbook-tools` атомарно выдаёт следующий свободный номер ревизии
+> при старом родителе или параллельной доставке, сохраняя parent и старые bytes.
+> Док↔код ✅; `workbook_chat_review_needed`, `begin_workbook_chat_review`,
 > [chat-profiles](modules/chat-profiles.md), `test_workbook_chat_refinement.py`.
 
 > **Кандидат 0.31.105 / 833:** `workbook_document_from_events` сохраняет тип

@@ -26,6 +26,12 @@ capability call budget либо наступил технический monotoni
 
 ## Canonical workbook execution (0.29.0 / build 620)
 
+С build 835 `ArtifactRevisionStore.create_revision` выдаёт номер как
+`MAX(revision_no) + 1` данного artifact под `BEGIN IMMEDIATE`. Явный родитель
+сохраняется даже при продолжении более старой ревизии: пересборка или параллельная
+доставка уже могли занять `parent.revision_no + 1`. Старые файлы неизменны.
+Регрессия воспроизводит живой `IntegrityError` 834 и одновременные доставки.
+
 Реестр содержит ровно `build_lsr_workbook` и `build_vor_workbook` версии
 `1.0.0` с effect `draft`, обязательным idempotency key, server-owned attachment
 scope и результатом `les.workbook_tool_result.v1`. Модель сама выбирает вызов;

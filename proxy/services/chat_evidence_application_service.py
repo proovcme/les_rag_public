@@ -619,35 +619,18 @@ def workbook_chat_review_needed(question, job, events=()) -> bool:
     )
 
 
-def parse_workbook_chat_review(text: str, allowed_locators) -> dict[str, Any]:
-    """Read the model's review scope; code never chooses rows by domain keywords."""
-    raw = str(text or "").strip()
-    if raw.startswith("```") and raw.endswith("```"):
-        raw = "\n".join(raw.splitlines()[1:-1]).strip()
-    try:
-        payload = json.loads(raw)
-    except (ValueError, TypeError) as error:
-        raise ValueError("REFINEMENT_PLAN_INVALID") from error
-    if not isinstance(payload, dict) or set(payload) != {"revisit_locators", "message"}:
-        raise ValueError("REFINEMENT_PLAN_INVALID")
-    locators = payload["revisit_locators"]
-    allowed = set(allowed_locators)
-    if not isinstance(locators, list) or any(not isinstance(item, str) or item not in allowed for item in locators):
-        raise ValueError("REFINEMENT_PLAN_UNKNOWN_ROW")
-    if not isinstance(payload["message"], str) or not payload["message"].strip():
-        raise ValueError("REFINEMENT_PLAN_INVALID")
-    return {"revisit_locators": list(dict.fromkeys(locators)), "message": payload["message"].strip()}
+def begin_workbook_chat_review(service, job, question, source_locators):
+    """Offer the original document again without a planning gate before RAG.
 
-
-def workbook_chat_review_rows(rows) -> list[dict[str, Any]]:
-    """The complete operation inventory for choosing scope, not norm verification."""
-    fields = (
-        "source_row", "operation_id", "title", "row_role", "unit", "quantity",
-        "norm_code", "norm_status", "work_row", "open_gap", "action_match",
-        "object_match", "condition_match", "unit_compatible", "composition_covers",
-    )
-    return [{key: row[key] for key in fields if key in row}
-            for row in rows or [] if isinstance(row, Mapping)]
+    The application schedules every source row, not a guessed professional
+    subset. The same model receives the remark and its previous decisions in
+    the normal query/result calls and owns every retained or revised choice.
+    """
+    note = {
+        "request_sha256": hashlib.sha256(str(question).encode("utf-8")).hexdigest(),
+        "message": str(question), "decision_author": "user", "review_scope": "document",
+    }
+    return service.reopen_locators(job["job_id"], list(source_locators), chat_review=note)
 
 
 def terminal_research_packaging_rows(
@@ -1249,6 +1232,8 @@ async def execute_workbook_with_bounded_retry(
         if checkpoint.get("checkpoint_id"):
             trace["checkpoint_id"] = str(checkpoint["checkpoint_id"])
             trace["resumed"] = bool(checkpoint.get("resumed"))
+        if safe_payload.get("error_type"):
+            trace["error_type"] = str(safe_payload["error_type"])
         traces.append(trace)
         if safe_payload.get("status") != "failed":
             break
@@ -2757,6 +2742,9 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "norm_status",
             "action_match",
             "object_match",
+            "condition_match",
+            "unit_compatible",
+            "composition_covers",
             "_quality_gate",
             "_evidence_check",
             "quality_message",
@@ -7657,58 +7645,22 @@ async def _execute_chat_evidence_application(
                     if research_job_service is not None and research_job is not None:
                         review_events = research_job_service.list_events(research_job["job_id"])
                         if workbook_chat_review_needed(req.question, research_job, review_events):
-                            review_instruction = (
-                                "Получено новое замечание к уже исследованному документу. "
-                                "Определи по замечанию пользователя, какие исходные строки нужно пересмотреть. "
-                                "Не выбирай нормы и цены на этом этапе. Не повторяй исследование строк, "
-                                "которых замечание не касается. Номера и названия пользователя сопоставь "
-                                "с предоставленными решениями; неоднозначность объясни в message. "
-                                "Верни только JSON с двумя полями: revisit_locators (массив адресов из "
-                                "allowed_locators) и message (краткое объяснение). Если изменений не нужно "
-                                "или нужен ответ пользователя, верни пустой массив и объясни причину."
-                            )
                             await _emit_sheet_progress(
                                 "Учитываю замечание к документу", completed=0, total=1,
                                 extra={"stage": "refinement_review"},
                             )
-                            try:
-                                review_messages, review_packet = govern_inference_messages(
-                                    preset=execution_preset,
-                                    profile_prefix=profile_system_prompt(profile_snapshot, strict=False) + "\n\n" + review_instruction,
-                                    request_payload={"question": str(req.question or "")},
-                                    required_evidence=[{
-                                        "allowed_locators": list(source_catalog.work_locators()),
-                                        "manifest": source_catalog.manifest_text(),
-                                        "prior_rows": workbook_chat_review_rows(research_job.get("accepted_rows") or []),
-                                    }],
-                                )
-                                retrieval_trace["context_governor"]["calls"].append(
-                                    context_packet_trace(review_packet, purpose="workbook_chat_refinement_plan")
-                                )
-                                review_text, review_usage = await _sheet_pass_llm(
-                                    {"messages": review_messages, "stream": False,
-                                     "temperature": 0, "max_tokens": 1600},
-                                    purpose="workbook_chat_refinement_plan",
-                                )
-                                if finish_reason_is_length(llm_usage_finish_reason(review_usage)):
-                                    raise ValueError("REFINEMENT_PLAN_TRUNCATED")
-                                plan = parse_workbook_chat_review(review_text, source_catalog.work_locators())
-                                review_note = {
-                                    "request_sha256": hashlib.sha256(str(req.question).encode("utf-8")).hexdigest(),
-                                    "message": plan["message"], "decision_author": "model",
-                                }
-                                research_job_service.reopen_locators(
-                                    research_job["job_id"], plan["revisit_locators"], chat_review=review_note,
-                                )
-                                research_job = research_job_service.begin_or_resume(research_identity)
-                                review_events = research_job_service.list_events(research_job["job_id"], "locators_reopened")
-                                review_notice = plan["message"]
-                                retrieval_trace["chat_refinement"] = {"status": "planned", **plan}
-                            except (ValueError, ContextRequiredSectionOverflow) as review_error:
-                                review_notice = "Уточнение не применено: модель не вернула корректный план пересмотра. Прежние решения сохранены."
-                                retrieval_trace["chat_refinement"] = {
-                                    "status": "failed", "code": str(review_error), "decision_author": "model",
-                                }
+                            research_job = begin_workbook_chat_review(
+                                research_job_service, research_job, req.question,
+                                source_catalog.work_locators(),
+                            )
+                            research_job = research_job_service.begin_or_resume(research_identity)
+                            review_events = research_job_service.list_events(research_job["job_id"], "locators_reopened")
+                            review_notice = "Замечание передано модели вместе с исходником и прежними решениями."
+                            retrieval_trace["chat_refinement"] = {
+                                "status": "reviewing", "review_scope": "document",
+                                "request_author": "user", "decision_author": "model",
+                                "source_rows": len(source_catalog.work_locators()),
+                            }
                         for event in reversed(review_events):
                             payload = event.get("payload") or {}
                             if payload.get("chat_review"):
@@ -8004,7 +7956,10 @@ async def _execute_chat_evidence_application(
                                 )
                                 prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
                                 if prior_packet_rows:
-                                    pass_evidence.append({"prior_model_decisions": compact_estimator_draft_rows(prior_packet_rows)})
+                                    pass_evidence.append({
+                                        "prior_model_decisions": compact_estimator_draft_rows(prior_packet_rows),
+                                        "review_instruction": "Учти замечание пользователя. Сохрани корректные прежние решения и их цитаты; изменения и нерешённые вопросы объясни. Верни все операции этого пакета.",
+                                    })
                                 selector_evidence = pass_evidence
                                 pass_hits = reuse_hits
                                 model_rag_query_hits = pass_hits
@@ -8048,7 +8003,10 @@ async def _execute_chat_evidence_application(
                                 )
                                 prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
                                 if prior_packet_rows:
-                                    pass_evidence.append({"prior_model_decisions": compact_estimator_draft_rows(prior_packet_rows)})
+                                    pass_evidence.append({
+                                        "prior_model_decisions": compact_estimator_draft_rows(prior_packet_rows),
+                                        "review_instruction": "Учти замечание пользователя. Сохрани корректные прежние решения и их цитаты; изменения и нерешённые вопросы объясни. Верни все операции этого пакета.",
+                                    })
                                 selector_evidence = pass_evidence
                                 query_text = ""
                                 model_queries: list[str] = []
