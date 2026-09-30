@@ -41,7 +41,10 @@ def test_typed_card_required_prefix_is_complete_in_a_budgeted_model_message():
     hit = SimpleNamespace(content=prefix + "Обзор ресурсов. " * 140,
                           doc_id="card", doc_name="smeta_norm_cards.v1", score=1,
                           meta={"minimum_evidence_body_chars": len(prefix)})
-    query_hits = [("прокладка труб", [hit, hit])]
+    # Two distinct sources must each reserve their required prefix. Exact
+    # duplicates have a separate sharing contract below.
+    other = SimpleNamespace(**{**vars(hit), "doc_id": "other-card"})
+    query_hits = [("прокладка труб", [hit, other])]
     headers = service.model_rag_evidence_header_chars(query_hits, hits_per_query=2)
     groups, chunks, omitted = service.build_model_rag_evidence_groups(
         query_hits, max_chars=headers + len(prefix) + 100, hits_per_query=2)
@@ -124,6 +127,119 @@ def test_measurement_attributes_omitted_refs_after_page_offset():
     result = service.model_rag_query_measurement(pass_hits=[("second query", [])],
                                                omitted_refs=["Q7.H6"], query_offset=6)
     assert result["queries"][0]["cards_omitted"] == 1
+
+
+def test_surplus_explanatory_cell_never_moves_unit_quantity_or_norm_status():
+    answer = (
+        "| source_row | row_role | work_row | title | unit | quantity | norm_code | norm_status | open_gap | evidence_refs |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| S!R7 | unresolved | S!R7 | Устройство проёма | шт. | 12 | | NEEDS_RESEARCH | insufficient_source_data | Не заданы условия | Q4.H6 |"
+    )
+    row = service.parse_model_rag_result(answer)[1][0]
+    assert row["title"] == "Устройство проёма"
+    assert row["unit"] == "шт."
+    assert row["quantity"] == 12
+    assert row.get("norm_code", "") == ""
+    assert row["norm_status"] == "NEEDS_RESEARCH"
+    assert "insufficient_source_data" in row["open_gap"] and "Не заданы условия" in row["open_gap"]
+
+
+def test_prior_operation_identity_is_visible_and_roundtrips_without_model_chosen_revision():
+    previous = {"operation_id": "op_existing", "revision": 2, "source_row": "S!R7", "title": "Work", "unit": "м", "quantity": 12, "norm_code": "01-02-003-04"}
+    compact = service.compact_estimator_draft_rows([previous])[0]
+    assert compact["operation_id"] == "op_existing"
+    answer = "source_row=S!R7, operation_id=op_existing, title=Work, unit=м, quantity=12, norm_code=01-02-003-04"
+    row = service.parse_model_rag_result(answer)[1][0]
+    assert row["operation_id"] == "op_existing"
+    assert "revision" not in row
+
+
+def test_duplicate_card_bodies_are_shared_with_all_query_hit_refs_intact():
+    content = ("Шифр: 01-02-003-04\nExact conditions. " * 40).rstrip()
+    hit = SimpleNamespace(content=content, doc_id="same-card", doc_name="cards", score=1,
+                          meta={"source_ref": "base#1", "minimum_evidence_body_chars": len(content)})
+    queries = [(f"query {i}", [hit]) for i in range(8)]
+    headers = service.model_rag_evidence_header_chars(queries, hits_per_query=1)
+    budget = headers + len(content) + 800
+    included, deferred, omitted = service.select_model_rag_query_hits_for_budget(
+        queries, max_chars=budget, hits_per_query=1, require_card_bodies=True)
+    assert len(included) == 8 and deferred == [] and omitted == []
+    groups, chunks, omitted = service.build_model_rag_evidence_groups(
+        included, max_chars=budget, hits_per_query=1)
+    rendered = "\n\n".join(groups)
+    assert rendered.count(content) == 1
+    assert len(rendered) <= budget
+    assert [chunk.meta["model_evidence_ref"] for chunk in chunks] == [f"Q{i}.H1" for i in range(1, 9)]
+    assert all(chunk.content == content for chunk in chunks)
+    assert omitted == []
+
+
+def test_equal_card_text_from_distinct_sources_is_never_shared():
+    content = "conditions " * 70
+    hits = [SimpleNamespace(content=content, doc_id="card", doc_name="cards", score=1,
+                            meta={"source_ref": source}) for source in ("edition-a#1", "edition-b#1")]
+    groups, chunks, omitted = service.build_model_rag_evidence_groups(
+        [("query", hits)], max_chars=10000, hits_per_query=2)
+    assert "\n\n".join(groups).count(content.rstrip()) == 2
+    assert not any(c.meta.get("shared_evidence_ref") for c in chunks)
+    assert not omitted
+
+
+def test_existing_operation_revision_survives_checkpoint_and_next_page(tmp_path):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    svc = WorkbookResearchJobService(tmp_path / "state.sqlite")
+    job = svc.begin_or_resume(svc.identity(session_id="test", attachment_id="read_123456abcdef", source_sha256="a" * 64,
+                                         dataset_ids=[], profile_revision_id="factory", model_identity="qwen", question="LSR"))
+    first = {"source_row": "S!R7", "row_role": "work", "title": "Work", "unit": "м", "quantity": 12, "norm_status": "MISSING"}
+    job = svc.record_packet(job["job_id"], sheet="S", packet_locators=["S!R7"], accepted_rows=[first], evidence=[], remaining=["S!R7"])
+    context, _ = service.model_rag_prior_page_context(job["accepted_rows"], [])
+    op = context["prior_model_decisions"][0]["operation_id"]
+    second = service.parse_model_rag_result(
+        f"source_row=S!R7, operation_id={op}, row_role=work, title=Clarified work, unit=м, quantity=12, norm_code=, norm_status=NEEDS_RESEARCH"
+    )[1][0]
+    assert not service.validate_model_rag_result_structure([second], [], expected_source_rows=1,
+                                                         validate_evidence_refs=False, existing_operation_rows=job["accepted_rows"])
+    job = svc.record_packet(job["job_id"], sheet="S", packet_locators=["S!R7"], accepted_rows=[second], evidence=[], remaining=[])
+    assert len(job["accepted_rows"]) == 1
+    assert job["accepted_rows"][0]["operation_id"] == op
+    assert job["accepted_rows"][0]["revision"] == 2
+    assert job["accepted_rows"][0]["title"] == "Clarified work"
+    assert [r["revision"] for r in svc.list_revisions(job["job_id"], op)] == [1, 2]
+
+
+def test_prior_page_shares_exact_cited_body_without_losing_immutable_refs():
+    cards = [SimpleNamespace(content="same exact body", doc_id="a", doc_name="cards", score=1,
+                             meta={"global_evidence_id": f"immutable-{i}", "model_evidence_ref": f"Q{i}.H1"})
+             for i in (1, 2)]
+    rows = [{"source_row": "S!R7", "evidence_bindings": {"Q1.H1": "immutable-1", "Q2.H1": "immutable-2"}}]
+    payload, retained = service.model_rag_prior_page_context(rows, cards)
+    evidence = payload["previously_shown_cited_evidence"]
+    assert retained == cards
+    assert [e["global_evidence_id"] for e in evidence] == ["immutable-1", "immutable-2"]
+    assert evidence[0]["content"] == "same exact body"
+    assert "immutable-1" in evidence[1]["content"]
+    assert json.dumps(payload).count("same exact body") == 1
+
+
+@pytest.mark.parametrize("operation_id,source_row,error", [
+    ("invented", "S!R7", "unknown_operation_id:S!R7:invented"),
+    ("op_known", "S!R8", "operation_source_mismatch:S!R8:op_known"),
+])
+def test_operation_identity_cannot_be_invented_or_moved(operation_id, source_row, error):
+    prior = {"operation_id": "op_known", "source_row": "S!R7", "row_role": "work"}
+    current = {"operation_id": operation_id, "source_row": source_row, "row_role": "material"}
+    errors = service.validate_model_rag_result_structure([current], [], expected_source_rows=1,
+                                                       existing_operation_rows=[prior])
+    assert error in errors
+
+
+def test_invalid_operation_identity_never_drops_other_operations_on_same_source():
+    rows = [{"source_row": "S!R7", "row_role": "material", "title": "Valid material"},
+            {"source_row": "S!R7", "row_role": "material", "title": "Other", "operation_id": "invented"}]
+    errors = service.validate_model_rag_result_structure(rows, [], expected_source_rows=1, existing_operation_rows=[])
+    catalog = SimpleNamespace(lookup=lambda key: SimpleNamespace(sheet="S", locator="S!R7"))
+    kept = service.sheet_pass_keep_rows(rows, sheet="S", catalog=catalog, errors=errors)
+    assert kept == [rows[0]]
 
 
 

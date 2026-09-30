@@ -1,5 +1,15 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 841: regression cases in `test_chat_evidence_application_service.py`
+cover surplus explanatory cells with known unit/quantity, echoed durable IDs,
+checkpoint revision continuity, rejection of invented/moved IDs, exact-card
+sharing with all eight query refs, distinct-source isolation, and shared
+prior citations retaining immutable IDs. The required-prefix fixture uses two
+distinct sources to continue testing that neither legal prefix may be cut.
+Focused chat/research/architecture gate: 284 passed. Live acceptance remains
+separate: 840 B1 finished with 23/75 accounted, 0 calculated, 920.8 seconds;
+0 omitted cards per delivered page establishes transport only, not quality.
+
 Build 839: seven regression cases in `test_model_research_tool_service.py`,
 `test_chat_evidence_application_service.py`, `test_rim_lsr_trace_service.py`
 prove the pre-existing loss of NR/SP options and the authored rule ID.

@@ -2116,7 +2116,12 @@ def sheet_pass_keep_rows(
     blocking = blocking_model_rag_result_errors(errors, work_row_count=work_count)
     kept: list[dict[str, Any]] = []
     for row in on_sheet:
-        if model_rag_row_kind(row) == "work" and _sheet_pass_row_blocked(row, blocking):
+        identity_blocked = any(
+            error in {f"unknown_operation_id:{row.get('source_row')}:{row.get('operation_id')}",
+                      f"operation_source_mismatch:{row.get('source_row')}:{row.get('operation_id')}"}
+            for error in blocking
+        )
+        if identity_blocked or (model_rag_row_kind(row) == "work" and _sheet_pass_row_blocked(row, blocking)):
             continue
         kept.append(row)
     return kept
@@ -2746,6 +2751,7 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "norm_code": str(item.get("norm_code") or "").strip(),
         }
         for field_name in (
+            "operation_id",
             "analogue",
             "coverage",
             "coefficient",
@@ -3534,6 +3540,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "confirmed_price",
     }
     header_fields = {
+        "operation_id": "operation_id",
         "source_row": "source_row",
         "№": "source_row",
         "№ п/п": "source_row",
@@ -3704,6 +3711,17 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         quantity = by.get("quantity", "")
         if quantity and not absence_marker(quantity) and number(quantity) is None:
             return False
+        # Only for surplus-cell reconstruction, never for an authored aligned
+        # row: a quantity is not a unit and gap_reason is not norm_status.
+        unit = by.get("unit", "")
+        if unit and not absence_marker(unit) and number(unit) is not None:
+            return False
+        status = by.get("norm_status", "")
+        if status and not absence_marker(status) and status.upper() not in {
+            "EXACT", "EXACT_VERIFIED", "ANALOGUE_CANDIDATE", "ANALOGUE_VERIFIED",
+            "NEEDS_RESEARCH", "MISSING", "CONFLICT",
+        }:
+            return False
         # Alignment preserves model text, including unresolved source labels.
         # Evidence validation is a separate step and must not erase work rows.
         applies = by.get("coefficient_applies_to", "")
@@ -3717,21 +3735,20 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         if len(values) == len(header):
             return values
         extra = len(values) - len(header)
-        title_at = next(
-            (index for index, name in enumerate(mapped_header) if name == "title"),
-            -1,
-        )
-        # Product titles often contain "|" (Hyperline dims). Fold surplus cells
-        # back into the title column instead of discarding the whole row.
-        if title_at >= 0 and extra >= 1:
-            title_end = title_at + 1 + extra
-            if title_end <= len(values):
-                merged_title = " | ".join(
-                    item for item in values[title_at:title_end] if str(item).strip()
-                )
-                trial = values[:title_at] + [merged_title] + values[title_end:]
-                if len(trial) == len(header) and aligned_row_fits(trial):
-                    return trial
+        # Preserve literal pipes in titles or explanations only when the
+        # structural cells identify exactly one alignment.
+        text_alignments = []
+        for text_field in ("title", "open_gap"):
+            text_at = next((i for i, name in enumerate(mapped_header) if name == text_field), -1)
+            text_end = text_at + 1 + extra
+            if text_at >= 0 and extra >= 1 and text_end <= len(values):
+                trial = values[:text_at] + [" | ".join(values[text_at:text_end])] + values[text_end:]
+                if aligned_row_fits(trial):
+                    text_alignments.append(trial)
+        if len(text_alignments) == 1:
+            return text_alignments[0]
+        if len(text_alignments) > 1:
+            return None  # no guessed reconstruction of professional cells
         if extra > 3:
             return None
         coeff_at = next(
@@ -3912,6 +3929,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             row_index += 1
         header_index = max(row_index, header_index + 1)
     block_fields = {
+        "operation_id": "operation_id",
         "source_row": "source_row",
         "section": "section",
         "title": "title",
@@ -4519,10 +4537,15 @@ def select_model_rag_query_hits_for_budget(
             query_addresses=query_addresses,
         )
         if require_card_bodies:
-            tax += sum(
-                _model_rag_required_body_chars(hit, _MIN_MODEL_RAG_EVIDENCE_BODY_CHARS)
-                for _query, hits in items[:count] for hit in hits
-            )
+            first_refs: dict[str, str] = {}
+            for qi, (_query, hits) in enumerate(items[:count], max(0, query_offset) + 1):
+                for hi, hit in enumerate(hits, 1):
+                    key = _model_rag_exact_card_key(hit)
+                    if key in first_refs:
+                        tax += len(_model_rag_shared_body_ref(first_refs[key]))
+                    else:
+                        first_refs[key] = f"Q{qi}.H{hi}"
+                        tax += _model_rag_required_body_chars(hit, _MIN_MODEL_RAG_EVIDENCE_BODY_CHARS)
         if tax <= max_chars:
             taken = count
             continue
@@ -4567,6 +4590,27 @@ def _model_rag_required_body_chars(hit: Any, minimum: int) -> int:
     return min(len(body), max(0, minimum, floor))
 
 
+def _model_rag_exact_card_key(hit: Any) -> str:
+    """Share byte-equivalent evidence only; keep distinct source/edition/scope."""
+    meta = getattr(hit, "meta", {}) or {}
+    identity = {
+        "body": str(getattr(hit, "content", "") or "").strip(),
+        "doc_id": str(getattr(hit, "doc_id", "") or ""),
+        "doc_name": str(getattr(hit, "doc_name", "") or ""),
+        "provenance": {key: meta.get(key) for key in (
+            "source_ref", "chunk_id", "source_locator", "source_sha256", "norm_code",
+            "norm_key", "dataset_id", "page", "sheet", "row", "edition", "base_type",
+            "nr_sp_candidates", "resource_preview", "resource_count", "resource_kinds",
+            "work_steps", "minimum_evidence_body_chars",
+        )},
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+
+
+def _model_rag_shared_body_ref(ref: str) -> str:
+    return f"То же содержимое и источник, что у {ref}; см. показанный там текст."
+
+
 def model_rag_evidence_page_state(
     *, sheet: str, packet: Sequence[str],
     leftover_query_hits: Sequence[tuple[str, Sequence[Any]]], query_offset: int,
@@ -4599,16 +4643,26 @@ def model_rag_prior_page_context(
         if identity in cited and identity not in seen:
             retained.append(chunk)
             seen.add(identity)
+    first_cards: dict[str, str] = {}
+    cited_evidence = []
+    for chunk in retained:
+        ref = (chunk.meta or {}).get("model_evidence_ref")
+        identity = (chunk.meta or {}).get("global_evidence_id")
+        owner = first_cards.setdefault(_model_rag_exact_card_key(chunk), identity)
+        cited_evidence.append({
+            "ref": ref,
+            "global_evidence_id": identity,
+            "content": chunk.content if owner == identity else _model_rag_shared_body_ref(f"global_evidence_id={owner}"),
+        })
     return {
         "prior_model_decisions": compact_estimator_draft_rows(list(rows)),
-        "previously_shown_cited_evidence": [
-            {"ref": (chunk.meta or {}).get("model_evidence_ref"),
-             "global_evidence_id": (chunk.meta or {}).get("global_evidence_id"),
-             "content": chunk.content} for chunk in retained
-        ],
+        "previously_shown_cited_evidence": cited_evidence,
         "evidence_continuation_instruction": (
             "Это следующая страница уже найденных карточек для тех же строк. "
             "Сохрани корректные прежние решения и их цитаты; учитывай новые карточки. "
+            "Для прежней операции верни её operation_id из prior_model_decisions; "
+            "для новой оставь operation_id пустым: идентификаторы и ревизии назначает приложение. "
+            "work_row остаётся адресом исходной строки работы. "
             "Верни все операции этого пакета. Код не изменял предметные решения."
         ),
     }, retained
@@ -4649,6 +4703,8 @@ def build_model_rag_evidence_groups(
     prepared: list[tuple[int, str, str, list[tuple[int, Any, str, str]]]] = []
     prepared_provenance: dict[int, str] = {}
     prepared_addresses: dict[int, tuple[str, ...]] = {}
+    first_cards: dict[str, tuple[int, int]] = {}
+    body_owners: dict[tuple[int, int], tuple[int, int]] = {}
     source_index = 0
     fixed_chars = 0
     segment_count = 0
@@ -4668,6 +4724,12 @@ def build_model_rag_evidence_groups(
             source_index += 1
             source_header = _model_rag_source_header(query_index, hit_index, hit)
             body = str(getattr(hit, "content", "") or "").strip()
+            key = _model_rag_exact_card_key(hit)
+            location = (query_index, hit_index)
+            owner = first_cards.setdefault(key, location)
+            body_owners[location] = owner
+            if owner != location:
+                body = _model_rag_shared_body_ref(f"Q{owner[0]}.H{owner[1]}")
             hits.append((hit_index, hit, source_header, body))
             fixed_chars += len(source_header) + 2
             segment_count += 1
@@ -4693,7 +4755,9 @@ def build_model_rag_evidence_groups(
     required_caps: dict[tuple[int, int], int] = {}
     for query_index, _qh, _q, hits in prepared:
         for hit_index, hit, _sh, body in hits:
-            required_caps[(query_index, hit_index)] = _model_rag_required_body_chars(hit, min_body)
+            key = (query_index, hit_index)
+            required_caps[key] = (_model_rag_required_body_chars(hit, min_body)
+                                  if body_owners[key] == key else len(body))
     omit_mode = bool(bodies) and any(body_cap < cap for cap in required_caps.values())
 
     included_caps: dict[tuple[int, int], int] = {}
@@ -4736,11 +4800,25 @@ def build_model_rag_evidence_groups(
 
     groups: list[str] = []
     chunks: list[_ModelRagEvidenceChunk] = []
+    visible_owner_bodies: dict[tuple[int, int], str] = {}
+    for qi, _qh, _q, hits in prepared:
+        for hi, _hit, _sh, body in hits:
+            key = (qi, hi)
+            if body_owners[key] != key or (omit_mode and key not in included_caps):
+                continue
+            cap = included_caps[key] if omit_mode else body_cap
+            visible_owner_bodies[key] = body if len(body) <= cap else body[:max(0, cap - 1)].rstrip() + "…"
     source_index = 0
     for query_index, query_header, query, hits in prepared:
         group_parts = [query_header]
         for hit_index, hit, source_header, body in hits:
             if omit_mode and (query_index, hit_index) not in included_caps:
+                continue
+            owner = body_owners[(query_index, hit_index)]
+            if owner not in visible_owner_bodies:
+                ref = f"Q{query_index}.H{hit_index}"
+                if ref not in omitted_refs:
+                    omitted_refs.append(ref)
                 continue
             visible_cap = (
                 included_caps[(query_index, hit_index)] if omit_mode else body_cap
@@ -4754,7 +4832,12 @@ def build_model_rag_evidence_groups(
                 )
             source_index += 1
             group_parts.append(f"{source_header}:\n{visible_body}")
+            # This alias points to the exact body actually present elsewhere in
+            # the same mandatory page. Preserve its body in the immutable map.
+            visible_body = visible_owner_bodies[owner]
             meta = dict(getattr(hit, "meta", {}) or {})
+            if owner != (query_index, hit_index):
+                meta["shared_evidence_ref"] = f"Q{owner[0]}.H{owner[1]}"
             alias = f"Q{query_index}.H{hit_index}"
             identity_payload = "\x1f".join(
                 (
@@ -5148,6 +5231,7 @@ def validate_model_rag_result_structure(
     source_incomplete_locators: Sequence[str] = (),
     finish_reason: str = "",
     validate_evidence_refs: bool = True,
+    existing_operation_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[str]:
     """Validate references before packaging without changing model decisions."""
 
@@ -5162,6 +5246,10 @@ def validate_model_rag_result_structure(
             + ",".join(list(source_incomplete_locators)[:8])
         )
     observed_keys: set[tuple[str, str, str, str]] = set()
+    known_operations = {
+        str(row.get("operation_id")): row for row in (existing_operation_rows or ())
+        if row.get("operation_id")
+    }
     for row in rows:
         source_row = row.get("source_row")
         is_positive_int = (
@@ -5185,6 +5273,17 @@ def validate_model_rag_result_structure(
         if source_key in observed_keys:
             errors.append(f"duplicate_source_row:{source_row}")
         observed_keys.add(source_key)
+        operation_id = str(row.get("operation_id") or "").strip()
+        if operation_id and existing_operation_rows is not None:
+            prior = known_operations.get(operation_id)
+            if prior is None:
+                errors.append(f"unknown_operation_id:{source_row}:{operation_id}")
+            else:
+                old_source = prior.get("source_row")
+                old_row = source_catalog.lookup(old_source) if source_catalog else None
+                new_row = source_catalog.lookup(source_row) if source_catalog else None
+                if (old_row.locator if old_row else str(old_source)) != (new_row.locator if new_row else str(source_row)):
+                    errors.append(f"operation_source_mismatch:{source_row}:{operation_id}")
 
     evidence_by_ref: dict[str, dict[str, Any]] = {}
     evidence_by_global_id: dict[str, dict[str, Any]] = {}
@@ -8491,11 +8590,6 @@ async def _execute_chat_evidence_application(
                                 model_rag_query_hits = pass_hits
                             leftover_query_hits: list[tuple[str, Sequence[Any]]] = []
                             included_hits: list[tuple[str, Sequence[Any]]] = []
-                            await _emit_row_progress(
-                                "таблица строк",
-                                sheet=sheet_name,
-                                index=sheet_index,
-                            )
                             question_tail = sheet_pass_question_tail(
                                 str(req.question or ""),
                                 sheet=sheet_name,
@@ -8555,6 +8649,12 @@ async def _execute_chat_evidence_application(
                                 )
                             )
                             pass_omitted.extend(trim_omitted)
+                            await _emit_row_progress(
+                                f"карточки: {evidence_query_offset + len(included_hits)}/"
+                                f"{evidence_query_offset + len(pass_hits)} групп; таблица строк",
+                                sheet=sheet_name,
+                                index=sheet_index,
+                            )
                             if not included_hits and leftover_query_hits:
                                 # Preserve a query that cannot fit even one page.
                                 # Capacity is a technical pause, never NO_NORM.
@@ -8715,6 +8815,7 @@ async def _execute_chat_evidence_application(
                                 source_incomplete_locators=source_incomplete_locators,
                                 finish_reason=last_finish,
                                 answer_truncated=last_truncated,
+                                existing_operation_rows=accumulated_rows,
                             )
                             tail_locator = truncated_tail_locator(
                                 pass_rows, truncated=last_truncated
@@ -8943,6 +9044,13 @@ async def _execute_chat_evidence_application(
                                     remaining=remaining,
                                     held_packet=held_payload,
                                 )
+                                # Application IDs/revisions belong to the durable
+                                # write. Replay them on the next evidence page and
+                                # calculate the same canonical decisions we saved.
+                                accumulated_rows = [
+                                    dict(row) for row in research_job["accepted_rows"]
+                                    if isinstance(row, Mapping)
+                                ]
                             # Blocker § 1 wants the whole chain readable from one
                             # trace: response -> parsed -> kept -> durable merge ->
                             # settled keys -> packet pool -> stall guard.  The guard

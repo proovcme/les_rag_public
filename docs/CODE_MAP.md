@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.113 / 841:** `chat_evidence_application_service` shares exact
+> same-source card bodies within a mandatory page, preserving every Q/H alias
+> and immutable evidence binding. Prior-page context keeps application-owned
+> operation IDs from the canonical record_packet result; authored updates
+> revise those operations instead of losing identity before the next page.
+> Structural validation prevents invented/moved IDs. The visible reader folds
+> surplus title/gap text only with a unique valid alignment, preserving units,
+> quantities and statuses. Existing progress includes evidence-group count.
+
 > **0.31.70 / 776 pack+lookup:** job and coverage keep work+material on one
 > locator; a named `NEEDS_RESEARCH` cipher is calculated when the card exists
 > and stays analogue (`priced_partial`). Overlay parquet fills missing GESN

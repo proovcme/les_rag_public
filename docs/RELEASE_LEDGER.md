@@ -1,5 +1,40 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.113 / 841 (01.10, Codex):** исправлены три измеренных
+транспортных дефекта без выбора норм кодом. Reader больше не сдвигает unit,
+quantity и norm_status из-за surplus explanatory cell (в PDF источник и
+модель имели шт./10 и м²/15, а reader превращал количества в единицы).
+Exact same-source card body показывается один раз на странице с сохранением
+всех query/hit refs, ranks и immutable IDs; разные источники/редакции не
+объединяются. В 840 354 найденные карточки имели 144 exact identities;
+210 повторных появлений перегружали контекст. Приложение передаёт модели
+свои durable operation_id после каждого record_packet, parser сохраняет
+эхо ID, следующий авторский выбор записывается ревизией той же операции;
+неизвестный ID и перенос на иной исходник отвергаются структурно.
+Прогресс показывает группы карточек отдельно от source rows. Нормы,
+профессиональные статусы, цены и run-budget не изменяются кодом.
+Focused 284 passed; final offline gate 2015 passed / 20 existing opt-in skipped
+/ 5 warnings, 186.84 с; compileall и 2035 collect зелёные, architecture и
+active-asset smoke зелёные, normative/pricebook SHA unchanged. Identity errors
+address the exact operation, preserving other operations on the same source.
+11 patch files dry-run without DIVERGENT; rollback_840_to_841 preserved.
+Installed acceptance pending.
+Customer-ready не заявлено.
+
+**Замер установленной 840, exact commit 13159567 (01.10, Codex):**
+11 patch files независимо сверены с Git HEAD и installed bytes; native-RRF
+1/1, idle basic smoke 10/10. Первый basic smoke при одновременном B0 имел
+один project-no-scope ReadTimeout; он сохранён отдельно, не объявлен успехом.
+Recovery ВОР/ЛСР 0.08/0.23 с без модели, прежние revision/SHA/snapshot.
+B0 СКС: 151.3 с, 72/75 accounted, 0 work/norm/money. B1: 920.8 с,
+23/75 accounted, 64 remaining (включая evidence-pending принятые строки),
+12 work/49 material/4 header, 0 calculated. Все 16 delivered pages имели
+0 omitted cards, но 14 answer calls потребовались только первому пакету.
+Job paused/run_end, durable tail 32 queries с offset 4. Revision
+rev_ddf6cf2f514e44be9541a6fddb6f8f70, sha 0091dd0b75b7276d7e902bda0e8e34ee3858e931329f1b6fbf4ab44d0460e2df;
+файл скачан, sha совпадает. Это регресс времени/покрытия относительно 839,
+не приёмка; измерения и исходные receipts: artifacts/live_840.
+
 **Кандидат 0.31.112 / 840 (01.10, Codex):** 839/838 live query measurements
 показали потерю H2..H6: страницы отбирались по размеру заголовков, затем
 полные первые карточки забирали бюджет тел; найденный хвост не доставлялся,

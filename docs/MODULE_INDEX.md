@@ -1,5 +1,17 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.113 / 841:** `core/chat-evidence` сохраняет все Q/H refs,
+> передавая точные повторы карточек одного источника одним телом на странице.
+> Canonical operation IDs после record_packet возвращаются в следующий
+> model context; parser сохраняет ID, validator запрещает неизвестный ID
+> и смену его source_row. Surplus explanatory cell не сдвигает unit/quantity/status.
+> Док↔код ✅; [rag-evidence-flow](modules/rag-evidence-flow.md),
+> `_model_rag_exact_card_key`, `model_rag_prior_page_context`,
+> `parse_model_rag_result`, `validate_model_rag_result_structure`.
+> Focused 284 passed. Installed gates pending; профессиональная готовность
+> не заявлена. Измеренная 840: B1 920.8 с, 23/75 accounted, 0 calculated;
+> данные сохранены для resume. Подтверждён регресс времени/покрытия.
+
 > **Кандидат 0.31.112 / 840:** `core/chat-evidence` резервирует тела всех
 > карточек запроса до optional previews; хвост evidence не исчезает после
 > терминального ответа строки. Durable cursor и прежние cited cards проходят
