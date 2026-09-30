@@ -2198,6 +2198,16 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         )
         role = inferred_row_role(row)
         parent = work_row_key(row)
+        if role in {"material", "equipment", "header"} and code:
+            # A mounting norm cannot become a supply price just because the
+            # model wrote its cipher on an explicit non-work row. Preserve the
+            # authored role/code and expose the type conflict; never reclassify.
+            bindings.append(_with_visible_identity(
+                {"row": source_row, "code": code, "status": "role_norm_conflict",
+                 "row_role": role, "work_row": parent, "source_row": row,
+                 "message": "Монтажная норма указана на строке поставки или заголовке; уточните роль операции и связь с работой."},
+                title=title, source_qty=source_qty, source_unit=source_unit))
+            continue
         if canonicalize_row_role(row.get("row_role")) == "header" and not code:
             # Headings/notes/subtotals are accounted as structure — no norm,
             # no volume gate, and no place in any sum.
@@ -2755,7 +2765,7 @@ def build_lsr_trace_from_visible_rows(
         if role_key in kind_counts:
             kind_counts[role_key] += 1
         cipher = str(binding.get("code") or "")
-        if cipher and _is_selected_cipher(cipher):
+        if role_key == "work" and cipher and _is_selected_cipher(cipher):
             selected_norms += 1
             selected_ciphers.add(cipher)
     summary["kind_counts"] = kind_counts

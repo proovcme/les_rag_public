@@ -6,6 +6,14 @@ from proxy.services.lsr_result_readiness_service import (
 )
 
 
+def test_mounting_norm_on_material_does_not_inflate_selected_work_norms():
+    rows = [{"source_row": "S!R7", "row_role": "material", "norm_code": "ГЭСН12-01-034-02", "norm_status": "EXACT"},
+            {"source_row": "S!R8", "row_role": "work", "norm_code": "ГЭСНм08-02-409-09", "norm_status": "EXACT"}]
+    counts = build_lsr_result_readiness(packaged=True, rows=rows)["counts"]
+    assert counts["norms_selected"] == 1
+    assert counts["norms_unique_ciphers"] == 1
+
+
 def test_readiness_splits_file_norms_and_prices() -> None:
     readiness = build_lsr_result_readiness(
         packaged=True,

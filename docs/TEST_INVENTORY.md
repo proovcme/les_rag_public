@@ -1,5 +1,11 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 842: three regression cases reproduce the missing output-ID contract,
+mounting resources calculated on explicit supply/header roles, and non-work
+ciphers inflating selected-work-norm counts. The role test asserts no norm
+lookup/calculation, preserved authored role/code/source, and an explicit conflict.
+Before: 3 failed / 86 passed; after: 119 passed, including 782 identity/money tests.
+
 Build 841: regression cases in `test_chat_evidence_application_service.py`
 cover surplus explanatory cells with known unit/quantity, echoed durable IDs,
 checkpoint revision continuity, rejection of invented/moved IDs, exact-card

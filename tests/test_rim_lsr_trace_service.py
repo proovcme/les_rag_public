@@ -13,6 +13,22 @@ from proxy.services.rim_lsr_trace_service import (
 CODE = "ГЭСН12-01-034-02"
 
 
+def test_mounting_norm_never_prices_an_explicit_supply_or_header(monkeypatch):
+    from proxy.services import gesn_service
+    calls = []
+    monkeypatch.setattr(gesn_service, "get_norm", lambda *args: calls.append(args))
+    for role in ("material", "equipment", "header"):
+        row = {"source_row": "S!R7", "row_role": role, "norm_code": CODE, "norm_status": "EXACT",
+               "title": "Authored item", "unit": "м²", "quantity": 61}
+        bound = positions_from_visible_lsr_rows([row])
+        assert not bound["positions"]
+        binding = bound["row_bindings"][0]
+        assert binding["status"] == "role_norm_conflict"
+        assert binding["code"] == CODE and binding["row_role"] == role
+        assert binding["source_row"] == row
+    assert not calls
+
+
 def test_model_accrual_rule_reaches_calculation_without_invented_default(monkeypatch):
     from proxy.services import gesn_service
     norm = {"code": "ГЭСНм08-02-409-09", "name": "Прокладка труб", "unit": "100 м", "resources": []}

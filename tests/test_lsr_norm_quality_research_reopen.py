@@ -223,6 +223,16 @@ def test_result_instruction_separates_missing_norm_from_missing_price() -> None:
     assert "open_gap" in instruction
 
 
+def test_result_contract_keeps_work_without_norm_and_echoes_application_identity():
+    from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
+    instruction = lsr_result_table_instruction()
+    assert "operation_id" in instruction
+    assert "для новой операции оставь operation_id пустым" in instruction
+    assert "work — самостоятельная работа с нормой" not in instruction
+    assert "Для ВОР отсутствие нормы" in instruction
+    assert "Для каждой выбранной нормы обязательно" in instruction
+
+
 def test_result_instruction_preserves_gapped_pdf_locators() -> None:
     from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 

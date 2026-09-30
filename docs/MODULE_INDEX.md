@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.114 / 842:** `core/chat-profiles` основной plain-text output
+> contract требует эхо application operation_id, отделяет work от наличия
+> нормы в ВОР и не разрешает вывод о недостающих строках по одному пакету.
+> `core/rim` сохраняет material/equipment/header + mounting cipher как явный
+> role_norm_conflict без начисления монтажных ресурсов на поставку;
+> RIM/readiness norms counters относятся только к work. Док↔код ✅;
+> [chat-profiles](modules/chat-profiles.md), [rag-evidence-flow](modules/rag-evidence-flow.md).
+> Reproduction first: 3 failed, focused after 119 passed. Offline/live pending.
+> Нормы/роли кодом не заменяются; customer-ready не заявлено.
+
 > **Кандидат 0.31.113 / 841:** `core/chat-evidence` сохраняет все Q/H refs,
 > передавая точные повторы карточек одного источника одним телом на странице.
 > Canonical operation IDs после record_packet возвращаются в следующий

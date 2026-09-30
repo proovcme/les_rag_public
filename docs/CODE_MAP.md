@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.114 / 842:** `lsr_norm_quality_gate_service.lsr_result_table_instruction`
+> requires echoed application IDs in ordinary result rows and separates a work
+> operation from norm availability. `rim_lsr_trace_service.positions_from_visible_lsr_rows`
+> exposes role_norm_conflict for mounting norms on explicit supply/header rows;
+> the authored role/code is retained, no norm resources are calculated there.
+> Its counters and `lsr_result_readiness_service` count selected norms only on works.
+
 > **0.31.113 / 841:** `chat_evidence_application_service` shares exact
 > same-source card bodies within a mandatory page, preserving every Q/H alias
 > and immutable evidence binding. Prior-page context keeps application-owned

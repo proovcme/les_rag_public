@@ -692,14 +692,14 @@ def build_lsr_result_readiness(
         "norms_selected": sum(
             1
             for row in work_rows
-            if _selected_cipher(row) and not classify_norm_gap(row)
+            if inferred_row_role(row) == "work" and _selected_cipher(row) and not classify_norm_gap(row)
         ),
         # distinct ciphers are reported apart from the per-operation count
         "norms_unique_ciphers": len(
             {
                 _selected_cipher(row).casefold()
                 for row in work_rows
-                if _selected_cipher(row) and not classify_norm_gap(row)
+                if inferred_row_role(row) == "work" and _selected_cipher(row) and not classify_norm_gap(row)
             }
         ),
     }

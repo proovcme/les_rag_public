@@ -1,5 +1,35 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.114 / 842 (01.10, Codex):** основной output contract явно
+просит вернуть application operation_id для прежней операции; work больше
+не определяется обязательным наличием нормы (ВОР не требует нормы/цены).
+Для выбранной нормы требуются пять match fields; unknown не подтверждается
+кодом. Пакет не основание объявлять данные остальных строк отсутствующими.
+Calculator сохраняет mounting cipher на явном material/equipment/header
+как role_norm_conflict без построения монтажной позиции. Норма и роль модели
+не изменены; нормальные цены поставки не затронуты. RIM/readiness counters
+не выдают шифры на материалах за выбранные нормы работ.
+3 regressions failed before, focused 119 passed after; full 2018 passed /
+20 existing opt-in skipped / 5 warnings, 186.96 с. Compileall/2038 collect,
+architecture и active assets зелёные; normative/pricebook SHA unchanged.
+14 product files dry-run without DIVERGENT; rollback_841_to_842 preserved.
+Installed comparative/financial acceptance pending.
+Customer-ready не заявлено.
+
+**Замер 841, exact c7ba7cce (01.10):** installed patch hashes 11/11;
+native-RRF 1/1, basic 9 pass/1 diagnostics WARN/0 fail; recovery ВОР/ЛСР
+0.08/0.23 с, same revision/SHA/snapshot. Paused 840 job сохраняет 65
+decisions, весь cache и cursor 4/32 queries после restart. B0 СКС 133.5 с:
+74/75 accounted, 70 materials/4 headers, 0 works/norms/money. B1 142.9 с:
+11/75 accounted, 31 decisions, 0 work/calculated. Stopped evidence_capacity;
+15 queries остаются с offset 16. Выходные rows не вернули operation_id,
+прежние результаты накопились как новые операции; 18 material rows получили
+один и тот же mounting cipher. В результате calculator дал preliminary
+3369965.62 при 0 calculated works. Это выявленный дефект типа данных,
+а не финансовый результат. SHA ec1171a2e2b58381e55909e317e7e5a96e010366855c1d7991523b7d393350bc
+совпадает у скачанного файла; receipts в artifacts/live_841.
+841 не проходит installed comparative/customer gate, не объявлена готовой.
+
 **Кандидат 0.31.113 / 841 (01.10, Codex):** исправлены три измеренных
 транспортных дефекта без выбора норм кодом. Reader больше не сдвигает unit,
 quantity и norm_status из-за surplus explanatory cell (в PDF источник и
