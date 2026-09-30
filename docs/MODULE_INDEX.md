@@ -1,5 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.106 / 834:** `core/chat-profiles` слышит свободное замечание
+> после завершённого задания. Модель выбирает точные адреса для пересмотра;
+> `reopen_locators(chat_review=…)` хранит прежние строки и подтверждения пользователя.
+> Док↔код ✅; `workbook_chat_review_needed`, `parse_workbook_chat_review`,
+> [chat-profiles](modules/chat-profiles.md), `test_workbook_chat_refinement.py`.
+
 > **Кандидат 0.31.105 / 833:** `workbook_document_from_events` сохраняет тип
 > ВОР в проекции задания, чате и repack. ВОР получает свою цепочку ревизий и
 > сообщение без требований ЛСР к нормам/ценам. Док↔код ✅; regression в

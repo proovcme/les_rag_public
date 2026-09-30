@@ -678,6 +678,7 @@ class WorkbookResearchJobService:
             "parent_profile_revision_id": str(
                 parent_identity.get("profile_revision_id") or ""
             ),
+            "parent_question_sha256": str(parent_identity.get("question_sha256") or ""),
             "continuation_model_identity": str(identity.model_identity or ""),
             "continuation_profile_revision_id": str(identity.profile_revision_id or ""),
             "decided_rows": len(accepted),
@@ -1518,6 +1519,8 @@ class WorkbookResearchJobService:
         self,
         job_id: str,
         locators: Sequence[str],
+        *,
+        chat_review: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Remove listed rows from accepted decisions and return them to remaining."""
 
@@ -1540,8 +1543,9 @@ class WorkbookResearchJobService:
                 if locator not in remaining:
                     remaining.append(locator)
             overlays = _json_object(row, "operator_overrides_json")
-            for locator in wanted:
-                overlays.pop(locator, None)
+            if chat_review is None:
+                for locator in wanted:
+                    overlays.pop(locator, None)
             # An operator who reopens a row also lifts the packet deferral that
             # had set it aside; otherwise the next run would skip the very row the
             # operator asked to revisit.
@@ -1568,7 +1572,13 @@ class WorkbookResearchJobService:
                 conn,
                 job_id,
                 "locators_reopened",
-                {"locators": wanted, "accepted_total": len(kept)},
+                {
+                    "locators": wanted, "accepted_total": len(kept),
+                    **({
+                        "chat_review": dict(chat_review),
+                        "prior_rows": [item for item in existing_rows if str(item.get("source_row") or "") in wanted],
+                    } if chat_review is not None else {}),
+                },
             )
         return self.get(job_id)
 
