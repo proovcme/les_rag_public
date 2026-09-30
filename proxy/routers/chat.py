@@ -364,10 +364,9 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         )),
         decisions=decisions,
         operator_overrides=overlays,
-        parent_revision_id=(
-            (document_block or {}).get("final_revision_id")
-            if repack_tool == "build_vor_workbook" else None
-        ),
+        # The workbook service resolves the session's parent only on a new
+        # build. Feeding the last delivered file back into this call would
+        # change its identity on every identical recovery request.
     )
     if inherited_basis and repack_tool == "build_lsr_workbook":
         repack_args["document_price_basis"] = inherited_basis
@@ -410,11 +409,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
                 tool=repack_tool,
                 revision_id=str(artifact["revision_id"]),
                 draft=str(job.get("status") or "") != "complete",
-                parent_revision_id=(
-                    _parents.get(repack_tool, "")
-                    if repack_tool == "build_vor_workbook"
-                    else settled.get(repack_tool, "")
-                ),
+                parent_revision_id=str(artifact.get("parent_revision_id") or "") or settled.get(repack_tool, ""),
                 # the rebuilt file is the document's newest basis; store it so a
                 # later continuation inherits it instead of asking again (§ 4)
                 price_basis=harvested.get("price_basis"),

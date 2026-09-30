@@ -1,5 +1,9 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 836: `test_completed_replay_after_restart_keeps_calculation_snapshot_and_same_file`
+in `test_workbook_tool_service.py` verifies immutable calculation metadata and
+same revision/SHA on replay through a newly created checkpoint/artifact context.
+
 Build 835: `test_artifact_revision_service.py` reproduces the installed 834
 duplicate revision-number failure after local repack and concurrent deliveries
 from the same parent. `test_workbook_chat_refinement.py` verifies a freeform

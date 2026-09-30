@@ -1,5 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.108 / 836:** `smeta/workbook-tools` сохраняет
+> `calculation_snapshot` вместе с ревизией. Повторная доставка возвращает те же
+> суммы, price_basis, row_projection и gaps, не считает старый файл заново.
+> Док↔код ✅; `_result_from_revision`, `test_workbook_tool_service.py`,
+> [ALGO-tool-harness](ALGO-tool-harness.md).
+
 > **Кандидат 0.31.107 / 835:** `core/chat-profiles` передаёт свободное замечание
 > в обычный проход исходного документа без обязательного JSON-плана;
 > `reopen_locators(chat_review=…)` хранит прежние строки и подтверждения пользователя.

@@ -204,6 +204,33 @@ def _attachment(tmp_path: Path, *, ident: str = "read_123456abcdef") -> dict:
 
 
 @pytest.mark.asyncio
+async def test_completed_replay_after_restart_keeps_calculation_snapshot_and_same_file(tmp_path):
+    meta = _attachment(tmp_path)
+    snapshot = {
+        "pricing_status": "priced_partial", "norms_status": "partial",
+        "price_basis": {"actual_book": "sankt-peterburg_3kv2026", "match": "exact"},
+        "price_gaps": [{"code": "resource-x", "resource": "Cable"}],
+        "norm_conflicts": [], "calculated_positions": 1, "positions_built": 2,
+        "confirmed_amount": 123.45, "preliminary_amount": 150.0,
+        "row_projection": [{"source_row": "Лист!R14", "amount_status": "complete", "confirmed_amount": 123.45}],
+    }
+    calls = []
+    def adapter(source, args, output, progress):
+        calls.append(args)
+        _source_workbook(output)
+        return {"file_path": output, "source_rows": 2, **snapshot}
+    args = {"attachment_id": meta["attachment_id"], "decisions": [{"source_row": "Лист!R14"}]}
+    first = await build_lsr_workbook(args, _context(tmp_path, lsr_adapter=adapter))
+    # A new context/store simulates restart: no in-memory adapter result survives.
+    second = await build_lsr_workbook(args, _context(tmp_path, lsr_adapter=adapter))
+    assert len(calls) == 1
+    assert second["artifact"]["revision_id"] == first["artifact"]["revision_id"]
+    assert second["artifact"]["sha256"] == first["artifact"]["sha256"]
+    assert second["checkpoint"]["resumed"] is True
+    assert {key: second.get(key) for key in snapshot} == snapshot
+
+
+@pytest.mark.asyncio
 async def test_vor_handler_preserves_source_rows_and_creates_revision(tmp_path):
     meta = _attachment(tmp_path)
     ctx = _context(tmp_path)

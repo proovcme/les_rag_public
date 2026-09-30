@@ -296,12 +296,20 @@ def _checkpoint_payload(checkpoint: WorkflowCheckpoint, *, resumed: bool) -> dic
     }
 
 
+_CALCULATION_SNAPSHOT_FIELDS = (
+    "pricing_status", "norms_status", "price_gaps", "price_basis", "norm_conflicts",
+    "calculated_positions", "row_projection", "positions_built", "confirmed_amount",
+    "preliminary_amount",
+)
+
+
 def _result_from_revision(
     *, revision, checkpoint: WorkflowCheckpoint, attachment_meta: Mapping[str, Any],
     source_rows: int = 0, resumed: bool,
 ) -> dict[str, Any]:
     if not source_rows and revision.tool_calls:
         source_rows = int(revision.tool_calls[-1].get("source_rows") or 0)
+    snapshot = (revision.tool_calls[-1].get("calculation_snapshot") or {}) if revision.tool_calls else {}
     return {
         "schema": "les.workbook_tool_result.v1",
         "status": "complete",
@@ -315,6 +323,7 @@ def _result_from_revision(
         "checkpoint": _checkpoint_payload(checkpoint, resumed=resumed),
         "missing": list(revision.missing),
         "blockers": list(revision.blockers),
+        **{key: snapshot[key] for key in _CALCULATION_SNAPSHOT_FIELDS if key in snapshot},
     }
 
 
@@ -547,6 +556,10 @@ async def _build_workbook(
             "idempotency_key": ctx.idempotency_key,
             "model_decision_revision": ctx.model_decision_revision,
             "source_rows": int(generated.get("source_rows") or 0),
+            # The revision must answer a replay with the exact same calculation
+            # facts, including zero totals and open questions. Recomputing here
+            # would price an immutable old file against today's changed books.
+            "calculation_snapshot": {key: generated[key] for key in _CALCULATION_SNAPSHOT_FIELDS if key in generated},
         }
         if normalized.get("draft"):
             tool_call_meta["draft"] = True
@@ -597,25 +610,6 @@ async def _build_workbook(
             ),
             "tool": tool_name,
         }
-        for key in (
-            "pricing_status",
-            "norms_status",
-            "price_gaps",
-            "price_basis",
-            # the adapter flags rows whose own wording names the opposite
-            # operation; without this key the question dies here and the
-            # operator never sees it in chat (task § 11 №8)
-            "norm_conflicts",
-            "calculated_positions",
-            # § 4: the projection is what the readiness counters are computed from,
-            # so it has to travel with the numbers it explains.
-            "row_projection",
-            "positions_built",
-            "confirmed_amount",
-            "preliminary_amount",
-        ):
-            if generated.get(key) not in (None, "", [], ()):
-                payload[key] = generated[key]
         return payload
     except Exception as error:
         failed = ctx.checkpoints.record_status(

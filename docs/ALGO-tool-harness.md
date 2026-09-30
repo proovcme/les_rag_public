@@ -32,6 +32,17 @@ capability call budget либо наступил технический monotoni
 доставка уже могли занять `parent.revision_no + 1`. Старые файлы неизменны.
 Регрессия воспроизводит живой `IntegrityError` 834 и одновременные доставки.
 
+С build 836 расчётный снимок (`price_basis`, суммы, row_projection, gaps,
+pricing/norms status) сохраняется в `tool_calls[].calculation_snapshot` новой
+ревизии. `_result_from_revision` читает те же факты при idempotent replay после
+рестарта. Нули и пустые списки сохраняются. Старые ревизии без снимка возвращают
+только сохранённые сведения, не пересчитываются и не дополняются выдуманными
+суммами. Неизменяемый файл и его SHA остаются прежними.
+Recovery-route не подставляет последнюю выданную ревизию в аргументы неизменного
+запроса: это нарушало idempotency ВОР. Сервис workbook сам разрешает родителя
+по session lineage при новой сборке; событие job сохраняет фактический parent
+из возвращённого artifact, а повтор получает прежний revision/SHA.
+
 Реестр содержит ровно `build_lsr_workbook` и `build_vor_workbook` версии
 `1.0.0` с effect `draft`, обязательным idempotency key, server-owned attachment
 scope и результатом `les.workbook_tool_result.v1`. Модель сама выбирает вызов;

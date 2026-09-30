@@ -338,7 +338,9 @@ def test_vor_repack_preserves_document_type_and_revision_lineage(tmp_path, monke
 
         assert set(call["args"]) <= set(BUILD_VOR_WORKBOOK.input_schema["properties"])
         calls.append(call)
-        return await packaging(executor, call, request_context, progress_sink, **kwargs)
+        result, trace = await packaging(executor, call, request_context, progress_sink, **kwargs)
+        result["artifact"]["parent_revision_id"] = "rev_vor_first"
+        return result, trace
 
     monkeypatch.setattr(chat_router, "WorkbookResearchJobService", lambda: service)
     monkeypatch.setattr(chat_router, "execute_workbook_with_bounded_retry", capture)
@@ -347,7 +349,10 @@ def test_vor_repack_preserves_document_type_and_revision_lineage(tmp_path, monke
     ))
     assert answer["model_called"] is False
     assert calls[0]["tool"] == "build_vor_workbook"
-    assert calls[0]["args"]["parent_revision_id"] == "rev_vor_first"
+    asyncio.run(chat_router.repack_lsr_without_model(
+        chat_router.LsrRepackRequest(session_id="session-1", job_id=job["job_id"]), _user=None,
+    ))
+    assert calls[1]["args"] == calls[0]["args"]  # replay identity must not grow with the delivered revision
     artifact = answer["harvested"]["artifact"]
     assert artifact["artifact_kind"] == "vor_workbook"
     assert artifact["document_state"]["state"] == "ready"
