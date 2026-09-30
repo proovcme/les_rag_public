@@ -1,5 +1,33 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.102 / 830:** сохранённый токен статуса перестал быть доказательством, а чат и тон подписывают
+> расчёт тем же словом, что и форма (`proxy/services/gesn_service.py`,
+> `proxy/services/rim_lsr_trace_service.py`, `proxy/services/lsr_assembly_service.py`,
+> `proxy/services/smeta_chat_service.py`, `proxy/services/sovushka_tone.py`,
+> `tools/architecture_contract_gate.py`). Readiness пересчитывает цитату из тех карточек, которые
+> модель действительно привела (`cited_ciphers_of`), а не верит сохранённому флагу: замер на
+> собственных долговечных строках установленного хранилища — 280 из 1082 EXACT-строк ссылаются на
+> карточку, в теле которой назван другой шифр, и ещё 440 считались «согласием» только потому, что
+> вердикта в старом payload не было. Вопрос применимости живёт в одной функции
+> (`applicability_gap_kind`), которую читают и колонка XLSX-трассы, и денежный гейт, и карточка
+> readiness, и назван отдельной причиной `cipher_without_cited_card` — пять различных причин вместо
+> одного «не готово». Эталон пересеян с демо-семени на основную базу: **12 679,40** (карточка
+> `ГЭСН12-01-034-02` × книга `sankt-peterburg_2kv2026`, `priced_partial`, дыра
+> `price_missing:11.1.03.01-0076`) вместо суммы семени 11 813,04; семя вынесено из производственного
+> слияния, закреплённые суммы больше не читают книгу оператора (`tests/pricebook_probe.py` плюс
+> `tests/test_pricebook_hermeticity_830.py` — 223 passed и без probe, и с ним, а отрицательный
+> контроль под probe красный), и обе лестницы цены обязаны назвать владельца ставки
+> (`price_is_attributed`, нарушение `UNOWNED_PRICE_SOURCE_ADOPTED`). Тон над `partial` и
+> `unsafe_source` больше не обещает «можешь не перепроверять» (20 из 28 достижимых формулировок
+> сборки → 0 из 28), над `not_calculated` рамки нет вовсе; чат берёт слово подписи у самой трассы
+> (`position_total_label`) и печатает основания трассы, когда ⚠-флага нет. Gate: канонический
+> `CURRENT_TESTS`, развёрнутый из Makefile в 147 файлов, — 1907 passed / 20 skipped
+> (`stage_b/live_830/current_tests_830_shipped.log`), доковые гейты после записи в леджер и сюда —
+> 49 passed (`stage_b/live_830/gates_830.log`); карта регенерирована (1038 файлов, 340
+> маршрутов). Ни один тест не ослаблен, но живой приёмки установленной 830 на момент записи нет, и
+> § 5 плюс построчный прогон большого ВОР клиента эта правка не закрывает. Подробно —
+> [RELEASE_LEDGER.md](RELEASE_LEDGER.md).
+
 > **0.31.101 / 829:** reader ответа модели перестал терять решения из-за оформления строки
 > (`core/chat-evidence`, `proxy/services/model_answer_table_service.py`,
 > `proxy/services/chat_evidence_application_service.py`,
@@ -1069,7 +1097,8 @@
 ## 1. Смета (ценообразование, 0 LLM в расчёте — ADR-11)
 
 Текущая карта сметного режима — [SMETA_MECHANICS.md](SMETA_MECHANICS.md). Сквозной поток и эталон
-(позиция = **11813.04**, смета 2× = **23626.08**) — [ALGO-smeta.md](ALGO-smeta.md).
+(позиция = **12679.40**, `priced_partial` с дырой `11.1.03.01-0076`; смета 2× = **25358.80**; карточка
+основной базы × книга `sankt-peterburg_2kv2026`) — [ALGO-smeta.md](ALGO-smeta.md).
 **Скилл-плейбук (для агента и ЛЕС): [skills/smeta/SKILL.md](../skills/smeta/SKILL.md).**
 Понятное описание живого модуля, его данных, потока и проблем —
 **[SMETA_MODULE_EXPLAINED.md](SMETA_MODULE_EXPLAINED.md)**.

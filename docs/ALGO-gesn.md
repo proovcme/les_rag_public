@@ -13,17 +13,22 @@
 
 ## Шаги
 
-1. **Каталог** — два источника, объединяются прозрачно (`gesn_service._merged_norms`):
-   - **Семя** `config/domain/gesn_seed.yaml`: норма = {code, name, unit, resources:[…]}.
-     Ресурс: kind (labor|machinist|machine|material), per_unit, code (для цены ФГИС ЦС),
-     price (тариф ОЗП/ОТм; для машин/материалов — опц. снимок цены).
+1. **Каталог** — `gesn_service._merged_norms` объединяет базу и официальный overlay; это
+   source of truth расчёта и поиска (§ 3):
    - **Canonical machine base** `data/smeta_base/les_smeta_base.sqlite`: одна структурированная
      SQLite-база с таблицами `norms` и `resources`. Ключ нормы:
      `norm_key=<base_type>:<bare_code>`. `ГЭСН:38-01-001-01` и `ГЭСНм:38-01-001-01` — разные нормы;
      bare-код при multi-family collision не раскрывается strict lookup. Overlay
      `data/gesn_base/gesn2022_overlay.parquet` (`tools/gesn_fgis_overlay_import.py`)
      закрывает только отсутствующие ключи, не выбирает работу и не затирает SQLite.
-     При совпадении кода **семя побеждает** (эталон точен).
+   - **Семя** `config/domain/gesn_seed.yaml`: демо-нормы = {code, name, unit, resources:[…]}.
+     Ресурс: kind (labor|machinist|machine|material), per_unit, code (для цены ФГИС ЦС),
+     price (тариф ОЗП/ОТм; для машин/материалов — опц. снимок цены).  В production НЕ участвует:
+     подключается только явным `path=` в вызове или `LES_GESN_SEED_ENABLED=1` (названный тестовый
+     сценарий) и помечается `_source_kind = "seed_yaml"`.  Семя больше не перекрывает базу: замеры
+     30.09.2026 показали, что все 10 демо-карточек уже есть в базе и семя подменяло их числа
+     (`stage_b/live_830/seed_vs_base_reconcile_830.md`, запрет закреплён
+     `tests/test_gesn_seed_is_test_only_830.py`).
    `data/gesn_base/gesn2022_unified.parquet` теперь source/staging слой, а не runtime-facing база:
    он собирается из raw ФГИС/ручных импортов через `tools/gesn_unify_base.py`, затем очищается и
    раскладывается в staging SQLite через `tools/build_smeta_structured_base.py`, а активная пара
@@ -255,17 +260,26 @@ Worker скачивает один архив, безопасно распако
 
 ## Где в коде
 
-- Сервис: `proxy/services/gesn_service.py`; каталог: `config/domain/gesn_seed.yaml`.
+- Сервис: `proxy/services/gesn_service.py`; production-каталог: `data/smeta_base/les_smeta_base.sqlite`
+  (+ overlay `data/gesn_base/gesn2022_overlay.parquet`).  `config/domain/gesn_seed.yaml` — демо-нормы
+  только для названного тестового сценария (§ 3).
 - Overlay-import: `tools/gesn_fgis_overlay_import.py` (`--preset sks` для СКС/ВОЛС-кандидатов).
 - Smetnoedelo API → RAG-карточки: `tools/smetnoedelo_rag_import.py`.
 - Smeta.RU ZIP downloader: `tools/smeta_ru_norm_download.py`.
 - Smeta.RU ZIP → RAG ingest worker: `tools/smeta_ru_norm_rag_ingest.py`.
 - API: `GET /api/lsr/gesn` (список), `GET /api/lsr/gesn/{code}/expand?qty=` (`proxy/routers/lsr.py`).
 - MCP: `les_gesn_expand`. Сборка от кода — `POST /api/lsr/assemble` (позиции `{code, qty}`).
-- Тест: `tests/test_gesn_service.py` — **gold: сборка от кода эталона = 11813.04**.
+- Тест: `tests/test_gesn_service.py` — сборка ЛСР прямо от кода карточки основной базы; цены берёт
+  из книги, которую пишет сам тест (`BOOK_PRICES`), поэтому закреплённый итог 18535.77 пересчитывается
+  на бумаге и не зависит от установленной ценовой базы.  Демо-ставка 475,11 руб./чел.-ч из семени в
+  расчёт не попадает.
 
 ## Граница (главное незакрытое)
 
-- **Семя** содержит демо-норму эталона. Полная **база ГЭСН-2022** (десятки тысяч норм) импортируется
-  отдельно, как ФГИС ЦС (источник https://fsnb2022.ru/gesn/) — это объём данных, не логики.
+- **Семя** содержит демо-норму эталона и больше не участвует в расчёте: карточка эталона берётся из
+  основной базы (замер 30.09.2026 — `stage_b/live_830/seed_vs_base_reconcile_830.md`).  **База
+  ГЭСН-2022 импортирована**: `data/smeta_base/les_smeta_base.sqlite` несёт 49 818 норм и 504 891
+  ресурс (`les_smeta_base_manifest.json`, `les_smeta_base_integrity.json` с `integrity.verdict =
+  "passed"`).  Осталось закрытие отдельных пробелов импорта: 923 нормы без `norm_name`/`norm_unit`
+  публикуются как excluded source debt, а не подменяются демо-числами.
 - Подбор кода нормы под работу ВОР (наименование→ГЭСН) — отдельный шаг (ретрив по базе ГЭСН).
