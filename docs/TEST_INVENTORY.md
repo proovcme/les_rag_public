@@ -1,5 +1,14 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 849: regression reproduces safe history dropping VOR source audit; all
+318 warning addresses survive repeat projection, status is partial. VOR repack
+retains lineage and returns VOR-specific readiness without LSR requirements.
+Two red tests before, focused carrier/recovery/workbook/prices 270 passed.
+Full canonical gate 2046 passed / 20 existing opt-in skipped / 5 warnings,
+198.25 seconds; verify 2066 collected, compileall/version/architecture green.
+Installed 848 big repack: 427 saved decisions, 185 blocks, 23 calculated,
+priced_partial, exact SHA/parent/replay; zero model calls. Not fresh inference.
+
 Build 848: regressions reproduce 100-fold money error for an already scaled
 source measure, lost multiplier in kg→t, overflow, equivalent-measure rejection
 through actual catalog/adapter/money, and unit matched inside a title.

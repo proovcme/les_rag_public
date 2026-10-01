@@ -1,5 +1,27 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.121 / 849 (01.10, Codex):** installed 848 exposed loss of
+vor_source_errors through safe workbook history. Field now retains every
+source address, harvester/chat/readiness agree with XLSX; VOR repack returns
+VOR-specific readiness without LSR norm/price requirements. Two regressions
+red before; focused 270 passed. Offline 2046 passed / 20 existing opt-in skipped /
+5 warnings, 198.25 с; verify 2066, compileall/version/architecture green.
+Installed gate pending.
+
+**Замер 848, exact a47eb6a9 (01.10):** installed 18/18 patch hashes, native
+RRF 1/1, basic 9 pass / 1 diagnostics WARN / 0 fail, immutable old VOR/LSR
+recovery same revisions/SHA/basis. Большой ВОР клиента повторно рассчитан из
+427 saved decisions без model call за 22.2 с: 185 built blocks, 23 fully calculated,
+confirmed field 310778.89, preliminary 7810166.92, priced_partial, SPb3q exact.
+Это арифметические поля приложения, не независимая профессиональная приёмка.
+Revision rev_cb7177fdb464406a8de9b2d9c1f2e682 (parent rev_ec03209731434a18b723de5dc3f13eaa),
+346578 bytes, SHA db92216b0aa61ae0d223d111b2054e32d47b2c1316da0845c23a6e345fab3ff1.
+Повтор доставки неизменен, model rows unchanged. Not a fresh 318-row model run.
+ЭОМ ВОР re-export: 83 rows, roles/links/gaps retained, 13391 bytes, SHA
+b8b57f461ae3a71e92bc129d60f4d8d65fdb6a08937757c840795bd4940a9f13.
+Source warnings printed in XLSX but missing from API projection; not accepted
+as customer-ready, fixed in 849. Receipts artifacts/live_848/{big,eom}_repack.
+
 **Кандидат 0.31.120 / 848 (01.10, Codex):** исправлена 100-кратная ошибка
 арифметики исходной масштабированной единицы. Равные физические меры дают
 одну сумму; catalog→adapter→money использует подтверждённую колонку единиц,

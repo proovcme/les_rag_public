@@ -3917,6 +3917,17 @@ def test_workbook_projection_keeps_bounded_conflict_diagnostics():
     assert safe["blockers"] == []
 
 
+def test_workbook_projection_preserves_every_vor_source_error():
+    errors = [f"source_quantity_mismatch:Архитектура!R{index}" for index in range(1, 319)]
+    raw = {"schema": "les.workbook_tool_result.v1", "tool": "build_vor_workbook", "status": "complete",
+           "missing": [], "blockers": [], "vor_source_errors": errors,
+           "artifact": {"revision_id": "rev-vor"}}
+    safe = service.safe_workbook_history_projection(raw)
+    assert safe["vor_source_errors"] == errors
+    assert safe["status"] == "partial"
+    assert service.safe_workbook_history_projection(safe) == safe
+
+
 def _lsr_tool_result_with_basis() -> dict:
     """One realistic ``build_lsr_workbook`` result for the carrying chain."""
 

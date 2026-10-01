@@ -1,5 +1,23 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.121 / 849:** `core/chat-evidence` safe workbook history/harvester
+> сохраняют все VOR source audit warnings; `/api/chat/repack-lsr` возвращает VOR
+> readiness для VOR, включая незакрытые исходные объёмы. Точки:
+> `safe_workbook_history_projection`, `harvest_workbook_tool_result`,
+> `repack_lsr_without_model`. Док↔код ✅; [ADR-15](ADR-15-model-rag-result.md).
+> Две regressions red before; focused 270 passed. Offline 2046 passed /
+> 20 existing opt-in skipped / 5 warnings; verify 2066, compileall/version/
+> architecture passed. Installed pending.
+>
+> **Установленная 848, a47eb6a9:** 18/18 patch hashes, native RRF 1/1,
+> basic 9 pass / 1 WARN / 0 fail; immutable old VOR/LSR recovery exact.
+> Большой клиентский ВОР: repack 427 saved decisions, 22.2 с без model call,
+> 185 positions built / 23 calculated, preliminary 7810166.92, priced_partial.
+> Новая revision/SHA/parent/replay совпадают, все model decisions неизменны.
+> Это тест расчёта/доставки масштаба, не свежий полный inference или профприёмка.
+> ВОР ЭОМ repack сохраняет 83 строки/роли/замечания в XLSX; API carrier терял
+> source audit field, что воспроизведено и закрывается в 849.
+
 > **Кандидат 0.31.120 / 848:** `core/rim` учитывает множитель исходной единицы;
 > catalog/adapter/trace подтверждают физически равные меры. `header_bound_unit`,
 > `_attach_catalog_facts`, `_norm_qty_from_visible_row` — точки входа.

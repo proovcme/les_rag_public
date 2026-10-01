@@ -1032,6 +1032,13 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
             safe[field] = [str(value)[:500] for value in values[:100]] if isinstance(values, list) else []
         if safe.get("status") == "complete" and (safe["missing"] or safe["blockers"]):
             safe["status"] = "partial"
+        source_errors = result.get("vor_source_errors")
+        if isinstance(source_errors, list):
+            # Preserve every affected source address; bounding each message must
+            # not erase the tail of a large VOR or turn it into a complete file.
+            safe["vor_source_errors"] = [item[:500] for item in source_errors if isinstance(item, str) and item]
+            if safe["vor_source_errors"]:
+                safe["status"] = "partial"
         # The basis and the concrete price / operation questions are not extras of
         # the file: without them a draft asks for nothing, and «Выберите регион и
         # уровень цен» could never appear on this route (ADR-16 § 7, task § 7).
@@ -1141,6 +1148,7 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         # rows the calculation itself flags as naming the opposite operation:
         # readiness turns each into one concrete question (task § 11 №8)
         "norm_conflicts": list(result.get("norm_conflicts") or []),
+        "vor_source_errors": list(result.get("vor_source_errors") or []),
         # § 4: one revision projection, unchanged in row count, is what the readiness
         # counters and the «Проверка» sheet both read.
         "row_projection": list(result.get("row_projection") or []),

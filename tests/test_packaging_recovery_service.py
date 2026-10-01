@@ -340,6 +340,7 @@ def test_vor_repack_preserves_document_type_and_revision_lineage(tmp_path, monke
         calls.append(call)
         result, trace = await packaging(executor, call, request_context, progress_sink, **kwargs)
         result["artifact"]["parent_revision_id"] = "rev_vor_first"
+        result["vor_source_errors"] = ["source_quantity_mismatch:Sheet!R2"]
         return result, trace
 
     monkeypatch.setattr(chat_router, "WorkbookResearchJobService", lambda: service)
@@ -356,7 +357,11 @@ def test_vor_repack_preserves_document_type_and_revision_lineage(tmp_path, monke
     artifact = answer["harvested"]["artifact"]
     assert artifact["artifact_kind"] == "vor_workbook"
     assert artifact["document_state"]["state"] == "ready"
-    assert "result_readiness" not in artifact  # no LSR norm/price requirements
+    readiness = artifact["result_readiness"]
+    assert readiness["schema"] == "les.vor-result-readiness.v1"
+    assert readiness["vor_complete"] is False
+    assert "source_quantity_mismatch:Sheet!R2" in readiness["open_questions"]
+    assert "price_basis" not in readiness and "estimate_complete" not in readiness
     stored = service.get(job["job_id"])["document"]
     assert stored["tool"] == "build_vor_workbook"
     assert stored["final_revision_id"] == "rev_vor_second"

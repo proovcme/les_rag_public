@@ -38,6 +38,7 @@ from proxy.services.chat_evidence_application_service import (
     task_document_price_basis,
     workbook_packaging_lineage,
     workbook_packaging_args,
+    build_vor_result_readiness,
 )
 from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
 from proxy.services.workbook_research_job_service import (
@@ -458,6 +459,17 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             download_url=str(artifact.get("download_url") or ""),
         )
         artifact["result_readiness"] = readiness
+        harvested["artifact"] = artifact
+    elif isinstance(artifact, dict) and repack_tool == "build_vor_workbook":
+        from proxy.services.attachment_source_catalog_service import load_catalog_from_attachment_id
+
+        catalog = await asyncio.to_thread(load_catalog_from_attachment_id, attachment_id)
+        artifact["result_readiness"] = build_vor_result_readiness(
+            rows=decisions, has_file=bool(artifact.get("download_url")),
+            remaining_locators=remaining,
+            catalog_work_count=len(catalog.work_locators()) if catalog else 0,
+            model_errors=list(payload.get("vor_source_errors") or []),
+        )
         harvested["artifact"] = artifact
     return {
         "schema": "les.lsr-repack.v1",
