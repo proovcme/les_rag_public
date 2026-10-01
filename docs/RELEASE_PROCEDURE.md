@@ -6,6 +6,14 @@
 
 ## Полный проход
 
+Windows prebundle smoke использует отдельные runtime/state roots и свободные
+порты. `LES_RELEASE_SMOKE=1` запрещает start-light останавливать уже работающий
+proxy/UI/adapter ради освобождения порта. Обычный запуск сохраняет прежнее
+поведение. `tauri_build_environment` добавляет существующий Rust toolchain
+через Windows `;`, сводит case-insensitive Path/PATH к одному ключу и сохраняет
+остальные PATH entries; установка toolchain не выполняется. Оба исправления
+закрывают измеренные отказы prepare 861, но не доказывают качество ЛСР.
+
 Из чистой ветки, отправленной в `origin`, принять кандидата на текущем Legion и
 опубликовать тот же immutable artifact одной командой:
 

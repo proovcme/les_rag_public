@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 import subprocess
+
+import pytest
 
 from tools import build_release_artifacts
 from tools import build_tauri_app
@@ -178,6 +182,163 @@ def test_windows_light_start_and_stop_resolve_one_state_root():
     )
     # stop derives the same root, or the two scripts would look at different stores
     assert 'Join-Path $env:LOCALAPPDATA "LES"' in stop
+
+
+@pytest.mark.parametrize("release_smoke", [False, True])
+@pytest.mark.parametrize("explicit_ports", [False, True])
+@pytest.mark.parametrize("mode", ["full", "backend", "ui"])
+@pytest.mark.parametrize("port_case", ["occupied", "free", "same"])
+def test_windows_light_release_smoke_selects_ports_without_stopping_owners(
+    tmp_path, release_smoke, explicit_ports, mode, port_case
+):
+    """Execute the shipped port branches without touching any real process."""
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if not powershell:
+        pytest.skip("PowerShell is required for the Windows lifecycle contract")
+    start = (
+        build_windows_installer.ROOT / "installers/windows/start-light.ps1"
+    ).read_text(encoding="utf-8-sig")
+    free_port_function = start[
+        start.index("function Get-LesFreePort(") : start.index("function Resolve-LesPython")
+    ]
+    port_branches = start[
+        start.index('if (($Mode -ne "ui")', start.index("$LesPython = Resolve-LesPython")) :
+        start.index("if (-not $env:QDRANT_URL)")
+    ]
+    harness = tmp_path / "light-port-contract.ps1"
+    harness.write_text(
+        r"""
+param([string]$Mode, [string]$PortCase, [switch]$ReleaseSmoke, [switch]$ExplicitPorts)
+$ErrorActionPreference = "Stop"
+$env:LES_RELEASE_SMOKE = if ($ReleaseSmoke) { "1" } else { "0" }
+$ProxyPort = 8050
+$UiPort = if ($PortCase -eq "same") { 8050 } else { 8051 }
+$ProxyPortExplicit = [bool]$ExplicitPorts
+$UiPortExplicit = [bool]$ExplicitPorts
+$script:occupied = New-Object 'System.Collections.Generic.HashSet[int]'
+if ($PortCase -eq "occupied") {
+  [void]$script:occupied.Add(8050)
+  [void]$script:occupied.Add(8051)
+}
+$script:stops = New-Object 'System.Collections.Generic.List[int]'
+function Test-LesPortFree([int]$Port) { return -not $script:occupied.Contains($Port) }
+function Stop-LesPortProcess([int]$Port) {
+  $script:stops.Add($Port)
+  [void]$script:occupied.Remove($Port)
+}
+"""
+        + free_port_function
+        + port_branches
+        + r"""
+@{ proxy_port=$ProxyPort; ui_port=$UiPort; stops=@($script:stops.ToArray()) } |
+  ConvertTo-Json -Compress
+""",
+        encoding="utf-8-sig",
+    )
+    command = [
+        powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness),
+        "-Mode", mode, "-PortCase", port_case,
+    ]
+    if release_smoke:
+        command.append("-ReleaseSmoke")
+    if explicit_ports:
+        command.append("-ExplicitPorts")
+    completed = subprocess.run(
+        command, check=True, capture_output=True, text=True, timeout=20,
+    )
+    result = json.loads(completed.stdout)
+
+    if release_smoke:
+        assert result["stops"] == []
+        if port_case == "occupied":
+            assert result["proxy_port"] == (8052 if mode != "ui" else 8050)
+            assert result["ui_port"] == (8053 if mode == "full" else 8052 if mode == "ui" else 8051)
+        elif port_case == "same":
+            assert result["proxy_port"] == 8050
+            assert result["ui_port"] == (8051 if mode != "backend" else 8050)
+        else:
+            assert (result["proxy_port"], result["ui_port"]) == (8050, 8051)
+    else:
+        # The normal production start retains its existing replacement policy.
+        expected_stops = []
+        if mode != "ui" and (explicit_ports or port_case == "occupied"):
+            expected_stops.append(8050)
+        if mode != "backend" and (explicit_ports or port_case in {"occupied", "same"}):
+            expected_stops.append(8050 if port_case == "same" else 8051)
+        assert result["stops"] == expected_stops
+        assert result["proxy_port"] == 8050
+        assert result["ui_port"] == (
+            8050 if port_case == "same" and (mode == "backend" or explicit_ports) else 8051
+        )
+
+
+@pytest.mark.parametrize("release_smoke", [False, True])
+@pytest.mark.parametrize("explicit_port", [False, True])
+@pytest.mark.parametrize("occupied", [False, True])
+def test_windows_light_release_smoke_preserves_existing_lemonade_adapter(
+    tmp_path, release_smoke, explicit_port, occupied
+):
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if not powershell:
+        pytest.skip("PowerShell is required for the Windows lifecycle contract")
+    start = (
+        build_windows_installer.ROOT / "installers/windows/start-light.ps1"
+    ).read_text(encoding="utf-8-sig")
+    free_port_function = start[
+        start.index("function Get-LesFreePort(") : start.index("function Resolve-LesPython")
+    ]
+    # Execute the adapter's full port decision before its process launch.
+    port_branch = start[
+        start.index('if (($Mode -ne "ui") -and ($Provider -eq "lemonade"))') :
+        start.index('  $lemonadeHostArgs = @("lemonade_host.py")')
+    ] + "}\n"
+    harness = tmp_path / "lemonade-port-contract.ps1"
+    harness.write_text(
+        r"""
+param([switch]$ReleaseSmoke, [switch]$ExplicitPort, [switch]$Occupied)
+$ErrorActionPreference = "Stop"
+$env:LES_RELEASE_SMOKE = if ($ReleaseSmoke) { "1" } else { "0" }
+$env:LEMONADE_HOST_PORT = "18080"
+$env:MLX_URL = "http://127.0.0.1:18080"
+$Mode = "full"
+$Provider = "lemonade"
+$ProxyPort = 18081
+$UiPort = 18082
+$LemonadeHostPort = 18080
+if ($ExplicitPort) { $PSBoundParameters["LemonadeHostPort"] = 18080 }
+$script:occupied = [bool]$Occupied
+$script:stops = New-Object 'System.Collections.Generic.List[int]'
+function Test-LesPortFree([int]$Port) { return -not ($script:occupied -and $Port -eq 18080) }
+function Stop-LesPortProcess([int]$Port) {
+  $script:stops.Add($Port)
+  $script:occupied = $false
+}
+"""
+        + free_port_function
+        + port_branch
+        + r"""
+@{ port=$LemonadeHostPort; endpoint=$env:MLX_URL; env_port=$env:LEMONADE_HOST_PORT;
+   stops=@($script:stops.ToArray()) } | ConvertTo-Json -Compress
+""",
+        encoding="utf-8-sig",
+    )
+    command = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness)]
+    if release_smoke:
+        command.append("-ReleaseSmoke")
+    if explicit_port:
+        command.append("-ExplicitPort")
+    if occupied:
+        command.append("-Occupied")
+    completed = subprocess.run(
+        command, check=True, capture_output=True, text=True, timeout=20,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["stops"] == ([18080] if explicit_port and not release_smoke else [])
+    expected_port = 18083 if occupied and (release_smoke or not explicit_port) else 18080
+    assert result["port"] == expected_port
+    assert result["env_port"] == str(expected_port)
+    assert result["endpoint"] == f"http://127.0.0.1:{expected_port}"
 
 
 def test_windows_release_smoke_reports_cleanup_failures_before_success():

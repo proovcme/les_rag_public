@@ -582,6 +582,26 @@ def test_tauri_builder_resolves_windows_npm_cmd(monkeypatch):
     assert seen == ["npm.cmd"]
 
 
+def test_windows_tauri_build_preserves_case_insensitive_path_and_rust_toolchain(tmp_path):
+    rust = tmp_path / "Rust tools" / "bin"
+    original = {"Path": r"C:\\Program Files\\nodejs;C:\\Windows", "PATH": r"D:\\Other tools", "KEEP": "value"}
+
+    env = build_tauri_app.tauri_build_environment(original, platform="win32", cargo_bin=rust)
+
+    assert env["PATH"].split(";") == [str(rust), r"C:\\Program Files\\nodejs", r"C:\\Windows", r"D:\\Other tools"]
+    assert "Path" not in env
+    assert env["KEEP"] == "value"
+    assert original["Path"] == r"C:\\Program Files\\nodejs;C:\\Windows"
+
+
+def test_unix_tauri_build_keeps_case_sensitive_environment(tmp_path):
+    env = build_tauri_app.tauri_build_environment(
+        {"PATH": "/usr/bin:/bin", "Path": "different-variable"}, platform="darwin", cargo_bin=tmp_path,
+    )
+    assert env["PATH"] == f"{tmp_path}:/usr/bin:/bin"
+    assert env["Path"] == "different-variable"
+
+
 def test_tauri_builder_maps_four_part_les_version_to_desktop_semver():
     assert build_tauri_app.desktop_semver("0.24.0.401") == "5.1.401"
     assert build_tauri_app.desktop_semver("5.1.401") == "5.1.401"

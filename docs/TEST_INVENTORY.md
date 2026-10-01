@@ -1,5 +1,18 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Кандидат **862**, установлен runtime **861**. Executable PowerShell regression
+в `tests/test_installer_windows.py` проверяет occupied/free explicit/implicit
+ports release smoke против production controls без реальных stop/listeners.
+`tests/test_tauri_desktop.py` проверяет Windows Path/PATH и Unix case-sensitive
+environment. Первый regression действительно воспроизвёл остановку рабочего
+proxy/UI в prebundle 861; frozen 861 full gates не обнаруживали этот дефект.
+861 native RRF/basic smoke прошли после штатного восстановления. Quality/live
+comparison 861 и точный installer пока не приняты; technical green не readiness.
+862 gates: verify/architecture/actual pinned baseline exit0; canonical 2457
+passed, 20 existing opt-in skipped, 5 warnings, 250.70s. Focused release tests:
+34 Tauri + 78 Windows installer passed. BAP JSON B0 861 measurement FAILED:
+220.27s, malformed Markdown вместо JSON, без файла. Reasoning control pending.
+
 Кандидат **861**, установлен runtime **860**. B0 860 имеет SHA-проверенный XLSX,
 но независимая профессиональная проверка FAILED; B1 остановлен с malformed
 proposals без XLSX. 861 добавляет regressions query budget/cut final без repair,

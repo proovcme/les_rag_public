@@ -11152,7 +11152,7 @@
     },
     {
       "inbound": [],
-      "lines": 654,
+      "lines": 815,
       "module": "tests.test_installer_windows",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -14723,7 +14723,7 @@
     },
     {
       "inbound": [],
-      "lines": 595,
+      "lines": 615,
       "module": "tests.test_tauri_desktop",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -15968,7 +15968,7 @@
         "tools/internal_update.py",
         "tools/multiplatform_release.py"
       ],
-      "lines": 601,
+      "lines": 615,
       "module": "tools.build_tauri_app",
       "outbound": [
         "proxy/services/version_service.py",
@@ -19988,7 +19988,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 683,
     "tracked_python_files": 1063,
-    "tracked_python_lines": 368455
+    "tracked_python_lines": 368650
   },
   "warnings": []
 }

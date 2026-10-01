@@ -1,5 +1,33 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.134 / 862; установлен runtime 861 (4bef6c7b); Tauri EXE 858.**
+Клиентская приёмка остаётся открыта. Exact patch 861: 16/16 SHA, native RRF
+exit0, basic release smoke exit0 после штатного восстановления. Первый smoke
+до восстановления получил connection refused; готовность на его основании
+не объявлялась. Installer prepare 861 прошёл все шесть gates, включая 286
+updater tests/public-check, но оба build attempts остановились до cargo metadata:
+builder использовал Unix `:` в Windows PATH. Нормализованное окружение нового
+helper уже на реальном child probe находит cargo; Path/PATH сводится к одному
+ключу как защита от case-insensitive дублей, наличие дублей в старом отказе
+не доказано. Prebundle одновременно
+выявил отдельный дефект изоляции: start-light завершал рабочие proxy/UI на
+8050/8051 до dynamic fallback, даже при smoke state root. Данные/jobs не удалены,
+внешние Qdrant/модели не перезапускались. 862 исправляет оба измеренных дефекта
+с executable PowerShell и PATH regressions; обычный production start сохранён.
+Failed receipts 861 сохранены. JSON BAP B0/B1 с одним заданием и той же моделью
+служит проверкой transport/профессиональной применимости; результат ещё не принят.
+300+ строки, разные входы и exact installer остаются обязательными открытыми gates.
+
+862 offline: verify exit0 (23.09s), canonical **2457 passed / 20 existing
+opt-in skipped / 5 warnings** (250.70s pytest), architecture exit0 (9.17s),
+pinned actual baseline exit0 (7.49s). Отдельные release regressions:
+`test_tauri_desktop.py` 34 passed; `test_installer_windows.py` 78 passed,
+44 executable PowerShell controls, включая воспроизведённые красные до фикса.
+861 B0 explicit-JSON control завершился за 220.27s без XLSX: ответ всё равно
+Markdown, 30 ячеек при 32 колонках; raw proposals сохранены без угадывания.
+Профессиональные несоответствия выбранных карточек сохраняются, reasoning
+control ещё измеряется. Эти факты не заменяются зелёными offline gates.
+
 **Кандидат 0.31.133 / 861; установлен runtime 860. Клиентская приёмка FAILED.**
 861 исправляет измеренный отказ Windows Make fallback: literal quoted `@echo`
 с пунктуацией не препятствует выполнению настоящего updater gate; подстановки и

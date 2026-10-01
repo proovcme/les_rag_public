@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **862 Windows release isolation:** `start-light.ps1` при release smoke
+> выбирает свободный порт без остановки работающего proxy/UI/adapter.
+> `build_tauri_app.tauri_build_environment` сохраняет Windows PATH entries
+> под одним case-insensitive ключом и добавляет `.cargo/bin` через `;`.
+> Измеренные prepare 861 failures сохранены; installer/live acceptance открыты.
+
 > **Кандидат 861; установлен 860, профессиональная приёмка FAILED:**
 > `governed_query_generation_budget` ограничивает query-output фактическим reserve;
 > `model_query_output_diagnostics` сохраняет безопасные call facts. Empty final+length

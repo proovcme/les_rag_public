@@ -520,6 +520,21 @@ def set_version(version: str) -> None:
     cargo_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def tauri_build_environment(
+    environment: dict[str, str] | None = None, *, platform: str | None = None,
+    cargo_bin: Path | None = None,
+) -> dict[str, str]:
+    """Preserve PATH entries while exposing the existing Rust toolchain."""
+    env = dict(os.environ if environment is None else environment)
+    is_windows = (platform or os.sys.platform).startswith("win")
+    separator = ";" if is_windows else ":"
+    path_keys = [key for key in env if key.casefold() == "path"] if is_windows else ["PATH"]
+    paths = [env.pop(key, "") for key in path_keys]
+    rust_path = str(cargo_bin if cargo_bin is not None else Path.home() / ".cargo" / "bin")
+    env["PATH"] = separator.join([rust_path, *(value for value in paths if value)])
+    return env
+
+
 def build(
     version: str,
     bundles: str | None,
@@ -558,8 +573,7 @@ def build(
         tauri_bundles = ",".join(requested)
     if tauri_bundles:
         command.extend(["--bundles", tauri_bundles])
-    env = dict(os.environ)
-    env["PATH"] = f"{Path.home() / '.cargo/bin'}:{env.get('PATH', '')}"
+    env = tauri_build_environment()
     subprocess.run(command, cwd=TAURI_ROOT, env=env, check=True)
     bundle_root = release_bundle_root()
     dist = ROOT / "dist"

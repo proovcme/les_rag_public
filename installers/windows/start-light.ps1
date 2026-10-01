@@ -165,7 +165,13 @@ function Wait-LesHttp([string]$Url, [int]$Seconds = 30) {
   return $null
 }
 
-if (($Mode -ne "ui") -and $ProxyPortExplicit) {
+if (($Mode -ne "ui") -and ($env:LES_RELEASE_SMOKE -eq "1")) {
+  # An isolated smoke must preserve every existing owner, including another LES
+  # installation. Select a free port before the normal replacement branches.
+  if (-not (Test-LesPortFree -Port $ProxyPort)) {
+    $ProxyPort = Get-LesFreePort -StartPort ($ProxyPort + 1)
+  }
+} elseif (($Mode -ne "ui") -and $ProxyPortExplicit) {
   Stop-LesPortProcess -Port $ProxyPort
 } elseif (($Mode -ne "ui") -and (-not (Test-LesPortFree -Port $ProxyPort))) {
   try { Stop-LesPortProcess -Port $ProxyPort } catch {}
@@ -175,7 +181,11 @@ if (($Mode -ne "ui") -and $ProxyPortExplicit) {
 }
 
 if ($Mode -ne "backend") {
-  if ($UiPortExplicit) {
+  if ($env:LES_RELEASE_SMOKE -eq "1") {
+    if ((-not (Test-LesPortFree -Port $UiPort)) -or ($UiPort -eq $ProxyPort)) {
+      $UiPort = Get-LesFreePort -StartPort ($UiPort + 1) -Reserved @($ProxyPort)
+    }
+  } elseif ($UiPortExplicit) {
     Stop-LesPortProcess -Port $UiPort
   } elseif ((-not (Test-LesPortFree -Port $UiPort)) -or ($UiPort -eq $ProxyPort)) {
     try { Stop-LesPortProcess -Port $UiPort } catch {}
@@ -262,7 +272,7 @@ switch ($Provider) {
 
 $lemonadeHost = $null
 if (($Mode -ne "ui") -and ($Provider -eq "lemonade")) {
-  if ($PSBoundParameters.ContainsKey("LemonadeHostPort")) {
+  if ($PSBoundParameters.ContainsKey("LemonadeHostPort") -and ($env:LES_RELEASE_SMOKE -ne "1")) {
     Stop-LesPortProcess -Port $LemonadeHostPort
   } elseif (-not (Test-LesPortFree -Port $LemonadeHostPort)) {
     $LemonadeHostPort = Get-LesFreePort -StartPort ($LemonadeHostPort + 1) -Reserved @($ProxyPort, $UiPort)

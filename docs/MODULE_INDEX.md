@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 862; установлен runtime 861, клиентская готовность открыта:**
+> Windows prebundle smoke больше не освобождает порты завершением рабочего
+> экземпляра; выбирает свободные порты. `tauri_build_environment` исправляет
+> Windows separator и case-insensitive Path/PATH, сохраняя установленный Rust.
+> Точки: `installers/windows/start-light.ps1`, `tools/build_tauri_app.py`;
+> док↔код ✅, [release procedure](RELEASE_PROCEDURE.md). 861 native RRF/basic
+> smoke passed после восстановления служб; professional JSON control идёт.
+
 > **Кандидат 861; установлен 860, live professional FAILED:** query-output
 > ограничен фактическим ContextGovernor reserve, auto учитывает явное рассуждение;
 > factor виден в GUI. Пустой final+length не вызывает blind repair/search/XLSX,
