@@ -28,9 +28,12 @@ class _SmetaNormChunk:
 def retrieve_smeta_norm_cards(query: str, *, limit: int = 6) -> dict[str, Any]:
     """Read model-facing cards from the dedicated smeta dense+sparse RRF."""
 
-    from proxy.smeta_core.norm_browser import browse_norms
+    from proxy.smeta_core.norm_browser import browse_norms_many
 
-    return browse_norms(query, limit=limit)
+    # Model-owned searches must not trigger legacy domain vocabulary from a
+    # product name or a source locator. The exact declared query is the input
+    # to the same typed/native-RRF reader, not a template chosen by code.
+    return browse_norms_many([query], limit=limit, rerank=True, expand_queries=False)[str(query)]
 
 
 def _norm_card_content(card: Mapping[str, Any]) -> str:

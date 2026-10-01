@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.116 / 844:** `model_research_tool_service.retrieve_smeta_norm_cards`
+> явно вызывает `browse_norms_many(... expand_queries=False)`; default
+> `norm_browser.browse_norms_many` тоже False. Legacy `_query_variants` больше
+> не участвует в model-search/default norm API. Источник слов locator не
+> добавляет скрытых cable queries; native RRF сохраняется.
+
 > **0.31.115 / 843:** `chat_evidence_application_service` query format contract
 > сохраняет модельное авторство поискового текста, включая обоснованную
 > операцию по изделию. Reader и original/derived builders не меняют смысл.

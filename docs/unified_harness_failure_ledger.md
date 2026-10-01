@@ -1,5 +1,16 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 844 candidate: source locator triggers a legacy domain rewrite
+
+After 843 the model's own SKS queries describe cabinet/organizer/ground-bar
+installation. The active reader still calls browse_norms with expansion enabled.
+The sheet label in СКС!Rn matches structured_cabling and prepends cable queries;
+different operations receive the same six cable candidates. This is measured in
+the installed 843 cache and reproduced by a generic source-label rule, not a
+domain fixture. 844 disables vocabulary expansion explicitly in model retrieval
+and by default in the browser. Literal systematic candidates remain additive,
+native RRF and rerank stay unchanged. Installed acceptance is required.
+
 ## 2026-10-01 — 843 candidate: the prompt forbids the model's own operation query
 
 842 SKS receipts contain literal product queries and unrelated norm candidates;

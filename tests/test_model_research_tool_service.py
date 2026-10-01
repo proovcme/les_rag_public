@@ -5,6 +5,29 @@ import pytest
 from proxy.services.model_research_tool_service import ModelResearchToolService
 
 
+@pytest.mark.parametrize("use_model_reader", [True, False])
+def test_active_model_norm_reader_does_not_expand_queries_from_a_source_label(monkeypatch, tmp_path, use_model_reader):
+    from proxy.smeta_core import norm_browser
+    from proxy.services.model_research_tool_service import retrieve_smeta_norm_cards
+    seen = []
+    monkeypatch.setattr(norm_browser, "_base_path", lambda: tmp_path / "base.sqlite")
+    monkeypatch.setattr(norm_browser, "normative_base_integrity", lambda **_kw: {})
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_a, **_kw: [])
+    monkeypatch.setattr(norm_browser, "_retrieval_vocabulary", lambda: (
+        {"match_any": ["source-label"], "query": "unrelated legacy expansion"},))
+    def rag(queries, **kwargs):
+        seen.extend(queries)
+        return {q: [{"norm_key": q, "norm_code": "01-02-003-04", "title": q}] for q in queries}
+    monkeypatch.setattr(norm_browser, "_rag_cards_many", rag)
+    monkeypatch.setattr(norm_browser, "_rerank_cards", lambda _q, cards, **_kw: (cards, False, "disabled"))
+    queries = ["source-label!R6 — Mount a cabinet", "source-label!R8 — Install a ground bar"]
+    results = [retrieve_smeta_norm_cards(q) if use_model_reader else norm_browser.browse_norms_many([q])[q] for q in queries]
+    assert seen == queries
+    assert [r["retrieval_trace"]["query_variants"] for r in results] == [[q] for q in queries]
+    assert all(r["retrieval_trace"]["query_expansion"] is False for r in results)
+    assert [r["cards"][0]["title"] for r in results] == queries
+
+
 class _Retrieval:
     def __init__(self):
         self.chunks = [

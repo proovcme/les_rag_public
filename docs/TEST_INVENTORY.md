@@ -1,5 +1,11 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 844: generic source-label fixtures exercise the real model norm reader
+and the default browser through a vocabulary rule; only the declared queries
+may reach native RRF and each result must retain its own query identity.
+The model-reader regression failed before the fix. Professional selection
+requires installed controls and is not inferred from this mock.
+
 Build 843: query instruction must permit a model-authored mounting operation
 instead of literal product-label copying; the reader preserves that query.
 Result instruction requests the table first and excludes marker-only expansion.

@@ -1529,7 +1529,7 @@ def browse_norms_many(
     collections: list[str] | tuple[str, ...] | None = None,
     table_codes: list[str] | tuple[str, ...] | None = None,
     rerank: bool | None = None,
-    expand_queries: bool = True,
+    expand_queries: bool = False,
 ) -> dict[str, dict[str, Any]]:
     tool_started = perf_counter()
     bounded_limit = max(1, min(int(limit), 50))

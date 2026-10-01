@@ -16,6 +16,11 @@
 2. Native dense+sparse RRF получает широкий `candidate_k`. Код удаляет только
    точные дубли фрагментов и ограничивает число фрагментов одного физического
    документа, затем передаёт модели `model_evidence_k` результатов.
+   На norm path с 844 production `retrieve_smeta_norm_cards` явно передаёт
+   expand_queries=False; тот же literal default используется norm browser API.
+   Legacy vocabulary не добавляет доменные шаблоны по source locator/изделию.
+   Модель получает карточки собственного запроса и дополнительных literal
+   original/derived запросов ADR-16; code-chosen query paraphrases отсутствуют.
 3. Для model-authored запросов каждая группа сохраняется независимо как `Qx.Hy`.
    С 843 инструкция не запрещает модели переформулировать изделие в
    обоснованный поисковый запрос по монтажной операции. Дословное исполнение

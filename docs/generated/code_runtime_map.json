@@ -5290,7 +5290,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_model_research_tool_service.py"
       ],
-      "lines": 349,
+      "lines": 352,
       "module": "proxy.services.model_research_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7867,6 +7867,7 @@
         "proxy/smeta_core/document_workflow.py",
         "tests/test_estimate_harness.py",
         "tests/test_flexible_code_resolver.py",
+        "tests/test_model_research_tool_service.py",
         "tests/test_smeta_core.py",
         "tests/test_smeta_norm_browser.py",
         "tools/smeta_rag_quality_probe.py",
@@ -11875,10 +11876,11 @@
     },
     {
       "inbound": [],
-      "lines": 451,
+      "lines": 474,
       "module": "tests.test_model_research_tool_service",
       "outbound": [
-        "proxy/services/model_research_tool_service.py"
+        "proxy/services/model_research_tool_service.py",
+        "proxy/smeta_core/norm_browser.py"
       ],
       "path": "tests/test_model_research_tool_service.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -19546,7 +19548,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 667,
     "tracked_python_files": 1040,
-    "tracked_python_lines": 359735
+    "tracked_python_lines": 359761
   },
   "warnings": []
 }

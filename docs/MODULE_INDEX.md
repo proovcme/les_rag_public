@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.116 / 844:** `core/chat-evidence` model norm reader явно
+> выключает legacy vocabulary expansions; `norm_browser.browse_norms_many` default
+> тоже literal. ADR-16 systematic builders, dense+sparse RRF и rerank не
+> меняются. На 843 locator «СКС!Rn» добавлял cable queries для шкафа/шины;
+> generic source-label regression воспроизвела потерю query identity.
+> Код↔док ✅; installed comparative/financial gate pending.
+
 > **Кандидат 0.31.115 / 843:** `core/chat-evidence` разрешает модели
 > формулировать поиск монтажной операции вместо буквального изделия.
 > Дословность относится к исполнению уже объявленного запроса; systematic

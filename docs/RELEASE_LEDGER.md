@@ -1,5 +1,34 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.116 / 844 (01.10, Codex):** на installed 843 модель уже
+написала 9 монтажных запросов (шкаф, организатор, шина, панели и т.д.),
+но active `retrieve_smeta_norm_cards → browse_norms` применял старый
+`_query_variants`. «СКС» в locator включало vocabulary structured_cabling:
+добавлялись два запросa о прокладке кабеля, одинаковые первые 6 cards для
+разных операций. Это вмешательство harness в evidence, не доказательство
+неспособности 35B выбрать норму. Production model reader теперь явно вызывает
+`browse_norms_many(... expand_queries=False)`; общий default тоже False.
+Typed FTS/native RRF/rerank остаются теми же, literal ADR-16 candidate queries
+не изменены. Regression с произвольным source-label воспроизводит подмену до
+фикса, без предметных шифров/boosts. Full offline gate 2022 passed /
+20 existing opt-in skipped / 5 warnings, 192.96 с; verify 2042 collected,
+compileall/architecture зелёные. 13 patch files dry-run without DIVERGENT,
+rollback_843_to_844 preserved. API before-control в
+artifacts/live_843/query_probe подтверждает query_expansion=true и одинаковые
+шесть cable cards для трёх разных операций. Installed after gate pending;
+customer-ready не заявлено.
+
+**Замер 843, exact d41da1ad (01.10):** installed hashes 13/13; RRF 1/1,
+basic 9 pass / 1 diagnostics WARN / 0 fail; immutable recovery 0.08/0.22 с.
+B0 СКС 126.3 с, 74/75 accounted, 0 work/norm/money. B1 остановлен самим
+контрольным клиентом после обнаружения query expansion, 340.1 с: первый
+packet доставил 31/31 query groups, 11/75 accounted, 2 header/9 material,
+0 work/calculated/money. Форматный ответ принят с первой страницы, marker-only
+повтор не наблюдался; это не полный прогон и не customer gate. Revision
+rev_c16f1adfe03d496ab72e8d6047b82a3e, downloaded SHA
+258f339ea6d45de59e1923998f98381beaeec4e0b6a3cbf30af7d376cba23dca.
+Receipts: artifacts/live_843/sks_baseline и sks_candidate.
+
 **Кандидат 0.31.115 / 843 (01.10, Codex):** исправлена противоречивая
 инструкция model query: «формулировку строки исходника не меняй» запрещала
 модели переходить от изделия к обоснованной операции. Теперь дословность
