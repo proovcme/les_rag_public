@@ -2616,6 +2616,51 @@ def test_governed_inference_rejects_required_overflow_before_provider_call() -> 
     assert provider_calls == []
 
 
+@pytest.mark.parametrize("purpose,reserve", [("query", 16000), ("answer", 24000)])
+def test_profile_output_budget_is_reserved_before_native_tools_and_required_evidence(purpose, reserve):
+    from proxy.services.model_execution_preset_service import (
+        BackendCapacity, model_rag_answer_execution_preset, resolve_execution_preset,
+    )
+    preset = resolve_execution_preset(
+        BackendCapacity("freetoken", "Qwen3.6-35B", 65536, True, "fixture"),
+        operator={"query_output_tokens": 16000, "answer_output_tokens": 24000},
+    )
+    if purpose == "answer":
+        preset = model_rag_answer_execution_preset(preset, model_rag=True)
+    tools = [{"type": "function", "function": {"name": "read_source",
+              "description": "Return literal source " * 20,
+              "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}}}]
+    messages, packet = service.govern_inference_messages(
+        preset=preset, profile_prefix="literal profile", request_payload="literal question",
+        native_tools=tools, required_evidence=["literal source row", "complete evidence body"],
+    )
+    assert packet.generation_reserve_tokens == reserve
+    assert packet.provider_payload_tokens > 0
+    assert packet.input_budget_tokens == 65536 - reserve - 2048 - packet.provider_payload_tokens
+    assert packet.included_tokens + packet.provider_payload_tokens + reserve + 2048 <= 65536
+    assert "literal source row" in str(messages) and "complete evidence body" in str(messages)
+    if purpose == "query":
+        budget = service.governed_query_generation_budget(preset, packet)
+        assert budget["effective"] == reserve and budget["reserved_tokens"] == reserve
+
+
+def test_gui_query_limit_only_narrows_reserved_profile_output(monkeypatch):
+    from proxy.services.model_execution_preset_service import BackendCapacity, resolve_execution_preset
+    preset = resolve_execution_preset(
+        BackendCapacity("freetoken", "Qwen3.6-35B", 65536, True, "fixture"),
+        operator={"query_output_tokens": 16000, "answer_output_tokens": 24000},
+    )
+    _messages, packet = service.govern_inference_messages(
+        preset=preset, profile_prefix="profile", request_payload="question",
+    )
+    monkeypatch.setenv("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", "4096")
+    assert service.governed_query_generation_budget(preset, packet)["effective"] == 4096
+    monkeypatch.setenv("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", "65536")
+    assert service.governed_query_generation_budget(preset, packet)["effective"] == 16000
+    assert packet.generation_reserve_tokens == preset.generation_reserve_tokens == 16000
+    assert preset.diagnostics()["answer_output_tokens"]["effective"] == 24000
+
+
 def test_cloud_fallback_re_resolves_and_repacks_before_local_provider() -> None:
     source = inspect.getsource(service._execute_chat_evidence_application)
 
@@ -2624,7 +2669,7 @@ def test_cloud_fallback_re_resolves_and_repacks_before_local_provider() -> None:
     send_at = source.index("fallback_body = {")
     assert resolve_at < repack_at < send_at
     assert '"messages": fallback_messages' in source
-    assert "fallback_preset.generation_reserve_tokens" in source
+    assert "fallback_answer_preset.generation_reserve_tokens" in source
     assert 'purpose="answer_fallback"' in source
 
 
@@ -2949,12 +2994,15 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
         "normal_unscoped",
         "selector_overflow",
         "cloud_retry",
+        "cloud_retry_output_budgets",
         "active",
+        "active_output_budgets",
         "active_web_research",
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
         "active_model_rag_result",
+        "active_model_rag_output_budgets",
         "active_model_rag_recovery",
         "candidate_workbook",
         "shadow_workbook",
@@ -2967,12 +3015,15 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     scenario,
 ) -> None:
     selector_overflow = scenario == "selector_overflow"
-    cloud_retry = scenario == "cloud_retry"
+    cloud_retry = scenario in {"cloud_retry", "cloud_retry_output_budgets"}
+    fallback_budgets = scenario == "cloud_retry_output_budgets"
+    output_budgets = scenario in {"active_model_rag_output_budgets", "active_output_budgets"}
     workbook_profile = scenario in {
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
         "active_model_rag_result",
+        "active_model_rag_output_budgets",
         "active_model_rag_recovery",
         "candidate_workbook",
         "shadow_workbook",
@@ -2983,6 +3034,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "active_workbook_private_arg",
         "active_workbook_rejected",
         "active_model_rag_result",
+        "active_model_rag_output_budgets",
         "active_model_rag_recovery",
         "candidate_workbook",
     }
@@ -2991,21 +3043,25 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     model_rag_recovery = scenario == "active_model_rag_recovery"
     model_rag_result = scenario in {
         "active_model_rag_result",
+        "active_model_rag_output_budgets",
         "active_model_rag_recovery",
     }
     active_web_research = scenario == "active_web_research"
     active = scenario in {
         "active",
+        "active_output_budgets",
         "active_web_research",
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
         "active_model_rag_result",
+        "active_model_rag_output_budgets",
         "active_model_rag_recovery",
         "candidate_workbook",
     }
     inactive_workbook = workbook_profile and not active
     model_calls = []
+    model_bodies = []
     shortlist_policies = []
     shadow_calls = []
     executor_codes = []
@@ -3067,6 +3123,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             return False
 
         async def post(self, _url, *, json, **_kwargs):
+            model_bodies.append((_url, json))
             system_text = str(json["messages"][0]["content"])
             if "исследовательским чтением LES" in system_text:
                 model_calls.append("selector")
@@ -3430,6 +3487,20 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 preset_id="active-preset",
             ),
         )
+        if output_budgets:
+            from proxy.services import freetoken_cache_profile_service as cache_profiles
+
+            active_connection.model_id = "Qwen3.6-35B"
+            active_connection.extension_type = "freetoken"
+            active_connection.requested_context_tokens = 65536
+            # The saved preset is deliberately stale. The real chat must resolve
+            # the observed KV, then reapply the immutable profile budgets.
+            monkeypatch.setattr(
+                cache_profiles, "align_freetoken_cache_for_turn",
+                lambda *_args, **_kwargs: {"status": "aligned", "effective_kv_tokens": 65536,
+                                          "desired_kv_tokens": 65536},
+            )
+            monkeypatch.delenv("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", raising=False)
 
         class ActiveResolver:
             def resolve(self, role, **_kwargs):
@@ -3600,14 +3671,28 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 reason="fixture cloud route",
             ),
         )
-        monkeypatch.setattr(
-            service,
-            "resolve_transport_execution_profile",
-            lambda *, provider, **_kwargs: _governor_preset(
-                input_tokens=12_000 if provider == "openai" else 6_000,
-                preset_id="cloud-large" if provider == "openai" else "local-restrictive",
-            ),
-        )
+        if fallback_budgets:
+            from dataclasses import replace
+            from proxy.services.model_execution_preset_service import apply_output_budget_policy
+
+            def fallback_budget_preset(*, provider, operator=None, **_kwargs):
+                preset = replace(
+                    _governor_preset(input_tokens=12000 if provider == "openai" else 6000,
+                                     preset_id="cloud-large" if provider == "openai" else "local-restrictive"),
+                    generation_reserve_tokens=1200, output_capacity_observed=provider == "openai",
+                )
+                return apply_output_budget_policy(preset, operator)
+
+            monkeypatch.setattr(service, "resolve_transport_execution_profile", fallback_budget_preset)
+        else:
+            monkeypatch.setattr(
+                service,
+                "resolve_transport_execution_profile",
+                lambda *, provider, **_kwargs: _governor_preset(
+                    input_tokens=12_000 if provider == "openai" else 6_000,
+                    preset_id="cloud-large" if provider == "openai" else "local-restrictive",
+                ),
+            )
     if selector_overflow:
         original_govern = service.govern_inference_messages
 
@@ -3690,6 +3775,10 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 else {"iterative": False}
             ),
             "prompt_text": "Answer only from evidence.",
+            "model_policy": ({"query_output_tokens": 16000, "answer_output_tokens": 24000,
+                              "reasoning_enabled": True, "temperature": 0.15}
+                             if output_budgets else {"query_output_tokens": 700, "answer_output_tokens": 9000}
+                             if fallback_budgets else {}),
         },
     )
 
@@ -3812,6 +3901,14 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 
     result = await service.run_chat_evidence_application(request, runtime, boundary)
 
+    if output_budgets and not model_rag_result:
+        assert active_transport.requests[-1].max_output_tokens == 24000
+        trace = history_rows[0]["retrieval_trace"]
+        assert trace["model_execution_profile"]["answer_output_tokens"]["effective"] == 24000
+        packet = next(call for call in trace["context_governor"]["calls"] if call["purpose"] == "answer")
+        assert packet["generation_reserve_tokens"] == 24000
+        assert packet["input_budget_tokens"] == 65536 - 24000 - 2048
+
     after_protected = protected_hash()
     if active_web_research:
         expected_answer = "Цемент — 650 руб.; арматура — 72 000 руб./т."
@@ -3884,6 +3981,23 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert history_rows[0]["retrieval_trace"]["source_map"] == result["source_map"]
         assert "rounds" not in tool_loop
         assert len(active_transport.requests) == 2
+        if output_budgets:
+            assert [call.max_output_tokens for call in active_transport.requests] == [16000, 24000]
+            assert [call.temperature for call in active_transport.requests] == [0, 0.15]
+            assert all(call.reasoning_enabled is True for call in active_transport.requests)
+            assert active_connection.requested_context_tokens == 65536
+            assert active_connection.effective_preset.input_token_limit == 6000
+            trace = history_rows[0]["retrieval_trace"]
+            assert trace["model_execution_profile"]["context_input_tokens"]["effective"] == 65536
+            assert trace["model_execution_profile"]["query_output_tokens"]["effective"] == 16000
+            assert trace["model_execution_profile"]["answer_output_tokens"]["effective"] == 24000
+            calls = trace["context_governor"]["calls"]
+            query_packet = next(call for call in calls if call["purpose"] == "model_rag_queries")
+            answer_packet = next(call for call in calls if call["purpose"] == "answer")
+            assert query_packet["generation_reserve_tokens"] == 16000
+            assert answer_packet["generation_reserve_tokens"] == 24000
+            assert query_packet["input_budget_tokens"] == 65536 - 16000 - 2048
+            assert answer_packet["input_budget_tokens"] == 65536 - 24000 - 2048
         assert history_rows[0]["retrieval_trace"]["norm_quality_gate"] == {
             "schema": "les.lsr-norm-quality-gate.v1",
             "status": "not_run",
@@ -3906,7 +4020,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "connection_id": "conn:active",
             "revision_id": "conn:active:r3",
             "display_name": "Active fixture",
-            "model_id": "active-model",
+            "model_id": "Qwen3.6-35B" if output_budgets else "active-model",
                 "locality": "loopback",
                 "fallback_used": False,
                 "pending_tool_calls": 0,
@@ -3955,7 +4069,9 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 assert trace["route_comparison"]["legacy_output_authoritative"] is False
         else:
             assert [call[1]["doc_id"] for call in legacy_calls] == ["d1", "d2"]
-        assert history_rows[0]["retrieval_trace"]["context_governor"]["preset_id"] == "active-preset"
+        assert history_rows[0]["retrieval_trace"]["context_governor"]["preset_id"] == (
+            "qwen-35b-extended" if output_budgets else "active-preset"
+        )
         assert after_protected == before_protected
         return
     assert result["answer"] == "legacy visible answer"
@@ -3967,6 +4083,17 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "local_final",
             "local_final",
         ]
+        if fallback_budgets:
+            trace = history_rows[0]["retrieval_trace"]
+            fallback_packet = next(call for call in trace["context_governor"]["calls"]
+                                   if call["purpose"] == "answer_fallback")
+            assert fallback_packet["generation_reserve_tokens"] == 1200
+            assert trace["model_execution_profile"]["query_output_tokens"]["effective"] == 700
+            assert trace["model_execution_profile"]["answer_output_tokens"]["effective"] == 1200
+            assert "unobserved_capacity_default" in trace["model_execution_profile"]["answer_output_tokens"]["source"]
+            assert trace["model_execution_profile"]["model_preset"]["requested"] == "local-fixture-model"
+            local_bodies = [body for url, body in model_bodies if "local.fixture" in url]
+            assert [body["max_tokens"] for body in local_bodies] == [1200, 1200]
         calls = history_rows[0]["retrieval_trace"]["context_governor"]["calls"]
         assert [call["purpose"] for call in calls] == [
             "tool_decision",

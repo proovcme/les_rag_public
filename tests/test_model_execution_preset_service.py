@@ -1,5 +1,10 @@
+import pytest
+
 from proxy.services.model_execution_preset_service import (
     BackendCapacity,
+    apply_output_budget_policy,
+    model_rag_answer_execution_preset,
+    query_generation_budget,
     resolve_execution_preset,
 )
 
@@ -134,3 +139,101 @@ def test_preset_diagnostics_are_redacted_and_explain_effective_source():
     }
     assert "token" not in diagnostics
     assert "api_key" not in diagnostics
+
+
+@pytest.mark.parametrize("model_id,tokens,query_default,answer_default", [
+    ("qwen3.5:9b", 8192, 1200, 1200),
+    ("qwen3.5:9b", 32768, 4096, 8192),
+    ("Qwen3.6-35B", 65536, 4096, 8192),
+])
+def test_omitted_purpose_budgets_preserve_query_and_answer_defaults(
+    model_id, tokens, query_default, answer_default,
+):
+    preset = resolve_execution_preset(_capacity(model_id=model_id, tokens=tokens))
+    assert preset.generation_reserve_tokens == query_default
+    answer = model_rag_answer_execution_preset(preset, model_rag=True)
+    assert answer.generation_reserve_tokens == answer_default
+    ordinary_answer = model_rag_answer_execution_preset(preset, model_rag=False)
+    assert ordinary_answer.generation_reserve_tokens == query_default
+    assert ordinary_answer.source_chain == preset.source_chain
+    assert preset.diagnostics()["query_output_tokens"]["requested"] is None
+    assert answer.diagnostics()["answer_output_tokens"]["requested"] is None
+
+
+@pytest.mark.parametrize("policy,expected_query,expected_answer", [
+    ({"query_output_tokens": 16000}, 16000, 8192),
+    ({"answer_output_tokens": 24000}, 4096, 24000),
+    ({"query_output_tokens": 16000, "answer_output_tokens": 24000}, 16000, 24000),
+    ({"query_output_tokens": 700, "answer_output_tokens": 900}, 700, 900),
+])
+def test_explicit_purpose_budgets_are_independent_and_do_not_change_capacity(
+    policy, expected_query, expected_answer,
+):
+    base = resolve_execution_preset(_capacity(model_id="Qwen3.6-35B", tokens=65536))
+    preset = apply_output_budget_policy(base, policy)
+    answer = model_rag_answer_execution_preset(preset, model_rag=True)
+    assert preset.generation_reserve_tokens == expected_query
+    assert answer.generation_reserve_tokens == expected_answer
+    for value in (preset, answer):
+        assert value.input_token_limit == base.input_token_limit == 65536
+        assert value.safety_reserve_tokens == base.safety_reserve_tokens
+        assert value.reasoning_enabled == base.reasoning_enabled
+        assert value.max_tools == base.max_tools
+    assert apply_output_budget_policy(preset, policy) == preset
+    assert query_generation_budget(preset, reserved_tokens=expected_query)["effective"] == (
+        expected_query if "query_output_tokens" in policy else 1600
+    )
+
+
+@pytest.mark.parametrize("field", ["query_output_tokens", "answer_output_tokens"])
+@pytest.mark.parametrize("value", [True, False, 0, -1, 1.5, "4096", None, {}])
+def test_invalid_profile_output_budget_is_rejected_without_coercion(field, value):
+    with pytest.raises(ValueError, match=field + ":"):
+        resolve_execution_preset(_capacity(), operator={field: value})
+
+
+def test_observed_output_budget_respects_narrowed_window_safety_and_input_headroom():
+    preset = resolve_execution_preset(
+        _capacity(model_id="Qwen3.6-35B", tokens=65536),
+        operator={"input_tokens": 35000, "query_output_tokens": 65536,
+                  "answer_output_tokens": 65536},
+        restrictions={"input_tokens": 12000},
+    )
+    answer = model_rag_answer_execution_preset(preset, model_rag=True)
+    expected = 12000 - preset.safety_reserve_tokens - 1024
+    assert preset.input_token_limit == 12000
+    assert preset.generation_reserve_tokens == answer.generation_reserve_tokens == expected
+    for field in ("query_output_tokens", "answer_output_tokens"):
+        diagnostic = answer.diagnostics()[field]
+        assert diagnostic["requested"] == 65536 and diagnostic["effective"] == expected
+        assert "effective_context_window" in diagnostic["source"]
+        assert diagnostic["restart_required"] is False
+
+
+def test_unobserved_capacity_cannot_widen_unproven_purpose_defaults():
+    preset = resolve_execution_preset(
+        _capacity(model_id="Qwen3.6-35B", tokens=None, observed=False),
+        operator={"input_tokens": 65536, "query_output_tokens": 16000,
+                  "answer_output_tokens": 24000},
+    )
+    answer = model_rag_answer_execution_preset(preset, model_rag=True)
+    assert preset.input_token_limit == 65536
+    assert preset.generation_reserve_tokens == 1200
+    assert answer.generation_reserve_tokens == 8192
+    for field in ("query_output_tokens", "answer_output_tokens"):
+        assert "unobserved_capacity_default" in answer.diagnostics()[field]["source"]
+
+
+def test_low_observed_kv_clamps_explicit_output_and_preserves_positive_input():
+    preset = resolve_execution_preset(
+        _capacity(model_id="Qwen3.6-35B", tokens=2048),
+        operator={"query_output_tokens": 16000, "answer_output_tokens": 24000},
+    )
+    answer = model_rag_answer_execution_preset(preset, model_rag=True)
+    assert preset.generation_reserve_tokens == answer.generation_reserve_tokens == 512
+    assert preset.input_token_limit - preset.safety_reserve_tokens - preset.generation_reserve_tokens == 1024
+
+
+def test_explicit_output_budget_fails_clearly_when_window_has_no_input_headroom():
+    with pytest.raises(ValueError, match="Недостаточно контекста"):
+        resolve_execution_preset(_capacity(tokens=1024), operator={"query_output_tokens": 1})

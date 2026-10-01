@@ -1,5 +1,13 @@
 # RAG evidence flow
 
+863 добавляет явные profile query/answer output budgets внутри того же
+подтверждённого окна. Governor учитывает каждый до упаковки evidence/native
+schemas; provider max_output_tokens ограничен diagnostic reserve, а model-RAG
+использует весь выбранный резерв. Ordinary notebook/inventory caps сохранены.
+Defaults и профессиональные решения не изменяются. 861 reasoning B0/B1
+не дали final/XLSX из-за `length`; это технический отказ, не отсутствие норм.
+[Поля профиля и границы](chat-profiles.md). Fresh live acceptance пока открыта.
+
 Кандидат **861**; установлен runtime **860**. Свежий B0 860 выдал файл с
 правильным переносом ячеек и арифметикой, но необоснованными авторскими нормами;
 B1 удержал malformed proposals и не выдал XLSX. Клиентская приёмка FAILED.

@@ -589,6 +589,9 @@ def publish_profile_revision(
         raise ValueError("Название версии профиля не задано")
     if "reasoning_enabled" in (model_policy or {}) and not isinstance(model_policy["reasoning_enabled"], bool):
         raise ValueError("reasoning_enabled must be a boolean")
+    from proxy.services.model_execution_preset_service import validate_output_budget_policy
+
+    validate_output_budget_policy(model_policy or {})
     selected_tools = list(dict.fromkeys(str(item).strip() for item in tools if str(item).strip()))
     unknown = sorted(set(selected_tools) - _tool_names())
     if unknown:

@@ -3140,7 +3140,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 11874,
+      "lines": 11881,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3229,12 +3229,13 @@
         "tests/test_profiles_router.py",
         "tests/test_workbook_tool_contracts.py"
       ],
-      "lines": 916,
+      "lines": 919,
       "module": "proxy.services.chat_profile_service",
       "outbound": [
         "backend/rag_config.py",
         "proxy/__init__.py",
         "proxy/services/__init__.py",
+        "proxy/services/model_execution_preset_service.py",
         "proxy/services/prompt_registry_service.py",
         "proxy/services/system_dataset_service.py",
         "proxy/services/tool_harness_service.py"
@@ -4241,6 +4242,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "sovushka/components/header.py",
+        "tests/test_chat_evidence_application_service.py",
         "tests/test_freetoken_cache_profile_service.py",
         "tests/test_freetoken_provider.py"
       ],
@@ -5351,6 +5353,7 @@
       "inbound": [
         "proxy/routers/settings.py",
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/chat_profile_service.py",
         "proxy/services/context_governor_service.py",
         "proxy/services/freetoken_cache_profile_service.py",
         "proxy/services/llm_transport_profile_service.py",
@@ -5367,7 +5370,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 273,
+      "lines": 396,
       "module": "proxy.services.model_execution_preset_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6677,7 +6680,7 @@
         "tests/test_model_reasoning_control.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 458,
+      "lines": 460,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -8804,7 +8807,7 @@
         "sovushka_ng.py",
         "tests/test_profiles_ui.py"
       ],
-      "lines": 554,
+      "lines": 587,
       "module": "sovushka.pages.profiles",
       "outbound": [
         "sovushka/__init__.py",
@@ -9752,7 +9755,7 @@
     },
     {
       "inbound": [],
-      "lines": 5388,
+      "lines": 5515,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -9762,6 +9765,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/context_governor_service.py",
         "proxy/services/fgis_price_service.py",
+        "proxy/services/freetoken_cache_profile_service.py",
         "proxy/services/model_answer_table_service.py",
         "proxy/services/model_connection_contracts.py",
         "proxy/services/model_execution_preset_service.py",
@@ -9847,7 +9851,7 @@
     },
     {
       "inbound": [],
-      "lines": 455,
+      "lines": 490,
       "module": "tests.test_chat_profile_service",
       "outbound": [
         "proxy/services/chat_profile_service.py"
@@ -12067,7 +12071,7 @@
     },
     {
       "inbound": [],
-      "lines": 136,
+      "lines": 239,
       "module": "tests.test_model_execution_preset_service",
       "outbound": [
         "proxy/services/model_execution_preset_service.py"
@@ -12706,7 +12710,7 @@
     },
     {
       "inbound": [],
-      "lines": 105,
+      "lines": 126,
       "module": "tests.test_profiles_ui",
       "outbound": [
         "sovushka/pages/chat.py",
@@ -13747,7 +13751,7 @@
     },
     {
       "inbound": [],
-      "lines": 329,
+      "lines": 345,
       "module": "tests.test_runtime_config_registry_service",
       "outbound": [
         "proxy/services/runtime_config_registry_service.py"
@@ -19988,7 +19992,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 683,
     "tracked_python_files": 1063,
-    "tracked_python_lines": 368650
+    "tracked_python_lines": 369120
   },
   "warnings": []
 }

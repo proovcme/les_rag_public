@@ -1,5 +1,13 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+863 output budget regressions: строгая profile валидация/round-trip и UI/registry
+113 passed; preset и реальные mocked chat call-boundary проверки включают
+post-cache capacity refresh, native-tool overhead, разделение query/answer,
+unobserved clamp и неизменные defaults. Fixtures — механические доказательства,
+не live professional acceptance. Live 861 JSON reasoning B0: 350.61s, answer
+length/no final; B1: 86.89s, query4095/4096 length/no final, 19 remaining paused.
+Professional/financial для них N/A_NO_FINAL_RESULT/NO_ARTIFACT, не missing norms.
+
 Кандидат **862**, установлен runtime **861**. Executable PowerShell regression
 в `tests/test_installer_windows.py` проверяет occupied/free explicit/implicit
 ports release smoke против production controls без реальных stop/listeners.

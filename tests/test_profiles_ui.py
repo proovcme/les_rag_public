@@ -6,6 +6,25 @@ from sovushka.pages import chat as chat_page
 from sovushka.pages import profiles as profiles_page
 
 
+def test_output_budget_editing_clears_auto_without_losing_other_profile_settings():
+    draft = {"model_policy": {"temperature": 0.0, "reasoning_enabled": True}}
+    profiles_page.set_model_output_budget(draft, "query_output_tokens", "8192")
+    profiles_page.set_model_output_budget(draft, "answer_output_tokens", "32768")
+    assert draft["model_policy"] == {
+        "temperature": 0.0, "reasoning_enabled": True,
+        "query_output_tokens": 8192, "answer_output_tokens": 32768,
+    }
+    profiles_page.set_model_output_budget(draft, "query_output_tokens", None)
+    assert "query_output_tokens" not in draft["model_policy"]
+    assert draft["model_policy"]["answer_output_tokens"] == 32768
+
+
+def test_invalid_output_budget_is_retained_for_visible_api_validation():
+    draft = {"model_policy": {"answer_output_tokens": 8192}}
+    profiles_page.set_model_output_budget(draft, "answer_output_tokens", "8192.5")
+    assert draft["model_policy"]["answer_output_tokens"] == "8192.5"
+
+
 def test_chat_exposes_four_canonical_profiles_with_agent_default():
     assert chat_page.visible_chat_modes() == (
         "search",
@@ -60,6 +79,8 @@ def test_profiles_page_uses_bundled_markdown_editor_and_explicit_actions():
         "Удалить редакцию",
         "Температура модели",
         "Рассуждение модели",
+        "Лимит составления поисковых запросов, токенов",
+        "Лимит итогового ответа, токенов",
         "Только по источникам",
         "Удалить",
     ):

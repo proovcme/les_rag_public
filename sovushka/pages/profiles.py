@@ -23,6 +23,18 @@ from sovushka.uikit.components import (
 MODE_ORDER = ("search", "agent", "estimator", "engineer")
 
 
+def set_model_output_budget(draft: dict[str, Any], key: str, value: Any) -> None:
+    """Keep auto unset and let the API reject invalid input without silent coercion."""
+    if key not in {"query_output_tokens", "answer_output_tokens"}:
+        raise ValueError("Unknown output budget field")
+    policy = draft.setdefault("model_policy", {})
+    text = str(value if value is not None else "").strip()
+    if not text:
+        policy.pop(key, None)
+    else:
+        policy[key] = int(text) if text.isascii() and text.isdecimal() else text
+
+
 def profile_text_budget(
     registry: dict[str, Any], kind: str, text: str
 ) -> dict[str, Any]:
@@ -478,6 +490,27 @@ def build_profiles():
                         "reasoning_enabled", bool(event.value)
                     )
                 )
+                for budget_key, budget_label in (
+                    ("query_output_tokens", "Лимит составления поисковых запросов, токенов"),
+                    ("answer_output_tokens", "Лимит итогового ответа, токенов"),
+                ):
+                    budget_field = text_field(
+                        label=budget_label,
+                        value=str((draft.get("model_policy") or {}).get(budget_key, "")),
+                        placeholder="Авто",
+                        clearable=True,
+                        classes="w-full",
+                    ).props("type=number min=1 step=1")
+                    budget_field.tooltip(
+                        "Пустое значение сохраняет стандартный лимит. Рассуждение и готовый "
+                        "ответ используют общий лимит этапа. Значение ограничено подтверждённым "
+                        "окном подключения; окно модели не увеличивается. Больший резерв ответа "
+                        "оставляет меньше места источникам и может увеличить время. "
+                        "Применяется с выбранной версией профиля без перезапуска."
+                    )
+                    budget_field.on_value_change(
+                        lambda event, key=budget_key: set_model_output_budget(draft, key, event.value)
+                    )
                 with ui.row().classes("w-full gap-4 flex-wrap"):
                     grounded = ui.switch(
                         "Только по источникам",

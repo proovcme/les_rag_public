@@ -123,6 +123,41 @@ def test_estimator_profile_system_dataset_is_added_to_frozen_scope():
     assert resolved == ["project-dataset", "fsnb-dataset"]
 
 
+@pytest.mark.parametrize("field", ["query_output_tokens", "answer_output_tokens"])
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "8192", None])
+def test_profile_rejects_invalid_output_budgets_before_writing_revision(tmp_path, field, value):
+    db = tmp_path / "meta.db"
+    initial = registry_snapshot(db_path=db)
+    profile = next(item for item in initial["profiles"] if item["mode"] == "estimator")["active"]
+    with pytest.raises(ValueError, match=field):
+        publish_profile_revision(
+            mode="estimator", name="Invalid budget",
+            prompt_revision_id=profile["prompt_revision_id"],
+            skill_revision_id=profile["skill_revision_id"], tools=profile["tools"],
+            model_policy={field: value}, rag_policy=profile["rag_policy"], db_path=db,
+        )
+    assert registry_snapshot(db_path=db) == initial
+
+
+def test_profile_output_budget_revision_round_trip_preserves_other_settings(tmp_path):
+    db = tmp_path / "meta.db"
+    initial = registry_snapshot(db_path=db)
+    profile = next(item for item in initial["profiles"] if item["mode"] == "estimator")["active"]
+    policy = {**profile["model_policy"], "reasoning_enabled": True,
+              "query_output_tokens": 8192, "answer_output_tokens": 32768}
+    revision = publish_profile_revision(
+        mode="estimator", name="Controlled output budgets",
+        prompt_revision_id=profile["prompt_revision_id"], skill_revision_id=profile["skill_revision_id"],
+        tools=profile["tools"], model_policy=policy, rag_policy=profile["rag_policy"], db_path=db,
+    )
+    assert revision["model_policy"] == policy
+    assert revision["prompt_text"] == profile["prompt_text"]
+    assert revision["skill_text"] == profile["skill_text"]
+    assert resolve_chat_profile(session_id="original", requested_mode="estimator", db_path=db)["revision_id"] == profile["revision_id"]
+    activate_profile_revision("estimator", revision["revision_id"], db_path=db)
+    assert resolve_chat_profile(session_id="controlled", requested_mode="estimator", db_path=db)["model_policy"] == policy
+
+
 def test_legacy_user_estimator_profile_gets_effective_model_authored_query_policy(tmp_path):
     db = tmp_path / "meta.db"
     snapshot = registry_snapshot(db_path=db)

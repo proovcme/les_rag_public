@@ -206,10 +206,26 @@ def test_context_factors_are_registered_with_effective_source() -> None:
         "generation_reserve",
         "safety_reserve",
         "reasoning",
+        "query_output_tokens",
+        "answer_output_tokens",
     }
     assert all("effective" in row and "source" in row for row in rows)
     assert all(row["mutable"] is False for row in rows)
     assert next(row for row in rows if row["id"] == "model_preset")["operator_action"] == "profile_clone"
+
+
+def test_profile_output_budgets_show_requested_clamped_value_and_profile_action():
+    rows = registry.runtime_factor_rows({
+        "query_output_tokens": {"requested": 8192, "effective": 8192, "source": "profile_model_policy"},
+        "answer_output_tokens": {"requested": 100000, "effective": 62464, "source": "observed_window_clamp"},
+    })
+    by_id = {row["id"]: row for row in rows}
+    assert by_id["answer_output_tokens"]["requested"] == 100000
+    assert by_id["answer_output_tokens"]["effective"] == 62464
+    assert by_id["answer_output_tokens"]["source"] == "observed_window_clamp"
+    for key in ("query_output_tokens", "answer_output_tokens"):
+        assert by_id[key]["operator_action"] == "profile_clone"
+        assert by_id[key]["restart_required"] is False
 
 
 def test_registry_requires_exact_danger_confirmation(isolated_registry):

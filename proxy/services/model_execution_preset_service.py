@@ -36,10 +36,33 @@ class ModelExecutionPreset:
     reasoning_requested: bool = False
     reasoning_source: str = "factory_default"
     reasoning_supported: bool = False
+    default_generation_reserve_tokens: int | None = None
+    output_capacity_observed: bool = False
+    query_output_tokens_requested: int | None = None
+    query_generation_reserve_tokens: int | None = None
+    query_output_tokens_source: str = "factory_default"
+    answer_output_tokens_requested: int | None = None
+    answer_output_tokens_effective: int | None = None
+    answer_output_tokens_source: str = "factory_default"
+    output_purpose: str = "query"
 
     def diagnostics(self, *, requested_input_tokens: int | None = None) -> dict[str, Any]:
         """Return operator-safe requested/effective/source values."""
         source = " > ".join(self.source_chain)
+        query_budget = query_generation_budget(
+            self,
+            reserved_tokens=self.query_generation_reserve_tokens or self.generation_reserve_tokens,
+        )
+        answer_budget = {
+            "requested": self.answer_output_tokens_requested,
+            "effective": self.answer_output_tokens_effective or self.generation_reserve_tokens,
+            "source": self.answer_output_tokens_source,
+            "restart_required": False,
+        }
+        reserve_requested = (self.answer_output_tokens_requested if self.output_purpose == "answer"
+                             else self.query_output_tokens_requested)
+        reserve_source = (self.answer_output_tokens_source if self.output_purpose == "answer"
+                          else self.query_output_tokens_source)
         return {
             "model_preset": {
                 "requested": self.model_family,
@@ -54,11 +77,13 @@ class ModelExecutionPreset:
                 "restart_required": False,
             },
             "generation_reserve": {
-                "requested": None,
+                "requested": reserve_requested,
                 "effective": self.generation_reserve_tokens,
-                "source": source,
+                "source": reserve_source if reserve_requested is not None else source,
                 "restart_required": False,
             },
+            "query_output_tokens": query_budget,
+            "answer_output_tokens": answer_budget,
             "safety_reserve": {
                 "requested": None,
                 "effective": self.safety_reserve_tokens,
@@ -109,6 +134,7 @@ MIN_EXTENDED_35B_CONTEXT_TOKENS = 16384
 _MIN_EXTENDED_GENERATION_CONTEXT_TOKENS = MIN_EXTENDED_35B_CONTEXT_TOKENS
 _EXTENDED_GENERATION_RESERVE_TOKENS = 4096
 _PROVEN_RESTRICTIVE_CONTEXT_TOKENS = 32768
+MIN_OUTPUT_BUDGET_INPUT_HEADROOM_TOKENS = 1024
 
 
 def is_qwen_35b(model_id: str) -> bool:
@@ -216,10 +242,102 @@ def resolve_execution_preset(
         resolved = _narrow(resolved, restrictions)
         source_chain.append("workflow_profile_restrictions")
 
-    return apply_reasoning_policy(
-        replace(resolved, source_chain=tuple(source_chain), reasoning_supported=(
+    resolved = apply_reasoning_policy(
+        replace(resolved, source_chain=tuple(source_chain),
+                default_generation_reserve_tokens=resolved.generation_reserve_tokens,
+                output_capacity_observed=has_observed_capacity, reasoning_supported=(
             capacity.provider.strip().casefold() == "freetoken" or capacity.reasoning_supported
         )), operator, restrictions=restrictions
+    )
+    return apply_output_budget_policy(resolved, operator)
+
+
+def validate_output_budget_policy(policy: Mapping[str, Any] | None) -> None:
+    """Reject profile output limits before any persistent profile write."""
+    for field in ("query_output_tokens", "answer_output_tokens"):
+        if field not in (policy or {}):
+            continue
+        value = policy[field]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{field}: значение должно быть положительным целым числом")
+
+
+def _bounded_output_budget(
+    preset: ModelExecutionPreset, *, requested: int | None, default: int, source: str,
+) -> tuple[int, str]:
+    if requested is None:
+        return default, source
+    effective = requested
+    if not preset.output_capacity_observed and effective > default:
+        effective = default
+        source += " > unobserved_capacity_default"
+    maximum = (preset.input_token_limit - preset.safety_reserve_tokens
+               - MIN_OUTPUT_BUDGET_INPUT_HEADROOM_TOKENS)
+    if maximum < 1:
+        raise ValueError(
+            "Недостаточно контекста для лимита вывода: после резерва безопасности "
+            "нужно сохранить не менее 1024 токенов для входных данных"
+        )
+    if effective > maximum:
+        effective = maximum
+        source += " > effective_context_window"
+    return effective, source
+
+
+def apply_output_budget_policy(
+    preset: ModelExecutionPreset, policy: Mapping[str, Any] | None,
+) -> ModelExecutionPreset:
+    """Reserve explicit purpose output inside the existing effective total window.
+
+    A requested context window is not observed capacity. Without observation,
+    an explicit budget may narrow its purpose default but cannot widen it.
+    """
+    validate_output_budget_policy(policy)
+    values = policy or {}
+    default = preset.default_generation_reserve_tokens or preset.generation_reserve_tokens
+    query_requested = values.get("query_output_tokens")
+    answer_requested = values.get("answer_output_tokens")
+    query_reserve, query_source = _bounded_output_budget(
+        preset, requested=query_requested, default=default,
+        source="profile_model_policy.query_output_tokens" if query_requested is not None else "factory_default",
+    )
+    answer_reserve, answer_source = _bounded_output_budget(
+        preset, requested=answer_requested, default=default,
+        source="profile_model_policy.answer_output_tokens" if answer_requested is not None else "factory_default",
+    )
+    return replace(
+        preset, generation_reserve_tokens=query_reserve,
+        default_generation_reserve_tokens=default,
+        query_output_tokens_requested=query_requested,
+        query_generation_reserve_tokens=query_reserve,
+        query_output_tokens_source=query_source,
+        answer_output_tokens_requested=answer_requested,
+        answer_output_tokens_effective=answer_reserve,
+        answer_output_tokens_source=answer_source,
+        output_purpose="query",
+    )
+
+
+def model_rag_answer_execution_preset(
+    preset: ModelExecutionPreset, *, model_rag: bool,
+) -> ModelExecutionPreset:
+    """Select the answer reserve before context and native-tool packing."""
+    default = preset.default_generation_reserve_tokens or preset.generation_reserve_tokens
+    source_chain = preset.source_chain
+    source = "factory_default"
+    if model_rag and preset.input_token_limit >= 32768:
+        default = max(default, 8192)
+        source = "model_rag_complete_answer"
+        source_chain = (*source_chain, source)
+    requested = preset.answer_output_tokens_requested
+    reserve, source = _bounded_output_budget(
+        preset, requested=requested, default=default,
+        source="profile_model_policy.answer_output_tokens" if requested is not None else source,
+    )
+    return replace(
+        preset, generation_reserve_tokens=reserve,
+        answer_output_tokens_effective=reserve, answer_output_tokens_source=source,
+        output_purpose="answer", source_chain=source_chain,
     )
 
 
@@ -250,8 +368,9 @@ def query_generation_budget(
     """Use only output space actually reserved by the query's ContextGovernor.
 
     Thinking and the final query list share the provider's output limit. Auto
-    preserves the ordinary 1600-token limit and permits an explicitly enabled
-    thinking profile to use its existing reserve, without enlarging context.
+    preserves the ordinary 1600-token limit unless the profile explicitly chooses
+    its query output budget. Thinking may use its existing reserve. Both cases
+    remain bounded by the actual packed reserve without enlarging context.
     """
     reserve = int(reserved_tokens)
     if reserve < 1:
@@ -265,6 +384,10 @@ def query_generation_budget(
         if requested < 1:
             raise ValueError("query output limit must be a positive integer")
         limit, source = requested, "operator_query_limit"
+    elif preset.query_output_tokens_requested is not None:
+        requested = preset.query_output_tokens_requested
+        limit = min(requested, preset.query_generation_reserve_tokens or reserve)
+        source = preset.query_output_tokens_source
     else:
         requested = None
         limit = reserve if preset.reasoning_enabled else 1600

@@ -1,5 +1,13 @@
 # UI KIT «Совушка»
 
+863: редактор профиля использует существующий `text_field` для независимых
+лимитов поискового и итогового ответа. Пустое значение — авто, положительное
+целое входит в immutable snapshot; API отвергает дробные/нулевые/строковые
+псевдочисла до записи. Подсказка объясняет общий лимит reasoning/final этапа,
+подтверждённое окно и меньший бюджет источников при большем резерве. Новые
+визуальные primitives, стили и restart не добавляются; live desktop/mobile
+проверка ещё открыта.
+
 857 installed UI/API verification: own VOR kind/file restored after restart, native download SHA exact; view=progress 17,908 bytes versus full 13,750,633, all authored state unchanged. Standard idle smoke passed; professional/financial customer acceptance remains failed (RELEASE_LEDGER).
 
 857 UI transport: `view=progress` on job/last/active drops only bulk

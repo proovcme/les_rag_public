@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **863:** `apply_output_budget_policy`/`model_rag_answer_execution_preset`
+> резервируют независимые query/answer outputs до Governor; actual provider
+> лимит не превышает резерв и может сужаться обязательным workflow cap.
+> `validate_output_budget_policy` применяется
+> до immutable profile write, `profiles.set_model_output_budget` сохраняет
+> auto unset и ошибочный ввод для видимого API reject. Два фактора видимы
+> в runtime registry. Capacity/model/sampling/professional выбор не изменяются.
+
 > **862 Windows release isolation:** `start-light.ps1` при release smoke
 > выбирает свободный порт без остановки работающего proxy/UI/adapter.
 > `build_tauri_app.tauri_build_environment` сохраняет Windows PATH entries

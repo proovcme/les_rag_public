@@ -1,5 +1,24 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.135 / 863; установлен runtime 861; бизнес-приёмка FAILED.**
+Ограничения 861 измерены: B0 reasoning query4034/4096 stop, но answer при
+8192 reserve length/no final (точный usage answer не сохранён); B1 query4095/
+4096 length, final пуст, paused checkpoint содержит все 19 remaining,
+RAG/accepted/missing=0. Тот же source/question/model/temperature/profile;
+operator profile после обоих контролей восстановлен. Independent audits:
+`artifacts/live_861/bap_lsr_json_{baseline,reasoning,reasoning_candidate}`.
+Это не доказательство отсутствия норм и не основание переписывать их кодом.
+863 даёт GUI-first раздельные profile output budgets до Governor packing,
+с observed-window clamps и неизменными defaults/model/KV/sampling. Profile/
+UI/registry focused113 passed; полный offline gate 863: verify exit0 (21.88s),
+canonical **2504 passed / 20 existing opt-in skipped / 5 warnings** (243.01s
+pytest), architecture exit0 (9.38s), pinned actual baseline exit0 (7.27s).
+Receipts: `artifacts/{verify,test,architecture,baseline}_863.exit.json`.
+Fresh live control ещё требуется. 862 installer
+реально прошёл prebundle, нашёл Rust и сохранил рабочие PID6920/21648 со
+старыми StartTime. Exact install/rollback/reinstall и профессиональный 300+
+gate остаются открыты, готовность заказчику не объявлена.
+
 **Кандидат 0.31.134 / 862; установлен runtime 861 (4bef6c7b); Tauri EXE 858.**
 Клиентская приёмка остаётся открыта. Exact patch 861: 16/16 SHA, native RRF
 exit0, basic release smoke exit0 после штатного восстановления. Первый smoke

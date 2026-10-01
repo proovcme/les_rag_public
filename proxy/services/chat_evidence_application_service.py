@@ -794,7 +794,8 @@ def tool_selector_request_payload(
         }
     return payload
 from proxy.services.model_execution_preset_service import (
-    ModelExecutionPreset, apply_reasoning_policy, query_generation_budget,
+    ModelExecutionPreset, apply_output_budget_policy, apply_reasoning_policy,
+    model_rag_answer_execution_preset, query_generation_budget,
 )
 from proxy.services.model_research_tool_service import (
     MATCHED_BEFORE_CAP_META_KEY as _MATCHED_BEFORE_CAP_META_KEY,
@@ -6877,6 +6878,13 @@ async def _execute_chat_evidence_application(
         else:
             execution_preset = resolved_connection.effective_preset
     execution_preset = apply_reasoning_policy(execution_preset, model_policy)
+    try:
+        execution_preset = apply_output_budget_policy(execution_preset, model_policy)
+    except ValueError as error:
+        raise HTTPException(400, detail={
+            "code": "INVALID_MODEL_OUTPUT_BUDGET",
+            "detail": str(error),
+        }) from error
     preset_diagnostics = execution_preset.diagnostics(
         requested_input_tokens=cache_state.get("desired_kv_tokens")
     )
@@ -8162,22 +8170,12 @@ async def _execute_chat_evidence_application(
                 # Reserving 4096 tokens unconditionally for model-authored rows made
                 # the profile + request overflow an 8K Qwen window before evidence
                 # could reach the model at all.
-                answer_execution_preset = execution_preset
-                if (
-                    model_driven_retrieval
-                    and answer_execution_preset.input_token_limit >= 32_768
-                ):
-                    answer_execution_preset = replace(
-                        answer_execution_preset,
-                        generation_reserve_tokens=max(
-                            answer_execution_preset.generation_reserve_tokens,
-                            8_192,
-                        ),
-                        source_chain=(
-                            *answer_execution_preset.source_chain,
-                            "model_rag_complete_answer",
-                        ),
-                    )
+                answer_execution_preset = model_rag_answer_execution_preset(
+                    execution_preset, model_rag=model_driven_retrieval,
+                )
+                retrieval_trace["model_execution_profile"]["answer_output_tokens"] = (
+                    answer_execution_preset.diagnostics()["answer_output_tokens"]
+                )
                 if (
                     sheet_pass_active
                     and model_driven_retrieval
@@ -10232,6 +10230,8 @@ async def _execute_chat_evidence_application(
                         attempt=attempt,
                         intent=answer_form.intent,
                     )
+                    if answer_execution_preset.answer_output_tokens_requested is not None:
+                        generation_budget = answer_execution_preset.generation_reserve_tokens
                     if notebook_study_prompt:
                         generation_budget = min(
                             generation_budget,
@@ -10313,9 +10313,12 @@ async def _execute_chat_evidence_application(
                             observed_source="cloud_fallback_unprobed",
                             operator=model_policy,
                         )
+                        fallback_answer_preset = model_rag_answer_execution_preset(
+                            fallback_preset, model_rag=False,
+                        )
                         try:
                             fallback_messages, fallback_packet = govern_inference_messages(
-                                preset=fallback_preset,
+                                preset=fallback_answer_preset,
                                 profile_prefix=sys_msg,
                                 request_payload=question_tail,
                                 checkpoint=answer_checkpoint,
@@ -10357,7 +10360,11 @@ async def _execute_chat_evidence_application(
                             fallback_preset.preset_id
                         )
                         execution_preset = fallback_preset
-                        answer_execution_preset = fallback_preset
+                        answer_execution_preset = fallback_answer_preset
+                        retrieval_trace["model_execution_profile"] = (
+                            fallback_answer_preset.diagnostics()
+                        )
+                        retrieval_trace["model_execution_profile"]["model_preset"]["requested"] = llm_runtime.model
                         headers = {}
                         retrieval_trace.setdefault("routing", {}).update(
                             {"cloud_fallback": type(net_err).__name__, "effective_provider": "mlx", "is_cloud": False}
@@ -10370,7 +10377,7 @@ async def _execute_chat_evidence_application(
                             "messages": fallback_messages,
                             "max_tokens": min(
                                 int(chat_body.get("max_tokens") or 0),
-                                fallback_preset.generation_reserve_tokens,
+                                fallback_answer_preset.generation_reserve_tokens,
                             ),
                         }
                         answer, usage = await _post_llm(

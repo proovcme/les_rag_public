@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 863; установлен 861, business acceptance FAILED:** явные profile
+> query/answer output reserves независимы, учитываются Governor до evidence,
+> ограничены observed effective окном, unobserved не разрешает расширение.
+> API валидирует положительные целые до записи, GUI использует `text_field`,
+> runtime/trace показывают requested/effective/source. Точки:
+> `model_execution_preset_service`, `chat_evidence_application_service`,
+> `chat_profile_service`, `runtime_config_registry_service`, `pages/profiles.py`.
+> Док↔код ✅; [chat profiles](modules/chat-profiles.md), [UI kit](modules/sovushka-uikit.md).
+
 > **Кандидат 862; установлен runtime 861, клиентская готовность открыта:**
 > Windows prebundle smoke больше не освобождает порты завершением рабочего
 > экземпляра; выбирает свободные порты. `tauri_build_environment` исправляет
