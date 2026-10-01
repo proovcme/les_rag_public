@@ -627,10 +627,10 @@ def load_tabular_source_catalog(
         rows: list[CatalogRow] = []
         section_context = ""
         for excel_row, raw in enumerate(csv.reader(text.splitlines(), delimiter=delimiter), 1):
-            values = tuple(
-                _compact_cell(item) for item in raw if str(item or "").strip()
-            )
-            if not values:
+            # CSV fields have physical column identity, including empty fields.
+            # Filtering them per row shifts quantities under adjacent headers.
+            values = tuple(_compact_cell(item) for item in raw)
+            if not any(values):
                 continue
             numbers = _numbers_in_values(values)
             row_class, reason, confidence, ambiguities = _classify_row(

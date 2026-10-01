@@ -99,7 +99,7 @@ def _cluster_columns(blocks: list[dict], page_width: float) -> list[list[dict]]:
 
 
 def _table_to_markdown(table) -> Optional[str]:
-    """find_tables → markdown PIPE-таблица. Чистим пустые/дублирующие строки и колонки."""
+    """find_tables → Markdown, preserving each cell's governing column."""
     try:
         rows = table.extract()
     except Exception:  # noqa: BLE001
@@ -137,27 +137,9 @@ def _table_to_markdown(table) -> Optional[str]:
 
     norm = [_dedup(r) for r in norm]
 
-    # Разреженная таблица (find_tables нередко накрывает грид-сеткой весь лист нормы:
-    # реальных данных мало, остальное — пустые ячейки). Сжимаем каждую строку до её
-    # непустых ячеек, выравнивая по максимальной ширине — данные сохраняются, а море
-    # `|  |  |` уходит. Ширину после сжатия пересчитываем.
-    cells_total = width * len(norm)
-    nonempty_total = sum(1 for r in norm for c in r if c)
-    if cells_total and nonempty_total / cells_total < 0.5:
-        squeezed = [[c for c in r if c] for r in norm]
-        squeezed = [r for r in squeezed if r]
-        if len(squeezed) < _MIN_TABLE_ROWS:
-            return None
-        width = max(len(r) for r in squeezed)
-        if width < _MIN_TABLE_COLS:
-            return None
-        norm = [r + [""] * (width - len(r)) for r in squeezed]
-        # Повторно дропаем пустые колонки, появившиеся от выравнивания по max-ширине.
-        keep2 = [j for j in range(width) if any(r[j] for r in norm)]
-        if len(keep2) < _MIN_TABLE_COLS:
-            return None
-        norm = [[r[j] for j in keep2] for r in norm]
-        width = len(keep2)
+    # Blank cells inside a row carry column identity. Removing them independently
+    # shifts quantities, masses and units under unrelated headers. Only the
+    # table-wide removal of wholly empty columns above is structurally safe.
 
     header = norm[0]
     body = norm[1:]

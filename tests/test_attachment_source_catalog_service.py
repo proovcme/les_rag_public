@@ -136,3 +136,27 @@ def test_markdown_table_parser_ignores_separator_and_prose():
     assert service._markdown_table_rows(
         "prose\n| A | B |\n| :--- | ---: |\n| x | 2 |\n"
     ) == [("A", "B"), ("x", "2")]
+
+
+def test_csv_empty_cells_keep_quantity_under_its_header(tmp_path):
+    import csv
+
+    for delimiter in (";", ","):
+        source = tmp_path / ("Разреженная спецификация " + str(ord(delimiter)) + ".csv")
+        with source.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.writer(stream, delimiter=delimiter)
+            writer.writerow(["№", "Наименование", "Тип", "Ед. изм.", "Количество", "Масса, кг"])
+            writer.writerow([1, "Монтаж изделия", "", "шт.", 25, 0.35])
+            writer.writerow(["", "", "", "", "", ""])
+            writer.writerow([2, "Монтаж изделия Б", "", "шт.", 14, ""])
+        catalog = service.load_tabular_source_catalog(source)
+        first = catalog.lookup("CSV!R2")
+        assert service.quantity_candidates(first) == (25.0,)
+        assert service.quantity_candidates(catalog.lookup("CSV!R4")) == (14.0,)
+        assert catalog.lookup("CSV!R3") is None
+        assert service.compare_model_row_to_catalog(
+            {"source_row": "CSV!R2", "quantity": 25, "unit": "шт."}, catalog
+        ) == []
+        assert "source_quantity_mismatch:CSV!R2" in service.compare_model_row_to_catalog(
+            {"source_row": "CSV!R2", "quantity": 0.35, "unit": "шт."}, catalog
+        )

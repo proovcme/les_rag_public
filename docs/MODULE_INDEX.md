@@ -1,12 +1,28 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.119 / 847:** `rag/pdf` сохраняет координаты пустых ячеек
+> разреженных таблиц; количества больше не сдвигаются под соседние заголовки.
+> CSV catalog исправляет ту же потерю пустых полей (`;` и `,`). Точки:
+> `pdf_layout._table_to_markdown`, `attachment_source_catalog_service`;
+> док [ALGO-pdf-layout](ALGO-pdf-layout.md), [ADR-15](ADR-15-model-rag-result.md).
+> Четыре regressions red before, focused 21 passed / 1 existing corpus-absent skip.
+> Оригинальные количества 25/14/43/25 подтверждаются reader после исправления.
+> Док↔код ✅; offline 2039 passed / 20 existing opt-in skipped, verify 2059,
+> compileall/version/architecture/active artifacts passed. Installed comparative
+> gate pending. Customer-ready нет.
+>
 > **Кандидат 0.31.118 / 846:** `intake/chat-attachment` обнаруживает image-only
 > DOCX по OOXML и возвращает OCR-required HTTP 422 до сохранения/chat; подписи
 > картинок не считаются содержимым исходника. Точки:
 > `chat_attachment_service.docx_is_image_only`, `datasets._prepare_read_attachment`;
 > док [ADR-15](ADR-15-model-rag-result.md), tests `test_datasets_router.py`.
 > Transitional/strict OOXML, смешанный текст и altChunk покрыты; 65 focused passed.
-> Installed gate pending; customer-ready не заявлено.
+> Installed 11/11 hashes; native RRF 1/1, basic 9 pass / 1 WARN / 0 fail,
+> immutable recovery same revisions/SHA/price basis. Extra mail gate 66 passed.
+> Fresh БАП B1/64K: 19/19 source rows, 467.8 с, 8 calculated positions;
+> полный расчёт не готов (4 norms missing, 7 applicability gaps, 18 price gaps).
+> Новый ЭОМ PDF показал общий дефект разреженных колонок, исправляемый в 847.
+> Customer-ready не заявлено.
 >
 > **0.31.117 / 845:** `core/chat-evidence` и workbook research store
 > version cache entries, refresh incompatible pending queries with the same

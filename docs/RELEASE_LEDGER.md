@@ -1,5 +1,44 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.119 / 847 (01.10, Codex):** исправлена измеренная потеря
+колонок в разреженном цифровом PDF. `pdf_layout._table_to_markdown` больше
+не сжимает каждую строку независимо: пустые ячейки сохраняют заголовки единиц,
+количества и массы. Table-wide empty-column removal остаётся. Тот же дефект
+подтверждён в CSV catalog: 25 принималось как соседняя масса 0.35 из-за удаления
+пустого поля. CSV сохраняет физические столбцы и пропускает только пустые строки.
+Четыре regressions red before (в том числе настоящий синтетический PDF и CSV
+с разделителями `;`/`,`); focused 21 passed /
+1 existing optional-corpus skip. На оригинальном ЭОМ reader снова подтверждает
+25/14/43/25 вместо пустых candidates. Строки/шифры моделью не заменяются.
+Offline: 2039 passed / 20 existing opt-in skipped / 5 warnings, 192.12 с;
+verify 2059 collected, compileall/version/architecture passed. Installed active
+base/FSEM/pricebook validation: 49818 norms, 1576 FSEM rows, 281223 prices, ok.
+Twelve bounded runtime files have preserved rollback_846_to_847; normalized
+previous committed source is checked before official force-copy (line endings).
+Installed comparative gate pending; customer-ready не объявлено.
+
+**Замер 846, exact a5b1c6c9 (01.10):** installed 11/11 patch hashes;
+native RRF 1/1; basic 9 pass / 1 diagnostics WARN / 0 fail; durable VOR/LSR
+recovery с прежними revisions/SHA и price basis, без model call. Дополнительный
+canonical mail gate 66 passed. Реальный image-only DOCX: HTTP 422 OCR-required
+вместо прежнего ложного 201; автоматическое OCR этим не реализовано.
+Capacity control: assigned 35B, visible connection r4/requested 65536,
+physical live 65536, feasible 393221, MoE 4025. БАП B0: 140.8 с, 19/19
+source rows, все нормы MISSING, 0 calculated. БАП B1: 467.8 с (737.2 с при 35K),
+19/19 source rows, 19 work / 10 material; все 29 объёмов/единиц совпадают с
+исходником; 15 named choices EXACT, но 7 с explicit unknown fact остаются
+unsubstantiated. 8 calculated positions; confirmed field 72684.14 / preliminary
+248451.80; 4 missing norms, 18 price gaps, estimate_complete=false. Шесть calls
+(2 query, 4 answer), вместо 20 на 35K. SPb3q2026 match exact. Revision
+rev_7a5ebac5c1d847c9ae890b89aeb893a2, 40644 bytes, SHA
+c509a57421261dc56018f3947aed437c5af903b33b917c900f801454c36f8c9b.
+EXACT/confirmed field не являются независимой профессиональной приёмкой.
+Новый ЭОМ PDF→ВОР B0: 269.1 с, model 76 rows / 38 source locators,
+packaged=false; полный исходник передан. Помимо модельных citation/unit gaps,
+приложение ошибочно отвергает реальные количества из-за PDF compaction.
+Own B1 control paused after diagnosis, checkpoint preserved; не объявляется
+зависанием или успехом. Receipts artifacts/live_846 and customer_corpus_2026_10_01.
+
 **Кандидат 0.31.118 / 846 (01.10, Codex):** read-intake DOCX больше не
 принимает подписи картинок за исходный текст. OOXML image-only body — HTTP 422
 с требованием OCR; real text with images и altChunk не блокируются этим guard.

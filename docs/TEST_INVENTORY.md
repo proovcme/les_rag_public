@@ -1,10 +1,27 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 847: four regressions reproduce sparse PDF/CSV row compaction losing quantity
+column identity. Two integration cases include an optional supplier, adjacent
+mass and different blank fields; a synthetic gridded PDF uses actual find_tables.
+CSV tests both delimiters and unchanged locators across a fully empty source row.
+Red before: 4 failed; after: PDF/catalog focused 21 passed / 1 existing skip for
+absent optional corpus. Original EOM project quantities now bind to their headers.
+Installed model comparison remains required, not inferred from these tests.
+Canonical gate 2039 passed / 20 existing opt-in skipped / 5 warnings; verify
+2059 collected, compileall/version/architecture and installed active-artifact
+semantic checks passed. No tests weakened and no dependencies changed.
+
 Build 846: image-only DOCX read-intake rejects converter image-label markup
 before persistence. Regression reproduced the false success before the fix;
 transitional/strict namespaces, real text plus image and altChunk are covered.
 Focused datasets/attachment gate 65 passed. Customer corpus preflight found
 the actual image-only DOCX and an unsupported RTF; this is not an OCR success.
+Canonical gate 2038 passed / 20 existing opt-in skipped; verify 2058 collected.
+Separate canonical mail gate 66 passed. Installed RRF 1/1 and basic 9 pass /
+1 diagnostics WARN / 0 fail; VOR/LSR recovery retains revisions, bytes and price
+basis. Same 35B/input 64K БАП: B0 no calculated rows; B1 19/19 source rows,
+8 calculated positions, 467.8 s. Full estimate remains incomplete. EOM B0
+source quantity failure is reproduced in the PDF parser regressions of 847.
 
 Build 845: legacy/foreign query-cache contracts (including empty hits) refresh
 without changing accepted operation revisions, cited evidence or held cursor;

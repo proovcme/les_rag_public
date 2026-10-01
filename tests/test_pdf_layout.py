@@ -105,6 +105,72 @@ def test_empty_or_garbage_table_rejected():
     assert pdf_layout._table_to_markdown(_FakeTable([["a", ""], ["b", ""]])) is None
 
 
+@pytest.mark.parametrize("supplier", ["", "Производитель"])
+def test_sparse_specification_keeps_header_quantity_column(tmp_path, monkeypatch, supplier):
+    """Blank optional cells must not move a quantity under another header."""
+    from proxy.services.attachment_source_catalog_service import (
+        compare_model_row_to_catalog,
+        load_tabular_source_catalog,
+        quantity_candidates,
+    )
+
+    class Table:
+        def extract(self):
+            return [
+                ["Поз.", "Наименование", "Тип", "Код", "Поставщик", "Ед. изм.", "Кол.", "Масса, кг", "Примечание"],
+                *[[f"Раздел {i}", "", "", "", "", "", "", "", ""] for i in range(1, 7)],
+                ["1.1", "Изделие А", "Тип А", "", supplier, "шт.", "25", "0.35", ""],
+                ["1.2", "Изделие Б", "", "", "", "шт.", "14", "", ""],
+            ]
+
+    markdown = pdf_layout._table_to_markdown(Table())
+    source = tmp_path / "Разреженная спецификация.pdf"
+    source.write_bytes(b"%PDF-fixture")
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path: markdown)
+    catalog = load_tabular_source_catalog(source)
+    assert quantity_candidates(catalog.lookup("PDF!R8")) == (25.0,)
+    assert quantity_candidates(catalog.lookup("PDF!R9")) == (14.0,)
+    assert compare_model_row_to_catalog(
+        {"source_row": "PDF!R8", "quantity": 25, "unit": "шт."}, catalog
+    ) == []
+    assert "source_quantity_mismatch:PDF!R8" in compare_model_row_to_catalog(
+        {"source_row": "PDF!R8", "quantity": 0.35, "unit": "шт."}, catalog
+    )
+
+
+def test_sparse_pdf_grid_keeps_empty_cells_in_place(tmp_path):
+    """Exercise the actual PDF table reader, including different empty columns."""
+    from proxy.services.attachment_source_catalog_service import _markdown_table_rows
+
+    doc = fitz.open()
+    page = doc.new_page(width=640, height=330)
+    grid = [
+        ["Item", "Name", "Type", "Code", "Supplier", "Unit", "Qty", "Mass", "Note"],
+        ["Section", "", "", "", "", "", "", "", ""],
+        ["Section2", "", "", "", "", "", "", "", ""],
+        ["Section3", "", "", "", "", "", "", "", ""],
+        ["1.1", "Product A", "Type A", "", "Vendor", "pcs", "25", "0.35", ""],
+        ["1.2", "Product B", "", "", "", "pcs", "14", "", ""],
+    ]
+    x0, y0, cw, rh = 30, 40, 65, 35
+    for ri, row in enumerate(grid):
+        for ci, value in enumerate(row):
+            if value:
+                page.insert_text((x0 + ci * cw + 3, y0 + ri * rh + 18), value, fontsize=8)
+    for ci in range(10):
+        page.draw_line((x0 + ci * cw, y0), (x0 + ci * cw, y0 + len(grid) * rh))
+    for ri in range(len(grid) + 1):
+        page.draw_line((x0, y0 + ri * rh), (x0 + 9 * cw, y0 + ri * rh))
+    source = tmp_path / "sparse grid.pdf"
+    doc.save(str(source))
+    doc.close()
+    rows = _markdown_table_rows(extract_layout_markdown(source))
+    first = next(row for row in rows if row[0] == "1.1")
+    second = next(row for row in rows if row[0] == "1.2")
+    assert first[5:8] == ("pcs", "25", "0.35")
+    assert second[5:8] == ("pcs", "14", "")
+
+
 def test_converter_fallback_when_layout_raises(tmp_path, monkeypatch):
     """Если layout-парсер падает, converter._parse_pdf откатывается на штатный путь."""
     from backend import converter
