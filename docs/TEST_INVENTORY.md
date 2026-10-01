@@ -1,5 +1,13 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 850: five regressions in `test_workbook_chat_refinement.py` cover review
+identities/source binding, resumed instruction/exact cited body, incomplete
+review baseline and no resurrection after a completed model result. Real SQLite
+jobs are reopened/inherited; record_packet keeps the old ID and next revision.
+Operator-confirmed data survive a new resume job. Focused 256 passed; canonical
+2051 passed / 20 existing opt-in skipped / 5 warnings, 197.43 seconds. Verify
+2071 collected, compileall/version/architecture green. Installed gate pending.
+
 Build 849: regression reproduces safe history dropping VOR source audit; all
 318 warning addresses survive repeat projection, status is partial. VOR repack
 retains lineage and returns VOR-specific readiness without LSR requirements.

@@ -1,5 +1,32 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.122 / 850 (01.10, Codex):** живой обычный пересмотр ЭОМ
+на 849 отверг 163 ранее опубликованных operation_id и 35 evidence_refs.
+Причина: reopen убирает accepted rows, но модель обязана сохранить их IDs;
+проверка и record_packet знали только новый accepted set. Review baseline,
+исходное замечание и точные цитированные карточки теперь читаются по lineage;
+валидация знает baseline IDs и сохраняет привязку к source, record_packet
+пишет следующую ревизию того же ID только для возвращённой моделью операции.
+Неизвестные IDs/перенос source по-прежнему запрещены. Очередь без accepted
+решений также наследуется; новое замечание во время partial review сохраняет
+непересмотренный baseline, после complete не восстанавливает удалённые операции.
+Пять regressions, включая потерю подтверждений оператора при новом resume job.
+Подтверждения также наследуются вместе с документом. Focused 256 passed;
+canonical 2051 passed / 20 existing opt-in skipped / 5 warnings, 197.43 с.
+Verify 2071 collected, compileall/version/architecture green; active base,
+FSEM и цены проверены по SHA/provenance. Installed live gates ожидаются.
+Контроль 849 остановлен оператором Codex: 786.8 с, 7 материалов / 5 из 51
+source locators, 46 remaining. Partial revision rev_04c61b609a0f4573a7ba42906ad75183,
+6593 bytes, SHA 9a4982a94b07a7b43be79b2f9424386c8f3d9d2f1dd76907dac98b3cdcc139c7.
+Он не считается зависанием, завершённой ВОР или финансовой приёмкой.
+
+**Замер 849, exact 8fc8ccd7 (01.10):** installed 11/11 commit/workspace/runtime
+patch hashes; native RRF 1/1; basic 9 pass / 1 diagnostics WARN / 0 fail;
+старые VOR/LSR revisions/bytes/SHA/basis неизменны. ЭОМ repack 29.53 с,
+83 неизменных model rows, 17 source warnings сохранены в API/replay/readiness.
+XLSX — черновик, не customer-ready. Свежий 300+ row model gate и точный
+Windows installer gate остаются открыты. artifacts/live_849/eom_repack.
+
 **Кандидат 0.31.121 / 849 (01.10, Codex):** installed 848 exposed loss of
 vor_source_errors through safe workbook history. Field now retains every
 source address, harvester/chat/readiness agree with XLSX; VOR repack returns

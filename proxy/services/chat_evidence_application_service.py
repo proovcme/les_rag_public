@@ -631,7 +631,38 @@ def begin_workbook_chat_review(service, job, question, source_locators):
         "request_sha256": hashlib.sha256(str(question).encode("utf-8")).hexdigest(),
         "message": str(question), "decision_author": "user", "review_scope": "document",
     }
-    return service.reopen_locators(job["job_id"], list(source_locators), chat_review=note)
+    prior_rows = None
+    if job.get("remaining") or job.get("held_packet"):
+        context = workbook_chat_review_context(service, job)
+        if context:
+            prior_rows = model_rag_existing_operation_rows(
+                job.get("accepted_rows") or (), context["prior_rows"])
+    return service.reopen_locators(job["job_id"], list(source_locators), chat_review=note,
+                                   review_prior_rows=prior_rows)
+
+
+def workbook_chat_review_context(service, job) -> dict[str, Any]:
+    """Read the latest user's review and its baseline across resume jobs."""
+    return service.chat_review_context(job["job_id"])
+
+
+def model_rag_existing_operation_rows(current_rows, review_rows=()) -> list[dict[str, Any]]:
+    """Known identities for context/validation; never restore accepted decisions.
+
+    A newer accepted revision wins over its review baseline. Rows without an
+    identity remain distinct; their contents are not guessed or reconciled.
+    """
+    rows: list[dict[str, Any]] = []
+    positions: dict[str, int] = {}
+    for row in (*review_rows, *current_rows):
+        identity = str(row.get("operation_id") or "")
+        if identity and identity in positions:
+            rows[positions[identity]] = dict(row)
+        else:
+            if identity:
+                positions[identity] = len(rows)
+            rows.append(dict(row))
+    return rows
 
 
 def terminal_research_packaging_rows(
@@ -4679,8 +4710,10 @@ def model_rag_evidence_page_state(
 
 def model_rag_prior_page_context(
     rows: Sequence[Mapping[str, Any]], evidence_chunks: Sequence[Any],
+    *, review_rows: Sequence[Mapping[str, Any]] = (), review_instruction: str = "",
 ) -> tuple[dict[str, Any], list[Any]]:
     """Replay authored rows and exactly their cited cards; never choose a norm."""
+    rows = model_rag_existing_operation_rows(rows, review_rows)
     cited = {
         str(identity) for row in rows
         for identity in (row.get("evidence_bindings") or {}).values()
@@ -4704,6 +4737,7 @@ def model_rag_prior_page_context(
             "content": chunk.content if owner == identity else _model_rag_shared_body_ref(f"global_evidence_id={owner}"),
         })
     return {
+        **({"review_instruction": review_instruction} if review_instruction else {}),
         # These diagnostics are application-derived projections of the same
         # authored fields/citations, not additional model choices. Repeating
         # their full citation dumps crowded out the next exact evidence group.
@@ -5288,6 +5322,7 @@ def validate_model_rag_result_structure(
     finish_reason: str = "",
     validate_evidence_refs: bool = True,
     existing_operation_rows: Sequence[Mapping[str, Any]] | None = None,
+    review_operation_rows: Sequence[Mapping[str, Any]] = (),
 ) -> list[str]:
     """Validate references before packaging without changing model decisions."""
 
@@ -5303,7 +5338,8 @@ def validate_model_rag_result_structure(
         )
     observed_keys: set[tuple[str, str, str, str]] = set()
     known_operations = {
-        str(row.get("operation_id")): row for row in (existing_operation_rows or ())
+        str(row.get("operation_id")): row for row in model_rag_existing_operation_rows(
+            existing_operation_rows or (), review_operation_rows)
         if row.get("operation_id")
     }
     for row in rows:
@@ -7957,8 +7993,9 @@ async def _execute_chat_evidence_application(
                             research_job = None
                     review_notice = ""
                     review_prior_rows: list[dict[str, Any]] = []
+                    review_instruction = ""
                     if research_job_service is not None and research_job is not None:
-                        review_events = research_job_service.list_events(research_job["job_id"])
+                        review_events = research_job_service.list_events_with_lineage(research_job["job_id"])
                         if workbook_chat_review_needed(req.question, research_job, review_events):
                             await _emit_sheet_progress(
                                 "Учитываю замечание к документу", completed=0, total=1,
@@ -7969,18 +8006,15 @@ async def _execute_chat_evidence_application(
                                 source_catalog.work_locators(),
                             )
                             research_job = research_job_service.begin_or_resume(research_identity)
-                            review_events = research_job_service.list_events(research_job["job_id"], "locators_reopened")
                             review_notice = "Замечание передано модели вместе с исходником и прежними решениями."
                             retrieval_trace["chat_refinement"] = {
                                 "status": "reviewing", "review_scope": "document",
                                 "request_author": "user", "decision_author": "model",
                                 "source_rows": len(source_catalog.work_locators()),
                             }
-                        for event in reversed(review_events):
-                            payload = event.get("payload") or {}
-                            if payload.get("chat_review"):
-                                review_prior_rows = list(payload.get("prior_rows") or [])
-                                break
+                        review_context = workbook_chat_review_context(research_job_service, research_job)
+                        review_prior_rows = list(review_context.get("prior_rows") or [])
+                        review_instruction = str(review_context.get("message") or "")
                     accumulated_rows: list[dict[str, Any]] = [
                         dict(item)
                         for item in ((research_job or {}).get("accepted_rows") or ())
@@ -8283,9 +8317,11 @@ async def _execute_chat_evidence_application(
                                     remaining_work=packet,
                                 )
                                 prior_page_rows = [row for row in accumulated_rows if str(row.get("source_row") or "") in packet]
+                                prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
                                 prior_page_context, prior_page_chunks = model_rag_prior_page_context(
-                                    prior_page_rows, sheet_pass_evidence_chunks)
-                                if prior_page_rows:
+                                    prior_page_rows, sheet_pass_evidence_chunks,
+                                    review_rows=prior_packet_rows, review_instruction=review_instruction)
+                                if prior_page_rows or prior_packet_rows:
                                     pass_evidence.append(prior_page_context)
                                 declared_queries = []
                                 query_calls = []
@@ -8294,12 +8330,6 @@ async def _execute_chat_evidence_application(
                                 rejected_reasons_now = []
                                 pass_query_provenance = dict(held_query_context.get("query_provenance") or {})
                                 pass_query_addresses = dict(held_query_context.get("query_addresses") or {})
-                                prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
-                                if prior_packet_rows:
-                                    pass_evidence.append({
-                                        "prior_model_decisions": compact_estimator_draft_rows(prior_packet_rows),
-                                        "review_instruction": "Учти замечание пользователя. Сохрани корректные прежние решения и их цитаты; изменения и нерешённые вопросы объясни. Верни все операции этого пакета.",
-                                    })
                                 selector_evidence = pass_evidence
                                 pass_hits = reuse_hits
                                 model_rag_query_hits = pass_hits
@@ -8344,11 +8374,12 @@ async def _execute_chat_evidence_application(
                                     remaining_work=packet,
                                 )
                                 prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
-                                if prior_packet_rows:
-                                    pass_evidence.append({
-                                        "prior_model_decisions": compact_estimator_draft_rows(prior_packet_rows),
-                                        "review_instruction": "Учти замечание пользователя. Сохрани корректные прежние решения и их цитаты; изменения и нерешённые вопросы объясни. Верни все операции этого пакета.",
-                                    })
+                                prior_page_rows = [row for row in accumulated_rows if str(row.get("source_row") or "") in packet]
+                                prior_page_context, prior_page_chunks = model_rag_prior_page_context(
+                                    prior_page_rows, sheet_pass_evidence_chunks,
+                                    review_rows=prior_packet_rows, review_instruction=review_instruction)
+                                if prior_page_rows or prior_packet_rows:
+                                    pass_evidence.append(prior_page_context)
                                 selector_evidence = pass_evidence
                                 query_text = ""
                                 model_queries: list[str] = []
@@ -8891,6 +8922,7 @@ async def _execute_chat_evidence_application(
                                 finish_reason=last_finish,
                                 answer_truncated=last_truncated,
                                 existing_operation_rows=accumulated_rows,
+                                review_operation_rows=review_prior_rows,
                             )
                             tail_locator = truncated_tail_locator(
                                 pass_rows, truncated=last_truncated

@@ -651,8 +651,9 @@ class WorkbookResearchJobService:
         deferrals = _json_object(parent, "deferrals_json")
         held = _json_object(parent, "held_packet_json")
         remaining = _json_list(parent, "remaining_json")
-        if not (accepted or evidence or omitted or cache or deferrals):
-            # nothing was decided, cached or set aside: there is no progress to lose.
+        overrides = _json_object(parent, "operator_overrides_json")
+        if not (accepted or evidence or omitted or cache or deferrals or remaining or held or overrides):
+            # No decisions, evidence, pending work or held page to continue.
             return {}
         watermark = len(evidence) + len(cache)
         rebased: dict[str, Any] = {}
@@ -667,7 +668,7 @@ class WorkbookResearchJobService:
             """UPDATE workbook_research_jobs
             SET accepted_rows_json=?,evidence_json=?,omitted_json=?,
                 query_cache_json=?,deferrals_json=?,held_packet_json=?,
-                remaining_json=?,continues_job_id=?,updated_at=CURRENT_TIMESTAMP
+                remaining_json=?,operator_overrides_json=?,continues_job_id=?,updated_at=CURRENT_TIMESTAMP
             WHERE job_id=?""",
             (
                 json.dumps(accepted, ensure_ascii=False),
@@ -677,6 +678,7 @@ class WorkbookResearchJobService:
                 json.dumps(rebased, ensure_ascii=False),
                 json.dumps(held, ensure_ascii=False),
                 json.dumps(remaining, ensure_ascii=False),
+                json.dumps(overrides, ensure_ascii=False),
                 str(parent["job_id"]),
                 str(job_id),
             ),
@@ -702,6 +704,7 @@ class WorkbookResearchJobService:
             "cached_queries": len(cache),
             "deferrals": len(rebased),
             "remaining_rows": len(remaining),
+            "operator_overrides": len(overrides),
             "evidence_watermark": watermark,
             "guard_counters_reset": True,
             # The document's already-spent time belongs to the continuation's ETA:
@@ -756,6 +759,17 @@ class WorkbookResearchJobService:
                     event["job_id"] = step
                 events.append(event)
         return events
+
+    def chat_review_context(self, job_id: str) -> dict[str, Any]:
+        """Latest review baseline/instruction, including inherited review jobs."""
+        for event in reversed(self.list_events_with_lineage(job_id, "locators_reopened")):
+            payload = event.get("payload") or {}
+            note = payload.get("chat_review") or {}
+            if note:
+                return {"prior_rows": [dict(item) for item in payload.get("prior_rows") or ()
+                                       if isinstance(item, Mapping)],
+                        "message": str(note.get("message") or "")}
+        return {}
 
     @staticmethod
     def elapsed_seconds_between(created_at: str, updated_at: str) -> float:
@@ -961,6 +975,9 @@ class WorkbookResearchJobService:
                 return self._row(row)
             existing_rows = json.loads(str(row["accepted_rows_json"]))
             migrated = self._ensure_operation_ids(str(job_id), existing_rows)
+            review_operations = {str(item["operation_id"]): item
+                                 for item in self.chat_review_context(job_id).get("prior_rows") or ()
+                                 if item.get("operation_id")}
             by_op: dict[str, dict[str, Any]] = {
                 str(item["operation_id"]): item
                 for item in existing_rows
@@ -980,6 +997,20 @@ class WorkbookResearchJobService:
                     continue
                 origin = str(payload.pop("revision_origin", "") or "model")
                 op_id = str(payload.get("operation_id") or "").strip()
+                if op_id in review_operations and op_id not in by_op:
+                    previous = review_operations[op_id]
+                    if str(previous.get("source_row") or "").strip().casefold() != locator.casefold():
+                        raise WorkbookResearchJobError("review operation source mismatch")
+                    # A model reaffirmed/revised this exact archived identity.
+                    # Accept only its returned row; never resurrect other old rows.
+                    revision = int(previous.get("revision") or 1) + 1
+                    payload["operation_id"] = op_id
+                    payload["revision"] = revision
+                    existing_rows.append(payload)
+                    by_op[op_id] = payload
+                    active_shas[op_id] = _decision_content_sha(payload)
+                    new_revisions.append((op_id, revision, origin, payload))
+                    continue
                 if op_id and op_id in by_op:
                     sha = _decision_content_sha(payload)
                     if sha == active_shas.get(op_id):
@@ -1567,6 +1598,7 @@ class WorkbookResearchJobService:
         locators: Sequence[str],
         *,
         chat_review: Mapping[str, Any] | None = None,
+        review_prior_rows: Sequence[Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Remove listed rows from accepted decisions and return them to remaining."""
 
@@ -1622,7 +1654,9 @@ class WorkbookResearchJobService:
                     "locators": wanted, "accepted_total": len(kept),
                     **({
                         "chat_review": dict(chat_review),
-                        "prior_rows": [item for item in existing_rows if str(item.get("source_row") or "") in wanted],
+                        "prior_rows": [dict(item) for item in (
+                            existing_rows if review_prior_rows is None else review_prior_rows
+                        ) if str(item.get("source_row") or "") in wanted],
                     } if chat_review is not None else {}),
                 },
             )

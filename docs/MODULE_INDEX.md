@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.122 / 850:** `core/chat-evidence`/`core/workbook-research`
+> сохраняют review baseline IDs, точные цитированные карточки и замечание по
+> lineage при пересмотре/продолжении. `record_packet` пишет следующую ревизию
+> прежнего ID; новые accepted rows только из ответа модели. Pending-only очередь
+> и подтверждения оператора также наследуются. Док↔код ✅; `workbook_chat_review_context`,
+> `model_rag_existing_operation_rows`, `chat_review_context`,
+> [chat-profiles](modules/chat-profiles.md), `test_workbook_chat_refinement.py`.
+> Live 849: 163 unknown_operation_id, 35 unknown_evidence_ref; fixed validation
+> and evidence replay are pending installed acceptance, not customer-ready.
+
 > **Кандидат 0.31.121 / 849:** `core/chat-evidence` safe workbook history/harvester
 > сохраняют все VOR source audit warnings; `/api/chat/repack-lsr` возвращает VOR
 > readiness для VOR, включая незакрытые исходные объёмы. Точки:
