@@ -119,6 +119,111 @@ def test_prior_model_context_does_not_repeat_application_diagnostics_as_model_ch
     assert row["_evidence_check"]["technical_dump"] == "y" * 20000  # durable source is untouched
 
 
+@pytest.mark.parametrize("chosen,expected", [
+    ("ГЭСНм08-03-593-19", False), ("ГЭСНм08-03-593-12", True),
+])
+def test_prior_page_exposes_literal_citation_comparison_without_rewriting_choice(chosen, expected):
+    row = {"source_row": "Любой лист!R2", "operation_id": "op_authored", "row_role": "work",
+           "norm_code": chosen, "norm_status": "EXACT", "evidence_refs": ["Q9.H1"],
+           "evidence_bindings": {"Q9.H1": "immutable-card"},
+           "_evidence_check": {"code_not_in_refs": not expected, "technical_dump": "x" * 20000}}
+    before = json.dumps(row, ensure_ascii=False)
+    card = SimpleNamespace(content="Шифр: ГЭСНм08-03-593-12\nПолная карточка без изменений.",
+                           doc_name="cards", meta={"global_evidence_id": "immutable-card", "model_evidence_ref": "Q9.H1"})
+    payload, retained = service.model_rag_prior_page_context([row], [card])
+    facts = payload["prior_result_structural_facts"][0]
+    assert facts["source_row"] == row["source_row"] and facts["operation_id"] == "op_authored"
+    assert facts["norm_reference"] == {"selected_code": chosen, "cited_ciphers": ["ГЭСНм08-03-593-12"],
+                                       "code_in_refs": expected, "unresolved_refs": []}
+    assert payload["prior_model_decisions"][0]["norm_code"] == chosen
+    assert payload["prior_model_decisions"][0]["norm_status"] == "EXACT"
+    assert payload["previously_shown_cited_evidence"][0]["content"] == card.content
+    assert retained == [card] and "technical_dump" not in json.dumps(payload)
+    assert json.dumps(row, ensure_ascii=False) == before
+
+
+def test_prior_page_unknown_citation_is_not_false_confirmation_from_stale_diagnostics():
+    row = {"source_row": "S!R2", "row_role": "work", "norm_code": "ГЭСНм08-03-593-19",
+           "evidence_refs": ["Q9.H1"], "evidence_bindings": {"Q9.H1": "absent-card"},
+           "_evidence_check": {"code_not_in_refs": False, "cited_ciphers": ["ГЭСНм08-03-593-19"]}}
+    payload, _ = service.model_rag_prior_page_context([row], [])
+    facts = payload["prior_result_structural_facts"][0]["norm_reference"]
+    assert facts == {"selected_code": row["norm_code"], "cited_ciphers": [],
+                     "code_in_refs": None, "unresolved_refs": ["Q9.H1"]}
+    assert payload["prior_model_decisions"][0]["norm_code"] == row["norm_code"]
+
+
+def test_prior_page_never_replays_stale_norm_diagnostics_for_a_row_without_a_norm():
+    row = {"source_row": "S!R2", "row_role": "material", "norm_code": "",
+           "_evidence_check": {"technical_dump": "previous norm diagnostics"}}
+    before = json.dumps(row)
+    payload, _ = service.model_rag_prior_page_context([row], [])
+    assert payload["prior_result_structural_facts"] == []
+    assert payload["prior_model_decisions"][0]["norm_code"] == ""
+    assert json.dumps(row) == before
+
+
+def test_prior_page_compares_with_the_immutable_binding_when_a_handle_is_reused():
+    row = {"source_row": "S!R2", "norm_code": "ГЭСНм08-03-593-12", "evidence_refs": ["Q1.H1"],
+           "evidence_bindings": {"Q1.H1": "old-card"}}
+    old = SimpleNamespace(content="Шифр: ГЭСНм08-03-593-12", doc_name="cards",
+                          meta={"global_evidence_id": "old-card", "model_evidence_ref": "Q1.H1"})
+    new = SimpleNamespace(content="Шифр: ГЭСНм08-03-593-19", doc_name="cards",
+                          meta={"global_evidence_id": "new-card", "model_evidence_ref": "Q1.H1"})
+    payload, retained = service.model_rag_prior_page_context([row], [new, old])
+    reference = payload["prior_result_structural_facts"][0]["norm_reference"]
+    assert reference["code_in_refs"] is True
+    assert reference["cited_ciphers"] == ["ГЭСНм08-03-593-12"]
+    assert retained == [old]
+    assert payload["prior_model_decisions"][0]["evidence_bindings"] == row["evidence_bindings"]
+
+
+def test_prior_page_reports_unconfirmed_material_quantity_without_changing_source_or_role(tmp_path):
+    from proxy.services.attachment_source_catalog_service import load_tabular_source_catalog
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Любой лист"
+    for values in (["№ п/п", "Наименование", "Ед. изм.", "Кол-во"],
+                   ["5.4", "Скоба для трубы", "", ""], ["", "- Ø20 мм", "шт.", 100]):
+        sheet.append(values)
+    source = tmp_path / "Разреженная спецификация.xlsx"
+    book.save(source)
+    catalog = load_tabular_source_catalog(source)
+    rows = [{"source_row": "Любой лист!R2", "operation_id": "op_material", "row_role": "material",
+             "title": "Модельное решение", "quantity": 100, "unit": "шт."},
+            {"source_row": "Любой лист!R3", "row_role": "material", "quantity": 100, "unit": "шт."},
+            {"source_row": "Любой лист!R2", "row_role": "header", "quantity": None, "unit": ""}]
+    before = json.dumps(rows, ensure_ascii=False)
+    payload, _ = service.model_rag_prior_page_context(rows, [], source_catalog=catalog)
+    facts = payload["prior_result_structural_facts"]
+    assert len(facts) == 1 and facts[0]["operation_id"] == "op_material"
+    observed = facts[0]["source_comparison"]
+    assert "source_quantity_unconfirmed:Любой лист!R2" in observed["errors"]
+    assert observed["quantity_column_known"] is True and observed["source_quantity"] is None
+    assert observed["model_quantity"] == 100
+    assert payload["prior_model_decisions"][0]["row_role"] == "material"
+    assert json.dumps(rows, ensure_ascii=False) == before
+    assert catalog.lookup("Любой лист!R2").header_quantity is None
+
+
+@pytest.mark.parametrize("quantity,unit", [(0.8, "км"), (800, "м")])
+def test_prior_page_does_not_report_a_source_gap_for_equivalent_measures(tmp_path, quantity, unit):
+    from proxy.services.attachment_source_catalog_service import load_tabular_source_catalog
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Источник"
+    sheet.append(["Наименование", "Ед. изм.", "Кол-во"])
+    sheet.append(["Ресурс", "м", 800])
+    source = tmp_path / "Единицы.xlsx"
+    book.save(source)
+    catalog = load_tabular_source_catalog(source)
+    row = {"source_row": "Источник!R2", "row_role": "material", "quantity": quantity, "unit": unit}
+    payload, _ = service.model_rag_prior_page_context([row], [], source_catalog=catalog)
+    assert payload["prior_result_structural_facts"] == []
+    assert payload["prior_model_decisions"][0]["quantity"] == quantity
+    assert payload["prior_model_decisions"][0]["unit"] == unit
+
+
 def test_page_cursor_and_cached_cards_survive_restart_with_terminal_model_rows(tmp_path):
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
     svc = WorkbookResearchJobService(tmp_path / "state.sqlite")

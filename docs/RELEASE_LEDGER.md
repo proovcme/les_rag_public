@@ -1,5 +1,28 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+858 final offline gate: 2101 passed / 20 existing opt-in skipped / 5 warnings,
+211.95s; verify 2121 collected, compileall/version green. Architecture gate and
+active-artifact verify-root passed (49,818 norms / 504,891 resources / 1,576
+FSEM / 281,223 prices). Resource transport full-path E2E: 12 m × selected-book
+100 = confirmed 1200; reference-only 777 ignored; trace/XLSX values and formula
+checked. Initial failed map freshness gate is preserved in
+artifacts/test_858_first_stale_map.log; generated inventory repaired, then
+canonical repeated green. Final bridge describes resource_code conditionally;
+it never promotes resource prices to confirmed work prices. Official bounded
+dry-run 13 files, rollback 857 retained; installed live quality control pending.
+
+**Кандидат 0.31.130 / 858:** доказаны две потери в active chat path:
+явный resource_code не проходил visible readers/compact replay; механические
+противоречия выбранного шифра цитате и объёма исходной ячейке не предъявлялись
+на существующей следующей странице/review. Теперь поле сохраняется, а отдельные
+prior_result_structural_facts пересчитываются по immutable карточкам/catalog
+для всех ролей. Нет нового model turn, выбора нормы или исправления объёма кодом.
+Дополнительно механическая source comparison принимает равные м/км и кг/т,
+как существующий калькулятор; не меняет авторские quantity/unit. Red сохранён:
+4 feedback tests + 12/13 resource tests failed; после patch focused 241 passed.
+Полные гейты, установка и live comparative quality пока pending. 857 и его
+измеренный отказ профессиональной/финансовой приёмки остаются ниже.
+
 Installed 0.31.129 / 857 verified on 01.10: 14/14 patch hashes match
 committed source; rollback 856 retained. Post-deploy native RRF 1/1 and standard
 basic smoke 9 pass / 1 existing diagnostics WARN / 0 fail (117.14s).

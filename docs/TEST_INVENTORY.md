@@ -1,5 +1,36 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+858 final canonical: 2101 passed / 20 existing opt-in skipped / 5 warnings;
+verify 2121 collected. Architecture/active artifacts green. Full-path E2E proves
+literal resource code and selected-book money survive into XLSX; live quality
+is still pending. The initial stale generated-map failure is preserved.
+
+Candidate 0.31.130 / 858: `tests/test_model_result_resource_code.py` adds
+14 offline cases for an explicit model-authored `resource_code`: Markdown,
+inline and multiline × material/equipment/work, compact replay with unchanged
+case/value, and no inferred/default code when the title merely mentions one.
+The downstream material calculator already reads this field; the visible
+decoder and replay must carry it separately from `norm_code`.
+One full-path E2E also proves selected-book ownership across parse/replay,
+immutable evidence/catalog, RIM and XLSX: 12 m × 100 = 1200 confirmed,
+preliminary 0; reference-only 777 in evidence does not become the price.
+Saved red baseline after correcting the multiline fixture: 12 failed / 1 passed.
+
+Eight new `test_prior_page_*` cases in `test_chat_evidence_application_service.py`
+reproduce lost mechanical feedback: same/different cited cipher, unavailable
+immutable card despite stale saved diagnostics, and a material quantity placed
+on an unquantified group beside its quantified variant. The separate
+`prior_result_structural_facts` packet exposes observed comparisons for all
+authored source roles without replacing choices, roles, quantities or cards.
+They also guard stale empty-norm diagnostics, equivalent source measures and
+reused handles with different durable IDs. Four direct source catalog cases
+prove exact m/km, kg/t comparisons and preserve a real unequal-quantity error.
+An empty header remains empty; an unavailable cipher comparison stays unknown.
+Saved red baseline: 4 failed. This adds facts to existing page/review calls,
+without a post-model selection loop or a change to packaging admission.
+Final offline gates and installed comparative/source/norm/financial acceptance
+remain pending; the failed 856 quality measurements below are not superseded.
+
 Installed 0.31.129 / 857 verified on 01.10: 14/14 patch hashes match
 committed source; rollback 856 retained. Post-deploy native RRF 1/1 and standard
 basic smoke 9 pass / 1 existing diagnostics WARN / 0 fail (117.14s).

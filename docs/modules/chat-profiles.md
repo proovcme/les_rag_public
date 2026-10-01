@@ -1,5 +1,53 @@
 # Chat profiles
 
+## Кандидат 0.31.130 / 858: явные коды ресурсов и сравнение прежнего результата
+
+`parse_model_rag_result` сохраняет явно написанный `resource_code` в Markdown,
+inline, multiline block и labelled формах; `compact_estimator_draft_rows`
+переносит его в контекст следующей страницы и пересмотра. Это поле отдельно от
+`norm_code`: `positions_from_visible_lsr_rows` передаёт выбранный моделью код
+ресурса в расчёт материальной позиции. Код не извлекается из названия и не
+получает значения по умолчанию. Сохранение шифра не подтверждает соответствие
+ресурса, наличие цены или применимость ценовой книги. `confirmed_price` и
+`price_source` используют существующий контракт передачи.
+Bridge описывает `resource_code` только как буквальный код уже выбранного
+моделью ресурса для material/equipment; отсутствие выбора оставляет поле пустым.
+Цена отдельного ресурса не объявляется подтверждённой ценой всей работы.
+
+`model_rag_prior_page_context` отдельно предъявляет
+`prior_result_structural_facts` на уже существующей следующей странице evidence
+или при пересмотре. Наблюдения вычисляются заново по immutable bindings,
+фактическим карточкам и исходному source catalog. `norm_reference` содержит
+выбранный шифр, шифры цитированных карточек, `code_in_refs` и неразрешённые
+ссылки; `code_in_refs=null` означает невозможность сравнения. `source_comparison`
+показывает ошибки сравнения, известность колонки количества, исходные
+quantity/unit и возвращённые моделью quantity/unit. Сравнение исходника
+выполняется для всех авторских ролей, включая material/equipment/resource,
+unresolved и header; факт выводится только при выявленном расхождении.
+Заголовок с пустым количеством не получает придуманного объёма.
+
+Авторские операции, роли, нормы, объёмы и точные цитированные карточки остаются
+в своих полях. Наблюдения не являются вердиктом о применимости, не выбирают
+замену, не меняют допуск файла и не запускают дополнительный модельный цикл.
+Объёмные `_quality_gate`/`_evidence_check` dumps не возвращаются в
+`prior_model_decisions`; компактные факты находятся в отдельном поле.
+
+Механическое сравнение source quantities принимает точные м↔км и кг↔т
+с теми же физическими коэффициентами, которые использует калькулятор. Отличие
+объёма после пересчёта остаётся ошибкой; quantity/unit модели не переписываются.
+
+Tests: `tests/test_model_result_resource_code.py` (14 cases) и восемь cases
+`test_prior_page_*` в `tests/test_chat_evidence_application_service.py`.
+Четыре прямых catalog regressions проверяют равные метрические количества
+и обнаружение неравных.
+E2E parse→compact→immutable evidence/catalog→RIM→XLSX доказывает передачу
+выбранного кода: 12 м × 100 из выбранной тестовой книги = 1200 confirmed,
+предварительных 0. Справочная цена 777 из evidence не применяется.
+Сохранён red baseline: resource-code 12 failed / 1 passed, structural facts
+4 failed. Итоговый canonical 2101 passed / 20 existing opt-in skipped;
+verify 2121 collected, architecture/active artifacts green. Installed comparative
+control ожидается; транспортный гейт не подтверждает качество конкретной сметы.
+
 857 UI transport: `view=progress` on job/last/active drops only bulk
 evidence and query_cache from the HTTP response, retaining authored rows,
 identity, task, held cursor, remaining scope and recovery projection. Default

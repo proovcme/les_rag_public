@@ -1,5 +1,17 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 858: explicit resource code lost; known contradictions hidden
+
+Same-input installed EOM 856 delivered 51/51 rows but failed quality/financial
+acceptance. Independent code review found that explicit resource_code was
+dropped by visible readers/compact replay, and literal citation/source errors
+were only persisted in trace, not shown in existing page/review calls. 858
+preserves the field and separately recomputes structural facts from actual
+immutable cards/catalog for all roles. Saved diagnostics are never trusted.
+No additional model call, inference loop, professional decision or authored
+quantity changes. Mechanical source comparison now accepts equal m/km, kg/t.
+Offline red-to-green preserved; installed quality acceptance pending, not claimed.
+
 856 fresh comparative: full 51/51 delivery and collision-free evidence handles proved; model-selected norms/citations, four source errors, NR/SP and price gaps still fail professional/financial acceptance. See RELEASE_LEDGER and artifacts/live_856/comparative_acceptance.json. Customer-ready status is not asserted.
 
 ## 2026-10-01 — 856: reconnect projection drops the document kind

@@ -1,5 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.130 / 858:** core/chat-evidence сохраняет явный resource_code
+> в visible formats/replay и предъявляет отдельные prior_result_structural_facts
+> в существующих page/review calls. Attachment source comparison принимает
+> механически равные м/км, кг/т. Авторские решения/card bodies не меняются;
+> doc↔code ✅, [chat-profiles](modules/chat-profiles.md). Live quality pending.
+
 857 installed UI/API verification: own VOR kind/file restored after restart, native download SHA exact; view=progress 17,908 bytes versus full 13,750,633, all authored state unchanged. Standard idle smoke passed; professional/financial customer acceptance remains failed (RELEASE_LEDGER).
 
 856 fresh comparative: full 51/51 delivery and collision-free evidence handles proved; model-selected norms/citations, four source errors, NR/SP and price gaps still fail professional/financial acceptance. See RELEASE_LEDGER and artifacts/live_856/comparative_acceptance.json. Customer-ready status is not asserted.

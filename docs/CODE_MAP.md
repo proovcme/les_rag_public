@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.130 / 858:** chat_evidence_application_service.py:
+> compact_estimator_draft_rows и три visible field maps сохраняют resource_code;
+> model_rag_prior_page_context пересчитывает компактные observations по
+> immutable bindings/source_catalog. Оба существующих page callsite передают
+> catalog. attachment_source_catalog_service.compare_model_row_to_catalog
+> сравнивает эквивалентные метрические количества без изменения входной строки.
+
 857 UI transport: `view=progress` on job/last/active drops only bulk
 evidence and query_cache from the HTTP response, retaining authored rows,
 identity, task, held cursor, remaining scope and recovery projection. Default

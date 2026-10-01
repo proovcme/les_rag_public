@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from proxy.services import attachment_source_catalog_service as service
 
 
@@ -14,6 +16,24 @@ def _write_sheet(tmp_path, rows, *, title="Лист1"):
         sheet.append(row)
     workbook.save(path)
     return path
+
+
+@pytest.mark.parametrize("source_qty,source_unit,model_qty,model_unit,expected", [
+    (800, "м", 0.8, "км", []),
+    (0.8, "км", 800, "м", []),
+    (250, "кг", 0.25, "т", []),
+    (800, "м", 0.9, "км", ["source_quantity_mismatch:Лист1!R2"]),
+])
+def test_source_comparison_accepts_only_equal_metric_quantities(
+    tmp_path, source_qty, source_unit, model_qty, model_unit, expected,
+):
+    source = _write_sheet(tmp_path, [["Наименование", "Ед. изм.", "Кол-во"],
+                                    ["Ресурс", source_unit, source_qty]])
+    catalog = service.load_tabular_source_catalog(source)
+    row = {"source_row": "Лист1!R2", "quantity": model_qty, "unit": model_unit}
+    assert service.compare_model_row_to_catalog(row, catalog) == expected
+    assert row["quantity"] == model_qty and row["unit"] == model_unit
+    assert catalog.lookup("Лист1!R2").header_quantity == source_qty
 
 
 def test_header_strip_naming_a_total_column_binds_the_quantity(tmp_path):

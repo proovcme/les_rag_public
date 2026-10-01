@@ -47,6 +47,7 @@ from proxy.services.attachment_source_catalog_service import (
     catalog_work_sheet_names,
     compare_model_row_to_catalog,
     coverage_errors,
+    header_bound_unit,
     load_catalog_from_attachment_id,
     locators_missing_from_text,
     sheet_coverage_from_missing,
@@ -1548,8 +1549,13 @@ _TABULAR_LSR_VOLUME_INSTRUCTION = (
     "не запрет собирать таблицу строк. Не отказывайся из‑за пустых цен и не проси "
     "прайс вместо таблицы. Цену считает код только после выбранной нормы. "
     "В таблице нужны source_row, row_role, work_row, title, unit, quantity, norm_code, "
-    "norm_status, open_gap, evidence_refs Qx.Hy. Для каждой выбранной нормы также "
-    "обязательно верни action_match, object_match, condition_match, unit_compatible, "
+    "norm_status, open_gap, evidence_refs Qx.Hy. "
+    "Для material/equipment, если ты выбрал конкретный ресурс по источнику, "
+    "перенеси его буквальный код в resource_code и ссылку в evidence_refs; "
+    "если ресурс не выбран, оставь resource_code пустым. Код считает цену "
+    "по явно выбранной книге. "
+    "Для каждой выбранной нормы также обязательно верни action_match, "
+    "object_match, condition_match, unit_compatible, "
     "composition_covers и coverage с обоснованием по той же цитируемой карточке. "
     "Если карточка показывает варианты НР/СП, выбери применимый по условиям "
     "объекта и верни его nr_sp_rule_id; если условия неизвестны, оставь поле "
@@ -2918,6 +2924,7 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "calc_quantity",
             "confirmed_price",
             "price_source",
+            "resource_code",
             "nr_sp_rule_id",
         ):
             if field_name in item:
@@ -3726,6 +3733,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "calc_quantity": "calc_quantity",
         "расчётное количество": "calc_quantity",
         "confirmed_price": "confirmed_price",
+        "resource_code": "resource_code",
         "подтверждённая цена": "confirmed_price",
         "price_source": "price_source",
         "источник цены": "price_source",
@@ -4089,6 +4097,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "conversion_source": "conversion_source",
         "calc_quantity": "calc_quantity",
         "confirmed_price": "confirmed_price",
+        "resource_code": "resource_code",
         "price_source": "price_source",
         "norm_code": "norm_code",
         "nr_sp_rule_id": "nr_sp_rule_id",
@@ -4267,6 +4276,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "conversion_source": "conversion_source",
         "calc_quantity": "calc_quantity",
         "confirmed_price": "confirmed_price",
+        "resource_code": "resource_code",
         "price_source": "price_source",
         "norm_code": "norm_code",
         "шифр нормы": "norm_code",
@@ -4776,9 +4786,41 @@ def model_rag_evidence_page_state(
 def model_rag_prior_page_context(
     rows: Sequence[Mapping[str, Any]], evidence_chunks: Sequence[Any],
     *, review_rows: Sequence[Mapping[str, Any]] = (), review_instruction: str = "",
+    source_catalog: AttachmentSourceCatalog | None = None,
 ) -> tuple[dict[str, Any], list[Any]]:
     """Replay authored rows and exactly their cited cards; never choose a norm."""
     rows = model_rag_existing_operation_rows(rows, review_rows)
+    structural_facts = []
+    # Recompute observations from immutable cards/source, not saved diagnostics.
+    # These are facts for the existing model turn, never replacement decisions.
+    observation_rows = [{key: value for key, value in row.items() if key != "_evidence_check"}
+                        for row in rows]
+    for row in bind_row_evidence_ids(observation_rows, evidence_chunks):
+        fact = {"source_row": row.get("source_row"),
+                "operation_id": row.get("operation_id")}
+        check = row.get("_evidence_check")
+        if isinstance(check, Mapping):
+            fact["norm_reference"] = {
+                "selected_code": check["norm_code"],
+                "cited_ciphers": check["cited_ciphers"],
+                "code_in_refs": (not check["code_not_in_refs"]
+                                 if check["citation_checkable"] else None),
+                "unresolved_refs": check["unresolved_refs"],
+            }
+        if source_catalog is not None:
+            errors = compare_model_row_to_catalog(row, source_catalog)
+            if errors:
+                source = source_catalog.lookup(row.get("source_row"))
+                fact["source_comparison"] = {
+                    "errors": errors,
+                    "quantity_column_known": source.quantity_column_known if source else False,
+                    "source_quantity": source.header_quantity if source else None,
+                    "source_unit": header_bound_unit(source) if source else None,
+                    "model_quantity": row.get("quantity"),
+                    "model_unit": row.get("unit"),
+                }
+        if "norm_reference" in fact or "source_comparison" in fact:
+            structural_facts.append(fact)
     cited = {
         str(identity) for row in rows
         for identity in (row.get("evidence_bindings") or {}).values()
@@ -4812,12 +4854,17 @@ def model_rag_prior_page_context(
             for row in compact_estimator_draft_rows(list(rows))
         ],
         "previously_shown_cited_evidence": cited_evidence,
+        "prior_result_structural_facts": structural_facts,
         "evidence_continuation_instruction": (
             "Это следующая страница уже найденных карточек для тех же строк. "
             "Сохрани корректные прежние решения и их цитаты; учитывай новые карточки. "
             "Для прежней операции верни её operation_id из prior_model_decisions; "
             "для новой оставь operation_id пустым: идентификаторы и ревизии назначает приложение. "
             "work_row остаётся адресом исходной строки работы. "
+            "prior_result_structural_facts содержит только сравнение с буквальными "
+            "карточками и исходными ячейками, не вердикт о применимости нормы. "
+            "code_in_refs=null означает, что сравнить шифр невозможно. "
+            "Проверь указанные противоречия; предметные решения принимаешь ты. "
             "Верни все операции этого пакета. Код не изменял предметные решения."
         ),
     }, retained
@@ -8387,7 +8434,8 @@ async def _execute_chat_evidence_application(
                                 prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
                                 prior_page_context, prior_page_chunks = model_rag_prior_page_context(
                                     prior_page_rows, sheet_pass_evidence_chunks,
-                                    review_rows=prior_packet_rows, review_instruction=review_instruction)
+                                    review_rows=prior_packet_rows, review_instruction=review_instruction,
+                                    source_catalog=source_catalog)
                                 if prior_page_rows or prior_packet_rows:
                                     pass_evidence.append(prior_page_context)
                                 declared_queries = []
@@ -8444,7 +8492,8 @@ async def _execute_chat_evidence_application(
                                 prior_page_rows = [row for row in accumulated_rows if str(row.get("source_row") or "") in packet]
                                 prior_page_context, prior_page_chunks = model_rag_prior_page_context(
                                     prior_page_rows, sheet_pass_evidence_chunks,
-                                    review_rows=prior_packet_rows, review_instruction=review_instruction)
+                                    review_rows=prior_packet_rows, review_instruction=review_instruction,
+                                    source_catalog=source_catalog)
                                 if prior_page_rows or prior_packet_rows:
                                     pass_evidence.append(prior_page_context)
                                 selector_evidence = pass_evidence

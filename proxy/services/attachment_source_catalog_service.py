@@ -878,14 +878,18 @@ def compare_model_row_to_catalog(
     if source_unit is not None and unit:
         source_factor, source_base = norm_measure(source_unit)
         model_factor, model_base = norm_measure(row.get("unit"))
+        source_base, model_base = normalize_unit(source_base), normalize_unit(model_base)
+        physical_factor = (1.0 if source_base and source_base == model_base else {
+            ("км", "м"): 1000.0, ("м", "км"): 0.001,
+            ("т", "кг"): 1000.0, ("кг", "т"): 0.001,
+        }.get((model_base, source_base)))
         equivalent_measure = bool(
-            normalize_unit(source_base)
-            and normalize_unit(source_base) == normalize_unit(model_base)
+            physical_factor is not None
             and math.isfinite(source_factor) and source_factor > 0
             and math.isfinite(model_factor) and model_factor > 0
         )
         if equivalent_measure and isinstance(quantity, (int, float)):
-            comparable_quantity = float(quantity) * model_factor / source_factor
+            comparable_quantity = float(quantity) * model_factor / source_factor * physical_factor
     if isinstance(quantity, (int, float)):
         if candidates:
             if not any(quantities_close(float(comparable_quantity), number) for number in candidates):
