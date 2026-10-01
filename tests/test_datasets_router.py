@@ -4,10 +4,68 @@ from collections import deque
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+import zipfile
 import pytest
 from fastapi import UploadFile
 
 from proxy.routers import datasets
+
+
+@pytest.mark.asyncio
+async def test_scan_only_docx_read_does_not_accept_image_markup(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+    from backend import converter
+    from proxy.services import chat_attachment_service
+
+    path = tmp_path / "Скан проекта (новый).docx"
+    original_name = 'Скан проекта "новый".docx'
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", (
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body><w:p><w:r><w:drawing /></w:r></w:p></w:body></w:document>'
+        ))
+    calls = []
+    monkeypatch.setattr(converter, "convert_to_markdown", lambda *a, **k: "![Рисунок 1](image.png)")
+    monkeypatch.setattr(chat_attachment_service, "cleanup_expired", lambda: calls.append("cleanup"))
+    monkeypatch.setattr(chat_attachment_service, "preserve_read_attachment", lambda *a, **k: calls.append("preserve"))
+
+    with pytest.raises(HTTPException) as error:
+        await datasets._prepare_read_attachment(path, original_name)
+
+    assert error.value.status_code == 422
+    assert "OCR" in error.value.detail
+    assert original_name in error.value.detail
+    assert calls == []
+
+
+@pytest.mark.parametrize("namespace", [
+    "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "http://purl.oclc.org/ooxml/wordprocessingml/main",
+])
+@pytest.mark.parametrize("text", ["", "Объём 12 м"])
+def test_scan_only_docx_detection_keeps_real_text(tmp_path, namespace, text):
+    from proxy.services.chat_attachment_service import docx_is_image_only
+
+    path = tmp_path / "input.docx"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", (
+            f'<w:document xmlns:w="{namespace}"><w:body>'
+            f'<w:p><w:r><w:t>{text}</w:t><w:drawing /></w:r></w:p>'
+            '</w:body></w:document>'
+        ))
+    assert docx_is_image_only(path) is (not bool(text))
+
+
+def test_scan_only_docx_detection_does_not_claim_altchunk_has_no_text(tmp_path):
+    from proxy.services.chat_attachment_service import docx_is_image_only
+
+    path = tmp_path / "imported.docx"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", (
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body><w:altChunk /><w:p><w:r><w:drawing /></w:r></w:p></w:body></w:document>'
+        ))
+    assert docx_is_image_only(path) is False
 
 
 def test_rag_readiness_route_is_registered():

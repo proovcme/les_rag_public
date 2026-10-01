@@ -1,5 +1,48 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.118 / 846 (01.10, Codex):** read-intake DOCX больше не
+принимает подписи картинок за исходный текст. OOXML image-only body — HTTP 422
+с требованием OCR; real text with images и altChunk не блокируются этим guard.
+На оригинальном scan-only DOCX заказчика 845 возвращал 201 / 58 chars без
+распознавания. Regression red before; focused 65 passed. Dependencies unchanged.
+Offline gate: 2038 passed / 20 existing opt-in skipped / 5 warnings, 194.50 с;
+verify 2058 collected, compileall/version/architecture passed. Eleven patch
+files have preserved rollback_845_to_846. Two baseline runtime files differ
+from Git only by line endings (normalized source equals ad1e964f); force mode
+requires exact saved baseline hashes and normalized equality before copying.
+Installed gate pending; не заявляет готовность автоматической ЛСР.
+Capacity control uses existing GUI-owned immutable connection revision r4 with
+65536 requested tokens; model metadata declares 262144, read-only physical
+probe reports 35000 live and 393221 feasible. No inference route/model/prompt
+change; exact binding rollback r3 retained in ignored control receipt. Larger
+context performance/quality remain unproved until the same installed live runs.
+
+**Замер 845, exact ad1e964f (01.10):** installed 16/16 hashes; native RRF
+1/1; basic 9 pass / 1 diagnostics WARN / 0 fail; immutable recovery same SHA,
+revisions and inherited price basis. B0 БАП 91.0 с: 19/19 source rows accounted,
+7 named work norms, 2 calculated positions; complete estimate false.
+B1 БАП 737.2 с: 19/19 accounted, 18 work / 3 material, 13 named work choices,
+8 EXACT tokens but only 6 substantiated work choices; 6 calculated positions,
+confirmed field 96117.85 / preliminary 153511.86. All 21 authored rows retain
+source units/quantities. XLSX 37125 bytes, revision
+rev_376b7044d6894ad3a38ec2d27febc512, download SHA
+5d8f420d0e90696d01dbe1dadb0401a3b648e01686b31dc256285e5c2e7a8a10.
+Professional applicability is not established by a model EXACT token or an
+application confirmed_amount field. Coverage gaps 3, estimate_complete=false;
+speed and full LSR acceptance remain failed.
+Own 844 СКС checkpoint resumed on 845: held tail passed 30→31/31; accounted
+11→35/75, 42 decisions. Control paused by operator after migration measurement,
+668.4 с. Parent revision retained and SPb3q2026 match exact inherited; all six
+named work choices NEEDS_RESEARCH, zero calculated positions. Artifact
+rev_19445317e52a4d3698fcfc34687c52d0, SHA
+f08dd11f4e4d08f894e606851269a869490ddb06f2ec06f636177b58168c021c.
+Receipts artifacts/live_845/{pdf_lsr_baseline,pdf_lsr_candidate,sks_resume}.
+Additional user corpus: 16 readable originals identified, two SKS XLSX copies
+have identical hash; two archives total about 3.8 GB inventoried without full
+extraction. Private manifests stay in ignored artifacts. RTF chat unsupported;
+large VOR upload preserves original and all 10 catalog sheets but preview is
+truncated. Full large-document live quality is still unproved.
+
 **Кандидат 0.31.117 / 845 (01.10, Codex):** durable search cache имеет contract;
 old/foreign entries (включая empty) не повторно выдаются как результат текущего
 literal reader. Held tail обновляется исходными запросами без нового model

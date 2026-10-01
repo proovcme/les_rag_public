@@ -14,6 +14,8 @@ import os
 import re
 import shutil
 import time
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,30 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def docx_is_image_only(path: Path) -> bool:
+    """Detect a scan container; converter image labels are not document text.
+
+    Unknown/malformed packages remain the converter's responsibility. Embedded
+    altChunk content may contain text, so it must not be classified as a scan.
+    Both transitional and strict OOXML use the same local element names.
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            document = ET.fromstring(archive.read("word/document.xml"))
+    except (zipfile.BadZipFile, KeyError, ET.ParseError):
+        return False
+    has_image = False
+    for element in document.iter():
+        name = element.tag.rsplit("}", 1)[-1]
+        if name == "altChunk":
+            return False
+        if name == "t" and "".join(element.itertext()).strip():
+            return False
+        if name in {"drawing", "pict"}:
+            has_image = True
+    return has_image
 
 
 def _paths(attachment_id: str, root: str | Path | None = None) -> tuple[Path, Path]:

@@ -1,6 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Кандидат 0.31.117 / 845:** `core/chat-evidence` и workbook research store
+> **Кандидат 0.31.118 / 846:** `intake/chat-attachment` обнаруживает image-only
+> DOCX по OOXML и возвращает OCR-required HTTP 422 до сохранения/chat; подписи
+> картинок не считаются содержимым исходника. Точки:
+> `chat_attachment_service.docx_is_image_only`, `datasets._prepare_read_attachment`;
+> док [ADR-15](ADR-15-model-rag-result.md), tests `test_datasets_router.py`.
+> Transitional/strict OOXML, смешанный текст и altChunk покрыты; 65 focused passed.
+> Installed gate pending; customer-ready не заявлено.
+>
+> **0.31.117 / 845:** `core/chat-evidence` и workbook research store
 > version cache entries, refresh incompatible pending queries with the same
 > declared wording, preserve old hits in superseded and all authored decisions.
 > Prior model context excludes only application diagnostic duplicates, preserving
@@ -9,7 +17,10 @@
 > Regressions reproduced first; focused 325 passed. Док↔код ✅;
 > [rag-evidence-flow](modules/rag-evidence-flow.md), [ALGO-lsr-assembly](ALGO-lsr-assembly.md).
 > Offline: 2032 passed / 20 existing opt-in skipped; verify/architecture green.
-> Installed/live gates pending; customer-ready не заявлено.
+> Installed 16/16 hashes; B1 БАП: 19/19 source rows, 6 calculated positions,
+> 737.2 с; full estimate incomplete. СКС resume: 11→35/75 accounted,
+> price basis and parent revision preserved; control paused by operator.
+> Customer-ready не заявлено.
 
 > **Кандидат 0.31.116 / 844:** `core/chat-evidence` model norm reader явно
 > выключает legacy vocabulary expansions; `norm_browser.browse_norms_many` default

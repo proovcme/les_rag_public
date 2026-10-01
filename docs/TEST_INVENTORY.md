@@ -1,5 +1,11 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 846: image-only DOCX read-intake rejects converter image-label markup
+before persistence. Regression reproduced the false success before the fix;
+transitional/strict namespaces, real text plus image and altChunk are covered.
+Focused datasets/attachment gate 65 passed. Customer corpus preflight found
+the actual image-only DOCX and an unsupported RTF; this is not an OCR success.
+
 Build 845: legacy/foreign query-cache contracts (including empty hits) refresh
 without changing accepted operation revisions, cited evidence or held cursor;
 infrastructure failure stays technical. Prior context preserves authored fields

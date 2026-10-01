@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1040 |
-| Строк Python | 359979 |
+| Строк Python | 360074 |
 | PRODUCT_REACHABLE | 361 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 667 |
@@ -39,7 +39,7 @@
 | backend/qdrant_adapter.py | 4552 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3927 | 3 |
-| proxy/routers/datasets.py | 3776 | 16 |
+| proxy/routers/datasets.py | 3787 | 16 |
 | sovushka/styles.py | 3301 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/rim_lsr_trace_service.py | 2801 | 26 |

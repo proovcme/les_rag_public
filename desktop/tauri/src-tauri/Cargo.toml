@@ -1,6 +1,6 @@
 [package]
 name = "les-desktop"
-version = "5.1.845"
+version = "5.1.846"
 description = "Native desktop shell for LES"
 authors = ["LES"]
 edition = "2021"

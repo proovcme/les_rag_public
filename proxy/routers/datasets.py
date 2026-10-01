@@ -3486,6 +3486,17 @@ async def _prepare_read_attachment(
     from uuid import uuid4
 
     attach_id = attachment_id or f"read_{uuid4().hex[:12]}"
+    if Path(original_name).suffix.lower() == ".docx":
+        from proxy.services.chat_attachment_service import docx_is_image_only
+
+        if await asyncio.to_thread(docx_is_image_only, temp_path):
+            raise HTTPException(
+                422,
+                f"В файле «{original_name}» только изображения, текстового слоя нет. "
+                "Сначала распознайте документ (OCR) и загрузите результат в PDF с "
+                "текстовым слоем или DOCX с распознанным текстом. "
+                "Подписи картинок не являются содержимым документа.",
+            )
     structured = await asyncio.to_thread(
         _format_tabular_attachment_context,
         temp_path,
