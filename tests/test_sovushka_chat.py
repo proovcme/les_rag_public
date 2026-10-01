@@ -819,6 +819,7 @@ async def test_history_open_restores_running_workbook_bubble():
         assert job_id == ""
         return {
             "job_id": "wrj_sks",
+            "identity": {"session_id": "session-live"},
             "status": "running",
             "phase": "packets",
             "sheet": "СКС",
@@ -855,6 +856,37 @@ async def test_history_open_restores_running_workbook_bubble():
     notice = format_in_progress_assembly_notice(pending)
     assert "45/75" in notice
     assert "пакет 3 строк" in notice
+
+
+@pytest.mark.asyncio
+async def test_history_switch_clears_old_progress_when_selected_session_has_no_job():
+    async def fetch_job(**kwargs):
+        assert kwargs["session_id"] == "session-finished" and kwargs["job_id"] == ""
+        return None
+    assert await hydrate_chat_pending_from_workbook(session_id="session-finished",
+        pending={"job_id": "wrj_other", "accepted": 25, "remaining": 39},
+        ignore_prior_job_id=True, fetch_job=fetch_job) is None
+
+
+@pytest.mark.asyncio
+async def test_history_selection_rejects_foreign_global_reconnect_job():
+    async def fetch_job(**kwargs):
+        return {"job_id": "wrj_other", "identity": {"session_id": "session-running"}, "status": "running"}
+    assert await hydrate_chat_pending_from_workbook(session_id="session-finished",
+        pending={"job_id": "wrj_other"}, ignore_prior_job_id=True, fetch_job=fetch_job) is None
+
+
+@pytest.mark.asyncio
+async def test_selected_history_poll_ignores_foreign_pinned_job_and_keeps_own_job(monkeypatch):
+    import sovushka.pages.chat as page
+    own = {"job_id": "wrj_own", "identity": {"session_id": "session-selected"}, "status": "running"}
+    other = {"job_id": "wrj_other", "identity": {"session_id": "session-other"}, "status": "running"}
+    async def getter(path):
+        return other if path.endswith("/wrj_other") else {"jobs": [other, own]}
+    monkeypatch.setattr(page, "read_active_workbook_research", lambda **kwargs: None)
+    fetched = await fetch_active_workbook_research(session_id="session-selected", job_id="wrj_other",
+        getter=getter, allow_foreign_session=False)
+    assert fetched == own
 
 
 @pytest.mark.asyncio

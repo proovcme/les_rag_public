@@ -42,6 +42,7 @@ from proxy.services.canonical_route_service import (
 from proxy.services.attachment_source_catalog_service import (
     AttachmentSourceCatalog,
     catalog_sheet_pack_lines,
+    catalog_sheet_packet_facts,
     catalog_sheet_work_locators,
     catalog_work_sheet_names,
     compare_model_row_to_catalog,
@@ -240,6 +241,33 @@ def workbook_packaging_tool(
     if "build_lsr_workbook" in tools:
         return ["build_lsr_workbook"]
     return []
+
+
+def workbook_model_question(question: str, job: Mapping[str, Any] | None) -> str:
+    """Keep the original operator task in resumed query and answer model calls.
+
+    The latest message remains authoritative. Saved dimensions come only from
+    explicit operator requests, not from model choices or application defaults.
+    Packaging/idempotency still use the literal latest message independently.
+    """
+    current = str(question or "")
+    context = (job or {}).get("task_context") or {}
+    original = str(context.get("original_question") or "")
+    if not original or original == current:
+        return current
+    effective: dict[str, Any] = {}
+    if context.get("artifact_intent") in {"vor", "lsr"}:
+        effective["artifact_intent"] = context["artifact_intent"]
+    basis = context.get("price_basis")
+    if isinstance(basis, Mapping):
+        effective["price_basis"] = {key: basis[key] for key in ("region", "quarter", "pricebook") if basis.get(key)}
+    return (
+        f"Исходное задание пользователя:\n{original}\n\n"
+        f"Текущее сообщение пользователя:\n{current}\n\n"
+        "Текущее сообщение и сохранённые явные параметры имеют приоритет при изменении задания. "
+        "Обычное продолжение сохраняет исходную задачу. Явные параметры этого же задания: "
+        + json.dumps(effective, ensure_ascii=False)
+    )
 
 
 def document_price_basis_arguments(basis: object) -> dict[str, Any]:
@@ -5587,6 +5615,7 @@ def selector_evidence_payload(
                     remaining_work=remaining_work,
                 )
             )
+            payload.append(catalog_sheet_packet_facts(source_catalog, wanted_sheet, remaining_work))
         else:
             payload.extend(source_catalog.interleaved_row_lines())
     elif str(attachment_context or "").strip():
@@ -8463,7 +8492,7 @@ async def _execute_chat_evidence_application(
                                                 + query_instruction
                                             ),
                                             request_payload={
-                                                "question": str(req.question or ""),
+                                                "question": workbook_model_question(str(req.question or ""), research_job),
                                                 "dataset_ids": [
                                                     str(item) for item in _dataset_ids
                                                 ],
@@ -8719,7 +8748,7 @@ async def _execute_chat_evidence_application(
                             leftover_query_hits: list[tuple[str, Sequence[Any]]] = []
                             included_hits: list[tuple[str, Sequence[Any]]] = []
                             question_tail = sheet_pass_question_tail(
-                                str(req.question or ""),
+                                workbook_model_question(str(req.question or ""), research_job),
                                 sheet=sheet_name,
                                 sheet_index=sheet_index,
                                 sheet_count=sheet_count,

@@ -1,5 +1,13 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 851: original task absent from resumed model request
+
+Durable original_question decides packaging/prices, but sheet-pass query payload
+and answer question_tail still contain req.question only. 852 restores the exact
+original user task beside the latest message and effective explicit dimensions.
+The latest request wins on conversion/repricing; no search query, norm or quantity
+is invented. Three regressions; installed professional acceptance is separate.
+
 ## 2026-10-01 — 850: VOR resume changes to LSR, group descriptions omitted
 
 The installed ordinary EOM review resumes with «Продолжи». Packaging ignores

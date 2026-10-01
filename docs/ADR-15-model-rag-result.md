@@ -2,6 +2,15 @@
 
 Статус: **принято** (2026-09-01).
 
+С 852 sheet-pass query/answer calls одновременно получают исходную задачу,
+текущее сообщение и исходные строки с RAG evidence. Явные актуальные параметры
+сохранённого задания имеют приоритет над прежними; literal question упаковки
+и идентичность вызова не изменяются. Это пользовательский task context,
+не профессиональное дополнение к retrieval query.
+Пакет явно разделяет requested/reference source rows и показывает source
+quantity cells; null/unknown не превращается в 0/1. Всё исходное evidence
+сохраняется, авторские операции/роли не изменяются.
+
 С 851 исходный target ВОР/ЛСР сохраняется в task_context.artifact_intent.
 Plain resume не выбирает priced default; новый явно названный target имеет
 приоритет. Предыдущие jobs дают родителя workbook revision, но не settled replay.

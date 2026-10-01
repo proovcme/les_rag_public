@@ -9,6 +9,7 @@ from proxy.services.chat_evidence_application_service import (
     workbook_packaging_args,
     workbook_packaging_tool,
     workbook_packaging_lineage,
+    workbook_model_question,
 )
 
 
@@ -117,6 +118,45 @@ def test_explicit_lsr_conversion_changes_target_for_later_resume(tmp_path):
 def test_legacy_task_without_target_uses_original_operator_request():
     assert workbook_packaging_tool(["build_vor_workbook", "build_lsr_workbook"], "Продолжи",
         task_context={"original_question": "Собери ВОР по проекту"}) == ["build_vor_workbook"]
+
+
+def test_model_continuation_receives_original_task_and_current_user_message():
+    original = "Собери ВОР по проекту, отдельно материалы и необходимые работы"
+    question = workbook_model_question("Продолжи", {"task_context": {"original_question": original, "artifact_intent": "vor"}})
+    assert original in question and "Продолжи" in question and "vor" in question
+    assert workbook_model_question(original, {"task_context": {"original_question": original}}) == original
+    assert workbook_model_question("Собери ЛСР", None) == "Собери ЛСР"
+
+
+def test_model_continuation_sees_new_effective_price_request_after_repricing(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    original = "Собери ЛСР, Санкт-Петербург, цены 3 квартал 2026"
+    service.begin_or_resume(identity(service, original), task_context={"original_question": original,
+        "price_basis": requested_price_basis(original), "artifact_intent": "lsr"})
+    changed = "Пересчитай, Москва, 4 квартал 2026"
+    service.begin_or_resume(identity(service, changed), task_context={"original_question": changed,
+        "price_basis": requested_price_basis(changed)})
+    resumed = service.begin_or_resume(identity(service, "Продолжи"), task_context={"original_question": "Продолжи"})
+    question = workbook_model_question("Продолжи", resumed)
+    assert original in question and "Москва" in question and "4 квартал 2026" in question
+    assert "имеют приоритет" in question
+
+
+def test_model_correction_keeps_source_and_exact_cards_together_with_original_task():
+    from proxy.services.chat_evidence_application_service import govern_inference_messages, packet_evidence_text
+    from proxy.services.model_execution_preset_service import ModelExecutionPreset
+    preset = ModelExecutionPreset(preset_id="test", model_family="test", input_token_limit=2500,
+        generation_reserve_tokens=200, safety_reserve_tokens=100, normal_tool_count=3, max_tools=5,
+        max_batch_items=5, parallel_read_limit=1, reasoning_enabled=False, source_chain=("test",))
+    original = "Собери ВОР с раздельными материалами и работами"
+    current = "Исправь единицы и объёмы"
+    question = workbook_model_question(current, {"task_context": {"original_question": original}})
+    messages, packet = govern_inference_messages(preset=preset, profile_prefix="Инженер",
+        request_payload=question, required_evidence=["Лист!R2: Изделие | шт | 25", "Q1.H1: Полная карточка источника"])
+    text = str(messages)
+    assert original in text and current in text
+    assert "Лист!R2: Изделие | шт | 25" in packet_evidence_text(packet)
+    assert "Q1.H1: Полная карточка источника" in packet_evidence_text(packet)
 
 
 def test_new_review_chains_parent_without_replaying_an_older_jobs_file(tmp_path):

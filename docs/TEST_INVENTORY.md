@@ -1,5 +1,14 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 852: three task_context cases cover original/current task in resumed model
+calls, effective explicit repricing dimensions and mandatory source/card/task
+presence in ContextGovernor. Three UI regressions cover history pending clear,
+foreign adoption and own-job selection over a foreign pin. Focused core 305,
+UI/source-context 180 passed. Canonical rerun/live pending after UI fix.
+Source catalog regressions additionally assert requested/reference scope,
+exact 30m quantity, null group cell and absent quantity for unknown columns.
+Final focused core/source/UI 437 passed; canonical/live pending after scope fix.
+
 Build 851: four task_context regressions cover VOR after remark/restart/resume,
 explicit conversion to LSR, old task fallback and parent-vs-replay across jobs.
 Two source_catalog regressions cover numbered descriptors beside variants and

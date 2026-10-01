@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.124 / 852:** `workbook_model_question` restores original task in sheet-pass
+> query request_payload and answer question_tail, with current user message and
+> durable explicit dimensions. Workbook call identity retains literal question.
+> UI history hydration clears previous progress, pins polling to the selected
+> owner/session_id and rejects stale asynchronous responses after chat switching.
+> `catalog_sheet_packet_facts` labels requested/reference source scope and exposes
+> exact header-bound quantities/units in the same mandatory source packet.
+
 > **0.31.123 / 851:** `begin_or_resume` persists the explicit artifact_intent;
 > `workbook_packaging_tool` falls back to durable task context on plain resume.
 > `workbook_packaging_lineage` reads older jobs for parent only, current events

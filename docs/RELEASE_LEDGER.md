@@ -1,5 +1,45 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.124 / 852 (01.10, Codex):** продолжение sheet-pass сохраняло
+review message, но query request/question_tail всё ещё читали только req.question.
+`workbook_model_question` возвращает модели original task вместе с current
+message и актуальными явными параметрами, не меняя literal упаковки/identity.
+Три core regressions, focused 305 passed. Live browser скачал ВОР в Downloads,
+SHA совпал с API, но история сохранила чужой progress. History selection теперь
+очищает старый pending и фильтрует owner/session_id; обычный night reconnect
+совместим. Late responses игнорируются. Три UI regressions, focused 180 passed;
+Installed acceptance pending after UI fix.
+`catalog_sheet_packet_facts` делает requested/reference source scope явным,
+передаёт header-bound quantity/unit, сохраняет null/unknown без 0/1 подстановки.
+Source scope regressions red→green, final focused 437 passed;
+Final canonical gate after scope fix: 2063 passed / 20 existing opt-in skipped /
+5 warnings, 201.13 с; verify 2083 collected, compileall/version/architecture green.
+Active artifacts: 49818 norms, 504891 resources, 1576 FSEM, 281223 prices,
+source hashes verified. Official bounded dry-run 16 files, rollback 851 preserved.
+Installed live comparison and customer-quality acceptance still pending.
+
+**Свежий сравнительный замер 851 (01.10):** тот же ЭОМ/35B/64K.
+B0_DIRECT 226.8 с: 76 строк, 26/51 source, structural_error, файла нет.
+B1_CANDIDATE 1132.0 с: 139 строк (31 work/63 material/45 header), 51/51 source,
+remaining=0, файл 17372 bytes, rev_9689b0edb59f4392be832afc2e7cad26,
+SHA 268eac20010cb464cf757bdf90832070613432c7bcbfe196091b19148965af99.
+Положительные количества actual variant rows больше не смещены, но 20 source
+audit rows: группы с null/0/1 и два lighting legend locators. Шесть групп material
+возвращены по три раза. Не customer-ready. Явный packet/reference scope и
+quantity-cell facts добавлены в 852; choices кодом не переписаны.
+Receipts: artifacts/live_851/{eom_baseline,eom_candidate}.
+
+**Замер 851, exact d7108c5b (01.10):** installed 15/15 SHA, RRF 1/1,
+basic 9 pass / 1 diagnostics WARN / 0 fail, immutable recovery двух прежних
+документов без модели. Обычное Продолжи 392.7 с, source coverage 51/51,
+83 authored rows, remaining=0, получен VOR и восстановлен parent revision.
+rev_119fdf87adbb48d49f101ed63d5ab452, parent rev_04c61b609a0f4573a7ba42906ad75183,
+13568 bytes, SHA c6d491e5583a8717f97be526e1edbbac89ad35030b4fe389b0e16ab331a2343d.
+Независимая сверка нашла 10 ошибочных work/material source quantity/unit bindings
+и одну unresolved операцию. Coverage не означает профессиональную готовность.
+Свежее B0/B1 сравнение 851 завершено (см. выше); 300+ и exact installer gates открыты.
+Receipts: artifacts/live_851/eom_review_resume.
+
 **Кандидат 0.31.123 / 851 (01.10, Codex):** контроль обычного Продолжи на 850
 упаковал ВОР как ЛСР: последняя реплика не называла документ, durable original
 question не участвовал в выборе. Explicit artifact_intent теперь сохраняется;

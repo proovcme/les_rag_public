@@ -157,6 +157,13 @@ def test_packet_keeps_unquantified_group_description_beside_variant(tmp_path):
     # Source context does not invent a quantity or change the coverage denominator.
     assert service.quantity_candidates(parent) == ()
     assert "Лист1!R2" in catalog.work_locators()
+    facts = service.catalog_sheet_packet_facts(catalog, "Лист1", ["Лист1!R4"])
+    assert facts["requested_source_rows"] == ["Лист1!R4"]
+    assert "Лист1!R2" in facts["reference_source_rows"]
+    values = {item["source_row"]: item for item in facts["source_quantity_cells"]}
+    assert values["Лист1!R4"]["quantity"] == 30
+    assert values["Лист1!R4"]["unit"] == "м"
+    assert values["Лист1!R2"]["quantity"] is None
 
 
 def test_unknown_quantity_layout_does_not_expose_every_other_work_as_context(tmp_path):
@@ -168,6 +175,9 @@ def test_unknown_quantity_layout_does_not_expose_every_other_work_as_context(tmp
     packet = service.catalog_sheet_pack_lines(catalog, "Лист1", remaining_work=["Лист1!R2"])
     assert catalog.lookup("Лист1!R1").line not in packet
     assert catalog.lookup("Лист1!R2").line in packet
+    facts = service.catalog_sheet_packet_facts(catalog, "Лист1", ["Лист1!R2"])
+    assert facts["source_quantity_cells"][0]["quantity_column_known"] is False
+    assert "quantity" not in facts["source_quantity_cells"][0]
 
 
 def test_csv_empty_cells_keep_quantity_under_its_header(tmp_path):

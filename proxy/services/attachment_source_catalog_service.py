@@ -519,6 +519,35 @@ def catalog_sheets_as_lines(
     return [(name, by_sheet.get(name, [])) for name, _count in catalog.sheets]
 
 
+def catalog_sheet_packet_facts(
+    catalog: AttachmentSourceCatalog, sheet: str, remaining_work: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Mechanical packet scope and literal header-bound quantity cells."""
+    lines = set(catalog_sheet_pack_lines(catalog, sheet, remaining_work))
+    visible = [row for row in catalog.rows if row.sheet == sheet and row.line in lines]
+    requested = set(remaining_work) if remaining_work is not None else {row.locator for row in visible if row.is_work_row()}
+    cells = []
+    for row in visible:
+        if row.locator not in requested and not (row.is_work_row() and row.quantity_column_known):
+            continue
+        item = {"source_row": row.locator, "quantity_column_known": row.quantity_column_known}
+        if row.quantity_column_known:
+            item.update(quantity=row.header_quantity, unit=header_bound_unit(row))
+        cells.append(item)
+    return {
+        "requested_source_rows": [row.locator for row in visible if row.locator in requested],
+        "reference_source_rows": [row.locator for row in visible if row.locator not in requested],
+        "source_quantity_cells": cells,
+        "source_scope_instruction": (
+            "Верни операции requested_source_rows текущего пакета. reference_source_rows "
+            "показаны для понимания контекста, их не нужно возвращать заново в этом пакете. "
+            "source_quantity_cells — значения исходной колонки количества, не расчётные объёмы. "
+            "null означает пустое или не определённое значение, а не количество 0 или 1. "
+            "Код не изменял роли, нормы или операции."
+        ),
+    }
+
+
 def load_tabular_source_catalog(
     path: str | Path,
     *,

@@ -1,5 +1,18 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.124 / 852:** `core/chat-evidence` передаёт durable original task,
+> current message и явные актуальные параметры в модельный query/answer запрос.
+> Док↔код ✅; `workbook_model_question`, [chat-profiles](modules/chat-profiles.md),
+> `test_workbook_task_context.py`. Literal packaging question/identity не меняются;
+> test green не означает качество норм или готовность customer release.
+> `core/attachment-source-catalog`: `catalog_sheet_packet_facts` передаёт
+> requested/reference scope и фактические header-bound quantities/units,
+> одновременно с исходными строками. Doc↔code ✅, source catalog regressions.
+> `ui/chat`: history selection/polling привязаны к session_id, чужой pending
+> сбрасывается; late responses не перерисовывают новый чат. Док↔код ✅;
+> `fetch_active_workbook_research`, `hydrate_chat_pending_from_workbook`,
+> [UI kit](modules/sovushka-uikit.md), `test_sovushka_chat.py`.
+
 > **Кандидат 0.31.123 / 851:** `core/chat-evidence`/`core/workbook-research`
 > сохраняют artifact_intent в task_context, resume читает исходный target;
 > lineage прежних jobs даёт parent, только текущий job может дать settled replay.

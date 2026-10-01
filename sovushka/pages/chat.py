@@ -949,7 +949,7 @@ def read_active_workbook_research(
     return None
 
 
-def _adopted_workbook_job(job: Any, sid: str) -> dict[str, Any] | None:
+def _adopted_workbook_job(job: Any, sid: str, *, allow_foreign_session: bool = True) -> dict[str, Any] | None:
     """Принять «свою» сборку, отказать той, от которой ушли в «Новый чат».
 
     `/workbook-research-active` отдаёт и чужое running-задание, если его
@@ -965,6 +965,8 @@ def _adopted_workbook_job(job: Any, sid: str) -> dict[str, Any] | None:
     identity = job.get("identity") if isinstance(job.get("identity"), dict) else {}
     if str(identity.get("session_id") or "") == str(sid or ""):
         return job
+    if not allow_foreign_session:
+        return None
     from sovushka.state import dismissed_research_jobs
 
     if str(job.get("job_id") or "") in dismissed_research_jobs():
@@ -977,6 +979,7 @@ async def fetch_active_workbook_research(
     session_id: str = "",
     job_id: str = "",
     getter: Any = None,
+    allow_foreign_session: bool = True,
 ) -> dict[str, Any] | None:
     """Prefer the live GET, then the same SQLite the proxy is writing."""
 
@@ -990,7 +993,11 @@ async def fetch_active_workbook_research(
     if wanted:
         job = await fetch(f"/api/workbook-research/{wanted}")
         if isinstance(job, dict) and job.get("job_id"):
-            return job
+            if allow_foreign_session:
+                return job
+            own = _adopted_workbook_job(job, sid, allow_foreign_session=False)
+            if own:
+                return own
     if not sid:
         # Есть job_id, но нет сессии: показывать чужую running-сборку вместо
         # потерянной своей — тот же дефект, что и запрос без session_id.
@@ -998,10 +1005,13 @@ async def fetch_active_workbook_research(
     listed = await fetch(f"/api/workbook-research-active?session_id={sid}")
     if isinstance(listed, dict):
         jobs = listed.get("jobs") or []
-        if jobs and isinstance(jobs[0], dict):
-            return _adopted_workbook_job(jobs[0], sid)
+        for job in jobs:
+            adopted = _adopted_workbook_job(job, sid, allow_foreign_session=allow_foreign_session)
+            if adopted:
+                return adopted
     return _adopted_workbook_job(
-        read_active_workbook_research(session_id=sid, job_id=wanted), sid
+        read_active_workbook_research(session_id=sid, job_id=wanted), sid,
+        allow_foreign_session=allow_foreign_session,
     )
 
 
@@ -1018,12 +1028,17 @@ async def hydrate_chat_pending_from_workbook(
     Opening that session must still restore the in-progress bubble.
     """
 
-    prior = dict(pending) if isinstance(pending, dict) else {}
+    prior = dict(pending) if isinstance(pending, dict) and not ignore_prior_job_id else {}
     job_id = "" if ignore_prior_job_id else str(prior.get("job_id") or "")
     fetch = fetch_job or fetch_active_workbook_research
-    job = await fetch(session_id=str(session_id or "").strip(), job_id=job_id)
+    kwargs = {"session_id": str(session_id or "").strip(), "job_id": job_id}
+    if fetch_job is None:
+        kwargs["allow_foreign_session"] = not ignore_prior_job_id
+    job = await fetch(**kwargs)
     if not isinstance(job, dict) or not job.get("job_id"):
         return prior or None
+    if ignore_prior_job_id and _adopted_workbook_job(job, str(session_id or "").strip(), allow_foreign_session=False) is None:
+        return None
     return workbook_job_to_pending_progress(job, prior)
 
 
@@ -6064,15 +6079,27 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 )
                 break
 
+    async def _selected_session_workbook_research(*, job_id: str = "") -> dict[str, Any] | None:
+        sid = str(state.get("session_id") or "")
+        job = await fetch_active_workbook_research(session_id=sid, job_id=job_id,
+            allow_foreign_session=bool(job_id) and sid != str(state.get("history_selected_session_id") or ""))
+        return job if str(state.get("session_id") or "") == sid else None
+
     async def _hydrate_running_workbook_progress(*, from_history: bool = False) -> None:
         from sovushka.state import persist_chat_pending
 
+        sid = str(state.get("session_id") or "")
+        if from_history:
+            state["history_selected_session_id"] = sid
+            persist_chat_pending(None)
         pending = await hydrate_chat_pending_from_workbook(
-            session_id=str(state.get("session_id") or ""),
+            session_id=sid,
             pending=state.get("chat_pending"),
             ignore_prior_job_id=from_history,
         )
-        if pending:
+        if str(state.get("session_id") or "") != sid:
+            return
+        if pending or from_history:
             persist_chat_pending(pending)
         notice = (
             format_workbook_session_sys_notice(state.get("chat_pending"))
@@ -6119,6 +6146,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         _terminal_restore_attempted.add(sid)
         last = await api_get(f"/api/workbook-research-last?session_id={sid}")
+        if str(state.get("session_id") or "") != sid:
+            return
         if not isinstance(last, dict) or not last.get("found"):
             return
         job = last.get("job") if isinstance(last.get("job"), dict) else {}
@@ -6147,13 +6176,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         sid = ensure_session_id()
         hist = await api_get(f"/api/chat/history?session_id={sid}")
-        if hist is None:
+        if hist is None or str(state.get("session_id") or "") != str(sid):
             return
         state["chat_history"] = list(hist or [])
         persist_session_id(sid)
         pending = dict(state.get("chat_pending") or {})
-        job = await fetch_active_workbook_research(
-            session_id=str(sid or ""),
+        job = await _selected_session_workbook_research(
             job_id=str(pending.get("job_id") or ""),
         )
         if job and workbook_job_is_terminal(job):
@@ -6188,7 +6216,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if not sid:
             return []
         hist = await api_get(f"/api/chat/history?session_id={sid}")
-        if hist is None:
+        if hist is None or str(state.get("session_id") or "") != str(sid):
             return []
         return list(hist or [])
 
@@ -6205,8 +6233,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
             async def _poll_workbook_progress(_rows=None) -> bool:
                 pending = dict(state.get("chat_pending") or {})
-                job = await fetch_active_workbook_research(
-                    session_id=str(state.get("session_id") or ""),
+                job = await _selected_session_workbook_research(
                     job_id=str(pending.get("job_id") or ""),
                 )
                 if job:
@@ -6227,8 +6254,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             if first:
                 state["chat_history"] = first
             pending = dict(state.get("chat_pending") or {})
-            job = await fetch_active_workbook_research(
-                session_id=str(state.get("session_id") or ""),
+            job = await _selected_session_workbook_research(
                 job_id=str(pending.get("job_id") or ""),
             )
             if job:
