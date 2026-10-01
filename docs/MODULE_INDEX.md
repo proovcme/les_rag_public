@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.115 / 843:** `core/chat-evidence` разрешает модели
+> формулировать поиск монтажной операции вместо буквального изделия.
+> Дословность относится к исполнению уже объявленного запроса; systematic
+> candidate builders ADR-16 не изменены. `core/chat-profiles` просит таблицу
+> первой, без длинных последовательностей пустых маркеров. Код↔док ✅;
+> installed comparative/financial gate pending. Замер 842 не проходит
+> customer gate: 11/75 СКС, 0 work/calculated, evidence_capacity; durable IDs
+> работают, ошибочный расчёт mounting norm на supply не повторился.
+
 > **Кандидат 0.31.114 / 842:** `core/chat-profiles` основной plain-text output
 > contract требует эхо application operation_id, отделяет work от наличия
 > нормы в ВОР и не разрешает вывод о недостающих строках по одному пакету.

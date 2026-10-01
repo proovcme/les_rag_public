@@ -1506,7 +1506,10 @@ _MODEL_RAG_QUERY_REPAIR_INSTRUCTION = (
 )
 _MODEL_RAG_QUERY_VOLUME_HINT = (
     "Пустые ценовые колонки исходника не ищи. Запросы — по работам и "
-    "измерителям строк, не по прайсу."
+    "измерителям строк, не по прайсу. Если исходник называет изделие, "
+    "по задаче и данным сформулируй обоснованную монтажную операцию "
+    "для поиска её нормы; не ограничивайся артикулом поставки. "
+    "Не добавляй неизвестные условия, размеры или объёмы."
 )
 #: The marker spellings the prompt names and the reader strips.  One tuple feeds
 #: both sides, so the declared-query contract cannot be documented on one end and
@@ -1517,8 +1520,10 @@ _DECLARED_QUERY_MARKER_EXAMPLES = ("1.", "1)", "-", "*", "•", "—")
 #: and adapter to agree instead of growing a list of Russian phrases: every form
 #: named here is accepted structurally, whatever model produced it.
 _MODEL_RAG_QUERY_FORMAT_CONTRACT = (
-    "Формат ответа: каждый поисковый запрос — отдельной строкой, формулировку "
-    "строки исходника не меняй. Строка может быть обычным текстом или пунктом "
+    "Формат ответа: каждый поисковый запрос — отдельной строкой; "
+    "код исполнит твой запрос дословно. Ты выбираешь формулировку поиска "
+    "по задаче и данным исходника, она не обязана повторять название изделия. "
+    "Строка может быть обычным текстом или пунктом "
     "списка ("
     + ", ".join(_DECLARED_QUERY_MARKER_EXAMPLES)
     + ") — любой из этих видов читается как один запрос, номер и маркер списка "

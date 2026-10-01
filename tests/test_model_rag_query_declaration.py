@@ -37,6 +37,19 @@ def test_declaration_prompt_and_reader_agree() -> None:
     )
 
 
+def test_model_can_search_for_an_operation_instead_of_copying_a_product_label():
+    """Only the code must preserve the declared query verbatim, not the model."""
+    instruction = service.sheet_pass_query_instruction(
+        {"mode": "estimator"}, sheet="Heating", sheet_index=1, sheet_count=1)
+    assert "формулировку строки исходника не меняй" not in instruction
+    assert "обоснованную монтажную операцию" in instruction
+    assert "код исполнит твой запрос дословно" in instruction
+    query = "Heating!R8 — Установка отопительного прибора на кронштейнах"
+    declared = service.read_declared_query_list(query)
+    assert len(declared["queries"]) == 1
+    assert declared["queries"][0].text == query
+
+
 def test_ordinary_numbered_and_bulleted_output_all_read_as_queries() -> None:
     """Support the provider's plain text answer without a phrase list."""
 

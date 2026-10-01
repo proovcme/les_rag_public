@@ -1815,6 +1815,8 @@ def _evidence_cards(chunks: Sequence[Any]) -> dict[str, dict[str, Any]]:
 def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: str = "") -> str:
     return (
         f"{sheet_clause}"
+        "Начни ответ с таблицы результата; пояснения — после таблицы. "
+        "В таблице не перечисляй пустые поля длинной последовательностью маркеров. "
         "Дай итоговый ответ Markdown-таблицей по указанным строкам исходного ВОР. Для каждой "
         "строки явно укажи source_row, row_role, work_row, title, unit, quantity, "
         "выбранный тобой norm_code, norm_status, open_gap и evidence_refs Qx.Hy. "

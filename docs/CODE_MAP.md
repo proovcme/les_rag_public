@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.115 / 843:** `chat_evidence_application_service` query format contract
+> сохраняет модельное авторство поискового текста, включая обоснованную
+> операцию по изделию. Reader и original/derived builders не меняют смысл.
+> `lsr_result_table_instruction` просит таблицу до комментариев и компактные
+> колонки. Norm choice, prices, evidence paging и budgets не изменены.
+
 > **0.31.114 / 842:** `lsr_norm_quality_gate_service.lsr_result_table_instruction`
 > requires echoed application IDs in ordinary result rows and separates a work
 > operation from norm availability. `rim_lsr_trace_service.positions_from_visible_lsr_rows`

@@ -1,5 +1,11 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 843: query instruction must permit a model-authored mounting operation
+instead of literal product-label copying; the reader preserves that query.
+Result instruction requests the table first and excludes marker-only expansion.
+Both regressions failed before correction. Installed/model outcome pending;
+offline prompt contracts do not prove professional norm selection.
+
 Build 842: three regression cases reproduce the missing output-ID contract,
 mounting resources calculated on explicit supply/header roles, and non-work
 ciphers inflating selected-work-norm counts. The role test asserts no norm

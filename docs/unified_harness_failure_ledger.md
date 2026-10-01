@@ -1,5 +1,18 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 843 candidate: the prompt forbids the model's own operation query
+
+842 SKS receipts contain literal product queries and unrelated norm candidates;
+11/75 rows were accounted, 0 work/money, with a visible evidence_capacity pause.
+The shared query-format paragraph told the model not to change the source-row
+wording. This contradicted the estimator contract that the model derives an
+operation from a specification. 843 changes the prompt, not the declared-query
+reader or ADR-16 literal builders: the model chooses the search wording and code
+executes that declared query verbatim. A generic heating-operation query regression
+failed before correction. Table-first output is requested after 842's marker-only
+generation consumed the answer budget. Both are prompt contract repairs; installed
+comparative/professional outcome is still required and not inferred from tests.
+
 ## 2026-10-01 — 840: retrieved evidence discarded after an early terminal row
 
 839/838 receipts measure omitted returned norm candidates despite query headers

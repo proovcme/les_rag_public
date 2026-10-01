@@ -233,6 +233,14 @@ def test_result_contract_keeps_work_without_norm_and_echoes_application_identity
     assert "Для каждой выбранной нормы обязательно" in instruction
 
 
+def test_result_table_precedes_commentary_and_does_not_require_empty_columns():
+    from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
+    instruction = lsr_result_table_instruction()
+    assert "Начни ответ с таблицы результата" in instruction
+    assert "пояснения — после таблицы" in instruction
+    assert "не перечисляй пустые поля" in instruction
+
+
 def test_result_instruction_preserves_gapped_pdf_locators() -> None:
     from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 

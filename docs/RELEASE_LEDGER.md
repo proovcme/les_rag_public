@@ -1,5 +1,40 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.115 / 843 (01.10, Codex):** исправлена противоречивая
+инструкция model query: «формулировку строки исходника не меняй» запрещала
+модели переходить от изделия к обоснованной операции. Теперь дословность
+относится к исполнению объявленного моделью запроса кодом. Модель выбирает
+формулировку операции по задаче и исходным данным, без выдуманных условий;
+original/derived builders и фильтры ADR-16 не изменены. Output contract просит
+таблицу первой и запрещает длинные последовательности пустых маркеров.
+Это формат и граница авторства, не выбор норм кодом и не гарантия результата
+модели. Две регрессии воспроизведены до исправления. Offline gate: 2020 passed /
+20 existing opt-in skipped / 5 warnings, 190.07 с; verify 2040 collected,
+compileall/architecture зелёные. 13 patch files dry-run without DIVERGENT;
+rollback_842_to_843 preserved. Installed gate pending;
+customer-ready не заявлено.
+
+**Замер 842, exact f7feace7 (01.10):** 14/14 installed patch hashes;
+native RRF 1/1, basic 9 pass / 1 diagnostics WARN / 0 fail; recovery 0.06/0.53 с,
+same revisions/SHA/snapshots. B0 СКС 147.2 с, 74/75 accounted, 70 materials /
+4 headers, 0 work/norm/money. B1 СКС 397.4 с, evidence_capacity at cursor 17/31:
+11/75 accounted, 9 materials/2 headers, 0 work/norm/calculated/money. Пять
+answer calls; первые два finish=length без parsed rows. Ответ содержит
+дегенеративное повторение пустых маркеров до первой таблицы (offset 50099).
+Все 11 решений имеют revision 2: operation IDs работают, новых дублей нет.
+Подмена монтажного расчёта стоимостью изделия из 841 не повторилась.
+14 queries остаются в durable held_packet; полностью завершённой ЛСР нет.
+Downloaded SHA 4270d33c5b425c0bcb78b9903120171c3b67fac65f06d38a8c5b705bd463256a.
+Receipts: artifacts/live_842/sks_baseline и sks_candidate. Comparative/customer
+gate не пройден; готовность к передаче заказчику не подтверждена.
+
+842 PDF → ВОР на оригинальном разрешённом файле: 761.8 с, 19/19 work,
+remaining=0, model_result accepted_unchanged, 19 строк в доставленном XLSX.
+Все 19 source quantity/unit совпадают с каталогом оригинала; прежние сдвиги
+PDF!R8/R16/R17 не повторились. SHA 1abd199b7fa407dccd1a8f0ffdbe6deaff442deac01059e921b63ec0c85cbf44.
+Две query calls и 23 answer calls: завершение ВОР подтверждено, приемлемая
+скорость и готовность ЛСР этим не доказаны. Receipt: artifacts/live_842/pdf_vor.
+
 **Кандидат 0.31.114 / 842 (01.10, Codex):** основной output contract явно
 просит вернуть application operation_id для прежней операции; work больше
 не определяется обязательным наличием нормы (ВОР не требует нормы/цены).
