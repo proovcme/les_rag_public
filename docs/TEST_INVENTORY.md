@@ -1,5 +1,26 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+867: durable terminal packet snapshots и независимые source packets проверяются
+`test_workbook_research_job_service` и `test_model_rag_sheet_evidence_reads`:
+3 новых регрессии failed до изменения, целевой повтор с chat/refinement — 282 passed.
+Проверяются
+сохранение решений/курсов при reopen, переход только к новым locator группам,
+честный remaining при пропуске моделью и отсутствие нового ответа за прежний
+пакет. `test_model_evidence_native_exchange` добавлен в canonical UNIT_TESTS;
+он проверяет роли/ID и budget actual native continuation, а не качество нормы.
+Совместный focused bundle native exchange/read driver/ContextGovernor/transport/
+sheet — 97 passed; 3 регрессии падали до исправления.
+UI/общий UIKit/chat refinement, включая запрет reopen работающего задания —
+197 passed (4.41s).
+Query failure сохраняет bounded final output/parse facts через typed exception
+в existing history, без раскрытия reasoning/credentials в history или public
+errors. Совместный focused повтор — 289 passed (12.42s), включая stream/nonstream,
+quoted JSON credentials и отказ от arbitrary HTTP trace promotion. Новый
+`test_model_query_failure_diagnostics` включён в canonical UNIT_TESTS.
+Frozen full gate 867: 2696 passed / 20 existing opt-in skipped / 5 warnings;
+verify/architecture/pinned baseline exit0. Установленная профессиональная
+приёмка 867 pending; offline gate её не заменяет.
+
 866: test_model_lsr_result_contract проверяет advertised quantity_basis и review
 statuses реальными constructors ResourceBinding/ResourceReview, включая правила
 add/replace и component reasons. Совместный focused gate с read-turn, sheet/cursor
@@ -7,7 +28,7 @@ add/replace и component reasons. Совместный focused gate с read-turn
 RAG evidence общий field contract сохранён, guide ограничен actual read turn:
 277 focused passed, включая обе исходные failed проверки без изменений.
 Установленные model-only требования
-не считаются доказательством профессиональной правильности; live 866 pending.
+не считаются доказательством профессиональной правильности; live 866 FAILED.
 
 865: `test_model_result_resource_actions` проверяет реальный JSON inventory
 pointer, отдельное full read той же identity и запрет metadata без буквального

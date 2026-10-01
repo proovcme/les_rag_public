@@ -61,6 +61,37 @@ def research_cache_entry(
     return entry
 
 
+def _merge_held_packet(previous: Mapping[str, Any], incoming: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep completed packets' delivery cursors independently of the active page."""
+    payload = dict(incoming)
+    snapshots: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for state in (previous, incoming):
+        candidates = list(state.get("terminal_packets") or ())
+        if state.get("terminal_model_result_saved"):
+            candidates.append({key: value for key, value in state.items()
+                               if key not in {"terminal_packets", "reopened_locators"}})
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                continue
+            snapshot = dict(candidate)
+            identity = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+            if identity not in seen:
+                seen.add(identity)
+                snapshots.append(snapshot)
+    if snapshots:
+        payload["terminal_packets"] = snapshots
+    reopened = set(map(str, previous.get("reopened_locators") or ()))
+    reopened.update(map(str, incoming.get("reopened_locators") or ()))
+    if incoming.get("terminal_model_result_saved"):
+        reopened.difference_update(map(str, incoming.get("locators") or ()))
+    if reopened:
+        payload["reopened_locators"] = sorted(reopened)
+    else:
+        payload.pop("reopened_locators", None)
+    return payload
+
+
 _EXTRA_COLUMNS = {
     "task_context_json": "TEXT NOT NULL DEFAULT '{}'",
     "remaining_json": "TEXT NOT NULL DEFAULT '[]'",
@@ -461,6 +492,16 @@ class WorkbookResearchIdentity:
 
 
 class WorkbookResearchJobService:
+    @staticmethod
+    def terminal_packet_locators(held_packet: Mapping[str, Any]) -> set[str]:
+        """Packets already completed by the model, excluding explicit user reopen."""
+        snapshots = list(held_packet.get("terminal_packets") or ())
+        if held_packet.get("terminal_model_result_saved"):
+            snapshots.append(held_packet)
+        return {str(locator) for snapshot in snapshots if isinstance(snapshot, Mapping)
+                for locator in snapshot.get("locators") or ()} - set(
+                    map(str, held_packet.get("reopened_locators") or ()))
+
     def __init__(self, db_path: Path | str = META_DB_PATH):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1212,7 +1253,7 @@ class WorkbookResearchJobService:
             remaining_locators = [
                 str(item) for item in remaining if str(item).strip()
             ]
-            held_payload = dict(held_packet or {})
+            held_payload = _merge_held_packet(_json_object(row, "held_packet_json"), dict(held_packet or {}))
             for op_id, revision, origin, payload in new_revisions:
                 self._insert_revision(conn, job_id, op_id, revision, origin, payload, None)
             # ─── Directive §1 (22.09): orthogonal stall / progress counters ───
@@ -1252,7 +1293,7 @@ class WorkbookResearchJobService:
 
             # Held (deferred) packet retry axis: the same deferred locators replayed
             # without progress is a *retry*, tracked separately from stalling.
-            held_present = bool(held_payload.get("locators"))
+            held_present = bool(held_payload.get("locators")) and not held_payload.get("terminal_model_result_saved")
             held_fp = ""
             if held_present:
                 held_fp = hashlib.sha256(
@@ -1759,6 +1800,12 @@ class WorkbookResearchJobService:
         """Remove listed rows from accepted decisions and return them to remaining."""
 
         wanted = [str(item).strip() for item in locators if str(item).strip()]
+        prior_context = (list(review_prior_rows) if review_prior_rows is not None
+                         else self.chat_review_context(job_id).get("prior_rows", []))
+        review_note = dict(chat_review or {
+            "message": "Пользователь явно открыл указанные исходные строки для нового исследования.",
+            "decision_author": "user", "review_scope": "locators",
+        })
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -1767,6 +1814,22 @@ class WorkbookResearchJobService:
             if row is None:
                 raise WorkbookResearchJobError("workbook research job not found")
             existing_rows = json.loads(str(row["accepted_rows_json"]))
+            active_held = _json_object(row, "held_packet_json")
+            completed_locators = self.terminal_packet_locators(active_held)
+            # A completed packet owns its current accepted operations even
+            # while other source packets remain open. Explicit reopens already
+            # exclude their locators until the next terminal model result.
+            prior_context = [item for item in prior_context
+                             if str(item.get("source_row") or "") not in completed_locators]
+            if not (_json_list(row, "remaining_json") or (
+                    active_held.get("locators") and not active_held.get("terminal_model_result_saved"))):
+                # A finished result owns its current accepted set; an older
+                # review baseline must not resurrect removed operations.
+                prior_context = []
+            if chat_review is None:
+                review_note["request_sha256"] = str(_json_object(row, "identity_json").get("question_sha256") or "")
+            baseline = {str(item.get("operation_id") or f"unassigned:{index}"): dict(item)
+                        for index, item in enumerate([*prior_context, *existing_rows])}
             kept = [
                 item
                 for item in existing_rows
@@ -1787,10 +1850,13 @@ class WorkbookResearchJobService:
             released = [locator for locator in wanted if locator in deferrals]
             for locator in released:
                 deferrals.pop(locator, None)
+            held = _json_object(row, "held_packet_json")
+            if held.get("terminal_packets") or held.get("terminal_model_result_saved"):
+                held["reopened_locators"] = sorted(set(map(str, held.get("reopened_locators") or ())) | set(wanted))
             conn.execute(
                 """UPDATE workbook_research_jobs
                 SET status='paused',phase='refine',accepted_rows_json=?,remaining_json=?,
-                    operator_overrides_json=?,deferrals_json=?,
+                    operator_overrides_json=?,deferrals_json=?,held_packet_json=?,
                     pause_kind='refine',cancel_requested=0,
                     stall_fingerprint='',stall_occurrences=0,updated_at=CURRENT_TIMESTAMP
                 WHERE job_id=?""",
@@ -1799,6 +1865,7 @@ class WorkbookResearchJobService:
                     json.dumps(remaining, ensure_ascii=False),
                     json.dumps(overlays, ensure_ascii=False),
                     json.dumps(deferrals, ensure_ascii=False),
+                    json.dumps(held, ensure_ascii=False),
                     job_id,
                 ),
             )
@@ -1808,12 +1875,9 @@ class WorkbookResearchJobService:
                 "locators_reopened",
                 {
                     "locators": wanted, "accepted_total": len(kept),
-                    **({
-                        "chat_review": dict(chat_review),
-                        "prior_rows": [dict(item) for item in (
-                            existing_rows if review_prior_rows is None else review_prior_rows
-                        ) if str(item.get("source_row") or "") in wanted],
-                    } if chat_review is not None else {}),
+                    "chat_review": review_note,
+                    "prior_rows": [item for item in baseline.values()
+                                   if str(item.get("source_row") or "") in wanted],
                 },
             )
         return self.get(job_id)
@@ -1845,6 +1909,7 @@ class WorkbookResearchJobService:
                 if held_packet is not None
                 else _json_object(row, "held_packet_json")
             )
+            held_payload = _merge_held_packet(_json_object(row, "held_packet_json"), held_payload)
             keys = row.keys()
             fingerprint = remainder_fingerprint(remaining_locators)
             previous_fingerprint = (
@@ -2193,13 +2258,14 @@ class WorkbookResearchJobService:
                 SET status=?,phase=?,accepted_rows_json=?,remaining_json=?,
                     stall_count=0,stall_reason='',stall_fingerprint='',
                     stall_occurrences=0,run_round_count=0,held_attempts=0,
-                    held_packet_json='{}',pause_kind=?,updated_at=CURRENT_TIMESTAMP
+                    held_packet_json=?,pause_kind=?,updated_at=CURRENT_TIMESTAMP
                 WHERE job_id=?""",
                 (
                     "complete" if completed else "paused",
                     phase,
                     json.dumps(existing_rows, ensure_ascii=False),
                     json.dumps(still_open, ensure_ascii=False),
+                    json.dumps(_merge_held_packet(_json_object(row, "held_packet_json"), {}), ensure_ascii=False),
                     pause_kind,
                     str(job_id),
                 ),
@@ -2479,6 +2545,7 @@ class WorkbookResearchJobService:
             if str(item.get("row_classification") or "") == "ambiguous"
         )
         status = str(row["status"])
+        source_omitted = [item for item in omitted if not re.fullmatch(r"Q\d+\.H\d+", str(item))]
         remaining = _json_list(row, "remaining_json")
         query_cache = _json_object(row, "query_cache_json")
         held_packet = _json_object(row, "held_packet_json")
@@ -2511,7 +2578,8 @@ class WorkbookResearchJobService:
             "resumable": status in RESUMABLE_STATUSES and status != "failed",
             "status_dimensions": {
                 "processed": len(accepted_rows),
-                "omitted": len(omitted),
+                "omitted": len(source_omitted),
+                "deferred_evidence": len(omitted) - len(source_omitted),
                 "ambiguous": ambiguous,
                 "missing": missing,
                 "remaining": len(remaining),
@@ -2525,7 +2593,7 @@ class WorkbookResearchJobService:
                 ),
                 "completeness": (
                     "full"
-                    if status == "complete" and not omitted and not remaining
+                    if status == "complete" and not source_omitted and not remaining
                     else "partial"
                 ),
             },

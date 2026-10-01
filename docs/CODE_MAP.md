@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **867:** `workbook_research_job_service` сохраняет отдельные terminal packet
+> cursors; sheet loop переходит к ещё не предложенным source packets. Непрочитанные
+> кандидаты отделены от source gaps. Native assistant/tool обмен остаётся внутри
+> token budget ContextGovernor и сохраняет matching call IDs. Профессиональное
+> решение модели и отдельные source/norm/price проверки сохраняются.
+> Typed `ModelQueryFailure` переносит bounded query diagnostics в existing
+> history через provider/stream boundaries; public error не раскрывает их.
+
 > **866:** `model_lsr_resource_decision_instruction` описывает проверку состава
 > и реальные enum/quantity/reasons ресурсного интерфейса. Общий
 > `MODEL_EVIDENCE_READ_INSTRUCTION` даёт её обеим сметным веткам с native reads;

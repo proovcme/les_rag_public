@@ -1,5 +1,36 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.139 / 867; установлен 0.31.138 / 866 (`99d47599`).**
+866 установлен официальным patch deploy; 13 файлов совпали с commit/workspace,
+rollback 865 сохранён. Native RRF smoke exit0 (0.92s), базовый release smoke
+9 passed / 1 diagnostic warning / 0 failed (141.94s), alignment 96/96.
+Свежие сравнительные B0/B1 с одинаковыми task/source/model/profile не прошли
+приёмку: B0 — 347.91s, 20 авторских строк, structural_error из-за ошибочных
+ссылок и объёма/единицы R8; B1 — 104.58s, 7 принятых строк первого пакета,
+11 ошибок ширины Markdown и неполное покрытие. В обеих ветках нет скачиваемого
+файла и фактических native reads. Температура 0.7 в отдельном видимом профиле
+не закрыла профессиональное качество; исходный профиль восстановлен.
+Receipts: `artifacts/live_866/bap_lsr_{baseline,candidate}/`. Готовность FAILED.
+
+867 исправляет два общих механических дефекта: terminal текущего source packet
+не останавливает ещё не предложенные пакеты; их независимые evidence cursors
+сохраняются без миграции БД и без повторного предметного ответа за прежний пакет.
+Unused карточки учитываются отдельно от пропущенных исходных строк; их наличие
+не подтверждает и не опровергает готовность расчёта. Native tool continuation
+должен сохранять assistant/tool роли и call_id внутри ContextGovernor, а не
+передавать результат инструмента как новый текст пользователя. Модельные нормы,
+объёмы, статусы и ресурсы код не меняет. Общая предответная инструкция различает
+Qx.Hy конкретной карточки и source_id таблицы с несколькими нормами.
+Первый замер candidate gate: verify exit0 (22.38s), 2693 passed / 20 existing
+opt-in skipped / 5 warnings (257.29s), architecture exit0 (9.45s), pinned baseline
+exit0 (7.31s), active artifacts verify-root ok. Независимый review закрыл stale
+prior-operations дефект и не нашёл новых P1/P2 в native/terminal diff.
+Дополнительная диагностика query failure вошла в candidate. Финальный frozen
+gate: verify exit0 (22.61s), 2696 passed / 20 existing opt-in skipped / 5 warnings
+(253.71s), architecture exit0 (9.31s), pinned baseline exit0 (7.53s). Первый
+замер сохранён отдельно. `artifacts/*_867_second.{log,exit.json}`.
+Installed live и exact installer 867 пока pending; приёмка FAILED сохраняется.
+
 **Кандидат 0.31.138 / 866; установлен 0.31.137 / 865 (`dd785f05`).**
 865 установлен официальным patch deploy: commit/workspace/runtime SHA совпали,
 rollback 864 сохранён. Native RRF smoke exit0 (1.16s), базовый release smoke

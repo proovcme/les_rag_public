@@ -380,17 +380,28 @@ def _parse_model_tool_calls(text: str, *, allowed_tools: set[str], max_calls: in
         calls_raw = [calls_raw]
     if not isinstance(calls_raw, list):
         return []
+    native_batch = any(isinstance(item, dict) and "call_id" in item for item in calls_raw)
     calls: list[dict[str, Any]] = []
     for item in calls_raw:
         if not isinstance(item, dict):
             continue
-        tool = str(item.get("tool") or item.get("name") or "").strip()
-        if tool not in allowed_tools:
+        tool = str(item.get("tool") or item.get("name") or "")
+        if not native_batch:
+            tool = tool.strip()
+        if tool not in allowed_tools and not native_batch:
             continue
         args = item.get("args") if isinstance(item.get("args"), dict) else {}
-        calls.append({"tool": tool, "args": dict(args)})
-        if len(calls) >= max(1, max_calls):
+        call = {"tool": tool, "args": dict(args)}
+        if "call_id" in item:
+            call["call_id"] = item.get("call_id")
+            for field in ("native_arguments", "native_assistant_content"):
+                if field in item:
+                    call[field] = item[field]
+        calls.append(call)
+        if len(calls) >= max(1, max_calls) and not native_batch:
             break
+    if calls and "native_assistant_content" in parsed:
+        calls[0]["native_assistant_content"] = parsed["native_assistant_content"]
     return calls
 
 def _strip_think(text: str) -> str:

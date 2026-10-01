@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
+from proxy.services.context_governor_service import NativeToolCall, NativeToolExchange, NativeToolReply
 from proxy.services.model_evidence_read_contract import read_result_receipt
 
 
@@ -19,6 +20,7 @@ class ModelEvidenceReadTurnResult:
     receipts: tuple[dict[str, Any], ...]
     results: tuple[Any, ...]
     seen_calls: tuple[str, ...]
+    native_exchanges: tuple[NativeToolExchange, ...] = ()
 
 
 def evidence_read_call_identity(call: Mapping[str, Any]) -> str:
@@ -30,7 +32,49 @@ def evidence_read_call_identity(call: Mapping[str, Any]) -> str:
 def evidence_read_receipt(call: Mapping[str, Any], result: Any) -> dict[str, Any]:
     payload = getattr(result, "payload", result)
     payload = dict(payload) if isinstance(payload, Mapping) else {}
-    return read_result_receipt(call, payload)
+    # Native protocol metadata belongs to the assistant exchange, not repeated
+    # receipt/evidence prose. The provider ID remains available for every reply.
+    public_call = {key: call[key] for key in ("tool", "args", "call_id") if key in call}
+    return read_result_receipt(public_call, payload)
+
+
+def _native_calls(calls: Sequence[Mapping[str, Any]]) -> tuple[NativeToolCall, ...]:
+    if not any("call_id" in call for call in calls):
+        return ()
+    typed = []
+    for call in calls:
+        arguments = call.get("native_arguments")
+        if arguments is None:
+            arguments = json.dumps(call.get("args") or {}, ensure_ascii=False, separators=(",", ":"))
+        native = NativeToolCall(call.get("call_id"), call.get("tool"), arguments)
+        if json.loads(native.arguments) != call.get("args"):
+            raise ValueError("native arguments differ from the executed literal call")
+        typed.append(native)
+    ids = [call.call_id for call in typed]
+    if len(set(ids)) != len(ids):
+        raise ValueError("native batch has duplicate provider IDs")
+    return tuple(typed)
+
+
+def native_evidence_read_exchange(
+    calls: Sequence[Mapping[str, Any]], receipts: Sequence[Mapping[str, Any]],
+) -> NativeToolExchange | None:
+    """Return protocol receipts; literal card bodies stay in the cited registry."""
+    typed_calls = _native_calls(calls)
+    if not typed_calls:
+        return None
+    if len(receipts) != len(typed_calls):
+        raise ValueError("native batch needs exactly one receipt per call")
+    replies = []
+    for call, receipt in zip(typed_calls, receipts, strict=True):
+        recorded_call = receipt.get("call") or {}
+        if (recorded_call.get("call_id") != call.call_id or recorded_call.get("tool") != call.name
+                or recorded_call.get("args") != json.loads(call.arguments)):
+            raise ValueError("native receipt belongs to another call")
+        replies.append(NativeToolReply(call.call_id, call.name, json.dumps(
+            dict(receipt), ensure_ascii=False, sort_keys=True, separators=(",", ":"))))
+    return NativeToolExchange(calls=typed_calls, replies=tuple(replies),
+                              assistant_content=calls[0].get("native_assistant_content", ""))
 
 
 async def _invoke(callback: Callable, *args: Any) -> Any:
@@ -44,7 +88,8 @@ async def run_model_evidence_read_turn(
     usage: Mapping[str, Any] | None,
     parse_calls: Callable,
     execute: Callable,
-    continue_turn: Callable,
+    continue_turn: Callable | None = None,
+    continue_native_turn: Callable | None = None,
     allowed_tools: Sequence[str] | set[str],
     max_calls: int = 48,
     on_read_results: Callable | None = None,
@@ -55,8 +100,9 @@ async def run_model_evidence_read_turn(
 
     ``execute`` receives one literal call mapping. ``on_read_results`` receives
     the new receipt/result batch and may return a visible stop reason.
-    ``continue_turn`` receives cumulative receipts/results and returns the next
-    model text/usage. Exceptions propagate; the caller owns technical pauses.
+    ``continue_turn`` receives cumulative receipts/results. The native callback
+    additionally receives complete typed exchanges for governed serialization.
+    Exceptions propagate; the caller owns technical pauses.
     Previously executed identities can be supplied by a durable ledger.
     """
     current_text = text
@@ -69,6 +115,8 @@ async def run_model_evidence_read_turn(
     extra_tokens = 0
     stop = ""
     names = set(allowed_tools)
+    native_exchanges: list[NativeToolExchange] = []
+    native_ids: set[str] = set()
     while current_text:
         calls = parse_calls(current_text, allowed_tools=names, max_calls=max(remaining, 1))
         if not calls:
@@ -77,6 +125,25 @@ async def run_model_evidence_read_turn(
         if remaining <= 0:
             stop = "evidence_read_budget"
             break
+        try:
+            typed_calls = _native_calls(calls)
+        except ValueError:
+            stop = "evidence_read_native_exchange_invalid"
+            break
+        if typed_calls:
+            if any(call.name not in names for call in typed_calls):
+                stop = "evidence_read_unknown_tool"
+                break
+            if native_ids.intersection(call.call_id for call in typed_calls):
+                stop = "evidence_read_native_exchange_invalid"
+                break
+            identities_in_batch = [evidence_read_call_identity(call) for call in calls]
+            if len(set(identities_in_batch)) != len(identities_in_batch) or seen.intersection(identities_in_batch):
+                stop = "evidence_read_repeat"
+                break
+            if len(typed_calls) > remaining:
+                stop = "evidence_read_budget"
+                break
         batch_receipts: list[dict[str, Any]] = []
         batch_results: list[Any] = []
         for call in calls:
@@ -106,9 +173,23 @@ async def run_model_evidence_read_turn(
             stop = "evidence_read_repeat"
         if stop:
             break
-        current_text, next_usage = await _invoke(continue_turn, receipts, results)
+        try:
+            exchange = native_evidence_read_exchange(calls, batch_receipts)
+        except ValueError:
+            stop = "evidence_read_native_exchange_invalid"
+            break
+        if exchange is not None:
+            native_exchanges.append(exchange)
+            native_ids.update(call.call_id for call in exchange.calls)
+        if continue_native_turn is not None:
+            current_text, next_usage = await _invoke(continue_native_turn, receipts, results, tuple(native_exchanges))
+        elif continue_turn is not None:
+            current_text, next_usage = await _invoke(continue_turn, receipts, results)
+        else:
+            raise ValueError("an evidence read needs a continuation callback")
         current_usage = dict(next_usage or {})
     return ModelEvidenceReadTurnResult(
         text=current_text, usage=current_usage, extra_completion_tokens=extra_tokens,
         stop_reason=stop, receipts=tuple(receipts), results=tuple(results), seen_calls=tuple(identities),
+        native_exchanges=tuple(native_exchanges),
     )

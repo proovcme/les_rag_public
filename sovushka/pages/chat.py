@@ -301,6 +301,37 @@ def merge_lsr_resume_payload(resume: Any, readiness: Any = None) -> dict[str, An
     return payload
 
 
+def lsr_explicit_resume_reopen_payload(resume: Any, job: Any) -> dict[str, Any] | None:
+    """A Continue click reopens only unresolved, previously terminal packets."""
+    payload = resume if isinstance(resume, dict) else {}
+    current = job if isinstance(job, dict) else {}
+    if str(current.get("job_id") or "") != str(payload.get("job_id") or ""):
+        raise ValueError("Сохранённое задание изменилось. Обновите карточку результата.")
+    if current.get("status") == "running":
+        raise ValueError("Задание уже выполняется. Дождитесь результата или остановите его.")
+    identity = current.get("identity") or {}
+    session = str(identity.get("session_id") or "")
+    if payload.get("session_id") and str(payload["session_id"]) != session:
+        raise ValueError("Задание относится к другому чату.")
+    held = current.get("held_packet") or {}
+    snapshots = list(held.get("terminal_packets") or ())
+    if held.get("terminal_model_result_saved"):
+        snapshots.append(held)
+    completed_packets = {str(locator) for snapshot in snapshots if isinstance(snapshot, dict)
+                         for locator in snapshot.get("locators") or ()}
+    already_open = set(map(str, held.get("reopened_locators") or ()))
+    remaining = [str(locator) for locator in current.get("remaining") or ()]
+    requested = set(map(str, payload.get("remaining_locators") or remaining))
+    locators = list(dict.fromkeys(locator for locator in remaining
+        if locator in requested and locator in completed_packets and locator not in already_open))
+    if not locators:
+        return None
+    return {"job_id": current["job_id"], "session_id": session,
+            "attachment_id": str(identity.get("attachment_id") or ""),
+            "question": str(payload.get("question") or ""),
+            "reopen_locators": locators, "repack": False}
+
+
 DETACHED_HISTORY_POLL_SEC = 8.0
 DETACHED_HISTORY_TIMEOUT_SEC = 36 * 3600
 
@@ -5241,6 +5272,22 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if not question:
             _notify("Нет сохранённого запроса для продолжения", type="warning")
             return
+        if _sending["v"]:
+            _notify("Дождитесь окончания текущего ответа", type="warning")
+            return
+        job_id = str(payload.get("job_id") or "").strip()
+        if job_id:
+            current_job = await api_get(f"/api/workbook-research/{job_id}?view=progress")
+            try:
+                reopen = lsr_explicit_resume_reopen_payload(payload, current_job)
+            except ValueError as error:
+                _notify(str(error), type="warning")
+                return
+            if reopen:
+                reopened = await api_post("/api/chat/patch-lsr-rows", reopen)
+                if not isinstance(reopened, dict) or reopened.get("model_called") is not False:
+                    _notify(last_api_error_text("Не удалось продолжить незакрытые строки"), type="negative")
+                    return
         attachment_id = str(payload.get("attachment_id") or resume.get("attachment_id") or "").strip()
         session_id = str(payload.get("session_id") or resume.get("session_id") or "").strip()
         if session_id:
@@ -5270,7 +5317,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         chat_input.value = ""
         chat_input.update()
         _notify(
-            "Продолжаю незакрытые строки. Поиск по принятым решениям не повторяется.",
+            "Продолжаю незакрытые строки. Закрытые решения сохраняются.",
             type="info",
         )
         await _do_send(

@@ -27,7 +27,8 @@ BOOK = "sankt-peterburg_3kv2026"
 
 
 def _native(tool, **arguments):
-    return {"id": tool + ":" + str(len(arguments)), "type": "function",
+    identity = hashlib.sha256(json.dumps(arguments, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    return {"id": tool + ":" + identity, "type": "function",
             "function": {"name": tool, "arguments": json.dumps(arguments, ensure_ascii=False)}}
 
 
@@ -44,7 +45,7 @@ def _answer(*, refs=("Q1.H1", "Q2.H1")):
 
 async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", unknown_tool=False,
                      reasoning_enabled=False, empty_final=False, empty_query=False,
-                     query_count=2, group_char_budget=None, partial_final=False):
+                     query_count=2, group_char_budget=None, partial_final=False, packet_count=1):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(tmp_path / "attachments"))
@@ -52,8 +53,9 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
     source_book = openpyxl.Workbook()
     source_book.active.title = "S"
     source_book.active.append(["Наименование", "Ед. изм.", "Количество"])
-    source_book.active.append(["Cable A", "m", 12])
-    source_book.active.append(["Cable B", "m", 3])
+    for _ in range(packet_count):
+        source_book.active.append(["Cable A", "m", 12])
+        source_book.active.append(["Cable B", "m", 3])
     source_book.save(source)
     source_book.close()
     attachment = preserve_read_attachment(source, attachment_id="read_123456abcdef",
@@ -139,12 +141,17 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         def resolve_fallback(self, *args, **kwargs):
             pytest.fail("offline model must not use fallback")
 
-    declared_queries = (["S!R2 — Cable A", "S!R3 — Cable B"] if query_count == 2 else
-                        [f"S!R{2 + index % 2} — Cable {'A' if index % 2 == 0 else 'B'} query {index}"
-                         for index in range(query_count)])
+    packet_queries = [
+        ([f"S!R{2 + offset * 2} — Cable A", f"S!R{3 + offset * 2} — Cable B"] if query_count == 2 else
+         [f"S!R{2 + offset * 2 + index % 2} — Cable {'A' if index % 2 == 0 else 'B'} query {index}"
+          for index in range(query_count)]) for offset in range(packet_count)]
+    declared_queries = [query for queries in packet_queries for query in queries]
+    if packet_count > 1:
+        original_packet = service.adaptive_row_packet
+        monkeypatch.setattr(service, "adaptive_row_packet", lambda *a, **kw: original_packet(*a, **kw)[:2])
     if group_char_budget is not None:
         monkeypatch.setattr(service, "model_rag_group_char_budget", lambda **kwargs: group_char_budget)
-    responses = [InferenceResponse(text="\n".join(declared_queries), tool_calls=(),
+    responses = [InferenceResponse(text="\n".join(packet_queries[0]), tool_calls=(),
                                    finish_reason="stop", usage={})]
     if empty_query:
         responses[0] = InferenceResponse(text="", tool_calls=(), finish_reason="length",
@@ -160,7 +167,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                                                     _native("read_resource_price", code=RESOURCE_B)),
                               finish_reason="tool_calls", usage={}),
         ])
-    def final_response():
+    def final_response(packet_index=0):
         # The model fixture uses the source addresses actually assigned to the
         # two book reads, including any candidate groups shown before them.
         refs = (f"Q{len(search_queries) + 2}.H1", f"Q{len(search_queries) + 3}.H1") if reads else ("Q1.H1", "Q2.H1")
@@ -178,7 +185,9 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                                 shown_prices[item["resource_code"]] = item["evidence_ref"]
             refs = shown_prices[RESOURCE_A], shown_prices[RESOURCE_B]
         answer = _answer(refs=refs)
-        if partial_final:
+        if packet_index:
+            answer = answer.replace("S!R2", f"S!R{2 + packet_index * 2}").replace("S!R3", f"S!R{3 + packet_index * 2}")
+        if partial_final and packet_index == 0:
             answer = "\n".join(answer.splitlines()[:-1])
         return InferenceResponse(text="" if empty_final else answer, tool_calls=(),
                                  finish_reason="length" if empty_final else "stop",
@@ -186,6 +195,14 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
 
     if not unknown_tool:
         responses.append(final_response)
+    for packet_index in range(1, packet_count):
+        responses.extend([
+            InferenceResponse(text="\n".join(packet_queries[packet_index]), tool_calls=(), finish_reason="stop", usage={}),
+            InferenceResponse(text="", tool_calls=(_native("read_norm_card", norm_key="immutable-norm"),), finish_reason="tool_calls", usage={}),
+            InferenceResponse(text="", tool_calls=(_native("read_resource_price", code=RESOURCE_A),
+                                                   _native("read_resource_price", code=RESOURCE_B)), finish_reason="tool_calls", usage={}),
+            lambda index=packet_index: final_response(index),
+        ])
     requests = []
 
     class Transport:
@@ -272,9 +289,14 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         if not empty_query:
             raise
         result = {"error": error.detail, "status": error.status_code}
+    async def resume_same_request():
+        return await service.run_chat_evidence_application(request, runtime, service.ResponseBoundary(
+            save_chat_history=lambda **row: histories.append(row) or "history-resume", token_sink=None,
+            version_stamp=lambda: {}))
+
     return SimpleNamespace(result=result, executions=executions, requests=requests, responses=responses,
                            exact_reads=exact_reads, lookups=lookups, queries=search_queries, histories=histories,
-                           declared_queries=declared_queries)
+                           declared_queries=declared_queries, resume_same_request=resume_same_request)
 
 
 @pytest.mark.asyncio
@@ -365,8 +387,12 @@ async def test_terminal_sheet_result_packages_before_35_candidate_groups_are_dra
     from proxy.services.workbook_research_job_service import WorkbookResearchIdentity, WorkbookResearchJobService
     store = WorkbookResearchJobService()
     job = store.get(trace["workbook_research_job"]["job_id"])
-    assert job["resumable"] is True and job["status"] != "complete"
+    assert job["status"] == ("paused" if partial_final else "complete")
+    assert job["remaining"] == (["S!R3"] if partial_final else [])
+    assert run.executions[0][1]["status"] == "complete"  # Packaging succeeded independently of source coverage.
+    assert trace["attachment_integrity"]["omitted_source_locators"] == (["S!R3"] if partial_final else [])
     assert job["held_packet"]["queries"]
+    assert len(job["held_packet"]["terminal_packets"]) == 1
     assert set(run.declared_queries) <= set(job["query_cache"])
     for query in job["held_packet"]["queries"]:
         hits = service.restore_query_hits_from_cache([query], job["query_cache"])
@@ -376,6 +402,37 @@ async def test_terminal_sheet_result_packages_before_35_candidate_groups_are_dra
     assert len(reopened["accepted_rows"]) == len(rows)
     assert "source.xlsx" in str(run.requests[-1].messages)
     assert "S!R2" in str(run.requests[-1].messages) and "S!R3" in str(run.requests[-1].messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial_final", [False, True])
+async def test_terminal_packets_continue_only_unseen_rows_and_keep_independent_evidence_cursors(tmp_path, monkeypatch, partial_final):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35,
+                           group_char_budget=7000, partial_final=partial_final, packet_count=2)
+    assert len(run.requests) == 8 and not run.responses
+    assert len(run.exact_reads) == 2 and len(run.executions) == 1
+    rows = run.executions[0][0]["args"]["decisions"]
+    assert [row["source_row"] for row in rows] == (
+        ["S!R2", "S!R4", "S!R5"] if partial_final else ["S!R2", "S!R3", "S!R4", "S!R5"])
+    assert len({row["operation_id"] for row in rows}) == len(rows)
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    store = WorkbookResearchJobService()
+    job = store.get(run.result["retrieval_trace"]["workbook_research_job"]["job_id"])
+    cursors = job["held_packet"]["terminal_packets"]
+    assert [cursor["locators"] for cursor in cursors] == [["S!R2", "S!R3"], ["S!R4", "S!R5"]]
+    assert all(cursor["queries"] and cursor["terminal_model_result_saved"] for cursor in cursors)
+    assert set(run.declared_queries) <= set(job["query_cache"])
+    assert job["remaining"] == (["S!R3"] if partial_final else [])
+    assert job["status"] == ("paused" if partial_final else "complete")
+    assert run.executions[0][1]["status"] == "complete"
+    assert run.result["retrieval_trace"]["attachment_integrity"]["omitted_source_locators"] == (["S!R3"] if partial_final else [])
+    assert job["status_dimensions"]["completeness"] == ("partial" if partial_final else "full")
+    reopened = WorkbookResearchJobService(store.db_path).get(job["job_id"])
+    assert reopened["held_packet"] == job["held_packet"] and reopened["evidence"] == job["evidence"]
+    request_count = len(run.requests)
+    await run.resume_same_request()
+    assert len(run.requests) == request_count
+    assert store.get(job["job_id"])["accepted_rows"] == job["accepted_rows"]
 
 
 @pytest.mark.asyncio

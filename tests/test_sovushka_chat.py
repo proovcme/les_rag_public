@@ -16,6 +16,45 @@ from sovushka.pages import samovar as samovar_page
 from sovushka.pages import volk as volk_page
 
 
+def test_explicit_continue_reopens_unresolved_terminal_packets_only():
+    current = {"job_id": "own-job", "identity": {"session_id": "own-chat", "attachment_id": "source"},
+               "remaining": ["АР!R14", "АР!R15", "ВК!R8"],
+               "accepted_rows": [{"source_row": "АР!R13", "title": "Закрытая работа"}],
+               "held_packet": {"terminal_packets": [{"locators": ["АР!R13", "АР!R14", "АР!R15"]}],
+                               "reopened_locators": ["АР!R15"]}}
+    payload = chat_page.lsr_explicit_resume_reopen_payload(
+        {"job_id": "own-job", "session_id": "own-chat", "question": "Собери ЛСР"}, current)
+    assert payload["reopen_locators"] == ["АР!R14"]
+    assert payload["attachment_id"] == "source" and payload["repack"] is False
+    assert current["remaining"] == ["АР!R14", "АР!R15", "ВК!R8"]
+    assert current["accepted_rows"][0]["source_row"] == "АР!R13"
+
+
+def test_explicit_continue_preserves_active_native_read_cursor():
+    current = {"job_id": "j", "identity": {"session_id": "s"}, "remaining": ["Лист!R4"],
+               "held_packet": {"locators": ["Лист!R4"], "model_read_pending": True}}
+    assert chat_page.lsr_explicit_resume_reopen_payload({"job_id": "j", "session_id": "s"}, current) is None
+    assert current["held_packet"]["model_read_pending"] is True
+
+
+def test_explicit_continue_does_not_reopen_during_detached_generation():
+    current = {"job_id": "j", "status": "running", "identity": {"session_id": "s"},
+               "remaining": ["Лист!R4"], "held_packet": {
+                   "terminal_model_result_saved": True, "locators": ["Лист!R4"]}}
+    with pytest.raises(ValueError, match="уже выполняется"):
+        chat_page.lsr_explicit_resume_reopen_payload({"job_id": "j", "session_id": "s"}, current)
+    assert current["remaining"] == ["Лист!R4"]
+
+
+@pytest.mark.parametrize("resume", [{"job_id": "other", "session_id": "s"},
+                                    {"job_id": "j", "session_id": "other"}])
+def test_explicit_continue_rejects_foreign_job_or_session(resume):
+    with pytest.raises(ValueError):
+        chat_page.lsr_explicit_resume_reopen_payload(resume, {
+            "job_id": "j", "identity": {"session_id": "s"}, "remaining": ["Лист!R4"],
+            "held_packet": {"terminal_model_result_saved": True, "locators": ["Лист!R4"]}})
+
+
 def test_lsr_position_numbers_resolve_through_delivered_revision():
     projection = [
         {"position_no": 14, "locator": "ВК!R104", "operation_id": "install"},

@@ -485,3 +485,55 @@ Reader ответа и gate закрытых статусов перечитыв
 
 Активный exact reader: `proxy/smeta_core/norm_browser.py:read_norm_card_exact`.
 Исторический `document_workflow` не становится активным ядром чата.
+
+### 867: terminal текущего пакета и независимые evidence cursors
+
+`sheet_pass_question_tail` ограничивает ответ текущим исходным пакетом. Его
+неусечённый terminal сохраняет авторские строки и завершает именно этот пакет;
+следующее предложение содержит только ещё не показанные исходные строки. Даже
+если модель не вернула решение части пакета, приложение не придумывает строки:
+их locators остаются в source coverage gap и durable `remaining`.
+
+`workbook_research_jobs.held_packet_json.terminal_packets` накапливает отдельные
+snapshots с packet identity, literal queries, query offset, provenance и
+addresses. `record_packet` и `pause` атомарно сохраняют предыдущие snapshots при
+смене активного курсора. Query cache и immutable evidence с признаками реально
+показанных bodies/native reads сохраняются отдельно; restart и document lineage
+переносят их вместе. Схема SQLite не меняется. `reopen_locators` отдельно отмечает
+явно открытые пользователем строки, не переписывая evidence snapshots.
+Такой reopen сохраняет текущие operation IDs/revisions и пользовательскую
+инструкцию в review baseline. При незавершённом предыдущем review его ещё не
+пересмотренные решения сохраняются; после завершённой ревизии удалённые старые
+операции из исторического baseline не восстанавливаются. Эта граница действует
+по terminal конкретного исходного пакета, даже если другие пакеты ещё открыты;
+повторный явный reopen до нового terminal сохраняет текущие IDs/revisions.
+
+Same-request replay не предлагает закрытые пакеты повторно. Неиспользованные
+кандидаты остаются для явного уточнения; их непрочитанные страницы не являются
+source omission или требованием нового предметного ответа. Готовность документа
+определяют source coverage, авторские proposals, доказательство выбранной нормы
+и цены. `status_dimensions.deferred_evidence` отделяет Qx.Hy от пропущенных
+исходных строк. Native requests до terminal и transport continuation усечённого
+ответа сохраняют прежний путь. Расчёт и XLSX выполняются после прохода новых
+пакетов без дополнительного предметного вызова модели.
+
+Регрессии: несколько terminal пакетов с 35 запросами, native card/price reads,
+неполный первый ответ без повторного предложения готовых строк, сохранение всех
+cursors/cache/evidence после restart и lineage, явное снятие packet marker.
+Offline gate не доказывает качество: обязательна installed live-проверка той же
+318-строчной ВОР, model/provider/source/scope/pricebook identity и сравнение с B0.
+
+Native continuation передаёт `NativeToolExchange` целиком через ContextGovernor:
+assistant content и исходные function arguments/IDs сохраняются, каждый tool
+reply связывается с тем же ID и содержит receipt с новыми immutable Qx.Hy refs.
+Полные тела карточек остаются одной копией в required evidence registry. Native
+batch с недопустимыми ID/arguments, неизвестным tool, повтором либо превышением
+лимита не исполняется частично; transport protocol не меняет решение модели.
+
+Query failure передаёт приватный typed `ModelQueryFailure` через provider wrapper
+в существующую error history. `retrieval_trace` сохраняет session/model/connection
+facts, finish reason, tokens/budget, counts/reasons declared parse и final text
+последних восьми query calls (до 8192 символов каждого, с явными признаками
+ограничения). Hidden thinking и credentials удаляются до ограничения текста.
+SSE/HTTP error содержит только безопасные code/detail; arbitrary HTTP detail не
+может подставить диагностический trace. Правила парсера и запросы модели не меняются.

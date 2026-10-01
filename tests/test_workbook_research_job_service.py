@@ -23,6 +23,81 @@ def _identity(service: WorkbookResearchJobService, question: str = "Собери
     )
 
 
+def test_terminal_packet_cursors_survive_other_packets_restart_and_explicit_reopen(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "terminal-packets.sqlite")
+    job = service.begin_or_resume(_identity(service))
+    cursors = []
+    for index, locator in enumerate(("S!R2", "S!R3")):
+        query = f"{locator} — literal model query"
+        cursor = {"sheet": "S", "locators": [locator], "queries": [query],
+                  "query_offset": index * 35 + 1, "query_provenance": {query: "model"},
+                  "query_addresses": {query: [locator]}, "terminal_model_result_saved": True}
+        cursors.append(cursor)
+        service.record_search_cache(job["job_id"], {query: [{"content": query, "meta": {"edition": "immutable"}}]})
+        job = service.record_packet(job["job_id"], sheet="S", packet_locators=[locator],
+                                    accepted_rows=[{"source_row": locator, "row_role": "work", "open_gap": "authored"}],
+                                    evidence=[{"global_evidence_id": f"shown-{index}", "content": query}],
+                                    omitted=[f"Q{index + 2}.H1"], remaining=[], held_packet=cursor)
+    assert job["held_packet"]["terminal_packets"] == cursors
+    original_rows, original_evidence, original_cache = job["accepted_rows"], job["evidence"], job["query_cache"]
+    job = service.pause(job["job_id"], remaining=[], held_packet={})
+    reopened = WorkbookResearchJobService(service.db_path).begin_or_resume(_identity(service))
+    assert reopened["held_packet"]["terminal_packets"] == cursors
+    assert (reopened["accepted_rows"], reopened["evidence"], reopened["query_cache"]) == (
+        original_rows, original_evidence, original_cache)
+    complete = service.finish(job["job_id"], status="complete")
+    assert complete["status_dimensions"]["completeness"] == "full"
+    assert complete["status_dimensions"]["omitted"] == 0
+    assert complete["status_dimensions"]["deferred_evidence"] == 2
+    assert complete["omitted"] == ["Q2.H1", "Q3.H1"]
+    continued = service.begin_or_resume(_identity(service, "Продолжи то же задание"))
+    assert continued["held_packet"]["terminal_packets"] == cursors
+    assert service.terminal_packet_locators(continued["held_packet"]) == {"S!R2", "S!R3"}
+    refined = service.reopen_locators(continued["job_id"], ["S!R2"])
+    assert refined["held_packet"]["terminal_packets"] == cursors
+    assert service.terminal_packet_locators(refined["held_packet"]) == {"S!R3"}
+    prior = [row for row in continued["accepted_rows"] if row["source_row"] == "S!R2"]
+    context = service.chat_review_context(refined["job_id"])
+    assert context["prior_rows"] == prior
+    assert context["message"]
+    events = service.list_events_with_lineage(refined["job_id"], "locators_reopened")
+    assert events[-1]["payload"]["chat_review"]["request_sha256"] == continued["identity"]["question_sha256"]
+    # A second explicit reopen before model execution still retains the baseline.
+    service.reopen_locators(refined["job_id"], ["S!R2"])
+    assert service.chat_review_context(refined["job_id"])["prior_rows"] == prior
+
+
+def test_reopen_completed_packet_does_not_restore_removed_operation_with_unrelated_remaining(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "scoped-review.sqlite")
+    job = service.begin_or_resume(_identity(service))
+    cursor = {"sheet": "S", "locators": ["S!R2"], "queries": ["literal query"],
+              "query_offset": 1, "terminal_model_result_saved": True}
+    job = service.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"],
+        accepted_rows=[{"source_row": "S!R2", "row_role": "work", "title": "Original work"},
+                       {"source_row": "S!R2", "row_role": "material", "title": "Removed material"}],
+        evidence=[], remaining=["S!R9"], held_packet=cursor)
+    published = job["accepted_rows"]
+    service.reopen_locators(job["job_id"], ["S!R2"])
+    assert service.chat_review_context(job["job_id"])["prior_rows"] == published
+    job = service.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"],
+        accepted_rows=[{**published[0], "title": "Revised work"}], evidence=[],
+        remaining=["S!R9"], held_packet={**cursor, "query_offset": 2})
+    revised = job["accepted_rows"]
+    assert len(revised) == 1
+    assert revised[0]["revision"] == published[0]["revision"] + 1
+    held = job["held_packet"]
+    # A different source packet remains open; it cannot revive an operation
+    # removed by the completed model review of this packet.
+    for _ in range(2):
+        service = WorkbookResearchJobService(service.db_path)
+        reopened = service.reopen_locators(job["job_id"], ["S!R2"])
+        assert service.chat_review_context(job["job_id"])["prior_rows"] == revised
+        assert reopened["remaining"] == ["S!R9", "S!R2"]
+        assert reopened["accepted_rows"] == []
+        assert reopened["held_packet"]["terminal_packets"] == held["terminal_packets"]
+        assert service.terminal_packet_locators(reopened["held_packet"]) == set()
+
+
 @pytest.mark.parametrize("old_hits", [[], [{"content": "old expanded result", "meta": {}}]])
 def test_search_cache_contract_refresh_preserves_prior_state_and_is_idempotent(tmp_path, old_hits):
     service = WorkbookResearchJobService(tmp_path / "cache-contract.sqlite")

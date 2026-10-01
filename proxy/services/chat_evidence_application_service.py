@@ -66,6 +66,7 @@ from proxy.services.context_governor_service import (
     ContextObject,
     ContextPacket,
     ContextRequiredSectionOverflow,
+    NativeToolExchange,
     conservative_token_estimate,
 )
 from proxy.services.context_expander_service import expand_context_windows
@@ -1436,9 +1437,12 @@ def govern_inference_messages(
     required_evidence: Sequence[Any] = (),
     source_map: Sequence[Any] = (),
     tool_exchange: Sequence[Any] = (),
+    native_exchanges: Sequence[NativeToolExchange] = (),
     dialogue: Sequence[Any] = (),
-) -> tuple[list[dict[str, str]], ContextPacket]:
+) -> tuple[list[dict[str, Any]], ContextPacket]:
     """Build the sole bounded packet used for one provider inference request."""
+    if any(not isinstance(exchange, NativeToolExchange) for exchange in native_exchanges):
+        raise TypeError("native exchange context needs typed NativeToolExchange objects")
     candidates = [
         ContextCandidate(
             ContextKind.PROFILE_PREFIX,
@@ -1461,6 +1465,12 @@ def govern_inference_messages(
         ContextCandidate(ContextKind.EVIDENCE, _context_objects("evidence", evidence)),
         ContextCandidate(ContextKind.SOURCE_MAP, _context_objects("source", source_map)),
         ContextCandidate(ContextKind.TOOL_EXCHANGE, _context_objects("exchange", tool_exchange)),
+        ContextCandidate(
+            ContextKind.TOOL_EXCHANGE,
+            tuple(ContextObject(f"native-exchange:{index + 1}", exchange)
+                  for index, exchange in enumerate(native_exchanges)),
+            required=True,
+        ),
         ContextCandidate(ContextKind.DIALOGUE, _context_objects("dialogue", dialogue)),
     ]
     external_tokens = (
@@ -2774,7 +2784,7 @@ def model_rag_next_query_offset(evidence_chunks: Sequence[Any]) -> int:
 
 def bind_model_requested_read_evidence(
     results: Sequence[Any], *, existing_chunks: Sequence[Any],
-    evidence_namespace: str, packet_id: str = "",
+    evidence_namespace: str, packet_id: str = "", receipts: Sequence[dict[str, Any]] = (),
 ) -> tuple[list[str], list[Any], list[str]]:
     """Give exact model-requested reads fresh handles; preserve full typed bodies."""
     groups, chunks, omitted = [], [], []
@@ -2795,6 +2805,11 @@ def bind_model_requested_read_evidence(
         for chunk in new_chunks:
             if packet_id:
                 chunk.meta["model_read_packet_id"] = packet_id
+        if index < len(receipts):
+            bindings = {str(chunk.meta.get("model_evidence_ref") or ""):
+                        str(chunk.meta.get("global_evidence_id") or "") for chunk in new_chunks}
+            receipts[index]["evidence_refs"] = [ref for ref in bindings if ref]
+            receipts[index]["evidence_bindings"] = {ref: identity for ref, identity in bindings.items() if ref and identity}
         groups.extend(new_groups)
         chunks.extend(new_chunks)
         omitted.extend(new_omitted)
@@ -5340,7 +5355,63 @@ def model_query_output_diagnostics(
             "completion_tokens": int(usage.get("completion_tokens") or 0),
             "final_chars": len(text or ""),
             "output_incomplete": not str(text or "").strip()
-                and finish_reason_is_length(llm_usage_finish_reason(usage))}
+                 and finish_reason_is_length(llm_usage_finish_reason(usage))}
+
+
+class ModelQueryFailure(HTTPException):
+    """Private query diagnostics survive sanitization; HTTP detail stays public."""
+
+    def __init__(self, detail: Any, *, diagnostics: Mapping[str, Any],
+                 status_code: int = 503, headers=None):
+        super().__init__(status_code, detail=detail, headers=headers)
+        self.private_query_trace = dict(diagnostics)
+
+
+def model_query_failure(detail: Any, *, trace: Mapping[str, Any], session_id: str,
+                        provider: str, model: str, secret_values: Sequence[str] = (),
+                        final_texts: Sequence[str] | None = None) -> ModelQueryFailure:
+    """Snapshot only query facts, bounded final text and public connection identity."""
+    outputs = list(trace.get("model_query_outputs") or ())
+    texts = list(final_texts) if final_texts is not None else [item.get("final_text", "") for item in outputs]
+    saved = []
+    for item, raw in zip(outputs[-8:], texts[-8:]):
+        final = re.sub(r"<think\b[^>]*>.*?(?:</think>|$)", "", str(raw or ""), flags=re.I | re.S).strip()
+        for secret in secret_values:
+            if secret:
+                final = final.replace(str(secret), "[redacted]")
+        final = re.sub(r'''(?i)["']?\b(?:api[_-]?key|password|authorization)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)|\bBearer\s+[^\s,;]+''',
+                       "[redacted]", final)
+        output = {key: item[key] for key in ("purpose", "finish_reason", "completion_tokens", "final_chars", "output_incomplete")
+                  if key in item}
+        output.update(final_text=final[:8192], final_text_truncated=len(final) > 8192)
+        output["budget"] = {key: value for key, value in (item.get("budget") or {}).items()
+                            if key in {"requested", "effective", "reserved_tokens", "source", "restart_required"}}
+        parsed = item.get("declared_parse") or {}
+        output["declared_parse"] = {key: parsed[key] for key in ("accepted_count", "rejected_count", "answer_cut", "output_shape")
+                                    if key in parsed}
+        output["declared_parse"]["reason_counts"] = dict(list((parsed.get("reason_counts") or {}).items())[:32])
+        saved.append(output)
+    connection = trace.get("model_connection") or {}
+    diagnostics = {"schema": "les.model-query-failure.v1", "session_id": str(session_id or ""),
+                   "model_execution": {"provider": str(provider), "model": str(model)},
+                   "model_connection": {key: connection[key] for key in (
+                       "connection_id", "revision_id", "display_name", "model_id", "locality", "fallback_used") if key in connection},
+                   "model_query_outputs": saved, "model_query_output_count": len(outputs),
+                   "model_query_outputs_truncated": len(outputs) > 8}
+    return ModelQueryFailure(detail, diagnostics=diagnostics)
+
+
+def declared_query_output_diagnostics(raw: str, declared: Mapping[str, Any]) -> dict[str, Any]:
+    """Parse counts/reasons only; this never alters model-authored queries."""
+    reasons: dict[str, int] = {}
+    for item in declared.get("accompanying_answer") or ():
+        reason = str(item.get("reason") or "")
+        reasons[reason] = reasons.get(reason, 0) + 1
+    shape = ("empty_final" if not str(raw or "").strip() else
+             "unsupported_structured_output" if not _unwrap_model_rag_query_lines(raw) else "declared_lines")
+    return {"accepted_count": len(declared.get("queries") or ()),
+            "rejected_count": len(declared.get("accompanying_answer") or ()),
+            "reason_counts": reasons, "answer_cut": bool(declared.get("answer_cut")), "output_shape": shape}
 
 
 def governed_query_generation_budget(preset: ModelExecutionPreset, packet: ContextPacket) -> dict[str, Any]:
@@ -7223,8 +7294,9 @@ async def _execute_chat_evidence_application(
                         if active_model_result.response.tool_calls:
                             canonical_calls: list[dict[str, Any]] = []
                             for raw_call in active_model_result.response.tool_calls:
-                                function = raw_call.get("function") or {}
-                                raw_arguments = function.get("arguments") or "{}"
+                                raw_function = raw_call.get("function")
+                                function = raw_function if isinstance(raw_function, Mapping) else {}
+                                raw_arguments = function.get("arguments")
                                 try:
                                     arguments = (
                                         json.loads(raw_arguments)
@@ -7235,13 +7307,15 @@ async def _execute_chat_evidence_application(
                                     arguments = {}
                                 canonical_calls.append(
                                     {
-                                        "call_id": str(raw_call.get("id") or ""),
+                                        "call_id": raw_call.get("id"),
                                         "tool": str(function.get("name") or ""),
                                         "args": arguments,
+                                        "native_arguments": raw_arguments if isinstance(raw_arguments, str)
+                                        else json.dumps(raw_arguments, ensure_ascii=False, separators=(",", ":")),
                                     }
                                 )
                             model_text = json.dumps(
-                                {"calls": canonical_calls},
+                                {"calls": canonical_calls, "native_assistant_content": model_text},
                                 ensure_ascii=False,
                                 separators=(",", ":"),
                             )
@@ -7434,6 +7508,7 @@ async def _execute_chat_evidence_application(
                 query_headers: dict[str, str] = {}
                 model_research_tools = None
                 retrieval_limits = effective_retrieval_policy(profile_snapshot)
+                query_failure_final_texts: list[str] = []
                 if model_driven_retrieval and tool_loop_enabled and not sheet_pass_active:
                     retrieval_limits = effective_retrieval_policy(profile_snapshot)
                     query_headers = {}
@@ -7504,19 +7579,24 @@ async def _execute_chat_evidence_application(
                             budget=query_budget,
                         )
                         retrieval_trace.setdefault("model_query_outputs", []).append(query_diagnostic)
+                        query_failure_final_texts.append(query_text)
+                        query_failure_final_texts = query_failure_final_texts[-8:]
+                        declared = read_declared_query_list(
+                            query_text, instruction=query_instruction, finish_reason=llm_usage_finish_reason(query_usage))
+                        query_diagnostic["declared_parse"] = declared_query_output_diagnostics(query_text, declared)
                         logger.info("[MODEL_RAG_QUERY_OUTPUT] %s", query_diagnostic)
                         if query_diagnostic["output_incomplete"]:
-                            raise HTTPException(503, detail={"error": "MODEL_QUERY_OUTPUT_INCOMPLETE"})
-                        model_queries, rejected_model_queries = classify_model_rag_query_lines(
-                            query_text, query_instruction, finish_reason=llm_usage_finish_reason(query_usage),
-                        )
+                            raise model_query_failure({"error": "MODEL_QUERY_OUTPUT_INCOMPLETE"}, trace=retrieval_trace,
+                                session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
+                                secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
+                        model_queries = [item.text for item in declared["queries"]]
+                        rejected_model_queries = [str(item.get("line") or "") for item in declared["accompanying_answer"]]
                         if model_queries:
                             break
                     if not model_queries:
-                        raise HTTPException(
-                            status_code=503,
-                            detail="MODEL_RAG_QUERY_LIST_EMPTY",
-                        )
+                        raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
+                            session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
+                            secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
 
                     async def _sheet_read_source_fallback(tool_name: str, args: dict[str, Any]):
                         # The executor validates selected dataset / shown document
@@ -8419,6 +8499,11 @@ async def _execute_chat_evidence_application(
                         if isinstance((research_job or {}).get("held_packet"), dict)
                         else {}
                     )
+                    terminal_packet_locators = WorkbookResearchJobService.terminal_packet_locators(stored_held)
+                    if stored_held.get("terminal_model_result_saved"):
+                        # A completed packet's unused candidates stay durable;
+                        # they are not an automatic professional re-offer.
+                        stored_held = {}
                     sheet_count = len(sheet_pass_names)
                     work_total = len(source_catalog.work_locators())
                     session_accepted_start = len(
@@ -8475,7 +8560,6 @@ async def _execute_chat_evidence_application(
                             index=1,
                         )
                     owns_sheet_pass = True
-                    terminal_evidence_pending = False
                     live_job_id = str((research_job or {}).get("job_id") or "")
                     if live_job_id:
                         owns_sheet_pass = await claim_or_join_sheet_pass(live_job_id)
@@ -8521,6 +8605,7 @@ async def _execute_chat_evidence_application(
                             sheet_name,
                             settled_source_keys(accumulated_rows, source_catalog),
                         )
+                        remaining = [locator for locator in remaining if locator not in terminal_packet_locators]
                         exhausted_locators: set[str] = set()
                         # Rows already put to the model in this sheet pass.  The
                         # packet pool is ordered least-offered-first so no row can
@@ -8844,6 +8929,11 @@ async def _execute_chat_evidence_application(
                                             query_text, query_usage, purpose=query_purpose, budget=query_budget,
                                         )
                                         retrieval_trace.setdefault("model_query_outputs", []).append(query_diagnostic)
+                                        query_failure_final_texts.append(query_text)
+                                        query_failure_final_texts = query_failure_final_texts[-8:]
+                                        query_diagnostic["declared_parse"] = declared_query_output_diagnostics(
+                                            query_text, read_declared_query_list(query_text,
+                                                finish_reason=llm_usage_finish_reason(query_usage), instruction=query_directive))
                                         logger.info("[MODEL_RAG_QUERY_OUTPUT] %s", query_diagnostic)
                                         if query_diagnostic["output_incomplete"]:
                                             if research_job_service is not None and research_job is not None:
@@ -8854,7 +8944,9 @@ async def _execute_chat_evidence_application(
                                                                  "model_query_output_missing": True,
                                                                  "query_output": query_diagnostic},
                                                 )
-                                            raise HTTPException(503, detail={"error": "MODEL_QUERY_OUTPUT_INCOMPLETE"})
+                                            raise model_query_failure({"error": "MODEL_QUERY_OUTPUT_INCOMPLETE"}, trace=retrieval_trace,
+                                                session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
+                                                secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
                                         # One reader for the declared-query contract:
                                         # the prompt states the format, this adapter
                                         # reads it, and nothing re-splits the answer a
@@ -9082,8 +9174,10 @@ async def _execute_chat_evidence_application(
                             )
                             question_tail += (
                                 "\nКарточки могут доставляться страницами по ёмкости контекста. "
-                                "Не объявляй поиск исчерпанным по одной странице: найденный хвост "
-                                "будет передан с твоими прежними решениями и цитатами."
+                                "Не объявляй поиск исчерпанным по одной странице: индекс показывает "
+                                "найденные карточки, а недостающее содержание прочитай инструментом "
+                                "до итогового ответа. После ответа непрочитанный хвост сохраняется "
+                                "для явного продолжения пользователем."
                             )
                             current_read_packet = row_packet_id(source_catalog, sheet=sheet_name, locators=packet)
                             saved_read_chunks = [
@@ -9335,6 +9429,7 @@ async def _execute_chat_evidence_application(
                                     batch_results, existing_chunks=sheet_pass_evidence_chunks,
                                     evidence_namespace=read_packet_id + ":read:" + str(len(read_receipts)),
                                     packet_id=read_packet_id,
+                                    receipts=batch_receipts,
                                 )
                                 read_groups.extend(groups)
                                 model_evidence_chunks.extend(chunks)
@@ -9352,11 +9447,12 @@ async def _execute_chat_evidence_application(
                                     )
                                 return "evidence_read_capacity" if omitted else ""
 
-                            async def _continue_sheet_reads(receipts, _results):
+                            async def _continue_sheet_reads(receipts, _results, native_exchanges):
                                 nonlocal t_llm
                                 messages, read_frame = govern_inference_messages(
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail, native_tools=sheet_read_tools,
+                                    native_exchanges=native_exchanges,
                                     required_evidence=model_read_frame_evidence(
                                         pass_evidence,
                                         [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks], receipts),
@@ -9378,7 +9474,7 @@ async def _execute_chat_evidence_application(
                                     execute=model_research_tools.execute,
                                     allowed_tools={item["function"]["name"] for item in sheet_read_tools},
                                     max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
-                                    on_read_results=_accept_sheet_reads, continue_turn=_continue_sheet_reads,
+                                    on_read_results=_accept_sheet_reads, continue_native_turn=_continue_sheet_reads,
                                 )
                                 pass_answer, usage = read_turn.text, read_turn.usage
                                 tokens = int(tokens or 0) + read_turn.extra_completion_tokens
@@ -9640,8 +9736,12 @@ async def _execute_chat_evidence_application(
                                 query_provenance=pass_query_provenance,
                                 query_addresses=pass_query_addresses)
                             held_query_context = held_payload
-                            if defer_query_packet and not last_truncated:
-                                held_payload["terminal_model_result_saved"] = True
+                            if not last_truncated and not pass_transport_diagnostics:
+                                held_payload.update({
+                                    "sheet": sheet_name, "locators": list(packet),
+                                    "packet_id": row_packet_id(source_catalog, sheet=sheet_name, locators=packet),
+                                    "terminal_model_result_saved": True,
+                                })
                             if pass_transport_diagnostics:
                                 held_payload = {**dict(held_payload or {}),
                                     "model_result_transport_pending": True,
@@ -9748,21 +9848,25 @@ async def _execute_chat_evidence_application(
                                 )
                             if pass_transport_diagnostics:
                                 break  # technical ambiguity cannot trigger another professional offer
-                            if defer_query_packet:
-                                if not last_truncated:
-                                    # The model ended its read/answer turn. Preserve
-                                    # its result and the independent delivery cursor;
-                                    # unread candidates cannot require another
-                                    # professional offer before partial packaging.
-                                    terminal_evidence_pending = True
-                                    retrieval_trace["candidate_body_delivery"] = {
-                                        "status": "pending_after_terminal_result",
+                            if not last_truncated:
+                                # The final answer is scoped to this source packet.
+                                # Keep its cursor; only NEVER_REACHED rows may follow.
+                                terminal_packet_locators.update(packet)
+                                exhausted_locators.update(locator for locator in packet if locator not in settled_after)
+                                remaining = [locator for locator in remaining if locator not in set(packet)]
+                                if defer_query_packet:
+                                    retrieval_trace.setdefault("candidate_body_delivery", {
+                                        "status": "saved_after_terminal_packets", "packets": [],
+                                    })["packets"].append({
                                         "query_count": len(leftover_query_hits),
                                         "packet_locators": list(packet),
                                         "query_offset": evidence_query_offset,
                                         "saved_rows": len(kept),
-                                    }
-                                    break
+                                    })
+                                deferred_query_hits = []
+                                held_packet = []
+                                continue
+                            if defer_query_packet:
                                 continue
                             if not made_progress:
                                 continue
@@ -9793,19 +9897,16 @@ async def _execute_chat_evidence_application(
                                 sheet_name,
                                 never_reached,
                             )
-                        if terminal_evidence_pending:
-                            break  # one durable cursor; continue on an explicit resume
                     except asyncio.CancelledError:
                         logger.warning("[SHEET_PASS] cancelled; preserving accepted packets")
                         research_cancelled = True
                     finally:
                         if live_job_id and owns_sheet_pass:
                             release_sheet_pass(live_job_id)
-                    if not any_sheet_queries and not accumulated_rows and not research_cancelled:
-                        raise HTTPException(
-                            status_code=503,
-                            detail="MODEL_RAG_QUERY_LIST_EMPTY",
-                        )
+                    if not any_sheet_queries and not accumulated_rows and not research_cancelled and not terminal_packet_locators:
+                        raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
+                            session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
+                            secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
                     # A row the model adjudicated with any terminal role is finished for
                     # completion purposes even if a quality gap remains; only rows that
                     # received NO decision at all are re-queued for the next resume pass.
@@ -9819,11 +9920,14 @@ async def _execute_chat_evidence_application(
                     ]
                     pending_transport = set()
                     pending_held = (research_job or {}).get("held_packet") or {}
-                    if (pending_held.get("queries") or pending_held.get("model_read_pending")
+                    if ((pending_held.get("queries") and not pending_held.get("terminal_model_result_saved")) or pending_held.get("model_read_pending")
                             or pending_held.get("model_result_transport_pending")
                             or pending_held.get("model_final_output_missing")):
                         pending_transport.update(pending_held.get("locators") or ())
                         unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
+                    # Unanswered source rows remain gaps; unused candidates do
+                    # not make accepted/proven/priced rows incomplete.
+                    pending_transport.update(locator for locator in terminal_packet_locators if locator not in settled_keys)
                     for proposal in retrieval_trace.get("model_result_transport_diagnostics", []):
                         pending_transport.update(proposal.get("packet_locators") or ())
                     unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
@@ -10477,6 +10581,7 @@ async def _execute_chat_evidence_application(
                             groups, chunks, omitted = bind_model_requested_read_evidence(
                                 batch_results, existing_chunks=model_evidence_chunks,
                                 evidence_namespace="B0_DIRECT:read:" + str(len(model_evidence_chunks)),
+                                receipts=batch_receipts,
                             )
                             direct_read_groups.extend(groups)
                             model_evidence_chunks.extend(chunks)
@@ -10486,11 +10591,12 @@ async def _execute_chat_evidence_application(
                             model_requested_price_basis = dict(model_research_tools.price_basis_snapshot)
                             return "evidence_read_capacity" if omitted else ""
 
-                        async def _continue_direct_reads(receipts, _results):
+                        async def _continue_direct_reads(receipts, _results, native_exchanges):
                             nonlocal t_llm, llm_model
                             read_messages, read_frame = govern_inference_messages(
                                 preset=answer_execution_preset, profile_prefix=sys_msg,
                                 request_payload=question_tail, native_tools=direct_read_tools,
+                                native_exchanges=native_exchanges,
                                 required_evidence=model_read_frame_evidence(
                                     fixed_model_rag_evidence, model_evidence_chunks, receipts),
                             )
@@ -10514,7 +10620,7 @@ async def _execute_chat_evidence_application(
                             read_turn = await run_model_evidence_read_turn(
                                 text=answer, usage=usage, parse_calls=_parse_model_tool_calls,
                                 execute=model_research_tools.execute,
-                                continue_turn=_continue_direct_reads, on_read_results=_accept_direct_reads,
+                                continue_native_turn=_continue_direct_reads, on_read_results=_accept_direct_reads,
                                 allowed_tools={item["function"]["name"] for item in direct_read_tools},
                                 max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
                             )

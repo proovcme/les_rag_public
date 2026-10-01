@@ -27,6 +27,7 @@ from proxy.config import ENV_PATH
 from proxy.security import require_user
 from proxy.services.answer_form_service import classify_answer_form
 from proxy.services.chat_evidence_application_service import (
+    ModelQueryFailure,
     EvidenceRequestContext,
     EvidenceRuntimeDeps,
     ResponseBoundary,
@@ -970,6 +971,9 @@ async def _run_chat_with_provider(req: ChatRequest, token_sink=None):
         raise HTTPException(429, detail=detail) from error
     except HTTPException as error:
         detail = public_error_payload(status_code=error.status_code, detail=error.detail)
+        if isinstance(error, ModelQueryFailure):
+            raise ModelQueryFailure(detail, diagnostics=error.private_query_trace,
+                                    status_code=error.status_code, headers=error.headers) from error
         raise HTTPException(error.status_code, detail=detail, headers=error.headers) from error
 
 
@@ -978,6 +982,9 @@ async def _run_chat_public(req: ChatRequest):
 
     try:
         return await _run_chat_with_provider(req)
+    except ModelQueryFailure as error:
+        _complete_pending_history_failure(req, error.detail, query_failure=error)
+        raise
     except HTTPException:
         raise
     except Exception as error:
@@ -2274,8 +2281,9 @@ def _recoverable_stream_payload(req: ChatRequest, stream_state: dict[str, Any], 
     }
 
 
-def _complete_pending_history_failure(req: ChatRequest, detail: Any) -> None:
-    if _ACTIVE_HISTORY_ID.get() is None:
+def _complete_pending_history_failure(req: ChatRequest, detail: Any, *,
+                                      query_failure: ModelQueryFailure | None = None) -> None:
+    if _ACTIVE_HISTORY_ID.get() is None and query_failure is None:
         return
     try:
         save_chat_history(
@@ -2289,6 +2297,7 @@ def _complete_pending_history_failure(req: ChatRequest, detail: Any) -> None:
             cache_type="stream_error",
             validation_enabled=False,
             success=0,
+            retrieval_trace=query_failure.private_query_trace if isinstance(query_failure, ModelQueryFailure) else None,
         )
     except Exception as error:
         logger.warning("[CHAT/STREAM] pending history failure save skipped: %s", error)
@@ -2506,7 +2515,8 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
                 recovered = _persist_recovered_stream_history(req, recovered)
                 await queue.put({"event": "final", "data": decorate_payload(recovered)})
             else:
-                _complete_pending_history_failure(req, he.detail)
+                _complete_pending_history_failure(req, he.detail,
+                    query_failure=he if isinstance(he, ModelQueryFailure) else None)
                 public = public_error_payload(status_code=he.status_code, detail=he.detail)
                 await queue.put({"event": "error", "data": {"status": he.status_code, **public}})
         except Exception as e:  # noqa: BLE001 — любую ошибку доносим клиенту как событие
