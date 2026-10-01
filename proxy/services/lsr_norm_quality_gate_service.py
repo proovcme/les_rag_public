@@ -21,6 +21,10 @@ from proxy.services.model_answer_table_service import (
     opens_as_table,
     table_cells,
 )
+from proxy.services.model_lsr_result_contract import (
+    MATCH_FIELDS,
+    model_lsr_result_field_instruction,
+)
 
 
 QUALITY_GATE_SCHEMA = "les.lsr-norm-quality-gate.v1"
@@ -46,13 +50,6 @@ VERIFIER_STATUSES = frozenset(
         "MISSING",
         "CONFLICT",
     }
-)
-MATCH_FIELDS = (
-    "action_match",
-    "object_match",
-    "condition_match",
-    "unit_compatible",
-    "composition_covers",
 )
 #: What each match fact asks, in the operator's words.  Task 2026-09-29 § 4: the
 #: «Ограничения аналога» column of the delivered file names the facts an analogue row
@@ -1821,20 +1818,10 @@ def _evidence_cards(chunks: Sequence[Any]) -> dict[str, dict[str, Any]]:
 def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: str = "") -> str:
     return (
         f"{sheet_clause}"
-        "Начни ответ с таблицы результата; пояснения — после таблицы. "
+        "Для табличного ответа: Начни ответ с таблицы результата; пояснения — после таблицы. "
         "В таблице не перечисляй пустые поля длинной последовательностью маркеров. "
-        "Дай итоговый ответ Markdown-таблицей по указанным строкам исходного ВОР. Для каждой "
-        "строки явно укажи source_row, row_role, work_row, title, unit, quantity, "
-        "выбранный тобой norm_code, norm_status, open_gap и evidence_refs Qx.Hy. "
-        "Если в prior_model_decisions уже дан operation_id, для прежней операции верни "
-        "этот operation_id отдельной колонкой; для новой операции оставь operation_id пустым. "
-        "Не назначай свои ID и номера revision. Изменение нормы или пояснения прежней "
-        "операции является её пересмотром; дополнительные работы являются новыми операциями. "
-        "Дополнительные колонки добавляй только когда они нужны: section, supply_kind, "
-        "calc_quantity, conversion_factor, conversion_source; коэффициент и "
-        "coefficient_applies_to (labor, machine или labor_and_machine); "
-        "action_match, object_match, condition_match, unit_compatible, composition_covers, "
-        "extra_ops, missing_ops. Не заполняй широкую таблицу пустыми служебными колонками. "
+        + model_lsr_result_field_instruction()
+        + " "
         "row_role только: work, material, equipment, resource, header или unresolved. "
         "header — заголовок, раздел, примечание или итог исходника: строка учтена "
         "и не требует монтажной нормы ни кодом, ни моделью. "
@@ -1863,15 +1850,11 @@ def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: st
         "шифр не существует в базе, ссылка противоречит твоим же карточкам или аналог "
         "не обоснован — это код видит по своим проверкам сам. Свои слова оставляй в open_gap "
         "дословно; gap_reason вердикт не повышает и норму не выбирает. "
-        "action_match/object_match/condition_match/unit_compatible/composition_covers — "
-        "только yes/no/unknown. "
-        "Для каждой выбранной нормы обязательно верни все эти пять полей; "
-        "неизвестное условие обозначь unknown и конкретным вопросом. "
         "Пояснения вроде «подходит по сути» можно писать в extra_ops, "
-        "но они не включают строку в расчёт. Не выводи JSON и не ограничивай число строк. "
+        "но они не включают строку в расчёт. Не ограничивай число возвращаемых решений. "
         "Если выбираешь карточку как норму или инженерный аналог, укажи её точный шифр в "
         "norm_code; оставляй его пустым только если не выбрана ни одна карточка. Для каждой "
-        "строки обязательно укажи точную evidence_refs Qx.Hy выбранной карточки; не сокращай "
+        "выбранной нормы обязательно укажи точную evidence_refs Qx.Hy выбранной карточки; не сокращай "
         "её до Qx. В source_row скопируй уникальный locator исходной строки; название "
         "раздела указывай только в section. Locator, unit и quantity копируй из одной "
         "и той же строки каталога без перенумерации. Для материала title сохраняет название "
@@ -1880,8 +1863,9 @@ def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: st
         "Не превращай каждое изделие в отдельную работу автоматически: учитывай состав нормы. "
         "Строки-разделы имеют собственные locator, "
         "поэтому locator работ могут идти с пропусками: не сдвигай следующие работы на номер "
-        "строки-раздела. Перед ответом сверь, что набор source_row результата точно равен набору "
-        "указанных строк ВОР. Код не выбирает норму и не меняет ячейки. "
+        "строки-раздела. Перед ответом сверь source_row возвращаемых решений с указанными "
+        "строками ВОР; неизменённые решения сохраняются по operation_id. "
+        "Код не выбирает норму и не меняет ячейки. "
         "Текущий пакет не является всем исходником: не делай вывод об отсутствии данных "
         "в остальных строках файла, которые будут предложены следующими пакетами. "
         "Коэффициент без явного coefficient_applies_to код не умножает. "

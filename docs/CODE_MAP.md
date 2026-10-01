@@ -1,5 +1,30 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **Candidate 859; установлен 858, live acceptance pending:**
+> `model_evidence_read_contract/service` дают optional native reads до итогового
+> ответа, literal body registry и stop/capacity guard. `norm_browser.read_norm_card_exact`
+> возвращает все ресурсы только previously-shown pointer; `model_research_tool_service`
+> исполняет norm/document/price reads в закреплённых scope/pricebook.
+> `model_lsr_result_contract` задаёт общие conditional fields для таблицы,
+> обычного текста и optional JSON; `model_result_packet_service` сохраняет
+> внепакетные/identity/revision conflicts как полные unapplied proposals.
+> `workbook_research_job_service.record_evidence_read` durable сохраняет cards/receipts
+> без объявления строк выполненными. `model_pricebook_evidence_service` читает
+> выбранную книгу, `model_price_provenance_service` проверяет literal цены/единицы
+> в cited bodies; `rim_lsr_trace_service` оставляет неподтверждённую цену gap.
+> `fgis_price_service.get_pricebook` кэширует официальный snapshot по whole-file
+> SHA-256/размеру, не path/mtime; typed price evidence сохраняет тот же source
+> hash/name/size, drift во время чтения или stored task hash mismatch — conflict.
+> Фактический hash в packaging `price_basis`/job/document не даёт continuation
+> той же книги рассчитать заменённые bytes: `PRICEBOOK_VERSION_CONFLICT`, без
+> нового artifact. Legacy basis без hash не доказывает прежнюю версию файла.
+> `attachment_source_catalog_service` сохраняет длинные/пустые/нулевые ячейки,
+> все листы и DOCX locators; `converter.convert_to_markdown(apply_char_limit=False)`
+> используется только каталогом PDF. `workbook_tool_service` принимает authored
+> ВОР из DOCX/CSV/PDF/XLSX/XLSM, помечает неполное извлечение и не создаёт пустой
+> artifact. RTF/ZIP workbook-путь не поддерживает. Ни один reader не выбирает
+> профессиональные операции, нормы, applicability, ресурсы или НР/СП.
+
 > **0.31.130 / 858:** chat_evidence_application_service.py:
 > compact_estimator_draft_rows и три visible field maps сохраняют resource_code;
 > model_rag_prior_page_context пересчитывает компактные observations по
@@ -274,14 +299,17 @@ measurement and browser recovery after the ongoing 856 controls remain pending.
 > этот workflow независимо от наличия нового policy-флага в старом keep-state snapshot.
 
 > **Текущий model → RAG → result:** estimator либо профиль с явным
-> `rag_policy.model_authored_initial_query=true` делает ровно два смысловых
-> model-call без native tools. Сначала модель по вопросу и полному вложению
+> `rag_policy.model_authored_initial_query=true` имеет query и answer стадии.
+> Сначала модель по вопросу и полному вложению
 > возвращает все собственные `queries`; application без переписывания выполняет
 > каждый запрос через `ModelResearchToolService`: estimator использует effective
 > dedicated сметную RRF collection, прочие профили — `retrieve_chat_chunks` в
 > замороженном dataset scope. Нулевые hits (`status=missing`) остаются пустой
 > группой; sheet-pass не рвёт пакет до таблицы строк. Затем та же модель
 > получает вложение и общий evidence packet и возвращает `answer + rows`. Если
+> до результата ей нужны полные карточки/цены/документы, optional native reads
+> исполняются внутри answer-хода и та же модель получает literal evidence.
+> Обычный итог без calls не запускает дополнительный model call. Если
 > заголовки всех `Qn` не
 > влезают в остаток окна, sheet-pass показывает влезающий префикс и продолжает
 > leftover-запросы следующим техническим пакетом; однопроходный путь честно
@@ -290,6 +318,10 @@ measurement and browser recovery after the ongoing 856 controls remain pending.
 > XLSX. В активном пути нет selector/workbook loop, `status`, confirm/review или
 > лимита количества строк. Ошибка упаковки не меняет ответ и не возвращает
 > предметное решение модели в цикл.
+> Conditional result fields и примеры принадлежат `model_lsr_result_contract`;
+> JSON не обязателен, delta по operation_id/expected_revision допустима.
+> Scope/revision admission выполняется до durable accepted rows; отклонённая
+> структурная принадлежность сохраняет полный authored proposal отдельно.
 
 > **0.30.29 workbook attachment handoff repair:** обязательный selector request
 > снова содержит факт server-owned attachment и его временный ID. Это переносит

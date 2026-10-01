@@ -27,11 +27,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 from uuid import uuid4
 
 from proxy.config import META_DB_PATH
@@ -298,6 +299,8 @@ _IDENTITY_DECISION_FIELDS = frozenset(
         "revision",
         "revision_origin",
         "content_sha256",
+        "expected_revision",
+        "base_revision",
     }
 )
 # Task 2026-09-29 § 3: these fields explain a decision that is already on the record.
@@ -371,11 +374,48 @@ def _packaged_price_basis(price_basis: Mapping[str, Any] | None) -> dict[str, An
         "inherited_from": str(
             price_basis.get("inherited_from_document") or ""
         ).strip(),
+        **({"pricebook_sha256": str(price_basis["pricebook_sha256"]).strip()}
+           if price_basis.get("pricebook_sha256") else {}),
     }
 
 
 def _new_operation_id() -> str:
     return f"op_{uuid4().hex[:16]}"
+
+
+def _merge_task_price_basis(previous: Mapping[str, Any], requested: Mapping[str, Any]) -> dict[str, Any]:
+    """Replace explicit operator dimensions without retaining a stale book hash."""
+    from proxy.services.lsr_workbook_adapter_service import requested_price_basis
+
+    basis, incoming = dict(previous), dict(requested)
+    dimensions = {
+        "region": ("region", "requested_region", "actual_region"),
+        "quarter": ("quarter", "requested_quarter", "actual_quarter"),
+    }
+
+    def dimension(values: Mapping[str, Any], key: str) -> str:
+        raw = next((str(values[alias]).strip() for alias in dimensions[key] if values.get(alias)), "")
+        if key == "quarter" and re.fullmatch(r"[1-4]:20\d{2}", raw):
+            number, year = raw.split(":", 1)
+            raw = f"{number} квартал {year}"
+        return requested_price_basis(raw).get(key, raw)
+
+    changed = any(dimension(incoming, key) and dimension(incoming, key) != dimension(basis, key)
+                  for key in dimensions)
+    incoming_book = incoming.get("pricebook") or incoming.get("actual_book") or incoming.get("pricebook_id")
+    previous_book = basis.get("pricebook") or basis.get("actual_book") or basis.get("pricebook_id")
+    if changed or (incoming_book and previous_book and str(incoming_book).strip().casefold() != str(previous_book).strip().casefold()):
+        for key in ("pricebook", "actual_book", "pricebook_id", "pricebook_sha256", "binding"):
+            basis.pop(key, None)
+    for key, aliases in dimensions.items():
+        value = dimension(incoming, key)
+        if value:
+            for alias in aliases:
+                basis.pop(alias, None)
+                if incoming.get(alias):
+                    incoming[alias] = value
+    basis.update({key: value for key, value in incoming.items() if value})
+    return basis
 
 
 def _legacy_operation_id(job_id: str, item: Mapping[str, Any]) -> str:
@@ -580,11 +620,9 @@ class WorkbookResearchJobService:
                     context["artifact_intent"] = artifact_intent
                 # Only explicitly named dimensions replace an inherited request.
                 # No default book/period and no model decision are introduced here.
-                basis = dict(context.get("price_basis") or {})
-                for key, value in dict(task_context.get("price_basis") or {}).items():
-                    if value:
-                        basis[key] = value
-                context["price_basis"] = basis
+                context["price_basis"] = _merge_task_price_basis(
+                    context.get("price_basis") or {}, task_context.get("price_basis") or {}
+                )
                 conn.execute(
                     "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
                     (json.dumps(context, ensure_ascii=False), job_id),
@@ -957,6 +995,61 @@ class WorkbookResearchJobService:
                 },
             )
 
+    def record_evidence_read(
+        self, job_id: str, *, packet_id: str,
+        evidence: Sequence[Mapping[str, Any]],
+        read_receipts: Sequence[Mapping[str, Any]],
+        price_basis: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Save model-requested reads before the next inference, without decisions.
+
+        This is not a completed packet and must not increment decision/stall
+        counters or mark source rows done. A restart can replay the exact reads.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM workbook_research_jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
+                raise WorkbookResearchJobError("workbook research job not found")
+            if str(row["status"]) in TERMINAL_STATUSES:
+                return self._row(row)
+            saved = _json_list(row, "evidence_json")
+            ids = {str(item.get("global_evidence_id") or "") for item in saved}
+            for item in evidence:
+                value = dict(item)
+                identity = str(value.get("global_evidence_id") or "")
+                if identity and identity not in ids:
+                    saved.append(value)
+                    ids.add(identity)
+            context = _json_object(row, "task_context_json")
+            snapshot = dict(price_basis) if isinstance(price_basis, Mapping) else {}
+            if "pricebook_sha256" in snapshot:
+                source_sha = snapshot["pricebook_sha256"]
+                book = snapshot.get("pricebook") or snapshot.get("actual_book") or snapshot.get("pricebook_id")
+                if (not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", source_sha)
+                        or not isinstance(book, str) or not book.strip()):
+                    raise WorkbookResearchJobError("evidence price basis requires an exact book and SHA-256")
+                previous = context.get("price_basis") or {}
+                previous_book = previous.get("pricebook") or previous.get("actual_book") or previous.get("pricebook_id")
+                if ((previous_book and str(previous_book).strip().casefold() != book.strip().casefold())
+                        or (previous.get("pricebook_sha256") and previous["pricebook_sha256"] != source_sha)):
+                    raise WorkbookResearchJobError("evidence price basis conflicts with stored task")
+                context["price_basis"] = snapshot
+            reads = dict(context.get("model_evidence_reads") or {})
+            reads[str(packet_id)] = [dict(item) for item in read_receipts]
+            context["model_evidence_reads"] = reads
+            conn.execute(
+                "UPDATE workbook_research_jobs SET evidence_json=?,task_context_json=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=?",
+                (json.dumps(saved, ensure_ascii=False), json.dumps(context, ensure_ascii=False), job_id),
+            )
+            self._append_event(conn, job_id, "model_evidence_read", {
+                "packet_id": str(packet_id), "read_receipts": reads[str(packet_id)],
+                "evidence_ids": [str(item.get("global_evidence_id") or "") for item in evidence],
+                "decision_author": "model", "source_rows_marked_done": 0,
+                **({"price_basis": snapshot} if "pricebook_sha256" in snapshot else {}),
+            })
+        return self.get(job_id)
+
     def record_packet(
         self,
         job_id: str,
@@ -968,6 +1061,9 @@ class WorkbookResearchJobService:
         omitted: Sequence[str] = (),
         remaining: Sequence[str] = (),
         held_packet: Mapping[str, Any] | None = None,
+        unapplied_proposals: Sequence[Mapping[str, Any]] = (),
+        enforce_packet_scope: bool = False,
+        canonicalize_locator: Callable[[Any], Any] | None = None,
     ) -> dict[str, Any]:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -988,6 +1084,59 @@ class WorkbookResearchJobService:
                 for item in existing_rows
                 if isinstance(item, Mapping) and item.get("operation_id")
             }
+            proposals = [dict(item) for item in unapplied_proposals if isinstance(item, Mapping)]
+            if enforce_packet_scope:
+                from proxy.services.model_result_packet_service import _locator_key, admit_model_result_packet
+
+                def locator_key(value: Any) -> str:
+                    canonical = canonicalize_locator(value) if canonicalize_locator is not None else value
+                    return _locator_key(canonical)
+
+                requested = {locator_key(value) for value in packet_locators}
+                # Check against this transaction's current revisions, not the
+                # earlier prompt snapshot. Only operations of the owned packet
+                # are available for revision; other source rows stay proposals.
+                scoped_prior = [
+                    item for item in (*review_operations.values(), *by_op.values())
+                    if locator_key(item.get("source_row")) in requested
+                ]
+                admission = admit_model_result_packet(
+                    accepted_rows, packet_locators=packet_locators,
+                    prior_operations=scoped_prior, canonicalize_locator=canonicalize_locator,
+                )
+                accepted_rows = admission.accepted_rows
+                proposals.extend(admission.unapplied_proposals)
+            context = _json_object(row, "task_context_json")
+            saved_proposals = [
+                dict(item) for item in context.get("unapplied_proposals", [])
+                if isinstance(item, Mapping)
+            ]
+            seen_proposals = {str(item.get("proposal_id") or "") for item in saved_proposals}
+            new_proposals: list[dict[str, Any]] = []
+            for item in proposals:
+                # Full authored rows are durable evidence, never accepted
+                # operations. Exact repeated delivery does not duplicate them.
+                proposal_id = str(item.get("proposal_id") or "")
+                if not proposal_id:
+                    encoded = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+                    proposal_id = "proposal_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+                    item["proposal_id"] = proposal_id
+                if proposal_id in seen_proposals:
+                    continue
+                seen_proposals.add(proposal_id)
+                saved_proposals.append(item)
+                new_proposals.append(item)
+            if new_proposals:
+                context["unapplied_proposals"] = saved_proposals
+                conn.execute(
+                    "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
+                    (json.dumps(context, ensure_ascii=False), str(job_id)),
+                )
+                self._append_event(conn, job_id, "unapplied_model_proposals", {
+                    "schema": "les.model-result-unapplied-proposal.v1",
+                    "sheet": str(sheet), "packet_locators": list(packet_locators),
+                    "count": len(new_proposals), "proposals": new_proposals,
+                })
             active_shas = {op: _decision_content_sha(item) for op, item in by_op.items()}
             new_revisions: list[tuple[str, int, str, dict[str, Any]]] = [
                 (op, int(item.get("revision") or 1), "migration", item)
@@ -1228,6 +1377,8 @@ class WorkbookResearchJobService:
                     "held_queries": len(held_payload.get("queries") or []),
                     "new_revisions": len(new_revisions),
                     "evidence_page_progress": evidence_page_progress,
+                    "unapplied_proposals": len(saved_proposals),
+                    "new_unapplied_proposals": len(new_proposals),
                 },
             )
             # Directive §4: emit stall event when auto-paused
@@ -2355,6 +2506,7 @@ class WorkbookResearchJobService:
             "held_packet": held_packet,
             "operator_overrides": operator_overrides,
             "task_context": _json_object(row, "task_context_json"),
+            "unapplied_proposals": _json_object(row, "task_context_json").get("unapplied_proposals", []),
             "identity": identity if isinstance(identity, dict) else {},
             "resumable": status in RESUMABLE_STATUSES and status != "failed",
             "status_dimensions": {

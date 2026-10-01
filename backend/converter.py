@@ -55,7 +55,13 @@ def _parse_with_markitdown(file_path: Path) -> Optional[str]:
     return None
 
 
-def convert_to_markdown(file_path: Path, route=None) -> Optional[str]:
+def convert_to_markdown(
+    file_path: Path,
+    route=None,
+    *,
+    apply_char_limit: bool = True,
+) -> Optional[str]:
+    """Convert a source; exact catalog readers may bypass the preview char cap."""
     suffix = file_path.suffix.lower()
     if suffix not in SUPPORTED:
         logger.warning(f"[CONVERT] Неподдерживаемый формат: {suffix} ({file_path.name})")
@@ -87,7 +93,9 @@ def convert_to_markdown(file_path: Path, route=None) -> Optional[str]:
         else:
             return None
 
-        return _limit_file_chars(file_path, result)
+        if apply_char_limit:
+            return _limit_file_chars(file_path, result)
+        return result if result and result.strip() else None
 
     except Exception as e:
         logger.error(f"[CONVERT] Ошибка {file_path.name}: {e}", exc_info=True)

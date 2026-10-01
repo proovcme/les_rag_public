@@ -141,7 +141,7 @@ def test_pdf_markdown_catalog_has_stable_locators_and_only_work_rows(monkeypatch
 | Раздел 2. Монтажные работы |  |  |  |  |
 | 1 | Монтаж блока аварийного питания | шт. | 16 |  |
 """
-    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path: markdown)
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path, **_kwargs: markdown)
 
     catalog = service.load_tabular_source_catalog(source)
 

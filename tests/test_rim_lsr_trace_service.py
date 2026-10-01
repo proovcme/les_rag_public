@@ -714,12 +714,13 @@ def test_lsr_trace_from_visible_rows_builds_priced_trace_from_selected_norms():
 class _ChosenBook:
     """A ценовая база the operator picked: exact lookup by resource code."""
 
-    def __init__(self, prices: dict[str, float]) -> None:
+    def __init__(self, prices: dict[str, float], units: dict[str, str] | None = None) -> None:
         self._prices = dict(prices)
+        self._units = dict(units or {})
 
     def lookup(self, code: str):
         price = self._prices.get(str(code).strip())
-        return None if price is None else {"price_current": price}
+        return None if price is None else {"price_current": price, **({"unit": self._units[code]} if code in self._units else {})}
 
 
 def test_resources_priced_from_the_chosen_book_are_confirmed_final():
@@ -774,9 +775,10 @@ def test_material_priced_from_the_chosen_book_is_confirmed_money():
                 "resource_code": "01.7.15.06-0111",
                 "unit": "м.п",
                 "quantity": 30,
+                "evidence_refs": ["selected-resource-card"],
             }
         ],
-        pricebook=_ChosenBook({"01.7.15.06-0111": 100.0}),
+        pricebook=_ChosenBook({"01.7.15.06-0111": 100.0}, units={"01.7.15.06-0111": "м.п"}),
     )
     binding = lsr["row_bindings"][0]
     assert binding["readiness"]["prices_provided"] is True
@@ -798,9 +800,10 @@ def test_operator_confirmed_price_makes_the_position_money_confirmed_and_says_so
     }
     draft = build_lsr_trace_from_visible_rows([row], pricebook=_Book(), name="Видимые строки")
     confirmed = build_lsr_trace_from_visible_rows(
-        [{**row, "confirmed_price": 20000.0, "price_source": "operator"}],
+        [row],
         pricebook=_Book(),
         name="Видимые строки",
+        confirmed_data={"PDF!R2": {"confirmed_price": 20000.0, "price_source": "operator"}},
     )
 
     assert draft["summary"]["result_status"] == "priced_partial"
@@ -1368,6 +1371,7 @@ def test_stage_v_bound_material_with_confirmed_price_is_confirmed():
                 "quantity": 30,
                 "confirmed_price": 100,
                 "price_source": "operator",
+                "confirmed_by": "operator",  # application-owned confirmation overlay
             }
         ]
     )

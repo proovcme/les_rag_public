@@ -88,6 +88,7 @@ _LSR_INPUT_SCHEMA = {
                 "quarter": {"type": "string"},
                 "binding": {"type": "string"},
                 "revision_id": {"type": "string"},
+                "pricebook_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             },
         },
     },
@@ -273,7 +274,7 @@ def _normalized_args(args: Mapping[str, Any], *, allowed_args: set[str]) -> dict
                     payload[locator] = dict(value)
         normalized["confirmed_data"] = payload
     if "document_price_basis" in allowed_args:
-        # Server-owned continuation of the basis (§ 4).  Only the five known
+        # Server-owned continuation of the basis (§ 4). The known basis
         # strings survive; an unknown key or a non-string value is dropped, so
         # nothing can smuggle a basis in through this field, and a book that is
         # not installed cannot be bound by it either (explicit_only=True).
@@ -282,6 +283,8 @@ def _normalized_args(args: Mapping[str, Any], *, allowed_args: set[str]) -> dict
             key: str(stored.get(key) or "").strip()
             for key in ("pricebook", "region", "quarter", "binding", "revision_id")
         } if isinstance(stored, Mapping) else {}
+        if isinstance(stored, Mapping) and "pricebook_sha256" in stored:
+            fields["pricebook_sha256"] = str(stored.get("pricebook_sha256") or "").strip()
         normalized["document_price_basis"] = (
             fields if any(fields.values()) else {}
         )
@@ -356,6 +359,8 @@ async def _default_vor_adapter(
         rows = _vor_rows_from_draft(args.get("decisions") or [], source_label=source_label)
     if not rows and spec_error is not None:
         raise spec_error
+    if not rows:
+        raise ValueError("NO_SOURCE_ROWS: source did not yield any VOR rows")
     from proxy.services.spec_to_bor_service import derive_work_for_item
 
     source_errors: list[str] = []
@@ -364,14 +369,28 @@ async def _default_vor_adapter(
             compare_model_row_to_catalog, load_tabular_source_catalog,
         )
         catalog = await asyncio.to_thread(load_tabular_source_catalog, source_path)
+        if catalog is None:
+            source_errors.append("source_catalog_unavailable")
+        else:
+            if not catalog.rows:
+                source_errors.append("source_catalog_empty")
+            if not catalog.extraction_complete:
+                source_errors.append("source_extraction_incomplete")
         messages = {
             "source_quantity_mismatch": "Количество расходится с исходной строкой",
             "source_quantity_unconfirmed": "Количество не подтверждено исходной строкой",
             "source_unit_mismatch": "Единица измерения расходится с исходной строкой",
             "source_row_not_in_catalog": "Ссылка на исходную строку не найдена",
+            "source_extraction_incomplete": "Часть исходного документа не извлечена",
         }
         for item, rendered in zip(draft, rows, strict=True):
             if rendered["row_role"] in {"header", "note", "subtotal"}:
+                if catalog is None or not catalog.rows or not catalog.extraction_complete:
+                    rendered["source_audit"] = (
+                        "Исходные объёмы не проверены" if catalog is None
+                        else "Исходный документ не содержит непустых строк" if not catalog.rows
+                        else "Часть исходного документа не извлечена"
+                    )
                 continue
             errors = compare_model_row_to_catalog(item, catalog) if catalog is not None else ["source_catalog_unavailable"]
             source_errors.extend(errors)
@@ -414,7 +433,7 @@ async def _default_vor_adapter(
         "requires_decision_count": requires_decision_count,
         "missing": missing,
         "vor_source_errors": list(dict.fromkeys(source_errors)),
-        "blockers": (["NO_SOURCE_ROWS"] if not rows else []),
+        "blockers": [],
     }
 
 
@@ -503,7 +522,7 @@ async def _build_workbook(
     if artifact_kind == "vor_workbook":
         supported = {".xlsx", ".xlsm"}
         if draft_rows:
-            supported.add(".pdf")
+            supported.update({".pdf", ".docx", ".csv"})
     else:
         supported = {".pdf", ".xlsx", ".xlsm"}
     if source_path.suffix.lower() not in supported:

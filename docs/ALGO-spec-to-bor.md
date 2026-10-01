@@ -1,8 +1,8 @@
 # Алгоритм: Спецификация (форма 9, ГОСТ 21.110) → ВОР
 
-## Текущий чатовый workbook-путь (0.31.120 / 848)
+## Текущий чатовый workbook-путь (candidate 859, установлен 858)
 
-Если модель уже вернула `decisions`, XLSX и PDF одинаково упаковываются из них.
+Если модель уже вернула `decisions`, XLSX/XLSM, PDF, DOCX и CSV упаковываются из них.
 Исходная спецификация не заменяет выбранные операции; словарь ниже не создаёт
 операцию вместо модели. В ВОР сохраняются row_role, work_row, open_gap, авторские
 количества и единицы. Проверка каталога охватывает также материалы: несовпадение
@@ -10,6 +10,26 @@
 файл доступен как черновик, никакой исправленный объём код не подставляет.
 Заголовки не требуют количества или нормы. Сомнения и вопросы модели остаются
 в XLSX; готовность файла не означает профессиональную полноту ВОР.
+
+Каталог исходника сохраняет длинные ячейки без preview cap, нулевые значения
+и физические пустые колонки. PDF conversion для каталога вызывается с
+`apply_char_limit=False`; UI preview cap остаётся прежним. Все XLSX листы,
+включая hidden, сохраняют исходные адреса. CSV сохраняет физический номер строки.
+DOCX reader использует существующий python-docx: body text, таблицы, вложенные
+таблицы и header/footer получают стабильные `DOCX_Tn!Rk`/text locators.
+Параграф без tabular role остаётся ambiguous до решения модели; код не
+превращает его в монтаж. Notes-only листы и DOCX context доходят в packet как
+reference_only_source_rows без расширения requested locators.
+
+Неизвлечённые изображения, textboxes, embedded/tracked content и footnotes
+обозначаются extraction warnings и `source_extraction_incomplete`; это честная
+граница literal text/table extraction, не утверждение о содержимом картинки.
+Проверка сохраняется и для header-only authored результата, и в readiness/XLSX.
+Пустой набор authored/source строк даёт `NO_SOURCE_ROWS` до записи artifact;
+quantity=0 сохраняется как исходное значение.
+RTF/ZIP остаются неподдерживаемыми форматами этого workbook-пути. OCR scan
+не объявляется полностью извлечённым только потому, что создан файл.
+Живая приёмка candidate 859 остаётся открытой.
 
 **Отдельный legacy path без модельных решений:**
 
@@ -55,8 +75,10 @@
 - Канонический workbook tool использует `bor_service.source_rows_to_vor_xlsx`:
   это отдельный lossless-экспорт без свода — порядок, единицы, количества и
   `source_file#position` переносятся 1:1, пустые значения остаются пустыми.
-- Чатовый `build_vor_workbook` использует 0-LLM контур
-  `rows_from_spec_xlsx` → `source_rows_to_vor_xlsx`; MCP сохраняет отдельные
+- Активный чатовый `build_vor_workbook` сохраняет authored decisions через
+  `workbook_tool_service` → `source_rows_to_vor_xlsx`, сверяя literal
+  `attachment_source_catalog_service`; `rows_from_spec_xlsx` применяется только
+  к отдельному legacy пути без decisions. MCP сохраняет отдельные
   `les_bor`/`les_spec_to_bor`. Старый `/api/bor` удалён в 0.30.21.
 
 ## v2 — декомпозиция (методика ГОСТ 21.111, дефолт)

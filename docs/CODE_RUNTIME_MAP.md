@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1041 |
-| Строк Python | 361461 |
-| PRODUCT_REACHABLE | 362 |
+| Python-файлов под git | 1059 |
+| Строк Python | 366241 |
+| PRODUCT_REACHABLE | 368 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 667 |
+| TEST_OR_TOOL_ONLY | 679 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 340 |
 | Ошибок разбора | 0 |
@@ -32,28 +32,28 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 11362 | 25 |
+| proxy/services/chat_evidence_application_service.py | 11755 | 29 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7733 | 7 |
-| proxy/routers/chat.py | 4707 | 42 |
+| proxy/routers/chat.py | 4707 | 44 |
 | backend/qdrant_adapter.py | 4552 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3927 | 3 |
 | proxy/routers/datasets.py | 3787 | 16 |
 | sovushka/styles.py | 3301 | 3 |
+| proxy/services/rim_lsr_trace_service.py | 2998 | 31 |
 | sovushka/pages/samovar.py | 2966 | 3 |
-| proxy/services/rim_lsr_trace_service.py | 2838 | 27 |
+| proxy/services/workbook_research_job_service.py | 2593 | 20 |
 | proxy/services/smeta_chat_adapter_service.py | 2450 | 15 |
-| proxy/services/workbook_research_job_service.py | 2441 | 16 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
-| proxy/services/lsr_norm_quality_gate_service.py | 2239 | 8 |
+| proxy/services/lsr_norm_quality_gate_service.py | 2223 | 9 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
-| proxy/smeta_core/norm_browser.py | 1703 | 14 |
+| proxy/smeta_core/norm_browser.py | 1799 | 16 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | sovushka/pages/diag.py | 1602 | 3 |
-| proxy/services/lsr_workbook_adapter_service.py | 1534 | 12 |
+| proxy/services/lsr_workbook_adapter_service.py | 1574 | 15 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |

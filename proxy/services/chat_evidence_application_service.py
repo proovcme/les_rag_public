@@ -67,6 +67,7 @@ from proxy.services.context_governor_service import (
     ContextObject,
     ContextPacket,
     ContextRequiredSectionOverflow,
+    conservative_token_estimate,
 )
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.evidence_packet_service import (
@@ -108,6 +109,16 @@ from proxy.services.model_answer_table_service import (
     table_cells,
 )
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+from proxy.services.model_result_packet_service import admit_model_result_packet
+from proxy.services.model_lsr_result_contract import model_lsr_result_field_instruction
+from proxy.services.model_evidence_read_contract import (
+    MODEL_EVIDENCE_READ_INSTRUCTION,
+    model_evidence_read_tool_schemas,
+    read_result_receipt,
+    shown_evidence_registry,
+)
+from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
+from proxy.services.model_price_provenance_service import price_evidence_check
 from proxy.services.packaging_recovery_service import (
     release_memory_for_packaging,
     packaging_recovery_payload,
@@ -261,7 +272,7 @@ def workbook_model_question(question: str, job: Mapping[str, Any] | None) -> str
         effective["artifact_intent"] = context["artifact_intent"]
     basis = context.get("price_basis")
     if isinstance(basis, Mapping):
-        effective["price_basis"] = {key: basis[key] for key in ("region", "quarter", "pricebook") if basis.get(key)}
+        effective["price_basis"] = {key: basis[key] for key in ("region", "quarter", "pricebook", "pricebook_sha256") if basis.get(key)}
     return (
         f"Исходное задание пользователя:\n{original}\n\n"
         f"Текущее сообщение пользователя:\n{current}\n\n"
@@ -272,7 +283,7 @@ def workbook_model_question(question: str, job: Mapping[str, Any] | None) -> str
 
 
 def document_price_basis_arguments(basis: object) -> dict[str, Any]:
-    """The five contract strings of a basis a document was already priced in.
+    """Preserve the actual immutable book together with explicit price dimensions.
 
     Explicit request dimensions survive before the first successful packaging,
     including requests for a period whose price book has not been loaded yet.
@@ -280,8 +291,8 @@ def document_price_basis_arguments(basis: object) -> dict[str, Any]:
     if not isinstance(basis, Mapping):
         return {}
     book = str(basis.get("pricebook") or basis.get("actual_book") or "").strip()
-    region = str(basis.get("region") or basis.get("actual_region") or "").strip()
-    quarter = str(basis.get("quarter") or basis.get("actual_quarter") or "").strip()
+    region = str(basis.get("region") or basis.get("actual_region") or basis.get("requested_region") or "").strip()
+    quarter = str(basis.get("quarter") or basis.get("actual_quarter") or basis.get("requested_quarter") or "").strip()
     if not (book or region or quarter):
         return {}
     return {
@@ -290,6 +301,7 @@ def document_price_basis_arguments(basis: object) -> dict[str, Any]:
         "quarter": quarter,
         "binding": str(basis.get("binding") or "").strip(),
         "revision_id": str(basis.get("revision_id") or "").strip(),
+        **({"pricebook_sha256": str(basis["pricebook_sha256"]).strip()} if basis.get("pricebook_sha256") else {}),
     }
 
 
@@ -314,6 +326,7 @@ def task_document_price_basis(job: object, previous_basis: object = None) -> dic
         # An old selected book must not override an explicitly changed period.
         basis.pop("pricebook", None)
         basis.pop("binding", None)
+        basis.pop("pricebook_sha256", None)
     for key in ("region", "quarter"):
         if requested.get(key):
             if changed or not basis.get(key):
@@ -1377,12 +1390,26 @@ def workspace_note_objects(
     )
 
 
+def model_read_frame_evidence(source_context, chunks, receipts):
+    """Replay each literal shown body once; retain source rows and prior decisions."""
+    source_objects = []
+    for item in source_context:
+        if isinstance(item, Mapping):
+            item = {key: value for key, value in item.items()
+                    if key not in {"previously_shown_cited_evidence", "previous_model_requested_exact_reads"}}
+            if not item:
+                continue
+        source_objects.append(item)
+    return [*source_objects, shown_evidence_registry(chunks), {"model_requested_reads": receipts}]
+
+
 def govern_inference_messages(
     *,
     preset: ModelExecutionPreset,
     profile_prefix: str,
     request_payload: Any,
     shortlist: Sequence[Any] = (),
+    native_tools: Sequence[Any] = (),
     checkpoint: Sequence[ContextObject] = (),
     working_memory: Sequence[ContextObject] = (),
     evidence: Sequence[Any] = (),
@@ -1398,7 +1425,7 @@ def govern_inference_messages(
             (ContextObject("profile:bound", profile_prefix),),
             required=True,
         ),
-        ContextCandidate(ContextKind.TOOL_SHORTLIST, _context_objects("tool", shortlist)),
+        ContextCandidate(ContextKind.TOOL_SHORTLIST, _context_objects("tool", () if native_tools else shortlist)),
         ContextCandidate(
             ContextKind.REQUEST,
             (ContextObject("request:current", request_payload),),
@@ -1416,7 +1443,14 @@ def govern_inference_messages(
         ContextCandidate(ContextKind.TOOL_EXCHANGE, _context_objects("exchange", tool_exchange)),
         ContextCandidate(ContextKind.DIALOGUE, _context_objects("dialogue", dialogue)),
     ]
-    packet = ContextGovernor(preset).pack(candidates)
+    external_tokens = (
+        conservative_token_estimate(json.dumps(list(native_tools), ensure_ascii=False, sort_keys=True)) + 2
+        if native_tools else 0
+    )
+    governed_preset = replace(preset, input_token_limit=max(0, preset.input_token_limit - external_tokens))
+    packet = ContextGovernor(governed_preset).pack(candidates)
+    if external_tokens:
+        packet = replace(packet, provider_payload_tokens=external_tokens)
     return packet.as_messages(), packet
 
 
@@ -1445,6 +1479,8 @@ def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, An
 
     return {
         "purpose": purpose,
+        **({"native_tools_reserved_tokens": packet.provider_payload_tokens}
+           if packet.provider_payload_tokens else {}),
         "preset_id": packet.preset_id,
         "input_budget_tokens": packet.input_budget_tokens,
         "generation_reserve_tokens": packet.generation_reserve_tokens,
@@ -1544,42 +1580,17 @@ def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configur
 
 TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE = "tabular_attachment_estimator_path_v1"
 _TABULAR_ESTIMATOR_TOOLS = ("search_sources", "read_source", "build_lsr_workbook")
-_TABULAR_LSR_VOLUME_INSTRUCTION = (
-    "Пустые колонки Материал/Работа/Итого во вложенной ведомости — это объёмы, "
-    "не запрет собирать таблицу строк. Не отказывайся из‑за пустых цен и не проси "
-    "прайс вместо таблицы. Цену считает код только после выбранной нормы. "
-    "В таблице нужны source_row, row_role, work_row, title, unit, quantity, norm_code, "
-    "norm_status, open_gap, evidence_refs Qx.Hy. "
-    "Для material/equipment, если ты выбрал конкретный ресурс по источнику, "
-    "перенеси его буквальный код в resource_code и ссылку в evidence_refs; "
-    "если ресурс не выбран, оставь resource_code пустым. Код считает цену "
-    "по явно выбранной книге. "
-    "Для каждой выбранной нормы также обязательно верни action_match, "
-    "object_match, condition_match, unit_compatible, "
-    "composition_covers и coverage с обоснованием по той же цитируемой карточке. "
-    "Если карточка показывает варианты НР/СП, выбери применимый по условиям "
-    "объекта и верни его nr_sp_rule_id; если условия неизвестны, оставь поле "
-    "пустым и сформулируй вопрос. Не подставляй ставки по памяти. "
-    "Признаки допускают yes, no, unknown; не ставь yes без проверки источником. "
-    "Если условия или состав не установлены, явно оставь unknown и назови пробел. "
-    "Поля supply_kind, calc_quantity, "
-    "conversion_factor, conversion_source добавляй только когда применяются. "
-    "quantity — исходное количество; расчётное не подменяет его. Перевод единиц "
-    "только с conversion_source. Отсутствие цены не делает строку MISSING."
-    " Если исходник — спецификация изделий, самостоятельно определи по задаче "
-    "и источникам необходимые монтажные работы, их объёмы и нормы; название "
-    "изделия не заменяет работу. Работу можно обосновать исходным source_row, "
-    "даже если монтаж не записан отдельной строкой исходника. Не назначай "
-    "отдельную работу каждому изделию автоматически: учитывай состав нормы "
-    "и избегай двойного учёта. work_row ресурса ссылается на source_row "
-    "реально возвращённой работы с row_role=work, а не на шифр или материал. "
-    "Выбранный по карточке шифр и Qx.Hy перенеси в norm_code и evidence_refs "
-    "итоговой строки; упоминания только в пояснении недостаточно. Если "
-    "работу нельзя определить, верни unresolved с конкретным open_gap. Строке, "
-    "оставленной не готовой (NEEDS_RESEARCH или MISSING), добавь колонку gap_reason: "
-    "insufficient_source_data, если сведений исходной строки не хватает для выбора "
-    "нормы, или no_suitable_candidate, если просмотренные карточки не подходят. "
-    "Как именно не хватает или не подходит — пиши своими словами в open_gap."
+_TABULAR_LSR_VOLUME_INSTRUCTION = model_lsr_result_field_instruction() + (
+    "Пустые ценовые колонки не мешают сборке. Код рассчитывает выбранные нормы "
+    "и ресурсы в явно заданной книге цен. quantity сохраняет исходный объём; "
+    "calc_quantity не подменяет его, conversion_source обосновывает перевод единиц. "
+    "Спецификация изделий может обосновывать монтажные работы на тех же source_row: "
+    "определи операции по задаче и источникам, учитывая состав нормы и двойной учёт. "
+    "Не назначай монтаж каждому изделию автоматически. work_row поставки — source_row "
+    "реально возвращённой работы row_role=work, не шифр. Если работу определить "
+    "нельзя, верни unresolved с open_gap. Для NEEDS_RESEARCH/MISSING укажи gap_reason: "
+    "insufficient_source_data либо no_suitable_candidate и объясни причину. "
+    "Отсутствие цены не делает норму MISSING."
 )
 _MODEL_RAG_QUERY_INSTRUCTION = (
     "Прочитай приложенный материал целиком. Сформулируй поисковые "
@@ -1839,12 +1850,14 @@ def sheet_pass_question_tail(
         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
         f"\nСейчас только лист «{sheet}» ({sheet_index}/{sheet_count}). "
-        "Дай таблицу по всем исходным строкам текущего пакета. "
+        "Для ещё не решённых исходных строк текущего пакета дай решения. "
+        "Если prior_model_decisions уже содержит операции, верни только новые "
+        "или изменённые; неизменённые операции сохраняются приложением. "
         "Не обрабатывай другие листы манифеста. "
     )
     remaining_clause = (
         remainder
-        + " Ответ должен вместить все операции строк текущего пакета: без вводного "
+        + " Ответ должен вместить новые и изменённые операции текущего пакета: без вводного "
         "обзора и итоговых рекомендаций. Число операций определяешь ты; "
         "одна исходная строка может обосновывать несколько операций. "
         "Не возвращай строки других пакетов; не придумывай их содержание по манифесту."
@@ -2715,6 +2728,36 @@ def model_rag_next_query_offset(evidence_chunks: Sequence[Any]) -> int:
     return maximum
 
 
+def bind_model_requested_read_evidence(
+    results: Sequence[Any], *, existing_chunks: Sequence[Any],
+    evidence_namespace: str, packet_id: str = "",
+) -> tuple[list[str], list[Any], list[str]]:
+    """Give exact model-requested reads fresh handles; preserve full typed bodies."""
+    groups, chunks, omitted = [], [], []
+    offset = model_rag_next_query_offset(existing_chunks)
+    for index, result in enumerate(results):
+        if not result.chunks:
+            continue
+        tool = str(result.payload.get("tool") or "read_source")
+        inputs = result.payload.get("inputs") or []
+        label = tool + " " + json.dumps(inputs, ensure_ascii=False, sort_keys=True)
+        full_chars = sum(len(str(getattr(c, "content", "") or "")) for c in result.chunks) + 16_000
+        new_groups, new_chunks, new_omitted = build_model_rag_evidence_groups(
+            [(label, result.chunks)], max_chars=full_chars,
+            hits_per_query=max(len(result.chunks), 1),
+            evidence_namespace=evidence_namespace + ":" + str(index),
+            query_offset=offset, query_provenance={label: "model"}, query_addresses={},
+        )
+        for chunk in new_chunks:
+            if packet_id:
+                chunk.meta["model_read_packet_id"] = packet_id
+        groups.extend(new_groups)
+        chunks.extend(new_chunks)
+        omitted.extend(new_omitted)
+        offset = max(offset + 1, model_rag_next_query_offset(chunks))
+    return groups, chunks, omitted
+
+
 def bind_row_evidence_ids(
     rows: Sequence[Mapping[str, Any]],
     evidence_chunks: Sequence[Any],
@@ -2724,6 +2767,7 @@ def bind_row_evidence_ids(
     alias_to_query: dict[str, str] = {}
     global_to_card: dict[str, str] = {}
     global_to_query: dict[str, str] = {}
+    global_to_resource_codes: dict[str, set[str]] = {}
     ambiguous_aliases: set[str] = set()
     for chunk in evidence_chunks:
         meta = getattr(chunk, "meta", {}) or {}
@@ -2741,6 +2785,18 @@ def bind_row_evidence_ids(
                 str(getattr(chunk, "doc_name", "") or ""),
             )
             global_to_query[global_id] = str(meta.get("model_query_text") or "")
+            body = str(getattr(chunk, "content", "") or "")
+            resource_codes = {str(meta.get("resource_code") or "").strip()}
+            for resource in [*(meta.get("resources") or []), *(meta.get("resource_preview") or [])]:
+                if isinstance(resource, Mapping):
+                    resource_codes.add(str(resource.get("code") or "").strip())
+            # Metadata alone may describe the undisplayed tail of a preview.
+            # Only literal codes actually delivered in its body prove a choice.
+            global_to_resource_codes[global_id] = {
+                code for code in resource_codes if code and re.search(
+                    r"(?<![\w.-])" + re.escape(code) + r"(?![\w.-])", body
+                )
+            }
         if alias and global_id:
             if alias in alias_to_global and alias_to_global[alias] != global_id:
                 ambiguous_aliases.add(alias)
@@ -2783,6 +2839,20 @@ def bind_row_evidence_ids(
         )
         if evidence_check is not None:
             payload["_evidence_check"] = evidence_check
+        resource_code = str(payload.get("resource_code") or "").strip()
+        if resource_code:
+            cited_resource_codes = sorted({
+                code for identity in checkable_bindings.values()
+                for code in global_to_resource_codes.get(identity, set())
+            })
+            payload["_resource_evidence_check"] = {
+                "resource_code": resource_code,
+                "cited_resource_codes": cited_resource_codes,
+                "code_in_refs": resource_code in cited_resource_codes,
+            }
+        price_check = price_evidence_check(payload, evidence_chunks, checkable_bindings)
+        if price_check is not None:
+            payload["_price_evidence_check"] = price_check
         bound.append(payload)
     return bound
 
@@ -2901,6 +2971,9 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
         }
         for field_name in (
             "operation_id",
+            "revision",
+            "expected_revision",
+            "base_revision",
             "analogue",
             "coverage",
             "coefficient",
@@ -2914,6 +2987,8 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "composition_covers",
             "_quality_gate",
             "_evidence_check",
+            "_resource_evidence_check",
+            "_price_evidence_check",
             "quality_message",
             "row_role",
             "work_row",
@@ -2924,6 +2999,13 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "calc_quantity",
             "confirmed_price",
             "price_source",
+            "price_kind",
+            "price_unit",
+            "price_currency",
+            "price_vat",
+            "price_period",
+            "price_year",
+            "price_quarter",
             "resource_code",
             "nr_sp_rule_id",
         ):
@@ -3682,7 +3764,25 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     """Decode only an unambiguous table; preserve the authored answer and cell values."""
 
     required_fields = {"title", "unit", "norm_code"}
+    json_rows = None
+    json_text = str(raw or "").strip()
+    if json_text.startswith("```") and json_text.endswith("```"):
+        json_lines = json_text.splitlines()
+        json_text = "\n".join(json_lines[1:-1]).strip()
+    if json_text.startswith("{"):
+        try:
+            envelope = json.loads(json_text)
+        except (ValueError, TypeError):
+            envelope = None
+        if isinstance(envelope, Mapping) and isinstance(envelope.get("rows"), list):
+            rows = envelope["rows"]
+            if all(isinstance(row, Mapping) and required_fields.issubset(row)
+                            and row.get("source_row") not in (None, "") for row in rows):
+                json_rows = rows
     numeric_fields = {
+        "revision",
+        "expected_revision",
+        "base_revision",
         "quantity",
         "coefficient",
         "conversion_factor",
@@ -3691,6 +3791,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     }
     header_fields = {
         "operation_id": "operation_id",
+        "revision": "revision",
+        "expected_revision": "expected_revision",
+        "base_revision": "base_revision",
         "source_row": "source_row",
         "№": "source_row",
         "№ п/п": "source_row",
@@ -3736,6 +3839,13 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "resource_code": "resource_code",
         "подтверждённая цена": "confirmed_price",
         "price_source": "price_source",
+        "price_kind": "price_kind",
+        "price_unit": "price_unit",
+        "price_currency": "price_currency",
+        "price_vat": "price_vat",
+        "price_period": "price_period",
+        "price_year": "price_year",
+        "price_quarter": "price_quarter",
         "источник цены": "price_source",
         "nr_sp_rule_id": "nr_sp_rule_id",
         "norm_code": "norm_code",
@@ -3789,6 +3899,18 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     def field_name(value: str) -> str:
         normalized = " ".join(value.replace("**", "").strip().split()).casefold()
         return header_fields.get(normalized, "")
+
+    if json_rows is not None:
+        # Same public field boundary as the visible table/text readers. A model
+        # cannot author application trust flags or operator confirmations.
+        public_rows = []
+        for row in json_rows:
+            public = {field_name(str(key)): value for key, value in row.items()
+                      if field_name(str(key))}
+            if isinstance(public.get("evidence_refs"), str):
+                public["evidence_refs"] = extract_model_evidence_refs(public["evidence_refs"])
+            public_rows.append(public)
+        return str(raw or ""), public_rows
 
     # Table lines are read through one shared contract (task § 3): the model's own
     # presentation — a pipe-opened line, a line opened without the optional outer
@@ -4081,6 +4203,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         header_index = max(row_index, header_index + 1)
     block_fields = {
         "operation_id": "operation_id",
+        "revision": "revision",
+        "expected_revision": "expected_revision",
+        "base_revision": "base_revision",
         "source_row": "source_row",
         "section": "section",
         "title": "title",
@@ -4099,6 +4224,13 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "confirmed_price": "confirmed_price",
         "resource_code": "resource_code",
         "price_source": "price_source",
+        "price_kind": "price_kind",
+        "price_unit": "price_unit",
+        "price_currency": "price_currency",
+        "price_vat": "price_vat",
+        "price_period": "price_period",
+        "price_year": "price_year",
+        "price_quarter": "price_quarter",
         "norm_code": "norm_code",
         "nr_sp_rule_id": "nr_sp_rule_id",
         "analogue": "analogue",
@@ -4217,13 +4349,17 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 else {}
             )
             continue
-        if current_block is None:
-            continue
         labelled = stripped.lstrip("*-+ ").strip()
         label, delimiter, value = labelled.partition(":")
         if not delimiter:
             continue
         key = block_fields.get(label.strip().strip("*_` ").casefold())
+        if key == "source_row" and current_block is not None and required_fields.issubset(current_block):
+            flush_block()
+        if current_block is None and key in {"source_row", "operation_id"}:
+            current_block = {}
+        if current_block is None:
+            continue
         clean = value.strip().lstrip("*_` ").strip()
         if not key or not clean:
             continue
@@ -4257,6 +4393,10 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         return str(raw or ""), block_rows
 
     labelled_fields = {
+        "operation_id": "operation_id",
+        "revision": "revision",
+        "expected_revision": "expected_revision",
+        "base_revision": "base_revision",
         "раздел": "section",
         "ед. изм.": "unit",
         "ед. изм": "unit",
@@ -4278,6 +4418,13 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "confirmed_price": "confirmed_price",
         "resource_code": "resource_code",
         "price_source": "price_source",
+        "price_kind": "price_kind",
+        "price_unit": "price_unit",
+        "price_currency": "price_currency",
+        "price_vat": "price_vat",
+        "price_period": "price_period",
+        "price_year": "price_year",
+        "price_quarter": "price_quarter",
         "norm_code": "norm_code",
         "шифр нормы": "norm_code",
         "nr_sp_rule_id": "nr_sp_rule_id",
@@ -4756,7 +4903,8 @@ def _model_rag_exact_card_key(hit: Any) -> str:
             "source_ref", "chunk_id", "source_locator", "source_sha256", "norm_code",
             "norm_key", "dataset_id", "page", "sheet", "row", "edition", "base_type",
             "nr_sp_candidates", "resource_preview", "resource_count", "resource_kinds",
-            "work_steps", "minimum_evidence_body_chars",
+            "work_steps", "minimum_evidence_body_chars", "resource_code", "pricebook",
+            "pricebook_sha256", "price_evidence",
         )},
     }
     return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
@@ -4793,7 +4941,8 @@ def model_rag_prior_page_context(
     structural_facts = []
     # Recompute observations from immutable cards/source, not saved diagnostics.
     # These are facts for the existing model turn, never replacement decisions.
-    observation_rows = [{key: value for key, value in row.items() if key != "_evidence_check"}
+    observation_rows = [{key: value for key, value in row.items()
+                         if key not in {"_evidence_check", "_resource_evidence_check", "_price_evidence_check"}}
                         for row in rows]
     for row in bind_row_evidence_ids(observation_rows, evidence_chunks):
         fact = {"source_row": row.get("source_row"),
@@ -4807,6 +4956,12 @@ def model_rag_prior_page_context(
                                  if check["citation_checkable"] else None),
                 "unresolved_refs": check["unresolved_refs"],
             }
+        resource_check = row.get("_resource_evidence_check")
+        if isinstance(resource_check, Mapping):
+            fact["resource_reference"] = dict(resource_check)
+        price_check = row.get("_price_evidence_check")
+        if isinstance(price_check, Mapping):
+            fact["price_reference"] = dict(price_check)
         if source_catalog is not None:
             errors = compare_model_row_to_catalog(row, source_catalog)
             if errors:
@@ -4819,7 +4974,7 @@ def model_rag_prior_page_context(
                     "model_quantity": row.get("quantity"),
                     "model_unit": row.get("unit"),
                 }
-        if "norm_reference" in fact or "source_comparison" in fact:
+        if any(key in fact for key in ("norm_reference", "resource_reference", "price_reference", "source_comparison")):
             structural_facts.append(fact)
     cited = {
         str(identity) for row in rows
@@ -4850,7 +5005,7 @@ def model_rag_prior_page_context(
         # their full citation dumps crowded out the next exact evidence group.
         "prior_model_decisions": [
             {key: value for key, value in row.items()
-             if key not in {"_quality_gate", "_evidence_check", "quality_message"}}
+             if key not in {"_quality_gate", "_evidence_check", "_resource_evidence_check", "_price_evidence_check", "quality_message"}}
             for row in compact_estimator_draft_rows(list(rows))
         ],
         "previously_shown_cited_evidence": cited_evidence,
@@ -4858,14 +5013,16 @@ def model_rag_prior_page_context(
         "evidence_continuation_instruction": (
             "Это следующая страница уже найденных карточек для тех же строк. "
             "Сохрани корректные прежние решения и их цитаты; учитывай новые карточки. "
-            "Для прежней операции верни её operation_id из prior_model_decisions; "
+            "Для изменённой прежней операции верни её operation_id из prior_model_decisions "
+            "и expected_revision, равный показанному revision; "
             "для новой оставь operation_id пустым: идентификаторы и ревизии назначает приложение. "
             "work_row остаётся адресом исходной строки работы. "
             "prior_result_structural_facts содержит только сравнение с буквальными "
             "карточками и исходными ячейками, не вердикт о применимости нормы. "
             "code_in_refs=null означает, что сравнить шифр невозможно. "
             "Проверь указанные противоречия; предметные решения принимаешь ты. "
-            "Верни все операции этого пакета. Код не изменял предметные решения."
+            "Верни только новые и изменённые операции этого пакета. Неизменённые "
+            "операции и цитаты остаются в документе. Код не изменял предметные решения."
         ),
     }, retained
 
@@ -6855,6 +7012,7 @@ async def _execute_chat_evidence_application(
         })
 
     model_evidence_chunks = list(llm_chunks)
+    model_requested_price_basis = {}
 
     def _build_model_evidence(current_chunks: Sequence[Any]):
         packet = build_retrieval_evidence_packet(
@@ -7285,8 +7443,15 @@ async def _execute_chat_evidence_application(
                             detail="MODEL_RAG_QUERY_LIST_EMPTY",
                         )
 
-                    async def _no_model_rag_fallback(_tool_name: str, _args: dict[str, Any]):
-                        raise RuntimeError("MODEL_RAG_ONLY_SUPPORTS_SEARCH_SOURCES")
+                    async def _sheet_read_source_fallback(tool_name: str, args: dict[str, Any]):
+                        # The executor validates selected dataset / shown document
+                        # scope. No workbook mutations are exposed in this turn.
+                        if tool_name != "read_source":
+                            raise ValueError("unsupported sheet evidence read")
+                        from proxy.services.tool_harness_service import harness
+                        return await asyncio.to_thread(
+                            harness(web_config=web_research_config).call, tool_name, args
+                        )
 
                     model_research_tools = ModelResearchToolService(
                         retrieve=retrieve_chat_chunks,
@@ -7302,7 +7467,7 @@ async def _execute_chat_evidence_application(
                             "logger": logger,
                             "llm_semaphore": state.llm_semaphore,
                             "return_trace": True,
-                            "doc_filter": None,
+                            "doc_filter": target_doc_filter or None,
                             "scope_source": str(
                                 (scope_resolution or {}).get("scope_source") or "unspecified"
                             ),
@@ -7310,7 +7475,7 @@ async def _execute_chat_evidence_application(
                                 (scope_resolution or {}).get("error_code") or ""
                             ),
                         },
-                        fallback=_no_model_rag_fallback,
+                        fallback=_sheet_read_source_fallback,
                         smeta_norm_retrieve=(
                             retrieve_smeta_norm_cards
                             if profile_uses_smeta_norm_retrieval(profile_snapshot)
@@ -7402,8 +7567,13 @@ async def _execute_chat_evidence_application(
                     if llm_runtime.api_key:
                         query_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
 
-                    async def _no_model_rag_fallback(_tool_name: str, _args: dict[str, Any]):
-                        raise RuntimeError("MODEL_RAG_ONLY_SUPPORTS_SEARCH_SOURCES")
+                    async def _sheet_read_source_fallback(tool_name: str, args: dict[str, Any]):
+                        if tool_name != "read_source":
+                            raise ValueError("unsupported sheet evidence read")
+                        from proxy.services.tool_harness_service import harness
+                        return await asyncio.to_thread(
+                            harness(web_config=web_research_config).call, tool_name, args
+                        )
 
                     model_research_tools = ModelResearchToolService(
                         retrieve=retrieve_chat_chunks,
@@ -7419,7 +7589,7 @@ async def _execute_chat_evidence_application(
                             "logger": logger,
                             "llm_semaphore": state.llm_semaphore,
                             "return_trace": True,
-                            "doc_filter": None,
+                            "doc_filter": target_doc_filter or None,
                             "scope_source": str(
                                 (scope_resolution or {}).get("scope_source") or "unspecified"
                             ),
@@ -7427,7 +7597,7 @@ async def _execute_chat_evidence_application(
                                 (scope_resolution or {}).get("error_code") or ""
                             ),
                         },
-                        fallback=_no_model_rag_fallback,
+                        fallback=_sheet_read_source_fallback,
                         smeta_norm_retrieve=(
                             retrieve_smeta_norm_cards
                             if profile_uses_smeta_norm_retrieval(profile_snapshot)
@@ -8058,6 +8228,8 @@ async def _execute_chat_evidence_application(
                     sheet_sys_msg = sys_normal + (
                         f" {answer_form.instruction}" if answer_form.instruction else ""
                     )
+                    sheet_read_tools = model_evidence_read_tool_schemas()
+                    sheet_sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
                     if req.output_directive and req.output_directive.strip():
                         sheet_sys_msg += " " + req.output_directive.strip()
                     research_job_service: WorkbookResearchJobService | None = None
@@ -8139,6 +8311,18 @@ async def _execute_chat_evidence_application(
                         for item in ((research_job or {}).get("evidence") or ())
                         if isinstance(item, Mapping)
                     ]
+                    model_research_tools.register_shown_norm_cards(sheet_pass_evidence_chunks)
+                    from proxy.services.lsr_workbook_adapter_service import explicit_estimate_pricebook
+                    sheet_price_basis = explicit_estimate_pricebook(
+                        question_text=workbook_model_question(str(req.question or ""), research_job),
+                        source_text=attachment_context,
+                        source_name=str(getattr(source_catalog, "original_name", "") or ""),
+                        document_basis=dict((research_job or {}).get("task_context") or {}).get("price_basis"),
+                    )
+                    model_research_tools.set_price_basis(sheet_price_basis)
+                    sheet_sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(
+                        sheet_price_basis, ensure_ascii=False
+                    )
                     answer_parts: list[str] = [review_notice] if review_notice else []
                     any_sheet_queries = False
                     last_finish = ""
@@ -8824,17 +9008,40 @@ async def _execute_chat_evidence_application(
                                 "Не объявляй поиск исчерпанным по одной странице: найденный хвост "
                                 "будет передан с твоими прежними решениями и цитатами."
                             )
-                            _, fixed_packet = govern_inference_messages(
-                                preset=answer_execution_preset,
-                                profile_prefix=sheet_sys_msg,
-                                request_payload=question_tail,
-                                checkpoint=(),
-                                working_memory=(),
-                                required_evidence=pass_evidence,
-                                source_map=(),
-                                tool_exchange=(),
-                                dialogue=(),
-                            )
+                            current_read_packet = row_packet_id(source_catalog, sheet=sheet_name, locators=packet)
+                            saved_read_chunks = [
+                                chunk for chunk in sheet_pass_evidence_chunks
+                                if chunk.meta.get("model_read_packet_id") == current_read_packet
+                            ]
+                            if saved_read_chunks:
+                                pass_evidence.append({
+                                    "previous_model_requested_exact_reads": [
+                                        {"ref": c.meta.get("model_evidence_ref"),
+                                         "global_evidence_id": c.meta.get("global_evidence_id"),
+                                         "content": c.content}
+                                        for c in saved_read_chunks
+                                    ]
+                                })
+                            try:
+                                _, fixed_packet = govern_inference_messages(
+                                    preset=answer_execution_preset,
+                                    profile_prefix=sheet_sys_msg,
+                                    request_payload=question_tail,
+                                    native_tools=sheet_read_tools,
+                                    required_evidence=pass_evidence,
+                                )
+                            except ContextRequiredSectionOverflow:
+                                pending_page = model_rag_evidence_page_state(
+                                    sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
+                                    query_offset=evidence_query_offset,
+                                    query_provenance=pass_query_provenance,
+                                    query_addresses=pass_query_addresses)
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.pause(
+                                        research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
+                                        held_packet=pending_page, phase="evidence_capacity")
+                                run_stop_kinds.append("evidence_capacity")
+                                break
                             remaining_group_tokens = max(
                                 0,
                                 fixed_packet.input_budget_tokens
@@ -8929,6 +9136,7 @@ async def _execute_chat_evidence_application(
                                     query_addresses=pass_query_addresses,
                                 )
                             sheet_pass_evidence_chunks.extend(model_evidence_chunks)
+                            model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                             pass_omitted.extend(omitted_now)
                             omitted_cards = model_rag_budget_omitted_cards(
                                 included_hits,
@@ -8961,6 +9169,7 @@ async def _execute_chat_evidence_application(
                                     preset=answer_execution_preset,
                                     profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail,
+                                    native_tools=sheet_read_tools,
                                     checkpoint=(),
                                     working_memory=workspace_note_objects(
                                         memory_candidates,
@@ -9009,10 +9218,87 @@ async def _execute_chat_evidence_application(
                                     fallback=_env_float("CHAT_TEMPERATURE", 0.2),
                                 ),
                                 "max_tokens": generation_budget,
+                                "tools": sheet_read_tools,
                             }
                             t_llm_call = time.time()
                             pass_answer, usage = await _sheet_pass_llm(chat_body)
                             t_llm += time.time() - t_llm_call
+                            read_packet_id = row_packet_id(source_catalog, sheet=sheet_name, locators=packet)
+                            read_groups = []
+                            read_receipts = []
+
+                            async def _accept_sheet_reads(batch_receipts, batch_results):
+                                nonlocal research_job, active_pending_tool_calls, model_requested_price_basis
+                                read_receipts.extend(batch_receipts)
+                                groups, chunks, omitted = bind_model_requested_read_evidence(
+                                    batch_results, existing_chunks=sheet_pass_evidence_chunks,
+                                    evidence_namespace=read_packet_id + ":read:" + str(len(read_receipts)),
+                                    packet_id=read_packet_id,
+                                )
+                                read_groups.extend(groups)
+                                model_evidence_chunks.extend(chunks)
+                                sheet_pass_evidence_chunks.extend(chunks)
+                                model_research_tools.register_shown_norm_cards(chunks)
+                                active_pending_tool_calls = max(0, active_pending_tool_calls - len(batch_receipts))
+                                retrieval_trace["tool_loop"].setdefault("evidence_reads", []).extend(batch_receipts)
+                                model_requested_price_basis = dict(model_research_tools.price_basis_snapshot)
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.record_evidence_read(
+                                        research_job["job_id"], packet_id=read_packet_id,
+                                        evidence=[durable_evidence_record(c) for c in model_evidence_chunks],
+                                        read_receipts=read_receipts,
+                                        price_basis=model_requested_price_basis if model_requested_price_basis.get("pricebook_sha256") else None,
+                                    )
+                                return "evidence_read_capacity" if omitted else ""
+
+                            async def _continue_sheet_reads(receipts, _results):
+                                nonlocal t_llm
+                                messages, read_frame = govern_inference_messages(
+                                    preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
+                                    request_payload=question_tail, native_tools=sheet_read_tools,
+                                    required_evidence=model_read_frame_evidence(
+                                        pass_evidence,
+                                        [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks], receipts),
+                                )
+                                retrieval_trace["context_governor"]["calls"].append(
+                                    context_packet_trace(read_frame, purpose="sheet_pass_evidence_read")
+                                )
+                                await _emit_row_progress("чтение карточек и цен", sheet=sheet_name, index=sheet_index)
+                                started = time.time()
+                                result = await _sheet_pass_llm(
+                                    {**chat_body, "messages": messages}, purpose="sheet_pass_evidence_read"
+                                )
+                                t_llm += time.time() - started
+                                return result
+
+                            try:
+                                read_turn = await run_model_evidence_read_turn(
+                                    text=pass_answer, usage=usage, parse_calls=_parse_model_tool_calls,
+                                    execute=model_research_tools.execute,
+                                    allowed_tools={item["function"]["name"] for item in sheet_read_tools},
+                                    max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
+                                    on_read_results=_accept_sheet_reads, continue_turn=_continue_sheet_reads,
+                                )
+                                pass_answer, usage = read_turn.text, read_turn.usage
+                                tokens = int(tokens or 0) + read_turn.extra_completion_tokens
+                                read_stop = read_turn.stop_reason
+                                if not read_stop and active_model_result is not None and active_model_result.response.tool_calls:
+                                    read_stop = "evidence_read_unknown_tool"
+                                    active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
+                            except ContextRequiredSectionOverflow:
+                                read_stop = "evidence_read_capacity"
+                            if read_stop:
+                                retrieval_trace["tool_loop"]["evidence_read_stop"] = read_stop
+                                run_stop_kinds.append(read_stop)
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.pause(
+                                        research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
+                                        phase=read_stop,
+                                        held_packet={"sheet": sheet_name, "locators": list(packet),
+                                                     "model_read_pending": True, "read_stop": read_stop},
+                                    )
+                                break
+                            active_pending_tool_calls = 0
                             if not pass_answer:
                                 break
                             tokens = int(tokens or 0) + int(
@@ -9044,8 +9330,19 @@ async def _execute_chat_evidence_application(
                             tail_locator = truncated_tail_locator(
                                 pass_rows, truncated=last_truncated
                             )
+                            admission = admit_model_result_packet(
+                                pass_rows, packet_locators=packet,
+                                prior_operations=[
+                                    row for row in model_rag_existing_operation_rows(accumulated_rows, review_prior_rows)
+                                    if source_catalog.lookup(row.get("source_row")) is not None
+                                    and source_catalog.lookup(row.get("source_row")).locator in set(packet)
+                                ],
+                                canonicalize_locator=lambda value: (
+                                    source_catalog.lookup(value).locator if source_catalog.lookup(value) else value
+                                ),
+                            )
                             kept = sheet_pass_keep_rows(
-                                pass_rows,
+                                admission.accepted_rows,
                                 sheet=sheet_name,
                                 catalog=source_catalog,
                                 errors=pass_errors,
@@ -9157,7 +9454,10 @@ async def _execute_chat_evidence_application(
                             if defer_query_packet:
                                 deferred_query_hits = leftover_query_hits
                                 held_packet = list(packet)
-                                evidence_query_offset += len(included_hits)
+                                evidence_query_offset = max(
+                                    evidence_query_offset + len(included_hits),
+                                    model_rag_next_query_offset(sheet_pass_evidence_chunks),
+                                )
                                 logger.warning(
                                     "[SHEET_PASS] defer leftover query headers "
                                     "sheet=%s shown=%s leftover=%s remaining_rows=%s",
@@ -9270,6 +9570,11 @@ async def _execute_chat_evidence_application(
                                     omitted=pass_omitted,
                                     remaining=remaining,
                                     held_packet=held_payload,
+                                    unapplied_proposals=admission.unapplied_proposals,
+                                    enforce_packet_scope=True,
+                                    canonicalize_locator=lambda value: (
+                                        source_catalog.lookup(value).locator if source_catalog.lookup(value) else value
+                                    ),
                                 )
                                 # Application IDs/revisions belong to the durable
                                 # write. Replay them on the next evidence page and
@@ -9362,7 +9667,7 @@ async def _execute_chat_evidence_application(
                     ]
                     pending_transport = set()
                     pending_held = (research_job or {}).get("held_packet") or {}
-                    if pending_held.get("queries"):
+                    if pending_held.get("queries") or pending_held.get("model_read_pending"):
                         pending_transport.update(pending_held.get("locators") or ())
                         unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
                     if research_job_service is not None and research_job is not None:
@@ -9605,6 +9910,21 @@ async def _execute_chat_evidence_application(
                         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
                         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
                     )
+                    direct_read_tools = (
+                        model_evidence_read_tool_schemas()
+                        if model_driven_retrieval
+                        and str(getattr(req, "comparative_acceptance_variant", "") or "") == "B0_DIRECT"
+                        else []
+                    )
+                    if direct_read_tools:
+                        from proxy.services.lsr_workbook_adapter_service import explicit_estimate_pricebook
+                        direct_price_basis = explicit_estimate_pricebook(
+                            question_text=str(req.question or ""), source_text=attachment_context,
+                            source_name=str(getattr(source_catalog, "original_name", "") or ""),
+                        )
+                        model_research_tools.set_price_basis(direct_price_basis)
+                        sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
+                        sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(direct_price_basis, ensure_ascii=False)
                     if model_driven_retrieval:
                         question_tail = lsr_result_table_instruction(
                             sheet_clause=question_tail + "\n",
@@ -9622,6 +9942,7 @@ async def _execute_chat_evidence_application(
                             preset=answer_execution_preset,
                             profile_prefix=sys_msg,
                             request_payload=question_tail,
+                            native_tools=direct_read_tools,
                             checkpoint=(),
                             working_memory=(),
                             evidence=fixed_model_rag_evidence,
@@ -9669,6 +9990,7 @@ async def _execute_chat_evidence_application(
                                 model_rag_query_hits
                             ),
                         )
+                        model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                         context = "\n\n".join(model_rag_evidence_groups)
                         answer_source_map = _model_rag_source_map(model_evidence_chunks)
                         model_rag_evidence_packet = build_retrieval_evidence_packet(
@@ -9753,6 +10075,7 @@ async def _execute_chat_evidence_application(
                             preset=answer_execution_preset,
                             profile_prefix=sys_msg,
                             request_payload=question_tail,
+                            native_tools=direct_read_tools,
                             checkpoint=answer_checkpoint,
                             working_memory=answer_working_memory,
                             evidence=answer_evidence,
@@ -9846,6 +10169,8 @@ async def _execute_chat_evidence_application(
                         ),
                         "max_tokens": generation_budget,
                     }
+                    if direct_read_tools:
+                        chat_body["tools"] = direct_read_tools
                     # При стриминге ретрай (строгий промпт) шлёт уже новый текст —
                     # просим клиент очистить накопленное от прошлой попытки.
                     if token_sink is not None and attempt > 1:
@@ -9967,6 +10292,71 @@ async def _execute_chat_evidence_application(
                             allow_stream=not model_driven_retrieval,
                         )
                     t_llm += time.time() - t_llm_call
+                    if direct_read_tools:
+                        direct_read_groups = []
+
+                        async def _accept_direct_reads(batch_receipts, batch_results):
+                            nonlocal active_pending_tool_calls, model_requested_price_basis
+                            groups, chunks, omitted = bind_model_requested_read_evidence(
+                                batch_results, existing_chunks=model_evidence_chunks,
+                                evidence_namespace="B0_DIRECT:read:" + str(len(model_evidence_chunks)),
+                            )
+                            direct_read_groups.extend(groups)
+                            model_evidence_chunks.extend(chunks)
+                            model_research_tools.register_shown_norm_cards(chunks)
+                            active_pending_tool_calls = max(0, active_pending_tool_calls - len(batch_receipts))
+                            retrieval_trace["tool_loop"].setdefault("evidence_reads", []).extend(batch_receipts)
+                            model_requested_price_basis = dict(model_research_tools.price_basis_snapshot)
+                            return "evidence_read_capacity" if omitted else ""
+
+                        async def _continue_direct_reads(receipts, _results):
+                            nonlocal t_llm, llm_model
+                            read_messages, read_frame = govern_inference_messages(
+                                preset=answer_execution_preset, profile_prefix=sys_msg,
+                                request_payload=question_tail, native_tools=direct_read_tools,
+                                required_evidence=model_read_frame_evidence(
+                                    fixed_model_rag_evidence, model_evidence_chunks, receipts),
+                            )
+                            retrieval_trace["context_governor"]["calls"].append(
+                                context_packet_trace(read_frame, purpose="direct_evidence_read")
+                            )
+                            started = time.time()
+                            read_text, read_usage = await _post_llm(
+                                llm_runtime, llm_model, headers,
+                                {**chat_body, "messages": read_messages}, allow_stream=False,
+                            )
+                            t_llm += time.time() - started
+                            if active_model_result is not None:
+                                llm_model = active_model_result.connection.model_id
+                            append_actual_model_call(retrieval_trace, purpose="direct_evidence_read",
+                                finish_reason=llm_usage_finish_reason(read_usage),
+                                completion_tokens=int(read_usage.get("completion_tokens") or 0))
+                            return read_text, read_usage
+
+                        try:
+                            read_turn = await run_model_evidence_read_turn(
+                                text=answer, usage=usage, parse_calls=_parse_model_tool_calls,
+                                execute=model_research_tools.execute,
+                                continue_turn=_continue_direct_reads, on_read_results=_accept_direct_reads,
+                                allowed_tools={item["function"]["name"] for item in direct_read_tools},
+                                max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
+                            )
+                            answer, usage = read_turn.text, read_turn.usage
+                            direct_read_stop = read_turn.stop_reason
+                            if not direct_read_stop and active_model_result is not None and active_model_result.response.tool_calls:
+                                direct_read_stop = "evidence_read_unknown_tool"
+                                active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
+                            usage = {**usage, "completion_tokens": read_turn.extra_completion_tokens
+                                     + (0 if direct_read_stop else int(usage.get("completion_tokens") or 0))}
+                        except ContextRequiredSectionOverflow:
+                            direct_read_stop = "evidence_read_capacity"
+                        retrieval_trace["tool_loop"]["evidence_read_stop"] = direct_read_stop
+                        answer_source_map = _model_rag_source_map(model_evidence_chunks)
+                        selector_source_map = answer_source_map
+                        if direct_read_stop:
+                            answer = "Техническая остановка чтения источников: " + direct_read_stop + ". Решение модели не завершено; ЛСР не упакована."
+                        else:
+                            active_pending_tool_calls = 0
                     if not answer:
                         if attempt < max_attempts:
                             logger.warning("[CHAT] empty LLM answer on attempt=%s — retrying strict", attempt)
@@ -10660,6 +11050,9 @@ async def _execute_chat_evidence_application(
                             # explicit later price request takes precedence over
                             # an older revision's basis, dimension by dimension.
                             inherited_basis = task_document_price_basis(research_job, inherited_basis)
+                            if model_requested_price_basis.get("pricebook_sha256"):
+                                inherited_basis.update({key: value for key, value in
+                                    document_price_basis_arguments(model_requested_price_basis).items() if value})
                             workbook_call = {
                                 "tool": packaging_tool,
                                 "args": workbook_packaging_args(

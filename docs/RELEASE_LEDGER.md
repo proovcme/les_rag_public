@@ -1,5 +1,27 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Candidate 0.31.131 / 859, installed 858; acceptance pending.**
+Closes measured transport and financial provenance defects from the 858 live
+comparison: optional same-model full-card/resource/document reads in B0 and B1;
+literal evidence retained without duplicate bodies; provider tool schemas
+reserved in ContextGovernor; packet ownership and operation revision checked
+before durable acceptance; out-of-packet/stale proposals retained separately.
+One shared visible-row contract covers all supported representations. Model JSON
+cannot inject application confirmation or evidence bindings. Full source text,
+zero quantities, DOCX/CSV and cross-sheet notes retained; empty VOR packaging
+refused. Resource and commercial prices require actual cited literal evidence;
+work price unit/kind is explicit, and the selected official book is loaded by
+whole-file SHA with no region/period fallback. No applicability choice, quantity
+correction or model decision is replaced by code. RTF/ZIP direct attachment
+construction is unsupported. The first verified typed read pins the selected
+book SHA in durable task context before the next model call; equivalent region
+and quarter aliases preserve it, and an explicit operator change of price scope
+clears the old binding. Final offline verify passed; canonical test: 2330 passed,
+20 existing opt-in skipped, 5 warnings (220.05s). Earlier failed runs are retained
+in artifacts/test_859_{first_failed,second_failed}.log. Installed comparative
+controls, varied inputs, 300+ rows and Windows deliverable remain pending here;
+no customer readiness is claimed from these changes.
+
 **Installed 0.31.130 / 858, 01.10: customer acceptance FAILED.**
 Measured code commit `74d635ee61de8ff47ac36f58566e2fb3cb0ec063`; the later
 documentation-only closeout does not change the measured executable files.

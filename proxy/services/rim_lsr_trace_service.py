@@ -272,6 +272,9 @@ PRICE_ACTION_LABELS = {
     "needs_machinist_rate": "нужна ставка ЗПМ",
     "needs_fgis_price": "нужна цена эксплуатации машины",
     "card_price_without_basis": "цена из карточки нормы, основания нет",
+    "model_price_without_basis": "цена модели без подтверждённого источника",
+    "kac_without_source_unit": "цена КАЦ без источника и подтверждённой единицы",
+    "book_price_unit_unknown": "единица цены книги не подтверждена",
     "unresolved_resource_group": "групповой ресурс, нужен конкретный ресурс книги",
     BOOK_UNIT_CONFLICT_ACTION: "цена книги отклонена: единицы не совпадают",
 }
@@ -536,7 +539,12 @@ RESOURCE_GROUP_ACTION = "unresolved_resource_group"
 #: (or its owner) is missing.  Any other tag is the structure itself; «action_conflict:»
 #: is neither, it is the double-counting question the operator has to settle.  One
 #: place splits them, so the check sheet, the readiness count and the sum agree.
-PRICE_REASON_PREFIXES = ("price_missing:", "card_price_without_basis:")
+PRICE_REASON_PREFIXES = (
+    "price_missing:", "card_price_without_basis:", "model_price_without_basis:", "kac_without_source_unit:",
+    "position_price_without_basis:", "book_price_unit_unknown:",
+    "position_price_kind_unknown:", "position_price_unit_conflict:",
+    "supply_price_kind_conflict",
+)
 CONFLICT_REASON_PREFIXES = ("action_conflict:",)
 
 #: The operator-confirmed-price note explains *how* a finished position got its money;
@@ -546,12 +554,13 @@ CONFLICT_REASON_PREFIXES = ("action_conflict:",)
 #: (§ 4 / § 10 — one meaning in every consumer).  The note stays in ``flags`` so every
 #: surface can still print it; only the status decision treats it as informational.
 OPERATOR_PRICE_NOTE_PREFIX = "итог позиции взят по подтверждённой цене оператора"
+SOURCE_PRICE_NOTE_PREFIX = "итог позиции взят по подтверждённой цене источника"
 
 
 def is_informational_flag(flag: Any) -> bool:
     """Does this calculator flag describe how the money was taken, not what is open?"""
 
-    return str(flag or "").startswith(OPERATOR_PRICE_NOTE_PREFIX)
+    return str(flag or "").startswith((OPERATOR_PRICE_NOTE_PREFIX, SOURCE_PRICE_NOTE_PREFIX))
 
 
 def gap_flags(flags: Any) -> list[Any]:
@@ -865,6 +874,45 @@ def price_is_attributed(res: dict[str, Any]) -> bool:
     return bool(str(res.get("price_source_ref") or "").strip())
 
 
+def _visible_row_has_evidence(row: Mapping[str, Any]) -> bool:
+    refs = _normalize_evidence_refs(_first_value(row, "evidence_refs", "source_refs"))
+    refs = [ref for ref in refs if ref.casefold() not in {"-", "—", "–", "missing", "n/a", "нет", "none", "null"}]
+    if not refs:
+        return False
+    if "evidence_bindings" not in row:
+        # Direct operator/editor rows retain their explicit source-reference
+        # contract. The active model adapter always supplies immutable bindings.
+        return True
+    bindings = row.get("evidence_bindings")
+    if not isinstance(bindings, Mapping):
+        return False
+    known = {str(alias).strip().casefold(): str(identity or "").strip() for alias, identity in bindings.items()}
+    return all(bool(known.get(ref.casefold())) for ref in refs)
+
+
+def _visible_price_owner(row: Mapping[str, Any]) -> tuple[str, str]:
+    """Return existing confirmation/source ownership; never invent an operator.
+
+    The workbook's confirmed-data overlay supplies ``confirmed_by`` outside the
+    model result. A model-written token ``price_source=operator`` is a claim,
+    not that confirmation. A commercial source needs its explicit reference.
+    """
+    source = str(row.get("price_source") or "").strip()
+    if str(row.get("confirmed_by") or "").strip() == "operator":
+        return source or "operator", "operator"
+    if "_price_evidence_check" in row:
+        check = row["_price_evidence_check"]
+        if not isinstance(check, Mapping) or any(check.get(key) is not True for key in (
+            "price_in_refs", "unit_in_refs", "source_in_refs", "optional_context_in_refs",
+        )):
+            return "", ""
+    if source and source.casefold() not in {
+        "operator", "оператор", "manual", "model", "-", "—", "–", "missing", "n/a", "нет", "none", "null",
+    } and _visible_row_has_evidence(row):
+        return source, "source"
+    return "", ""
+
+
 def _resolve_price_trace(
     res: dict[str, Any],
     *,
@@ -888,6 +936,12 @@ def _resolve_price_trace(
             # confirmed amount that no arithmetic supports (§ 11 № 8).
             book_unit_conflict = book_price_unit_conflict(rec.get("unit"), res.get("unit"))
         if rec is not None and not book_unit_conflict:
+            unit_action = (
+                "book_price_unit_unknown"
+                if res.get("requires_price_unit_provenance") and (
+                    not str(rec.get("unit") or "").strip() or not str(res.get("unit") or "").strip()
+                ) else ""
+            )
             current = _num(rec.get("price_current"))
             if current is not None:
                 price = _round(current)
@@ -896,6 +950,7 @@ def _resolve_price_trace(
                     source="fgis_current",
                     column_10=price,
                     basis="split_form_col_8",
+                    action=unit_action,
                 )
             base = _num(rec.get("price_base"))
             index = _num(rec.get("index"))
@@ -908,6 +963,7 @@ def _resolve_price_trace(
                     column_9=_round(index, 6),
                     column_10=price,
                     basis="split_form_col_5_x_col_9",
+                    action=unit_action,
                 )
             eff = _num(rec.get("price_current_eff"))
             if eff is not None:
@@ -917,6 +973,7 @@ def _resolve_price_trace(
                     source="fgis_effective",
                     column_10=price,
                     basis="split_form_effective_price",
+                    action=unit_action,
                 )
 
     if str(res.get("kind")) == "material" and kac_map:
@@ -928,6 +985,9 @@ def _resolve_price_trace(
                 source="kac",
                 column_10=price,
                 basis="kac",
+                # The legacy map only carries a name and number. On a model
+                # supply row it cannot establish the quote's source or unit.
+                action="kac_without_source_unit" if res.get("requires_kac_provenance") else "",
                 book_unit=book_unit_conflict,
             )
 
@@ -935,6 +995,11 @@ def _resolve_price_trace(
     # card is applied only when neither the chosen book nor КАЦ has the resource,
     # it is labelled with its own action, and the position stops being a
     # confirmed amount (ADR-16 § 7, acceptance § 12 "no invented prices").
+    if explicit is not None and res.get("price_origin") == "model_result":
+        return PriceTrace(
+            price=explicit, source="model_unattributed_price", column_10=explicit,
+            basis="model_authored_price", action="model_price_without_basis", book_unit=book_unit_conflict,
+        )
     if explicit is not None:
         return PriceTrace(
             price=explicit,
@@ -1079,6 +1144,12 @@ def build_position_trace(
     labor_code_trace = gfgis.labor_code_provenance(resources)
     flags: list[str] = []
     completeness_reasons: list[str] = []
+    if position.get("resource_selection_unsubstantiated"):
+        flags.append("соответствие выбранного ресурса строке не подтверждено ссылкой на источник")
+        completeness_reasons.append("resource_selection_unsubstantiated")
+    if position.get("supply_price_kind_conflict"):
+        flags.append("цена поставки требует уточнения: для материала или оборудования допустима только цена за единицу")
+        completeness_reasons.append("supply_price_kind_conflict")
     if fsem_trace.get("status") == "unresolved":
         details = list(fsem_trace.get("reasons") or fsem_trace.get("missing_machine_codes") or [])
         flags.append("ФСЭМ не смог детализировать ОТм: " + "; ".join(str(item) for item in details))
@@ -1295,12 +1366,17 @@ def build_position_trace(
             completeness_reasons.append(
                 f"card_price_without_basis:{res.get('code') or res.get('name') or '?'}"
             )
+        elif price.action in {"kac_without_source_unit", "model_price_without_basis", "book_price_unit_unknown"}:
+            flags.append(f"{price_action_label(price.action)}: {res.get('name', '?')}")
+            completeness_reasons.append(f"{price.action}:{res.get('code') or res.get('name') or '?'}")
         # § 4: which price hole this resource leaves, in the calculator's own words.
         # A resource priced from the chosen book or КАЦ has none; money that exists
         # only because the norm card writes it is still a hole (ADR-16 § 7).
         gap_action = (
             ""
-            if price.price is not None and price.action != "card_price_without_basis"
+            if price.price is not None and price.action not in {
+                "card_price_without_basis", "kac_without_source_unit", "model_price_without_basis", "book_price_unit_unknown",
+            }
             else str(price.action or price.source or "")
         )
         resource_decisions.append(
@@ -1390,44 +1466,83 @@ def build_position_trace(
     operator_price = _num(position.get("confirmed_price"))
     operator_price_trace: dict[str, Any] = {}
     if operator_price is not None and math.isfinite(operator_price):
-        operator_cost = round(work_qty * operator_price, 2)
+        attributed = position.get("confirmed_price_attributed") is not False
+        price_owner = str(position.get("price_owner") or "operator") if attributed else ""
+        price_kind = str(position.get("confirmed_price_kind") or "").strip()
+        price_qty = work_qty
+        price_unit = work_unit
+        price_issue = str(position.get("confirmed_price_issue") or "")
+        if price_owner != "operator" and "confirmed_price_kind" in position:
+            if price_kind == "position_total":
+                price_qty = 1.0
+                price_unit = "позиция"
+            elif price_kind == "unit_price":
+                price_qty = _num(position.get("confirmed_price_quantity"))
+                price_unit = str(position.get("confirmed_price_unit") or "")
+                if price_qty is None:
+                    price_qty = work_qty
+                    attributed = False
+                    price_issue = price_issue or "position_price_unit_conflict"
+            else:
+                attributed = False
+                price_issue = "position_price_kind_unknown"
+        operator_cost = round(price_qty * operator_price, 2)
         norm_known = total
         direct = operator_cost
         total = operator_cost
-        full_amount = operator_cost
-        position_total_label = "Всего по позиции (цена подтверждена оператором)"
+        full_amount = operator_cost if attributed else None
+        position_total_label = (
+            "Всего по позиции (цена подтверждена оператором)" if price_owner == "operator"
+            else "Всего по позиции (цена подтверждена источником)" if attributed
+            else "Известная стоимость позиции (цена без подтверждённого источника)"
+        )
         # § 4: the unit the confirmed price was multiplied by has to be in the file.
         # A position is measured in the norm's unit (often «100 м2»), while the source
         # ВОР states its own; an operator answering «100 рублей за единицу» without
         # seeing which unit the document uses would get a sum off by that factor, so
         # the line names the unit, the quantity it was applied to, and what the source
         # row stated.  Nothing is recomputed here — the numbers stay the calculator's.
+        note_prefix = (
+            OPERATOR_PRICE_NOTE_PREFIX if price_owner == "operator"
+            else SOURCE_PRICE_NOTE_PREFIX if attributed else "итог позиции взят по неподтверждённой цене модели"
+        )
         unit_note = (
-            f"{OPERATOR_PRICE_NOTE_PREFIX}: {operator_price} ₽ за "
-            f"«{work_unit or '?'}» × {work_qty} = {operator_cost} ₽, а не по ресурсному "
+            f"{note_prefix}: {operator_price} ₽ за "
+            f"«{price_unit or '?'}» × {price_qty} = {operator_cost} ₽, а не по ресурсному "
             "составу нормы"
         )
         source_qty = _num(position.get("source_quantity"))
         source_unit = str(position.get("source_unit") or "").strip()
-        if source_unit and source_unit != str(work_unit or "").strip():
+        if source_unit and source_unit != str(work_unit or "").strip() and (
+            price_owner == "operator" or price_kind not in {"unit_price", "position_total"}
+        ):
             unit_note += (
                 f"; в исходной строке {source_qty if source_qty is not None else '?'} "
                 f"«{source_unit}» — если цена названа за исходную единицу, её нужно "
                 "переписать в этом количестве"
             )
         flags.append(unit_note)
+        if not attributed:
+            completeness_reasons.append(f"position_price_without_basis:{work_code or work_name}")
+        if price_issue:
+            completeness_reasons.append(f"{price_issue}:{work_code or work_name}")
+            flags.append(f"{price_issue}:{work_code or work_name}")
         operator_price_trace = {
-            "status": "operator_confirmed_position_price",
+            "status": (
+                "operator_confirmed_position_price" if price_owner == "operator"
+                else "source_confirmed_position_price" if attributed else "position_price_without_basis"
+            ),
             "price": operator_price,
-            "qty": work_qty,
+            "qty": price_qty,
             "cost": operator_cost,
             "norm_known": norm_known,
             # the unit the multiplication used, stated apart from the source unit (§ 4)
-            "unit": str(work_unit or ""),
+            "unit": str(price_unit or ""),
+            "price_kind": price_kind or ("operator_unit_price" if price_owner == "operator" else ""),
             "source_unit": str(position.get("source_unit") or ""),
             "source_quantity": source_qty,
             "unit_note": unit_note,
-            "source": str(position.get("price_source") or "operator"),
+            "source": str(position.get("price_source") or ("operator" if price_owner == "operator" else "")),
         }
 
     rows: list[dict[str, Any]] = [
@@ -1581,7 +1696,9 @@ def build_position_trace(
             # summary loop, which runs before the caller can annotate, honors it.
             "resource_reference_only": bool(
                 isinstance(operator_price_trace, Mapping)
-                and operator_price_trace.get("status") == "operator_confirmed_position_price"
+                and operator_price_trace.get("status") in {
+                    "operator_confirmed_position_price", "source_confirmed_position_price", "position_price_without_basis",
+                }
             ),
             "completeness_reasons": list(dict.fromkeys(completeness_reasons)),
             "resource_review_status": resource_review_status,
@@ -2311,10 +2428,15 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 "code": str(row.get("resource_code") or ""),
                 "unit": source_unit,
                 "per_unit": 1,
+                "requires_kac_provenance": True,
+                "requires_price_unit_provenance": True,
+                "price_origin": "model_result",
             }
+            price_source, price_owner = _visible_price_owner(row)
             if price is not None:
                 resource["price"] = price
-                resource["price_source_ref"] = str(row.get("price_source") or "operator")
+                if price_source:
+                    resource["price_source_ref"] = price_source
             if source_qty is None:
                 bindings.append(
                     _with_visible_identity(
@@ -2352,6 +2474,24 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 "source_quantity": source_qty,
                 "source_unit": source_unit,
             }
+            refs = _normalize_evidence_refs(_first_value(row, "evidence_refs", "source_refs"))
+            if refs:
+                position["evidence_refs"] = refs
+            position["resource_selection_unsubstantiated"] = (
+                bool(resource["code"]) and (
+                    (not _visible_row_has_evidence(row) and price_owner != "operator")
+                    or (
+                        "_resource_evidence_check" in row and (
+                            not isinstance(row["_resource_evidence_check"], Mapping)
+                            or row["_resource_evidence_check"].get("code_in_refs") is not True
+                        )
+                    )
+                )
+            )
+            position["supply_price_kind_conflict"] = (
+                "price_kind" in row and str(row.get("price_kind") or "").strip() != "unit_price"
+                and price_owner != "operator"
+            )
             positions.append(position)
             bindings.append(
                 _with_visible_identity(
@@ -2485,8 +2625,23 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             position["action_conflict"] = action_conflict
         confirmed_price = _num(row.get("confirmed_price"))
         if confirmed_price is not None and math.isfinite(confirmed_price):
+            price_source, price_owner = _visible_price_owner(row)
             position["confirmed_price"] = confirmed_price
-            position["price_source"] = str(row.get("price_source") or "operator")
+            position["price_source"] = price_source
+            position["confirmed_price_attributed"] = bool(price_source)
+            position["price_owner"] = price_owner
+            if price_owner != "operator":
+                price_kind = str(row.get("price_kind") or "").strip()
+                price_unit = str(_first_value(row, "price_unit", "unit") or "").strip()
+                position["confirmed_price_kind"] = price_kind
+                position["confirmed_price_quantity"] = source_qty
+                position["confirmed_price_unit"] = price_unit
+                if price_kind not in {"position_total", "unit_price"}:
+                    position["confirmed_price_attributed"] = False
+                    position["confirmed_price_issue"] = "position_price_kind_unknown"
+                elif price_kind == "unit_price" and book_price_unit_conflict(price_unit, source_unit):
+                    position["confirmed_price_attributed"] = False
+                    position["confirmed_price_issue"] = "position_price_unit_conflict"
         if norm and norm.get("unit"):
             position["unit"] = norm.get("unit")
         position["row_role"] = role
@@ -2700,11 +2855,15 @@ def build_lsr_trace_from_visible_rows(
                 isinstance(_opt, Mapping)
                 and _opt.get("status") == "operator_confirmed_position_price"
             )
+            source_confirmed_price = (
+                isinstance(_opt, Mapping) and _opt.get("status") == "source_confirmed_position_price"
+            )
+            attributed_position_price = operator_confirmed_price or source_confirmed_price
             # § 4: the position's money came from an answer given in the chat, so the
             # row carries the calculator's own statement of how it was applied (price,
             # unit, quantity, product, and the unit the source line itself used).
             binding["price_note"] = (
-                str(_opt.get("unit_note") or "") if operator_confirmed_price else ""
+                str(_opt.get("unit_note") or "") if attributed_position_price else ""
             )
             # Directive 2.2: a position's readiness rests on four independent
             # bases; confirming a price closes only the price question. Norm
@@ -2729,10 +2888,10 @@ def build_lsr_trace_from_visible_rows(
             price_ok = bool(
                 (
                     complete
-                    or operator_confirmed_price
+                    or attributed_position_price
                     or (not pos_summary.get("completeness_reasons"))
                 )
-                and not (card_priced_money and not operator_confirmed_price)
+                and not (card_priced_money and not attributed_position_price)
             )
             conflicts_ok = (
                 str(source_row) not in conflict_locators
@@ -2747,9 +2906,10 @@ def build_lsr_trace_from_visible_rows(
             readiness["price_from_norm_card"] = bool(card_priced_money)
             readiness["conflicts_ok"] = bool(conflicts_ok)
             readiness["operator_confirmed_price"] = bool(operator_confirmed_price)
+            readiness["source_confirmed_price"] = bool(source_confirmed_price)
             readiness["prices_provided"] = (
                 "не по базе"
-                if card_priced_money and not operator_confirmed_price
+                if card_priced_money and not attributed_position_price
                 else bool(price_ok and conflicts_ok)
             )
             readiness["double_count_conflict"] = str(source_row) in conflict_locators

@@ -171,7 +171,7 @@ def test_positions_built_and_positions_calculated_are_two_different_numbers():
     assert summary["confirmed_amount"] == 0.0
     # one priced, operator-confirmed line does move the counter
     priced = _trace([{**SUPPLY_ROW, "work_row": "ВОР!R3", "confirmed_price": 100,
-                      "price_source": "operator"}])
+                      "price_source": "operator", "confirmed_by": "operator"}])
     assert priced["summary"]["calculated_positions"] == 1
     assert priced["summary"]["positions_built"] == 1
 
@@ -449,7 +449,7 @@ def test_a_finished_document_prints_a_full_calculation_and_no_open_remark(tmp_pa
     calling the same revision partial and complete), nothing is open in the remarks
     block, and the delivered ЛСР carries the arithmetic as a number.
     """
-    finished = {**SUPPLY_ROW, "confirmed_price": 100, "price_source": "operator"}
+    finished = {**SUPPLY_ROW, "confirmed_price": 100, "price_source": "operator", "confirmed_by": "operator"}
     lsr = _trace([finished])
     summary = lsr["summary"]
     assert summary["result_status"] == "priced_final"
@@ -544,7 +544,7 @@ def test_the_unit_the_operator_price_was_multiplied_by_reaches_the_file(tmp_path
     rows = [
         {"source_row": "ЛСР!R2", "row_role": "work", "basis": "ГЭСН 12-01-034-02",
          "title": "Устройство обрешетки", "quantity": "1", "unit": "м2",
-         "norm_status": "EXACT", "confirmed_price": 100, "price_source": "operator"},
+         "norm_status": "EXACT", "confirmed_price": 100, "price_source": "operator", "confirmed_by": "operator"},
     ]
     lsr = build_lsr_trace_from_visible_rows(rows)
     summary = lsr["summary"]
@@ -582,7 +582,7 @@ def test_the_tabular_preview_shows_an_uncached_total_as_a_formula_not_as_empty(t
     """
     from proxy.services.xlsx_preview_service import spreadsheet_preview
 
-    lsr = _trace([{**SUPPLY_ROW, "confirmed_price": 100, "price_source": "operator"}])
+    lsr = _trace([{**SUPPLY_ROW, "confirmed_price": 100, "price_source": "operator", "confirmed_by": "operator"}])
     out = tmp_path / "lsr.xlsx"
     render_lsr_xlsx(lsr, out)
 

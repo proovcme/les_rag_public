@@ -28,6 +28,12 @@ _QUESTION_LIKE_TITLES = {
     "локальный сметный расчёт",
     "локальный сметный расчет",
 }
+
+
+class PriceBookVersionConflict(ValueError):
+    """The current source bytes cannot price a document pinned to another book."""
+
+
 _PRICE_SOURCE_LABEL = {
     "needs_kac": "КАЦ или выбранная ценовая книга",
     "needs_labor_rate": "ставка ОЗП",
@@ -312,7 +318,7 @@ def _books_consistent_with(
     ]
 
 
-def explicit_estimate_pricebook(
+def _explicit_estimate_pricebook_choice(
     *,
     requested_book: str = "",
     operator_book: str = "",
@@ -572,6 +578,30 @@ def explicit_estimate_pricebook(
     result["refusal"] = "ambiguous_catalog"
     result["matching_books"] = matches
     return result
+
+
+def explicit_estimate_pricebook(
+    *, requested_book: str = "", operator_book: str = "", region_text: str = "",
+    question_text: str = "", source_text: str = "", source_name: str = "",
+    document_basis: object = None, pricebooks: Sequence[object] | None = None,
+) -> dict[str, Any]:
+    """Resolve an explicit basis and retain its existing immutable source hash."""
+    choice = _explicit_estimate_pricebook_choice(
+        requested_book=requested_book, operator_book=operator_book, region_text=region_text,
+        question_text=question_text, source_text=source_text, source_name=source_name,
+        document_basis=document_basis, pricebooks=pricebooks,
+    )
+    if isinstance(document_basis, Mapping):
+        stored_book = str(document_basis.get("pricebook") or document_basis.get("actual_book") or "").strip()
+        selected_book = str(choice.get("pricebook") or "").strip()
+        if stored_book and selected_book.casefold() == stored_book.casefold() and document_basis.get("pricebook_sha256"):
+            choice["pricebook_sha256"] = document_basis["pricebook_sha256"]
+    # Preserve the public refusal contract as well as the selected snapshot.
+    # A choice conflict is never re-labelled as an absent catalogue.
+    return {**choice,
+            "contradicting_regions": choice["contradicting_regions"],
+            "contradicting_quarters": choice["contradicting_quarters"],
+            "refusal": choice["refusal"], "matching_books": choice["matching_books"]}
 
 
 def summarize_lsr_price_basis(
@@ -1385,6 +1415,14 @@ async def build_lsr_workbook_from_decisions(
         if pricebook_path
         else None
     )
+    expected_book_sha = basis_choice.get("pricebook_sha256")
+    actual_book_sha = str(getattr(pricebook, "source_sha256", "") or "")
+    if expected_book_sha is not None:
+        if (not isinstance(expected_book_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_book_sha)
+                or expected_book_sha != actual_book_sha):
+            raise PriceBookVersionConflict(
+                "PRICEBOOK_VERSION_CONFLICT: выбранная книга не совпадает с сохранённой версией документа"
+            )
     pricebook_name = Path(pricebook_path).stem if pricebook_path else ""
     identity = extract_lsr_source_identity(
         source_text=source_text,
@@ -1435,6 +1473,8 @@ async def build_lsr_workbook_from_decisions(
         basis_refusal=str(basis_choice["refusal"] or ""),
         basis_candidates=basis_choice["matching_books"],
     )
+    if re.fullmatch(r"[0-9a-f]{64}", actual_book_sha):
+        price_basis["pricebook_sha256"] = actual_book_sha
     progress("model_decisions", 0, len(decisions))
     overlays = args.get("confirmed_data") if isinstance(args.get("confirmed_data"), Mapping) else None
     trace = await asyncio.to_thread(

@@ -56,6 +56,12 @@ def _supply_row(locator: str, title: str, **overrides):
     return row
 
 
+def _operator_price(row, price):
+    # This fixture uses the same application-owned confirmation overlay as the
+    # chat. A model's confirmed_price field alone does not create an operator.
+    return apply_confirmed_data([row], {row["source_row"]: {"confirmed_price": price}})[0]
+
+
 # --------------------------------------------------------------------------- 1.1
 
 
@@ -107,8 +113,8 @@ def test_validator_still_flags_identical_repeat():
 
 
 def _priced_supply_pair(**id_overrides):
-    a = _supply_row("СКС!R9", "Кабель А", confirmed_price=10, **id_overrides.get("a", {}))
-    b = _supply_row("СКС!R9", "Кабель Б", confirmed_price=20, **id_overrides.get("b", {}))
+    a = _operator_price(_supply_row("СКС!R9", "Кабель А", **id_overrides.get("a", {})), 10)
+    b = _operator_price(_supply_row("СКС!R9", "Кабель Б", **id_overrides.get("b", {})), 20)
     return a, b
 
 
@@ -141,7 +147,7 @@ def test_trace_amounts_bind_by_operation_id():
 
 
 def test_trace_mixed_confirmed_and_unpriced_positions():
-    a = _supply_row("СКС!R9", "Кабель А", confirmed_price=10)
+    a = _operator_price(_supply_row("СКС!R9", "Кабель А"), 10)
     b = _supply_row("СКС!R9", "Кабель Б")  # no price -> preliminary
     trace = build_lsr_trace_from_visible_rows([a, b])
     summary = trace["summary"]
@@ -152,13 +158,22 @@ def test_trace_mixed_confirmed_and_unpriced_positions():
 
 
 def test_trace_zero_price_is_not_a_missing_norm_counter():
-    a = _supply_row("СКС!R9", "Кабель А", confirmed_price=0)
+    a = _operator_price(_supply_row("СКС!R9", "Кабель А"), 0)
     trace = build_lsr_trace_from_visible_rows([a])
     summary = trace["summary"]
     # a zero price is a provided price, but must never be mistaken for a total
     assert summary["confirmed_amount"] + summary["preliminary_amount"] == pytest.approx(
         float(summary["known_amount"])
     )
+
+
+def test_bare_model_price_does_not_borrow_confirmation_from_a_sibling_operation():
+    a = _supply_row("СКС!R9", "Кабель А", confirmed_price=10)
+    b = _operator_price(_supply_row("СКС!R9", "Кабель Б"), 20)
+    trace = build_lsr_trace_from_visible_rows([a, b])
+    assert trace["summary"]["confirmed_amount"] == pytest.approx(20)
+    assert trace["summary"]["preliminary_amount"] == pytest.approx(10)
+    assert trace["summary"]["known_amount"] == pytest.approx(30)
 
 
 # --------------------------------------------------------------------------- 1.3
@@ -310,10 +325,10 @@ def test_confirmed_price_prices_the_addressed_work_position(monkeypatch, tmp_pat
         gesn_service, "get_norm",
         lambda code, *a, **k: catalog.get(str(code or "")),
     )
-    work = dict(
+    work = _operator_price(
         _work_row("ВОР!R3", "Монтаж шкафа", operation_id="op_w", revision=1,
                   norm_status="EXACT", norm_code="ГЭСНм08-03-575-01", quantity=2),
-        confirmed_price=123.45,
+        123.45,
     )
     trace = build_lsr_trace_from_visible_rows([work])
     positions = [
@@ -358,8 +373,8 @@ def test_double_count_conflict_is_detected_and_visible():
     conflicts = double_count_conflicts([eq, mat])
     assert any(item["locator"] == "СКС!R6" for item in conflicts)
 
-    eq_p = dict(eq, confirmed_price=99.5, quantity=2)
-    mat_p = dict(mat, confirmed_price=99.5, quantity=2)
+    eq_p = _operator_price(dict(eq, quantity=2), 99.5)
+    mat_p = _operator_price(dict(mat, quantity=2), 99.5)
     trace = build_lsr_trace_from_visible_rows([eq_p, mat_p])
     flags = " ".join(trace["summary"].get("flags") or [])
     assert "двойн" in flags.lower(), "the double-accounting conflict must stay visible"
@@ -496,7 +511,7 @@ def test_confirmed_price_does_not_confirm_norm_applicability(monkeypatch):
         gesn_service, "get_norm",
         lambda code, *a, **k: catalog.get(str(code or "")),
     )
-    work = dict(
+    work = _operator_price(
         _work_row(
             "\u0412\u041e\u0420!R5", "Mount a device",
             operation_id="op_needs_research",
@@ -504,7 +519,7 @@ def test_confirmed_price_does_not_confirm_norm_applicability(monkeypatch):
             norm_code="\u0413\u042d\u0421\u041d\u043c08-03-575-01",
             quantity=1,
         ),
-        confirmed_price=246.90,
+        246.90,
     )
     trace = build_lsr_trace_from_visible_rows([work])
     summary = trace["summary"]
@@ -539,7 +554,7 @@ def test_norm_reference_resources_do_not_inflate_summary(monkeypatch):
         gesn_service, "get_norm",
         lambda code, *a, **k: catalog.get(str(code or "")),
     )
-    work = dict(
+    work = _operator_price(
         _work_row(
             "\u0412\u041e\u0420!R6", "Mount a device",
             operation_id="op_replaced",
@@ -548,7 +563,7 @@ def test_norm_reference_resources_do_not_inflate_summary(monkeypatch):
             norm_code="\u0413\u042d\u0421\u041d\u043c08-03-575-01",
             quantity=2,
         ),
-        confirmed_price=99.99,
+        99.99,
     )
     trace = build_lsr_trace_from_visible_rows([work])
     positions = [

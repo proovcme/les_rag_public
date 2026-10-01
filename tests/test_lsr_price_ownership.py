@@ -4,7 +4,7 @@ The defect these tests close: a rate stored inside the installed norm card was
 applied as if it came from the chosen ценовая база, so a workbook whose own
 header said "no price basis applied" still reported a non-zero confirmed amount
 and a complete position.  Since then the resolver asks who provided the number:
-the chosen book, КАЦ or the operator own confirmation are owners; the card is a
+the chosen book, a cited КАЦ quote with its unit or the operator own confirmation are owners; the card is a
 labelled last resort that keeps the position a draft.
 
 The other half of ownership is the unit the owner priced.  ``PriceBook.lookup``
@@ -321,8 +321,8 @@ def test_price_with_a_source_reference_is_attributed_without_the_flag():
     assert trace["summary"]["amount_status"] == "complete"
 
 
-def test_kac_price_is_an_owner_and_counts_as_confirmed():
-    """§ 7: a resource without a book price goes to КАЦ, and КАЦ is an owner."""
+def test_bare_kac_name_price_stays_preliminary_without_source_and_unit():
+    """A legacy name/number map preserves a candidate, not a quoted source/unit."""
     lsr = build_lsr_trace_from_visible_rows(
         [
             {
@@ -338,10 +338,13 @@ def test_kac_price_is_an_owner_and_counts_as_confirmed():
     )
     binding = lsr["row_bindings"][0]
 
-    assert binding["readiness"]["prices_provided"] is True
+    assert binding["readiness"]["prices_provided"] is False
     assert binding["readiness"]["price_from_norm_card"] is False
-    assert lsr["summary"]["confirmed_amount"] == pytest.approx(3000.0)
-    assert lsr["summary"]["preliminary_amount"] == pytest.approx(0.0)
+    assert lsr["summary"]["confirmed_amount"] == pytest.approx(0.0)
+    assert lsr["summary"]["preliminary_amount"] == pytest.approx(3000.0)
+    assert lsr["summary"]["known_amount"] == pytest.approx(3000.0)
+    reasons = lsr["sections"][0]["positions"][0]["summary"]["completeness_reasons"]
+    assert "kac_without_source_unit:Лоток лестничный" in reasons
     assert collect_lsr_card_prices(lsr) == []
 
 

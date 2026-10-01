@@ -413,6 +413,102 @@ def _card(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def read_norm_card_exact(
+    *,
+    norm_key: str = "",
+    norm_code: str = "",
+    base_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Read one literal identity and all its resources; never search for a substitute.
+
+    The caller owns the model-visible pointer registry. This reader only verifies
+    that any supplied key and display code identify the same immutable base row.
+    A legacy schema or inconsistent stored count stays visible as incomplete.
+    """
+    key = str(norm_key or "").strip()
+    code = str(norm_code or "").strip()
+    result: dict[str, Any] = {
+        "schema": "smeta_exact_norm_card.v1",
+        "status": "missing",
+        "card": None,
+        "missing": [],
+        "warnings": [],
+    }
+    code_key = _norm_key(code) if _FULL_CODE_RE.fullmatch(code) else ""
+    if not key and not code:
+        result["missing"] = ["norm_key or exact family-qualified norm_code"]
+        return result
+    if code and not code_key:
+        result["missing"] = ["exact family-qualified norm_code"]
+        return result
+    if key and code_key and key != code_key:
+        result["status"] = "conflict"
+        result["missing"] = ["norm_key and norm_code identify different cards"]
+        return result
+    selected_key = key or code_key
+    path = Path(base_path) if base_path is not None else _base_path()
+    if not path.exists():
+        result["missing"] = ["normative base unavailable"]
+        return result
+    conn = _connect_base_readonly(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM norms WHERE norm_key = ?", (selected_key,)
+        ).fetchone()
+        if row is None:
+            result["missing"] = ["exact norm card not found"]
+            return result
+        if _norm_key(str(row["display_code"] or "")) != selected_key:
+            result["status"] = "conflict"
+            result["missing"] = ["stored display code contradicts the requested norm identity"]
+            return result
+        card = _card(conn, row)
+        resource_rows = conn.execute(
+            """
+            SELECT * FROM resources WHERE parent_norm_id = ?
+            ORDER BY CASE kind WHEN 'machine' THEN 0 WHEN 'material' THEN 1 ELSE 2 END,
+                     resource_code, resource_name, rowid
+            """,
+            (row["norm_id"],),
+        ).fetchall()
+        resources: list[dict[str, Any]] = []
+        consumption_known = True
+        for resource in resource_rows:
+            columns = set(resource.keys())
+            per_unit = resource["per_unit"] if "per_unit" in columns else None
+            consumption_known = consumption_known and per_unit is not None
+            item = {
+                "kind": str(resource["kind"] or ""),
+                "code": str(resource["resource_code"] or ""),
+                "name": str(resource["resource_name"] or ""),
+                "unit": str(resource["resource_unit"] or ""),
+                "per_unit": per_unit,
+            }
+            if "source_doc" in columns and "source_guid" in columns:
+                item["source_ref"] = (
+                    f"{resource['source_doc']}#guid={resource['source_guid']}"
+                )
+            if "price" in columns:
+                item["price"] = resource["price"]
+            resources.append(item)
+        count_matches = len(resources) == int(row["resource_count"])
+        if not count_matches:
+            result["warnings"].append("stored resource_count differs from full resource rows")
+        if not consumption_known:
+            result["warnings"].append("resource consumption is missing from source rows")
+        card.update(
+            resources=resources,
+            resources_returned=len(resources),
+            resources_complete=count_matches and consumption_known,
+            resource_consumption_known=consumption_known,
+        )
+        result.update(status="ok", card=card)
+        return result
+    finally:
+        conn.close()
+
+
 def _cards_by_norm_keys(norm_keys: list[str], *, base_path: Path) -> list[dict[str, Any]]:
     ordered = [str(key) for key in norm_keys if str(key)]
     if not ordered or not base_path.exists():

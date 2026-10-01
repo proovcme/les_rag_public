@@ -1,5 +1,53 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Candidate **859**, установлен **858**. Новые offline regressions добавлены в
+`UNIT_TESTS +=`; полный candidate verify/test и живая сравнительная приёмка
+фиксируются отдельными результатами, не выводятся из перечисления tests.
+Профессиональная source/norm/financial приёмка установленного 858 ниже остаётся
+FAILED; live pass для 859 этим документом не заявлен.
+
+Новые scoped файлы:
+
+- `test_smeta_exact_norm_card.py`: exact key/code conflict, все resource rows и
+  расходы/единицы/нулевой расход, provenance, unknown consumption/count mismatch;
+  без поиска альтернативы.
+- `test_model_lsr_result_contract.py`: единые conditional fields/examples,
+  обычный текст/optional JSON/delta и expected_revision.
+- `test_model_evidence_read_contract.py`: immutable aliases и literal registry
+  bodies, safe same-card dedup/prefix/shared reference, missing/cycles explicit;
+  docs/prices разных identities не схлопываются, durable exact read не закрывает
+  source rows.
+- `test_model_evidence_read_service.py`: literal argument identity, same-tool
+  distinct reads, repeat/budget/capacity stop, plain final без нового model call.
+- `test_model_research_evidence_actions.py`: ранее показанный exact pointer,
+  полный resource transport, selected document scope и read-only action executor.
+- `test_model_rag_sheet_evidence_reads.py`: offline B0/B1 native reads через
+  настоящий chat/workbook executor до рассчитанного XLSX; это integration fixture,
+  не живое доказательство профессионального выбора модели.
+- `test_model_result_packet_service.py`: текущий packet, operation/source/revision
+  conflicts как полные unapplied proposals, разные операции одного locator,
+  durable restart/redelivery без повторной revision.
+- `test_model_price_provenance_service.py`: цена/unit/source и optional quote
+  context сверяются по реальным cited bodies, без model→operator confirmation.
+- `test_resource_binding_provenance.py`: literal selected resource_code/ref
+  binding, неизменный authored выбор и неизвестное соответствие.
+- `test_rim_visible_price_provenance.py`: source/operator price ownership,
+  confirmed/preliminary граница, price unit/kind и отсутствие ложного complete.
+- `test_fgis_pricebook_snapshot.py`: official reader/cache по exact whole-file
+  hash; смена bytes при прежних path/size/mtime не возвращает старые цены;
+  drift во время decode не кэширует ложный snapshot, typed source context и
+  реальный расчёт используют прочитанную официальную книгу; packaging/job basis
+  сохраняет hash, а continuation той же заменённой книги завершается
+  `PRICEBOOK_VERSION_CONFLICT` без artifact и без изменения model decisions.
+- `test_vor_input_transport.py`: uncapped PDF catalog, long cells/zero/blank,
+  все XLSX листы, DOCX body/nested tables/header locators и unread-content warning,
+  authored DOCX/CSV XLSX export, notes-only reference scope, empty source без
+  artifact, явный unsupported RTF/ZIP.
+
+Локальные scoped измерения: exact-reader/contract group **76 passed**;
+source-transport group **85 passed**; registry/read-driver/native integration
+group **31 passed**. Группы пересекаются и не суммируются в новый full gate.
+
 858 final canonical: 2101 passed / 20 existing opt-in skipped / 5 warnings;
 verify 2121 collected. Architecture/active artifacts green. Full-path E2E proves
 literal resource code and selected-book money survive into XLSX. Installed

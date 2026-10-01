@@ -62,6 +62,8 @@ def _recorded_price_basis(
         "binding": str(basis.get("binding") or "").strip(),
         "match": str(basis.get("match") or "").strip(),
         "revision_id": str(revision_id or ""),
+        **({"pricebook_sha256": str(basis["pricebook_sha256"]).strip()}
+           if basis.get("pricebook_sha256") else {}),
     }
 
 

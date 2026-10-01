@@ -625,7 +625,8 @@ def test_sheet_packet_prompts_do_not_request_the_whole_sheet_again():
     assert "Другой раздел!R300" in answer
     assert "по всем строкам ЭТОГО листа" not in answer
     assert "все строки текущего листа" not in answer
-    assert "все операции строк текущего пакета" in answer
+    assert "новые и изменённые операции текущего пакета" in answer
+    assert "неизменённые операции сохраняются приложением" in answer
 
 
 def test_only_estimator_model_rag_uses_the_dedicated_smeta_catalog():

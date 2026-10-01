@@ -31,9 +31,11 @@ _QUANTITY_HEADER_TOKENS = (
 )
 
 
-def _compact_cell(value: Any, *, max_len: int = 480) -> str:
-    text = " ".join(str(value or "").replace("\u00a0", " ").split())
-    if len(text) > max_len:
+def _compact_cell(value: Any, *, max_len: int | None = None) -> str:
+    # This is an exact source catalog, not a preview. ContextGovernor owns the
+    # downstream budget and records omissions; losing a cell here is invisible.
+    text = " ".join(str(value if value is not None else "").replace("\u00a0", " ").split())
+    if max_len is not None and len(text) > max_len:
         return text[: max_len - 1].rstrip() + "…"
     return text
 
@@ -405,6 +407,8 @@ class AttachmentSourceCatalog:
     source_file_sha256: str = ""
     source_file_id: str = ""
     schema: str = CATALOG_SCHEMA
+    extraction_complete: bool = True
+    extraction_warnings: tuple[str, ...] = ()
 
     def manifest_text(self) -> str:
         lines = [
@@ -412,6 +416,8 @@ class AttachmentSourceCatalog:
             f"Каталог: {self.schema}",
             f"Идентификатор источника: {self.source_file_id or 'legacy'}",
             "Тип данных: таблица/спецификация. Ниже — полный манифест листов исходника.",
+            f"source_extraction_complete: {str(self.extraction_complete).lower()}",
+            *[f"Предупреждение извлечения: {warning}" for warning in self.extraction_warnings],
             "",
             "## Манифест листов",
         ]
@@ -485,7 +491,7 @@ def catalog_sheet_pack_lines(
     sheet: str,
     remaining_work: Sequence[str] | None = None,
 ) -> list[str]:
-    """Sheet headers/descriptors plus the current work rows.
+    """Sheet headers/descriptors, current rows and literal notes-only sheet context.
 
     A numbered description with an empty, proven quantity column can govern
     several subsequent variants. Keep its literal text as source context even
@@ -494,6 +500,7 @@ def catalog_sheet_pack_lines(
     """
 
     wanted = str(sheet or "").strip()
+    work_sheets = set(catalog_work_sheet_names(catalog))
     remaining = (
         {str(item).strip() for item in remaining_work}
         if remaining_work is not None
@@ -502,6 +509,10 @@ def catalog_sheet_pack_lines(
     lines: list[str] = []
     for row in catalog.rows:
         if row.sheet != wanted:
+            # A separate conditions/notes sheet otherwise never reaches a work
+            # packet. Its literal rows are references, not new requested work.
+            if row.sheet not in work_sheets or row.classification_reason == "docx_text_requires_model_role":
+                lines.append(row.line)
             continue
         descriptor_context = row.quantity_column_known and row.header_quantity is None
         if remaining is not None and row.is_work_row() and row.locator not in remaining and not descriptor_context:
@@ -524,8 +535,10 @@ def catalog_sheet_packet_facts(
 ) -> dict[str, Any]:
     """Mechanical packet scope and literal header-bound quantity cells."""
     lines = set(catalog_sheet_pack_lines(catalog, sheet, remaining_work))
-    visible = [row for row in catalog.rows if row.sheet == sheet and row.line in lines]
-    requested = set(remaining_work) if remaining_work is not None else {row.locator for row in visible if row.is_work_row()}
+    visible = [row for row in catalog.rows if row.line in lines]
+    requested = (set(remaining_work) if remaining_work is not None else {
+        row.locator for row in visible if row.sheet == sheet and row.is_work_row()
+    })
     cells = []
     for row in visible:
         if row.locator not in requested and not (row.is_work_row() and row.quantity_column_known):
@@ -535,17 +548,129 @@ def catalog_sheet_packet_facts(
             item.update(quantity=row.header_quantity, unit=header_bound_unit(row))
         cells.append(item)
     return {
+        "source_extraction_complete": catalog.extraction_complete,
+        "source_extraction_warnings": list(catalog.extraction_warnings),
         "requested_source_rows": [row.locator for row in visible if row.locator in requested],
         "reference_source_rows": [row.locator for row in visible if row.locator not in requested],
+        "reference_only_source_rows": [row.locator for row in visible if row.sheet != sheet],
         "source_quantity_cells": cells,
         "source_scope_instruction": (
             "Верни операции requested_source_rows текущего пакета. reference_source_rows "
             "показаны для понимания контекста, их не нужно возвращать заново в этом пакете. "
             "source_quantity_cells — значения исходной колонки количества, не расчётные объёмы. "
             "null означает пустое или не определённое значение, а не количество 0 или 1. "
+            "reference_only_source_rows — дословный контекст других листов без заданий: "
+            "он не расширяет requested_source_rows и не требует новых операций. "
             "Код не изменял роли, нормы или операции."
         ),
     }
+
+
+def _docx_source_sheets(
+    path: Path, source_sha256: str,
+) -> tuple[list[tuple[str, str, bool, list[CatalogRow]]], tuple[str, ...]]:
+    """Read literal DOCX text/tables; unread embedded content remains a source gap."""
+    from docx import Document
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    document = Document(path)
+    sheets: list[tuple[str, str, bool, list[CatalogRow]]] = []
+    warnings: list[str] = []
+    table_index = 0
+    seen_tables: set[Any] = set()
+
+    def rows_for(
+        sheet: str, physical_rows: Sequence[tuple[int, Sequence[str]]], *, text_blocks: bool = False,
+    ) -> list[CatalogRow]:
+        sheet_id = _stable_id(source_sha256, sheet, prefix="sheet")
+        rows: list[CatalogRow] = []
+        section_context = ""
+        for row_number, raw in physical_rows:
+            values = tuple(_compact_cell(value) for value in raw)
+            if not any(values):
+                continue
+            numbers = _numbers_in_values(values)
+            row_class, reason, confidence, ambiguities = _classify_row(values, numbers, excel_row=row_number)
+            if text_blocks:
+                # Paragraphs can contain scope, conditions or unquantified work.
+                # Keep them in the account-all denominator; only the model may
+                # decide whether each is a header, a note or an operation.
+                row_class, reason, confidence, ambiguities = (
+                    "ambiguous", "docx_text_requires_model_role", 0.0, ("row_role_unconfirmed",),
+                )
+            if row_class == "section":
+                section_context = " | ".join(values)
+            locator = f"{sheet}!R{row_number}"
+            rows.append(CatalogRow(
+                locator=locator, sheet=sheet, excel_row=row_number, values=values,
+                line=f"{locator}: " + " | ".join(values), numbers=numbers,
+                row_id=_stable_id(source_sha256, sheet_id, row_number, prefix="row"),
+                sheet_id=sheet_id,
+                cells=tuple(CatalogCell(
+                    coordinate=f"{_column_letter(column)}{row_number}", column=column,
+                    raw_value=value, display_value=values[column - 1], data_type="s", number_format="General",
+                ) for column, value in enumerate(raw, 1)),
+                row_classification=row_class, classification_reason=reason,
+                classification_confidence=confidence, ambiguities=ambiguities,
+                section_context=section_context,
+            ))
+        return rows
+
+    def add_table(table: Table) -> None:
+        nonlocal table_index
+        if table._tbl in seen_tables:
+            return
+        seen_tables.add(table._tbl)
+        table_index += 1
+        sheet = f"DOCX_T{table_index}"
+        rows = rows_for(sheet, [(index, [""] * row.grid_cols_before + [cell.text for cell in row.cells]
+                                + [""] * row.grid_cols_after)
+                                for index, row in enumerate(table.rows, 1)])
+        sheets.append((sheet, _stable_id(source_sha256, sheet, prefix="sheet"), False, rows))
+        for row in table.rows:
+            for cell in row.cells:
+                for nested in cell.tables:
+                    add_table(nested)
+
+    def add_container(container: Any, prefix: str) -> None:
+        unread = {
+            "drawing", "pict", "object", "altChunk", "txbxContent", "sdt", "customXml",
+            "ins", "del", "moveFrom", "moveTo", "oMath", "oMathPara",
+        }
+        for node in container._element.iter():
+            local = str(node.tag).rsplit("}", 1)[-1]
+            if local in unread:
+                warnings.append(f"docx_unread_content:{prefix}:{local}")
+        paragraphs: list[tuple[int, Sequence[str]]] = []
+        for index, block in enumerate(container.iter_inner_content(), 1):
+            if isinstance(block, Paragraph):
+                paragraphs.append((index, (block.text,)))
+            elif isinstance(block, Table):
+                add_table(block)
+        if paragraphs:
+            sheet = f"{prefix}_TEXT"
+            sheets.append((sheet, _stable_id(source_sha256, sheet, prefix="sheet"), False,
+                           rows_for(sheet, paragraphs, text_blocks=True)))
+
+    add_container(document, "DOCX")
+    seen_parts: set[str] = {str(document.part.partname)}
+    for index, section in enumerate(document.sections, 1):
+        for variant, label in enumerate(("header", "first_page_header", "even_page_header", "footer", "first_page_footer", "even_page_footer"), 1):
+            container = getattr(section, label)
+            if container.is_linked_to_previous:
+                continue
+            part_name = str(container.part.partname)
+            if part_name not in seen_parts:
+                seen_parts.add(part_name)
+                kind = "H" if "header" in label else "F"
+                add_container(container, f"DOCX_{kind}{index}_{variant}")
+    for part in document.part.package.parts:
+        name = str(part.partname)
+        if name.startswith("/word/") and name.endswith(".xml") and name not in seen_parts:
+            if any(marker in name for marker in ("footnotes", "endnotes")):
+                warnings.append(f"docx_unread_part:{name.rsplit('/', 1)[-1]}")
+    return sheets, tuple(dict.fromkeys(warnings))
 
 
 def load_tabular_source_catalog(
@@ -559,6 +684,7 @@ def load_tabular_source_catalog(
     source_sha256 = _sha256_file(file_path)
     source_file_id = _stable_id(source_sha256, prefix="src")
     sheets: list[tuple[str, str, bool, list[CatalogRow]]] = []
+    extraction_warnings: tuple[str, ...] = ()
 
     if suffix in {".xlsx", ".xlsm"}:
         try:
@@ -716,11 +842,16 @@ def load_tabular_source_catalog(
                 )
             )
         sheets.append((sheet, sheet_id, False, rows))
+    elif suffix == ".docx":
+        try:
+            sheets, extraction_warnings = _docx_source_sheets(file_path, source_sha256)
+        except Exception:  # noqa: BLE001 - unavailable source stays an explicit audit gap
+            return None
     elif suffix == ".pdf":
         try:
             from backend.converter import convert_to_markdown
 
-            markdown = convert_to_markdown(file_path)
+            markdown = convert_to_markdown(file_path, apply_char_limit=False)
         except Exception:  # noqa: BLE001 - catalog failure stays visible upstream
             return None
         sheet = "PDF"
@@ -789,6 +920,8 @@ def load_tabular_source_catalog(
         rows=tuple(catalog_rows),
         source_file_sha256=source_sha256,
         source_file_id=source_file_id,
+        extraction_complete=not extraction_warnings,
+        extraction_warnings=extraction_warnings,
     )
 
 
@@ -866,7 +999,7 @@ def compare_model_row_to_catalog(
     catalog_row = catalog.lookup(source_row)
     if catalog_row is None:
         return [f"source_row_not_in_catalog:{source_row}"]
-    errors: list[str] = []
+    errors: list[str] = ([] if catalog.extraction_complete else [f"source_extraction_incomplete:{source_row}"])
     quantity = row.get("quantity")
     if isinstance(quantity, bool):
         quantity = None
@@ -925,9 +1058,10 @@ def coverage_errors(
     )
     work = catalog.work_locators()
     uncovered = [locator for locator in work if locator not in cited]
-    if not uncovered:
-        return []
-    return [f"source_coverage_incomplete:{len(work) - len(uncovered)}/{len(work)}"]
+    errors = [] if catalog.extraction_complete else ["source_extraction_incomplete"]
+    if uncovered:
+        errors.append(f"source_coverage_incomplete:{len(work) - len(uncovered)}/{len(work)}")
+    return errors
 
 
 def load_catalog_from_attachment_id(attachment_id: str) -> AttachmentSourceCatalog | None:

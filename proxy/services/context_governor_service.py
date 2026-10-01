@@ -84,6 +84,7 @@ class ContextPacket:
     included_tokens: int
     sections: tuple[ContextSection, ...]
     omissions: tuple[ContextOmission, ...]
+    provider_payload_tokens: int = 0
 
     def as_messages(self) -> list[dict[str, str]]:
         system = "\n\n".join(

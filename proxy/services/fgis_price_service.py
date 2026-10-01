@@ -35,6 +35,7 @@ from __future__ import annotations
 import re
 import os
 import json
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 from backend.runtime_paths import mutable_path
@@ -477,10 +478,43 @@ _DEFAULT_PRICEBOOK_STEMS = (
 )
 
 
+class PriceBookSourceChanged(ValueError):
+    """A price book changed while the official reader was decoding its bytes."""
+
+
+def pricebook_source_identity(parquet_path: str | Path) -> tuple[str, int]:
+    """Hash the selected source bytes without decoding or choosing resources."""
+    with Path(parquet_path).open("rb") as source:
+        sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+        size = os.fstat(source.fileno()).st_size
+    return sha256, size
+
+
 @lru_cache(maxsize=8)
+def _pricebook_snapshot(parquet_path: str, sha256: str, byte_size: int) -> PriceBook:
+    book = PriceBook.from_parquet(parquet_path)
+    if pricebook_source_identity(parquet_path) != (sha256, byte_size):
+        raise PriceBookSourceChanged("selected pricebook changed during read")
+    book.source_sha256 = sha256
+    book.source_name = Path(parquet_path).name
+    book.source_byte_size = byte_size
+    return book
+
+
 def get_pricebook(parquet_path: str) -> PriceBook:
-    """Кешированная загрузка книги цен по пути к Parquet."""
-    return PriceBook.from_parquet(parquet_path)
+    """Reuse only a snapshot of the exact same source bytes, even at one path."""
+    path = str(Path(parquet_path).resolve())
+    sha256, byte_size = pricebook_source_identity(path)
+    book = _pricebook_snapshot(path, sha256, byte_size)
+    if pricebook_source_identity(path) != (sha256, byte_size):
+        raise PriceBookSourceChanged("selected pricebook changed during read")
+    return book
+
+
+# Existing import/update callers invalidate the cache through this public API.
+get_pricebook.cache_clear = _pricebook_snapshot.cache_clear
+get_pricebook.cache_info = _pricebook_snapshot.cache_info
+get_pricebook.cache_parameters = _pricebook_snapshot.cache_parameters
 
 
 def _is_scratch_pricebook(path: str | Path) -> bool:

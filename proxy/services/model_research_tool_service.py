@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import unicodedata
+import json
+import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
@@ -73,6 +76,16 @@ def _norm_card_content(card: Mapping[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _full_norm_card_content(card: Mapping[str, Any]) -> str:
+    parts = [_norm_card_content({**card, "resource_preview": []})]
+    parts.append("Полные ресурсы выбранной карточки; применимость выбирает модель:")
+    parts.extend(json.dumps(dict(row), ensure_ascii=False, sort_keys=True, default=str)
+                 for row in card.get("resources") or [] if isinstance(row, Mapping))
+    parts.append(f"resources_complete={card.get('resources_complete')!r}; "
+                 f"resources_returned={card.get('resources_returned', len(card.get('resources') or []))}")
+    return "\n".join(parts)
+
+
 def _chunk_payload(chunk: Any) -> dict[str, Any]:
     meta = getattr(chunk, "meta", {}) or {}
     payload: dict[str, Any] = {
@@ -129,15 +142,170 @@ class ModelResearchToolService:
         retrieval_candidate_k: int = 64,
         document_diversity_k: int = 2,
         model_evidence_k: int = 6,
+        price_basis: Mapping[str, Any] | None = None,
+        norm_card_reader: Callable[..., Mapping[str, Any]] | None = None,
+        pricebook_provider: Callable[[str], Any] | None = None,
     ) -> None:
         self._retrieve = retrieve
         self._dataset_ids = tuple(str(item) for item in frozen_dataset_ids if str(item))
         self._retrieval_kwargs = dict(retrieval_kwargs)
+        document_filter = self._retrieval_kwargs.get("doc_filter")
+        self._document_scope_invalid = document_filter is not None and (
+            not isinstance(document_filter, (list, tuple))
+            or any(not isinstance(item, str) or not item.strip() for item in document_filter)
+        )
+        self._document_names = tuple(document_filter or ()) if not self._document_scope_invalid else ()
         self._fallback = fallback
         self._smeta_norm_retrieve = smeta_norm_retrieve
         self._retrieval_candidate_k = max(int(retrieval_candidate_k), 1)
         self._document_diversity_k = max(int(document_diversity_k), 1)
         self._model_evidence_k = max(int(model_evidence_k), 1)
+        self._norm_card_reader = norm_card_reader
+        self._pricebook_provider = pricebook_provider
+        self._shown_norm_cards: list[dict[str, str]] = []
+        self._shown_documents: dict[str, tuple[str, str]] = {}
+        self.set_price_basis(price_basis or {})
+
+    def set_price_basis(self, price_basis: Mapping[str, Any]) -> None:
+        """Bind application-owned durable task scope, never a model-chosen fallback."""
+        self._price_basis = dict(price_basis) if isinstance(price_basis, Mapping) else {}
+
+    @property
+    def price_basis_snapshot(self) -> dict[str, Any]:
+        """Copy the task basis, including the first successfully read book hash."""
+        return dict(self._price_basis)
+
+    @staticmethod
+    def _document_name(value: str) -> str:
+        return unicodedata.normalize("NFC", value.strip().replace("\\", "/")).casefold()
+
+    def _document_allowed(self, name: str) -> bool:
+        return not self._document_scope_invalid and (
+            not self._document_names or self._document_name(name) in {
+                self._document_name(item) for item in self._document_names
+            }
+        )
+
+    def register_shown_norm_cards(self, chunks) -> None:
+        """Restore exact pointers from previously shown application-owned evidence."""
+        for chunk in chunks:
+            raw = chunk if isinstance(chunk, Mapping) else _chunk_payload(chunk)
+            meta = raw.get("meta") or {}
+            if not isinstance(meta, Mapping):
+                continue
+            code = str(meta.get("norm_code") or raw.get("norm_code") or "").strip()
+            key = str(meta.get("norm_key") or raw.get("norm_key") or "").strip()
+            source = str(meta.get("source_ref") or raw.get("source_ref") or "").strip()
+            if code and (key or source):
+                pointer = {"norm_code": code, "norm_key": key, "source_ref": source}
+                if pointer not in self._shown_norm_cards:
+                    self._shown_norm_cards.append(pointer)
+            dataset = str(meta.get("dataset_id") or raw.get("dataset_id") or "").strip()
+            doc_id = str(meta.get("doc_id") or raw.get("doc_id") or "").strip()
+            doc_name = str(raw.get("doc_name") or meta.get("doc_name") or "").strip()
+            if dataset in self._dataset_ids and doc_id and self._document_allowed(doc_name):
+                self._shown_documents[doc_id] = (dataset, doc_name)
+
+    @staticmethod
+    def _missing(tool: str, message: str, *, status: str = "missing") -> ModelResearchToolResult:
+        return ModelResearchToolResult(payload={
+            "schema": "les_tool_result_v1", "tool": tool, "operation": "scoped_evidence_read",
+            "status": status, "result": {"hits": [], "count": 0}, "sources": [],
+            "missing": [message], "warnings": [], "trace": {}, "decision_required_from_model": True,
+        })
+
+    async def _read_norm_card(self, args: Mapping[str, Any]) -> ModelResearchToolResult:
+        for field in ("norm_key", "norm_code"):
+            if field in args and (not isinstance(args[field], str) or not args[field].strip()):
+                return self._missing("read_norm_card", f"{field} must be a nonempty string")
+        key = str(args.get("norm_key") or "").strip()
+        code = str(args.get("norm_code") or "").strip()
+        if not key and not code:
+            return self._missing("read_norm_card", "norm_key or norm_code is required")
+        pointers = [row for row in self._shown_norm_cards
+                    if (not key or row["norm_key"] == key) and (not code or row["norm_code"] == code)]
+        if len(pointers) != 1:
+            return self._missing("read_norm_card", "exact pointer must identify one previously shown norm card",
+                                 status="conflict" if pointers or (key and code) else "missing")
+        pointer = pointers[0]
+        reader = self._norm_card_reader
+        if reader is None:
+            from proxy.smeta_core.norm_browser import read_norm_card_exact
+            reader = read_norm_card_exact
+        result = await asyncio.to_thread(reader, norm_key=pointer["norm_key"], norm_code=pointer["norm_code"])
+        card = result.get("card")
+        if result.get("status") != "ok" or not isinstance(card, Mapping):
+            payload = dict(result)
+            payload.update({"tool": "read_norm_card", "decision_required_from_model": True})
+            return ModelResearchToolResult(payload=payload)
+        if str(card.get("norm_code") or "") != pointer["norm_code"] or (
+            pointer["norm_key"] and str(card.get("norm_key") or "") != pointer["norm_key"]
+        ):
+            return self._missing("read_norm_card", "reader returned a different norm pointer", status="conflict")
+        card = {**card, "nr_sp_candidates": nr_sp_service.model_candidates(code=pointer["norm_code"])}
+        content = _full_norm_card_content(card)
+        chunk = _SmetaNormChunk(content=content, doc_name="smeta_norm_cards.v1", score=1.0, meta={
+            **{name: card[name] for name in ("norm_key", "norm_code", "source_ref", "edition", "base_type",
+                 "work_steps", "measure_unit", "resource_count", "resources_returned", "resources_complete",
+                 "resource_consumption_known", "resources", "nr_sp_candidates") if name in card},
+            "exact_card_read": True, "minimum_evidence_body_chars": len(content),
+        })
+        return ModelResearchToolResult(payload={
+            "schema": "les_tool_result_v1", "tool": "read_norm_card", "operation": "typed_exact_norm_read",
+            "status": "ok", "inputs": [dict(args)], "result": {"card": card, "hits": [_chunk_payload(chunk)], "count": 1},
+            "sources": [{"source_ref": card.get("source_ref") or "", "norm_key": pointer["norm_key"]}],
+            "missing": list(result.get("missing") or []), "warnings": list(result.get("warnings") or []),
+            "trace": {"previously_shown_pointer": pointer}, "decision_required_from_model": True,
+        }, chunks=(chunk,))
+
+    async def _read_source(self, args: Mapping[str, Any]) -> ModelResearchToolResult:
+        for field in ("doc_id", "dataset_id", "doc_name", "q"):
+            if field in args and not isinstance(args[field], str):
+                return self._missing("read_source", f"{field} must be a string")
+        doc_id = str(args.get("doc_id") or "").strip()
+        dataset = str(args.get("dataset_id") or "").strip()
+        name = str(args.get("doc_name") or "").strip()
+        if doc_id:
+            shown = self._shown_documents.get(doc_id)
+            if shown is None or (dataset and dataset != shown[0]) or (
+                name and self._document_name(name) != self._document_name(shown[1])
+            ):
+                return self._missing("read_source", "doc_id must identify a shown document in selected scope", status="conflict")
+            dataset, name = shown
+        elif dataset not in self._dataset_ids or not name:
+            return self._missing("read_source", "selected dataset_id and doc_name are required", status="conflict")
+        if not self._document_allowed(name):
+            return self._missing("read_source", "document is outside explicit selected document filter", status="conflict")
+        scoped_args = {**args, "dataset_id": dataset, "doc_name": name}
+        payload = await asyncio.to_thread(self._fallback, "read_source", scoped_args)
+        if inspect.isawaitable(payload):
+            payload = await payload
+        result = payload.get("result") or {}
+        rows = (result.get("hits") or result.get("chunks") or []) if isinstance(result, Mapping) else []
+        chunks = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            meta = dict(row.get("meta") or {})
+            row_dataset = str(row.get("dataset_id") or meta.get("dataset_id") or dataset)
+            row_doc = str(row.get("doc_id") or meta.get("doc_id") or doc_id)
+            row_name = str(row.get("doc_name") or meta.get("doc_name") or name)
+            if (row_dataset != dataset or (doc_id and row_doc != doc_id)
+                    or self._document_name(row_name) != self._document_name(name)
+                    or not self._document_allowed(row_name)):
+                return self._missing("read_source", "reader returned evidence outside selected document scope", status="conflict")
+            content = str(row.get("content") or row.get("text") or "")
+            if not content:
+                continue
+            meta.update({"dataset_id": dataset, "doc_id": row_doc, "source_read": True,
+                         "minimum_evidence_body_chars": len(content), "content_complete": row.get("content_complete")})
+            for field in ("chunk_id", "page", "source_ref"):
+                if row.get(field) is not None:
+                    meta[field] = row[field]
+            chunks.append(_SmetaNormChunk(content=content, doc_name=str(row.get("doc_name") or name),
+                                         score=float(row.get("score") or 1.0), meta=meta))
+        self.register_shown_norm_cards(chunks)
+        return ModelResearchToolResult(payload=payload, chunks=tuple(chunks))
 
     @property
     def cache_contract(self) -> str:
@@ -146,14 +314,55 @@ class ModelResearchToolService:
         return "smeta_literal_query_v1" if self._smeta_norm_retrieve is not None else "shared_native_query_v1"
 
     async def execute(self, call: Mapping[str, Any]) -> ModelResearchToolResult:
+        if not isinstance(call, Mapping) or not isinstance(call.get("args", {}), Mapping):
+            return self._missing("", "tool call and args must be objects")
         tool = str(call.get("tool") or "")
         args = dict(call.get("args") or {})
+        if tool == "read_norm_card":
+            return await self._read_norm_card(args)
+        if tool in {"search_pricebook_resources", "read_resource_price"}:
+            from proxy.services.model_pricebook_evidence_service import read_pricebook_evidence
+            payload = await asyncio.to_thread(read_pricebook_evidence, tool, args,
+                price_basis=self._price_basis, pricebook_provider=self._pricebook_provider, limit=self._model_evidence_k)
+            trace = payload.get("trace") or {}
+            source_sha = trace.get("pricebook_sha256")
+            if (payload.get("operation") == "typed_pricebook_read" and payload.get("status") in {"ok", "missing"}
+                    and isinstance(source_sha, str) and re.fullmatch(r"[0-9a-f]{64}", source_sha)):
+                expected_sha = self._price_basis.get("pricebook_sha256")
+                if expected_sha and expected_sha != source_sha:
+                    return self._missing(tool, "chosen pricebook bytes differ from stored-task source hash", status="conflict")
+                self._price_basis = {**self._price_basis, "pricebook_sha256": source_sha}
+            chunks = tuple(_SmetaNormChunk(content=hit["content"], doc_name=hit["doc_name"], score=hit["score"], meta=hit["meta"])
+                           for hit in payload["result"]["hits"])
+            return ModelResearchToolResult(payload=payload, chunks=chunks)
+        if tool == "read_source" and self._smeta_norm_retrieve is not None:
+            return await self._read_source(args)
         if tool != "search_sources":
+            if self._smeta_norm_retrieve is not None:
+                return self._missing(tool, "unsupported research action")
             payload = self._fallback(tool, args)
             if inspect.isawaitable(payload):
                 payload = await payload
             return ModelResearchToolResult(payload=payload)
 
+        target = args.get("target", "norms")
+        if not isinstance(target, str) or target not in {"norms", "documents"}:
+            return self._missing(tool, "target must be norms or documents")
+        scoped_ids = self._dataset_ids
+        if target == "documents":
+            if self._document_scope_invalid:
+                return self._missing(tool, "selected document filter must be a list of literal names", status="conflict")
+            if not scoped_ids:
+                return self._missing(tool, "selected document datasets are required")
+            if "dataset_ids" in args:
+                requested = args["dataset_ids"]
+                if not isinstance(requested, (list, tuple)) or not requested or any(
+                    not isinstance(item, str) or not item.strip() or item not in scoped_ids for item in requested
+                ):
+                    return self._missing(tool, "dataset_ids must be selected document datasets", status="conflict")
+                scoped_ids = tuple(dict.fromkeys(requested))
+        if "q" in args and not isinstance(args["q"], str):
+            return self._missing(tool, "q must be a string")
         query = str(args.get("q") or "").strip()
         if not query:
             return ModelResearchToolResult(
@@ -172,7 +381,7 @@ class ModelResearchToolService:
                 }
             )
 
-        if self._smeta_norm_retrieve is not None:
+        if self._smeta_norm_retrieve is not None and target == "norms":
             browse = await asyncio.to_thread(
                 self._smeta_norm_retrieve,
                 query,
@@ -254,6 +463,7 @@ class ModelResearchToolService:
                 )
                 for index, card in enumerate(cards)
             )
+            self.register_shown_norm_cards(chunks)
             hits = [_chunk_payload(chunk) for chunk in chunks]
             # Honest effective status: a degraded channel stays degraded even when
             # it serves verified cards; zero verified hits is a model-visible
@@ -312,14 +522,24 @@ class ModelResearchToolService:
 
         retrieval = await self._retrieve(
             question=query,
-            dataset_ids=list(self._dataset_ids),
+            dataset_ids=list(scoped_ids),
             result_limit=self._model_evidence_k,
             candidate_limit=self._retrieval_candidate_k,
             document_diversity_k=self._document_diversity_k,
             **self._retrieval_kwargs,
         )
         all_chunks = tuple(retrieval.chunks)
+        if target == "documents" and any(
+            str((getattr(chunk, "meta", {}) or {}).get("dataset_id") or getattr(chunk, "dataset_id", "")) not in scoped_ids
+            for chunk in all_chunks
+        ):
+            return self._missing(tool, "retriever returned evidence outside selected document datasets", status="conflict")
+        if target == "documents" and any(
+            not self._document_allowed(str(_chunk_payload(chunk).get("doc_name") or "")) for chunk in all_chunks
+        ):
+            return self._missing(tool, "retriever returned evidence outside explicit selected document filter", status="conflict")
         chunks = all_chunks[: self._model_evidence_k]
+        self.register_shown_norm_cards(chunks)
         trace = dict(retrieval.payload())
         matched_before_cap = _pre_cap_match_count(trace, len(all_chunks))
         _stamp_pre_cap_match_count(chunks, matched_before_cap)
@@ -337,7 +557,7 @@ class ModelResearchToolService:
             "schema": "les_tool_result_v1",
             "tool": "search_sources",
             "operation": "native_rrf",
-            "inputs": [{"q": query, "dataset_ids": list(self._dataset_ids)}],
+            "inputs": [{"q": query, "dataset_ids": list(scoped_ids)}],
             "status": "ok" if hits else "missing",
             "result": {
                 "hits": hits,

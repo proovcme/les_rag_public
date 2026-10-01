@@ -111,7 +111,8 @@ def test_authored_resource_code_reaches_chosen_book_and_rendered_money(tmp_path,
     evidence = SimpleNamespace(
         content=f"Resource: {RESOURCE_CODE}\nUnit: m\nReference-only price: 777",
         doc_name="Synthetic resource evidence",
-        meta={"model_evidence_ref": "Q1.H1", "global_evidence_id": "selected-resource-card"},
+        meta={"model_evidence_ref": "Q1.H1", "global_evidence_id": "selected-resource-card",
+              "resource_code": RESOURCE_CODE},
     )
 
     class ChosenBook:

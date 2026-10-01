@@ -1,5 +1,9 @@
 # RAG evidence flow
 
+Candidate **859**; установлен **858**. Описанные изменения проходят локальные
+contract/behavior проверки; живая сравнительная и клиентская приёмка candidate
+остаётся открытой.
+
 ## Назначение
 
 Обычный чат и model-authored estimate используют один принцип: модель сама формулирует запросы и
@@ -35,7 +39,8 @@
    обоснованный поисковый запрос по монтажной операции. Дословное исполнение
    относится к готовому запросу модели, а не к запрету её профессионального
    связывания; original/derived builders по-прежнему ограничены исходными
-   словами ADR-16. Ответ начинается с таблицы, затем идут пояснения.
+   словами ADR-16. Итог допускает таблицу, обычные подписанные поля или
+   необязательный JSON; одна условная схема полей применяется ко всем примерам.
    Начиная с 840 sheet-pass резервирует не только заголовки, но
    обязательное содержимое ВСЕХ карточек запроса (typed prefix либо 400
    символов обычного текста) до любого optional resource preview. Группы,
@@ -117,6 +122,66 @@
    роль на work и не выбирает другую норму; требуется авторское уточнение.
    Счётчики выбранных монтажных норм RIM и readiness относятся к work,
    независимо от нормальных стоимостей поставки/ресурсов.
+
+## Необязательные чтения в answer-ходе (candidate 859)
+
+Модель получает native read-only schemas и может запросить недостающее evidence
+до итоговых строк: `read_norm_card`, `search_pricebook_resources`,
+`read_resource_price`, `search_sources` (`target=norms|documents`), `read_source`.
+Если она сразу вернула итог, новых model calls нет. B0_DIRECT получает те же
+доступные действия; original/derived candidate queries остаются вне baseline.
+
+Exact norm reader допускает только ранее показанный pointer: key/code conflict
+не выбирает альтернативу. Карточка содержит все resources, per_unit/units,
+work steps, provenance и явные count/completeness/consumption flags. Unknown
+расход не выдаётся за полный ресурсный состав. Поиск документов использует
+замороженные selected datasets; цена читается из закреплённой region/quarter
+книги. Model-selected resource и условие НР/СП остаются выбором модели.
+`fgis_price_service.get_pricebook` использует официальный reader и cache
+snapshot по whole-file SHA-256/размеру; замена bytes по тому же path/mtime
+не возвращает старую книгу. Typed price body, metadata и source_ref сохраняют
+exact hash/name/size. Drift при чтении или mismatch с сохранённым task hash
+возвращает conflict; partial snapshot не объявляется доказательством цены.
+Фактический hash сохраняется в packaging `price_basis` и document/job projection.
+Continuation той же literal книги проверяет expected hash до расчёта/render;
+замена bytes даёт `PRICEBOOK_VERSION_CONFLICT` без нового artifact. Reader
+не архивирует прежний файл; legacy basis без hash не доказывает прошлую версию.
+
+`run_model_evidence_read_turn` исполняет literal calls, различает все аргументы
+и останавливает повтор одного вызова; полный read result привязывается к новым
+immutable Q/H evidence IDs и сохраняется до продолжения модели.
+`shown_evidence_registry` передаёт literal предыдущие тела со всеми aliases;
+точные norm pointer/source/edition с идентичным либо проверенным prefix view
+разделяют одно уже показанное тело. Разные документы/price evidence с разными
+IDs остаются отдельными. Shared-body reference разрешается только в фактический
+показанный original; отсутствующее или неоднозначное тело явно unavailable.
+ContextGovernor сохраняет целые обязательные source/evidence объекты и
+учитывает schemas; overflow — видимая technical capacity pause. Read receipts
+и exact cards durable, но сами по себе не отмечают source rows выполненными.
+
+`model_lsr_result_contract` — общий контракт таблицы, JSON и подписанного текста:
+выбранная work-норма требует пять match flags и coverage, выбранный supply
+resource — resource_code/refs, выбранное условие НР/СП — известный rule ID либо
+конкретный вопрос. Delta не требует повторить уже сохранённые операции.
+`model_result_packet_service` допускает только текущую packet identity либо
+явно предложенный известный operation_id; source/revision conflicts и новые
+внепакетные строки остаются полными unapplied proposals. Это структурная
+принадлежность пакету, не исправление роли, объёма или нормы.
+
+Supply price/unit/source и optional quote context проверяются по фактически
+процитированным телам. Один resource_code или model token `price_source=operator`
+не создаёт подтверждения. Неподтверждённая цена сохраняется как preliminary/gap;
+её наличие не разрешает ложную confirmed sum. Source quantity errors одинаково
+проверяются для work, material и equipment до расчёта.
+
+Source catalog не обрезает клетки до 480 символов, сохраняет 0/False и пустые
+колонки. PDF catalog использует conversion без preview character cap; это не
+гарантия распознавания произвольного скана. ВОР из authored decisions принимает
+PDF/XLSX/XLSM/DOCX/CSV; DOCX сохраняет literal body/table/header/footer locators,
+unread images/textboxes/embedded content отмечаются source_extraction_incomplete.
+Примечания другого листа видны как reference_only_source_rows и не расширяют
+requested_source_rows. RTF/ZIP не поддержаны этим workbook-путём; пустой ВОР
+получает NO_SOURCE_ROWS до создания файла.
 
 ## Происхождение поисковых запросов (ADR-16)
 
@@ -299,6 +364,15 @@ Reader ответа и gate закрытых статусов перечитыв
 - `proxy/services/retrieval_candidate_service.py`
 - `proxy/services/retrieval_service.py`
 - `proxy/services/model_research_tool_service.py`
+- `proxy/services/model_evidence_read_{contract,service}.py` — optional reads,
+  literal body registry и технические stop conditions.
+- `proxy/services/model_lsr_result_contract.py` — один условный контракт полей.
+- `proxy/services/model_result_packet_service.py` — admission/unapplied proposals.
+- `proxy/services/model_pricebook_evidence_service.py` и
+  `proxy/services/model_price_provenance_service.py` — чтение закреплённой книги
+  и механическая сверка authored цены с cited evidence.
+- `proxy/services/fgis_price_service.py:get_pricebook` — официальный snapshot
+  reader/cache по exact source bytes.
 - `proxy/services/chat_evidence_application_service.py`
 - `proxy/services/model_answer_table_service.py` — один формат таблицы решения для
   reader и quality gate; снимает только оформление строки, смысл ячеек не трогает.
@@ -316,4 +390,5 @@ Reader ответа и gate закрытых статусов перечитыв
 - `proxy/services/rag_{readiness,pipeline_status,advanced_policy}_service.py`
 - `sovushka/pages/{chat,profiles,diag}.py`
 
-Сметное ядро `proxy/smeta_core/**` этим модулем не изменяется.
+Активный exact reader: `proxy/smeta_core/norm_browser.py:read_norm_card_exact`.
+Исторический `document_workflow` не становится активным ядром чата.
