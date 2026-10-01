@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **Кандидат 861; установлен 860, профессиональная приёмка FAILED:**
+> `governed_query_generation_budget` ограничивает query-output фактическим reserve;
+> `model_query_output_diagnostics` сохраняет безопасные call facts. Empty final+length
+> останавливает ход без repair/search/file, candidate checkpoint resumable.
+> `public_error_service` различает query/search failures и upstream unavailable;
+> factor в `runtime_config_registry_service` доступен из GUI. Windows Make-less
+> runner принимает literal quoted echo, сохраняет actual updater gate и отвергает
+> дополнительные shell-команды. Эти транспортные исправления не выбирают нормы.
+
 > **Candidate 860; установлен runtime 859, live acceptance FAILED:**
 > `parse_model_rag_result` сохраняет literal malformed Markdown proposals;
 > padding/слияние пропущенных ячеек не заменяет авторские поля. Допускается

@@ -29,6 +29,18 @@ _EFFECTIVE_FACTOR_LABELS = {
     "reasoning": "Рассуждение модели",
 }
 _FACTOR_PRESENTATION = {
+    "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS": {
+        "secret": False,  # numeric output limit, never an authentication token
+        "label": "Лимит ответа модели при составлении поисковых запросов",
+        "help_text": (
+            "Пустое значение — авто: до 1600 токенов без рассуждения, при включённом "
+            "рассуждении используется уже выделенный резерв ответа. Явный положительный "
+            "лимит ограничен резервом контекста и не увеличивает окно модели. "
+            "Рассуждение и готовые запросы расходуют этот лимит вместе. "
+            "Действует со следующего запроса, перезапуск не нужен."
+        ),
+        "category": "models",
+    },
     "QDRANT_URL": {
         "label": "Адрес Qdrant",
         "help_text": "Хранилище индекса: локальная машина, LAN или VPS.",
@@ -138,6 +150,7 @@ _FACTOR_PRESENTATION = {
     },
 }
 _EXPLICIT_FACTOR_DEFAULTS = {
+    "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS": "",
     # Web factors are read through an injected Mapping; numeric admission
     # factors use the shared _env_float helper. AST discovery cannot infer
     # either default from a literal os.getenv call.
@@ -202,6 +215,8 @@ def env_path() -> Path:
 
 
 def _is_secret(key: str) -> bool:
+    if _FACTOR_PRESENTATION.get(key, {}).get("secret") is False:
+        return False
     # FreeToken is a product/provider name, not a credential marker.
     scan_key = key.removeprefix("FREETOKEN_")
     return any(marker in scan_key for marker in _SECRET_MARKERS)

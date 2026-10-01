@@ -1,9 +1,10 @@
 # RAG evidence flow
 
-Candidate **860**; установлен runtime **859**. Сравнительная клиентская проверка
-859 провалена: сдвиг ячеек ответа и необоснованные авторские нормы, при совпадении
-расчёта с XLSX. Изменения 860 проходят локальные contract/behavior проверки;
-свежая установленная сравнительная и клиентская приёмка остаётся открытой.
+Кандидат **861**; установлен runtime **860**. Свежий B0 860 выдал файл с
+правильным переносом ячеек и арифметикой, но необоснованными авторскими нормами;
+B1 удержал malformed proposals и не выдал XLSX. Клиентская приёмка FAILED.
+861 исправляет техническую диагностику и согласование query-output с резервом;
+свежая профессиональная сравнительная приёмка остаётся открытой.
 
 ## Назначение
 
@@ -22,7 +23,7 @@ Candidate **860**; установлен runtime **859**. Сравнительн�
 исполнения, перезапуск не требуется. Политика проходит через bound runner и
 typed `InferenceRequest` одинаково для B0/B1 и продолжений чтения; FreeToken
 получает `chat_template_kwargs.enable_thinking`. Модель, провайдер, sampling,
-KV и бюджеты не меняются. Для generic OpenAI-compatible подключения без известного управления transport
+KV и резерв контекста не меняются. Для generic OpenAI-compatible подключения без известного управления transport
 сохраняет `requested=true`, но показывает `effective=false` с причиной
 `unsupported_by_transport`; поддержка не угадывается. Известные способы —
 FreeToken template flag и уже выбранный native Ollama protocol.
@@ -32,6 +33,19 @@ FreeToken template flag и уже выбранный native Ollama protocol.
 content при исчерпании генерации остаётся видимой технической остановкой без
 выдуманных строк и дополнительного предметного вызова. Это опция для проверяемого
 эксперимента; улучшение качества требует установленного live-сравнения.
+
+С 861 query-output ограничен фактическим `query_packet.generation_reserve_tokens`.
+Пустой GUI-фактор `LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS` означает auto: до 1600
+без рассуждения, при явно включённом рассуждении — уже выделенный резерв.
+Явный положительный cap также ограничен резервом; ошибка настройки видна отдельно.
+Каждый call сохраняет safe `model_query_outputs` (requested/effective/source,
+reserve, finish, usage, final_chars) без hidden reasoning и текста источника.
+Пустой final + length не запускает repair: `MODEL_QUERY_OUTPUT_INCOMPLETE`,
+candidate checkpoint остаётся paused и resumable без workbook. Завершённый
+невалидный final по-прежнему допускает штатный repair; законченные строки
+обрезанного query list сохраняются, оборванная последняя не исполняется.
+Коды `MODEL_RAG_QUERY_LIST_EMPTY` и `MODEL_RAG_SEARCH_INCOMPLETE` проходят
+public error boundary отдельно от реальной недоступности upstream.
 
 1. Effective chat profile задаёт `candidate_k`, `document_diversity_k` и
    `model_evidence_k`. Заводские значения — `64 / 2 / 6`; пользовательская

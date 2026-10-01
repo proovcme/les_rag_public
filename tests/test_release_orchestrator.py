@@ -1135,6 +1135,25 @@ def test_current_make_fallback_contains_the_new_canonical_contract_tests(monkeyp
     assert len(tests) > 150
 
 
+def test_current_updater_recipe_preserves_the_gate_with_quoted_unicode_status():
+    commands = release_orchestrator._make_fallback_commands(release_orchestrator.ROOT, "test-updater")
+
+    assert commands == [("uv", "run", "python", "tools/platform_release_gate.py", "updater")]
+
+
+@pytest.mark.parametrize("recipe", [
+    '@echo "Гейт готов; ничего не запускалось"; uv run python extra_required_gate.py',
+    '@echo "$(shell uv run python extra_required_gate.py)"',
+    '@echo "`uv run python extra_required_gate.py`"',
+])
+def test_quoted_echo_cannot_hide_an_additional_command_or_expansion(tmp_path, recipe):
+    (tmp_path / "Makefile").write_text(
+        f"test:\n\t{recipe}\n\tuv run python -m pytest\n", encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="unsupported shell syntax"):
+        release_orchestrator._make_fallback_commands(tmp_path, "test")
+
+
 def test_make_absent_does_not_skip_a_shell_command_disguised_as_echo(tmp_path):
     (tmp_path / "Makefile").write_text(
         "test:\n\t@echo hello; uv run python extra_required_gate.py\n"

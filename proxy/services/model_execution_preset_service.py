@@ -242,3 +242,32 @@ def apply_reasoning_policy(
         enabled = False
         source = "unsupported_by_transport"
     return replace(preset, reasoning_enabled=enabled, reasoning_requested=requested, reasoning_source=source)
+
+
+def query_generation_budget(
+    preset: ModelExecutionPreset, *, reserved_tokens: int, configured_limit: str = "",
+) -> dict[str, Any]:
+    """Use only output space actually reserved by the query's ContextGovernor.
+
+    Thinking and the final query list share the provider's output limit. Auto
+    preserves the ordinary 1600-token limit and permits an explicitly enabled
+    thinking profile to use its existing reserve, without enlarging context.
+    """
+    reserve = int(reserved_tokens)
+    if reserve < 1:
+        raise ValueError("query output reserve must be positive")
+    literal = str(configured_limit).strip()
+    if literal:
+        try:
+            requested = int(literal)
+        except ValueError as error:
+            raise ValueError("query output limit must be a positive integer") from error
+        if requested < 1:
+            raise ValueError("query output limit must be a positive integer")
+        limit, source = requested, "operator_query_limit"
+    else:
+        requested = None
+        limit = reserve if preset.reasoning_enabled else 1600
+        source = "profile_reasoning_reserved_output" if preset.reasoning_enabled else "ordinary_query_default"
+    return {"requested": requested, "effective": min(limit, reserve),
+            "reserved_tokens": reserve, "source": source, "restart_required": False}

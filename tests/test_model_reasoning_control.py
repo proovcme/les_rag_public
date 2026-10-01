@@ -84,6 +84,31 @@ def test_reasoning_policy_does_not_change_capacity_or_route_and_explains_effecti
     assert restricted.reasoning_enabled is False
 
 
+@pytest.mark.parametrize("thinking,reserve,configured,expected", [
+    (False, 4096, "", 1600), (True, 4096, "", 4096),
+    (True, 1200, "", 1200), (False, 1200, "", 1200),
+    (True, 4096, "1600", 1600), (True, 1200, "8000", 1200),
+    (False, 4096, "512", 512),
+])
+def test_query_output_never_exceeds_actual_governor_reserve(thinking, reserve, configured, expected):
+    from proxy.services.model_execution_preset_service import query_generation_budget
+    base = resolve_execution_preset(BackendCapacity("freetoken", "Qwen3.6-35B", 35000, True, "test"))
+    selected = apply_reasoning_policy(base, {"reasoning_enabled": thinking})
+    before = selected.diagnostics()
+    budget = query_generation_budget(selected, reserved_tokens=reserve, configured_limit=configured)
+    assert budget["effective"] == expected and budget["reserved_tokens"] == reserve
+    assert budget["requested"] == (int(configured) if configured else None)
+    assert selected.diagnostics() == before  # no window/provider/reserve mutation
+
+
+@pytest.mark.parametrize("configured", ["0", "-1", "true", "2.5", "secret=value"])
+def test_invalid_explicit_query_limit_is_visible_and_never_silently_defaulted(configured):
+    from proxy.services.model_execution_preset_service import query_generation_budget
+    base = resolve_execution_preset(BackendCapacity("freetoken", "Qwen3.6-35B", 35000, True, "test"))
+    with pytest.raises(ValueError, match="positive integer"):
+        query_generation_budget(base, reserved_tokens=4096, configured_limit=configured)
+
+
 @pytest.mark.parametrize("fragments, expected", [
     (["<thi", "nk>private", "</thi", "nk>Final"], "Final"),
     (["Intro", "<THINK>literal", "</THINK>", "\nFinal"], "Intro<THINK>literal</THINK>\nFinal"),

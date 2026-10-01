@@ -54,6 +54,15 @@ def test_registry_reports_literal_default_as_effective_value(monkeypatch):
     assert factor["declared_default"] == "64"
 
 
+def test_query_output_limit_is_editable_auto_factor_with_no_restart(monkeypatch):
+    monkeypatch.delenv("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", raising=False)
+    registry.declared_env_defaults.cache_clear()
+    factor = registry._factor("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", {})
+    assert factor["effective_value"] == "" and factor["declared_default"] == ""
+    assert factor["mutable"] is True and factor["restart_required"] is False
+    assert "резерв" in factor["help_text"] and "Рассуждение" in factor["help_text"]
+
+
 def test_index_recovery_limits_are_visible_as_danger_factors(monkeypatch):
     monkeypatch.delenv("RAG_BOUNDED_REPAIR_MAX_FILES", raising=False)
 

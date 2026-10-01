@@ -3140,7 +3140,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 11830,
+      "lines": 11874,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5367,7 +5367,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 244,
+      "lines": 273,
       "module": "proxy.services.model_execution_preset_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6055,9 +6055,10 @@
     {
       "inbound": [
         "proxy/routers/chat.py",
+        "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_public_error_service.py"
       ],
-      "lines": 42,
+      "lines": 62,
       "module": "proxy.services.public_error_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6676,7 +6677,7 @@
         "tests/test_model_reasoning_control.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 443,
+      "lines": 458,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -12127,7 +12128,7 @@
     },
     {
       "inbound": [],
-      "lines": 668,
+      "lines": 675,
       "module": "tests.test_model_rag_query_declaration",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py"
@@ -12138,7 +12139,7 @@
     },
     {
       "inbound": [],
-      "lines": 346,
+      "lines": 366,
       "module": "tests.test_model_rag_sheet_evidence_reads",
       "outbound": [
         "proxy/routers/chat.py",
@@ -12151,6 +12152,7 @@
         "proxy/services/model_execution_preset_service.py",
         "proxy/services/model_pricebook_evidence_service.py",
         "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/public_error_service.py",
         "proxy/smeta_core/norm_browser.py"
       ],
       "path": "tests/test_model_rag_sheet_evidence_reads.py",
@@ -12159,7 +12161,7 @@
     },
     {
       "inbound": [],
-      "lines": 219,
+      "lines": 244,
       "module": "tests.test_model_reasoning_control",
       "outbound": [
         "proxy/services/chat_profile_service.py",
@@ -12869,7 +12871,7 @@
     },
     {
       "inbound": [],
-      "lines": 34,
+      "lines": 50,
       "module": "tests.test_public_error_service",
       "outbound": [
         "proxy/services/public_error_service.py"
@@ -13338,7 +13340,7 @@
     },
     {
       "inbound": [],
-      "lines": 1345,
+      "lines": 1364,
       "module": "tests.test_release_orchestrator",
       "outbound": [
         "tools/release_classification.py",
@@ -13745,7 +13747,7 @@
     },
     {
       "inbound": [],
-      "lines": 320,
+      "lines": 329,
       "module": "tests.test_runtime_config_registry_service",
       "outbound": [
         "proxy/services/runtime_config_registry_service.py"
@@ -17207,7 +17209,7 @@
         "tests/test_release_local_full.py",
         "tests/test_release_orchestrator.py"
       ],
-      "lines": 1738,
+      "lines": 1742,
       "module": "tools.release_orchestrator",
       "outbound": [
         "proxy/services/update_service.py",
@@ -19986,7 +19988,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 683,
     "tracked_python_files": 1063,
-    "tracked_python_lines": 368247
+    "tracked_python_lines": 368455
   },
   "warnings": []
 }

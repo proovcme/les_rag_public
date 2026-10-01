@@ -793,7 +793,9 @@ def tool_selector_request_payload(
             "attachment_id": bound_attachment,
         }
     return payload
-from proxy.services.model_execution_preset_service import ModelExecutionPreset, apply_reasoning_policy
+from proxy.services.model_execution_preset_service import (
+    ModelExecutionPreset, apply_reasoning_policy, query_generation_budget,
+)
 from proxy.services.model_research_tool_service import (
     MATCHED_BEFORE_CAP_META_KEY as _MATCHED_BEFORE_CAP_META_KEY,
     ModelResearchToolService,
@@ -3716,6 +3718,7 @@ def is_model_rag_search_query_line(line: str, instruction: str = "") -> bool:
 def classify_model_rag_query_lines(
     raw: str,
     instruction: str = "",
+    *, finish_reason: str = "",
 ) -> tuple[list[str], list[str]]:
     """Split an answer into executable queries and the accompanying answer text.
 
@@ -3724,7 +3727,7 @@ def classify_model_rag_query_lines(
     only need the texts.
     """
 
-    declared = read_declared_query_list(raw, instruction=instruction)
+    declared = read_declared_query_list(raw, instruction=instruction, finish_reason=finish_reason)
     return (
         [item.text for item in declared["queries"]],
         [str(row.get("line") or "") for row in declared["accompanying_answer"]],
@@ -5297,6 +5300,31 @@ def llm_usage_finish_reason(usage: Mapping[str, Any] | None) -> str:
 
 def finish_reason_is_length(reason: str) -> bool:
     return str(reason or "").strip().casefold() in _LENGTH_FINISH_REASONS
+
+
+def model_query_output_diagnostics(
+    text: str, usage: Mapping[str, Any], *, purpose: str, budget: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Safe call facts; neither source text nor hidden reasoning is persisted here."""
+    return {"purpose": purpose, "budget": dict(budget),
+            "finish_reason": llm_usage_finish_reason(usage),
+            "completion_tokens": int(usage.get("completion_tokens") or 0),
+            "final_chars": len(text or ""),
+            "output_incomplete": not str(text or "").strip()
+                and finish_reason_is_length(llm_usage_finish_reason(usage))}
+
+
+def governed_query_generation_budget(preset: ModelExecutionPreset, packet: ContextPacket) -> dict[str, Any]:
+    try:
+        return query_generation_budget(
+            preset, reserved_tokens=packet.generation_reserve_tokens,
+            configured_limit=os.getenv("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", ""),
+        )
+    except ValueError as error:
+        raise HTTPException(400, detail={
+            "code": "INVALID_MODEL_QUERY_OUTPUT_LIMIT",
+            "detail": "Лимит ответа для поисковых запросов должен быть положительным целым числом либо пустым (авто).",
+        }) from error
 
 
 def packet_evidence_text(packet: ContextPacket) -> str:
@@ -7415,14 +7443,12 @@ async def _execute_chat_evidence_application(
                                 ),
                             )
                         )
+                        query_budget = governed_query_generation_budget(execution_preset, query_packet)
                         query_body = {
                             "messages": query_messages,
                             "stream": False,
                             "temperature": 0,
-                            "max_tokens": max(
-                                256,
-                                _env_int("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", 1600),
-                            ),
+                            "max_tokens": query_budget["effective"],
                         }
                         t_query_model = time.time()
                         query_text, query_usage = await _post_llm(
@@ -7437,8 +7463,16 @@ async def _execute_chat_evidence_application(
                             retrieval_trace, purpose="model_rag_queries" if query_attempt == 1 else "model_rag_query_repair",
                             finish_reason=llm_usage_finish_reason(query_usage),
                             completion_tokens=int(query_usage.get("completion_tokens") or 0))
+                        query_diagnostic = model_query_output_diagnostics(
+                            query_text, query_usage, purpose="model_rag_queries" if query_attempt == 1 else "model_rag_query_repair",
+                            budget=query_budget,
+                        )
+                        retrieval_trace.setdefault("model_query_outputs", []).append(query_diagnostic)
+                        logger.info("[MODEL_RAG_QUERY_OUTPUT] %s", query_diagnostic)
+                        if query_diagnostic["output_incomplete"]:
+                            raise HTTPException(503, detail={"error": "MODEL_QUERY_OUTPUT_INCOMPLETE"})
                         model_queries, rejected_model_queries = classify_model_rag_query_lines(
-                            query_text, query_instruction
+                            query_text, query_instruction, finish_reason=llm_usage_finish_reason(query_usage),
                         )
                         if model_queries:
                             break
@@ -8766,17 +8800,12 @@ async def _execute_chat_evidence_application(
                                                 purpose=query_purpose,
                                             )
                                         )
+                                        query_budget = governed_query_generation_budget(execution_preset, query_packet)
                                         query_body = {
                                             "messages": query_messages,
                                             "stream": False,
                                             "temperature": 0,
-                                            "max_tokens": max(
-                                                256,
-                                                _env_int(
-                                                    "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS",
-                                                    1600,
-                                                ),
-                                            ),
+                                            "max_tokens": query_budget["effective"],
                                         }
                                         t_query_model = time.time()
                                         query_text, query_usage = await _sheet_pass_llm(
@@ -8784,6 +8813,21 @@ async def _execute_chat_evidence_application(
                                             purpose=query_purpose,
                                         )
                                         t_llm += time.time() - t_query_model
+                                        query_diagnostic = model_query_output_diagnostics(
+                                            query_text, query_usage, purpose=query_purpose, budget=query_budget,
+                                        )
+                                        retrieval_trace.setdefault("model_query_outputs", []).append(query_diagnostic)
+                                        logger.info("[MODEL_RAG_QUERY_OUTPUT] %s", query_diagnostic)
+                                        if query_diagnostic["output_incomplete"]:
+                                            if research_job_service is not None and research_job is not None:
+                                                research_job = research_job_service.pause(
+                                                    research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
+                                                    phase="model_query_output_incomplete",
+                                                    held_packet={"sheet": sheet_name, "locators": list(packet),
+                                                                 "model_query_output_missing": True,
+                                                                 "query_output": query_diagnostic},
+                                                )
+                                            raise HTTPException(503, detail={"error": "MODEL_QUERY_OUTPUT_INCOMPLETE"})
                                         # One reader for the declared-query contract:
                                         # the prompt states the format, this adapter
                                         # reads it, and nothing re-splits the answer a

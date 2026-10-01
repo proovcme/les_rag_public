@@ -253,6 +253,10 @@ def _make_fallback_commands(root: Path, target: str) -> list[tuple[str, ...]]:
             break
         recipe = line[1:].strip()
         if recipe.startswith("@echo "):
+            # A complete quoted status string is not executable shell syntax;
+            # punctuation inside it must not suppress the preceding real gate.
+            if re.fullmatch(r'@echo "[^"$`\\]*"', recipe):
+                continue
             if any(character in recipe for character in "$;|&<>`\\"):
                 raise RuntimeError(f"unsupported shell syntax in Make gate: {target}")
             continue

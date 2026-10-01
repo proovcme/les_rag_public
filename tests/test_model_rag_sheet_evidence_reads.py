@@ -43,7 +43,7 @@ def _answer(*, refs=("Q1.H1", "Q2.H1")):
 
 
 async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", unknown_tool=False,
-                     reasoning_enabled=False, empty_final=False):
+                     reasoning_enabled=False, empty_final=False, empty_query=False):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(tmp_path / "attachments"))
@@ -139,6 +139,9 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
 
     responses = [InferenceResponse(text="S!R2 — Cable A\nS!R3 — Cable B", tool_calls=(),
                                    finish_reason="stop", usage={})]
+    if empty_query:
+        responses[0] = InferenceResponse(text="", tool_calls=(), finish_reason="length",
+                                         usage={"completion_tokens": 5000})
     if unknown_tool:
         responses.append(InferenceResponse(text="", tool_calls=(_native("not_a_reader", code=RESOURCE_A),),
                                           finish_reason="tool_calls", usage={}))
@@ -238,9 +241,14 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                           "prompt_text": "Answer only from shown evidence."},
     )
     histories = []
-    result = await service.run_chat_evidence_application(request, runtime, service.ResponseBoundary(
-        save_chat_history=lambda **row: histories.append(row) or "history-sheet", token_sink=None,
-        version_stamp=lambda: {}))
+    try:
+        result = await service.run_chat_evidence_application(request, runtime, service.ResponseBoundary(
+            save_chat_history=lambda **row: histories.append(row) or "history-sheet", token_sink=None,
+            version_stamp=lambda: {}))
+    except service.HTTPException as error:
+        if not empty_query:
+            raise
+        result = {"error": error.detail, "status": error.status_code}
     return SimpleNamespace(result=result, executions=executions, requests=requests, responses=responses,
                            exact_reads=exact_reads, lookups=lookups, queries=search_queries, histories=histories)
 
@@ -344,3 +352,15 @@ async def test_reasoning_without_final_length_stops_without_workbook_or_new_mode
     assert run.executions == []
     assert run.result["retrieval_trace"]["model_generation"] == {
         "status": "technical_pending", "reason": "model_final_output_missing", "finish_reason": "length"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_empty_length_query_never_becomes_repair_search_or_empty_workbook(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant=variant,
+                           reasoning_enabled=True, empty_query=True)
+    assert len(run.requests) == 1 and run.requests[0].max_output_tokens == 5000
+    assert run.executions == [] and run.queries == []
+    assert run.result == {"error": {"error": "MODEL_QUERY_OUTPUT_INCOMPLETE"}, "status": 503}
+    from proxy.services.public_error_service import public_error_payload
+    assert public_error_payload(status_code=503, detail=run.result["error"])["code"] == "MODEL_QUERY_OUTPUT_INCOMPLETE"

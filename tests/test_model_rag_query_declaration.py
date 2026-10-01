@@ -15,6 +15,13 @@ def _query_texts(raw: str) -> list[str]:
     return [item.text for item in service.read_declared_query_list(raw)["queries"]]
 
 
+def test_direct_query_adapter_does_not_execute_the_cut_final_line():
+    raw = "Монтаж кабеля\nМонтаж шкафа без"
+    queries, _ = service.classify_model_rag_query_lines(raw, finish_reason="length")
+    assert queries == ["Монтаж кабеля"]
+    assert service.classify_model_rag_query_lines(raw)[0] == ["Монтаж кабеля", "Монтаж шкафа без"]
+
+
 def test_declaration_prompt_and_reader_agree() -> None:
     """The format the prompt promises is the format the reader implements.
 

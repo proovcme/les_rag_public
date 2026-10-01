@@ -1,6 +1,47 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-**Candidate 0.31.132 / 860; installed runtime 859. Acceptance pending.**
+**Кандидат 0.31.133 / 861; установлен runtime 860. Клиентская приёмка FAILED.**
+861 исправляет измеренный отказ Windows Make fallback: literal quoted `@echo`
+с пунктуацией не препятствует выполнению настоящего updater gate; подстановки и
+дополнительные команды запрещены. Query-output использует фактический резерв
+ContextGovernor: auto без рассуждения сохраняет лимит до 1600, с явно включённым
+рассуждением использует уже выделенный резерв; явный положительный cap ограничен
+этим резервом. Фактор виден в GUI. Пустой final с `finish_reason=length` останавливает
+ход без blind repair, поиска и XLSX; candidate сохраняет оставшиеся строки и
+техническую причину в checkpoint. Safe call diagnostics содержат лимит, usage,
+finish и число final-символов. Известные отказы query/search сохраняют свой код
+на обеих границах чата и не выдаются за недоступность сервиса модели. Прямой
+query reader также не исполняет оборванную последнюю строку списка. Эти правки
+не изменяют профессиональный выбор норм и не доказывают готовность ЛСР.
+
+Установленный 860 exact runtime patch: commit `9cacaeba`, 26/26 SHA совпадают;
+native RRF 1/1, basic smoke 9 pass / 1 existing diagnostics WARN / 0 fail.
+Tauri EXE остаётся 858. BAP B0 с прежним профилем завершён за 134.75s и выдал
+SHA-проверенный XLSX: 21 решение, 19/19 исходных адресов, без сдвига ячеек,
+ошибок объёма/единиц и дублей. Профессиональная проверка FAILED: R12/R15
+подменены силикатной шпаклёвкой вместо полимерной/финишной, R16 — комплексом
+замены с новыми рейками вместо демонтажа с сохранением; R24/R25 только материалы.
+Формулы файла сходятся: 10354.16 confirmed + 35168.11 preliminary = 45522.27.
+Причины и проверка карточек/ресурсов: `artifacts/live_860/bap_lsr_baseline_default/independent_audit.json`.
+B1 за 150.14s остановлен после 12/19: 12 malformed table proposals удержаны,
+готового XLSX нет (`artifacts/live_860/bap_lsr_candidate_default`).
+Эксперимент reasoning=true вернул generic503 после двух HTTP200; exact внутренний
+код утрачен прежней error boundary, exhaustion не объявляется доказанным.
+Прежний operator profile восстановлен. Installer prepare 860 сначала выявил
+отсутствие canonical базы в чистом checkout; official baseline provision закрыл
+это без правки тестов (2441 passed / 20 skipped). Затем measured Make fallback
+отказал на quoted echo test-updater, до начала builder. Все failed receipts
+сохранены. Разные файлы, 300+ строк, live professional comparison 861 и точный
+установщик остаются открыты; готовность заказчику не объявлена.
+
+861 frozen offline gates: verify 21.89s; canonical test **2457 passed / 20
+existing opt-in skipped / 5 warnings**, 240.59s pytest / 242.08s wrapper;
+architecture 9.55s; actual pinned baseline archive verification 7.28s.
+Receipts: `artifacts/{verify,test,architecture,baseline}_861_third{.log,.exit.json}`.
+Earlier version-sync and generated map drift failures remain preserved;
+no gate or test was weakened. These are technical contracts, not live acceptance.
+
+**860 реализованные правки и offline checks (исторический кандидат):**
 The measured 859 Markdown defect is repaired without guessing omitted cells:
 excess trailing empty cells can be removed only when the declared field values
 remain structurally compatible. Missing middle cells and extra nonempty cells

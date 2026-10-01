@@ -1,5 +1,17 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Кандидат **861**, установлен runtime **860**. B0 860 имеет SHA-проверенный XLSX,
+но независимая профессиональная проверка FAILED; B1 остановлен с malformed
+proposals без XLSX. 861 добавляет regressions query budget/cut final без repair,
+safe specific public errors, GUI auto factor и exact updater Make-less recipe.
+Тесты включены в прежние канонические файлы. Full gates/live comparison/exact
+installer 861 пока открыты; 2441 passed ниже — результат frozen 860.
+
+861 frozen full gates: **2457 passed / 20 existing opt-in skipped / 5 warnings**,
+240.59s, verify/architecture/pinned-baseline passed. Exact third-attempt receipts:
+`artifacts/*_861_third.exit.json`; initial version-sync and generated-map failures
+preserved. Independent narrow transport review found no actionable defect.
+
 Candidate **860**, установлен runtime **859**. Сравнительная профессиональная
 приёмка 859 FAILED: parser cell shifts и необоснованные авторские нормы при
 согласованном расчёте/XLSX. Новые offline regressions добавлены в `UNIT_TESTS +=`;

@@ -1,10 +1,22 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 861; установлен 860, live professional FAILED:** query-output
+> ограничен фактическим ContextGovernor reserve, auto учитывает явное рассуждение;
+> factor виден в GUI. Пустой final+length не вызывает blind repair/search/XLSX,
+> candidate checkpoint сохраняет строки. Safe finish/usage/budget diagnostics и
+> известные query/search errors доходят до public boundary; прямой query reader
+> не исполняет оборванный хвост. Точки: `chat_evidence_application_service`,
+> `model_execution_preset_service`, `runtime_config_registry_service`,
+> `public_error_service`; [RAG evidence flow](modules/rag-evidence-flow.md).
+> Статус док↔код ✅, клиентская готовность не заявлена.
+
 > **Release tooling:** явный `prepare/run --local-only-full` допускает чистый
 > exact detached checkout без upstream/full-base и сохраняет все обычные gates.
 > Gate/artifact честно имеют null upstream, пустой base, local-only scope и
 > publishable=false; публикация запрещена, стандартный install/smoke/rollback/
 > reinstall не меняется. Windows prepared cache привязан и к SHA baseline.
+> Make-less fallback принимает literal quoted `@echo` с пунктуацией и сохраняет
+> actual updater command; подстановки и дополнительные shell-команды отклоняются.
 > Точки: `tools/{release_orchestrator,release_receipt}.py`,
 > `tools/windows_prepare_update.ps1`, `tests/test_release_local_full.py`;
 > [RELEASE_PROCEDURE](RELEASE_PROCEDURE.md). Статус док↔код: ✅; это не live acceptance.
