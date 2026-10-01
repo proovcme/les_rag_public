@@ -485,7 +485,13 @@ def catalog_sheet_pack_lines(
     sheet: str,
     remaining_work: Sequence[str] | None = None,
 ) -> list[str]:
-    """Headers of this sheet plus remaining work rows. Other sheets stay in the manifest."""
+    """Sheet headers/descriptors plus the current work rows.
+
+    A numbered description with an empty, proven quantity column can govern
+    several subsequent variants. Keep its literal text as source context even
+    though its numeric item number makes its classification ambiguous. Neither
+    its classification nor the coverage denominator is changed here.
+    """
 
     wanted = str(sheet or "").strip()
     remaining = (
@@ -497,7 +503,8 @@ def catalog_sheet_pack_lines(
     for row in catalog.rows:
         if row.sheet != wanted:
             continue
-        if remaining is not None and row.is_work_row() and row.locator not in remaining:
+        descriptor_context = row.quantity_column_known and row.header_quantity is None
+        if remaining is not None and row.is_work_row() and row.locator not in remaining and not descriptor_context:
             continue
         lines.append(row.line)
     return lines

@@ -1,5 +1,16 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 850: VOR resume changes to LSR, group descriptions omitted
+
+The installed ordinary EOM review resumes with «Продолжи». Packaging ignores
+durable original_question and defaults to LSR; its revision has no VOR parent.
+851 persists the explicit target with legacy original-question fallback, keeps
+prior-job parents separate from current-job replay. Generic six regressions.
+Source packet slicing also omitted numbered empty-quantity descriptions beside
+short product variants. Literal descriptors now stay in source context; no
+quantity or professional decision is supplied by code. Source-quality/live
+acceptance remains independent from structural tests and must not be claimed.
+
 ## 2026-10-01 — 844 candidate: source locator triggers a legacy domain rewrite
 
 After 843 the model's own SKS queries describe cabinet/organizer/ground-bar

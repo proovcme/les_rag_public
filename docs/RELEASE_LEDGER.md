@@ -1,5 +1,27 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.123 / 851 (01.10, Codex):** контроль обычного Продолжи на 850
+упаковал ВОР как ЛСР: последняя реплика не называла документ, durable original
+question не участвовал в выборе. Explicit artifact_intent теперь сохраняется;
+для старых jobs читается original_question. Новая явная конвертация имеет
+приоритет. Parent revision читается из continues_job_id цепочки, settled replay
+только из текущего job. Пакеты сохраняют numbered quantity-empty descriptions
+как исходный контекст, не меняя авторские операции, классификацию или coverage.
+Шесть regressions red→green; focused 295 passed. Canonical 2057 passed /
+20 existing opt-in skipped / 5 warnings, 204.52 с; verify 2077 collected,
+compileall/version/architecture green. Installed comparative gates pending.
+
+**Замер 850, exact d87949a5 (01.10):** installed 11/11 patch SHA, native RRF 1/1,
+basic 9 pass / 1 diagnostics WARN / 0 fail, прежние файлы/цены неизменны.
+Обычный пересмотр 710.5 с, 39/51 source, 12 remaining, 59 authored operations;
+54 published IDs сохранены, source IDs не перенесены, unknown_operation_id=0.
+Остаются 17 unknown_evidence_ref, 31 norm_code_not_in_referenced_evidence и ошибки
+модельной привязки материалов/количеств. Тип выданного файла LSR вместо VOR,
+parent null: rev_0b400fe15a36446a992dbdb4e22322f4, 58871 bytes,
+SHA 0ce4111016150627259e07d3b0c07d8d764f2cfe206293cf70fc30e1068937d7.
+Не customer-ready; финансовый результат, свежий 300+ и точный installer не приняты.
+Receipts: artifacts/live_850/eom_review_resume.
+
 **Кандидат 0.31.122 / 850 (01.10, Codex):** живой обычный пересмотр ЭОМ
 на 849 отверг 163 ранее опубликованных operation_id и 35 evidence_refs.
 Причина: reopen убирает accepted rows, но модель обязана сохранить их IDs;

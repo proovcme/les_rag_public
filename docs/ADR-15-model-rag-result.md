@@ -2,6 +2,12 @@
 
 Статус: **принято** (2026-09-01).
 
+С 851 исходный target ВОР/ЛСР сохраняется в task_context.artifact_intent.
+Plain resume не выбирает priced default; новый явно названный target имеет
+приоритет. Предыдущие jobs дают родителя workbook revision, но не settled replay.
+Пакет сохраняет дословные quantity-empty group descriptions текущего листа;
+код не выбирает вид работ и не присваивает описанию количество варианта.
+
 С 849 безопасная проекция workbook result сохраняет каждый vor_source_errors
 locator (ограничивается длина сообщения, не число строк). Harvester/чат/readiness
 видят те же замечания, что XLSX. Repack ВОР возвращает собственную vor readiness,

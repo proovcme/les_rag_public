@@ -1,5 +1,13 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 851: four task_context regressions cover VOR after remark/restart/resume,
+explicit conversion to LSR, old task fallback and parent-vs-replay across jobs.
+Two source_catalog regressions cover numbered descriptors beside variants and
+quantity-unknown layouts. Red cases reproduced before fixing; focused 295 passed.
+Canonical 2057 passed / 20 existing opt-in skipped / 5 warnings, 204.52 seconds;
+verify 2077 collected, compileall/version/architecture green. Installed
+comparative controls pending, not a customer-ready claim.
+
 Build 850: five regressions in `test_workbook_chat_refinement.py` cover review
 identities/source binding, resumed instruction/exact cited body, incomplete
 review baseline and no resurrection after a completed model result. Real SQLite

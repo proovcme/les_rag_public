@@ -138,6 +138,38 @@ def test_markdown_table_parser_ignores_separator_and_prose():
     ) == [("A", "B"), ("x", "2")]
 
 
+def test_packet_keeps_unquantified_group_description_beside_variant(tmp_path):
+    catalog = service.load_tabular_source_catalog(_write_sheet(tmp_path, [
+        ["№ п/п", "Наименование", "Ед. изм.", "Кол-во"],
+        ["5.1", "Труба гибкая гофрированная из ПВХ", "", ""],
+        ["", "- Ø20 мм", "м", 200],
+        ["", "- Ø25 мм", "м", 30],
+        ["5.2", "Труба стальная", "", ""],
+        ["", "- Ø40 мм", "м", 50],
+    ]))
+    parent = catalog.lookup("Лист1!R2")
+    assert parent.is_work_row() and parent.quantity_column_known and parent.header_quantity is None
+    packet = service.catalog_sheet_pack_lines(catalog, "Лист1", remaining_work=["Лист1!R4"])
+    assert parent.line in packet
+    assert catalog.lookup("Лист1!R4").line in packet
+    assert catalog.lookup("Лист1!R3").line not in packet
+    assert catalog.lookup("Лист1!R6").line not in packet
+    # Source context does not invent a quantity or change the coverage denominator.
+    assert service.quantity_candidates(parent) == ()
+    assert "Лист1!R2" in catalog.work_locators()
+
+
+def test_unknown_quantity_layout_does_not_expose_every_other_work_as_context(tmp_path):
+    catalog = service.load_tabular_source_catalog(_write_sheet(tmp_path, [
+        ["1.1", "Монтаж первого изделия", "шт", 10],
+        ["1.2", "Монтаж другого изделия", "шт", 20],
+    ]))
+    assert not catalog.lookup("Лист1!R1").quantity_column_known
+    packet = service.catalog_sheet_pack_lines(catalog, "Лист1", remaining_work=["Лист1!R2"])
+    assert catalog.lookup("Лист1!R1").line not in packet
+    assert catalog.lookup("Лист1!R2").line in packet
+
+
 def test_csv_empty_cells_keep_quantity_under_its_header(tmp_path):
     import csv
 

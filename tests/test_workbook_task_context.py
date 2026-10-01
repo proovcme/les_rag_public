@@ -7,6 +7,8 @@ from proxy.services.lsr_workbook_adapter_service import (
 from proxy.services.chat_evidence_application_service import (
     task_document_price_basis,
     workbook_packaging_args,
+    workbook_packaging_tool,
+    workbook_packaging_lineage,
 )
 
 
@@ -77,6 +79,67 @@ def test_replacement_attachment_does_not_inherit_price_request(tmp_path):
     })
     replaced = service.begin_or_resume(identity(service, "Собери ЛСР", "b" * 64))
     assert task_document_price_basis(replaced) == {}
+
+
+def test_vor_target_survives_remark_restart_and_plain_resume(tmp_path):
+    tools = ["build_vor_workbook", "build_lsr_workbook"]
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    service.begin_or_resume(identity(service, "Собери ВОР"), task_context={
+        "original_question": "Собери ВОР", "artifact_intent": "vor",
+    })
+    service.begin_or_resume(identity(service, "Исправь объёмы"), task_context={
+        "original_question": "Исправь объёмы", "artifact_intent": "both",
+    })
+    restarted = WorkbookResearchJobService(tmp_path / "meta.db")
+    resumed = restarted.begin_or_resume(identity(restarted, "Продолжи"), task_context={
+        "original_question": "Продолжи", "artifact_intent": "both",
+    })
+    assert workbook_packaging_tool(tools, "Продолжи", task_context=resumed["task_context"]) == ["build_vor_workbook"]
+
+
+def test_explicit_lsr_conversion_changes_target_for_later_resume(tmp_path):
+    tools = ["build_vor_workbook", "build_lsr_workbook"]
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    service.begin_or_resume(identity(service, "Собери ВОР"), task_context={
+        "original_question": "Собери ВОР", "artifact_intent": "vor",
+    })
+    converted = service.begin_or_resume(identity(service, "Собери ЛСР из ВОР"), task_context={
+        "original_question": "Собери ЛСР из ВОР", "artifact_intent": "lsr",
+    })
+    assert converted["task_context"]["original_question"] == "Собери ВОР"
+    resumed = service.begin_or_resume(identity(service, "Продолжи"), task_context={
+        "original_question": "Продолжи", "artifact_intent": "both",
+    })
+    assert workbook_packaging_tool(tools, "Продолжи", task_context=resumed["task_context"]) == ["build_lsr_workbook"]
+    assert workbook_packaging_tool(tools, "Собери ВОР", task_context=resumed["task_context"]) == ["build_vor_workbook"]
+
+
+def test_legacy_task_without_target_uses_original_operator_request():
+    assert workbook_packaging_tool(["build_vor_workbook", "build_lsr_workbook"], "Продолжи",
+        task_context={"original_question": "Собери ВОР по проекту"}) == ["build_vor_workbook"]
+
+
+def test_new_review_chains_parent_without_replaying_an_older_jobs_file(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    first = service.begin_or_resume(identity(service, "Собери ВОР"))
+    service.record_packet(first["job_id"], sheet="Лист", packet_locators=["Лист!R2"],
+        accepted_rows=[{"source_row": "Лист!R2", "row_role": "work", "title": "Монтаж"}],
+        evidence=[], remaining=[])
+    service.record_packaging(first["job_id"], tool="build_vor_workbook", revision_id="rev_previous", draft=False)
+    service.finish(first["job_id"], status="complete")
+    review = service.begin_or_resume(identity(service, "Уточни объёмы"))
+    previous = [event for event in service.list_events_with_lineage(review["job_id"])
+                if event["job_id"] != review["job_id"]]
+    parents, settled = workbook_packaging_lineage(service.list_events(review["job_id"]),
+        durable_decisions=True, prior_events=previous)
+    assert parents == {"build_vor_workbook": "rev_previous"}
+    assert settled == {}
+    service.record_packaging(review["job_id"], tool="build_vor_workbook", revision_id="rev_changed",
+        draft=False, parent_revision_id="rev_previous")
+    parents, settled = workbook_packaging_lineage(service.list_events(review["job_id"]),
+        durable_decisions=True, prior_events=previous)
+    assert parents == {"build_vor_workbook": "rev_changed"}
+    assert settled == {"build_vor_workbook": "rev_previous"}
 
 
 def test_equivalent_basis_does_not_change_packaging_identity():

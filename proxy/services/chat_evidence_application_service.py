@@ -206,7 +206,9 @@ def prioritize_workbook_tools(
     return workbook + other
 
 
-def workbook_packaging_tool(profile_tools: Sequence[str], question: str) -> list[str]:
+def workbook_packaging_tool(
+    profile_tools: Sequence[str], question: str, *, task_context: Mapping[str, Any] | None = None,
+) -> list[str]:
     """Choose the packaging tool for the sheet-pass result by intent.
 
     The operator's own words decide the artifact, checked before any profile
@@ -220,6 +222,12 @@ def workbook_packaging_tool(profile_tools: Sequence[str], question: str) -> list
     """
     tools = set(profile_tools)
     intent = workbook_artifact_intent(question)
+    if intent == "both":
+        context = task_context or {}
+        saved = str(context.get("artifact_intent") or "")
+        intent = saved if saved in {"vor", "lsr"} else workbook_artifact_intent(
+            str(context.get("original_question") or "")
+        )
     if intent == "vor":
         # The operator named a ВОР: package the row-preserving ВОР even when an
         # un-narrowed profile list still carries build_lsr_workbook (sheet-pass
@@ -346,6 +354,7 @@ def workbook_packaging_lineage(
     events: Sequence[Mapping[str, Any]],
     *,
     durable_decisions: bool,
+    prior_events: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[dict[str, str], dict[str, str | None]]:
     """Revision lineage for durable workbook packaging.
 
@@ -359,7 +368,19 @@ def workbook_packaging_lineage(
     finished job again serves the same file instead of duplicating it.
     """
 
+    # Older jobs supply a parent only. Their independent sequence numbers must
+    # never make a new remark replay a settled file from before that remark.
     parents: dict[str, str] = {}
+    for event in prior_events:
+        if str(event.get("event_type") or "") != "workbook_packaged":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        tool = str(payload.get("tool") or "")
+        revision = str(payload.get("revision_id") or "")
+        if tool and revision:
+            parents[tool] = revision
     settled: dict[str, str | None] = {}
     last_change_sequence = max(
         (
@@ -7976,6 +7997,7 @@ async def _execute_chat_evidence_application(
                                 research_identity,
                                 task_context={
                                     "original_question": str(req.question or ""),
+                                    "artifact_intent": workbook_artifact_intent(str(req.question or "")),
                                     "price_basis": requested_price_basis(str(req.question or "")),
                                 },
                             )
@@ -10458,7 +10480,8 @@ async def _execute_chat_evidence_application(
                             await token_sink({"event": "token", "data": answer})
                     attachment_id = str(getattr(req, "attachment_id", None) or "").strip()
                     packaging_tools = workbook_packaging_tool(
-                        profile_tools, str(getattr(req, "question", "") or "")
+                        profile_tools, str(getattr(req, "question", "") or ""),
+                        task_context=(research_job or {}).get("task_context"),
                     )
                     if (
                         (parsed_model_result is not None or bool(durable_packaging_rows))
@@ -10495,6 +10518,12 @@ async def _execute_chat_evidence_application(
                                 workbook_packaging_lineage(
                                     packaging_events,
                                     durable_decisions=bool(durable_packaging_rows),
+                                    prior_events=[
+                                        event for event in research_job_service.list_events_with_lineage(
+                                            str(research_job.get("job_id") or ""), "workbook_packaged"
+                                        )
+                                        if str(event.get("job_id") or "") != str(research_job.get("job_id") or "")
+                                    ],
                                 )
                             )
                         # The basis is a property of the document, its lineage here is a

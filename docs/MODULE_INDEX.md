@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.123 / 851:** `core/chat-evidence`/`core/workbook-research`
+> сохраняют artifact_intent в task_context, resume читает исходный target;
+> lineage прежних jobs даёт parent, только текущий job может дать settled replay.
+> `core/attachment-source-catalog` сохраняет пустые quantity group descriptors
+> при packet slicing. Док↔код ✅; `workbook_packaging_tool`,
+> `workbook_packaging_lineage`, `catalog_sheet_pack_lines`,
+> [chat-profiles](modules/chat-profiles.md), tests task_context/source_catalog.
+> Live 850 показал ВОР→ЛСР на «Продолжи»; installed acceptance 851 ожидается.
+
 > **Кандидат 0.31.122 / 850:** `core/chat-evidence`/`core/workbook-research`
 > сохраняют review baseline IDs, точные цитированные карточки и замечание по
 > lineage при пересмотре/продолжении. `record_packet` пишет следующую ревизию
@@ -7,8 +16,8 @@
 > и подтверждения оператора также наследуются. Док↔код ✅; `workbook_chat_review_context`,
 > `model_rag_existing_operation_rows`, `chat_review_context`,
 > [chat-profiles](modules/chat-profiles.md), `test_workbook_chat_refinement.py`.
-> Live 849: 163 unknown_operation_id, 35 unknown_evidence_ref; fixed validation
-> and evidence replay are pending installed acceptance, not customer-ready.
+> Live 850: 54 published IDs сохранены, переносов source нет, unknown_operation_id=0;
+> 39/51 source, 12 remaining, 17 unknown_evidence_ref. Не customer-ready.
 
 > **Кандидат 0.31.121 / 849:** `core/chat-evidence` safe workbook history/harvester
 > сохраняют все VOR source audit warnings; `/api/chat/repack-lsr` возвращает VOR

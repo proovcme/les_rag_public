@@ -573,6 +573,11 @@ class WorkbookResearchJobService:
                 context = _json_object(stored, "task_context_json")
                 if not context.get("original_question"):
                     context["original_question"] = str(task_context.get("original_question") or "")
+                # A plain resume/remark preserves the requested artifact. Only
+                # an explicit operator target may switch VOR to LSR or back.
+                artifact_intent = str(task_context.get("artifact_intent") or "")
+                if artifact_intent in {"vor", "lsr"}:
+                    context["artifact_intent"] = artifact_intent
                 # Only explicitly named dimensions replace an inherited request.
                 # No default book/period and no model decision are introduced here.
                 basis = dict(context.get("price_basis") or {})

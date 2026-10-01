@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.123 / 851:** `begin_or_resume` persists the explicit artifact_intent;
+> `workbook_packaging_tool` falls back to durable task context on plain resume.
+> `workbook_packaging_lineage` reads older jobs for parent only, current events
+> for replay. `catalog_sheet_pack_lines` retains unquantified descriptors even
+> when their numbering makes them ambiguous work candidates.
+
 > **0.31.117 / 845:** `WorkbookResearchJobService.record_search_cache`
 > writes versioned entries with superseded history; `restore_or_refresh_held_query_hits`
 > re-executes only incompatible pending reads without a new model query.
