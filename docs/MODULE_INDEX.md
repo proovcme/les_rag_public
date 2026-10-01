@@ -1,5 +1,9 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.126 / 854:** `ui/chat` latest own-session API/local state
+> применяется и к ordinary reload с persisted job_id. Foreign adoption только
+> при отсутствии своего newest job. Doc↔code ✅, UI kit, same regression оба режима.
+
 > **Кандидат 0.31.125 / 853:** `ui/chat` восстанавливает newest selected-session
 > job в любом статусе через last API и local `latest`, раньше `list_open`
 > возвращал paused ancestor завершённого review. Doc↔code ✅;

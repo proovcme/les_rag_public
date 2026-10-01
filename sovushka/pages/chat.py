@@ -993,10 +993,11 @@ async def fetch_active_workbook_research(
     fetch = getter or api_get
     wanted = str(job_id or "").strip()
     sid = str(session_id or "").strip()
-    if sid and not allow_foreign_session:
+    if sid:
         # An old paused stage may remain in list_open after a later review has
-        # completed. A selected history session must restore its latest state,
-        # including a terminal document, before considering an open ancestor.
+        # completed. History selection and ordinary re-entry restore the own
+        # latest state before an open ancestor. Foreign night reconnect stays
+        # available only when this session has no durable job of its own.
         last = await fetch(f"/api/workbook-research-last?session_id={sid}")
         if isinstance(last, dict):
             latest = _adopted_workbook_job(last.get("job"), sid, allow_foreign_session=False)
@@ -1024,7 +1025,7 @@ async def fetch_active_workbook_research(
             if adopted:
                 return adopted
     return _adopted_workbook_job(
-        read_active_workbook_research(session_id=sid, job_id=wanted, prefer_latest=not allow_foreign_session), sid,
+        read_active_workbook_research(session_id=sid, job_id=wanted, prefer_latest=bool(sid)), sid,
         allow_foreign_session=allow_foreign_session,
     )
 

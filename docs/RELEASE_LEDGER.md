@@ -1,5 +1,20 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.126 / 854 (01.10, Codex):** browser reload 853 всё ещё
+принимал persisted paused ancestor, т.к. latest-own priority был только strict.
+Latest-own API/local fallback теперь имеют приоритет во всех вариантах
+восстановления; foreign night reconnect сохраняется, когда своего job нет.
+Регрессия для обычного reload red→green; focused UI/history/documents 185 passed.
+Inference, source evidence и расчёт не менялись относительно 852.
+Canonical 2066 passed / 20 existing opt-in skipped / 5 warnings, 211.41 с;
+verify 2086 collected, compileall/version/architecture green. Official bounded
+dry-run 12 files, rollback 853 preserved. Installed GUI and ordinary LSR review
+acceptance pending; professional quality gate всё ещё открыт.
+
+**Замер 853, exact 6da0f076:** installed 12/12 patch hashes, RRF 1/1,
+basic 9 pass / 1 diagnostics WARN / 0 fail. Проверка браузером выявила
+startup ancestor defect; это не принято как завершённая UI-финализация.
+
 **Кандидат 0.31.125 / 853 (01.10, Codex):** GUI проверка 852 восстановила
 правильный текущий ВОР, но local list_open выбрал более старый paused stage
 этого же session_id. Selected history теперь сначала читает newest job в любом

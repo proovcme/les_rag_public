@@ -890,7 +890,8 @@ async def test_selected_history_poll_ignores_foreign_pinned_job_and_keeps_own_jo
 
 
 @pytest.mark.asyncio
-async def test_selected_history_prefers_latest_finished_document_over_older_paused_step(monkeypatch):
+@pytest.mark.parametrize("allow_foreign", [False, True])
+async def test_selected_history_prefers_latest_finished_document_over_older_paused_step(monkeypatch, allow_foreign):
     import sovushka.pages.chat as page
     old = {"job_id": "wrj_old", "identity": {"session_id": "session-selected"}, "status": "paused",
         "remaining": ["Лист!R3"], "accepted_rows": [{"source_row": "Лист!R2", "row_role": "work"}]}
@@ -903,7 +904,7 @@ async def test_selected_history_prefers_latest_finished_document_over_older_paus
         return {"jobs": []}
     monkeypatch.setattr(page, "read_active_workbook_research", lambda **kwargs: old)
     fetched = await fetch_active_workbook_research(session_id="session-selected", getter=getter,
-        allow_foreign_session=False)
+        allow_foreign_session=allow_foreign)
     assert fetched == latest
     async def fetch_job(**kwargs):
         return fetched

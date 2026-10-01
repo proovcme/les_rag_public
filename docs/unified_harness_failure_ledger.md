@@ -1,5 +1,13 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 853: ordinary reload bypasses selected-history latest priority
+
+Installed browser reload shows correct current VOR but old 7-row/46-open paused
+status because persisted job_id takes the compatible night-reconnect branch.
+854 always prefers an own-session newest job first, API and local fallback;
+foreign night adoption is retained when no own job exists. Same regression in
+both modes, focused 185 passed. No model choice or file is rewritten.
+
 ## 2026-10-01 — 852: history restores an open ancestor of the finished document
 
 Browser download restores the correct latest VOR and matching SHA, but progress

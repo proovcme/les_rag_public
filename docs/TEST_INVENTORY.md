@@ -1,5 +1,10 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 854: latest-over-paused regression covers explicit history selection and
+ordinary startup with saved job_id. Focused UI/history/documents 185 passed.
+Canonical 2066 passed / 20 existing opt-in skipped / 5 warnings, 211.41s;
+verify 2086 collected. Installed acceptance pending; fixtures do not prove model quality.
+
 Build 853: latest finished document beats an older paused stage in selected
 history, including local API-unavailable fallback; default reconnect preserved.
 Two additional UI regressions, focused UI/history/documents 184 passed.

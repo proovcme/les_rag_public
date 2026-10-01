@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ЛЕС",
-  "version": "5.1.853",
+  "version": "5.1.854",
   "identifier": "me.ovc.les",
   "build": {
     "frontendDist": "../web"

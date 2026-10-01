@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.126 / 854:** fetch_active_workbook_research always prefers an existing
+> own-session latest state before a persisted ancestor; local fallback too.
+> Foreign night adoption stays as fallback for regenerated sessions without a job.
+
 > **0.31.125 / 853:** strict selected-session restoration prefers last API and
 > local latest over an older open stage; terminal document state stays visible.
 > `sovushka/pages/chat.py`: fetch/read_active_workbook_research. Inference unchanged.

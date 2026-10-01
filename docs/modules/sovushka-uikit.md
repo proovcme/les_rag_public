@@ -2,6 +2,12 @@
 
 ## Назначение
 
+854: latest own-session state имеет приоритет также при обычном reload с
+persisted job_id. 853 применял правило только к explicit history selection,
+поэтому startup ещё возвращал paused ancestor. Foreign night reconnect
+допустим, когда своего latest job нет; empty/new chat не принимает его без pin.
+Тот же regression теперь покрывает оба режима; focused 185 passed.
+
 853: выбранная история читает `/api/workbook-research-last` перед списком
 открытых заданий, включая terminal document. Local fallback использует
 `latest(session_id=...)`. Старый paused этап того же документа больше не
