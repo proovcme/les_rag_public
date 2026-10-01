@@ -1,5 +1,26 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.120 / 848:** `core/rim` учитывает множитель исходной единицы;
+> catalog/adapter/trace подтверждают физически равные меры. `header_bound_unit`,
+> `_attach_catalog_facts`, `_norm_qty_from_visible_row` — точки входа.
+> `core/workbook` сохраняет model VOR decisions и на XLSX, не заменяет их spec
+> reader/derive dictionary. В ВОР сохраняются роли, связи и замечания; материалы
+> также сверяются с исходником, без подмены количества. Receipt сохраняет
+> vor_source_errors при replay. Док↔код ✅; [ALGO-lsr-assembly](ALGO-lsr-assembly.md),
+> [ALGO-spec-to-bor](ALGO-spec-to-bor.md), [ADR-15](ADR-15-model-rag-result.md).
+> Regressions red before; focused quantity/price 116 passed, VOR/trace 137 passed.
+> Offline: 2045 passed / 20 existing opt-in skipped / 5 warnings; verify 2065,
+> compileall/version/architecture и active artifacts passed. Installed проверки
+> ещё ожидаются; customer-ready нет.
+>
+> **Замер установленной 847:** 12/12 patch hashes, native RRF 1/1,
+> basic 9 pass / 1 WARN / 0 fail; old VOR/LSR recovery same bytes/SHA.
+> ЭОМ PDF→ВОР B0: 310.6 с, no file, два реальных work quantity/unit conflicts.
+> B1: 1058.7 с, 51/51 учтены, 83 строки (31 work/44 material/7 header/1 unresolved),
+> XLSX скачивается, SHA совпадает. Независимая сверка обнаружила 11 material rows
+> с неверными источниками/объёмами; это измеренный дефект, не приемочный успех.
+> Source parser не сдвигает колонки после 847, остаток — authored decisions.
+
 > **Кандидат 0.31.119 / 847:** `rag/pdf` сохраняет координаты пустых ячеек
 > разреженных таблиц; количества больше не сдвигаются под соседние заголовки.
 > CSV catalog исправляет ту же потерю пустых полей (`;` и `,`). Точки:

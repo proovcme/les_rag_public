@@ -10734,7 +10734,7 @@ async def _execute_chat_evidence_application(
                                 rows=model_result_rows, has_file=bool(workbook_files),
                                 remaining_locators=remaining_locators,
                                 catalog_work_count=len(source_catalog.work_locators()) if source_catalog else 0,
-                                model_errors=model_result_errors,
+                                model_errors=[*model_result_errors, *((safe_payload or {}).get("vor_source_errors") or [])],
                             )
                         retrieval_trace["result_readiness"] = lsr_readiness
                         if isinstance(workbook_chat_meta, dict):

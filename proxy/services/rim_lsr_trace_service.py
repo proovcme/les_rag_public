@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
+from proxy.smeta_core.unit_contract import norm_measure
+
 from proxy.services.estimate_math_service import parse_ru_number
 from proxy.services import gesn_service, nr_sp_service
 from proxy.services.lsr_source_coverage_service import (
@@ -1888,10 +1890,24 @@ def _unconfirmed_source_change(
     ):
         return None
     unit_norm = normalize_unit(source_unit)
+    comparable_qty = source_qty
     if unit_norm not in {"", "-", "—", "–"} and isinstance(values, list) and values:
-        cell_units = {normalize_unit(item) for item in values}
-        joined = normalize_unit(" ".join(str(item) for item in values))
-        if unit_norm not in cell_units and unit_norm not in joined:
+        if "_catalog_source_unit" in row:
+            catalog_factor, catalog_base = norm_measure(row["_catalog_source_unit"])
+            authored_factor, authored_base = norm_measure(source_unit)
+            unit_matches = bool(
+                normalize_unit(catalog_base)
+                and normalize_unit(catalog_base) == normalize_unit(authored_base)
+                and math.isfinite(catalog_factor) and catalog_factor > 0
+                and math.isfinite(authored_factor) and authored_factor > 0
+            )
+            if unit_matches and source_qty is not None:
+                comparable_qty = source_qty * authored_factor / catalog_factor
+        else:
+            cell_units = {normalize_unit(item) for item in values}
+            joined = normalize_unit(" ".join(str(item) for item in values))
+            unit_matches = unit_norm in cell_units or unit_norm in joined
+        if not unit_matches:
             return {
                 "field": "unit",
                 "source_value": " / ".join(
@@ -1908,7 +1924,7 @@ def _unconfirmed_source_change(
         isinstance(numbers, list)
         and numbers
         and source_qty is not None
-        and not any(quantities_close(float(source_qty), float(item)) for item in numbers)
+        and not any(quantities_close(float(comparable_qty), float(item)) for item in numbers)
     ):
         return {
             "field": "quantity",
@@ -1993,6 +2009,17 @@ def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, A
             "message": "единица исходной строки не указана; код её не угадывает",
         }
 
+    if cited is None:
+        source_scale, _source_base = norm_measure(source_unit)
+        if not math.isfinite(source_scale) or source_scale <= 0:
+            return None, {
+                **base_trace, "status": "needs_input", "norm_unit": norm_unit,
+                "message": "масштаб исходной единицы должен быть положительным конечным числом",
+            }
+        physical = float(raw_qty) * source_scale
+        if source_scale != 1.0:
+            extra["source_measure_factor"] = source_scale
+
     source_base_unit = _canon_unit(source_unit) if source_unit else norm_base_unit
     if cited is None and source_base_unit != norm_base_unit:
         si = _unit_conversion_factor(source_base_unit, norm_base_unit)
@@ -2006,10 +2033,15 @@ def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, A
                     "и conversion_source; код не извлекает фасовку или габарит из названия"
                 ),
             }
-        physical = round(float(raw_qty) * si, 9)
-        extra = {"status": "unit_conversion", "si_factor": si}
+        physical = round(float(physical) * si, 9)
+        extra = {**extra, "status": "unit_conversion", "si_factor": si}
 
     norm_qty = round(float(physical) / float(scale or 1.0), 9)
+    if not math.isfinite(norm_qty):
+        return None, {
+            **base_trace, **extra, "status": "needs_input", "norm_unit": norm_unit,
+            "message": "перевод объёма переполняет числовой диапазон; проверьте количество и единицы",
+        }
     status = str(extra.get("status") or "")
     if not status:
         status = (
@@ -2027,6 +2059,11 @@ def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, A
         formula = (
             f"calc_quantity {extra['calc_quantity']:g} / {scale:g} = {norm_qty} "
             f"({extra.get('conversion_source')})"
+        )
+    elif extra.get("source_measure_factor") is not None:
+        formula = (
+            f"{raw_qty} {source_unit} × {extra['source_measure_factor']:g} "
+            f"× {extra.get('si_factor', 1):g} / {scale:g} = {norm_qty}"
         )
     elif extra.get("si_factor") not in (None, 1.0) or scale != 1.0:
         formula = (

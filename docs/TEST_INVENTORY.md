@@ -1,5 +1,19 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 848: regressions reproduce 100-fold money error for an already scaled
+source measure, lost multiplier in kg→t, overflow, equivalent-measure rejection
+through actual catalog/adapter/money, and unit matched inside a title.
+Notation aliases keep the physical dimension; wrong quantity remains rejected.
+VOR regression reproduces model XLSX operations replaced by spec reader/dictionary;
+material mismatch and model open_gap must remain visible with unchanged rows.
+Focused quantity/price gate 116 passed; VOR/trace 137 passed. Canonical full gate
+2045 passed / 20 existing opt-in skipped / 5 warnings, 194.36 seconds;
+verify 2065 collected, compileall/version/architecture and active artifacts pass.
+Installed acceptance remains pending.
+New EOM installed 847 B1 delivered 83 rows/51 source addresses, but independent
+source check found 11 material errors and one model unresolved operation.
+Downloading a complete file did not establish professional readiness.
+
 Build 847: four regressions reproduce sparse PDF/CSV row compaction losing quantity
 column identity. Two integration cases include an optional supplier, adjacent
 mass and different blank fields; a synthetic gridded PDF uses actual find_tables.

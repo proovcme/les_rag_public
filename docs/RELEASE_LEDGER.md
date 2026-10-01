@@ -1,5 +1,31 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.120 / 848 (01.10, Codex):** исправлена 100-кратная ошибка
+арифметики исходной масштабированной единицы. Равные физические меры дают
+одну сумму; catalog→adapter→money использует подтверждённую колонку единиц,
+переполнение становится needs_input. Выборы модели/объёмы не переписываются.
+VOR XLSX packager больше не заменяет готовые model decisions исходной
+спецификацией и derive dictionary. Роли/связи/open_gap сохраняются в самом
+файле, материалы сверяются с исходником, source audit сохраняется в replay.
+Regressions red before, quantity/price focused 116 passed, VOR/trace 137 passed.
+Offline: 2045 passed / 20 existing opt-in skipped / 5 warnings, 194.36 с;
+verify 2065 collected, compileall/version/architecture passed. Active artifact
+gate: 49818 norms / 504891 resources / 1576 FSEM / 281223 book rows, hashes stable.
+Installed проверки ожидаются; customer-ready не объявлено.
+
+**Замер 847, exact 6fb49c8a (01.10):** installed 12/12 hashes, native RRF
+1/1, basic 9 pass / 1 diagnostics WARN / 0 fail, immutable VOR/LSR recovery
+same revisions/bytes/SHA. ЭОМ PDF→ВОР B0: 310.6 с, no file; ложные quantity
+unconfirmed устранены, остаются две ошибочные авторские ссылки на крепёж
+вместо труб (метры против штук). B1: 1058.7 с, 51/51 source rows, 83 rows
+(31 work/44 material/7 header/1 unresolved), revision
+rev_5552cc9f1af0401f8cf83eb4733ecaf7, 11635 bytes, SHA
+8ff15c8307e0d762b04a763448c5763e5658540bbe1c70086b810c66806c5500.
+Независимая сверка на оригинале обнаружила 11 ошибочных material source/quantity
+привязок, ранее не отражённых в файле. Это провал полноты, не готовая ВОР.
+Receipts: artifacts/live_847/eom_vor_candidate_64k/independent_source_audit.json.
+Большой 318-row live gate и точный Windows installer gate остаются открыты.
+
 **Кандидат 0.31.119 / 847 (01.10, Codex):** исправлена измеренная потеря
 колонок в разреженном цифровом PDF. `pdf_layout._table_to_markdown` больше
 не сжимает каждую строку независимо: пустые ячейки сохраняют заголовки единиц,

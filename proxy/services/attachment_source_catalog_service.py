@@ -9,9 +9,12 @@ It does not choose norms or rewrite model cells.
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+from proxy.smeta_core.unit_contract import norm_measure
 
 CATALOG_SCHEMA = "les.attachment-source-catalog.v2"
 _WORK_UNITS = {
@@ -71,11 +74,19 @@ def normalize_unit(value: Any) -> str:
         .replace("м²", "м2")
         .replace("m²", "м2")
         .replace("м^2", "м2")
+        .replace("м³", "м3")
+        .replace("m³", "m3")
+        .replace("м^3", "м3")
         .replace("шт.", "шт")
         .replace(".", "")
         .replace(" ", "")
     )
-    return text.strip()
+    text = text.strip()
+    return {
+        "пм": "м", "мп": "м", "погм": "м",
+        "штука": "шт", "штуки": "шт", "штук": "шт",
+        "комплект": "компл",
+    }.get(text, text)
 
 
 def _sha256_file(path: Path) -> str:
@@ -795,6 +806,20 @@ def sheet_coverage_from_missing(
     return {"included": included, "omitted": omitted}
 
 
+def header_bound_unit(row: CatalogRow) -> str | None:
+    """A unique source unit column, including a known but empty unit cell."""
+    columns = []
+    for column, label in getattr(row, "column_headers", ()):
+        marker = "".join(ch for ch in label.casefold() if ch.isalnum())
+        if marker.startswith(("едизм", "единицаизмер", "единицыизмер", "unit")) or marker in {
+            "ед", "единица", "единицы",
+        }:
+            columns.append(column)
+    if len(columns) != 1:
+        return None
+    return next((cell.display_value for cell in row.cells if cell.column == columns[0]), "")
+
+
 def compare_model_row_to_catalog(
     row: Mapping[str, Any],
     catalog: AttachmentSourceCatalog,
@@ -810,17 +835,35 @@ def compare_model_row_to_catalog(
     if isinstance(quantity, bool):
         quantity = None
     candidates = quantity_candidates(catalog_row)
+    source_unit = header_bound_unit(catalog_row)
+    unit = normalize_unit(row.get("unit"))
+    equivalent_measure = False
+    comparable_quantity = quantity
+    if source_unit is not None and unit:
+        source_factor, source_base = norm_measure(source_unit)
+        model_factor, model_base = norm_measure(row.get("unit"))
+        equivalent_measure = bool(
+            normalize_unit(source_base)
+            and normalize_unit(source_base) == normalize_unit(model_base)
+            and math.isfinite(source_factor) and source_factor > 0
+            and math.isfinite(model_factor) and model_factor > 0
+        )
+        if equivalent_measure and isinstance(quantity, (int, float)):
+            comparable_quantity = float(quantity) * model_factor / source_factor
     if isinstance(quantity, (int, float)):
         if candidates:
-            if not any(quantities_close(float(quantity), number) for number in candidates):
+            if not any(quantities_close(float(comparable_quantity), number) for number in candidates):
                 errors.append(f"source_quantity_mismatch:{source_row}")
         elif getattr(catalog_row, "quantity_column_known", False):
             errors.append(f"source_quantity_unconfirmed:{source_row}")
-    unit = normalize_unit(row.get("unit"))
     if unit:
-        cell_units = {normalize_unit(item) for item in catalog_row.values}
-        joined = normalize_unit(" ".join(catalog_row.values))
-        if unit not in cell_units and unit not in joined:
+        if source_unit is not None:
+            unit_matches = equivalent_measure
+        else:
+            cell_units = {normalize_unit(item) for item in catalog_row.values}
+            joined = normalize_unit(" ".join(catalog_row.values))
+            unit_matches = unit in cell_units or unit in joined
+        if not unit_matches:
             errors.append(f"source_unit_mismatch:{source_row}")
     return errors
 

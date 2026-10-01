@@ -620,6 +620,51 @@ async def test_vor_can_package_exact_model_rows_from_a_pdf_without_renumbering(t
         workbook.close()
     assert values[0][1:6] == ("ЭОМ", "Прокладка кабеля", None, "м", 12.5)
     assert "source.pdf#42" in values[0][6]
+
+
+@pytest.mark.asyncio
+async def test_vor_from_xlsx_preserves_authored_operations_and_gaps(tmp_path, monkeypatch):
+    from proxy.services import workbook_tool_service as service
+    from proxy.services import spec_to_bor_service
+
+    source = _source_workbook(tmp_path / "Спецификация.xlsx")
+    decisions = [
+        {"source_row": "Sheet!R2", "title": "Авторский монтаж воздуховода", "row_role": "work",
+         "unit": "м", "quantity": 12.5, "open_gap": "Требуется подтвердить крепления"},
+        {"source_row": "Sheet!R2", "title": "Воздуховод", "row_role": "material",
+         "work_row": "Sheet!R2", "unit": "м", "quantity": 12.5},
+    ]
+    def forbidden_guess(*_args, **_kwargs):
+        raise AssertionError("code must not choose or replace an authored operation")
+    monkeypatch.setattr(spec_to_bor_service, "derive_work_for_item", forbidden_guess)
+    target = tmp_path / "ВОР.xlsx"
+    result = await service._default_vor_adapter(source, {"decisions": decisions}, target, lambda *_: None)
+    assert result["source_rows"] == 2
+    assert result["requires_decision_count"] == 1
+    wb = openpyxl.load_workbook(target, data_only=True)
+    rows = list(wb.active.iter_rows(min_row=4, values_only=True))
+    assert [r[2] for r in rows] == [r["title"] for r in decisions]
+    assert rows[0][9] == "work" and rows[1][9:11] == ("material", "Sheet!R2")
+    assert "Требуется подтвердить крепления" in rows[0][11]
+    assert "ЧЕРНОВИК" in wb.active["A2"].value
+    wb.close()
+
+
+@pytest.mark.asyncio
+async def test_vor_material_quantity_mismatch_is_visible_without_rewriting(tmp_path):
+    from proxy.services import workbook_tool_service as service
+    source = _source_workbook(tmp_path / "Исходник.xlsx")
+    decisions = [{"source_row": "Sheet!R2", "title": "Воздуховод", "row_role": "material",
+                  "unit": "м", "quantity": 99}]
+    target = tmp_path / "ВОР.xlsx"
+    result = await service._default_vor_adapter(source, {"decisions": decisions}, target, lambda *_: None)
+    assert result["vor_source_errors"] == ["source_quantity_mismatch:Sheet!R2"]
+    assert result["requires_decision_count"] == 1
+    wb = openpyxl.load_workbook(target, data_only=True)
+    assert wb.active["F4"].value == 99 and decisions[0]["quantity"] == 99
+    assert "исходной строкой" in wb.active["L4"].value
+    assert "ТРЕБУЕТ" in wb.active["I4"].value
+    wb.close()
 def test_stage_d_price_basis_period_conflict_is_explicit():
     """§8: a Q2 book must not be presented as a Q3 calculation."""
     from proxy.services.lsr_workbook_adapter_service import summarize_lsr_price_basis

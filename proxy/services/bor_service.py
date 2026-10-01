@@ -196,8 +196,13 @@ def source_rows_to_vor_xlsx(
     sheet.append([title])
     sheet["A1"].font = Font(bold=True, size=13)
     sheet.append([])
+    if any(row.get("requires_decision") or row.get("open_gap") or row.get("source_audit") for row in rows):
+        sheet["A2"] = "ЧЕРНОВИК — есть вопросы к исходным объёмам или решениям; см. примечания строк"
+    authored_columns = any(row.get("row_role") or row.get("work_row") or row.get("open_gap") or row.get("source_audit") for row in rows)
     headers = ["№", "Раздел", "Наименование", "Код/Шифр", "Ед. изм.", "Кол-во",
                "Источник", "Предполагаемая работа", "Статус решения"]
+    if authored_columns:
+        headers += ["Тип строки", "Связанная работа", "Замечания / проверка исходника"]
     sheet.append(headers)
     for cell in sheet[3]:
         cell.font = Font(bold=True)
@@ -212,7 +217,7 @@ def source_rows_to_vor_xlsx(
             locator = f"{locator} ({source_row})" if locator else source_row
         requires_decision = bool(row.get("requires_decision"))
         proposed = str(row.get("derived_work") or "").strip()
-        sheet.append([
+        values = [
             index,
             str(row.get("section") or "").strip(),
             str(row.get("name") or row.get("work_name") or "").strip(),
@@ -227,10 +232,14 @@ def source_rows_to_vor_xlsx(
                 else "ТРЕБУЕТ РЕШЕНИЯ" if requires_decision
                 else "подтверждено" if proposed else ""
             ),
-        ])
+        ]
+        if authored_columns:
+            values += [str(row.get("row_role") or ""), str(row.get("work_row") or ""),
+                       "; ".join(str(row.get(key) or "").strip() for key in ("open_gap", "source_audit") if row.get(key))]
+        sheet.append(values)
 
     for column, width in {"A": 6, "B": 18, "C": 60, "D": 16, "E": 10, "F": 12, "G": 42,
-                          "H": 46, "I": 18}.items():
+                          "H": 46, "I": 18, **({"J": 14, "K": 20, "L": 64} if authored_columns else {})}.items():
         sheet.column_dimensions[column].width = width
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)

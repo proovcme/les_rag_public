@@ -1299,6 +1299,7 @@ def _attach_catalog_facts(
         return
     try:
         from proxy.services.attachment_source_catalog_service import (
+            header_bound_unit,
             load_catalog_from_attachment_id,
             quantity_candidates,
         )
@@ -1322,6 +1323,9 @@ def _attach_catalog_facts(
         item["_catalog_source_quantity_known"] = bool(
             getattr(cat_row, "quantity_column_known", False)
         )
+        catalog_unit = header_bound_unit(cat_row)
+        if catalog_unit is not None:
+            item["_catalog_source_unit"] = catalog_unit
 
 
 async def build_lsr_workbook_from_decisions(

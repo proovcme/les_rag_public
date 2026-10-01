@@ -2855,6 +2855,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/rim_lsr_trace_service.py",
+        "proxy/services/workbook_tool_service.py",
         "tests/test_attachment_source_catalog_service.py",
         "tests/test_catalog_header_quantity_binding.py",
         "tests/test_catalog_quantity_gap_cases.py",
@@ -2864,13 +2865,14 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 863,
+      "lines": 906,
       "module": "proxy.services.attachment_source_catalog_service",
       "outbound": [
         "backend/converter.py",
         "proxy/__init__.py",
         "proxy/services/__init__.py",
-        "proxy/services/chat_attachment_service.py"
+        "proxy/services/chat_attachment_service.py",
+        "proxy/smeta_core/unit_contract.py"
       ],
       "path": "proxy/services/attachment_source_catalog_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -2888,7 +2890,7 @@
         "tests/test_vor_route_columns_23.py",
         "tools/les_mcp_server.py"
       ],
-      "lines": 264,
+      "lines": 273,
       "module": "proxy.services.bor_service",
       "outbound": [
         "backend/parquet_writer.py",
@@ -4880,7 +4882,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 1530,
+      "lines": 1534,
       "module": "proxy.services.lsr_workbook_adapter_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6333,7 +6335,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 2801,
+      "lines": 2838,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6348,7 +6350,8 @@
         "proxy/services/nr_sp_service.py",
         "proxy/services/smeta_norm_store.py",
         "proxy/smeta_core/integrity.py",
-        "proxy/smeta_core/resource_normalizer.py"
+        "proxy/smeta_core/resource_normalizer.py",
+        "proxy/smeta_core/unit_contract.py"
       ],
       "path": "proxy/services/rim_lsr_trace_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -6987,6 +6990,7 @@
         "tests/test_spec_to_bor_uncertainty.py",
         "tests/test_vor_qty_header_variant_25.py",
         "tests/test_vor_route_columns_23.py",
+        "tests/test_workbook_tool_service.py",
         "tools/les_mcp_server.py"
       ],
       "lines": 573,
@@ -7572,12 +7576,13 @@
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 667,
+      "lines": 697,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/services/__init__.py",
         "proxy/services/artifact_revision_service.py",
+        "proxy/services/attachment_source_catalog_service.py",
         "proxy/services/bor_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
@@ -8011,7 +8016,9 @@
     },
     {
       "inbound": [
+        "proxy/services/attachment_source_catalog_service.py",
         "proxy/services/construction_harness_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
         "tests/test_smeta_application_boundary.py"
       ],
       "lines": 27,
@@ -8022,7 +8029,7 @@
         "proxy/smeta_core/norm_validator.py"
       ],
       "path": "proxy/smeta_core/unit_contract.py",
-      "status": "TEST_OR_TOOL_ONLY",
+      "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
     {
@@ -9509,7 +9516,7 @@
     },
     {
       "inbound": [],
-      "lines": 81,
+      "lines": 114,
       "module": "tests.test_catalog_header_quantity_binding",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py"
@@ -13169,7 +13176,7 @@
         "tests/test_fsem_machinist_service.py",
         "tests/test_lsr_rim_trace_api.py"
       ],
-      "lines": 1573,
+      "lines": 1634,
       "module": "tests.test_rim_lsr_trace_service",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -14908,7 +14915,7 @@
     },
     {
       "inbound": [],
-      "lines": 1277,
+      "lines": 1322,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
         "proxy/services/artifact_revision_service.py",
@@ -14917,6 +14924,7 @@
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/packaging_recovery_service.py",
         "proxy/services/rim_lsr_trace_service.py",
+        "proxy/services/spec_to_bor_service.py",
         "proxy/services/structured_extract.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py"
@@ -19547,12 +19555,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 361,
+    "product_reachable": 362,
     "registered_api_routes": 340,
     "runtime_support": 11,
-    "test_or_tool_only": 667,
+    "test_or_tool_only": 666,
     "tracked_python_files": 1040,
-    "tracked_python_lines": 360146
+    "tracked_python_lines": 360408
   },
   "warnings": []
 }

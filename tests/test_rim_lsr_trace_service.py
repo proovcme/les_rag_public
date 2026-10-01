@@ -161,6 +161,39 @@ def test_invalid_conversion_does_not_fall_back_to_pricing_otherwise_valid_quanti
         assert trace["authored_value"] == row[field]
 
 
+def test_equivalent_source_measures_produce_identical_money_without_double_scaling():
+    """61 m² and 0.61 hundreds of m² are the same physical work volume."""
+    for quantity, unit in [(61, "м2"), (0.61, "100 м2"), (0.061, "1000 м²"), (6.1, "10 м²")]:
+        authored = {"source_row": "R1", "row_role": "work", "title": "Same physical volume",
+                    "norm_code": CODE, "quantity": quantity, "unit": unit}
+        original = dict(authored)
+        result = build_lsr_trace_from_visible_rows([authored], pricebook=_Book())
+        assert result["summary"]["total"] == GOLD_TOTAL
+        assert result["row_bindings"][0]["quantity_trace"]["norm_quantity"] == GOLD_QTY
+        assert authored == original
+
+
+def test_source_measure_multiplier_survives_si_conversion(monkeypatch):
+    from proxy.services import gesn_service
+    norm = {"code": CODE, "name": "Authored work", "unit": "т", "resources": []}
+    monkeypatch.setattr(gesn_service, "get_norm", lambda *_args, **_kwargs: norm)
+    authored = {"source_row": "R1", "row_role": "work", "title": "Authored work",
+                "norm_code": CODE, "quantity": 1, "unit": "1000 кг"}
+    position = positions_from_visible_lsr_rows([authored])["positions"][0]
+    assert position["qty"] == 1
+    assert position["quantity_trace"]["source_quantity"] == 1
+    assert position["quantity_trace"]["source_unit"] == "1000 кг"
+
+
+def test_source_measure_overflow_is_an_explicit_quantity_gap():
+    from proxy.services.rim_lsr_trace_service import _norm_qty_from_visible_row
+    quantity, trace = _norm_qty_from_visible_row(
+        {"quantity": 2, "unit": str(10 ** 308) + " м"}, CODE, {"unit": "м"}
+    )
+    assert quantity is None
+    assert trace["status"] == "needs_input"
+
+
 def test_bad_numeric_row_preserves_good_row_calculation_and_gap():
     valid = {"source_row": "R1", "row_role": "work", "title": "First",
              "norm_code": CODE, "quantity": 61, "unit": "м2"}
@@ -1223,6 +1256,34 @@ def test_adapter_stamps_catalog_facts_without_rewriting_model_cells(monkeypatch)
     assert decisions[0]["unit"] == snapshot["unit"]
     assert decisions[0]["_catalog_source_values"] == ["м.п", "30"]
     assert decisions[0]["_catalog_source_numbers"] == [30.0]
+
+
+def test_equivalent_measure_passes_real_catalog_adapter_and_money_trace(tmp_path, monkeypatch):
+    from openpyxl import Workbook
+    from proxy.services import attachment_source_catalog_service as catalog_module
+    from proxy.services import lsr_workbook_adapter_service as adapter_module
+
+    path = tmp_path / "Объёмы с масштабом.xlsx"
+    wb = Workbook()
+    wb.active.append(["Наименование", "Ед. изм.", "Количество"])
+    wb.active.append(["Устройство обрешетки", "м²", 61])
+    wb.save(path)
+    catalog = catalog_module.load_tabular_source_catalog(path)
+    monkeypatch.setattr(catalog_module, "load_catalog_from_attachment_id", lambda _: catalog)
+    for qty, unit in [(61, "м2"), (0.61, "100 м2"), (0.061, "1000 м²")]:
+        row = {"source_row": "Sheet!R2", "title": "Устройство обрешетки", "row_role": "work",
+               "quantity": qty, "unit": unit, "norm_code": CODE, "nr_sp_rule_id": "nrsp-12"}
+        assert catalog_module.compare_model_row_to_catalog(row, catalog) == []
+        adapter_module._attach_catalog_facts([row], "read_test")
+        trace = build_lsr_trace_from_visible_rows([row], pricebook=_Book())
+        assert trace["row_bindings"][0]["status"] == "bound"
+        assert trace["summary"]["total"] == GOLD_TOTAL
+        assert row["quantity"] == qty and row["unit"] == unit
+
+    wrong = {"source_row": "Sheet!R2", "title": "Монтаж обрешетки", "row_role": "work",
+             "quantity": 61, "unit": "м", "norm_code": CODE}
+    adapter_module._attach_catalog_facts([wrong], "read_test")
+    assert build_lsr_trace_from_visible_rows([wrong], pricebook=_Book())["row_bindings"][0]["status"] == "unconfirmed_quantity"
 
 
 # ---------------------------------------------------------------- stage V split states

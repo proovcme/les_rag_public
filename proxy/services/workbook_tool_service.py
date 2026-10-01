@@ -182,6 +182,9 @@ def _vor_rows_from_draft(draft: Any, *, source_label: str) -> list[dict[str, Any
             "qty": item.get("quantity") if item.get("quantity") not in (None, "") else item.get("qty"),
             "source_file": source_label,
             "pos": source_row,
+            "row_role": str(item.get("row_role") or "").strip(),
+            "work_row": str(item.get("work_row") or "").strip(),
+            "open_gap": str(item.get("open_gap") or "").strip(),
         })
     return rows
 
@@ -300,6 +303,7 @@ _CALCULATION_SNAPSHOT_FIELDS = (
     "pricing_status", "norms_status", "price_gaps", "price_basis", "norm_conflicts",
     "calculated_positions", "row_projection", "positions_built", "confirmed_amount",
     "preliminary_amount",
+    "vor_source_errors",
 )
 
 
@@ -335,9 +339,11 @@ async def _default_vor_adapter(
     from proxy.services.spec_to_bor_service import rows_from_spec_xlsx
 
     source_label = str(args.get("_source_name") or source_path.name)
-    rows: list[dict[str, Any]] = []
+    draft = list(args.get("decisions") or [])
+    authored = bool(draft)
+    rows: list[dict[str, Any]] = _vor_rows_from_draft(draft, source_label=source_label) if authored else []
     spec_error: Exception | None = None
-    if source_path.suffix.lower() in {".xlsx", ".xlsm"}:
+    if not authored and source_path.suffix.lower() in {".xlsx", ".xlsm"}:
         try:
             rows = await asyncio.to_thread(
                 rows_from_spec_xlsx,
@@ -352,14 +358,35 @@ async def _default_vor_adapter(
         raise spec_error
     from proxy.services.spec_to_bor_service import derive_work_for_item
 
+    source_errors: list[str] = []
+    if authored:
+        from proxy.services.attachment_source_catalog_service import (
+            compare_model_row_to_catalog, load_tabular_source_catalog,
+        )
+        catalog = await asyncio.to_thread(load_tabular_source_catalog, source_path)
+        messages = {
+            "source_quantity_mismatch": "Количество расходится с исходной строкой",
+            "source_quantity_unconfirmed": "Количество не подтверждено исходной строкой",
+            "source_unit_mismatch": "Единица измерения расходится с исходной строкой",
+            "source_row_not_in_catalog": "Ссылка на исходную строку не найдена",
+        }
+        for item, rendered in zip(draft, rows, strict=True):
+            if rendered["row_role"] in {"header", "note", "subtotal"}:
+                continue
+            errors = compare_model_row_to_catalog(item, catalog) if catalog is not None else ["source_catalog_unavailable"]
+            source_errors.extend(errors)
+            rendered["source_audit"] = "; ".join(messages.get(error.split(":", 1)[0], "Исходные объёмы не проверены") for error in errors)
+
     requires_decision_count = 0
     for row in rows:
         if not isinstance(row, dict):
             continue
-        proposed, needs = derive_work_for_item(str(row.get("name") or row.get("work_name") or ""))
+        proposed, needs = ("", False) if authored else derive_work_for_item(str(row.get("name") or row.get("work_name") or ""))
         row["derived_work"] = proposed
         row["requires_decision"] = (
             bool(row.get("requires_decision")) or needs or bool(row.get("quantity_issue"))
+            or bool(row.get("open_gap")) or bool(row.get("source_audit"))
+            or str(row.get("row_role") or "").casefold() == "unresolved"
         )
         if row["requires_decision"]:
             requires_decision_count += 1
@@ -372,6 +399,8 @@ async def _default_vor_adapter(
     )
     missing: list[str] = []
     for index, row in enumerate(rows, 1):
+        if row.get("row_role") in {"header", "note", "subtotal"}:
+            continue
         if not str(row.get("unit") or "").strip():
             missing.append(f"row:{index}:unit")
         if row.get("qty") is None:
@@ -384,6 +413,7 @@ async def _default_vor_adapter(
         "source_rows": len(rows),
         "requires_decision_count": requires_decision_count,
         "missing": missing,
+        "vor_source_errors": list(dict.fromkeys(source_errors)),
         "blockers": (["NO_SOURCE_ROWS"] if not rows else []),
     }
 

@@ -79,3 +79,36 @@ def test_sheet_without_header_keeps_legacy_candidates(tmp_path):
     # data row still yields its quantities.
     row = catalog.lookup("Лист1!R2")
     assert 120.0 in quantity_candidates(row)
+
+
+def test_equivalent_counted_units_verify_without_changing_authored_row(tmp_path):
+    path = _write(tmp_path, ["№", "Наименование", "Ед. изм.", "Количество", "Масса, кг"],
+                  [[1, "Монтаж изделия", "шт.", 25, 0.35]])
+    catalog = load_tabular_source_catalog(path)
+    for quantity, unit in [(25, "шт."), (0.25, "100 шт."), (0.025, "1000 шт.")]:
+        authored = {"source_row": "Лист1!R2", "quantity": quantity, "unit": unit}
+        original = dict(authored)
+        assert compare_model_row_to_catalog(authored, catalog) == []
+        assert authored == original
+    assert "source_quantity_mismatch:Лист1!R2" in compare_model_row_to_catalog(
+        {"source_row": "Лист1!R2", "quantity": 25, "unit": "100 шт."}, catalog
+    )
+
+
+def test_known_unit_column_does_not_match_a_letter_in_the_work_title(tmp_path):
+    path = _write(tmp_path, ["№", "Наименование", "Ед. изм.", "Количество"],
+                  [[1, "Монтаж изделия", "кг", 25]])
+    catalog = load_tabular_source_catalog(path)
+    assert "source_unit_mismatch:Лист1!R2" in compare_model_row_to_catalog(
+        {"source_row": "Лист1!R2", "quantity": 25, "unit": "м"}, catalog
+    )
+
+
+def test_source_unit_notation_aliases_keep_physical_dimension(tmp_path):
+    for source_unit, model_unit in [("п.м.", "м"), ("м³", "м3"), ("шт.", "штук")]:
+        path = _write(tmp_path, ["№", "Наименование", "Ед. изм.", "Количество"],
+                      [[1, "Монтаж изделия", source_unit, 25]])
+        catalog = load_tabular_source_catalog(path)
+        assert compare_model_row_to_catalog(
+            {"source_row": "Лист1!R2", "quantity": 25, "unit": model_unit}, catalog
+        ) == []
