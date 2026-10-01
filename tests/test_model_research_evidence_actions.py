@@ -62,6 +62,42 @@ def chosen_book():
 
 
 @pytest.mark.asyncio
+async def test_visible_deferred_norm_pointer_reads_full_resources_without_another_search():
+    from proxy.services import chat_evidence_application_service as chat_evidence
+    searches, reads = [], []
+    card = {"norm_key": "norm-immutable", "norm_code": NORM_CODE, "title": "Selected norm",
+            "source_ref": "typed#norm-immutable", "measure_unit": "m",
+            "work_steps": ["Literal complete conditions " + "x" * 5000], "resource_count": 1}
+
+    def search(query, *, limit):
+        searches.append(query)
+        return {"cards": [card], "retrieval_trace": {"rag": {"status": "ok"}}}
+
+    def exact(**pointer):
+        reads.append(pointer)
+        return {"status": "ok", "card": {**card, "resources": [
+            {"kind": "material", "code": RESOURCE_CODE, "name": "Literal resource", "unit": "kg", "per_unit": 7.25}],
+            "resources_complete": True, "resources_returned": 1, "resource_consumption_known": True}}
+
+    reader = service(smeta_norm_retrieve=search, norm_card_reader=exact)
+    found = await reader.execute({"tool": "search_sources", "args": {"q": "literal model query", "target": "norms"}})
+    groups, pointers, deferred = chat_evidence.build_model_rag_evidence_groups(
+        [("literal model query", found.chunks)], max_chars=1400, hits_per_query=6)
+    assert deferred == ["Q1.H1"] and groups
+    pointer = pointers[0]
+    assert pointer.meta["body_status"] == "deferred_capacity" and pointer.meta["card_body_shown"] is False
+    assert card["work_steps"][0] not in pointer.content
+    reader.register_shown_norm_cards(pointers)
+    result = await reader.execute({"tool": "read_norm_card", "args": {"norm_key": "norm-immutable", "norm_code": NORM_CODE}})
+    assert searches == ["literal model query"] and len(reads) == 1
+    assert result.payload["status"] == "ok"
+    assert result.chunks[0].meta["body_status"] == "full"
+    assert result.chunks[0].meta["normative_card_identity"] == pointer.meta["normative_card_identity"]
+    assert card["work_steps"][0] in result.chunks[0].content
+    assert '"per_unit": 7.25' in result.chunks[0].content and '"unit": "kg"' in result.chunks[0].content
+
+
+@pytest.mark.asyncio
 async def test_model_document_target_uses_selected_native_rrf_without_norm_fallback():
     calls = []
 

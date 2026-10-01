@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from proxy.services.rim_lsr_trace_service import (
     build_lsr_trace,
     build_lsr_trace_from_visible_rows,
@@ -11,6 +13,272 @@ from proxy.services.rim_lsr_trace_service import (
 
 
 CODE = "ГЭСН12-01-034-02"
+
+
+def _active_resource_norm(monkeypatch):
+    from proxy.services import gesn_service
+    norm = {"code": "ГЭСНм08-02-409-09", "name": "Authored work", "unit": "100 м",
+            "resources": [
+                {"kind": "material", "code": "A-1", "name": "Target", "unit": "m", "per_unit": 2, "price": 777},
+                {"kind": "material", "code": "A-10", "name": "Other", "unit": "m", "per_unit": 3, "price": 888},
+            ]}
+    monkeypatch.setattr(gesn_service, "get_norm", lambda *_args, **_kwargs: norm)
+    return {"source_row": "S!R2", "operation_id": "op_model", "row_role": "work", "title": "Authored work",
+            "quantity": 1000, "unit": "м", "norm_code": norm["code"], "norm_status": "EXACT",
+            "nr_sp_rule_id": "nrsp-49.3", "evidence_refs": ["Q1.H1"]}
+
+
+def test_active_model_resource_reuse_preserves_consumption_and_zero_outranks_book(monkeypatch):
+    row = _active_resource_norm(monkeypatch)
+    row["resource_bindings"] = [{"action": "reuse", "target_resource_code": "A-1",
+                                 "reason": "Authored reuse", "basis_ref": "S!R2", "source_refs": ["Q1.H1"]}]
+
+    class Book:
+        def __init__(self):
+            self.lookups = []
+
+        def lookup(self, code):
+            self.lookups.append(code)
+            return {"price_current": 100, "unit": "m"}
+
+    book = Book()
+    trace = build_lsr_trace_from_visible_rows([row], pricebook=book)
+    binding = trace["row_bindings"][0]
+    resources = binding["resource_decisions"]
+    reused = next(item for item in resources if item["code"] == "A-1")
+    assert (reused["unit"], reused["per_unit"], reused["qty"], reused["price"], reused["cost"]) == ("m", 2, 20, 0, 0)
+    assert reused["price_source"] == "reuse"
+    assert reused["price_basis"] == "S!R2"
+    assert book.lookups == ["A-10"]
+    assert binding["resource_binding_audit"][0]["target"]["per_unit"] == 2
+    assert binding["source_row"]["resource_bindings"] == row["resource_bindings"]
+    assert binding["position"]["source_quantity"] == 1000
+    assert binding["position"]["qty"] == 10
+
+
+def test_active_model_resource_exclusion_can_produce_empty_resources_without_rehydration(monkeypatch):
+    row = _active_resource_norm(monkeypatch)
+    row["resource_bindings"] = [{"action": "exclude", "target_resource_code": code,
+                                 "reason": "Authored exclusion", "source_refs": ["Q1.H1"]}
+                                for code in ("A-1", "A-10")]
+    position = positions_from_visible_lsr_rows([row])["positions"][0]
+    assert position["resources"] == []
+    result = build_position_trace(position)
+    assert result["summary"]["resource_decisions"] == []
+    assert [item["status"] for item in result["summary"]["resource_binding_audit"]] == ["applied", "applied"]
+
+
+def test_active_model_resource_invalid_replacement_preserves_model_and_target_and_is_visible(monkeypatch):
+    row = _active_resource_norm(monkeypatch)
+    action = {"action": "replace", "target_resource_code": "A-1", "resource_name": "Replacement",
+              "unit": "m", "quantity": -1, "reason": "Authored replacement", "source_refs": ["Q1.H1"]}
+    row["resource_bindings"] = [action]
+    trace = build_lsr_trace_from_visible_rows([row])
+    binding = trace["row_bindings"][0]
+    assert binding["code"] == row["norm_code"]
+    assert binding["norm_status"] == "EXACT"
+    assert [item["code"] for item in binding["resource_decisions"]] == ["A-1", "A-10"]
+    assert binding["resource_bindings"] == [action]
+    assert binding["resource_binding_conflicts"][0]["proposal"] == action
+    assert binding["readiness"]["conflicts_ok"] is False
+    assert "resource_binding_conflict" in binding["readiness"]["open_reasons"]
+    assert any("Конфликт действия над ресурсом" in flag for flag in trace["summary"]["flags"])
+    assert trace["sections"][0]["positions"][0]["summary"]["full_amount"] is None
+
+
+def test_active_model_resource_source_work_quantity_is_not_norm_quantity(monkeypatch):
+    row = _active_resource_norm(monkeypatch)
+    row["resource_bindings"] = [{"action": "add", "resource_name": "Authored material", "unit": "m",
+                                 "quantity_basis": "source_work", "reason": "Source quantity", "basis_ref": "S!R2"}]
+    position = positions_from_visible_lsr_rows([row])["positions"][0]
+    added = position["resources"][-1]
+    assert position["qty"] == 10
+    assert position["source_quantity"] == 1000
+    assert added["per_unit"] == 100
+    assert added["resource_binding"]["physical_quantity"] == 1000
+    trace = build_position_trace(position)
+    added_decision = next(item for item in trace["summary"]["resource_decisions"] if item["name"] == "Authored material")
+    assert added_decision["qty"] == 1000
+
+
+def test_active_model_resource_optional_review_does_not_invent_component_gaps(monkeypatch):
+    row = _active_resource_norm(monkeypatch)
+    row["resource_review"] = {"status": "keep_all_confirmed", "reason": "Authored whole-resource review"}
+    position = positions_from_visible_lsr_rows([row])["positions"][0]
+    assert "resources" not in position
+    summary = build_position_trace(position)["summary"]
+    assert summary["resource_review_status"] == "keep_all_confirmed"
+    assert not {"labor_review_unresolved", "machine_review_unresolved", "material_review_unresolved"} & set(summary["completeness_reasons"])
+
+
+def test_active_model_resource_supply_preserves_materials_and_exposes_unresolved_overlap(monkeypatch):
+    row = _active_resource_norm(monkeypatch)
+    row["resource_bindings"] = [{"action": "reuse", "target_resource_code": "A-1",
+                                 "reason": "Authored reuse", "basis_ref": "S!R2"}]
+    supply = {"source_row": "S!R3", "row_role": "material", "work_row": "S!R2", "supply_kind": "supply",
+              "title": "Separate supply", "unit": "m", "quantity": 1000}
+    trace = build_lsr_trace_from_visible_rows([row, supply])
+    binding = trace["row_bindings"][0]
+    assert binding["resource_binding_audit"][0]["status"] == "applied"
+    overlap = next(item for item in binding["resource_binding_conflicts"] if item["code"] == "separate_supply_possible_overlap")
+    assert {item["code"] for item in overlap["norm_material_resources"]} == {"A-1", "A-10"}
+    assert {item["code"] for item in binding["resource_decisions"]} == {"A-1", "A-10"}
+    assert next(item for item in binding["resource_decisions"] if item["code"] == "A-1")["price"] == 0
+    assert binding["readiness"]["conflicts_ok"] is False
+    assert trace["sections"][0]["positions"][0]["summary"]["full_amount"] is None
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_active_model_resource_linked_supply_exact_exclusion_keeps_consumables_and_parent_ambiguity(monkeypatch, ambiguous):
+    row = _active_resource_norm(monkeypatch)
+    row["resource_bindings"] = [{"action": "exclude", "target_resource_code": "A-1",
+                                 "reason": "Supplied separately", "basis_ref": "S!R3", "source_refs": ["Q1.H1"]}]
+    row["_resource_binding_evidence_checks"] = [{"index": 0, "target_code_in_refs": True}]
+    supply = {"source_row": "S!R3", "row_role": "material", "work_row": "S!R2", "resource_code": "A-1",
+              "title": "Separate supply", "unit": "m", "quantity": 20}
+    rows = [row, supply]
+    if ambiguous:
+        rows.append({**row, "operation_id": "second_work", "title": "Other authored work"})
+    trace = build_lsr_trace_from_visible_rows(rows)
+    binding = trace["row_bindings"][0]
+    assert [item["code"] for item in binding["resource_decisions"]] == ["A-10"]
+    assert binding["resource_decisions"][0]["qty"] == 30
+    assert bool(binding["resource_binding_conflicts"]) is ambiguous
+    if ambiguous:
+        assert binding["resource_binding_conflicts"][-1]["parent_ambiguous"] is True
+        assert binding["readiness"]["conflicts_ok"] is False
+    else:
+        assert binding["readiness"]["conflicts_ok"] is True
+    assert trace["row_bindings"][1]["row_role"] == "material"
+
+
+def test_active_model_resource_legacy_supply_marker_preserves_exact_card(monkeypatch):
+    row = _active_resource_norm(monkeypatch)
+    position = positions_from_visible_lsr_rows([row])["positions"][0]
+    position["exclude_gesn_materials"] = True
+    trace = build_position_trace(position)
+    assert [item["code"] for item in trace["summary"]["resource_decisions"]] == ["A-1", "A-10"]
+    assert trace["summary"]["resource_binding_conflicts"][0]["code"] == "separate_supply_possible_overlap"
+    assert trace["summary"]["full_amount"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action,linked_supply", [("reuse", False), ("exclude", False), ("exclude", True)])
+async def test_active_model_resource_public_result_reaches_actual_adapter_and_xlsx(tmp_path, monkeypatch, action, linked_supply):
+    import copy
+    import json
+    from types import SimpleNamespace
+
+    import openpyxl
+
+    from proxy.services import attachment_source_catalog_service as catalog_service
+    from proxy.services import chat_evidence_application_service as chat_service
+    from proxy.services import lsr_workbook_adapter_service as adapter_service
+
+    row = _active_resource_norm(monkeypatch)
+    row["resource_bindings"] = [{"action": action, "target_resource_code": "A-1",
+                                 "reason": "Source says it is supplied", "basis_ref": "S!R2", "source_refs": ["Q2.H1"]}]
+    if action == "reuse":
+        row["resource_bindings"][0]["explicit_price"] = 0
+    authored_rows = [row]
+    if linked_supply:
+        row["resource_bindings"][0]["basis_ref"] = "S!R3"
+        authored_rows.append({"source_row": "S!R3", "row_role": "material", "work_row": "S!R2",
+                              "title": "Separate supply", "unit": "м", "quantity": 20,
+                              "norm_code": "", "resource_code": "A-1", "evidence_refs": ["Q2.H1"]})
+    answer = json.dumps({"rows": authored_rows}, ensure_ascii=False)
+    chunks = [
+        SimpleNamespace(content=f"Norm {row['norm_code']}\nA-1 Target 2 m\nA-10 Other 3 m", doc_name="smeta_norm_cards.v1",
+                        meta={"model_evidence_ref": "Q1.H1", "global_evidence_id": "norm-card", "norm_code": row["norm_code"]}),
+        SimpleNamespace(content=f"Original source {'S!R3' if linked_supply else 'S!R2'}: Target A-1 is supplied", doc_name="Original source",
+                        meta={"model_evidence_ref": "Q2.H1", "global_evidence_id": "source-card"}),
+    ]
+    parsed = chat_service.parse_model_rag_result(answer)
+    assert parsed is not None and parsed[0] == answer
+    decisions = chat_service.bind_row_evidence_ids(parsed[1], chunks)
+    assert decisions[0]["evidence_refs"] == ["Q1.H1"]
+    assert decisions[0]["_resource_binding_evidence_checks"][0]["evidence_bindings"] == {"Q2.H1": "source-card"}
+
+    source_path = tmp_path / "source.xlsx"
+    source_book = openpyxl.Workbook()
+    source_book.active.title = "S"
+    source_book.active.append(["Наименование", "Ед. изм.", "Количество"])
+    source_book.active.append(["Authored work", "м", 1000])
+    if linked_supply:
+        source_book.active.append(["Separate supply", "м", 20])
+    source_book.save(source_path)
+    source_book.close()
+    catalog = catalog_service.load_tabular_source_catalog(source_path)
+    monkeypatch.setattr(catalog_service, "load_catalog_from_attachment_id", lambda _: catalog)
+
+    class Book:
+        region = "Synthetic region"
+        source_sha256 = "a" * 64
+
+        def __init__(self):
+            self.lookups = []
+
+        def lookup(self, code):
+            self.lookups.append(code)
+            return {"price_current": 100, "unit": "m"}
+
+    book = Book()
+    monkeypatch.setattr(adapter_service, "visible_pricebook_stems", lambda: ["synthetic_2kv2026"])
+    monkeypatch.setattr(adapter_service.fgis_price_service, "resolve_pricebook_path", lambda *_args, **_kwargs: tmp_path / "synthetic_2kv2026.parquet")
+    monkeypatch.setattr(adapter_service.fgis_price_service, "get_pricebook", lambda _: book)
+    captured = {}
+    calculate = adapter_service.build_lsr_trace_from_visible_rows
+
+    def capture_calculation(*args, **kwargs):
+        trace = calculate(*args, **kwargs)
+        captured["trace"] = copy.deepcopy(trace)
+        return trace
+
+    monkeypatch.setattr(adapter_service, "build_lsr_trace_from_visible_rows", capture_calculation)
+    output = tmp_path / "authored-reuse.xlsx"
+    result = await adapter_service.build_lsr_workbook_from_decisions(
+        source_path, {"attachment_id": "synthetic-source", "decisions": decisions,
+                      "pricebook": "synthetic_2kv2026", "_source_text": "Authored source"},
+        output, lambda *_args: None,
+    )
+    assert result["file_path"] == output and output.is_file()
+    binding = captured["trace"]["row_bindings"][0]
+    assert binding["resource_binding_conflicts"] == []
+    assert binding["resource_bindings"] == row["resource_bindings"]
+    assert binding["resource_binding_audit"][0]["provenance"]["evidence_bindings"] == {"Q2.H1": "source-card"}
+    if action == "reuse":
+        reused = next(item for item in binding["resource_decisions"] if item["code"] == "A-1")
+        assert (reused["qty"], reused["price"], reused["cost"]) == (20, 0, 0)
+        assert reused["resource_binding"]["reason"] == "Source says it is supplied"
+    else:
+        assert all(item["code"] != "A-1" for item in binding["resource_decisions"])
+    assert book.lookups == (["A-10", "A-1"] if linked_supply else ["A-10"])
+    workbook = openpyxl.load_workbook(output, data_only=False)
+    try:
+        sheet = workbook["ЛСР РИМ"]
+        if action == "reuse":
+            resource_row = next(cells[1].row for cells in sheet.iter_rows() if cells[1].value == "A-1")
+            assert sheet.cell(resource_row, 4).value == "m"
+            assert sheet.cell(resource_row, 5).value == 2
+            assert sheet.cell(resource_row, 7).value == 20
+            assert sheet.cell(resource_row, 10).value == 0
+            assert sheet.cell(resource_row, 12).value == f"=ROUND(G{resource_row}*J{resource_row}*K{resource_row},2)"
+        elif linked_supply:
+            supply_resource_rows = [cells for cells in sheet.iter_rows() if cells[1].value == "A-1"]
+            assert len(supply_resource_rows) == 1
+            assert supply_resource_rows[0][6].value == 20
+            other = next(cells for cells in sheet.iter_rows() if cells[1].value == "A-10")
+            assert other[6].value == 30
+        else:
+            assert all(cells[1].value != "A-1" for cells in sheet.iter_rows())
+        check_text = "\n".join(str(cell.value or "") for cells in workbook["Проверка"].iter_rows() for cell in cells)
+        assert "Source says it is supplied" in check_text
+        assert "Q2.H1" in check_text and "S!R2" in check_text
+        if linked_supply:
+            assert "S!R3" in check_text
+        assert ("повторно использовать A-1" if action == "reuse" else "исключить A-1") in check_text
+    finally:
+        workbook.close()
 
 
 def test_mounting_norm_never_prices_an_explicit_supply_or_header(monkeypatch):
@@ -1056,7 +1324,7 @@ def test_confirmed_overlay_fixes_one_row_without_rewriting_others():
     assert by_row["A!R3"]["code"] == CODE
 
 
-def test_supply_row_excludes_gesn_materials_and_keeps_work_link(monkeypatch):
+def test_supply_row_preserves_gesn_materials_and_keeps_work_link_with_possible_overlap(monkeypatch):
     from proxy.services import gesn_service
 
     monkeypatch.setattr(
@@ -1105,7 +1373,15 @@ def test_supply_row_excludes_gesn_materials_and_keeps_work_link(monkeypatch):
         for position in section["positions"]
         if position.get("source_row") == "СКС!R2"
     )
-    assert not [row for row in work["rows"] if row.get("type") == "resource_material"]
+    materials = [row for row in work["rows"] if row.get("type") == "resource_material"]
+    assert len(materials) == 1
+    assert materials[0]["columns"]["3"] == "Аппарат из нормы"
+    assert materials[0]["columns"]["5"] == 1
+    assert materials[0]["columns"]["7"] == 1
+    assert work["summary"]["full_amount"] is None
+    assert work["summary"]["resource_binding_conflicts"][0]["code"] == "separate_supply_possible_overlap"
+    assert "resource_bindings" not in work["summary"] and "resource_review" not in work["summary"]
+    assert any("Возможное пересечение" in flag for flag in work["summary"]["flags"])
     resource = next(
         item for item in lsr["row_bindings"] if item.get("row") == "СКС!R3"
     )

@@ -35,8 +35,8 @@ def test_model_accrual_rule_survives_visible_formats_and_review_projection(answe
     assert service.compact_estimator_draft_rows([row])[0]["nr_sp_rule_id"] == "nrsp-49.3"
 
 
-def test_typed_card_required_prefix_is_complete_in_a_budgeted_model_message():
-    """Truncated resource previews must not hide the legal candidate block."""
+def test_typed_card_body_is_deferred_instead_of_truncated_to_a_prefix():
+    """An identity pointer never masquerades as a partially delivered card."""
     prefix = "Шифр: ГЭСНм08-02-409-09\n" + "Условия и основание НР/СП. " * 32 + "nrsp-49.3"
     hit = SimpleNamespace(content=prefix + "Обзор ресурсов. " * 140,
                           doc_id="card", doc_name="smeta_norm_cards.v1", score=1,
@@ -48,18 +48,21 @@ def test_typed_card_required_prefix_is_complete_in_a_budgeted_model_message():
     headers = service.model_rag_evidence_header_chars(query_hits, hits_per_query=2)
     groups, chunks, omitted = service.build_model_rag_evidence_groups(
         query_hits, max_chars=headers + len(prefix) + 100, hits_per_query=2)
-    assert chunks and omitted == ["Q1.H2"]
-    assert all(chunk.content.startswith(prefix) for chunk in chunks)
+    assert chunks and omitted == ["Q1.H1", "Q1.H2"]
+    assert all(chunk.meta["body_status"] == "deferred_capacity" for chunk in chunks)
+    assert all(chunk.meta["card_body_shown"] is False for chunk in chunks)
+    assert all(not chunk.content.startswith(prefix) for chunk in chunks)
     assert len("\n\n".join(groups)) <= headers + len(prefix) + 100
 
 
-def test_query_page_reserves_bodies_for_every_candidate_before_optional_preview():
+def test_query_page_preserves_whole_candidate_bodies_and_query_cursor():
     hits = [SimpleNamespace(content=f"code-{i}: " + "x" * 3000,
                             doc_id=str(i), doc_name="cards", score=1,
                             meta={"minimum_evidence_body_chars": 480}) for i in range(12)]
     queries = [("first", hits[:6]), ("second", hits[6:])]
-    headers = service.model_rag_evidence_header_chars(queries[:1], hits_per_query=6)
-    budget = headers + 6 * 481 + 100
+    first_groups, _first_chunks, _ = service.build_model_rag_evidence_groups(
+        queries[:1], max_chars=100000, hits_per_query=6)
+    budget = len("\n\n".join(first_groups)) + 2000
     included, deferred, omitted = service.select_model_rag_query_hits_for_budget(
         queries, max_chars=budget, hits_per_query=6, require_card_bodies=True)
     assert [q for q, _ in included] == ["first"]
@@ -68,7 +71,8 @@ def test_query_page_reserves_bodies_for_every_candidate_before_optional_preview(
     groups, chunks, omitted = service.build_model_rag_evidence_groups(
         included, max_chars=budget, hits_per_query=6)
     assert [c.doc_id for c in chunks] == [str(i) for i in range(6)]
-    assert all(len(c.content) >= 481 for c in chunks)
+    assert all(c.content == hits[i].content for i, c in enumerate(chunks))
+    assert all(c.meta["body_status"] == "full" for c in chunks)
     assert omitted == []
     assert len("\n\n".join(groups)) <= budget
 
@@ -289,8 +293,9 @@ def test_duplicate_card_bodies_are_shared_with_all_query_hit_refs_intact():
     hit = SimpleNamespace(content=content, doc_id="same-card", doc_name="cards", score=1,
                           meta={"source_ref": "base#1", "minimum_evidence_body_chars": len(content)})
     queries = [(f"query {i}", [hit]) for i in range(8)]
-    headers = service.model_rag_evidence_header_chars(queries, hits_per_query=1)
-    budget = headers + len(content) + 800
+    complete_groups, _chunks, _ = service.build_model_rag_evidence_groups(
+        queries, max_chars=100000, hits_per_query=1)
+    budget = len("\n\n".join(complete_groups))
     included, deferred, omitted = service.select_model_rag_query_hits_for_budget(
         queries, max_chars=budget, hits_per_query=1, require_card_bodies=True)
     assert len(included) == 8 and deferred == [] and omitted == []
@@ -659,7 +664,9 @@ def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
                 doc_id=f"doc-{query_index}-{hit_index}",
                 doc_name="smeta_norm_cards.v1",
                 score=1.0 / hit_index,
-                meta={"dataset_id": "smeta"},
+                meta={"dataset_id": "smeta", "norm_key": f"fixture-{query_index}-{hit_index}",
+                      "norm_code": f"ГЭСН{query_index:02d}-00-000-{hit_index:02d}",
+                      "title": f"кандидат {hit_index}", "measure_unit": "m"},
             )
             for hit_index in range(1, 9)
         ]
@@ -675,11 +682,15 @@ def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
     assert len(groups) == 30
     assert len(chunks) == 120
     assert "[Поисковый запрос Q30] работа 30" in rendered
-    assert "[Q30.H4 | smeta_norm_cards.v1" in rendered
+    assert '"Q30.H4"' in rendered
     assert "ГЭСН30-00-000-04" in rendered
     assert "ГЭСН30-00-000-05" not in rendered
     assert len(rendered) <= 70_000
-    assert omitted_refs == []
+    assert omitted_refs
+    assert set(omitted_refs) == {c.meta["model_evidence_ref"] for c in chunks
+                                if c.meta["body_status"] == "deferred_capacity"}
+    assert all(c.content == query_hits[c.meta["model_query_index"] - 1][1][c.meta["model_hit_index"] - 1].content
+               for c in chunks if c.meta["body_status"] == "full")
 
 
 def _query_hits_with_long_headers(query_count: int, *, title: str):
@@ -696,7 +707,7 @@ def _query_hits_with_long_headers(query_count: int, *, title: str):
     return [(title, hits) for _ in range(query_count)]
 
 
-def test_model_rag_evidence_splits_query_headers_instead_of_raising():
+def test_model_rag_query_cursor_and_actual_index_are_budgeted_separately():
     query_hits = _query_hits_with_long_headers(
         20,
         title="Hyperline TTR-4281-DD-RAL7035 шкаф напольный 19-дюймовый 42U разобранный",
@@ -722,23 +733,24 @@ def test_model_rag_evidence_splits_query_headers_instead_of_raising():
         hits_per_query=6,
     )
 
-    assert len(groups) == 3
+    assert 0 < len(groups) <= 3
     assert "[Поисковый запрос Q1]" in groups[0]
-    assert "[Поисковый запрос Q3]" in groups[2]
     assert "[Поисковый запрос Q4]" not in "\n\n".join(groups)
-    assert "Q4" in omitted_refs
     assert "Q4.H1" in omitted_refs
+    assert len("\n\n".join(groups)) <= header_tax
+    assert len(chunks) < 18  # the identity index also has an explicit cost
 
     prefix_groups, _prefix_chunks, prefix_omitted = service.build_model_rag_evidence_groups(
         included,
         max_chars=header_tax,
         hits_per_query=6,
     )
-    assert len(prefix_groups) == 3
+    assert len(prefix_groups) <= 3
+    assert len("\n\n".join(prefix_groups)) <= header_tax
     assert all(not ref.startswith("Q4") for ref in prefix_omitted)
 
 
-def test_model_rag_evidence_keeps_query_identity_when_even_one_header_is_tight():
+def test_model_rag_evidence_explicitly_defers_an_identity_that_cannot_fit():
     query_hits = _query_hits_with_long_headers(
         2,
         title="кабель витая пара категория 6a экран F/UTP",
@@ -753,10 +765,8 @@ def test_model_rag_evidence_keeps_query_identity_when_even_one_header_is_tight()
         hits_per_query=6,
     )
 
-    assert groups
-    assert groups[0].startswith("[Поисковый запрос Q1]")
-    assert "Q2" in omitted_refs
-    assert all(not item.startswith("[Поисковый запрос Q2]") for item in groups)
+    assert groups == [] and chunks == []
+    assert omitted_refs == [f"Q{q}.H{h}" for q in (1, 2) for h in range(1, 7)]
 
 
 def test_model_rag_evidence_empty_budget_omits_queries_without_raising():
@@ -769,7 +779,7 @@ def test_model_rag_evidence_empty_budget_omits_queries_without_raising():
 
     assert groups == []
     assert chunks == []
-    assert omitted_refs[0] == "Q1"
+    assert omitted_refs[0] == "Q1.H1"
     assert "Q4.H6" in omitted_refs
 
 
@@ -5417,15 +5427,22 @@ def test_adr16_budget_accounts_for_the_provenance_label() -> None:
         query_hits, hits_per_query=6, query_provenance={"Прокладка кабеля": "derived"}
     )
     assert tagged > plain
+    complete, _chunks, _ = service.build_model_rag_evidence_groups(
+        query_hits, max_chars=10000, hits_per_query=6,
+        query_provenance={"Прокладка кабеля": "derived"},
+    )
+    tagged_budget = len("\n\n".join(complete))
     groups, chunks, _omitted = service.build_model_rag_evidence_groups(
-        query_hits, max_chars=tagged + 400, hits_per_query=6,
+        query_hits, max_chars=tagged_budget, hits_per_query=6,
         query_provenance={"Прокладка кабеля": "derived"},
     )
     assert "(системный подбор по атрибутам этой строки)" in groups[0]
     assert chunks[0].meta["query_provenance"] == "derived"
+    assert chunks[0].content == hit.content and chunks[0].meta["body_status"] == "full"
+    assert len("\n\n".join(groups)) == tagged_budget
     # an untagged query is reported as the model's own, never as a system query
     untagged, _c, _o = service.build_model_rag_evidence_groups(
-        query_hits, max_chars=plain + 400, hits_per_query=6, query_provenance=None
+        query_hits, max_chars=tagged_budget - (tagged - plain), hits_per_query=6, query_provenance=None
     )
     assert "системный подбор" not in untagged[0]
 

@@ -19,9 +19,9 @@ from proxy.services import gesn_service, nr_sp_service
 from proxy.services.lsr_source_coverage_service import (
     apply_confirmed_data,
     canonicalize_row_role,
+    canonicalize_supply_kind,
     double_count_conflicts,
     inferred_row_role,
-    locators_with_separate_supply,
     operation_identity,
     work_row_key,
 )
@@ -924,6 +924,9 @@ def _resolve_price_trace(
         _round(res.get("price")) if res.get("price") not in (None, "") else None
     )
     if explicit is not None and price_is_attributed(res):
+        if isinstance(res.get("resource_binding"), Mapping) and res["resource_binding"].get("action") == "reuse":
+            return PriceTrace(price=explicit, source="reuse", column_10=explicit,
+                              basis=str(res.get("price_source_ref") or ""), action="reuse")
         return PriceTrace(price=explicit, source="manual", column_10=explicit, basis="explicit_resource_price")
 
     code = str(res.get("code") or "").strip()
@@ -1120,10 +1123,15 @@ def build_position_trace(
         coefficient_basis=coefficient_basis,
     )
     norm, resources = _position_resources(position)
-    if position.get("exclude_gesn_materials"):
-        resources = [
-            item for item in resources if str(item.get("kind") or "") != "material"
-        ]
+    resource_binding_conflicts = list(position.get("resource_binding_conflicts") or [])
+    if position.get("exclude_gesn_materials") and any(item.get("kind") == "material" for item in resources):
+        # A legacy marker does not identify an authored target. Preserve the
+        # composition and expose its unresolved supply relationship instead.
+        resource_binding_conflicts.append({
+            "code": "separate_supply_possible_overlap",
+            "reason": "legacy separate-supply marker has no explicit resource target",
+            "norm_material_resources": [dict(item) for item in resources if item.get("kind") == "material"],
+        })
     from proxy.services import fsem_machinist_service as fsem
     from proxy.services import gesn_fgis_service as gfgis
 
@@ -1144,6 +1152,15 @@ def build_position_trace(
     labor_code_trace = gfgis.labor_code_provenance(resources)
     flags: list[str] = []
     completeness_reasons: list[str] = []
+    if position.get("norm_card_body_unread"):
+        flags.append("Полная карточка выбранной нормы не была прочитана моделью")
+        completeness_reasons.append("norm_card_body_unread")
+    from proxy.services.model_resource_binding_service import resource_binding_conflict_note
+
+    for conflict in resource_binding_conflicts:
+        prefix = "" if conflict.get("code") == "separate_supply_possible_overlap" else "Конфликт действия над ресурсом: "
+        flags.append(prefix + resource_binding_conflict_note(conflict))
+        completeness_reasons.append(str(conflict.get("code") or "resource_binding_conflict"))
     if position.get("resource_selection_unsubstantiated"):
         flags.append("соответствие выбранного ресурса строке не подтверждено ссылкой на источник")
         completeness_reasons.append("resource_selection_unsubstantiated")
@@ -1399,6 +1416,7 @@ def build_position_trace(
                 "price_book_unit": price.book_unit or "",
                 "resource_group": str((price.group or {}).get("group") or ""),
                 "code_derivation": str(res.get("code_derivation") or ""),
+                **({"resource_binding": dict(res["resource_binding"])} if isinstance(res.get("resource_binding"), Mapping) else {}),
             }
         )
         if kind not in detail_rows:
@@ -1620,6 +1638,9 @@ def build_position_trace(
             )
         )
 
+    if resource_binding_conflicts or position.get("norm_card_body_unread"):
+        # An attributed position price cannot hide an unapplied resource action.
+        full_amount = None
     rows.extend(
         [
             _row("group_labor", "ОТ(ЗТ)", columns={3: "ОТ(ЗТ)", 4: "чел.-ч", 7: qty_sums["labor"], 12: ozp}),
@@ -1707,6 +1728,11 @@ def build_position_trace(
             # § 4 (tracker #54): one stated decision per resource the calculator
             # priced, from the same numbers the document prints.
             "resource_decisions": resource_decisions,
+            **({
+                "resource_binding_audit": list(position.get("resource_binding_audit") or []),
+                "resource_binding_conflicts": resource_binding_conflicts,
+                **{key: position[key] for key in ("resource_bindings", "resource_review") if key in position},
+            } if "resource_bindings" in position or "resource_review" in position or resource_binding_conflicts else {}),
             "labor_qty": qty_sums["labor"],
             "machinist_qty": qty_sums["machinist"],
             "flags": flags,
@@ -2329,7 +2355,17 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
     """
     positions: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
-    supply_parents = locators_with_separate_supply(rows)
+    supplies_by_parent: dict[str, list[Mapping[str, Any]]] = {}
+    work_ids_by_parent: dict[str, set[str]] = {}
+    for item in rows or []:
+        role = inferred_row_role(item)
+        parent = work_row_key(item)
+        if role == "work":
+            for key in {str(item.get("source_row") or ""), parent} - {""}:
+                work_ids_by_parent.setdefault(key, set()).add(operation_identity(item))
+        elif role in {"material", "equipment"} and parent:
+            if (canonicalize_supply_kind(item.get("supply_kind")) or "supply") in {"supply", "both"}:
+                supplies_by_parent.setdefault(parent, []).append(item)
     for idx, row in enumerate(rows or [], 1):
         model_source_row = row.get("source_row")
         source_row = (
@@ -2646,8 +2682,8 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             position["unit"] = norm.get("unit")
         position["row_role"] = role
         position["work_row"] = parent or str(source_row)
-        if str(source_row) in supply_parents or parent in supply_parents:
-            position["exclude_gesn_materials"] = True
+        if isinstance(row.get("_evidence_check"), Mapping) and row["_evidence_check"].get("card_body_shown") is False:
+            position["norm_card_body_unread"] = True
         analogue = str(_first_value(row, "analogue", "coverage") or "").strip()
         if analogue:
             position["analogue"] = analogue
@@ -2660,6 +2696,21 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             # Missing/ambiguous rules remain open, never a title-based default.
             position["nr_sp_rule_id"] = row["nr_sp_rule_id"]
         position.update(_model_coefficient_fields(row))
+        linked_supply_rows = [supply for key in {str(source_row), parent} - {""}
+                              for supply in supplies_by_parent.get(key, [])]
+        if "resource_bindings" in row or "resource_review" in row or linked_supply_rows:
+            from proxy.services.model_resource_binding_service import resource_binding_position_fields
+            from proxy.smeta_core.resource_normalizer import normalize_norm_resources
+
+            position.update(resource_binding_position_fields(
+                row,
+                [_plain_resource_line(dict(resource)) for resource in normalize_norm_resources(list(norm.get("resources") or []))],
+                work_id=operation_identity(row), work_qty=norm_qty,
+                physical_quantity=source_qty, physical_unit=source_unit,
+                linked_supply_rows=linked_supply_rows,
+                supply_parent_ambiguous=any(len(work_ids_by_parent.get(work_row_key(supply), set())) != 1
+                                            for supply in linked_supply_rows),
+            ))
         if (
             position.get("coefficient_application") == "applied"
             and (
@@ -2693,6 +2744,10 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             "norm_quantity",
             "source_coefficient_overlap",
             "action_conflict",
+            "resource_bindings",
+            "resource_review",
+            "resource_binding_audit",
+            "resource_binding_conflicts",
         ):
             if key in position:
                 binding[key] = position[key]
@@ -2896,6 +2951,7 @@ def build_lsr_trace_from_visible_rows(
             conflicts_ok = (
                 str(source_row) not in conflict_locators
                 and not bool(model_row.get("confirm_ambiguous"))
+                and not bool(pos_summary.get("resource_binding_conflicts"))
             )
             preliminary = not (
                 norm_applicability_ok and units_ok and price_ok and conflicts_ok
@@ -2953,6 +3009,9 @@ def build_lsr_trace_from_visible_rows(
                 for entry in (pos_summary.get("resource_decisions") or [])
                 if isinstance(entry, Mapping)
             ]
+            for key in ("resource_binding_audit", "resource_binding_conflicts", "resource_bindings", "resource_review"):
+                if key in pos_summary:
+                    binding[key] = pos_summary[key]
             if preliminary:
                 preliminary_amount = round(preliminary_amount + amount, 2)
             else:

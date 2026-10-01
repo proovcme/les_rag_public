@@ -118,6 +118,14 @@ from proxy.services.model_evidence_read_contract import (
     shown_evidence_registry,
 )
 from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
+from proxy.services.model_rag_grouped_evidence_service import (
+    EvidenceCard,
+    EvidenceGroup,
+    plan_full_group_page,
+    normative_card_identity,
+    card_delivery_facts,
+    share_registry_catalogs,
+)
 from proxy.services.model_price_provenance_service import price_evidence_check
 from proxy.services.packaging_recovery_service import (
     release_memory_for_packaging,
@@ -140,6 +148,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
     aggregate_norms_status,
     build_blind_review_evidence_items,
     ciphers_compatible,
+    ciphers_identical,
     invented_source_row,
     lsr_coefficient_instruction,
     lsr_format_retry_instruction,
@@ -1406,7 +1415,12 @@ def model_read_frame_evidence(source_context, chunks, receipts):
             if not item:
                 continue
         source_objects.append(item)
-    return [*source_objects, shown_evidence_registry(chunks), {"model_requested_reads": receipts}]
+    metadata = {str(c.meta.get("model_evidence_ref") or ""): c.meta for c in chunks}
+    registry = shown_evidence_registry(chunks)
+    catalogs, rows = share_registry_catalogs(registry["previously_shown_evidence_registry"], metadata)
+    registry["previously_shown_evidence_registry"] = rows
+    registry["body_delivery"] = "Full literal bodies and exact shared catalogs are shown; deferred_capacity entries are identity pointers only."
+    return [*source_objects, catalogs, registry, {"model_requested_reads": receipts}]
 
 
 def govern_inference_messages(
@@ -2776,6 +2790,12 @@ def bind_row_evidence_ids(
     global_to_card: dict[str, str] = {}
     global_to_query: dict[str, str] = {}
     global_to_resource_codes: dict[str, set[str]] = {}
+    global_to_bodies: dict[str, str] = {}
+    global_to_body_shown: dict[str, bool] = {}
+    # Whole delivered RAG bodies prove their conditions, not complete typed
+    # resource consumption; exact native reads expose that separate metadata.
+    delivered_norm_identities: set[str] = set()
+    deferred_norm_identities: dict[str, set[str]] = {}
     ambiguous_aliases: set[str] = set()
     for chunk in evidence_chunks:
         meta = getattr(chunk, "meta", {}) or {}
@@ -2787,13 +2807,31 @@ def bind_row_evidence_ids(
                 str(getattr(chunk, "doc_name", "") or ""),
             )
             alias_to_query[alias] = str(meta.get("model_query_text") or "")
+        if alias and global_id:
+            if alias in alias_to_global and alias_to_global[alias] != global_id:
+                ambiguous_aliases.add(alias)
+            else:
+                alias_to_global[alias] = global_id
         if global_id:
+            body_shown = meta.get("body_status") != "deferred_capacity"
+            norm_identity = (normative_card_identity(meta)
+                             if meta.get("norm_code") or meta.get("norm_key") else global_id)
+            if body_shown:
+                delivered_norm_identities.add(norm_identity)
+            else:
+                deferred_norm_identities.setdefault(global_id, set()).add(norm_identity)
+            if not body_shown and global_to_body_shown.get(global_id) is True:
+                # A later index entry cannot erase an already delivered full
+                # body with the same immutable identity.
+                continue
+            global_to_body_shown[global_id] = body_shown
             global_to_card[global_id] = _card_code_from_body(
                 str(getattr(chunk, "content", "") or ""),
                 str(getattr(chunk, "doc_name", "") or ""),
             )
             global_to_query[global_id] = str(meta.get("model_query_text") or "")
             body = str(getattr(chunk, "content", "") or "")
+            global_to_bodies[global_id] = body
             resource_codes = {str(meta.get("resource_code") or "").strip()}
             for resource in [*(meta.get("resources") or []), *(meta.get("resource_preview") or [])]:
                 if isinstance(resource, Mapping):
@@ -2805,11 +2843,6 @@ def bind_row_evidence_ids(
                     r"(?<![\w.-])" + re.escape(code) + r"(?![\w.-])", body
                 )
             }
-        if alias and global_id:
-            if alias in alias_to_global and alias_to_global[alias] != global_id:
-                ambiguous_aliases.add(alias)
-            else:
-                alias_to_global[alias] = global_id
     bound: list[dict[str, Any]] = []
     for row in rows:
         payload = dict(row)
@@ -2846,6 +2879,21 @@ def bind_row_evidence_ids(
             payload, checkable_bindings, cards, queries
         )
         if evidence_check is not None:
+            deferred_refs = [ref for ref, identity in checkable_bindings.items()
+                             if identity in deferred_norm_identities]
+            if deferred_refs:
+                evidence_check["deferred_card_refs"] = deferred_refs
+                # A full parent paragraph or a card from another edition/source
+                # cannot prove that this deferred item was actually read.
+                selected_deferred_ids = {
+                    identity for ref in deferred_refs
+                    if ciphers_identical(str(payload.get("norm_code") or ""), cards.get(ref, ""))
+                    for identity in deferred_norm_identities[checkable_bindings[ref]]
+                }
+                if selected_deferred_ids:
+                    evidence_check["card_body_shown"] = (
+                        selected_deferred_ids <= delivered_norm_identities
+                    )
             payload["_evidence_check"] = evidence_check
         resource_code = str(payload.get("resource_code") or "").strip()
         if resource_code:
@@ -2861,6 +2909,63 @@ def bind_row_evidence_ids(
         price_check = price_evidence_check(payload, evidence_chunks, checkable_bindings)
         if price_check is not None:
             payload["_price_evidence_check"] = price_check
+        actions = payload.get("resource_bindings")
+        if isinstance(actions, list):
+            old_bindings = payload.get("_resource_binding_evidence_bindings")
+            old_bindings = old_bindings if isinstance(old_bindings, Mapping) else {}
+            action_checks, action_bindings = [], {}
+            for index, action in enumerate(actions):
+                if not isinstance(action, Mapping):
+                    action_checks.append({"index": index, "invalid_action_object": True})
+                    continue
+                refs = extract_model_evidence_refs(action.get("source_refs"))
+                prior = old_bindings.get(str(index))
+                prior = prior if isinstance(prior, Mapping) else {}
+                resolved = {}
+                for ref in refs:
+                    # Saved actions refer to their immutable card, never to a
+                    # different packet's coincident Q/H alias.
+                    identity = str(prior.get(ref) or "")
+                    if not identity and ref not in ambiguous_aliases:
+                        identity = alias_to_global.get(ref, "")
+                    if identity in global_to_bodies:
+                        resolved[ref] = identity
+                action_bindings[str(index)] = resolved
+                cited_ids = set(checkable_bindings.values()) | set(resolved.values())
+                bodies = [global_to_bodies[identity] for identity in cited_ids
+                          if identity in global_to_bodies]
+                check = {"index": index, "evidence_bindings": resolved,
+                         "unresolved_refs": [ref for ref in refs if ref not in resolved]}
+                for field, diagnostic in (("target_resource_code", "target_code_in_refs"),
+                                          ("resource_code", "resource_code_in_refs"),
+                                          ("target_resource_name", "target_name_in_refs")):
+                    literal = str(action.get(field) or "").strip()
+                    if literal:
+                        check[diagnostic] = any(re.search(
+                            r"(?<![\w.-])" + re.escape(literal) + r"(?![\w.-])", body,
+                            re.IGNORECASE,
+                        ) is not None for body in bodies)
+                if action.get("explicit_price") not in (None, ""):
+                    quote = {"confirmed_price": action["explicit_price"],
+                             "price_unit": action.get("unit"),
+                             "price_source": action.get("price_source_ref"),
+                             "evidence_refs": refs}
+                    observed = price_evidence_check(quote, evidence_chunks, resolved) or {}
+                    for diagnostic in ("price_in_refs", "unit_in_refs", "source_in_refs"):
+                        check[diagnostic] = observed.get(diagnostic) is True
+                if str(action.get("action") or "").casefold() == "reuse" and action.get("price_source_ref"):
+                    # Reuse zero is authored accounting treatment, not a market
+                    # quote. Validate only the cited source identity here.
+                    source = str(action["price_source_ref"]).strip().casefold()
+                    check["source_in_refs"] = any(
+                        str((getattr(chunk, "meta", {}) or {}).get("global_evidence_id") or "") in resolved.values()
+                        and source in {str(getattr(chunk, "doc_name", "") or "").strip().casefold(),
+                                       str((getattr(chunk, "meta", {}) or {}).get("source_ref") or "").strip().casefold()}
+                        for chunk in evidence_chunks
+                    )
+                action_checks.append(check)
+            payload["_resource_binding_evidence_checks"] = action_checks
+            payload["_resource_binding_evidence_bindings"] = action_bindings
         bound.append(payload)
     return bound
 
@@ -3015,6 +3120,10 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "price_year",
             "price_quarter",
             "resource_code",
+            "resource_bindings",
+            "resource_review",
+            "_resource_binding_evidence_checks",
+            "_resource_binding_evidence_bindings",
             "nr_sp_rule_id",
         ):
             if field_name in item:
@@ -3776,21 +3885,11 @@ def parse_model_rag_result(
 
     required_fields = {"title", "unit", "norm_code"}
     transport_diagnostics: list[dict[str, Any]] = []
-    json_rows = None
-    json_text = str(raw or "").strip()
-    if json_text.startswith("```") and json_text.endswith("```"):
-        json_lines = json_text.splitlines()
-        json_text = "\n".join(json_lines[1:-1]).strip()
-    if json_text.startswith("{"):
-        try:
-            envelope = json.loads(json_text)
-        except (ValueError, TypeError):
-            envelope = None
-        if isinstance(envelope, Mapping) and isinstance(envelope.get("rows"), list):
-            rows = envelope["rows"]
-            if all(isinstance(row, Mapping) and required_fields.issubset(row)
-                            and row.get("source_row") not in (None, "") for row in rows):
-                json_rows = rows
+    from proxy.services.model_lsr_result_contract import (
+        decode_model_result_rows, decode_model_resource_field,
+    )
+    json_rows = decode_model_result_rows(raw)
+    resource_fields = {"resource_bindings", "resource_review"}
     numeric_fields = {
         "revision",
         "expected_revision",
@@ -3849,6 +3948,8 @@ def parse_model_rag_result(
         "расчётное количество": "calc_quantity",
         "confirmed_price": "confirmed_price",
         "resource_code": "resource_code",
+        "resource_bindings": "resource_bindings",
+        "resource_review": "resource_review",
         "подтверждённая цена": "confirmed_price",
         "price_source": "price_source",
         "price_kind": "price_kind",
@@ -3917,10 +4018,19 @@ def parse_model_rag_result(
         # cannot author application trust flags or operator confirmations.
         public_rows = []
         for row in json_rows:
-            public = {field_name(str(key)): value for key, value in row.items()
-                      if field_name(str(key))}
+            public = {}
+            for key, value in row.items():
+                canonical = field_name(str(key))
+                if canonical:
+                    if canonical in public:
+                        if diagnostics is not None:
+                            diagnostics.append({"reason": "duplicate_json_field_alias", "field": canonical, "raw_proposal": row})
+                        return None
+                    public[canonical] = value
             if isinstance(public.get("evidence_refs"), str):
                 public["evidence_refs"] = extract_model_evidence_refs(public["evidence_refs"])
+            for key in resource_fields & public.keys():
+                public[key] = decode_model_resource_field(public[key])
             public_rows.append(public)
         return str(raw or ""), public_rows
 
@@ -4185,6 +4295,8 @@ def parse_model_rag_result(
                         refs = [value.strip()]
                     if refs:
                         row[name] = refs
+                elif name in resource_fields:
+                    row[name] = decode_model_resource_field(value)
                 elif name:
                     row[name] = value
             embedded_refs = evidence_refs(" ".join(visible_values))
@@ -4218,6 +4330,8 @@ def parse_model_rag_result(
         "calc_quantity": "calc_quantity",
         "confirmed_price": "confirmed_price",
         "resource_code": "resource_code",
+        "resource_bindings": "resource_bindings",
+        "resource_review": "resource_review",
         "price_source": "price_source",
         "price_kind": "price_kind",
         "price_unit": "price_unit",
@@ -4255,12 +4369,28 @@ def parse_model_rag_result(
         if not payload.startswith("source_row="):
             continue
         boundaries = [(0, "source_row", len("source_row="))]
+        top_level = set()
+        depth, quoted, escaped = 0, False, False
+        for offset, character in enumerate(payload):
+            if depth == 0 and not quoted:
+                top_level.add(offset)
+            if escaped:
+                escaped = False
+            elif quoted and character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = not quoted
+            elif not quoted and character in "[{":
+                depth += 1
+            elif not quoted and character in "]}":
+                depth = max(0, depth - 1)
         for label in block_fields:
             for separator in (", ", "; "):
                 marker = separator + label + "="
                 start = 0
                 while (at := payload.find(marker, start)) >= 0:
-                    boundaries.append((at, block_fields[label], at + len(marker)))
+                    if at in top_level:
+                        boundaries.append((at, block_fields[label], at + len(marker)))
                     start = at + len(marker)
         boundaries.sort()
         if len({key for _, key, _ in boundaries}) != len(boundaries):
@@ -4275,6 +4405,8 @@ def parse_model_rag_result(
                 inline[key] = number(value) if number(value) is not None else value
             elif key == "evidence_refs":
                 inline[key] = evidence_refs(value)
+            elif key in resource_fields:
+                inline[key] = decode_model_resource_field(value)
             else:
                 inline[key] = value
         if not required_fields.issubset(inline) or not inline.get("source_row"):
@@ -4381,6 +4513,8 @@ def parse_model_rag_result(
             refs = evidence_refs(clean)
             if refs:
                 current_block[key] = refs
+        elif key in resource_fields:
+            current_block[key] = decode_model_resource_field(clean)
         else:
             current_block[key] = clean
     flush_block()
@@ -4825,6 +4959,13 @@ def select_model_rag_query_hits_for_budget(
         return [], [], []
     if max_chars <= 0:
         return [], items, []
+    if require_card_bodies:
+        groups, _ = _model_rag_full_groups(
+            items, hits_per_query=hits_per_query, query_offset=query_offset,
+            query_provenance=query_provenance, query_addresses=query_addresses,
+        )
+        page = plan_full_group_page(groups, max_chars)
+        return items[:page.included_count], items[page.included_count:], []
 
     taken = 0
     for count in range(1, len(items) + 1):
@@ -4893,7 +5034,7 @@ def _model_rag_exact_card_key(hit: Any) -> str:
     """Share byte-equivalent evidence only; keep distinct source/edition/scope."""
     meta = getattr(hit, "meta", {}) or {}
     identity = {
-        "body": str(getattr(hit, "content", "") or "").strip(),
+        "body": str(getattr(hit, "content", "") or ""),
         "doc_id": str(getattr(hit, "doc_id", "") or ""),
         "doc_name": str(getattr(hit, "doc_name", "") or ""),
         "provenance": {key: meta.get(key) for key in (
@@ -4977,6 +5118,12 @@ def model_rag_prior_page_context(
         str(identity) for row in rows
         for identity in (row.get("evidence_bindings") or {}).values()
     }
+    for row in rows:
+        nested_bindings = row.get("_resource_binding_evidence_bindings")
+        if isinstance(nested_bindings, Mapping):
+            for bindings in nested_bindings.values():
+                if isinstance(bindings, Mapping):
+                    cited.update(str(identity) for identity in bindings.values())
     retained = []
     seen = set()
     for chunk in evidence_chunks:
@@ -5002,7 +5149,7 @@ def model_rag_prior_page_context(
         # their full citation dumps crowded out the next exact evidence group.
         "prior_model_decisions": [
             {key: value for key, value in row.items()
-             if key not in {"_quality_gate", "_evidence_check", "_resource_evidence_check", "_price_evidence_check", "quality_message"}}
+             if key not in {"_quality_gate", "_evidence_check", "_resource_evidence_check", "_price_evidence_check", "_resource_binding_evidence_checks", "_resource_binding_evidence_bindings", "quality_message"}}
             for row in compact_estimator_draft_rows(list(rows))
         ],
         "previously_shown_cited_evidence": cited_evidence,
@@ -5024,6 +5171,29 @@ def model_rag_prior_page_context(
     }, retained
 
 
+def _model_rag_full_groups(
+    query_hits, *, hits_per_query, query_offset=0,
+    query_provenance=None, query_addresses=None,
+):
+    groups, hits = [], {}
+    for qi, (raw_query, raw_hits) in enumerate(query_hits, max(0, query_offset) + 1):
+        query = str(raw_query or "").strip()
+        provenance = _model_rag_query_provenance(query_provenance, query)
+        addresses = _query_address_list(query_addresses, query)
+        cards = []
+        for hi, hit in enumerate(_model_rag_capped_hits(raw_hits, hits_per_query), 1):
+            ref = f"Q{qi}.H{hi}"
+            meta = dict(getattr(hit, "meta", {}) or {})
+            meta.setdefault("doc_id", str(getattr(hit, "doc_id", "") or ""))
+            meta.setdefault("doc_name", str(getattr(hit, "doc_name", "") or ""))
+            cards.append(EvidenceCard(ref, _model_rag_source_header(qi, hi, hit),
+                                      _model_rag_exact_card_key(hit),
+                                      str(getattr(hit, "content", "") or ""), meta))
+            hits[ref] = (qi, hi, query, provenance, addresses, hit)
+        groups.append(EvidenceGroup(_model_rag_query_header(qi, query, provenance, addresses), cards))
+    return groups, hits
+
+
 def build_model_rag_evidence_groups(
     query_hits: Sequence[tuple[str, Sequence[Any]]],
     *,
@@ -5035,204 +5205,46 @@ def build_model_rag_evidence_groups(
     query_provenance: Mapping[str, str] | None = None,
     query_addresses: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[list[str], list[_ModelRagEvidenceChunk], list[str]]:
-    """Keep query headers; omit leftover queries and cards rather than crash."""
-
-    included, leftover, omitted_refs = select_model_rag_query_hits_for_budget(
-        query_hits,
-        max_chars=max_chars,
-        hits_per_query=hits_per_query,
-        query_offset=query_offset,
-        query_provenance=query_provenance,
-        query_addresses=query_addresses,
+    """Show literal identities first; full bodies are indivisible capacity units."""
+    groups, hits = _model_rag_full_groups(
+        query_hits, hits_per_query=hits_per_query, query_offset=query_offset,
+        query_provenance=query_provenance, query_addresses=query_addresses,
     )
-    omitted_refs = list(omitted_refs)
-    omitted_refs.extend(
-        model_rag_query_hit_refs(
-            leftover,
-            hits_per_query=hits_per_query,
-            query_offset=query_offset + len(included),
-        )
-    )
-    if not included:
-        return [], [], omitted_refs
-
-    prepared: list[tuple[int, str, str, list[tuple[int, Any, str, str]]]] = []
-    prepared_provenance: dict[int, str] = {}
-    prepared_addresses: dict[int, tuple[str, ...]] = {}
-    first_cards: dict[str, tuple[int, int]] = {}
-    body_owners: dict[tuple[int, int], tuple[int, int]] = {}
-    source_index = 0
-    fixed_chars = 0
-    segment_count = 0
-    for query_index, (raw_query, raw_hits) in enumerate(
-        included, max(0, query_offset) + 1
-    ):
-        query = str(raw_query or "").strip()
-        provenance = _model_rag_query_provenance(query_provenance, query)
-        addresses = _query_address_list(query_addresses, query)
-        query_header = _model_rag_query_header(
-            query_index, query, provenance, addresses
-        )
-        hits: list[tuple[int, Any, str, str]] = []
-        fixed_chars += len(query_header)
-        segment_count += 1
-        for hit_index, hit in enumerate(list(raw_hits), 1):
-            source_index += 1
-            source_header = _model_rag_source_header(query_index, hit_index, hit)
-            body = str(getattr(hit, "content", "") or "").strip()
-            key = _model_rag_exact_card_key(hit)
-            location = (query_index, hit_index)
-            owner = first_cards.setdefault(key, location)
-            body_owners[location] = owner
-            if owner != location:
-                body = _model_rag_shared_body_ref(f"Q{owner[0]}.H{owner[1]}")
-            hits.append((hit_index, hit, source_header, body))
-            fixed_chars += len(source_header) + 2
-            segment_count += 1
-        prepared.append((query_index, query_header, query, hits))
-        prepared_provenance[query_index] = provenance
-        prepared_addresses[query_index] = addresses
-
-    fixed_chars += max(0, segment_count - 1) * 2
-
-    bodies = [
-        body for _qi, _qh, _q, hits in prepared for _hi, _hit, _sh, body in hits
-    ]
-    body_budget = max(0, int(max_chars) - fixed_chars)
-    low, high = 0, max((len(body) for body in bodies), default=0)
-    while low < high:
-        cap = (low + high + 1) // 2
-        if sum(min(len(body), cap) for body in bodies) <= body_budget:
-            low = cap
-        else:
-            high = cap - 1
-    body_cap = low
-    min_body = max(0, int(min_body_chars))
-    required_caps: dict[tuple[int, int], int] = {}
-    for query_index, _qh, _q, hits in prepared:
-        for hit_index, hit, _sh, body in hits:
-            key = (query_index, hit_index)
-            required_caps[key] = (_model_rag_required_body_chars(hit, min_body)
-                                  if body_owners[key] == key else len(body))
-    omit_mode = bool(bodies) and any(body_cap < cap for cap in required_caps.values())
-
-    included_caps: dict[tuple[int, int], int] = {}
-    if sum(required_caps.values()) <= body_budget:
-        # Reserve the identity/conditions of *every* card before allocating any
-        # optional resource preview. Greedy full-first allocation hid H2..H6.
-        low, high = 0, max((len(body) for body in bodies), default=0)
-        while low < high:
-            extra = (low + high + 1) // 2
-            used = sum(min(len(body), required_caps[(qi, hi)] + extra)
-                       for qi, _qh, _q, hits in prepared for hi, _hit, _sh, body in hits)
-            if used <= body_budget:
-                low = extra
-            else:
-                high = extra - 1
-        included_caps = {(qi, hi): min(len(body), required_caps[(qi, hi)] + low)
-                         for qi, _qh, _q, hits in prepared for hi, _hit, _sh, body in hits}
-        omit_mode = True  # use the individual reserved caps, with no omitted card
-    elif omit_mode:
-        used = 0
-        max_rank = max((len(hits) for _qi, _qh, _q, hits in prepared), default=0)
-        for rank in range(1, max_rank + 1):
-            for query_index, _query_header, _query, hits in prepared:
-                match = next((item for item in hits if item[0] == rank), None)
-                if match is None:
-                    continue
-                hit_index, _hit, _source_header, body = match
-                ref = f"Q{query_index}.H{hit_index}"
-                full = len(body)
-                required_cap = required_caps[(query_index, hit_index)]
-                if used + full <= body_budget:
-                    included_caps[(query_index, hit_index)] = full
-                    used += full
-                    continue
-                if required_cap and full > required_cap and used + required_cap <= body_budget:
-                    included_caps[(query_index, hit_index)] = required_cap
-                    used += required_cap
-                    continue
-                omitted_refs.append(ref)
-
-    groups: list[str] = []
-    chunks: list[_ModelRagEvidenceChunk] = []
-    visible_owner_bodies: dict[tuple[int, int], str] = {}
-    for qi, _qh, _q, hits in prepared:
-        for hi, _hit, _sh, body in hits:
-            key = (qi, hi)
-            if body_owners[key] != key or (omit_mode and key not in included_caps):
-                continue
-            cap = included_caps[key] if omit_mode else body_cap
-            visible_owner_bodies[key] = body if len(body) <= cap else body[:max(0, cap - 1)].rstrip() + "…"
-    source_index = 0
-    for query_index, query_header, query, hits in prepared:
-        group_parts = [query_header]
-        for hit_index, hit, source_header, body in hits:
-            if omit_mode and (query_index, hit_index) not in included_caps:
-                continue
-            owner = body_owners[(query_index, hit_index)]
-            if owner not in visible_owner_bodies:
-                ref = f"Q{query_index}.H{hit_index}"
-                if ref not in omitted_refs:
-                    omitted_refs.append(ref)
-                continue
-            visible_cap = (
-                included_caps[(query_index, hit_index)] if omit_mode else body_cap
-            )
-            visible_body = body
-            if len(visible_body) > visible_cap:
-                visible_body = (
-                    visible_body[: max(0, visible_cap - 1)].rstrip() + "…"
-                    if visible_cap
-                    else ""
-                )
-            source_index += 1
-            group_parts.append(f"{source_header}:\n{visible_body}")
-            # This alias points to the exact body actually present elsewhere in
-            # the same mandatory page. Preserve its body in the immutable map.
-            visible_body = visible_owner_bodies[owner]
-            meta = dict(getattr(hit, "meta", {}) or {})
-            if owner != (query_index, hit_index):
-                meta["shared_evidence_ref"] = f"Q{owner[0]}.H{owner[1]}"
-            alias = f"Q{query_index}.H{hit_index}"
-            identity_payload = "\x1f".join(
-                (
-                    str(evidence_namespace or "ordinary"),
-                    alias,
-                    str(getattr(hit, "doc_id", "") or ""),
-                    str(meta.get("source_ref") or meta.get("chunk_id") or ""),
-                    hashlib.sha256(visible_body.encode("utf-8")).hexdigest(),
-                )
-            )
-            meta.update(
-                {
-                    "model_query_index": query_index,
-                    "model_query_text": query,
-                    "model_query_addresses": list(
-                        prepared_addresses.get(query_index, ())
-                    ),
-                    "model_hit_index": hit_index,
-                    "model_evidence_ref": alias,
-                    "query_provenance": prepared_provenance.get(query_index, "model"),
-                    "global_evidence_id": (
-                        "evidence_"
-                        + hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()[:32]
-                    ),
-                    "evidence_namespace": str(evidence_namespace or "ordinary"),
-                    "model_source_index": source_index,
-                }
-            )
-            chunks.append(
-                _ModelRagEvidenceChunk(
-                    content=visible_body,
-                    doc_id=str(getattr(hit, "doc_id", "") or ""),
-                    doc_name=str(getattr(hit, "doc_name", "") or ""),
-                    score=float(getattr(hit, "score", 0.0) or 0.0),
-                    meta=meta,
-                )
-            )
-        groups.append("\n\n".join(group_parts))
-    return groups, chunks, omitted_refs
+    page = plan_full_group_page(groups, max_chars)
+    chunks = []
+    full = set(page.body_refs)
+    for source_index, alias in enumerate(page.inventory_refs, 1):
+        qi, hi, query, provenance, addresses, hit = hits[alias]
+        body_shown = alias in full
+        content = page.body_by_ref[alias] if body_shown else page.pointer_by_ref[alias]
+        meta = dict(getattr(hit, "meta", {}) or {})
+        meta.setdefault("doc_id", str(getattr(hit, "doc_id", "") or ""))
+        meta.setdefault("doc_name", str(getattr(hit, "doc_name", "") or ""))
+        if alias in page.shared_refs:
+            meta["shared_evidence_ref"] = page.shared_refs[alias]
+        identity = "\x1f".join((
+            str(evidence_namespace or "ordinary"), alias,
+            str(getattr(hit, "doc_id", "") or ""),
+            str(meta.get("source_ref") or meta.get("chunk_id") or ""),
+            hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        ))
+        meta.update({
+            "model_query_index": qi, "model_query_text": query,
+            "model_query_addresses": list(addresses), "model_hit_index": hi,
+            "model_evidence_ref": alias, "query_provenance": provenance,
+            "global_evidence_id": "evidence_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32],
+            "evidence_namespace": str(evidence_namespace or "ordinary"),
+            "model_source_index": source_index,
+            "body_status": "full" if body_shown else "deferred_capacity",
+            **card_delivery_facts(meta, raw_body_shown=body_shown),
+            "normative_card_identity": normative_card_identity(meta),
+        })
+        chunks.append(_ModelRagEvidenceChunk(
+            content=content, doc_id=str(getattr(hit, "doc_id", "") or ""),
+            doc_name=str(getattr(hit, "doc_name", "") or ""),
+            score=float(getattr(hit, "score", 0.0) or 0.0), meta=meta,
+        ))
+    return page.groups, chunks, page.deferred_refs
 
 
 def _model_rag_source_map(chunks: Sequence[_ModelRagEvidenceChunk]) -> list[dict[str, Any]]:
@@ -9070,6 +9082,13 @@ async def _execute_chat_evidence_application(
                                         for c in saved_read_chunks
                                     ]
                                 })
+                            # Every continuation retains the complete original
+                            # attachment, independently of the current row packet.
+                            if attachment_context and not any(
+                                isinstance(item, Mapping) and "original_attachment_context" in item
+                                for item in pass_evidence
+                            ):
+                                pass_evidence.append({"original_attachment_context": attachment_context})
                             try:
                                 _, fixed_packet = govern_inference_messages(
                                     preset=answer_execution_preset,
@@ -9168,7 +9187,7 @@ async def _execute_chat_evidence_application(
                                     model_evidence_chunks,
                                     omitted_now,
                                 ) = build_model_rag_evidence_groups(
-                                    included_hits,
+                                    pass_hits,
                                     max_chars=group_max_chars,
                                     hits_per_query=retrieval_limits["model_evidence_k"],
                                     evidence_namespace=(
@@ -9185,7 +9204,24 @@ async def _execute_chat_evidence_application(
                                 )
                             sheet_pass_evidence_chunks.extend(model_evidence_chunks)
                             model_research_tools.register_shown_norm_cards(model_evidence_chunks)
+                            page_body_deferred = list(omitted_now)
+                            included_refs = set(model_rag_query_hit_refs(
+                                included_hits, hits_per_query=retrieval_limits["model_evidence_k"],
+                                query_offset=evidence_query_offset,
+                            ))
+                            omitted_now = [ref for ref in omitted_now if ref in included_refs]
                             pass_omitted.extend(omitted_now)
+                            retrieval_trace.setdefault("grouped_model_evidence_pages", []).append({
+                                "query_offset": evidence_query_offset,
+                                "returned_hit_count": sum(len(hits) for _q, hits in pass_hits),
+                                "inventory_hit_count": len(model_evidence_chunks),
+                                "full_body_hit_count": sum(c.meta.get("body_status") == "full" for c in model_evidence_chunks),
+                                "normative_complete_card_count": sum(c.meta.get("normative_card_complete") is True for c in model_evidence_chunks),
+                                "normative_preview_card_count": sum(c.meta.get("normative_resources_status") == "preview" for c in model_evidence_chunks),
+                                "deferred_body_refs": page_body_deferred,
+                                "unshown_refs": [ref for ref in page_body_deferred if ref not in {
+                                    c.meta.get("model_evidence_ref") for c in model_evidence_chunks}],
+                            })
                             omitted_cards = model_rag_budget_omitted_cards(
                                 included_hits,
                                 model_evidence_chunks,
@@ -10095,6 +10131,15 @@ async def _execute_chat_evidence_application(
                             "schema": "les.model-rag-grouped-evidence.v1",
                             "query_count": len(model_rag_evidence_groups),
                             "hit_count": len(model_evidence_chunks),
+                            "returned_hit_count": sum(len(hits) for _q, hits in model_rag_query_hits),
+                            "inventory_hit_count": len(model_evidence_chunks),
+                            "full_body_hit_count": sum(c.meta.get("body_status") == "full" for c in model_evidence_chunks),
+                            "normative_complete_card_count": sum(c.meta.get("normative_card_complete") is True for c in model_evidence_chunks),
+                            "normative_preview_card_count": sum(c.meta.get("normative_resources_status") == "preview" for c in model_evidence_chunks),
+                            "deferred_body_hit_count": len(omitted_evidence_refs),
+                            "unshown_hit_count": sum(ref not in {
+                                c.meta.get("model_evidence_ref") for c in model_evidence_chunks}
+                                for ref in omitted_evidence_refs),
                             "group_ids": [
                                 f"Q{index}"
                                 for index in range(1, len(model_rag_evidence_groups) + 1)
@@ -10165,7 +10210,8 @@ async def _execute_chat_evidence_application(
                             native_tools=direct_read_tools,
                             checkpoint=answer_checkpoint,
                             working_memory=answer_working_memory,
-                            evidence=answer_evidence,
+                            evidence=() if model_driven_retrieval else answer_evidence,
+                            required_evidence=answer_evidence if model_driven_retrieval else (),
                             source_map=(() if model_driven_retrieval else answer_source_map),
                             tool_exchange=answer_tool_exchange,
                             dialogue=[session_block] if session_block else [],

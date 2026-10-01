@@ -1,5 +1,16 @@
 # Алгоритм: движок сборки ЛСР (позиция → ресурсы → цены → НР/СП → Всего)
 
+864: активный RIM переносит literal `resource_bindings`/`resource_review` через
+`model_resource_binding_service`, не через исторический workflow. Действия
+add/replace/exclude/reuse имеют точную цель, основание и independent citations;
+невалидная замена не удаляет исходный ресурс. Количество хранится как физическое
+и переводится в расход на расчётную единицу один раз. Reuse сохраняет количество,
+но учитывает авторское повторное использование по нулю, поверх цены книги.
+Явные действия, причины, ссылки и конфликты видны в XLSX «Проверка».
+Отдельная поставка не исключает все материалы нормы: сохраняется состав,
+возможное неразрешённое пересечение блокирует полную готовность. Выбор нормы
+и профессиональные решения остаются авторскими; цифры без происхождения не закрывают gaps.
+
 Build 749: relative `work_row=R4` resolves against the source sheet, never
 against a norm code or an arbitrary sheet. Unknown source locators remain
 in the raw answer, but are not accepted workbook decisions. Packet sizes

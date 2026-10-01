@@ -354,6 +354,7 @@ def exact_citation_ungrounded(row: Mapping[str, Any] | None) -> bool:
 APPLICABILITY_GAP_KINDS = (
     "cipher_not_in_cited_evidence",
     "cipher_without_cited_card",
+    "norm_card_body_unread",
     "analogue_needs_confirmation",
     "exact_match_unresolved",
 )
@@ -371,6 +372,9 @@ def applicability_gap_kind(row: Mapping[str, Any] | None) -> str:
         return ""
     if cited_cipher_matches_evidence(payload) is False:
         return "cipher_not_in_cited_evidence"
+    check = payload.get("_evidence_check")
+    if isinstance(check, Mapping) and check.get("card_body_shown") is False:
+        return "norm_card_body_unread"
     status = canonicalize_norm_status(payload.get("norm_status"))
     if status in _ANALOGUE_APPLICABILITY_STATUSES:
         return "analogue_needs_confirmation" if open_analogue_match_fields(payload) else ""
@@ -943,6 +947,11 @@ def _code_key(value: Any) -> str:
 def _same_code(left: Any, right: Any) -> bool:
     first, second = _code_key(left), _code_key(right)
     return bool(first and second and first == second)
+
+
+def ciphers_identical(left: Any, right: Any) -> bool:
+    """Exact item identity after presentation folding; never parent containment."""
+    return _same_code(left, right)
 
 
 _CIPHER_SHAPE_RE = re.compile(r"\d{1,3}[-–]\d{1,2}[-–]\d{1,3}(?:[-–]\d{1,2})?[а-яё]?")
@@ -1853,10 +1862,9 @@ def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: st
         "дословно; gap_reason вердикт не повышает и норму не выбирает. "
         "Пояснения вроде «подходит по сути» можно писать в extra_ops, "
         "но они не включают строку в расчёт. Не ограничивай число возвращаемых решений. "
-        "Если выбираешь карточку как норму или инженерный аналог, укажи её точный шифр в "
-        "norm_code; оставляй его пустым только если не выбрана ни одна карточка. Для каждой "
-        "выбранной нормы обязательно укажи точную evidence_refs Qx.Hy выбранной карточки; не сокращай "
-        "её до Qx. В source_row скопируй уникальный locator исходной строки; название "
+        "Выбранная норма/аналог: точный norm_code и evidence_refs Qx.Hy той же карточки, "
+        "не Qx. Пустой norm_code — карточка не выбрана. В source_row скопируй "
+        "уникальный locator исходной строки; название "
         "раздела указывай только в section. Locator, unit и quantity копируй из одной "
         "и той же строки каталога без перенумерации. Для материала title сохраняет название "
         "изделия; для обоснованной монтажной работы title описывает выбранную тобой работу. "

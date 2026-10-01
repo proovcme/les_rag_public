@@ -258,6 +258,12 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
 async def test_native_sheet_reads_keep_full_resources_distinct_price_arguments_and_real_workbook(tmp_path, monkeypatch, variant):
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant)
     assert len(run.requests) == 4 and not run.responses
+    for request in run.requests:
+        frame = "\n".join(str(message["content"]) for message in request.messages)
+        assert "ВОР не создавай" in frame and "Санкт-Петербург, 3 квартал 2026" in frame
+        assert "source.xlsx" in frame
+        assert "S!R2" in frame and "Cable A" in frame
+        assert "S!R3" in frame and "Cable B" in frame
     for name in ("read_norm_card", "search_pricebook_resources", "read_resource_price", "read_source"):
         assert name in str(run.requests[1].tools)
     assert len(run.exact_reads) == 1
@@ -308,6 +314,10 @@ async def test_plain_final_sheet_rows_do_not_force_an_evidence_read_cycle(tmp_pa
     run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant=variant)
     assert len(run.requests) == 2 and not run.responses
     assert run.exact_reads == []
+    for request in run.requests:
+        frame = "\n".join(str(message["content"]) for message in request.messages)
+        assert "ВОР не создавай" in frame
+        assert "S!R2" in frame and "S!R3" in frame
     assert len(run.executions) == 1
     assert run.executions[0][1]["status"] == "complete"
     assert [row["resource_code"] for row in run.executions[0][0]["args"]["decisions"]] == [RESOURCE_A, RESOURCE_B]

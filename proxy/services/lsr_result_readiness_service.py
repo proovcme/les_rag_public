@@ -429,6 +429,12 @@ def build_lsr_result_readiness(
                 "нормы в evidence_refs или измените решение; код ссылку не "
                 "дорисовывает и норму не выбирает."
             )
+        elif kind == "norm_card_body_unread":
+            action = (
+                f"Строка {locator}: найден заголовок нормы {_norm_code(row)}, "
+                "но её полная карточка не была прочитана моделью. Продолжите с "
+                "чтением карточки и проверкой состава; выбор нормы сохранён."
+            )
         elif kind == "analogue_needs_confirmation":
             action = (
                 f"Строка {locator} выбрана аналогом ({_norm_code(row) or 'шифр не назван'}), "
@@ -895,6 +901,7 @@ def build_lsr_result_readiness(
                 if g.get("kind") in {
                     "cipher_not_in_cited_evidence",
                     "cipher_without_cited_card",
+                    "norm_card_body_unread",
                     "analogue_needs_confirmation",
                     "exact_match_unresolved",
                 }

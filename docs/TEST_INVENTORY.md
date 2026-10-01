@@ -1,5 +1,22 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+864 регрессии включены в canonical UNIT_TESTS: `test_model_result_resource_actions`
+проверяет полный JSON-массив/объект с prose, неоднозначность и усечение без repair,
+all-format nested fields, durable alias collision, independent norm/action refs,
+literal price provenance и сохранение действий в XLSX. `test_model_resource_binding_service`
+и `test_rim_lsr_trace_service` проверяют atomic replacement, фактический расход,
+reuse zero-price precedence, неоднозначные цели и actual parser→binder→RIM→XLSX.
+Отдельная поставка должна сохранять расходники нормы и показывать незакрытое
+пересечение вместо blanket deletion. Полный gate 864 и live acceptance пока открыты.
+`test_model_rag_grouped_evidence_service` проверяет lossless общие каталоги,
+разные источники/редакции, единый capacity-план и прогресс первой целой группы.
+Pointer-only, parent cipher, иной source/edition, duplicate JSON keys/aliases
+не закрывают provenance; sparse JSON роли сохраняются без новых значений.
+
+Установленный 863: B0 416.20s, полный авторский JSON array19, parser0, XLSX0;
+independent professional audit FAILED. B1 791.81s, answer length32768, paused19,
+XLSX0. Эти измерения не заменяются fixtures или позднейшим исправлением reader.
+
 863 output budget regressions: строгая profile валидация/round-trip и UI/registry
 113 passed; preset и реальные mocked chat call-boundary проверки включают
 post-cache capacity refresh, native-tool overhead, разделение query/answer,

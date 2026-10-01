@@ -527,6 +527,27 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
                 f"{entry.get('qty') if entry.get('qty') is not None else ''} "
                 f"{entry.get('unit') or ''} — {price_note}{unit_note}"
             )
+        # Applied exclusion has no surviving priced row. Keep the authored
+        # action and its actual application visible on the same check sheet.
+        action_labels = {"add": "добавить", "replace": "заменить",
+                         "exclude": "исключить", "reuse": "повторно использовать"}
+        for audit in item.get("resource_binding_audit") or ():
+            if not isinstance(audit, Mapping):
+                continue
+            proposal = audit.get("proposal")
+            proposal = proposal if isinstance(proposal, Mapping) else {}
+            identity = str(proposal.get("target_resource_code") or proposal.get("target_resource_name")
+                           or proposal.get("resource_code") or proposal.get("resource_name") or "ресурс не указан")
+            action = action_labels.get(str(proposal.get("action") or ""), "некорректное действие")
+            status = "применено" if audit.get("status") == "applied" else "не применено — требуется уточнение"
+            refs = proposal.get("source_refs")
+            refs = refs if isinstance(refs, (list, tuple)) else []
+            basis = "; ".join(str(ref) for ref in refs)
+            if proposal.get("basis_ref"):
+                basis = "; ".join(filter(None, [basis, str(proposal["basis_ref"])]))
+            reason = str(proposal.get("reason") or "основание не указано")
+            resource_lines.append(f"Решение: {action} {identity} — {status}; {reason}"
+                                  + (f"; источник: {basis}" if basis else ""))
         analogue_lines = [
             str(value) for value in (item.get("analog_limitations") or ()) if str(value).strip()
         ]

@@ -1,5 +1,18 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **864:** `model_lsr_result_contract.decode_model_result_rows` читает полный
+> уникальный JSON result; `chat_evidence_application_service` сохраняет nested
+> ресурсные поля и independent immutable citations. `model_resource_binding_service`
+> механически применяет авторские add/replace/exclude/reuse; active
+> `rim_lsr_trace_service` рассчитывает сохранённый расход, `rim_trace_xlsx_service`
+> показывает действия, причины и ссылки. Отдельная поставка не удаляет весь
+> material состав нормы. Технические конфликты не переписывают выбор нормы.
+> `model_rag_grouped_evidence_service` даёт общий capacity-план, точный shared
+> НР/СП и раздельные full-body/index/deferred counters; existing native reads
+> доступны по показанному exact pointer. `normative_card_identity` отделяет
+> полную карточку от parent cipher и иной редакции/источника. Root binder и
+> readiness не принимают pointer-only как proof полного чтения.
+
 > **863:** `apply_output_budget_policy`/`model_rag_answer_execution_preset`
 > резервируют независимые query/answer outputs до Governor; actual provider
 > лимит не превышает резерв и может сужаться обязательным workflow cap.

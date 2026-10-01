@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
 from proxy.services import nr_sp_service
+from proxy.services.model_rag_grouped_evidence_service import card_delivery_facts, normative_card_identity
 
 
 @dataclass(frozen=True)
@@ -244,12 +245,16 @@ class ModelResearchToolService:
             return self._missing("read_norm_card", "reader returned a different norm pointer", status="conflict")
         card = {**card, "nr_sp_candidates": nr_sp_service.model_candidates(code=pointer["norm_code"])}
         content = _full_norm_card_content(card)
-        chunk = _SmetaNormChunk(content=content, doc_name="smeta_norm_cards.v1", score=1.0, meta={
-            **{name: card[name] for name in ("norm_key", "norm_code", "source_ref", "edition", "base_type",
+        card_meta = {
+            **{name: card[name] for name in ("norm_key", "norm_code", "source_ref", "source_sha256", "edition", "base_type",
                  "work_steps", "measure_unit", "resource_count", "resources_returned", "resources_complete",
                  "resource_consumption_known", "resources", "nr_sp_candidates") if name in card},
             "exact_card_read": True, "minimum_evidence_body_chars": len(content),
-        })
+            "body_status": "full", "card_body_shown": True,
+        }
+        card_meta["normative_card_identity"] = normative_card_identity(card_meta)
+        card_meta.update(card_delivery_facts(card_meta, raw_body_shown=True))
+        chunk = _SmetaNormChunk(content=content, doc_name="smeta_norm_cards.v1", score=1.0, meta=card_meta)
         return ModelResearchToolResult(payload={
             "schema": "les_tool_result_v1", "tool": "read_norm_card", "operation": "typed_exact_norm_read",
             "status": "ok", "inputs": [dict(args)], "result": {"card": card, "hits": [_chunk_payload(chunk)], "count": 1},

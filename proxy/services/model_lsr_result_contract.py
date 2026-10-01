@@ -7,6 +7,8 @@ norms. Renderers share this contract so a table hint cannot weaken required fact
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Mapping
 
 
 BASE_FIELDS = (
@@ -23,7 +25,56 @@ OPTIONAL_FIELDS = (
     "coefficient", "coefficient_applies_to", "extra_ops", "missing_ops", "norm_components",
     "confirmed_price", "price_kind", "price_unit", "price_source",
     "price_currency", "price_vat", "price_period",
+    "resource_bindings", "resource_review",
 )
+
+
+def _unique_json_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate authored JSON field: " + key)
+        value[key] = item
+    return value
+
+
+def decode_model_result_rows(raw: str) -> list[dict] | None:
+    """Read a complete, uniquely labelled JSON result without repairing values."""
+    candidates = []
+    text = str(raw or "").strip()
+    if text.startswith(("{", "[")):
+        candidates.append(text)
+    candidates.extend(re.findall(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text))
+    decoded = []
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate, object_pairs_hook=_unique_json_object)
+        except (ValueError, TypeError):
+            continue
+        rows = value.get("rows") if isinstance(value, Mapping) else value
+        if isinstance(rows, list) and all(
+            isinstance(row, Mapping)
+            and "title" in row
+            and ({"unit", "norm_code"}.issubset(row)
+                 or str(row.get("row_role") or "").strip().casefold()
+                 in {"work", "material", "equipment", "resource", "header", "unresolved"})
+            and row.get("source_row") not in (None, "") for row in rows
+        ):
+            decoded.append(rows)
+    return decoded[0] if len(decoded) == 1 else None
+
+
+def decode_model_resource_field(value):
+    """Structured cell/label values are JSON; malformed authored values survive."""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if text.startswith("`") and text.endswith("`"):
+        text = text[1:-1]
+    try:
+        return json.loads(text, object_pairs_hook=_unique_json_object)
+    except (ValueError, TypeError):
+        return value
 
 
 def model_lsr_result_examples() -> dict[str, str]:
@@ -59,17 +110,17 @@ def model_lsr_result_examples() -> dict[str, str]:
 def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str:
     """Explain conditional row fields identically for Markdown, JSON and text."""
     instruction = (
-        "Ответ: Markdown-таблица, JSON rows или обычным текстом с подписанными полями; "
-        "JSON не обязателен; предпочти JSON rows. В Markdown сохраняй объявленные "
+        "Ответ: предпочти JSON rows; можно Markdown или обычным текстом. JSON не обязателен. "
+        "В Markdown сохраняй объявленные "
         "ячейки, включая пустые, и экранируй | внутри значения. "
-        "Для каждой строки укажи " + ", ".join(BASE_FIELDS) + ". "
+        "Поля строки: " + ", ".join(BASE_FIELDS) + ". "
         "Для каждой выбранной нормы обязательно верни "
         + ", ".join(SELECTED_NORM_FIELDS) + ". "
         "Признаки: yes/no/unknown; пояснение пиши в coverage, не вместо признака. "
         "coverage обоснуй параметрами и составом той же карточки. Неизвестное: unknown "
         "и конкретный вопрос в open_gap. norm_code и evidence_refs относятся к одной "
-        "карточке; применимость выбираешь ты. Для material/equipment/resource верни "
-        "буквальный выбранный resource_code с evidence_refs либо пустой код. "
+        "карточке; применимость выбираешь ты. material/equipment/resource: "
+        "resource_code из карточки с evidence_refs либо пусто. "
         "nr_sp_rule_id выбирай из карточки по известным условиям; при неизвестных — "
         "пустой ID и вопрос в open_gap. Ставки по памяти не подставляй. "
         "Коммерческая confirmed_price требует цитаты суммы, единицы и price_source; "
@@ -82,7 +133,10 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "неизменённые строки prior_model_decisions повторять не обязательно. Изменение "
         "нормы/пояснения — пересмотр прежней операции, дополнительная работа — новая. "
         "Не объявляй неприменимые необязательные колонки. Дополнительно: "
-        + ", ".join(OPTIONAL_FIELDS) + "."
+        "resource_bindings: JSON-массив action=add/replace/exclude/reuse, "
+        "target_resource_code/name, reason, source_refs/basis_ref. "
+        "add/replace: resource_name/code, unit, quantity/quantity_basis. "
+        + ", ".join(field for field in OPTIONAL_FIELDS if field != "resource_bindings") + "."
     )
     if include_examples:
         examples = model_lsr_result_examples()
