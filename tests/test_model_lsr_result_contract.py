@@ -43,3 +43,16 @@ def test_result_table_contract_allows_delta_and_ordinary_text_without_weaker_fla
     assert "или base_revision" in instruction
     assert "Не назначай свои ID и новый revision" in instruction
     assert "набор source_row результата точно равен" not in instruction
+
+
+def test_format_hints_do_not_contradict_empty_cell_transport_or_force_markdown():
+    instruction = lsr_result_table_instruction()
+
+    assert "не перечисляй пустые поля" not in instruction
+    assert "Если выбран Markdown" in instruction
+    assert "сохраняй пустую ячейку" in instruction
+    assert "предпочти JSON rows" in instruction
+    assert "JSON не обязателен" in instruction
+    assert "пояснение пиши в coverage, не вместо признака" in instruction
+    assert "Неприменимые поля не выводи" not in instruction
+    assert "Не объявляй неприменимые необязательные колонки" in instruction

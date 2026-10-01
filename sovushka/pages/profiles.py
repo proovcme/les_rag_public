@@ -464,6 +464,20 @@ def build_profiles():
                         "temperature", float(event.value or 0.0)
                     )
                 )
+                reasoning = ui.switch(
+                    "Рассуждение модели",
+                    value=(draft.get("model_policy") or {}).get("reasoning_enabled") is True,
+                )
+                reasoning.tooltip(
+                    "По умолчанию выключено. Может увеличить время ответа и расход токенов. "
+                    "Фактическое значение и источник видны в диагностике исполнения. "
+                    "Настройка применяется с выбранной версией профиля; перезапуск не нужен."
+                )
+                reasoning.on_value_change(
+                    lambda event: draft.setdefault("model_policy", {}).__setitem__(
+                        "reasoning_enabled", bool(event.value)
+                    )
+                )
                 with ui.row().classes("w-full gap-4 flex-wrap"):
                     grounded = ui.switch(
                         "Только по источникам",

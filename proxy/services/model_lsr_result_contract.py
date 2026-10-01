@@ -60,10 +60,13 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
     """Explain conditional row fields identically for Markdown, JSON and text."""
     instruction = (
         "Ответ: Markdown-таблица, JSON rows или обычным текстом с подписанными полями; "
-        "JSON не обязателен. Для каждой строки укажи " + ", ".join(BASE_FIELDS) + ". "
+        "JSON не обязателен; предпочти JSON rows. В Markdown сохраняй объявленные "
+        "ячейки, включая пустые, и экранируй | внутри значения. "
+        "Для каждой строки укажи " + ", ".join(BASE_FIELDS) + ". "
         "Для каждой выбранной нормы обязательно верни "
         + ", ".join(SELECTED_NORM_FIELDS) + ". "
-        "Признаки: yes/no/unknown; coverage обоснуй той же карточкой. Неизвестное: unknown "
+        "Признаки: yes/no/unknown; пояснение пиши в coverage, не вместо признака. "
+        "coverage обоснуй параметрами и составом той же карточки. Неизвестное: unknown "
         "и конкретный вопрос в open_gap. norm_code и evidence_refs относятся к одной "
         "карточке; применимость выбираешь ты. Для material/equipment/resource верни "
         "буквальный выбранный resource_code с evidence_refs либо пустой код. "
@@ -78,7 +81,8 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "(или base_revision). Не назначай свои ID и новый revision. Верни новые и изменённые решения: "
         "неизменённые строки prior_model_decisions повторять не обязательно. Изменение "
         "нормы/пояснения — пересмотр прежней операции, дополнительная работа — новая. "
-        "Неприменимые поля не выводи. Дополнительно: " + ", ".join(OPTIONAL_FIELDS) + "."
+        "Не объявляй неприменимые необязательные колонки. Дополнительно: "
+        + ", ".join(OPTIONAL_FIELDS) + "."
     )
     if include_examples:
         examples = model_lsr_result_examples()

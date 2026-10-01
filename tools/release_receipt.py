@@ -180,14 +180,17 @@ def create_gate_receipt(
     build_number: int,
     desktop_version: str,
     branch: str,
-    upstream_commit: str,
+    upstream_commit: str | None,
     policy: Sequence[tuple[str, Sequence[str]]],
     results: Sequence[dict[str, Any]],
     clean: bool,
+    local_only_full: bool = False,
 ) -> Path:
     target = _validate_commit(target_commit, "target_commit")
     tree = _validate_commit(target_tree, "target_tree")
-    upstream = _validate_commit(upstream_commit, "upstream_commit")
+    if local_only_full and upstream_commit is not None:
+        raise ValueError("local-only full gate must not claim an upstream commit")
+    upstream = None if local_only_full else _validate_commit(upstream_commit, "upstream_commit")
     normalized_policy = _normalized_policy(policy)
     normalized_results = [dict(item) for item in results]
     expected_names = [item["gate"] for item in normalized_policy]
@@ -209,6 +212,8 @@ def create_gate_receipt(
         "upstream_commit": upstream,
         "policy_sha256": policy_sha,
     }
+    if local_only_full:
+        identity["local_only_full"] = True
     gate_id = hashlib.sha256(_canonical(identity)).hexdigest()[:24]
     payload = {
         "schema": GATE_SCHEMA,
@@ -219,6 +224,8 @@ def create_gate_receipt(
         "results": normalized_results,
         "created_at": _now(),
     }
+    if local_only_full:
+        payload["publishable"] = False
     return _write_hashed_json(
         Path(root) / "gates" / gate_id / "gate-receipt.json",
         payload,
@@ -239,10 +246,13 @@ def verify_gate_receipt(
     build_number: int,
     desktop_version: str,
     branch: str,
-    upstream_commit: str,
+    upstream_commit: str | None,
     policy: Sequence[tuple[str, Sequence[str]]],
+    local_only_full: bool = False,
 ) -> None:
     normalized_policy = _normalized_policy(policy)
+    if local_only_full and upstream_commit is not None:
+        raise ValueError("local-only full gate must not claim an upstream commit")
     expected = {
         "target_commit": _validate_commit(target_commit, "target_commit"),
         "target_tree": _validate_commit(target_tree, "target_tree"),
@@ -250,11 +260,18 @@ def verify_gate_receipt(
         "build_number": int(build_number),
         "desktop_version": str(desktop_version),
         "branch": str(branch),
-        "upstream_commit": _validate_commit(upstream_commit, "upstream_commit"),
+        "upstream_commit": None if local_only_full else _validate_commit(upstream_commit, "upstream_commit"),
         "policy_sha256": hashlib.sha256(_canonical(normalized_policy)).hexdigest(),
     }
+    if local_only_full:
+        expected["local_only_full"] = True
     actual = {key: receipt.get(key) for key in expected}
-    if actual != expected or receipt.get("clean") is not True:
+    if (
+        actual != expected
+        or receipt.get("clean") is not True
+        or bool(receipt.get("local_only_full", False)) != local_only_full
+        or (local_only_full and receipt.get("publishable") is not False)
+    ):
         raise RuntimeError("gate receipt binding changed")
     result_names = [str(item.get("gate") or "") for item in receipt.get("results", [])]
     if result_names != [item["gate"] for item in normalized_policy] or any(
@@ -287,6 +304,13 @@ def create_artifact_receipt(
         raise RuntimeError("artifact gate binding changed")
     if release_class not in {"patch", "full"}:
         raise ValueError("release_class must be patch or full")
+    local_only_full = gate.get("local_only_full") is True
+    if local_only_full and (
+        release_class != "full" or base_commits or publishable is not False
+        or gate.get("upstream_commit") is not None
+        or gate.get("publishable") is not False
+    ):
+        raise ValueError("local-only full artifact requires full class, no base, and publishable=false")
     records = _artifact_records(assets)
     identity = {
         "gate_id": gate["gate_id"],
@@ -309,6 +333,8 @@ def create_artifact_receipt(
             for item in records
         ],
     }
+    if local_only_full:
+        identity["local_only_full"] = True
     artifact_id = hashlib.sha256(_canonical(identity)).hexdigest()[:24]
     payload = {
         "schema": ARTIFACT_SCHEMA,
@@ -337,6 +363,12 @@ def load_artifact_receipt(path: Path) -> dict[str, Any]:
 def verify_artifact_receipt(
     artifact: dict[str, Any], *, commit: str, assets: Sequence[Path]
 ) -> None:
+    if artifact.get("local_only_full") is True and (
+        artifact.get("publishable") is not False
+        or artifact.get("release_class") != "full"
+        or artifact.get("base_commits") != []
+    ):
+        raise RuntimeError("local-only full artifact scope changed")
     expected = sorted(
         [
             {key: item.get(key) for key in ("name", "bytes", "sha256")}
@@ -487,6 +519,8 @@ def create_publication(
     artifact_path = Path(artifact_path).resolve()
     acceptance_path = Path(acceptance_path).resolve()
     artifact = load_artifact_receipt(artifact_path)
+    if artifact.get("local_only_full") is True:
+        raise RuntimeError("local-only full artifact cannot be published")
     acceptance = load_acceptance_attempt(acceptance_path)
     if (
         acceptance.get("result") != "accepted"
@@ -800,6 +834,8 @@ def write_public_artifact_receipt(
     artifact_path = Path(artifact_path).resolve()
     acceptance_path = Path(acceptance_path).resolve()
     artifact = load_artifact_receipt(artifact_path)
+    if artifact.get("local_only_full") is True:
+        raise RuntimeError("local-only full artifact cannot have a public receipt")
     acceptance = load_acceptance_attempt(acceptance_path)
     if (
         acceptance.get("result") != "accepted"

@@ -1,6 +1,58 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-**Candidate 0.31.131 / 859, installed 858; acceptance pending.**
+**Candidate 0.31.132 / 860; installed runtime 859. Acceptance pending.**
+The measured 859 Markdown defect is repaired without guessing omitted cells:
+excess trailing empty cells can be removed only when the declared field values
+remain structurally compatible. Missing middle cells and extra nonempty cells
+retain the literal header/line/cells as unapplied proposals and pause technical
+completion; they do not become MISSING norms. The shared output instructions
+no longer tell the model to omit declared empty cells. An explicit profile
+reasoning boolean defaults off, is editable in GUI and is passed to the same
+bound model in B0/B1 and continuations; separate reasoning is not a final row.
+No provider, model, capacity, temperature or professional decision is changed
+by that option. Release baseline v2 supports explicitly named additional
+region/quarter books, preserving gaps and valid operator state. The Windows
+release runner supports the exact current Makefile gates when Make is absent.
+Explicit local-only full preparation keeps all gates while truthfully recording
+no upstream/base and forbidding publication. Baseline SHA is pinned throughout
+the build; freeze checks copied bytes and bounds transient Windows lock retries.
+Fresh installed comparisons, varied inputs, 300+ rows and the exact Windows
+deliverable remain open; no customer readiness is claimed.
+
+860 frozen offline checks: verify passed (21.84s); canonical test 2441 passed,
+20 existing opt-in skipped, 5 warnings (228.84s pytest / 230.31s wrapper).
+Architecture gate passed (9.25s). Actual v2 baseline archive verification passed
+(7.28s), SHA `c614a99c3bf624faf011af2383a06e64b9e2491bd4fb77e8eaeeb82bc441af5d`.
+It retains 49,818 norms / 504,891 resources / 1,576 FSEM and explicitly adds
+281,630-row SPb and Moscow 3kv2026 books (10 missing price rows each, zero
+missing units/duplicate codes); no missing value is replaced by zero.
+Receipts: `artifacts/{verify,test,architecture,baseline}_860{.log,.exit.json}`.
+These checks establish transport/package contracts, not professional live quality.
+
+**Installed 0.31.131 / 859, 01.10: customer acceptance FAILED.**
+Measured code commit `11dcc1b9`; all 31 deployed patch file hashes match source.
+Native RRF 1/1; idle basic smoke 9 pass / 1 existing diagnostics WARN / 0 fail.
+The Tauri executable itself remains 858: this was a runtime patch, not an exact
+installer acceptance. Fresh BAP PDF controls used the same source SHA, question,
+FreeToken Qwen3.6-35B-A3B-NVFP4 r4, profile and SPb 3kv2026 book SHA.
+B0: 217.69s, 32 authored rows (18 work / 14 material), 19/19 source addresses,
+10 selected work norms, 9 positions with calculation; confirmed 64272.09 and
+preliminary 3894.14. XLSX formula total is 68166.23. R4 is only a material;
+14 materials have no valid work parent. Six material rows use kg for source
+areas without conversion evidence. B1: 379.62s, 35 authored rows (19 work /
+16 material), 19/19 addresses, seven repeated material groups, four material
+unit error entries on two locators. Five positions have preliminary money,
+confirmed 0.00 / preliminary 81137.97, exactly matching XLSX formula total.
+Parser field shifts corrupt applicability flags, NR/SP IDs and supply metadata;
+literal saved cards separately show unjustified EXACT choices (including an
+emergency power block vs luminaire and fireproof box vs cable termination).
+Neither control uses optional native card/resource reads or authors resource
+codes. Calculation and workbook amounts agree; these facts do not establish
+professional correctness. Receipts and actual SHA-verified workbooks:
+`artifacts/live_859/{bap_lsr_baseline,bap_lsr_candidate}`; independent comparison:
+`artifacts/live_859/{comparative_acceptance.json,rowwise_note.md}`.
+
+**859 implemented changes and offline checks (not live acceptance):**
 Closes measured transport and financial provenance defects from the 858 live
 comparison: optional same-model full-card/resource/document reads in B0 and B1;
 literal evidence retained without duplicate bodies; provider tool schemas
@@ -19,8 +71,9 @@ and quarter aliases preserve it, and an explicit operator change of price scope
 clears the old binding. Final offline verify passed; canonical test: 2330 passed,
 20 existing opt-in skipped, 5 warnings (220.05s). Earlier failed runs are retained
 in artifacts/test_859_{first_failed,second_failed}.log. Installed comparative
-controls, varied inputs, 300+ rows and Windows deliverable remain pending here;
-no customer readiness is claimed from these changes.
+controls subsequently failed as recorded above; varied inputs, 300+ rows and
+Windows deliverable remain open. No customer readiness follows from these
+offline changes.
 
 **Installed 0.31.130 / 858, 01.10: customer acceptance FAILED.**
 Measured code commit `74d635ee61de8ff47ac36f58566e2fb3cb0ec063`; the later

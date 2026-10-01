@@ -14,6 +14,8 @@ import httpx
 from proxy.services.llm_transport_profile_service import (
     apply_transport_options,
     assistant_delta_text,
+    final_assistant_text,
+    FinalTextFilter,
     provider_is_local,
 )
 from proxy.services.model_connection_contracts import CapabilityName, CapabilityState
@@ -43,8 +45,11 @@ class InferenceRequest:
     temperature: float | None = None
     tools: Sequence[Mapping[str, Any]] = ()
     response_format: Mapping[str, Any] | None = None
+    reasoning_enabled: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.reasoning_enabled, bool):
+            raise ValueError("reasoning_enabled must be a boolean")
         if self.max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
         object.__setattr__(self, "messages", tuple(dict(item) for item in self.messages))
@@ -95,10 +100,7 @@ def _usage(value: object) -> Mapping[str, int]:
 
 
 def _message_text(message: Mapping[str, Any]) -> str:
-    content = message.get("content")
-    if isinstance(content, str) and content:
-        return content
-    return assistant_delta_text(message)
+    return final_assistant_text(message)
 
 
 class OpenAICompatibleTransport:
@@ -178,7 +180,9 @@ class OpenAICompatibleTransport:
         if stream:
             body["stream"] = True
         if provider_is_local(connection.extension_type):
-            return apply_transport_options(body, connection.extension_type)
+            return apply_transport_options(
+                body, connection.extension_type, reasoning_enabled=request.reasoning_enabled
+            )
         return body
 
     @staticmethod
@@ -205,7 +209,7 @@ class OpenAICompatibleTransport:
         body: dict[str, Any] = {
             "model": connection.model_id,
             "messages": [dict(item) for item in request.messages],
-            "think": False,
+            "think": request.reasoning_enabled,
             # Native chat sends one NDJSON event per generated fragment.
             # Consuming it keeps a long local generation alive while complete()
             # still returns the exact concatenated model answer as one value.
@@ -248,6 +252,7 @@ class OpenAICompatibleTransport:
             event_wire_limit = max(1024, self.response_body_limit * 8)
             saw_event = False
             text_parts: list[str] = []
+            final_filter = FinalTextFilter()
             tool_calls: list[Mapping[str, Any]] = []
             prompt_tokens = 0
             completion_tokens = 0
@@ -275,7 +280,9 @@ class OpenAICompatibleTransport:
                     semantic_size += len(content.encode("utf-8"))
                     if semantic_size > self.response_body_limit:
                         raise ModelTransportError("UPSTREAM_RESPONSE_TOO_LARGE")
-                    text_parts.append(content)
+                    visible = final_filter.feed(content)
+                    if visible:
+                        text_parts.append(visible)
                 tool_calls_raw = message.get("tool_calls") or ()
                 if not isinstance(tool_calls_raw, Sequence) or isinstance(tool_calls_raw, str):
                     raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
@@ -436,6 +443,7 @@ class OpenAICompatibleTransport:
         consumed = 0
         finished = False
         observed_model_id = ""
+        final_filter = FinalTextFilter()
         try:
             if not 200 <= response.status_code < 300:
                 await self._read_bounded(response)
@@ -458,7 +466,7 @@ class OpenAICompatibleTransport:
                 except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
                     raise ModelTransportError("UPSTREAM_STREAM_EVENT_INVALID") from exc
                 observed_model_id = str(payload.get("model") or observed_model_id)
-                text = assistant_delta_text(delta)
+                text = final_filter.feed(assistant_delta_text(delta))
                 if text:
                     yield InferenceEvent(
                         kind="text_delta",

@@ -59,6 +59,7 @@ def resolve_transport_execution_profile(
     observed_source: str = "unavailable",
     operator: Mapping[str, Any] | None = None,
     restrictions: Mapping[str, Any] | None = None,
+    reasoning_supported: bool = False,
 ) -> ModelExecutionPreset:
     """Resolve a preset from transport facts without changing provider state."""
     return resolve_execution_preset(
@@ -68,6 +69,7 @@ def resolve_transport_execution_profile(
             context_tokens=observed_context_tokens,
             observed=bool(observed),
             source=str(observed_source or "unavailable"),
+            reasoning_supported=reasoning_supported,
         ),
         operator=operator,
         restrictions=restrictions,
@@ -81,6 +83,8 @@ def resolve_connection_execution_profile(
     observed_context_tokens: int | None,
     observed_source: str,
     restrictions: Mapping[str, Any] | None = None,
+    provider: str = "model_connection",
+    reasoning_supported: bool = False,
 ) -> ModelExecutionPreset:
     """Resolve execution limits from one saved, capability-observed connection."""
     operator = (
@@ -89,13 +93,14 @@ def resolve_connection_execution_profile(
         else None
     )
     return resolve_transport_execution_profile(
-        provider="model_connection",
+        provider=provider,
         model_id=model_id,
         observed_context_tokens=observed_context_tokens,
         observed=observed_context_tokens is not None,
         observed_source=observed_source,
         operator=operator,
         restrictions=restrictions,
+        reasoning_supported=reasoning_supported,
     )
 
 
@@ -125,15 +130,56 @@ def effective_model_execution_diagnostics() -> dict[str, Any]:
 
 
 def assistant_delta_text(delta: Mapping[str, Any] | None) -> str:
-    """Normalize text fields used by OpenAI-compatible streaming providers."""
+    """Return final content only; reasoning channels are never model decisions."""
     if not isinstance(delta, Mapping):
         return ""
-    return str(
-        delta.get("content")
-        or delta.get("reasoning")
-        or delta.get("reasoning_content")
-        or ""
-    )
+    return str(delta.get("content") or "")
+
+
+class FinalTextFilter:
+    """Suppress one leading thinking block; preserve ordinary final literals."""
+
+    def __init__(self) -> None:
+        self._pending = ""
+        self._thinking = False
+        self._leading = True
+
+    def feed(self, text: str) -> str:
+        self._pending += str(text or "")
+        if self._leading:
+            candidate = self._pending.lstrip().lower()
+            if not candidate or "<think>".startswith(candidate):
+                return ""
+            if candidate.startswith("<think>"):
+                leading_space = len(self._pending) - len(self._pending.lstrip())
+                self._pending = self._pending[leading_space + len("<think>"):]
+                self._thinking = True
+            self._leading = False
+        if self._thinking:
+            lowered = self._pending.lower()
+            closing = "</think>"
+            found = lowered.find(closing)
+            if found < 0:
+                held = max((size for size in range(1, len(closing))
+                            if lowered.endswith(closing[:size])), default=0)
+                self._pending = self._pending[-held:] if held else ""
+                return ""
+            self._pending = self._pending[found + len(closing):]
+            self._thinking = False
+        visible, self._pending = self._pending, ""
+        return visible
+
+    def finish(self) -> str:
+        # Incomplete leading reasoning/control tags have no final content.
+        # Once final content starts, feed() preserves all literals verbatim.
+        visible = self._pending if not self._thinking and not self._leading else ""
+        self._pending = ""
+        return visible
+
+
+def final_assistant_text(message: Mapping[str, Any] | None) -> str:
+    filter_ = FinalTextFilter()
+    return (filter_.feed(assistant_delta_text(message)) + filter_.finish()).strip()
 
 
 def provider_is_local(provider: str | None) -> bool:
@@ -143,12 +189,14 @@ def provider_is_local(provider: str | None) -> bool:
 def apply_transport_options(
     body: Mapping[str, Any],
     provider: str | None,
+    *,
+    reasoning_enabled: bool = False,
 ) -> dict[str, Any]:
     normalized = dict(body)
     if not provider_is_local(provider):
         return normalized
     template_options = dict(normalized.get("chat_template_kwargs") or {})
-    template_options["enable_thinking"] = False
+    template_options["enable_thinking"] = reasoning_enabled
     normalized["chat_template_kwargs"] = template_options
     return normalized
 

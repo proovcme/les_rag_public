@@ -1,10 +1,27 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
-Candidate **859**, установлен **858**. Новые offline regressions добавлены в
-`UNIT_TESTS +=`; полный candidate verify/test и живая сравнительная приёмка
-фиксируются отдельными результатами, не выводятся из перечисления tests.
-Профессиональная source/norm/financial приёмка установленного 858 ниже остаётся
-FAILED; live pass для 859 этим документом не заявлен.
+Candidate **860**, установлен runtime **859**. Сравнительная профессиональная
+приёмка 859 FAILED: parser cell shifts и необоснованные авторские нормы при
+согласованном расчёте/XLSX. Новые offline regressions добавлены в `UNIT_TESTS +=`;
+полный candidate verify/test и живая сравнительная приёмка фиксируются
+отдельными результатами, не выводятся из перечисления tests. Live pass для 860
+этим документом не заявлен.
+
+860 frozen canonical offline gate: verify passed; **2441 passed / 20 existing
+opt-in skipped / 5 warnings**, 228.84s. Architecture and actual v2 baseline
+archive verification passed. Exact receipts are in `artifacts/*_860.exit.json`.
+
+- `test_model_result_table_transport.py`: literal malformed proposals, no
+  padding/merging, compatible empty tails, escaped pipes и resumable technical
+  hold без MISSING/retry/model confirmation.
+- `test_model_reasoning_control.py`: default-off strict boolean, GUI/profile
+  persistence, same B0/B1/continuation policy, supported/effective boundary,
+  separate reasoning/final, split tags и literal XML/code preservation;
+  reasoning-only length не создаёт workbook или новый model turn.
+- `test_release_local_full.py`: exact clean detached local-only full, no fake
+  upstream/base, unchanged all gates и explicit publication denial.
+- `test_release_candidate_freeze.py`: actual Windows sharing lock, bounded
+  atomic-rename retries, visible final refusal и frozen-byte integrity.
 
 Новые scoped файлы:
 

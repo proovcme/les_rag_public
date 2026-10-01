@@ -80,12 +80,12 @@ def test_freetoken_transport_disables_thinking_without_mutating_input():
     assert original == {"model": "Qwen3.6-35B-A3B-NVFP4", "max_tokens": 400}
 
 
-def test_freetoken_stream_reads_reasoning_content_delta():
+def test_freetoken_stream_excludes_reasoning_content_delta():
     delta = {"content": "", "reasoning_content": "Готово"}
 
     parser = getattr(transport_profile, "assistant_delta_text", None)
     assert callable(parser), "shared stream delta parser is missing"
-    assert parser(delta) == "Готово"
+    assert parser(delta) == ""
 
 
 def test_freetoken_transport_preserves_other_template_options():

@@ -41,6 +41,10 @@ function Restore-BuildTree {
 }
 
 function Read-PreparedUpdate {
+  if (-not (Test-Path -LiteralPath $SmetaBaselineArchive -PathType Leaf)) {
+    throw "Verified smeta baseline is missing: $SmetaBaselineArchive"
+  }
+  $baselineSha = (Get-FileHash -LiteralPath $SmetaBaselineArchive -Algorithm SHA256).Hash.ToLowerInvariant()
   if (-not (Test-Path -LiteralPath $ManifestPath) -or
       -not (Test-Path -LiteralPath $CachedInstaller)) {
     return $null
@@ -54,6 +58,7 @@ function Read-PreparedUpdate {
       $prepared.product_version -eq $Version -and
       [int]$prepared.build_number -eq $BuildNumber -and
       $prepared.commit -eq $BuildCommit -and
+      $prepared.baseline_sha256 -eq $baselineSha -and
       $prepared.sha256 -eq $sha
     ) {
       $prepared.cache_hit = $true
@@ -63,8 +68,16 @@ function Read-PreparedUpdate {
   return $null
 }
 
+if (-not (Test-Path -LiteralPath $SmetaBaselineArchive -PathType Leaf)) {
+  throw "Verified smeta baseline is missing: $SmetaBaselineArchive"
+}
+$capturedBaselineSha = (Get-FileHash -LiteralPath $SmetaBaselineArchive -Algorithm SHA256).Hash.ToLowerInvariant()
 $cached = Read-PreparedUpdate
 if ($cached) {
+  if ($cached.baseline_sha256 -ne $capturedBaselineSha -or
+      (Get-FileHash -LiteralPath $SmetaBaselineArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $capturedBaselineSha) {
+    throw "Baseline archive changed during package preparation"
+  }
   $cached | ConvertTo-Json -Depth 12
   exit 0
 }
@@ -91,6 +104,10 @@ try {
   if (-not (Test-Path -LiteralPath $Installer)) {
     throw "Installer was not built: $Installer"
   }
+  if (-not (Test-Path -LiteralPath $SmetaBaselineArchive -PathType Leaf) -or
+      (Get-FileHash -LiteralPath $SmetaBaselineArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $capturedBaselineSha) {
+    throw "Baseline archive changed during package preparation"
+  }
 
   $sha = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
   New-Item -ItemType Directory -Force -Path $CacheRoot | Out-Null
@@ -107,7 +124,7 @@ try {
     installer = $CachedInstaller
     bytes = (Get-Item -LiteralPath $CachedInstaller).Length
     sha256 = $sha
-    baseline_sha256 = (Get-FileHash -LiteralPath $SmetaBaselineArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+    baseline_sha256 = $capturedBaselineSha
     prepared_at = [DateTime]::UtcNow.ToString("o")
     cache_hit = $false
   }

@@ -257,7 +257,15 @@ def test_surplus_explanatory_cell_never_moves_unit_quantity_or_norm_status():
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
         "| S!R7 | unresolved | S!R7 | Устройство проёма | шт. | 12 | | NEEDS_RESEARCH | insufficient_source_data | Не заданы условия | Q4.H6 |"
     )
-    row = service.parse_model_rag_result(answer)[1][0]
+    diagnostics = []
+    assert service.parse_model_rag_result(answer, diagnostics=diagnostics) == (answer, [])
+    assert diagnostics[0]["decision"]["raw_line"] == answer.splitlines()[-1]
+    assert diagnostics[0]["decision"]["raw_cells"][8:] == [
+        "insufficient_source_data", "Не заданы условия", "Q4.H6",
+    ]
+    escaped_answer = answer.replace("insufficient_source_data | Не заданы условия",
+                                    r"insufficient_source_data \| Не заданы условия")
+    row = service.parse_model_rag_result(escaped_answer)[1][0]
     assert row["title"] == "Устройство проёма"
     assert row["unit"] == "шт."
     assert row["quantity"] == 12
@@ -1155,7 +1163,7 @@ def test_markdown_title_with_pipe_still_parses_row():
     answer = (
         "| source_row | row_role | title | unit | quantity | norm_code | evidence_refs |\n"
         "|---|---|---|---|---|---|---|\n"
-        "| СКС!R6 | material | Шкаф 19\" | 800x1000 | Hyperline | шт. | 2 | - | Q1.H1 |\n"
+        "| СКС!R6 | material | Шкаф 19\" \\| 800x1000 \\| Hyperline | шт. | 2 | - | Q1.H1 |\n"
         "| СКС!R6 | work | Монтаж шкафа | шт. | 2 | ГЭСНм10-01-055-01 | Q1.H1 |\n"
     )
     parsed = service.parse_model_rag_result(answer)
@@ -1164,6 +1172,8 @@ def test_markdown_title_with_pipe_still_parses_row():
     assert len(rows) >= 2
     roles = {str(row.get("row_role")) for row in rows}
     assert "material" in roles and "work" in roles
+    material = next(row for row in rows if row.get("row_role") == "material")
+    assert material["title"] == 'Шкаф 19" | 800x1000 | Hyperline'
     work = next(row for row in rows if row.get("row_role") == "work")
     assert work.get("norm_code") == "ГЭСНм10-01-055-01"
 
@@ -1723,22 +1733,20 @@ def test_model_rag_result_preserves_non_numeric_coefficient_text_unchanged():
     )
 
 
-def test_model_rag_result_pads_only_missing_trailing_optional_cells():
+def test_model_rag_result_rejects_missing_cells_without_padding():
     answer = """| № | Наименование | Ед. изм. | Кол-во | Нормативный код (ГЭСН/ЕР) | Коэфф. | Примечание |
 |---:|---|---|---:|---|---|---|
 | 7 | Работа модели | шт. | 3 | CUSTOM-NORM-A |
 """
 
-    assert service.parse_model_rag_result(answer) == (
-        answer,
-        [{
-            "source_row": 7,
-            "title": "Работа модели",
-            "unit": "шт.",
-            "quantity": 3,
-            "norm_code": "CUSTOM-NORM-A",
-        }],
-    )
+    diagnostics = []
+    assert service.parse_model_rag_result(answer, diagnostics=diagnostics) == (answer, [])
+    assert diagnostics[0]["code"] == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH"
+    assert diagnostics[0]["expected_cells"] == 7 and diagnostics[0]["actual_cells"] == 5
+    assert diagnostics[0]["decision"]["raw_cells"] == [
+        "7", "Работа модели", "шт.", "3", "CUSTOM-NORM-A",
+    ]
+    assert "norm_status" not in diagnostics[0]["decision"]
 
 
 def test_estimator_draft_projection_never_invents_source_row_or_decision():

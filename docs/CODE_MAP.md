@@ -1,6 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
-> **Candidate 859; установлен 858, live acceptance pending:**
+> **Candidate 860; установлен runtime 859, live acceptance FAILED:**
+> `parse_model_rag_result` сохраняет literal malformed Markdown proposals;
+> padding/слияние пропущенных ячеек не заменяет авторские поля. Допускается
+> только совместимый surplus empty tail, technical hold остаётся resumable.
+> Profile `reasoning_enabled` defaults off; GUI показывает requested/effective
+> и источник, typed transport передаёт boolean той же модели без смены budget.
+> Separate reasoning channel не становится final content или строками ЛСР.
 > `model_evidence_read_contract/service` дают optional native reads до итогового
 > ответа, literal body registry и stop/capacity guard. `norm_browser.read_norm_card_exact`
 > возвращает все ресурсы только previously-shown pointer; `model_research_tool_service`

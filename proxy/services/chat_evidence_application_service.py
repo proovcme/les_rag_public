@@ -15,7 +15,6 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import lru_cache
-from itertools import combinations
 from pathlib import Path
 from backend.runtime_paths import mutable_path
 from typing import Any, Callable, Mapping, Sequence
@@ -107,6 +106,7 @@ from proxy.services.model_answer_table_service import (
     is_divider_cell,
     opens_as_table,
     table_cells,
+    table_line,
 )
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from proxy.services.model_result_packet_service import admit_model_result_packet
@@ -161,6 +161,9 @@ from proxy.services.lsr_norm_quality_gate_service import (
 )
 from proxy.services.llm_transport_profile_service import (
     assistant_delta_text,
+    apply_transport_options,
+    final_assistant_text,
+    FinalTextFilter,
     resolve_connection_execution_profile,
     resolve_transport_execution_profile,
 )
@@ -790,7 +793,7 @@ def tool_selector_request_payload(
             "attachment_id": bound_attachment,
         }
     return payload
-from proxy.services.model_execution_preset_service import ModelExecutionPreset
+from proxy.services.model_execution_preset_service import ModelExecutionPreset, apply_reasoning_policy
 from proxy.services.model_research_tool_service import (
     MATCHED_BEFORE_CAP_META_KEY as _MATCHED_BEFORE_CAP_META_KEY,
     ModelResearchToolService,
@@ -1837,6 +1840,7 @@ def sheet_pass_question_tail(
     sheet_index: int,
     sheet_count: int,
     remaining_work: Sequence[str] | None = None,
+    reasoning_enabled: bool = False,
 ) -> str:
     remaining = [str(item).strip() for item in (remaining_work or ()) if str(item).strip()]
     remainder = ""
@@ -1846,7 +1850,8 @@ def sheet_pass_question_tail(
         remainder = f" Остались только строки: {preview}{extra}."
     sheet_clause = (
         f"Вопрос: {question}\n\n"
-        "/no_think\n"
+        + ("" if reasoning_enabled else "/no_think\n")
+        +
         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
         f"\nСейчас только лист «{sheet}» ({sheet_index}/{sheet_count}). "
@@ -3760,10 +3765,13 @@ def unresolved_evidence_placeholder(value: Any) -> bool:
     return "qx.hy" in marker or "отсутствует в выдаче" in marker
 
 
-def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
+def parse_model_rag_result(
+    raw: str, *, diagnostics: list[dict[str, Any]] | None = None,
+) -> tuple[str, list[dict[str, Any]]] | None:
     """Decode only an unambiguous table; preserve the authored answer and cell values."""
 
     required_fields = {"title", "unit", "norm_code"}
+    transport_diagnostics: list[dict[str, Any]] = []
     json_rows = None
     json_text = str(raw or "").strip()
     if json_text.startswith("```") and json_text.endswith("```"):
@@ -3917,8 +3925,39 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     # pipes, or a line carrying the mandated [Источник N] mark glued in front of it
     # — is the same table.  Cells come back verbatim; nothing here decides what a
     # cell means.
-    def cells(line: str) -> list[str]:
-        return table_cells(line)
+    def cells(line: str, *, strip_trailing_boundary: bool = True) -> list[str]:
+        payload = table_line(line)
+        if not payload:
+            return []
+        if payload.startswith("|"):
+            payload = payload[1:]
+        # Only an unescaped final pipe is the optional outer delimiter.
+        if strip_trailing_boundary and payload.endswith("|"):
+            slash_count = len(payload[:-1]) - len(payload[:-1].rstrip("\\"))
+            if slash_count % 2 == 0:
+                payload = payload[:-1]
+        result, current = [], []
+        index = 0
+        while index < len(payload):
+            character = payload[index]
+            if character == "\\" and index + 1 < len(payload):
+                following = payload[index + 1]
+                if following == "|":
+                    current.append("|")
+                    index += 2
+                    continue
+                if following == "\\":
+                    current.extend((character, following))
+                    index += 2
+                    continue
+            if character == "|":
+                result.append("".join(current).strip())
+                current = []
+            else:
+                current.append(character)
+            index += 1
+        result.append("".join(current).strip())
+        return result
 
     def number(value: str) -> int | float | None:
         normalized = value.replace("\u00a0", "").replace(" ", "").replace(",", ".")
@@ -3961,118 +4000,49 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     def evidence_refs(value: str) -> list[str]:
         return extract_model_evidence_refs(value)
 
-    def applies_to_token(value: str) -> bool:
-        folded = " ".join(value.casefold().replace("ё", "е").split())
-        return folded in {
-            "",
-            "labor",
-            "machine",
-            "labor_and_machine",
-            "озп",
-            "эм",
-            "озп и эм",
-        } or absence_marker(value)
+    def trimmed_field_errors(values: Sequence[str], names: Sequence[str]) -> list[str]:
+        """Check literal types before accepting a surplus-empty presentation.
 
-    def aligned_row_fits(values: list[str]) -> bool:
-        if len(values) != len(mapped_header):
-            return False
-        by = {
-            name: values[index]
-            for index, name in enumerate(mapped_header)
-            if name
-        }
-        quantity = by.get("quantity", "")
-        if quantity and not absence_marker(quantity) and number(quantity) is None:
-            return False
-        # Only for surplus-cell reconstruction, never for an authored aligned
-        # row: a quantity is not a unit and gap_reason is not norm_status.
-        unit = by.get("unit", "")
-        if unit and not absence_marker(unit) and number(unit) is not None:
-            return False
-        status = by.get("norm_status", "")
-        if status and not absence_marker(status) and status.upper() not in {
-            "EXACT", "EXACT_VERIFIED", "ANALOGUE_CANDIDATE", "ANALOGUE_VERIFIED",
-            "NEEDS_RESEARCH", "MISSING", "CONFLICT",
-        }:
-            return False
-        # Alignment preserves model text, including unresolved source labels.
-        # Evidence validation is a separate step and must not erase work rows.
-        applies = by.get("coefficient_applies_to", "")
-        if applies and not applies_to_token(applies):
-            return False
-        return True
-
-    def align_row_values(values: list[str]) -> list[str] | None:
-        if len(values) < len(header):
-            return values + [""] * (len(header) - len(values))
-        if len(values) == len(header):
-            return values
-        extra = len(values) - len(header)
-        # Preserve literal pipes in titles or explanations only when the
-        # structural cells identify exactly one alignment.
-        text_alignments = []
-        for text_field in ("title", "open_gap"):
-            text_at = next((i for i, name in enumerate(mapped_header) if name == text_field), -1)
-            text_end = text_at + 1 + extra
-            if text_at >= 0 and extra >= 1 and text_end <= len(values):
-                trial = values[:text_at] + [" | ".join(values[text_at:text_end])] + values[text_end:]
-                if aligned_row_fits(trial):
-                    text_alignments.append(trial)
-        if len(text_alignments) == 1:
-            return text_alignments[0]
-        if len(text_alignments) > 1:
-            return None  # no guessed reconstruction of professional cells
-        if extra > 3:
-            return None
-        coeff_at = next(
-            (index for index, name in enumerate(mapped_header) if name == "coefficient"),
-            -1,
+        Removing a final blank could otherwise hide an extra internal cell.
+        These checks never derive a missing value or a professional verdict.
+        """
+        from proxy.services.lsr_source_coverage_service import (
+            canonicalize_row_role, canonicalize_supply_kind,
         )
-        if (
-            extra == 1
-            and "contradictions" not in mapped_header
-            and 0 <= coeff_at < len(values)
-            and absence_marker(values[coeff_at])
-        ):
-            trial = values[:coeff_at] + values[coeff_at + 1 :]
-            if aligned_row_fits(trial):
-                return trial
-        if (
-            extra == 1
-            and "contradictions" not in mapped_header
-            and 0 <= coeff_at < len(values) - 3
-            and evidence_refs(values[-1])
-            and applies_to_token(values[-2])
-            and number(values[-3]) is not None
-            and number(values[coeff_at]) is None
-            and not absence_marker(values[coeff_at])
-        ):
-            trial = values[:coeff_at] + values[coeff_at + 1 :]
-            if aligned_row_fits(trial):
-                return trial
-        trimmed = list(values)
-        while len(trimmed) > len(header) and trimmed and (
-            not trimmed[-1].strip() or absence_marker(trimmed[-1])
-        ):
-            if evidence_refs(trimmed[-1]):
-                break
-            trimmed = trimmed[:-1]
-        if len(trimmed) == len(header) and aligned_row_fits(trimmed):
-            return trimmed
-        drop_at = [
-            index
-            for index, item in enumerate(values)
-            if index >= 6 and absence_marker(item)
-        ]
-        matched: list[list[str]] = []
-        for combo in combinations(drop_at, extra):
-            skip = set(combo)
-            trial = [item for index, item in enumerate(values) if index not in skip]
-            if aligned_row_fits(trial):
-                matched.append(trial)
-                if len(matched) > 1:
-                    return None
-        return matched[0] if matched else None
+
+        match_names = {"action_match", "object_match", "condition_match",
+                       "unit_compatible", "composition_covers"}
+        match_tokens = {"yes", "true", "1", "совпало", "совпадает", "да",
+                        "no", "false", "0", "не совпало", "нет", "unknown",
+                        "неясно", "н/д", "n/a", "na", "—", "-", "–", "−"}
+        errors = []
+        for name, value in zip(names, values, strict=True):
+            token = value.strip().strip("*_` ").strip()
+            if len(token) >= 2 and (token[0], token[-1]) in {("(", ")"), ("[", "]")}:
+                token = token[1:-1].strip()
+            token = " ".join(token.strip(".,;:").casefold().replace("ё", "е").split())
+            if not token:
+                continue
+            valid = True
+            if name in match_names:
+                valid = token in match_tokens
+            elif name == "row_role":
+                valid = bool(canonicalize_row_role(token))
+            elif name == "supply_kind":
+                valid = bool(canonicalize_supply_kind(token)) or absence_marker(token)
+            elif name in numeric_fields:
+                valid = absence_marker(token) or token in {"none", "null", "unknown"}
+                if not valid:
+                    parsed = number(token)
+                    if parsed is None and name in {"coefficient", "conversion_factor"}:
+                        numerator_text, separator, denominator_text = token.partition("/")
+                        numerator, denominator = number(numerator_text), number(denominator_text)
+                        if separator and numerator is not None and denominator not in {None, 0}:
+                            parsed = numerator / denominator
+                    valid = parsed is not None and parsed == parsed and abs(parsed) != float("inf")
+            if not valid:
+                errors.append(name)
+        return errors
 
     lines = str(raw or "").splitlines()
     table_rows: list[dict[str, Any]] = []
@@ -4087,6 +4057,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             header_index += 1
             continue
         header = cells(lines[header_index])
+        header_has_trailing_boundary = table_line(lines[header_index]).endswith("|")
         mapped_header = [field_name(item) for item in header]
         # A display ordinal is not a second source locator when the model
         # explicitly supplies source_row. Keep the explicit identity verbatim.
@@ -4127,19 +4098,39 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         table_section = current_section
         row_index = header_index + 2
         while row_index < len(lines):
-            values = cells(lines[row_index])
+            values = cells(lines[row_index], strip_trailing_boundary=header_has_trailing_boundary)
             if not values:
                 break
             if len(values) < len(header) - 1 and not opens_as_table(lines[row_index]):
-                # The outer pipes are optional, so a prose line that happens to hold
-                # a pipe also splits.  A row may drop its final empty cells (markdown
-                # pads them), but a line this much narrower than the table and not
-                # opened as a table row is prose: the table ends there instead of
-                # inventing a decision out of a sentence.
+                # A prose line may contain a pipe without being a model row.
                 break
             if len(values) != len(header):
-                values = align_row_values(values) or []
-                if len(values) != len(header):
+                authored_values = list(values)
+                # Extra empty cells after every named value do not change the
+                # mapping. Never remove an internal cell or an absence marker.
+                while len(values) > len(header) and values[-1] == "":
+                    values.pop()
+                field_errors = (trimmed_field_errors(values, mapped_header)
+                                if len(values) == len(header) else [])
+                if len(values) != len(header) or field_errors:
+                    proposal = {
+                        "code": "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH",
+                        "reason": ("ambiguous_markdown_row_field_types" if field_errors
+                                   else "ambiguous_markdown_row_width"),
+                        "line_number": row_index + 1,
+                        "expected_cells": len(header),
+                        "actual_cells": len(authored_values),
+                        "decision": {"raw_line": lines[row_index],
+                                     "raw_cells": authored_values,
+                                     "table_header": list(header)},
+                    }
+                    if field_errors:
+                        proposal["structural_field_errors"] = field_errors
+                    if mapped_header and mapped_header[0] == "source_row" and authored_values:
+                        proposal["decision"]["source_row"] = authored_values[0]
+                    transport_diagnostics.append(proposal)
+                    if diagnostics is not None:
+                        diagnostics.append(proposal)
                     row_index += 1
                     continue
             visible_values = [value.replace("**", "").strip() for value in values]
@@ -4487,6 +4478,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         labelled_rows.append(row)
     if labelled_rows:
         return str(raw or ""), labelled_rows
+    if transport_diagnostics:
+        return str(raw or ""), []
     return None
 
 
@@ -6847,12 +6840,15 @@ async def _execute_chat_evidence_application(
         if observed_context_tokens is not None:
             execution_preset = resolve_connection_execution_profile(
                 model_id=resolved_connection.model_id,
+                provider=getattr(resolved_connection, "extension_type", None) or "model_connection",
+                reasoning_supported=resolved_connection.effective_preset.reasoning_supported,
                 requested_context_tokens=resolved_connection.requested_context_tokens,
                 observed_context_tokens=observed_context_tokens,
                 observed_source=observed_source,
             )
         else:
             execution_preset = resolved_connection.effective_preset
+    execution_preset = apply_reasoning_policy(execution_preset, model_policy)
     preset_diagnostics = execution_preset.diagnostics(
         requested_input_tokens=cache_state.get("desired_kv_tokens")
     )
@@ -7131,6 +7127,7 @@ async def _execute_chat_evidence_application(
                             temperature=body.get("temperature"),
                             tools=tuple(body.get("tools") or ()),
                             response_format=body.get("response_format"),
+                            reasoning_enabled=execution_preset.reasoning_enabled,
                         )
 
                         async def no_legacy_call(_request):
@@ -7200,7 +7197,10 @@ async def _execute_chat_evidence_application(
                             max_tokens=int(body.get("max_tokens", 1400)),
                             temperature=float(body.get("temperature", 0.7)),
                             headers=hdrs, token_sink=token_sink if allow_stream else None)
-                    _body = _cloud_body_for_model(body, model, runtime.provider)
+                    _body = apply_transport_options(
+                        _cloud_body_for_model(body, model, runtime.provider), runtime.provider,
+                        reasoning_enabled=execution_preset.reasoning_enabled,
+                    )
                     if token_sink is not None and allow_stream:
                         sbody = {**_body, "model": model, "stream": True}
                         # include_usage нужен только облаку (учёт $); MLX/локальные —
@@ -7208,6 +7208,7 @@ async def _execute_chat_evidence_application(
                         if is_cloud_provider(runtime.provider):
                             sbody["stream_options"] = {"include_usage": True}
                         acc: list[str] = []
+                        final_filter = FinalTextFilter()
                         usage_d: dict = {}
                         stream_finish = ""
                         async with client.stream("POST", runtime.chat_url, headers=hdrs, json=sbody) as sresp:
@@ -7224,7 +7225,7 @@ async def _execute_chat_evidence_application(
                                     continue
                                 choices = chunk.get("choices") or []
                                 _delta = choices[0].get("delta", {}) if choices else {}
-                                piece = assistant_delta_text(_delta)
+                                piece = final_filter.feed(assistant_delta_text(_delta))
                                 if piece:
                                     acc.append(piece)
                                     await token_sink({"event": "token", "data": piece})
@@ -7239,8 +7240,12 @@ async def _execute_chat_evidence_application(
                     r.raise_for_status()
                     rj = r.json()
                     choice = (rj.get("choices") or [{}])[0]
+                    final_message = dict(choice.get("message") or {})
+                    final_message["content"] = final_assistant_text(final_message)
+                    final_message.pop("reasoning", None)
+                    final_message.pop("reasoning_content", None)
                     return (
-                        _assistant_text(choice.get("message", {})),
+                        final_message["content"] or _assistant_text(final_message),
                         usage_with_finish_reason(
                             rj.get("usage", {}) or {},
                             str(choice.get("finish_reason") or ""),
@@ -9002,6 +9007,7 @@ async def _execute_chat_evidence_application(
                                 sheet_index=sheet_index,
                                 sheet_count=sheet_count,
                                 remaining_work=packet,
+                                reasoning_enabled=execution_preset.reasoning_enabled,
                             )
                             question_tail += (
                                 "\nКарточки могут доставляться страницами по ёмкости контекста. "
@@ -9300,6 +9306,21 @@ async def _execute_chat_evidence_application(
                                 break
                             active_pending_tool_calls = 0
                             if not pass_answer:
+                                last_finish = llm_usage_finish_reason(usage)
+                                tokens = int(tokens or 0) + int(usage.get("completion_tokens") or 0)
+                                if execution_preset.reasoning_enabled or finish_reason_is_length(last_finish):
+                                    run_stop_kinds.append("model_final_output_missing")
+                                    retrieval_trace["model_generation"] = {
+                                        "status": "technical_pending", "reason": "model_final_output_missing",
+                                        "finish_reason": last_finish,
+                                    }
+                                    if research_job_service is not None and research_job is not None:
+                                        research_job = research_job_service.pause(
+                                            research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
+                                            phase="model_final_output_missing",
+                                            held_packet={"sheet": sheet_name, "locators": list(packet),
+                                                         "model_final_output_missing": True},
+                                        )
                                 break
                             tokens = int(tokens or 0) + int(
                                 usage.get("completion_tokens") or 0
@@ -9309,7 +9330,16 @@ async def _execute_chat_evidence_application(
                                 finish_reason_is_length(last_finish)
                                 or model_rag_answer_is_truncated(pass_answer)
                             )
-                            parsed_pass = parse_model_rag_result(pass_answer)
+                            pass_transport_diagnostics: list[dict[str, Any]] = []
+                            parsed_pass = parse_model_rag_result(
+                                pass_answer, diagnostics=pass_transport_diagnostics,
+                            )
+                            if pass_transport_diagnostics:
+                                for proposal in pass_transport_diagnostics:
+                                    proposal["packet_locators"] = list(packet)
+                                retrieval_trace.setdefault("model_result_transport_diagnostics", []).extend(
+                                    pass_transport_diagnostics
+                                )
                             pass_rows: list[dict[str, Any]] = []
                             if parsed_pass is not None:
                                 _visible, pass_rows = parsed_pass
@@ -9425,6 +9455,7 @@ async def _execute_chat_evidence_application(
                                     "kept_rows": len(kept),
                                     "parsed_rows": len(pass_rows),
                                     "row_errors": list(pass_errors),
+                                    "transport_diagnostics": pass_transport_diagnostics,
                                     "finish_reason": last_finish,
                                     "truncated": last_truncated,
                                     "unread_tail_row": tail_locator,
@@ -9514,6 +9545,12 @@ async def _execute_chat_evidence_application(
                                 query_provenance=pass_query_provenance,
                                 query_addresses=pass_query_addresses)
                             held_query_context = held_payload
+                            if pass_transport_diagnostics:
+                                held_payload = {**dict(held_payload or {}),
+                                    "model_result_transport_pending": True,
+                                    "locators": list(packet),
+                                    "transport_diagnostics": pass_transport_diagnostics}
+                                held_query_context = held_payload
                             if leftover_query_hits and research_job_service is not None and research_job is not None:
                                 leftover_cache = {
                                     str(query): [durable_research_hit(item) for item in hits]
@@ -9570,7 +9607,7 @@ async def _execute_chat_evidence_application(
                                     omitted=pass_omitted,
                                     remaining=remaining,
                                     held_packet=held_payload,
-                                    unapplied_proposals=admission.unapplied_proposals,
+                                    unapplied_proposals=[*admission.unapplied_proposals, *pass_transport_diagnostics],
                                     enforce_packet_scope=True,
                                     canonicalize_locator=lambda value: (
                                         source_catalog.lookup(value).locator if source_catalog.lookup(value) else value
@@ -9612,6 +9649,8 @@ async def _execute_chat_evidence_application(
                                         "run_stops": bool(guard_now.get("run_stops")),
                                     }
                                 )
+                            if pass_transport_diagnostics:
+                                break  # technical ambiguity cannot trigger another professional offer
                             if defer_query_packet:
                                 continue
                             if not made_progress:
@@ -9667,9 +9706,14 @@ async def _execute_chat_evidence_application(
                     ]
                     pending_transport = set()
                     pending_held = (research_job or {}).get("held_packet") or {}
-                    if pending_held.get("queries") or pending_held.get("model_read_pending"):
+                    if (pending_held.get("queries") or pending_held.get("model_read_pending")
+                            or pending_held.get("model_result_transport_pending")
+                            or pending_held.get("model_final_output_missing")):
                         pending_transport.update(pending_held.get("locators") or ())
                         unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
+                    for proposal in retrieval_trace.get("model_result_transport_diagnostics", []):
+                        pending_transport.update(proposal.get("packet_locators") or ())
+                    unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
                     if research_job_service is not None and research_job is not None:
                         if owns_sheet_pass:
                             if research_cancelled or unfinished_locators:
@@ -9906,7 +9950,8 @@ async def _execute_chat_evidence_application(
                             )
                     question_tail = (
                         f"Вопрос: {req.question}\n\n"
-                        "/no_think\n"
+                        + ("" if execution_preset.reasoning_enabled else "/no_think\n")
+                        +
                         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
                         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
                     )
@@ -9930,7 +9975,7 @@ async def _execute_chat_evidence_application(
                             sheet_clause=question_tail + "\n",
                             remaining_clause=(
                                 " Ответ должен вместить все строки: без вводного обзора "
-                                "и итоговых рекомендаций, кратко по одной строке ВОР."
+                                "и итоговых рекомендаций, кратко по каждой строке исходника."
                             ),
                         )
                         fixed_model_rag_evidence = selector_evidence_payload(
@@ -10358,6 +10403,19 @@ async def _execute_chat_evidence_application(
                         else:
                             active_pending_tool_calls = 0
                     if not answer:
+                        if execution_preset.reasoning_enabled or finish_reason_is_length(llm_usage_finish_reason(usage)):
+                            answer_finish_reason = llm_usage_finish_reason(usage)
+                            tokens = int(usage.get("completion_tokens") or 0)
+                            retrieval_trace["model_generation"] = {
+                                "status": "technical_pending", "reason": "model_final_output_missing",
+                                "finish_reason": answer_finish_reason,
+                            }
+                            answer = (
+                                "Генерация не завершена: модель не вернула финальный ответ. "
+                                "Рассуждения не используются как строки сметы; ЛСР не упакована."
+                            )
+                            crag_status = "MODEL_OUTPUT_INCOMPLETE"
+                            break
                         if attempt < max_attempts:
                             logger.warning("[CHAT] empty LLM answer on attempt=%s — retrying strict", attempt)
                             continue
@@ -10385,7 +10443,9 @@ async def _execute_chat_evidence_application(
                             (answer, sheet_pass_rows) if sheet_pass_rows else None
                         )
                     else:
-                        parsed_model_result = parse_model_rag_result(answer)
+                        parsed_model_result = parse_model_rag_result(
+                            answer, diagnostics=retrieval_trace.setdefault("model_result_transport_diagnostics", []),
+                        )
                         expected_format_locators = (
                             list(source_catalog.work_locators())
                             if source_catalog is not None
@@ -10891,6 +10951,8 @@ async def _execute_chat_evidence_application(
                         )
                         if research_cancelled:
                             model_result_errors.append("workbook_research_cancelled")
+                        if retrieval_trace.get("model_result_transport_diagnostics"):
+                            model_result_errors.append("MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH")
                         work_row_count = sum(
                             1
                             for row in model_result_rows
@@ -10909,6 +10971,8 @@ async def _execute_chat_evidence_application(
                             # longer suppress the complete artifact.
                             model_result_rows = durable_packaging_rows
                             model_result_blocking_errors = []
+                        elif retrieval_trace.get("model_result_transport_diagnostics"):
+                            model_result_blocking_errors.append("MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH")
                         notice_kwargs = {
                             "errors": model_result_errors,
                             "row_count": len(model_result_rows),
@@ -10959,6 +11023,17 @@ async def _execute_chat_evidence_application(
                     result_meta = retrieval_trace.get("model_result")
                     if isinstance(result_meta, dict):
                         result_meta["finish_reason"] = answer_finish_reason
+                    transport_diagnostics = retrieval_trace.get("model_result_transport_diagnostics") or []
+                    if transport_diagnostics:
+                        notice = (
+                            "Техническая ошибка таблицы: число ячеек не соответствует заголовку "
+                            f"в {len(transport_diagnostics)} строках. Исходные строки сохранены как "
+                            "неприменённые предложения; их нормы, объёмы и цены не подставлены."
+                        )
+                        if notice not in answer:
+                            answer = f"{answer.rstrip()}\n\n{notice}"
+                        if isinstance(result_meta, dict):
+                            result_meta["transport_diagnostics"] = transport_diagnostics
                     if token_sink is not None:
                         await token_sink({"event": "reset", "data": ""})
                         if answer:

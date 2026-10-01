@@ -308,6 +308,8 @@ class ModelConnectionResolver:
         observed_context = _positive_int(snapshot.transport_options.get("observed_context_tokens"))
         preset = resolve_connection_execution_profile(
             model_id=revision.model_id,
+            provider=revision.extension_type or "model_connection",
+            reasoning_supported=(snapshot.transport_options.get("chat_protocol") == "native_chat_v1"),
             requested_context_tokens=revision.requested_context_tokens,
             observed_context_tokens=observed_context,
             observed_source=(

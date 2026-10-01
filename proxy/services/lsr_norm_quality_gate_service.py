@@ -1818,8 +1818,9 @@ def _evidence_cards(chunks: Sequence[Any]) -> dict[str, dict[str, Any]]:
 def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: str = "") -> str:
     return (
         f"{sheet_clause}"
-        "Для табличного ответа: Начни ответ с таблицы результата; пояснения — после таблицы. "
-        "В таблице не перечисляй пустые поля длинной последовательностью маркеров. "
+        "Если выбран Markdown: Начни ответ с таблицы результата; пояснения — после таблицы. "
+        "Неприменимые необязательные колонки можно не объявлять. Для объявленной "
+        "колонки сохраняй пустую ячейку, чтобы остальные значения не сдвигались. "
         + model_lsr_result_field_instruction()
         + " "
         "row_role только: work, material, equipment, resource, header или unresolved. "

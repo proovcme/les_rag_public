@@ -587,6 +587,8 @@ def publish_profile_revision(
     title = str(name or "").strip()
     if not title:
         raise ValueError("Название версии профиля не задано")
+    if "reasoning_enabled" in (model_policy or {}) and not isinstance(model_policy["reasoning_enabled"], bool):
+        raise ValueError("reasoning_enabled must be a boolean")
     selected_tools = list(dict.fromkeys(str(item).strip() for item in tools if str(item).strip()))
     unknown = sorted(set(selected_tools) - _tool_names())
     if unknown:

@@ -42,7 +42,8 @@ def _answer(*, refs=("Q1.H1", "Q2.H1")):
     )
 
 
-async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", unknown_tool=False):
+async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", unknown_tool=False,
+                     reasoning_enabled=False, empty_final=False):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(tmp_path / "attachments"))
@@ -121,6 +122,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                                   input_token_limit=100_000, generation_reserve_tokens=5000,
                                   safety_reserve_tokens=100, normal_tool_count=6, max_tools=6,
                                   max_batch_items=6, parallel_read_limit=1, reasoning_enabled=False,
+                                  reasoning_supported=True,
                                   source_chain=("test",))
     connection = SimpleNamespace(connection_id="conn:sheet", revision_id="conn:sheet:r1",
                                  display_name="Offline sheet model", model_id="fixture-model",
@@ -152,7 +154,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         # The model fixture uses the source addresses actually assigned to the
         # two book reads, including any candidate groups shown before them.
         refs = (f"Q{len(search_queries) + 2}.H1", f"Q{len(search_queries) + 3}.H1") if reads else ("Q1.H1", "Q2.H1")
-        return InferenceResponse(text=_answer(refs=refs), tool_calls=(), finish_reason="stop",
+        return InferenceResponse(text="" if empty_final else _answer(refs=refs), tool_calls=(),
+                                 finish_reason="length" if empty_final else "stop",
                                  usage={"completion_tokens": 120})
 
     if not unknown_tool:
@@ -228,6 +231,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         class_suggestions=[], use_semantic_cache=False, use_validation=False, validation_skip_reason="test",
         route=SimpleNamespace(intent="rag"), table_result=None, request_started_at=time.time(),
         profile_snapshot={"revision_id": "fixture-profile:1", "mode": "estimator",
+                          "model_policy": {"reasoning_enabled": reasoning_enabled},
                           "tools": ["search_sources", "build_lsr_workbook"],
                           "rag_policy": {"iterative": True, "system_datasets": ["smeta"],
                                          "model_authored_initial_query": True},
@@ -313,3 +317,30 @@ async def test_unknown_native_reader_never_becomes_a_terminal_workbook(tmp_path,
         assert trace["tool_loop"]["evidence_read_stop"] == "evidence_read_unknown_tool"
     else:
         assert "evidence_read_unknown_tool" in str(trace)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+@pytest.mark.parametrize("reasoning_enabled", [False, True])
+async def test_bound_sheet_profile_reasoning_reaches_every_existing_model_turn(tmp_path, monkeypatch, variant, reasoning_enabled):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+                           reasoning_enabled=reasoning_enabled)
+    assert len(run.requests) == 4 and not run.responses
+    assert all(request.reasoning_enabled is reasoning_enabled for request in run.requests)
+    assert len(run.executions) == 1
+    final_prompt = str(run.requests[-1].messages)
+    assert ("/no_think" in final_prompt) is (not reasoning_enabled)
+    reasoning = run.result["retrieval_trace"]["model_execution_profile"]["reasoning"]
+    assert reasoning == {"requested": reasoning_enabled, "effective": reasoning_enabled,
+                         "source": "profile_model_policy", "restart_required": False}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_reasoning_without_final_length_stops_without_workbook_or_new_model_turn(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant=variant,
+                           reasoning_enabled=True, empty_final=True)
+    assert len(run.requests) == 2 and not run.responses
+    assert run.executions == []
+    assert run.result["retrieval_trace"]["model_generation"] == {
+        "status": "technical_pending", "reason": "model_final_output_missing", "finish_reason": "length"}

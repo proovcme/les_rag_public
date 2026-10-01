@@ -68,6 +68,69 @@ make release RELEASE_ARGS='run --host local --publish'
 exact installer, делает rollback и повторную установку через общий hard-update
 engine.
 
+### Локальный полный установщик без публикации
+
+Когда нет подтверждённого full-base или отправленной в `origin` ветки, явный
+`--local-only-full` готовит полный установщик из чистого exact checkout, включая
+detached HEAD. Он сохраняет все обычные version/runtime-map/verify/test/updater/
+public-check gates, verified baseline, immutable installer/job SHA и стандартную
+приёмку. Пропуск gates, remote host, `--base`, `--full-feed` и `--publish` запрещены.
+Источник фиксируется честно: `upstream_commit: null` в gate receipt,
+`base_commits: []` в artifact receipt; оба имеют `local_only_full: true` и
+`publishable: false`. Режим не
+создаёт искусственный full-base feed и не разрешает последующую публикацию.
+Обычный выпуск без флага по-прежнему требует pushed branch и attested base.
+
+Из отдельного чистого checkout после commit всех изменений:
+для `uv` в этом build-process задаётся `UV_PROJECT_ENVIRONMENT` внутри уже
+игнорируемого `<clean-checkout>/.test-tmp/release-env`, чтобы не создать
+untracked `.venv`. Пользовательские untracked files исходного checkout сохраняются.
+
+```text
+uv run python -m tools.release_orchestrator prepare --root <clean-checkout> --work-root <release-work> --host local --local-only-full --target <exact-commit> --smeta-baseline-archive <verified-baseline.zip>
+uv run python -m tools.release_orchestrator accept --root <clean-checkout> --work-root <release-work> --host local --artifact <artifact-receipt.json>
+uv run python -m tools.release_orchestrator status --artifact <artifact-receipt.json>
+```
+
+`prepare` только собирает пакет; `accept` выполняется после завершения живых
+прогонов, поскольку ставит exact installer, проверяет smoke, делает rollback,
+проверяет восстановленную версию и повторно ставит те же bytes. Нестандартные
+install/runtime/state roots передаются одинаково обоим командам. Кэш подготовленного
+installer принимается только при совпадении SHA текущего baseline; другой архив
+того же commit требует новой сборки. Отсутствующий baseline не допускает cache hit.
+SHA baseline закрепляется до сборки и проверяется перед изменением кэша;
+изменение архива во время сборки отклоняется, прежний кэш сохраняется.
+Freeze проверяет реальные SHA скопированных файлов. Временные Windows locks
+atomic rename допускают только три попытки для WinError 5/32/33; постоянный
+отказ остаётся ошибкой, несовпадающие immutable bytes не перезаписываются.
+
+### Явные дополнительные книги цен
+
+Официальный baseline creator поддерживает старый семифайловый архив v1 и
+расширенный v2. Дополнительные книги перечисляются явно; папки пользовательского
+RAG, мета-БД, документы и секреты не обходятся и не копируются:
+
+```text
+uv run python -m tools.smeta_release_baseline create --source-root <verified-source-root> --archive <baseline.zip> --pricebook data/price_base/sankt-peterburg_3kv2026.parquet --pricebook data/price_base/moskva_3kv2026.parquet
+uv run python -m tools.smeta_release_baseline verify --archive <baseline.zip>
+```
+
+Разрешены только явно названные `data/price_base/*.parquet`, с любым фактическим
+регионом и периодом. Creator/verifier используют официальный `PriceBook`, проверяют
+typed metadata, SHA/размеры, числовые значения и точный file whitelist. В manifest
+v2 сохранены количество исходных строк, строки с ценовыми значениями, пробелы цен
+и единиц, повторные коды. Такие исходные пробелы сохраняются без исправления или
+удаления строк; они не доказывают готовность денежного расчёта, который проверяет
+единицу и происхождение каждой выбранной позиции отдельно.
+
+Bootstrap `repair` и `provision` добавляют только отсутствующие дополнительные
+книги. Проверенные существующие книги оператора сохраняются побайтно; повреждённая
+существующая дополнительная книга вызывает явный отказ без молчаливой замены.
+Manifest известных производителей проецируется в публичные hashes/counts и
+относительные payload paths; абсолютные machine paths и неизвестные private keys
+не попадают в новый архив. Это не проверка прав распространения исходных нормативных
+данных: источник для поставки должен быть отдельно разрешён владельцем.
+
 Полный Windows runtime manifest обязан включать не только импортируемый код, но
 и package metadata, которую читает build backend. В частности, если
 `pyproject.toml` объявляет корневой `README.md`, оба файла входят в staged
@@ -95,6 +158,15 @@ publication state. Если последующий шаг упал, повтор
 продолжает тот же draft; уже выполненный exact sync становится безопасным no-op.
 Release CLI до первого вывода принудительно устанавливает UTF-8 для stdout и
 stderr, поэтому русский progress и итоговый JSON не зависят от Windows codepage.
+
+Если GNU Make отсутствует на Windows, `uv run python tools/release_orchestrator.py`
+выполняет те же обязательные gate-рецепты из текущего `Makefile` напрямую через
+`uv`: сохраняются полный `CURRENT_TESTS`, локальный `--basetemp`, updater и
+`public-check`. Эффективные команды записываются в gate receipt. Неизвестная
+Make/shell-конструкция прекращает подготовку; сокращённая platform-suite не
+подменяет канонические тесты. Раздельный `prepare` принимает `--runtime`, `--state`
+и `--install` с теми же defaults, что `accept` и `run`; нестандартные корни нужно
+передать одинаково при подготовке и приёмке immutable installer.
 
 Ручной fast-forward нужен только как диагностическое восстановление после
 осознанного устранения divergence. Обычная процедура не требует отдельного

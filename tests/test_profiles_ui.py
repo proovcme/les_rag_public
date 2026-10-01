@@ -59,6 +59,7 @@ def test_profiles_page_uses_bundled_markdown_editor_and_explicit_actions():
         "Создать с нуля",
         "Удалить редакцию",
         "Температура модели",
+        "Рассуждение модели",
         "Только по источникам",
         "Удалить",
     ):

@@ -11,15 +11,17 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import shutil
 import sqlite3
+import sys
 import tempfile
 import zipfile
 import zlib
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +57,8 @@ REQUIRED_PRICE_COLUMNS = {
     "region",
     "quarter",
 }
+BASELINE_V1 = "les.smeta.release-baseline.v1"
+BASELINE_V2 = "les.smeta.release-baseline.v2"
 
 
 class BaselineError(RuntimeError):
@@ -109,6 +113,196 @@ def _failures(value: Any) -> int:
         return int(raw)
     except (TypeError, ValueError) as exc:
         raise BaselineError(f"invalid integrity failure count: {value!r}") from exc
+
+
+def _extra_pricebook_paths(values: Sequence[str | Path | PurePosixPath]) -> tuple[PurePosixPath, ...]:
+    result: list[PurePosixPath] = []
+    seen = {path.as_posix().casefold() for path in REQUIRED_FILES}
+    for value in values:
+        literal = str(value).replace("\\", "/")
+        relative = PurePosixPath(literal)
+        if (
+            relative.as_posix() != literal or len(relative.parts) != 3
+            or relative.parts[:2] != ("data", "price_base")
+            or relative.suffix != ".parquet" or any(character in literal for character in '<>:"|?*\0')
+            or ".." in relative.parts or relative.as_posix().casefold() in seen
+        ):
+            raise BaselineError(f"invalid extra pricebook path: {value}")
+        result.append(relative)
+        seen.add(relative.as_posix().casefold())
+    return tuple(result)
+
+
+def _validate_extra_pricebook(root: Path, relative: PurePosixPath) -> dict[str, Any]:
+    from proxy.services.fgis_price_service import PRICE_FIELDS, get_pricebook, normalize_code
+
+    root = root.resolve()
+    path = root / Path(*relative.parts)
+    if not path.resolve().is_relative_to(root):
+        raise BaselineError(f"extra pricebook escapes source root: {relative}")
+    try:
+        book = get_pricebook(str(path))
+    except (OSError, ValueError, TypeError) as exc:
+        raise BaselineError(f"cannot read extra pricebook: {relative}") from exc
+    rows = len(book._rows)
+    columns = set(book._rows[0]) if rows else set()
+    if not {"code", "name", "unit", "region", "quarter"}.issubset(columns) or not rows:
+        raise BaselineError(f"extra pricebook misses typed identity: {relative}")
+    if columns - {*PRICE_FIELDS, "region", "quarter"}:
+        raise BaselineError(f"extra pricebook has unsupported columns: {relative}")
+    price_fields = {"price_release", "price_current_eff", "price_current", "price_base", "index"} & columns
+    if not price_fields:
+        raise BaselineError(f"extra pricebook misses price columns: {relative}")
+    regions: set[str] = set()
+    quarters: set[str] = set()
+    codes: set[str] = set()
+    priced_rows = 0
+    missing_unit_rows = 0
+    duplicate_code_rows = 0
+    for row in book._rows:
+        if not all(isinstance(row.get(key), str) and row[key].strip() for key in ("code", "region", "quarter")):
+            raise BaselineError(f"extra pricebook has blank code/metadata: {relative}")
+        if row.get("unit") is not None and not isinstance(row["unit"], str):
+            raise BaselineError(f"extra pricebook has invalid unit type: {relative}")
+        missing_unit_rows += int(not str(row.get("unit") or "").strip())
+        code = normalize_code(row["code"])
+        duplicate_code_rows += int(code in codes)
+        codes.add(code)
+        regions.add(row["region"].strip())
+        quarters.add(row["quarter"].strip())
+        for field in price_fields:
+            value = row.get(field)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0):
+                raise BaselineError(f"extra pricebook has invalid numeric price: {relative}")
+        if any(row.get(field) is not None for field in ("price_release", "price_current_eff", "price_current", "price_base")):
+            priced_rows += 1
+    if len(regions) != 1 or len(quarters) != 1:
+        raise BaselineError(f"extra pricebook has mixed region/period: {relative}")
+    return {
+        "path": relative.as_posix(), "sha256": book.source_sha256, "bytes": book.source_byte_size,
+        "rows": rows, "region": next(iter(regions)), "quarter": next(iter(quarters)),
+        "rows_with_price_values": priced_rows, "missing_price_rows": rows - priced_rows,
+        "missing_unit_rows": missing_unit_rows, "duplicate_code_rows": duplicate_code_rows,
+    }
+
+
+def _public_manifest_payload(relative: PurePosixPath, payload: dict[str, Any]) -> dict[str, Any]:
+    """Known producer schemas expose hashes/counts and relative payload identities."""
+    def fields(value: Any, keys: Sequence[str]) -> dict[str, Any]:
+        return {key: value[key] for key in keys if isinstance(value, dict) and key in value}
+
+    def checks(value: Any, keys: Sequence[str]) -> dict[str, Any]:
+        return {key: fields(value[key], ("failures", "actual", "minimum", "rows"))
+                if isinstance(value[key], dict) else value[key]
+                for key in keys if isinstance(value, dict) and key in value}
+
+    schema = payload.get("schema")
+    if schema == "les_smeta_base_v2":
+        result = fields(payload, ("schema", "minimum_norms", "created_at"))
+        result["excluded"] = fields(payload.get("excluded"), (
+            "rows_missing_norm_key", "resource_rows_missing_kind_or_name", "resource_identity_duplicates_dropped",
+            "norms_missing_name_or_unit", "norms_without_resources", "untrusted_identity_rows_quarantined",
+            "family_mismatch_rows_quarantined", "metadata_conflict_norms",
+        ))
+        result["examples"] = fields(payload.get("examples"), (
+            "missing_metadata_norm_keys", "norms_without_resources", "metadata_conflict_norm_keys",
+        ))
+        result["source"] = fields(payload.get("source"), ("sha256", "rows", "norm_keys"))
+        result["source"]["path"] = REQUIRED_FILES[0].as_posix()
+        result["output"] = fields(payload.get("output"), ("sha256", "edition", "norms", "resources"))
+        result["output"]["path"] = REQUIRED_FILES[1].as_posix()
+        if isinstance(payload.get("integrity"), dict):
+            result["integrity"] = fields(payload["integrity"], ("schema", "verdict"))
+            result["integrity"]["path"] = REQUIRED_FILES[3].as_posix()
+        return result
+    if schema == "les_smeta_base_integrity_v1":
+        result = fields(payload, ("schema", "created_at", "verdict", "edition", "source_sha256", "base_sha256"))
+        result["checks"] = checks(payload.get("checks"), (*REQUIRED_ZERO_CHECKS, "minimum_norms"))
+        result["quarantine"] = fields(payload.get("quarantine"), (
+            "untrusted_identity_rows", "family_mismatch_rows", "metadata_conflict_norms",
+        ))
+        return result
+    if schema == "fsem_2022_catalog_manifest_v1":
+        result = fields(payload, ("schema", "created_at", "verdict"))
+        result["checks"] = checks(payload.get("checks"), ("minimum_rows", "invalid_driver_rows", "duplicate_machine_keys"))
+        result["coverage"] = fields(payload.get("coverage"), ("driver_rows", "no_driver_rows"))
+        result["quarantine"] = fields(payload.get("quarantine"), ("numeric_conflict_codes", "numeric_conflict_count", "same_numeric_duplicates"))
+        result["source"] = fields(payload.get("source"), ("sha256", "pages"))
+        result["output"] = fields(payload.get("output"), ("sha256", "rows"))
+        result["output"]["path"] = REQUIRED_FILES[4].as_posix()
+        return result
+    raise BaselineError(f"unsupported public manifest projection: {relative}")
+
+
+def _archive_paths(manifest: dict[str, Any]) -> tuple[PurePosixPath, ...]:
+    schema = manifest.get("schema")
+    if schema not in {BASELINE_V1, BASELINE_V2}:
+        raise BaselineError("unsupported smeta baseline archive schema")
+    declared_books = manifest.get("pricebooks", [])
+    if not isinstance(declared_books, list) or any(not isinstance(item, dict) for item in declared_books):
+        raise BaselineError("invalid extra pricebook manifest")
+    if schema == BASELINE_V1 and declared_books:
+        raise BaselineError("legacy baseline cannot declare extra pricebooks")
+    extras = _extra_pricebook_paths([item.get("path", "") for item in declared_books])
+    paths = (*REQUIRED_FILES, *extras)
+    records = manifest.get("files")
+    if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+        raise BaselineError("invalid smeta baseline file manifest")
+    if any(not isinstance(item.get("path"), str) for item in records):
+        raise BaselineError("invalid smeta baseline file path")
+    if len(records) != len(paths) or {item.get("path") for item in records} != {path.as_posix() for path in paths}:
+        raise BaselineError("smeta baseline archive file set is incomplete")
+    for book in declared_books:
+        entry = next(item for item in records if item["path"] == book["path"])
+        if book.get("sha256") != entry.get("sha256") or book.get("bytes") != entry.get("bytes"):
+            raise BaselineError("extra pricebook manifest fingerprint differs from file")
+    return paths
+
+
+def _extract_archive(archive: Path, staging: Path, paths: Sequence[PurePosixPath]) -> None:
+    with zipfile.ZipFile(archive) as bundle:
+        for relative in paths:
+            target = staging / Path(*relative.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with bundle.open((PAYLOAD_PREFIX / relative).as_posix()) as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output, length=8 * 1024 * 1024)
+
+
+def _extra_install_plan(state_root: Path, manifest: dict[str, Any]) -> tuple[tuple[PurePosixPath, ...], list[str]]:
+    missing: list[PurePosixPath] = []
+    kept: list[str] = []
+    for declared in manifest.get("pricebooks", []):
+        relative = PurePosixPath(declared["path"])
+        target = state_root / Path(*relative.parts)
+        if not target.resolve().is_relative_to(state_root.resolve()):
+            raise BaselineError(f"extra pricebook escapes state root: {relative}")
+        if target.exists():
+            _validate_extra_pricebook(state_root, relative)
+            kept.append(relative.as_posix())
+        else:
+            missing.append(relative)
+    return tuple(missing), kept
+
+
+def _provision_extra_pricebooks(archive: Path, state_root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    missing, kept = _extra_install_plan(state_root, manifest)
+    installed: list[PurePosixPath] = []
+    if missing:
+        with tempfile.TemporaryDirectory(prefix="les-pricebook-baseline-", dir=state_root) as temporary:
+            staging = Path(temporary)
+            _extract_archive(archive, staging, missing)
+            try:
+                for relative in missing:
+                    source = staging / Path(*relative.parts)
+                    target = state_root / Path(*relative.parts)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(source, target)
+                    installed.append(relative)
+            except OSError:
+                for relative in reversed(installed):
+                    (state_root / Path(*relative.parts)).unlink(missing_ok=True)
+                raise
+    return {"installed_pricebooks": [item.as_posix() for item in installed], "kept_pricebooks": kept}
 
 
 def validate_root(
@@ -206,6 +400,7 @@ def create_archive(
     minimum_norms: int = DEFAULT_MINIMUM_NORMS,
     minimum_fsem_rows: int = DEFAULT_MINIMUM_FSEM_ROWS,
     minimum_price_rows: int = DEFAULT_MINIMUM_PRICE_ROWS,
+    extra_pricebooks: Sequence[str | Path | PurePosixPath] = (),
 ) -> dict[str, Any]:
     validation = validate_root(
         source_root,
@@ -214,16 +409,18 @@ def create_archive(
         minimum_price_rows=minimum_price_rows,
     )
     source_root = source_root.resolve()
+    extra_paths = _extra_pricebook_paths(extra_pricebooks)
+    pricebooks = [_validate_extra_pricebook(source_root, relative) for relative in extra_paths]
     archive.parent.mkdir(parents=True, exist_ok=True)
     temp = archive.with_suffix(archive.suffix + ".tmp")
     temp.unlink(missing_ok=True)
     entries: list[dict[str, Any]] = []
     with zipfile.ZipFile(temp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
-        for relative in REQUIRED_FILES:
+        for relative in (*REQUIRED_FILES, *extra_paths):
             source = source_root / Path(*relative.parts)
             arcname = (PAYLOAD_PREFIX / relative).as_posix()
-            if relative.name in {"les_smeta_base_integrity.json", "les_smeta_base_manifest.json"}:
-                payload = _json(source)
+            if relative.name in {"les_smeta_base_integrity.json", "les_smeta_base_manifest.json", "fsem_2022_manifest.json"}:
+                payload = _public_manifest_payload(relative, _json(source))
                 if relative.name == "les_smeta_base_integrity.json":
                     checks = dict(payload.get("checks") or {})
                     checks["minimum_norms"] = {
@@ -232,19 +429,28 @@ def create_archive(
                         "minimum": minimum_norms,
                     }
                     payload["checks"] = checks
-                else:
+                elif relative.name == "les_smeta_base_manifest.json":
                     payload["minimum_norms"] = minimum_norms
                 raw = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
                 bundle.writestr(arcname, raw)
                 digest = hashlib.sha256(raw).hexdigest()
                 size = len(raw)
             else:
-                bundle.write(source, arcname)
-                digest = _sha256(source)
-                size = source.stat().st_size
+                hasher = hashlib.sha256()
+                size = 0
+                with source.open("rb") as input_stream, bundle.open(arcname, "w") as output_stream:
+                    for block in iter(lambda: input_stream.read(8 * 1024 * 1024), b""):
+                        output_stream.write(block)
+                        hasher.update(block)
+                        size += len(block)
+                digest = hasher.hexdigest()
+                if relative in extra_paths:
+                    snapshot = next(item for item in pricebooks if item["path"] == relative.as_posix())
+                    if digest != snapshot["sha256"] or size != snapshot["bytes"]:
+                        raise BaselineError(f"extra pricebook changed during packaging: {relative}")
             entries.append({"path": relative.as_posix(), "sha256": digest, "bytes": size})
         manifest = {
-            "schema": "les.smeta.release-baseline.v1",
+            "schema": BASELINE_V2 if extra_paths else BASELINE_V1,
             "norm_count": validation["norm_count"],
             "resource_count": validation["resource_count"],
             "minimum_norms": minimum_norms,
@@ -254,9 +460,12 @@ def create_archive(
             "minimum_pricebook_rows": minimum_price_rows,
             "files": entries,
         }
+        if extra_paths:
+            manifest["pricebooks"] = pricebooks
         bundle.writestr(ARCHIVE_MANIFEST, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     os.replace(temp, archive)
-    return {**validation, "archive": str(archive), "archive_sha256": _sha256(archive)}
+    return {**validation, "archive": str(archive), "archive_sha256": _sha256(archive),
+            **({"pricebooks": pricebooks} if extra_paths else {})}
 
 
 def verify_archive(archive: Path) -> dict[str, Any]:
@@ -265,12 +474,14 @@ def verify_archive(archive: Path) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(archive) as bundle:
             manifest = json.loads(bundle.read(ARCHIVE_MANIFEST).decode("utf-8"))
-            if manifest.get("schema") != "les.smeta.release-baseline.v1":
-                raise BaselineError("unsupported smeta baseline archive schema")
+            if not isinstance(manifest, dict):
+                raise BaselineError("invalid smeta baseline archive manifest")
+            paths = _archive_paths(manifest)
             expected = {item["path"]: item for item in manifest.get("files") or []}
-            required = {item.as_posix() for item in REQUIRED_FILES}
-            if set(expected) != required:
-                raise BaselineError("smeta baseline archive file set is incomplete")
+            members = [item.filename for item in bundle.infolist()]
+            allowed = {ARCHIVE_MANIFEST, *((PAYLOAD_PREFIX / path).as_posix() for path in paths)}
+            if len(members) != len(allowed) or set(members) != allowed:
+                raise BaselineError("smeta baseline archive has undeclared/duplicate members")
             for relative, item in expected.items():
                 member = (PAYLOAD_PREFIX / PurePosixPath(relative)).as_posix()
                 digest = hashlib.sha256()
@@ -294,19 +505,17 @@ def verify_archive(archive: Path) -> dict[str, Any]:
         raise BaselineError("smeta baseline archive pricebook floor is not satisfied")
     with tempfile.TemporaryDirectory(prefix="les-smeta-baseline-verify-") as temporary:
         staging = Path(temporary)
-        with zipfile.ZipFile(archive) as bundle:
-            for relative in REQUIRED_FILES:
-                member = (PAYLOAD_PREFIX / relative).as_posix()
-                target = staging / Path(*relative.parts)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with bundle.open(member) as source, target.open("wb") as output:
-                    shutil.copyfileobj(source, output, length=8 * 1024 * 1024)
+        _extract_archive(archive, staging, paths)
         validation = validate_root(
             staging,
             minimum_norms=minimum_norms,
             minimum_fsem_rows=minimum_fsem_rows,
             minimum_price_rows=minimum_price_rows,
         )
+        for declared in manifest.get("pricebooks", []):
+            actual = _validate_extra_pricebook(staging, PurePosixPath(declared["path"]))
+            if actual != declared:
+                raise BaselineError(f"extra pricebook metadata does not match payload: {declared['path']}")
     expected_counts = {
         "norm_count": validation["norm_count"],
         "resource_count": validation["resource_count"],
@@ -335,30 +544,35 @@ def provision_archive(archive: Path, state_root: Path) -> dict[str, Any]:
             minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
             minimum_price_rows=int(archive_status["minimum_pricebook_rows"]),
         )
-        return {**validation, "action": "kept_existing"}
+        return {**validation, "action": "kept_existing",
+                **_provision_extra_pricebooks(archive, state_root, archive_status)}
 
     state_root.mkdir(parents=True, exist_ok=True)
+    missing_extras, kept_extras = _extra_install_plan(state_root, archive_status)
+    install_paths = (*REQUIRED_FILES, *missing_extras)
     with tempfile.TemporaryDirectory(prefix="les-smeta-baseline-", dir=state_root) as temporary:
         staging = Path(temporary)
-        with zipfile.ZipFile(archive) as bundle:
-            for relative in REQUIRED_FILES:
-                member = (PAYLOAD_PREFIX / relative).as_posix()
-                target = staging / Path(*relative.parts)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with bundle.open(member) as source, target.open("wb") as output:
-                    shutil.copyfileobj(source, output, length=8 * 1024 * 1024)
+        _extract_archive(archive, staging, install_paths)
         validation = validate_root(
             staging,
             minimum_norms=int(archive_status["minimum_norms"]),
             minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
             minimum_price_rows=int(archive_status["minimum_pricebook_rows"]),
         )
-        for relative in REQUIRED_FILES:
-            source = staging / Path(*relative.parts)
-            target = state_root / Path(*relative.parts)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(source, target)
-    return {**validation, "action": "installed"}
+        installed: list[PurePosixPath] = []
+        try:
+            for relative in install_paths:
+                source = staging / Path(*relative.parts)
+                target = state_root / Path(*relative.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(source, target)
+                installed.append(relative)
+        except OSError:
+            for relative in reversed(installed):
+                (state_root / Path(*relative.parts)).unlink(missing_ok=True)
+            raise
+    return {**validation, "action": "installed", "installed_pricebooks": [item.as_posix() for item in missing_extras],
+            "kept_pricebooks": kept_extras}
 
 
 def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
@@ -369,6 +583,7 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
     linked file set, so norms/manifests/FSEM can never be mixed across revisions.
     """
     archive_status = verify_archive(archive)
+    kept_core: dict[str, Any] | None = None
     try:
         current = validate_root(
             state_root,
@@ -388,24 +603,25 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
             if int(current.get(current_key) or 0) < int(archive_status.get(archive_key) or 0)
         ]
         if not behind:
-            return {**current, "action": "kept_valid"}
-        reason = "persistent smeta baseline is older than release payload: " + ", ".join(behind)
+            kept_core = current
+        else:
+            reason = "persistent smeta baseline is older than release payload: " + ", ".join(behind)
     except (BaselineError, OSError) as current_error:
         reason = str(current_error)
 
+    if kept_core is not None:
+        return {**kept_core, "action": "kept_valid",
+                **_provision_extra_pricebooks(archive, state_root, archive_status)}
+
     state_root.mkdir(parents=True, exist_ok=True)
+    missing_extras, kept_extras = _extra_install_plan(state_root, archive_status)
+    install_paths = (*REQUIRED_FILES, *missing_extras)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_root = state_root / "storage" / "recovery" / f"smeta_baseline_{stamp}"
     backed_up: list[str] = []
     with tempfile.TemporaryDirectory(prefix="les-smeta-repair-", dir=state_root) as temporary:
         staging = Path(temporary)
-        with zipfile.ZipFile(archive) as bundle:
-            for relative in REQUIRED_FILES:
-                member = (PAYLOAD_PREFIX / relative).as_posix()
-                target = staging / Path(*relative.parts)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with bundle.open(member) as source, target.open("wb") as output:
-                    shutil.copyfileobj(source, output, length=8 * 1024 * 1024)
+        _extract_archive(archive, staging, install_paths)
         validation = validate_root(
             staging,
             minimum_norms=int(archive_status["minimum_norms"]),
@@ -425,7 +641,7 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(source, target)
                 backed_up.append(relative.as_posix())
-            for relative in REQUIRED_FILES:
+            for relative in install_paths:
                 source = staging / Path(*relative.parts)
                 target = state_root / Path(*relative.parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -448,10 +664,16 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
         "reason": reason,
         "backup": str(backup_root) if backed_up else "",
         "backed_up": backed_up,
+        "installed_pricebooks": [item.as_posix() for item in missing_extras],
+        "kept_pricebooks": kept_extras,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     create = subparsers.add_parser("create")
@@ -459,6 +681,8 @@ def main(argv: list[str] | None = None) -> int:
     create.add_argument("--archive", type=Path, default=DEFAULT_ARCHIVE)
     create.add_argument("--minimum-norms", type=int, default=DEFAULT_MINIMUM_NORMS)
     create.add_argument("--minimum-price-rows", type=int, default=DEFAULT_MINIMUM_PRICE_ROWS)
+    create.add_argument("--pricebook", action="append", default=[],
+                        help="explicit additional data/price_base/*.parquet; repeat for each book")
     verify = subparsers.add_parser("verify")
     verify.add_argument("--archive", type=Path, required=True)
     verify_root = subparsers.add_parser("verify-root")
@@ -478,6 +702,7 @@ def main(argv: list[str] | None = None) -> int:
             args.archive,
             minimum_norms=args.minimum_norms,
             minimum_price_rows=args.minimum_price_rows,
+            extra_pricebooks=args.pricebook,
         )
     elif args.command == "verify":
         result = verify_archive(args.archive)

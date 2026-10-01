@@ -331,7 +331,7 @@ def runtime_factor_rows(
                 "mutable": False,
                 "operator_action": (
                     "profile_clone"
-                    if factor_id in {"model_preset", "context_input_tokens"}
+                    if factor_id in {"model_preset", "context_input_tokens", "reasoning"}
                     else "read_only"
                 ),
             }

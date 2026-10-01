@@ -17,6 +17,7 @@ class BackendCapacity:
     context_tokens: int | None
     observed: bool
     source: str
+    reasoning_supported: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,9 @@ class ModelExecutionPreset:
     parallel_read_limit: int
     reasoning_enabled: bool
     source_chain: tuple[str, ...]
+    reasoning_requested: bool = False
+    reasoning_source: str = "factory_default"
+    reasoning_supported: bool = False
 
     def diagnostics(self, *, requested_input_tokens: int | None = None) -> dict[str, Any]:
         """Return operator-safe requested/effective/source values."""
@@ -62,9 +66,9 @@ class ModelExecutionPreset:
                 "restart_required": False,
             },
             "reasoning": {
-                "requested": False,
+                "requested": self.reasoning_requested,
                 "effective": self.reasoning_enabled,
-                "source": "workflow_invariants",
+                "source": self.reasoning_source,
                 "restart_required": False,
             },
         }
@@ -212,4 +216,29 @@ def resolve_execution_preset(
         resolved = _narrow(resolved, restrictions)
         source_chain.append("workflow_profile_restrictions")
 
-    return replace(resolved, source_chain=tuple(source_chain), reasoning_enabled=False)
+    return apply_reasoning_policy(
+        replace(resolved, source_chain=tuple(source_chain), reasoning_supported=(
+            capacity.provider.strip().casefold() == "freetoken" or capacity.reasoning_supported
+        )), operator, restrictions=restrictions
+    )
+
+
+def apply_reasoning_policy(
+    preset: ModelExecutionPreset,
+    policy: Mapping[str, Any] | None,
+    *,
+    restrictions: Mapping[str, Any] | None = None,
+) -> ModelExecutionPreset:
+    """Apply an explicit profile boolean without changing capacity or routing."""
+    requested = (policy or {}).get("reasoning_enabled", False)
+    if not isinstance(requested, bool):
+        raise ValueError("reasoning_enabled must be a boolean")
+    enabled = requested
+    source = "profile_model_policy" if "reasoning_enabled" in (policy or {}) else "factory_default"
+    if (restrictions or {}).get("reasoning_enabled") is False:
+        enabled = False
+        source = "workflow_profile_restrictions"
+    elif requested and not preset.reasoning_supported:
+        enabled = False
+        source = "unsupported_by_transport"
+    return replace(preset, reasoning_enabled=enabled, reasoning_requested=requested, reasoning_source=source)

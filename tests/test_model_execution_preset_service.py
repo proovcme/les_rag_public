@@ -116,6 +116,8 @@ def test_operator_and_workflow_can_only_narrow_factory_limits():
     assert resolved.max_tools == 2
     assert resolved.normal_tool_count == 2
     assert resolved.reasoning_enabled is False
+    assert resolved.diagnostics()["reasoning"]["requested"] is True
+    assert resolved.diagnostics()["reasoning"]["source"] == "unsupported_by_transport"
     assert resolved.source_chain[-1] == "workflow_profile_restrictions"
 
 

@@ -238,7 +238,9 @@ def test_result_table_precedes_commentary_and_does_not_require_empty_columns():
     instruction = lsr_result_table_instruction()
     assert "Начни ответ с таблицы результата" in instruction
     assert "пояснения — после таблицы" in instruction
-    assert "не перечисляй пустые поля" in instruction
+    assert "Неприменимые необязательные колонки можно не объявлять" in instruction
+    assert "сохраняй пустую ячейку" in instruction
+    assert "не перечисляй пустые поля" not in instruction
 
 
 def test_result_instruction_preserves_gapped_pdf_locators() -> None:

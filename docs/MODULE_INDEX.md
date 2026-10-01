@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Release tooling:** явный `prepare/run --local-only-full` допускает чистый
+> exact detached checkout без upstream/full-base и сохраняет все обычные gates.
+> Gate/artifact честно имеют null upstream, пустой base, local-only scope и
+> publishable=false; публикация запрещена, стандартный install/smoke/rollback/
+> reinstall не меняется. Windows prepared cache привязан и к SHA baseline.
+> Точки: `tools/{release_orchestrator,release_receipt}.py`,
+> `tools/windows_prepare_update.ps1`, `tests/test_release_local_full.py`;
+> [RELEASE_PROCEDURE](RELEASE_PROCEDURE.md). Статус док↔код: ✅; это не live acceptance.
+
 > **Candidate 859; установлен 858:** optional native evidence reads внутри
 > answer-хода, exact full norm cards, общий conditional result contract и
 > delta/packet admission; literal evidence bodies/aliases и read receipts durable.
@@ -902,6 +911,37 @@ measurement and browser recovery after the ongoing 856 controls remain pending.
 > `windows_prepare_update.ps1`, копируется в immutable candidate и получает
 > bounded hard-update job для install → smoke → rollback → reinstall. Точки:
 > `tools/release_orchestrator.py`, `tests/test_release_orchestrator.py`,
+> `docs/RELEASE_PROCEDURE.md`. Статус док↔код: ✅.
+
+> **Release baseline v2:** `tools/smeta_release_baseline.py create --pricebook`
+> допускает только явно перечисленные дополнительные `data/price_base/*.parquet`.
+> V1/seven-file archive остаётся совместимым; v2 проверяет SHA, whitelist и metadata
+> официального `PriceBook`, сохраняет исходные gaps и counts без исправления строк.
+> Provision/repair добавляют отсутствующие книги и сохраняют валидные операторские
+> bytes; известные JSON manifest получают публичную проекцию без machine paths.
+> Точки: `tools/smeta_release_baseline.py`, `tests/test_smeta_release_baseline.py`,
+> `docs/RELEASE_PROCEDURE.md`. Статус док↔код: ✅.
+
+> **Candidate 860; installed 859 quality FAILED:** visible-result Markdown reader
+> не дополняет и не склеивает пропущенные ячейки; совместимый excess empty tail
+> удаляется механически, остальные literal raw proposals остаются resumable
+> technical hold. Общая инструкция сохраняет объявленные пустые колонки.
+> `model_policy.reasoning_enabled` — явный boolean профиля (default off), GUI
+> показывает источник/effective value; B0/B1 и continuation используют одну
+> модель/политику, separate reasoning не читается как final result. Нового
+> предметного review loop или автоматического выбора нормы нет. Точки:
+> `proxy/services/{chat_evidence_application,model_execution_preset,
+> llm_transport_profile,openai_compatible_transport,chat_profile,
+> model_lsr_result_contract}_service.py`, `sovushka/pages/profiles.py`,
+> `tests/test_model_result_table_transport.py`. Статус док↔код: ✅;
+> live comparative / 300+ / exact installer acceptance открыты.
+
+> **Windows release CLI:** отдельный `prepare` объявляет фактические
+> `--runtime/--state/--install` для canonical hard-update job. При отсутствии
+> GNU Make оркестратор исполняет текущие gate-рецепты `Makefile` через `uv`,
+> сохраняет полный набор тестов и effective commands в receipt, отклоняет
+> неизвестный Make/shell-синтаксис. Clean/exact-commit и public-check не ослаблены.
+> Точки: `tools/release_orchestrator.py`, `tests/test_release_orchestrator.py`,
 > `docs/RELEASE_PROCEDURE.md`. Статус док↔код: ✅.
 
 > **Текущий model → RAG → result:** активный контракт закреплён в

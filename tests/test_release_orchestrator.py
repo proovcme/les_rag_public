@@ -983,6 +983,168 @@ def test_cli_exposes_artifact_accept_retry_and_publish():
     assert inspected.artifact == Path("artifact.json")
 
 
+def test_prepare_cli_has_the_same_local_paths_as_accept_and_run(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local AppData"))
+    parser = release_orchestrator._parser()
+    commands = [parser.parse_args([name]) for name in ("prepare", "accept", "run")]
+
+    for name in ("runtime", "state", "install"):
+        assert getattr(commands[0], name) == getattr(commands[1], name)
+        assert getattr(commands[0], name) == getattr(commands[2], name)
+
+
+def test_full_candidate_accepts_real_prepare_cli_with_custom_unicode_paths(monkeypatch, tmp_path):
+    repo = tmp_path / "clean checkout"
+    repo.mkdir()
+    baseline = tmp_path / "база цен.zip"
+    baseline.write_bytes(b"verified baseline fixture")
+    installer = tmp_path / "installer.exe"
+    installer.write_bytes(b"exact installer fixture")
+    state = tmp_path / "состояние приложения"
+    install = tmp_path / "Programs" / "ЛЕС"
+    args = release_orchestrator._parser().parse_args([
+        "prepare", "--root", str(repo), "--host", "local",
+        "--smeta-baseline-archive", str(baseline), "--state", str(state),
+        "--install", str(install), "--runtime", str(install / "runtime"),
+    ])
+    prepared = {
+        "schema": "les.windows.prepared-package.v1", "status": "prepared",
+        "commit": TARGET, "installer": str(installer), "desktop_version": "5.1.859",
+        "sha256": release_orchestrator._sha256(installer),
+    }
+    monkeypatch.setattr(
+        release_orchestrator, "_run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(prepared), stderr=""
+        ),
+    )
+
+    result = release_orchestrator.build_full_candidate(
+        target=TARGET, output=tmp_path / "candidate", args=args,
+        contract={"product_version": "0.31.131", "build_number": 859},
+    )
+    job = json.loads((result["acceptance_path"] / "hard-update-job.json").read_text(encoding="utf-8"))
+
+    assert job["install_root"] == str(install.resolve())
+    assert job["state_root"] == str(state.resolve())
+    assert job["target_commit"] == TARGET
+    assert job["installer_sha256"] == release_orchestrator._sha256(installer)
+
+
+def _portable_gate_makefile(root: Path) -> None:
+    (root / "Makefile").write_text(
+        "PKGS := proxy tools\n"
+        "PYTEST_BASETEMP ?= .test-tmp\n"
+        "UNIT_TESTS ?= tests/test_z.py tests/test_a.py\n"
+        "UNIT_TESTS += tests/test_b.py tests/test_a.py\n"
+        "CURRENT_TESTS ?= $(sort $(UNIT_TESTS) tests/test_c.py)\n"
+        "UNUSED := $(unsupported Make function)\n"
+        "verify:\n"
+        "\tuv run python tools/sync_version_contract.py --check\n"
+        "\tuv run python -m compileall -q $(PKGS)\n"
+        "\tuv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/verify --collect-only -q $(CURRENT_TESTS)\n"
+        "\t@echo \"verify passed\"\n"
+        "\ntest:\n"
+        "\tuv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/test -q --durations=20 $(CURRENT_TESTS)\n"
+        "\ntest-updater:\n"
+        "\tuv run python tools/platform_release_gate.py updater\n"
+        "\npublic-check:\n"
+        "\tuv run python tools/publication_check.py\n",
+        encoding="utf-8",
+    )
+
+
+def test_make_absent_runs_exact_checked_in_recipes_without_changing_receipt_policy(monkeypatch, tmp_path):
+    _portable_gate_makefile(tmp_path)
+    for variable in ("PKGS", "PYTEST_BASETEMP", "UNIT_TESTS", "CURRENT_TESTS"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(release_orchestrator.shutil, "which", lambda _name: None)
+    calls = []
+    monkeypatch.setattr(release_orchestrator, "_run", lambda command, **_kwargs: calls.append(tuple(command)))
+
+    evidence = release_orchestrator.run_prepare_gates(tmp_path)
+    tests = ("tests/test_a.py", "tests/test_b.py", "tests/test_c.py", "tests/test_z.py")
+
+    assert calls == [
+        release_orchestrator.PREPARE_GATES[0][1],
+        release_orchestrator.PREPARE_GATES[1][1],
+        ("uv", "run", "python", "tools/sync_version_contract.py", "--check"),
+        ("uv", "run", "python", "-m", "compileall", "-q", "proxy", "tools"),
+        ("uv", "run", "python", "-m", "pytest", "--basetemp=.test-tmp/verify", "--collect-only", "-q", *tests),
+        ("uv", "run", "python", "-m", "pytest", "--basetemp=.test-tmp/test", "-q", "--durations=20", *tests),
+        ("uv", "run", "python", "tools/platform_release_gate.py", "updater"),
+        ("uv", "run", "python", "tools/publication_check.py"),
+    ]
+    assert [item["gate"] for item in evidence] == [label for label, _command in release_orchestrator.PREPARE_GATES]
+    assert [item["command"] for item in evidence] == [" ".join(command) for _label, command in release_orchestrator.PREPARE_GATES]
+    assert all(item["exit_code"] == 0 for item in evidence)
+    assert evidence[2]["effective_commands"] == [list(command) for command in calls[2:5]]
+
+
+def test_make_present_keeps_original_gate_commands(monkeypatch, tmp_path):
+    monkeypatch.setattr(release_orchestrator.shutil, "which", lambda _name: "make.exe")
+    calls = []
+    monkeypatch.setattr(release_orchestrator, "_run", lambda command, **_kwargs: calls.append(tuple(command)))
+
+    release_orchestrator.run_prepare_gates(tmp_path)
+
+    assert calls == [command for _label, command in release_orchestrator.PREPARE_GATES]
+
+
+def test_make_absent_does_not_continue_after_a_gate_failure(monkeypatch, tmp_path):
+    _portable_gate_makefile(tmp_path)
+    monkeypatch.setattr(release_orchestrator.shutil, "which", lambda _name: None)
+    calls = []
+
+    def failed_run(command, **_kwargs):
+        calls.append(tuple(command))
+        if "--durations=20" in command:
+            raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(release_orchestrator, "_run", failed_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        release_orchestrator.run_prepare_gates(tmp_path)
+
+    assert not any("updater" in command or "tools/publication_check.py" in command for command in calls)
+
+
+@pytest.mark.parametrize("recipe", [
+    "uv run python -m pytest; exit 0", "uv run python $(unknown)",
+    "uv run python $(wildcard tests/test_*.py)", "python -m pytest",
+])
+def test_make_absent_rejects_unsupported_gate_syntax(tmp_path, recipe):
+    (tmp_path / "Makefile").write_text(f"test:\n\t{recipe}\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="unsupported|unresolved"):
+        release_orchestrator._make_fallback_commands(tmp_path, "test")
+
+
+def test_current_make_fallback_contains_the_new_canonical_contract_tests(monkeypatch):
+    for variable in ("UNIT_TESTS", "CURRENT_TESTS", "PYTEST_BASETEMP"):
+        monkeypatch.delenv(variable, raising=False)
+    commands = release_orchestrator._make_fallback_commands(release_orchestrator.ROOT, "test")
+
+    assert len(commands) == 1
+    assert "--basetemp=.test-tmp/test" in commands[0]
+    assert "tests/test_model_price_provenance_service.py" in commands[0]
+    assert "tests/test_model_result_packet_service.py" in commands[0]
+    assert "tests/test_rim_visible_price_provenance.py" in commands[0]
+    tests = [argument for argument in commands[0] if argument.startswith("tests/")]
+    assert tests == sorted(set(tests))
+    assert len(tests) > 150
+
+
+def test_make_absent_does_not_skip_a_shell_command_disguised_as_echo(tmp_path):
+    (tmp_path / "Makefile").write_text(
+        "test:\n\t@echo hello; uv run python extra_required_gate.py\n"
+        "\tuv run python -m pytest\n", encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="unsupported shell syntax"):
+        release_orchestrator._make_fallback_commands(tmp_path, "test")
+
+
 def test_latest_pointer_uses_artifact_fields(tmp_path):
     artifact_path = tmp_path / "artifact-receipt.json"
     artifact_path.write_text("{}", encoding="utf-8")

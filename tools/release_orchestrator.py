@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -89,6 +90,25 @@ def require_release_source(*, root: Path, branch: str, target: str) -> str:
     return commit
 
 
+def require_local_release_source(*, root: Path, branch: str, target: str) -> str:
+    """Attest a clean exact local checkout without claiming a pushed upstream."""
+    root = Path(root).resolve()
+    if _run(("git", "status", "--porcelain"), root=root, capture=True).stdout.strip():
+        raise RuntimeError("local-only full preparation requires a clean checkout")
+    current = current_branch(root, allow_detached=True)
+    if current != branch:
+        raise RuntimeError("local-only full preparation branch differs from checkout")
+    head = resolve_commit(root, "HEAD")
+    # Compare before resolving the requested ref so an invented full SHA has a
+    # useful identity error rather than being treated as a substitute base.
+    if re.fullmatch(r"[0-9a-f]{40}", str(target)) and target != head:
+        raise RuntimeError("local-only full target and HEAD must be identical")
+    commit = resolve_commit(root, target)
+    if commit != head:
+        raise RuntimeError("local-only full target and HEAD must be identical")
+    return commit
+
+
 def sync_public_main(*, root: Path, target: str) -> dict[str, Any]:
     """Fast-forward the public mirror to an already accepted release commit."""
     root = Path(root).resolve()
@@ -121,11 +141,11 @@ def sync_public_main(*, root: Path, target: str) -> dict[str, Any]:
     return {"before": before, "after": after, "fast_forwarded": True}
 
 
-def current_branch(root: Path) -> str:
+def current_branch(root: Path, *, allow_detached: bool = False) -> str:
     branch = _run(
         ("git", "branch", "--show-current"), root=Path(root), capture=True
     ).stdout.strip()
-    if not branch:
+    if not branch and not allow_detached:
         raise RuntimeError("release preparation cannot run from detached HEAD")
     return branch
 
@@ -147,16 +167,105 @@ def run_prepare_gates(root: Path) -> list[dict[str, Any]]:
     evidence: list[dict[str, Any]] = []
     for label, command in PREPARE_GATES:
         started = time.monotonic()
-        _run(command, root=Path(root))
+        commands = (
+            _make_fallback_commands(Path(root), command[1])
+            if command[0] == "make" and shutil.which("make") is None
+            else [command]
+        )
+        for effective_command in commands:
+            _run(effective_command, root=Path(root))
         evidence.append(
             {
                 "gate": label,
                 "command": " ".join(command),
+                "effective_commands": [list(item) for item in commands],
                 "exit_code": 0,
                 "duration_ms": round((time.monotonic() - started) * 1000),
             }
         )
     return evidence
+
+
+def _make_fallback_commands(root: Path, target: str) -> list[tuple[str, ...]]:
+    """Run the checked-in gate recipes when GNU Make is absent on Windows.
+
+    This deliberately supports only the simple assignments, variable references
+    and sort expression used by these recipes. New shell syntax or Make features
+    fail closed instead of silently changing the release test set.
+    """
+    lines = (Path(root) / "Makefile").read_text(encoding="utf-8").splitlines()
+    variables: dict[str, str] = {}
+    unsupported_immediate: set[str] = set()
+
+    def expand(value: str, stack: tuple[str, ...] = ()) -> str:
+        while "$(" in value:
+            start = value.index("$(")
+            depth = 1
+            end = start + 2
+            while end < len(value) and depth:
+                if value[end] == "(":
+                    depth += 1
+                elif value[end] == ")":
+                    depth -= 1
+                end += 1
+            if depth:
+                raise RuntimeError("unsupported Make gate expression")
+            expression = value[start + 2 : end - 1]
+            if expression.startswith("sort "):
+                replacement = " ".join(sorted(set(expand(expression[5:], stack).split())))
+            elif re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", expression):
+                if expression not in variables or expression in stack:
+                    raise RuntimeError(f"unresolved Make gate variable: {expression}")
+                if expression in unsupported_immediate:
+                    raise RuntimeError(f"unsupported immediate Make gate variable: {expression}")
+                replacement = expand(variables[expression], (*stack, expression))
+            else:
+                raise RuntimeError(f"unsupported Make gate expression: {expression}")
+            value = value[:start] + replacement + value[end:]
+        return value
+
+    for line in lines:
+        if line.startswith("\t"):
+            continue
+        assignment = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)\s*([?:+]?=)\s*(.*)", line)
+        if not assignment:
+            continue
+        name, operator, value = assignment.groups()
+        if operator == "?=":
+            variables.setdefault(name, os.environ.get(name, value))
+        elif operator == "+=":
+            variables[name] = (variables.get(name, "") + " " + value).strip()
+        else:
+            variables[name] = value
+            if operator == ":=" and "$" in value:
+                unsupported_immediate.add(name)
+            else:
+                unsupported_immediate.discard(name)
+
+    declaration = next((i for i, line in enumerate(lines) if line.startswith(f"{target}:")), None)
+    if declaration is None or lines[declaration] != f"{target}:":
+        raise RuntimeError(f"unsupported Make gate target: {target}")
+    commands: list[tuple[str, ...]] = []
+    for line in lines[declaration + 1 :]:
+        if not line.strip():
+            continue
+        if not line.startswith("\t"):
+            break
+        recipe = line[1:].strip()
+        if recipe.startswith("@echo "):
+            if any(character in recipe for character in "$;|&<>`\\"):
+                raise RuntimeError(f"unsupported shell syntax in Make gate: {target}")
+            continue
+        effective = expand(recipe)
+        if any(character in effective for character in "$;|&<>`\\\n"):
+            raise RuntimeError(f"unsupported shell syntax in Make gate: {target}")
+        arguments = tuple(shlex.split(effective))
+        if arguments[:2] != ("uv", "run"):
+            raise RuntimeError(f"unsupported executable in Make gate: {target}")
+        commands.append(arguments)
+    if not commands:
+        raise RuntimeError(f"empty Make gate target: {target}")
+    return commands
 
 
 def verify_post_gate_source(*, root: Path, target: str, tree: str) -> None:
@@ -458,7 +567,24 @@ def _freeze_candidate(
         staging = destination.parent / f".staging-{uuid.uuid4().hex}"
         staging.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(candidate_root, staging)
-        os.replace(staging, destination)
+        for attempt in range(3):
+            if destination.exists():
+                break
+            try:
+                os.replace(staging, destination)
+                break
+            except OSError as exc:
+                if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 2:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
+    for record in identity:
+        frozen = destination / record["path"]
+        if (
+            not frozen.is_file()
+            or frozen.stat().st_size != record["bytes"]
+            or _sha256(frozen) != record["sha256"]
+        ):
+            raise RuntimeError("durable candidate asset bytes differ from frozen identity")
     frozen_assets = [destination / path.relative_to(candidate_root) for path in source_assets]
     if any(not path.is_file() for path in frozen_assets):
         raise RuntimeError("durable candidate copy is incomplete")
@@ -519,7 +645,8 @@ def _gate_receipt_for_prepare(
     contract: dict[str, Any],
 ) -> Path:
     tree = resolve_tree(root, target)
-    upstream = resolve_commit(root, f"origin/{branch}")
+    local_only_full = bool(getattr(args, "local_only_full", False))
+    upstream = None if local_only_full else resolve_commit(root, f"origin/{branch}")
     configured = getattr(args, "gate_receipt", None)
     if configured:
         path = Path(configured).resolve()
@@ -534,6 +661,7 @@ def _gate_receipt_for_prepare(
             branch=branch,
             upstream_commit=upstream,
             policy=PREPARE_GATES,
+            local_only_full=local_only_full,
         )
         return path
     results = run_prepare_gates(root)
@@ -550,6 +678,7 @@ def _gate_receipt_for_prepare(
         policy=PREPARE_GATES,
         results=results,
         clean=True,
+        local_only_full=local_only_full,
     )
 
 
@@ -573,16 +702,38 @@ def gate(args: argparse.Namespace) -> dict[str, Any]:
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.root).resolve()
     work_root = Path(args.work_root).resolve()
-    branch = str(getattr(args, "branch", "") or "") or current_branch(root)
-    args.branch = branch
-    target = (
-        resolve_commit(root, args.target)
-        if args.skip_gates
-        else require_release_source(root=root, branch=branch, target=args.target)
+    local_only_full = bool(getattr(args, "local_only_full", False))
+    branch = str(getattr(args, "branch", "") or "") or (
+        current_branch(root, allow_detached=True) if local_only_full else current_branch(root)
     )
+    args.branch = branch
+    if local_only_full:
+        if (
+            not is_local_host(args.host)
+            or args.skip_gates
+            or getattr(args, "publish", False)
+            or str(getattr(args, "base", "") or "")
+            or getattr(args, "full_feed", None) is not None
+        ):
+            raise RuntimeError("local-only full requires local host, all gates, no publication, and no base/feed")
+        target = require_local_release_source(root=root, branch=branch, target=args.target)
+    else:
+        target = (
+            resolve_commit(root, args.target)
+            if args.skip_gates
+            else require_release_source(root=root, branch=branch, target=args.target)
+        )
     contract = load_contract(root)
-    base = _base_from_args(args)
-    classification = classify_release(base, target, root=root)
+    if local_only_full:
+        base = None
+        classification = ReleaseClassification(
+            kind="full", runtime_files=(),
+            triggers=(ReleaseTrigger("<local-bootstrap>", "explicit local-only full installer without a prior full base"),),
+            ignored_version_surfaces=(),
+        )
+    else:
+        base = _base_from_args(args)
+        classification = classify_release(base, target, root=root)
     if getattr(args, "force_full", False) and classification.kind == "patch":
         classification = ReleaseClassification(
             kind="full",
@@ -629,7 +780,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
             gate_receipt=gate_path,
             release_class=classification.kind,
             target_commit=target,
-            base_commits=[base],
+            base_commits=[] if local_only_full else [base],
             product_version=str(contract["product_version"]),
             build_number=int(contract["build_number"]),
             desktop_version=_desktop_version(contract),
@@ -644,7 +795,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
                 "classification": _classification_evidence(classification),
                 "build": built.get("build", {}),
             },
-            publishable=True,
+            publishable=not local_only_full,
         )
         artifact = release_receipt.load_artifact_receipt(artifact_path)
         _write_latest(
@@ -975,6 +1126,8 @@ def _accept_artifact(
 ) -> dict[str, Any]:
     artifact_path = _artifact_path(args)
     artifact = release_receipt.load_artifact_receipt(artifact_path)
+    if artifact.get("local_only_full") is True and not is_local_host(args.host):
+        raise RuntimeError("local-only full artifact requires local acceptance host")
     if list((artifact_path.parent / "revocations").glob("*.json")):
         raise RuntimeError("artifact is revoked")
     try:
@@ -1152,6 +1305,8 @@ def publish_artifact_candidate(
     root: Path,
     resume_stage: str = "accepted",
 ) -> dict[str, Any]:
+    if artifact.get("local_only_full") is True:
+        raise RuntimeError("local-only full artifact cannot be published")
     if artifact["release_class"] == "patch":
         _bind_artifact_public_receipt(
             artifact_path=artifact_path,
@@ -1356,6 +1511,8 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
     if getattr(args, "artifact", None):
         artifact_path = _artifact_path(args)
         artifact = release_receipt.load_artifact_receipt(artifact_path)
+        if artifact.get("local_only_full") is True:
+            raise RuntimeError("local-only full artifact cannot be published")
         if list((artifact_path.parent / "revocations").glob("*.json")):
             raise RuntimeError("artifact is revoked")
         try:
@@ -1467,6 +1624,7 @@ def run_release(args: argparse.Namespace) -> dict[str, Any]:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.set_defaults(root=ROOT, work_root=DEFAULT_WORK_ROOT)
+    local = os.getenv("LOCALAPPDATA", "")
     sub = parser.add_subparsers(dest="command", required=True)
     gate_cmd = sub.add_parser("gate")
     gate_cmd.add_argument("--root", type=Path, default=ROOT)
@@ -1485,7 +1643,11 @@ def _parser() -> argparse.ArgumentParser:
     prepare_cmd.add_argument("--smeta-baseline-archive", type=Path)
     prepare_cmd.add_argument("--gate-receipt", type=Path)
     prepare_cmd.add_argument("--force-full", action="store_true")
+    prepare_cmd.add_argument("--local-only-full", action="store_true", help="Build a fully gated local full installer without upstream/base; publication is forbidden")
     prepare_cmd.add_argument("--skip-gates", action="store_true")
+    prepare_cmd.add_argument("--runtime", type=Path, default=Path(local) / "Programs" / "LES" / "runtime")
+    prepare_cmd.add_argument("--state", type=Path, default=Path(local) / "LES")
+    prepare_cmd.add_argument("--install", type=Path, default=Path(local) / "Programs" / "LES")
     accept_cmd = sub.add_parser("accept")
     accept_cmd.add_argument("--root", type=Path, default=ROOT)
     accept_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
@@ -1493,7 +1655,6 @@ def _parser() -> argparse.ArgumentParser:
     accept_cmd.add_argument("--artifact", type=Path)
     accept_cmd.add_argument("--host", default="local")
     accept_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
-    local = os.getenv("LOCALAPPDATA", "")
     accept_cmd.add_argument("--runtime", type=Path, default=Path(local) / "Programs" / "LES" / "runtime")
     accept_cmd.add_argument("--state", type=Path, default=Path(local) / "LES")
     accept_cmd.add_argument("--install", type=Path, default=Path(local) / "Programs" / "LES")
@@ -1530,10 +1691,10 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--smeta-baseline-archive", type=Path)
     run_cmd.add_argument("--gate-receipt", type=Path)
     run_cmd.add_argument("--force-full", action="store_true")
+    run_cmd.add_argument("--local-only-full", action="store_true", help="Build and accept a fully gated local full installer; publication is forbidden")
     run_cmd.add_argument("--skip-gates", action="store_true")
     run_cmd.add_argument("--publish", action="store_true")
     run_cmd.add_argument("--attempt", type=Path)
-    local = os.getenv("LOCALAPPDATA", "")
     run_cmd.add_argument("--runtime", type=Path, default=Path(local) / "Programs" / "LES" / "runtime")
     run_cmd.add_argument("--state", type=Path, default=Path(local) / "LES")
     run_cmd.add_argument("--install", type=Path, default=Path(local) / "Programs" / "LES")
