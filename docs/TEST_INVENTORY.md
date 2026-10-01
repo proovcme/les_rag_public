@@ -1,5 +1,13 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 845: legacy/foreign query-cache contracts (including empty hits) refresh
+without changing accepted operation revisions, cited evidence or held cursor;
+infrastructure failure stays technical. Prior context preserves authored fields
+and exact cited cards but excludes repeated application diagnostic dumps.
+EXACT/EXACT_VERIFIED with an explicit no/unknown fact stays unsubstantiated in
+both readiness and the money trace, without rewriting the model choice.
+Ten regressions failed before corrections; focused gate 325 passed.
+
 Build 844: generic source-label fixtures exercise the real model norm reader
 and the default browser through a vocabulary rule; only the declared queries
 may reach native RRF and each result must retain its own query identity.

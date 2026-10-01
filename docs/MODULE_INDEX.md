@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.117 / 845:** `core/chat-evidence` и workbook research store
+> version cache entries, refresh incompatible pending queries with the same
+> declared wording, preserve old hits in superseded and all authored decisions.
+> Prior model context excludes only application diagnostic duplicates, preserving
+> the exact cited card bodies. `core/rim`/readiness report exact_match_unresolved
+> when an explicit no/unknown fact contradicts EXACT; no status/cipher rewrite.
+> Regressions reproduced first; focused 325 passed. Док↔код ✅;
+> [rag-evidence-flow](modules/rag-evidence-flow.md), [ALGO-lsr-assembly](ALGO-lsr-assembly.md).
+> Offline: 2032 passed / 20 existing opt-in skipped; verify/architecture green.
+> Installed/live gates pending; customer-ready не заявлено.
+
 > **Кандидат 0.31.116 / 844:** `core/chat-evidence` model norm reader явно
 > выключает legacy vocabulary expansions; `norm_browser.browse_norms_many` default
 > тоже literal. ADR-16 systematic builders, dense+sparse RRF и rerank не

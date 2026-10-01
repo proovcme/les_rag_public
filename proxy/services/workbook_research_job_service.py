@@ -45,6 +45,21 @@ SCHEMA = "les.workbook-research-job.v1"
 _PRICE_BASIS_KEY = "_price_basis"
 TERMINAL_STATUSES = {"complete", "failed"}
 RESUMABLE_STATUSES = {"running", "paused", "failed", "cancelled"}
+
+
+def research_cache_entry(
+    hits: Sequence[Mapping[str, Any]], *, cache_contract: str = "", previous: Any = None,
+) -> Any:
+    """Version technical retrieval results without rewriting cited evidence."""
+    records = [dict(item) for item in hits if isinstance(item, Mapping)]
+    if not cache_contract:
+        return records
+    entry = {"contract": str(cache_contract), "hits": records}
+    if previous is not None:
+        entry["superseded"] = [previous]
+    return entry
+
+
 _EXTRA_COLUMNS = {
     "task_context_json": "TEXT NOT NULL DEFAULT '{}'",
     "remaining_json": "TEXT NOT NULL DEFAULT '[]'",
@@ -1262,6 +1277,7 @@ class WorkbookResearchJobService:
         query_hits: Mapping[str, Sequence[Mapping[str, Any]]],
         *,
         context: Mapping[str, Any] | None = None,
+        cache_contract: str = "",
     ) -> dict[str, Any]:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -1276,19 +1292,30 @@ class WorkbookResearchJobService:
             if not isinstance(cache, dict):
                 cache = {}
             added = 0
+            refreshed = 0
             for query, hits in query_hits.items():
                 key = str(query or "").strip()
-                if not key or key in cache:
+                if not key:
                     continue
-                cache[key] = [dict(item) for item in hits if isinstance(item, Mapping)]
-                added += 1
+                previous = cache.get(key)
+                if key in cache:
+                    if not cache_contract or (
+                        isinstance(previous, Mapping) and previous.get("contract") == cache_contract
+                    ):
+                        continue
+                    refreshed += 1
+                else:
+                    added += 1
+                cache[key] = research_cache_entry(hits, cache_contract=cache_contract, previous=previous)
             conn.execute(
                 """UPDATE workbook_research_jobs
                 SET query_cache_json=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=?""",
                 (json.dumps(cache, ensure_ascii=False), job_id),
             )
-            if added:
+            if added or refreshed:
                 payload: dict[str, Any] = {"added": added, "cached_total": len(cache)}
+                if cache_contract:
+                    payload.update(cache_contract=cache_contract, refreshed=refreshed)
                 for key in ("sheet", "packet_id", "locators", "queries"):
                     value = dict(context or {}).get(key)
                     if isinstance(value, (list, tuple)):

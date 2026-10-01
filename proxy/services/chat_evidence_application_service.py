@@ -1970,11 +1970,19 @@ def research_hit_from_record(record: Mapping[str, Any]) -> _ModelRagEvidenceChun
 def restore_query_hits_from_cache(
     queries: Sequence[str],
     cache: Mapping[str, Any],
+    *,
+    cache_contract: str = "",
 ) -> list[tuple[str, Sequence[Any]]]:
     restored: list[tuple[str, Sequence[Any]]] = []
     for query in queries:
         key = str(query or "").strip()
         records = cache.get(key) if isinstance(cache, Mapping) else None
+        if isinstance(records, Mapping):
+            if cache_contract and records.get("contract") != cache_contract:
+                continue
+            records = records.get("hits")
+        elif cache_contract:
+            continue
         if not key or not isinstance(records, list):
             continue
         hits = tuple(
@@ -1984,6 +1992,32 @@ def restore_query_hits_from_cache(
         )
         restored.append((key, hits))
     return restored
+
+
+async def restore_or_refresh_held_query_hits(
+    queries: Sequence[str], cache: dict[str, Any], *, model_research_tools: Any,
+    retrieval_trace: dict[str, Any], hits_per_query: int,
+) -> tuple[list[tuple[str, Sequence[Any]]], dict[str, list[dict[str, Any]]], str]:
+    """Resume pending evidence with the current reader and the original queries."""
+    from proxy.services.workbook_research_job_service import research_cache_entry
+    contract = str(getattr(model_research_tools, "cache_contract", "") or "")
+    restored: list[tuple[str, Sequence[Any]]] = []
+    updates: dict[str, list[dict[str, Any]]] = {}
+    for query in queries:
+        cached = restore_query_hits_from_cache([query], cache, cache_contract=contract)
+        if cached:
+            hits = cached[0][1]
+            append_actual_search(retrieval_trace, cached=True, hit_count=len(hits))
+        else:
+            result = await model_research_tools.execute({"tool": "search_sources", "args": {"q": query}})
+            if model_search_result_blocks_packet(result.payload):
+                return restored, updates, str(result.payload.get("status") or "unknown")
+            hits = tuple(result.chunks)[:max(1, int(hits_per_query))]
+            updates[query] = [durable_research_hit(item) for item in hits]
+            cache[query] = research_cache_entry(updates[query], cache_contract=contract, previous=cache.get(query))
+            append_actual_search(retrieval_trace, cached=False, hit_count=len(hits))
+        restored.append((query, hits))
+    return restored, updates, ""
 
 
 _MODEL_SEARCH_CONTINUE_STATUSES = frozenset({"ok", "missing", "degraded_sparse_only"})
@@ -4319,7 +4353,7 @@ async def _execute_system_candidate_queries(
     model_queries: Sequence[str],
     pass_hits: list[tuple[str, Sequence[Any]]],
     pass_tools: list[dict[str, Any]],
-    sheet_query_cache: Mapping[str, Sequence[dict[str, Any]]],
+    sheet_query_cache: dict[str, Any],
     cache_updates: dict[str, list[dict[str, Any]]],
     query_provenance: dict[str, str],
     retrieval_trace: dict[str, Any],
@@ -4364,7 +4398,9 @@ async def _execute_system_candidate_queries(
     blocked = ""
     for index, candidate in enumerate(candidates):
         query = candidate.text
-        cached = restore_query_hits_from_cache([query], sheet_query_cache)
+        cached = restore_query_hits_from_cache(
+            [query], sheet_query_cache,
+            cache_contract=str(getattr(model_research_tools, "cache_contract", "") or ""))
         if cached:
             hits = cached[0][1]
             pass_tools.append(
@@ -4660,7 +4696,14 @@ def model_rag_prior_page_context(
             "content": chunk.content if owner == identity else _model_rag_shared_body_ref(f"global_evidence_id={owner}"),
         })
     return {
-        "prior_model_decisions": compact_estimator_draft_rows(list(rows)),
+        # These diagnostics are application-derived projections of the same
+        # authored fields/citations, not additional model choices. Repeating
+        # their full citation dumps crowded out the next exact evidence group.
+        "prior_model_decisions": [
+            {key: value for key, value in row.items()
+             if key not in {"_quality_gate", "_evidence_check", "quality_message"}}
+            for row in compact_estimator_draft_rows(list(rows))
+        ],
         "previously_shown_cited_evidence": cited_evidence,
         "evidence_continuation_instruction": (
             "Это следующая страница уже найденных карточек для тех же строк. "
@@ -7070,6 +7113,10 @@ async def _execute_chat_evidence_application(
                             allow_stream=False,
                         )
                         t_llm += time.time() - t_query_model
+                        append_actual_model_call(
+                            retrieval_trace, purpose="model_rag_queries" if query_attempt == 1 else "model_rag_query_repair",
+                            finish_reason=llm_usage_finish_reason(query_usage),
+                            completion_tokens=int(query_usage.get("completion_tokens") or 0))
                         model_queries, rejected_model_queries = classify_model_rag_query_lines(
                             query_text, query_instruction
                         )
@@ -7118,6 +7165,7 @@ async def _execute_chat_evidence_application(
                         research_result = await model_research_tools.execute(
                             {"tool": "search_sources", "args": {"q": query}}
                         )
+                        append_actual_search(retrieval_trace, cached=False, hit_count=len(research_result.chunks))
                         tool_results_for_model.append(research_result.payload)
                         model_rag_query_hits.append(
                             (
@@ -7952,12 +8000,8 @@ async def _execute_chat_evidence_application(
                     # `research_cancelled` so a per-run budget is never shown as an
                     # operator cancellation.
                     run_stop_kinds: list[str] = []
-                    sheet_query_cache: dict[str, list[dict[str, Any]]] = {
-                        str(key): [
-                            dict(item)
-                            for item in (value or [])
-                            if isinstance(item, Mapping)
-                        ]
+                    sheet_query_cache: dict[str, Any] = {
+                        str(key): value
                         for key, value in (
                             ((research_job or {}).get("query_cache") or {})
                             if isinstance((research_job or {}).get("query_cache"), dict)
@@ -8148,15 +8192,28 @@ async def _execute_chat_evidence_application(
                                 for locator in (stored_held.get("locators") or [])
                                 if source_catalog.lookup(locator) is not None
                             ]
-                            deferred_query_hits = restore_query_hits_from_cache(
+                            held_query_context = dict(stored_held)
+                            deferred_query_hits, refreshed_cache, refresh_blocked = await restore_or_refresh_held_query_hits(
                                 [
                                     str(item)
                                     for item in (stored_held.get("queries") or [])
                                     if str(item).strip()
                                 ],
                                 sheet_query_cache,
+                                model_research_tools=model_research_tools,
+                                retrieval_trace=retrieval_trace,
+                                hits_per_query=retrieval_limits["model_evidence_k"],
                             )
-                            held_query_context = dict(stored_held)
+                            if refreshed_cache and research_job_service is not None and research_job is not None:
+                                research_job = research_job_service.record_search_cache(
+                                    research_job["job_id"], refreshed_cache, context=dict(stored_held),
+                                    cache_contract=str(getattr(model_research_tools, "cache_contract", "") or ""))
+                            if refresh_blocked:
+                                retrieval_trace["search_cache_refresh"] = {"status": refresh_blocked, "technical_failure": True}
+                                run_stop_kinds.append("search_cache_refresh_blocked")
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.pause(research_job["job_id"], phase="search_cache_refresh_blocked")
+                                break
                             evidence_query_offset = int(stored_held.get("query_offset") or 0)
                             stored_held = {}
                         while remaining or deferred_query_hits:
@@ -8494,7 +8551,8 @@ async def _execute_chat_evidence_application(
                                 cache_updates: dict[str, list[dict[str, Any]]] = {}
                                 for query in model_queries:
                                     cached_hits = restore_query_hits_from_cache(
-                                        [query], sheet_query_cache
+                                        [query], sheet_query_cache,
+                                        cache_contract=str(getattr(model_research_tools, "cache_contract", "") or "")
                                     )
                                     if cached_hits:
                                         hits = cached_hits[0][1]
@@ -8533,7 +8591,10 @@ async def _execute_chat_evidence_application(
                                     ]
                                     pass_hits.append((query, hits))
                                     records = [durable_research_hit(item) for item in hits]
-                                    sheet_query_cache[str(query)] = records
+                                    from proxy.services.workbook_research_job_service import research_cache_entry
+                                    sheet_query_cache[str(query)] = research_cache_entry(
+                                        records, cache_contract=str(getattr(model_research_tools, "cache_contract", "") or ""),
+                                        previous=sheet_query_cache.get(str(query)))
                                     cache_updates[str(query)] = records
                                     append_actual_search(
                                         retrieval_trace,
@@ -8580,6 +8641,7 @@ async def _execute_chat_evidence_application(
                                     research_job = research_job_service.record_search_cache(
                                         research_job["job_id"],
                                         cache_updates,
+                                        cache_contract=str(getattr(model_research_tools, "cache_contract", "") or ""),
                                         context={
                                             "sheet": sheet_name,
                                             "packet_id": row_packet_id(
@@ -9003,10 +9065,13 @@ async def _execute_chat_evidence_application(
                                 }
                                 if leftover_cache:
                                     for query, records in leftover_cache.items():
-                                        sheet_query_cache[query] = records
+                                        from proxy.services.workbook_research_job_service import research_cache_entry
+                                        sheet_query_cache[query] = research_cache_entry(
+                                            records, cache_contract=str(getattr(model_research_tools, "cache_contract", "") or ""))
                                     research_job = research_job_service.record_search_cache(
                                         research_job["job_id"],
                                         leftover_cache,
+                                        cache_contract=str(getattr(model_research_tools, "cache_contract", "") or ""),
                                         context={
                                             "sheet": sheet_name,
                                             "packet_id": row_packet_id(

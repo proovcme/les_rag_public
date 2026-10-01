@@ -102,6 +102,23 @@ def test_prior_evidence_page_exposes_only_authored_decisions_and_their_exact_car
     assert "unselected card" not in json.dumps(payload)
 
 
+def test_prior_model_context_does_not_repeat_application_diagnostics_as_model_choices():
+    row = {"source_row": "Any!R2", "operation_id": "op_1", "row_role": "work", "title": "Authored operation",
+           "norm_code": "01-02-003-04", "norm_status": "NEEDS_RESEARCH", "condition_match": "unknown",
+           "open_gap": "authored condition question", "evidence_refs": ["Q1.H1"],
+           "evidence_bindings": {"Q1.H1": "card-id"}, "confirmed_price": 0,
+           "_quality_gate": {"technical_dump": "x" * 20000}, "_evidence_check": {"technical_dump": "y" * 20000},
+           "quality_message": "application-derived message"}
+    card = SimpleNamespace(content="complete cited evidence", meta={"global_evidence_id": "card-id", "model_evidence_ref": "Q1.H1"})
+    payload, retained = service.model_rag_prior_page_context([row], [card])
+    decision = payload["prior_model_decisions"][0]
+    for key in ("operation_id", "norm_code", "norm_status", "condition_match", "open_gap", "evidence_refs", "evidence_bindings", "confirmed_price"):
+        assert decision[key] == row[key]
+    assert not {"_quality_gate", "_evidence_check", "quality_message"} & decision.keys()
+    assert retained == [card] and payload["previously_shown_cited_evidence"][0]["content"] == card.content
+    assert row["_evidence_check"]["technical_dump"] == "y" * 20000  # durable source is untouched
+
+
 def test_page_cursor_and_cached_cards_survive_restart_with_terminal_model_rows(tmp_path):
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
     svc = WorkbookResearchJobService(tmp_path / "state.sqlite")
@@ -4212,6 +4229,49 @@ def test_restore_empty_search_hits_counts_as_cached() -> None:
         {"нет карточек": []},
     )
     assert hits == [("нет карточек", ())]
+
+
+def test_cache_contract_rejects_legacy_and_foreign_hits_including_empty_results():
+    cache = {"legacy": [], "foreign": {"contract": "expanded-v0", "hits": []},
+             "current": {"contract": "literal-v1", "hits": []}}
+    assert service.restore_query_hits_from_cache(list(cache), cache, cache_contract="literal-v1") == [("current", ())]
+
+
+@pytest.mark.asyncio
+async def test_held_page_refreshes_obsolete_cache_without_a_new_model_query():
+    from proxy.services.model_research_tool_service import ModelResearchToolResult
+    calls = []
+    class Tools:
+        cache_contract = "literal-v1"
+        async def execute(self, call):
+            calls.append(call)
+            return ModelResearchToolResult(payload={"status": "missing"}, chunks=())
+    cache = {"model-declared tail": [{"content": "expanded result", "meta": {}}]}
+    trace = {}
+    hits, updates, blocked = await service.restore_or_refresh_held_query_hits(
+        ["model-declared tail"], cache, model_research_tools=Tools(), retrieval_trace=trace, hits_per_query=6)
+    assert calls == [{"tool": "search_sources", "args": {"q": "model-declared tail"}}]
+    assert hits == [("model-declared tail", ())] and updates == {"model-declared tail": []} and not blocked
+    assert service.restore_query_hits_from_cache(list(cache), cache, cache_contract="literal-v1") == hits
+    assert trace["actual_model_calls"]["search_executions"] == 1
+    assert trace["actual_model_calls"]["calls"] == []
+    again, updates, blocked = await service.restore_or_refresh_held_query_hits(
+        ["model-declared tail"], cache, model_research_tools=Tools(), retrieval_trace=trace, hits_per_query=6)
+    assert again == hits and updates == {} and len(calls) == 1 and not blocked
+
+
+@pytest.mark.asyncio
+async def test_held_cache_refresh_infrastructure_failure_is_not_missing_evidence():
+    from proxy.services.model_research_tool_service import ModelResearchToolResult
+    class Tools:
+        cache_contract = "literal-v1"
+        async def execute(self, call):
+            return ModelResearchToolResult(payload={"status": "blocked"})
+    cache = {"pending": []}
+    hits, updates, blocked = await service.restore_or_refresh_held_query_hits(
+        ["pending"], cache, model_research_tools=Tools(), retrieval_trace={}, hits_per_query=6)
+    assert hits == [] and updates == {} and blocked == "blocked"
+    assert cache == {"pending": []}
 
 
 def test_unstructured_notice_distinguishes_empty_sheet_pass() -> None:

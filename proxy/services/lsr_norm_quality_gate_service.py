@@ -358,6 +358,7 @@ APPLICABILITY_GAP_KINDS = (
     "cipher_not_in_cited_evidence",
     "cipher_without_cited_card",
     "analogue_needs_confirmation",
+    "exact_match_unresolved",
 )
 
 
@@ -376,6 +377,12 @@ def applicability_gap_kind(row: Mapping[str, Any] | None) -> str:
     status = canonicalize_norm_status(payload.get("norm_status"))
     if status in _ANALOGUE_APPLICABILITY_STATUSES:
         return "analogue_needs_confirmation" if open_analogue_match_fields(payload) else ""
+    if status in _EXACT_APPLICABILITY_STATUSES and any(field in payload for field in MATCH_FIELDS):
+        # A citation identifies a card; it cannot turn the model's own no/unknown
+        # applicability facts into yes. Legacy rows without this factual block
+        # keep their citation contract, while explicit facts remain authoritative.
+        if open_analogue_match_fields(payload):
+            return "exact_match_unresolved"
     if status == "EXACT_VERIFIED":
         # The verifier's own answer carries the five match facts; that is its
         # contract, and it stands in for the first-pass citation.
@@ -394,10 +401,9 @@ def norm_applicability_substantiated(row: Mapping[str, Any] | None) -> bool:
     the model's *own* answer — the card it was shown and cited, whose body names
     that cipher.  The citation column is announced in the first-pass instruction
     («обязательно укажи точную evidence_refs Qx.Hy выбранной карточки»), so nothing
-    here asks the model for a hidden field; the five match facts are deliberately
-    *not* demanded at this stage because the measured first-pass answers carry them
-    in 17 of 9 452 rows, and a check the real answer cannot make is a check that
-    only pretends to discriminate.
+    here asks the model for a hidden field. Historical rows without match facts
+    retain the citation contract. When the model explicitly supplies those facts,
+    an unresolved or negative fact cannot be confirmed by an EXACT token.
 
     An analogue is a different question and keeps its own rule: all five match
     facts, because an analogue by definition claims a transfer the model must

@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.117 / 845:** `WorkbookResearchJobService.record_search_cache`
+> writes versioned entries with superseded history; `restore_or_refresh_held_query_hits`
+> re-executes only incompatible pending reads without a new model query.
+> `model_rag_prior_page_context` retains model choices and cited card bodies,
+> omitting duplicated application diagnostics only. The shared applicability
+> gap blocks confirmation of an explicit unresolved match fact under EXACT.
+> Direct batch query/search calls now appear in actual_model_calls as well.
+
 > **0.31.116 / 844:** `model_research_tool_service.retrieve_smeta_norm_cards`
 > явно вызывает `browse_norms_many(... expand_queries=False)`; default
 > `norm_browser.browse_norms_many` тоже False. Legacy `_query_variants` больше

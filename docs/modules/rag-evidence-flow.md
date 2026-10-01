@@ -19,6 +19,15 @@
    На norm path с 844 production `retrieve_smeta_norm_cards` явно передаёт
    expand_queries=False; тот же literal default используется norm browser API.
    Legacy vocabulary не добавляет доменные шаблоны по source locator/изделию.
+   С 845 результаты поиска в durable query_cache имеют технический contract:
+   smeta_literal_query_v1 / shared_native_query_v1. Старый либо несовместимый
+   кэш, включая пустую выдачу, не подменяет новый поиск. На продолжении held
+   queries исполняются исходными формулировками через текущий reader без
+   нового модельного планирования; offset/addresses остаются прежними.
+   Envelope хранит прежнюю выдачу в superseded для аудита. Accepted rows,
+   cited evidence, operation revisions и immutable файлы не переписываются.
+   Отказ инфраструктуры при обновлении кэша — техническая pause,
+   search_cache_refresh_blocked, а не MISSING нормы.
    Модель получает карточки собственного запроса и дополнительных literal
    original/derived запросов ADR-16; code-chosen query paraphrases отсутствуют.
 3. Для model-authored запросов каждая группа сохраняется независимо как `Qx.Hy`.
@@ -52,6 +61,11 @@
    Manifest хранит фактически показанное тело по каждому immutable ID,
    ссылки на разные источники не объединяются. Аналогично сокращаются
    повторы уже процитированных тел в контексте следующей страницы.
+   С 845 prior_model_decisions сохраняет авторские поля, IDs и все citations,
+   но не повторяет application-derived _quality_gate/_evidence_check/
+   quality_message. Эти диагностики остаются в durable state и GUI; их
+   повторные дампы не вытесняют очередную целую evidence-группу. Тела
+   процитированных карточек не сокращаются этим изменением.
    После durable record_packet приложение возвращает назначенные им
    operation_id модели: прежняя операция может быть авторски пересмотрена
    как revision N+1; новая остаётся без ID до записи. Неизвестный ID или

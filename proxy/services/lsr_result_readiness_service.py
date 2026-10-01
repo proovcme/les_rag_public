@@ -436,6 +436,13 @@ def build_lsr_result_readiness(
                 "измерения и составу работ не подтверждено: аналог не закрывает "
                 "позицию без вашего решения."
             )
+        elif kind == "exact_match_unresolved":
+            action = (
+                f"Строка {locator}: модель назвала норму {_norm_code(row)} точной, "
+                "но оставила непроверенное или отрицательное совпадение по работе, "
+                "объекту, условиям, единице или составу работ. Уточните открытое "
+                "условие; метка EXACT не подтверждает этот выбор."
+            )
         elif kind in MODEL_GAP_REASONS:
             action = gap_reason_action(
                 kind, locator, row, research_finished=research_finished
@@ -889,12 +896,14 @@ def build_lsr_result_readiness(
                     "cipher_not_in_cited_evidence",
                     "cipher_without_cited_card",
                     "analogue_needs_confirmation",
+                    "exact_match_unresolved",
                 }
             ),
             "meaning": (
                 "Шифр выбран, но его применимость не подтверждена: карточки цитат "
                 "содержат другой шифр, ссылка на карточку отсутствует, либо аналог "
-                "оставлен без проверки совпадений."
+                "оставлен без проверки совпадений, либо EXACT противоречит "
+                "явным фактам применимости."
             ),
         },
         "price_missing": {

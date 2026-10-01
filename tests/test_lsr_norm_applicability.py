@@ -32,6 +32,7 @@ from proxy.services.lsr_result_readiness_service import (
     classify_norm_gap,
 )
 from proxy.services.rim_lsr_trace_service import _row_readiness
+import pytest
 
 MATCH_YES = {
     "action_match": "yes",
@@ -40,6 +41,26 @@ MATCH_YES = {
     "unit_compatible": "yes",
     "composition_covers": "yes",
 }
+
+
+@pytest.mark.parametrize("status", ["EXACT", "EXACT_VERIFIED"])
+@pytest.mark.parametrize("flag", ["unknown", "no"])
+def test_exact_token_does_not_confirm_a_condition_the_same_model_left_open(status, flag):
+    row = {"source_row": "Other!R18", "row_role": "work", "norm_code": "01-02-003-04",
+           "norm_status": status, **MATCH_YES, "condition_match": flag,
+           "_evidence_check": {"citation_checkable": True, "cited_ciphers": ["01-02-003-04"]}}
+    before = dict(row)
+    assert applicability_gap_kind(row) == "exact_match_unresolved"
+    assert norm_applicability_substantiated(row) is False
+    readiness = build_lsr_result_readiness(packaged=True, rows=[row], pricing_status="priced_final",
+                                          calculated_positions=1, catalog_work_count=1,
+                                          catalog_locators=["Other!R18"])
+    assert readiness["dimensions"]["norms"]["complete"] is False
+    assert readiness["gap_states"]["norm_unsubstantiated"]["count"] == 1
+    assert "условиям" in readiness["dimensions"]["norms"]["gaps"][0]["action"]
+    assert _row_readiness({"code": row["norm_code"], "norm_status": status, "row_role": "work",
+                           "status": "bound", "position": {"op_key": "operation"}}, row)["applicability_substantiated"] is False
+    assert row == before  # report the contradiction; never rewrite the authored decision
 
 
 def _check(norm_code: str, cards: dict[str, str]) -> dict:

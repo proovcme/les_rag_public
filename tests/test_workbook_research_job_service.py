@@ -23,6 +23,30 @@ def _identity(service: WorkbookResearchJobService, question: str = "Собери
     )
 
 
+@pytest.mark.parametrize("old_hits", [[], [{"content": "old expanded result", "meta": {}}]])
+def test_search_cache_contract_refresh_preserves_prior_state_and_is_idempotent(tmp_path, old_hits):
+    service = WorkbookResearchJobService(tmp_path / "cache-contract.sqlite")
+    job = service.begin_or_resume(_identity(service))
+    query = "S!R2 — original model query"
+    service.record_search_cache(job["job_id"], {query: old_hits})
+    job = service.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"],
+                                accepted_rows=[{"source_row": "S!R2", "row_role": "work", "open_gap": "authored"}],
+                                evidence=[{"global_evidence_id": "old-citation", "content": "old card"}], remaining=[],
+                                held_packet={"sheet": "S", "locators": ["S!R2"], "queries": [query], "query_offset": 5})
+    before_rows, before_evidence, before_held = job["accepted_rows"], job["evidence"], job["held_packet"]
+    new_hits = [{"content": "literal result", "meta": {}}]
+    service.record_search_cache(job["job_id"], {query: new_hits}, cache_contract="literal-v1")
+    reopened = WorkbookResearchJobService(tmp_path / "cache-contract.sqlite").get(job["job_id"])
+    cached = reopened["query_cache"][query]
+    assert cached["contract"] == "literal-v1" and cached["hits"] == new_hits
+    assert cached["superseded"] == [old_hits]
+    assert (reopened["accepted_rows"], reopened["evidence"], reopened["held_packet"]) == (before_rows, before_evidence, before_held)
+    service.record_search_cache(job["job_id"], {query: []}, cache_contract="literal-v1")
+    assert service.get(job["job_id"])["query_cache"][query] == cached
+    events = [e["data"] for e in service.events_after(job["job_id"]) if e["event"] == "search_cache"]
+    assert events[-1]["refreshed"] == 1 and events[-1]["cache_contract"] == "literal-v1"
+
+
 def test_advancing_evidence_cursor_is_delivery_progress_not_a_held_retry(tmp_path):
     service = WorkbookResearchJobService(tmp_path / "pages.sqlite")
     job = service.begin_or_resume(_identity(service))

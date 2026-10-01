@@ -139,6 +139,12 @@ class ModelResearchToolService:
         self._document_diversity_k = max(int(document_diversity_k), 1)
         self._model_evidence_k = max(int(model_evidence_k), 1)
 
+    @property
+    def cache_contract(self) -> str:
+        # The old dedicated reader expanded source labels through a vocabulary.
+        # Such cached hits (including empty results) must never mask a literal search.
+        return "smeta_literal_query_v1" if self._smeta_norm_retrieve is not None else "shared_native_query_v1"
+
     async def execute(self, call: Mapping[str, Any]) -> ModelResearchToolResult:
         tool = str(call.get("tool") or "")
         args = dict(call.get("args") or {})

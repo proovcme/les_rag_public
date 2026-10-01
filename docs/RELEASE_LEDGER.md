@@ -1,5 +1,37 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.117 / 845 (01.10, Codex):** durable search cache имеет contract;
+old/foreign entries (включая empty) не повторно выдаются как результат текущего
+literal reader. Held tail обновляется исходными запросами без нового model
+плана; прежние hits остаются в superseded. Accepted rows, citations, operation
+revisions и файлы не изменяются. Infrastructure failure — technical pause.
+Из prior model context убраны только повторные application-derived diagnostics;
+авторские поля и тела всех cited cards остаются. EXACT token не закрывает явный
+no/unknown match fact: общий gap читают readiness и денежная трасса. Direct
+batch query/search calls теперь тоже учтены в actual_model_calls; прежний нулевой
+счётчик не доказывал отсутствие поиска. 10 regressions red before; focused
+325 passed. Full offline gate 2032 passed / 20 existing opt-in skipped /
+5 warnings, 191.67 с; verify 2052 collected, compileall/version/architecture
+зелёные. Real checkpoint replay: 23179 → 19984 prior chars, все 18 решений
+и тела 6 cited cards сохранены. 16 patch files dry-run without DIVERGENT,
+rollback_844_to_845 preserved. Installed/live gates pending; customer-ready нет.
+
+**Замер 844, exact 1c865ef7 (01.10):** installed 13/13 hashes, API probe
+query_expansion=false, одна исходная query_variant на запрос; разные операции
+больше не получают одинаковые 6 cable cards. RRF 1/1; basic 9 pass / 1 diagnostics
+WARN / 0 fail; immutable recovery 0.08/0.36 с с теми же revisions/SHA.
+Fresh B0 СКС 184.0 с: structural_error, packaged=false. Raw answer содержит
+127 rows / 53 work / 70 material / 4 header, 74 source locators; не следует
+выводить неспособность модели создавать работы из пустых workbook counters.
+Direct tool_loop показывает модельные запросы и их RAG results; старый
+actual_model_calls.search_executions=0 — дефект счётчика, не отсутствие retrieval.
+B1 СКС 1017.3 с: paused evidence_capacity на 30/31 групп первого packet;
+11/75 accounted, 9 material / 7 work / 2 header. 5 cipher-bearing work choices
+NEEDS_RESEARCH, confirmed=0, preliminary=4440.91; полный расчёт не подтверждён.
+Book sankt-peterburg_3kv2026 match exact. Revision rev_ea0d4dcffc9c4a3c941eb69f7398cd61,
+download SHA efa970d60977c749a6a13fcb4bd0b6ebc9b83a673e353f85024421d0963b803e.
+Receipts artifacts/live_844/{sks_baseline,sks_candidate}; customer gate failed.
+
 **Кандидат 0.31.116 / 844 (01.10, Codex):** на installed 843 модель уже
 написала 9 монтажных запросов (шкаф, организатор, шина, панели и т.д.),
 но active `retrieve_smeta_norm_cards → browse_norms` применял старый

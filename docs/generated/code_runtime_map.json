@@ -3106,7 +3106,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 11133,
+      "lines": 11198,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4806,7 +4806,7 @@
         "tests/test_lsr_norm_quality_research_reopen.py",
         "tests/test_model_answer_table_service.py"
       ],
-      "lines": 2233,
+      "lines": 2239,
       "module": "proxy.services.lsr_norm_quality_gate_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4832,7 +4832,7 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_stall_bound_25.py"
       ],
-      "lines": 1087,
+      "lines": 1096,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5288,9 +5288,10 @@
     {
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
+        "tests/test_chat_evidence_application_service.py",
         "tests/test_model_research_tool_service.py"
       ],
-      "lines": 352,
+      "lines": 358,
       "module": "proxy.services.model_research_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7545,7 +7546,7 @@
         "tests/test_workbook_research_job_service.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 2375,
+      "lines": 2402,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -9562,7 +9563,7 @@
     },
     {
       "inbound": [],
-      "lines": 5173,
+      "lines": 5233,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -9575,6 +9576,7 @@
         "proxy/services/model_answer_table_service.py",
         "proxy/services/model_connection_contracts.py",
         "proxy/services/model_execution_preset_service.py",
+        "proxy/services/model_research_tool_service.py",
         "proxy/services/openai_compatible_transport_service.py",
         "proxy/services/structured_extract.py",
         "proxy/services/tool_contract_service.py",
@@ -11338,7 +11340,7 @@
     },
     {
       "inbound": [],
-      "lines": 321,
+      "lines": 342,
       "module": "tests.test_lsr_norm_applicability",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -14865,7 +14867,7 @@
     },
     {
       "inbound": [],
-      "lines": 1247,
+      "lines": 1271,
       "module": "tests.test_workbook_research_job_service",
       "outbound": [
         "proxy/services/workbook_research_job_service.py"
@@ -19548,7 +19550,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 667,
     "tracked_python_files": 1040,
-    "tracked_python_lines": 359761
+    "tracked_python_lines": 359979
   },
   "warnings": []
 }
