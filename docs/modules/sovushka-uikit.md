@@ -2,6 +2,12 @@
 
 ## Назначение
 
+853: выбранная история читает `/api/workbook-research-last` перед списком
+открытых заданий, включая terminal document. Local fallback использует
+`latest(session_id=...)`. Старый paused этап того же документа больше не
+подменяет состояние завершённого пересмотра; default night reconnect сохранён.
+Регрессии API и local fallback, focused UI/history/documents 184 passed.
+
 852: выбор чата из истории сбрасывает pending предыдущего чата и разрешает
 только job с совпадающим session_id. Subsequent polling сохраняет выбранную
 область; поздний ответ старой сессии не перерисовывает новую. Обычный night

@@ -1,5 +1,36 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.125 / 853 (01.10, Codex):** GUI проверка 852 восстановила
+правильный текущий ВОР, но local list_open выбрал более старый paused stage
+этого же session_id. Selected history теперь сначала читает newest job в любом
+статусе через existing last API; offline fallback тоже читает latest. Обычный
+night reconnect совместим. Две UI regressions, focused 184 passed; canonical
+2065 passed / 20 existing opt-in skipped / 5 warnings, 226.10 с. Verify 2085
+collected, compileall/version/architecture green. Official bounded dry-run
+12 files, rollback 852 preserved.
+Inference/RAG/workbook code не менялись относительно 852; свежий B0/B1 852
+продолжается без рестарта, UI installed acceptance 853 pending.
+
+**Замер 852, exact be776714 (01.10):** installed 16/16 patch hashes; RRF 1/1,
+basic 9 pass / 1 diagnostics WARN / 0 fail; прежние ВОР/ЛСР и цены восстановлены
+без модели, SHA неизменны. Mail offline/static gate 66 passed. Browser download
+13568 bytes с SHA c6d491e5583a8717f97be526e1edbbac89ad35030b4fe389b0e16ab331a2343d
+проверен в Downloads. Последний ВОР/parent сохранены, старый paused status
+same-session — отдельный UI defect, исправляется в 853. Контрольные материалы:
+artifacts/live_852/{smoke,recovery,history_selection.json,eom_baseline,eom_candidate}.
+Это технический замер, не customer-ready verdict.
+
+**Свежее B0/B1 сравнение 852 завершено:** ЭОМ/35B/64K, исходный SHA
+7c87c941f3962ab69920def8ed2b92584063f1913e0c3fba4fbcd93764d2f78d.
+B0_DIRECT 261.3 с, no artifact. B1_CANDIDATE 1168.6 с, 51/51 source,
+remaining=0, 83 строки (32 work/41 material/10 header), duplicate_roles=0.
+rev_01f35c328ab54ecb892e5d02f854653a, 13482 bytes,
+SHA 232a4e866915f455be4b226e3ea6141ec878ff640f09a15d93183ac98c9c1e9a.
+Source binding errors уменьшились с 20 (851) до 5, но не закрыты: перенос
+объёмов вариантов на группы R63/R71/R91 и шт→100м без обоснования R92.
+Структурные trace ошибки есть; declared EXACT не равен verified applicability.
+technical_complete=false. Это улучшение, не приёмка профессионального ВОР/ЛСР.
+
 **Кандидат 0.31.124 / 852 (01.10, Codex):** продолжение sheet-pass сохраняло
 review message, но query request/question_tail всё ещё читали только req.question.
 `workbook_model_question` возвращает модели original task вместе с current

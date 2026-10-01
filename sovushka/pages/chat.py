@@ -913,6 +913,7 @@ def read_active_workbook_research(
     session_id: str = "",
     job_id: str = "",
     service: Any = None,
+    prefer_latest: bool = False,
 ) -> dict[str, Any] | None:
     """Read the durable sheet-pass checkpoint without waiting for SSE."""
 
@@ -938,6 +939,10 @@ def read_active_workbook_research(
     if not services:
         return None
     for item in services:
+        if prefer_latest and sid:
+            latest = item.latest(session_id=sid)
+            if latest:
+                return latest
         if wanted:
             try:
                 return item.get(wanted)
@@ -988,6 +993,15 @@ async def fetch_active_workbook_research(
     fetch = getter or api_get
     wanted = str(job_id or "").strip()
     sid = str(session_id or "").strip()
+    if sid and not allow_foreign_session:
+        # An old paused stage may remain in list_open after a later review has
+        # completed. A selected history session must restore its latest state,
+        # including a terminal document, before considering an open ancestor.
+        last = await fetch(f"/api/workbook-research-last?session_id={sid}")
+        if isinstance(last, dict):
+            latest = _adopted_workbook_job(last.get("job"), sid, allow_foreign_session=False)
+            if latest:
+                return latest
     if not wanted and not sid:
         return None
     if wanted:
@@ -1010,7 +1024,7 @@ async def fetch_active_workbook_research(
             if adopted:
                 return adopted
     return _adopted_workbook_job(
-        read_active_workbook_research(session_id=sid, job_id=wanted), sid,
+        read_active_workbook_research(session_id=sid, job_id=wanted, prefer_latest=not allow_foreign_session), sid,
         allow_foreign_session=allow_foreign_session,
     )
 

@@ -1,5 +1,11 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 853: latest finished document beats an older paused stage in selected
+history, including local API-unavailable fallback; default reconnect preserved.
+Two additional UI regressions, focused UI/history/documents 184 passed.
+Canonical 2065 passed / 20 existing opt-in skipped / 5 warnings, 226.10s;
+verify 2085 collected, architecture green. Installed UI acceptance pending.
+
 Build 852: three task_context cases cover original/current task in resumed model
 calls, effective explicit repricing dimensions and mandatory source/card/task
 presence in ContextGovernor. Three UI regressions cover history pending clear,
@@ -7,7 +13,9 @@ foreign adoption and own-job selection over a foreign pin. Focused core 305,
 UI/source-context 180 passed. Canonical rerun/live pending after UI fix.
 Source catalog regressions additionally assert requested/reference scope,
 exact 30m quantity, null group cell and absent quantity for unknown columns.
-Final focused core/source/UI 437 passed; canonical/live pending after scope fix.
+Final focused core/source/UI 437 passed; canonical 2063 passed / 20 existing
+opt-in skipped / 5 warnings, 201.13s; verify 2083 collected. Installed RRF/basic,
+immutable recovery and mail 66 passed; fresh B0/B1 model-quality control pending.
 
 Build 851: four task_context regressions cover VOR after remark/restart/resume,
 explicit conversion to LSR, old task fallback and parent-vs-replay across jobs.

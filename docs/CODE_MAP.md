@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.125 / 853:** strict selected-session restoration prefers last API and
+> local latest over an older open stage; terminal document state stays visible.
+> `sovushka/pages/chat.py`: fetch/read_active_workbook_research. Inference unchanged.
+
 > **0.31.124 / 852:** `workbook_model_question` restores original task in sheet-pass
 > query request_payload and answer question_tail, with current user message and
 > durable explicit dimensions. Workbook call identity retains literal question.

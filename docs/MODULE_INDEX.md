@@ -1,5 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.125 / 853:** `ui/chat` восстанавливает newest selected-session
+> job в любом статусе через last API и local `latest`, раньше `list_open`
+> возвращал paused ancestor завершённого review. Doc↔code ✅;
+> `fetch_active_workbook_research`, `read_active_workbook_research(prefer_latest)`,
+> [UI kit](modules/sovushka-uikit.md), two regressions in `test_sovushka_chat.py`.
+
 > **Кандидат 0.31.124 / 852:** `core/chat-evidence` передаёт durable original task,
 > current message и явные актуальные параметры в модельный query/answer запрос.
 > Док↔код ✅; `workbook_model_question`, [chat-profiles](modules/chat-profiles.md),

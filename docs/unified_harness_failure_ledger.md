@@ -1,5 +1,23 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 852: history restores an open ancestor of the finished document
+
+Browser download restores the correct latest VOR and matching SHA, but progress
+uses local list_open and displays an older paused stage of the same session.
+853 selected-history fetch checks the existing last API before open jobs;
+local fallback checks latest too. No prior job is deleted or modified, default
+night reconnect stays compatible. API and local regressions, focused 184 passed.
+Installed browser control pending; model-quality control on unchanged 852 core.
+
+## 2026-10-01 — 851: reference descriptions become repeated quantity-less materials
+
+Fresh EOM B1 preserves actual quantity-bearing variants but returns six group
+descriptions as materials three times each, with null/0/1 quantity, plus other
+source binding gaps. 852 source packet explicitly labels requested/reference
+rows and exact header-bound quantity cells, keeping null/unknown as source facts.
+No operation, quantity or norm is rewritten by code. Fresh installed comparison
+must establish whether model output actually improves; coverage alone is not QA.
+
 ## 2026-10-01 — 851: original task absent from resumed model request
 
 Durable original_question decides packaging/prices, but sheet-pass query payload

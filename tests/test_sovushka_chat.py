@@ -890,6 +890,43 @@ async def test_selected_history_poll_ignores_foreign_pinned_job_and_keeps_own_jo
 
 
 @pytest.mark.asyncio
+async def test_selected_history_prefers_latest_finished_document_over_older_paused_step(monkeypatch):
+    import sovushka.pages.chat as page
+    old = {"job_id": "wrj_old", "identity": {"session_id": "session-selected"}, "status": "paused",
+        "remaining": ["Лист!R3"], "accepted_rows": [{"source_row": "Лист!R2", "row_role": "work"}]}
+    latest = {"job_id": "wrj_latest", "identity": {"session_id": "session-selected"}, "status": "complete",
+        "continues_job_id": "wrj_old", "document": {"state": "ready", "artifact_kind": "vor_workbook",
+        "final_revision_id": "rev_current"}}
+    async def getter(path):
+        if path.startswith("/api/workbook-research-last?"):
+            return {"found": True, "job": latest}
+        return {"jobs": []}
+    monkeypatch.setattr(page, "read_active_workbook_research", lambda **kwargs: old)
+    fetched = await fetch_active_workbook_research(session_id="session-selected", getter=getter,
+        allow_foreign_session=False)
+    assert fetched == latest
+    async def fetch_job(**kwargs):
+        return fetched
+    pending = await hydrate_chat_pending_from_workbook(session_id="session-selected", pending={"job_id": "wrj_old"},
+        fetch_job=fetch_job, ignore_prior_job_id=True)
+    assert pending["document"]["final_revision_id"] == "rev_current"
+    assert "current.xlsx" in format_workbook_session_sys_notice(pending)
+
+
+def test_selected_history_local_fallback_reads_latest_terminal_state():
+    latest = {"job_id": "wrj_latest", "status": "complete", "identity": {"session_id": "session-selected"}}
+    old = {"job_id": "wrj_old", "status": "paused", "identity": {"session_id": "session-selected"}}
+    class Service:
+        def latest(self, *, session_id):
+            assert session_id == "session-selected"
+            return latest
+        def list_open(self, **kwargs):
+            return [old]
+    assert read_active_workbook_research(session_id="session-selected", service=Service(), prefer_latest=True) == latest
+    assert read_active_workbook_research(session_id="session-selected", service=Service()) == old
+
+
+@pytest.mark.asyncio
 async def test_reconnect_progress_uses_workbook_checkpoint(tmp_path):
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 
