@@ -1,7 +1,34 @@
 import json
 
+import pytest
+
 from proxy.services import model_lsr_result_contract as contract
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
+
+
+@pytest.mark.parametrize("action,basis", [("add", "explicit"), ("replace", "explicit"),
+                                        ("add", "source_work"), ("replace", "target_norm")])
+def test_resource_quantity_instruction_matches_the_actual_binding_contract(action, basis):
+    from proxy.smeta_core.contracts import ResourceBinding
+    binding = ResourceBinding(work_id="source-operation", selected_by="model", action=action,
+        resource_name="Literal shown resource", unit="kg", quantity=2,
+        quantity_basis=basis, target_resource_code="shown-target")
+    instruction = contract.model_lsr_resource_decision_instruction()
+    assert binding.quantity_basis in instruction
+    assert "target_norm только для replace, source_work только для add" in instruction
+    assert "полный физический расход" in instruction
+
+
+@pytest.mark.parametrize("status", ["keep_all_confirmed", "actions_confirmed", "unresolved"])
+def test_resource_review_instruction_exposes_real_review_statuses(status):
+    from proxy.smeta_core.contracts import ResourceReview
+    review = ResourceReview(work_id="source-operation", selected_by="model", status=status,
+        reason="Literal source comparison", labor_status="confirmed", labor_reason="Shown labor",
+        machine_status="not_present", material_status="unresolved")
+    instruction = contract.model_lsr_resource_decision_instruction()
+    assert review.status in instruction
+    assert "confirmed/not_present/unresolved/rejected" in instruction
+    assert "labor_reason/machine_reason/material_reason" in instruction
 
 
 def test_selected_norm_facts_are_required_and_not_in_optional_fields():

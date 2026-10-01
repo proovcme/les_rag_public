@@ -3147,7 +3147,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 11959,
+      "lines": 11962,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5332,11 +5332,12 @@
         "proxy/services/model_evidence_read_service.py",
         "tests/test_model_evidence_read_contract.py"
       ],
-      "lines": 163,
+      "lines": 169,
       "module": "proxy.services.model_evidence_read_contract",
       "outbound": [
         "proxy/__init__.py",
-        "proxy/services/__init__.py"
+        "proxy/services/__init__.py",
+        "proxy/services/model_lsr_result_contract.py"
       ],
       "path": "proxy/services/model_evidence_read_contract.py",
       "status": "PRODUCT_REACHABLE",
@@ -5393,9 +5394,10 @@
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
+        "proxy/services/model_evidence_read_contract.py",
         "tests/test_model_lsr_result_contract.py"
       ],
-      "lines": 148,
+      "lines": 168,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -7992,6 +7994,7 @@
         "proxy/smeta_core/revision_store.py",
         "proxy/smeta_core/source_intake.py",
         "proxy/smeta_core/workflow.py",
+        "tests/test_model_lsr_result_contract.py",
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_smeta_core.py"
       ],
@@ -12131,11 +12134,12 @@
     },
     {
       "inbound": [],
-      "lines": 58,
+      "lines": 85,
       "module": "tests.test_model_lsr_result_contract",
       "outbound": [
         "proxy/services/lsr_norm_quality_gate_service.py",
-        "proxy/services/model_lsr_result_contract.py"
+        "proxy/services/model_lsr_result_contract.py",
+        "proxy/smeta_core/contracts.py"
       ],
       "path": "tests/test_model_lsr_result_contract.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -20080,7 +20084,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 686,
     "tracked_python_files": 1068,
-    "tracked_python_lines": 371432
+    "tracked_python_lines": 371488
   },
   "warnings": []
 }

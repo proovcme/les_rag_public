@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **866:** `model_lsr_resource_decision_instruction` описывает проверку состава
+> и реальные enum/quantity/reasons ресурсного интерфейса. Общий
+> `MODEL_EVIDENCE_READ_INSTRUCTION` даёт её обеим сметным веткам с native reads;
+> общий field/format contract и обычный RAG не получают эту добавочную нагрузку.
+> Требования оформления пользователя отделены от предмета query-фазы инструкцией,
+> без переформулировки model-authored queries кодом.
+
 > **865:** `_card_code_from_chunk` связывает literal cipher показанного JSON
 > pointer, не выдавая metadata за полную карточку. Sheet-pass terminal boundary
 > сохраняет held cursor и упаковывает partial вместо нового предметного ответа

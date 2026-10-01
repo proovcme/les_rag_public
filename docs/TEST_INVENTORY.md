@@ -1,5 +1,14 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+866: test_model_lsr_result_contract проверяет advertised quantity_basis и review
+statuses реальными constructors ResourceBinding/ResourceReview, включая правила
+add/replace и component reasons. Совместный focused gate с read-turn, sheet/cursor
+и literal resource transport — 76 passed; после выявленного вытеснения обычного
+RAG evidence общий field contract сохранён, guide ограничен actual read turn:
+277 focused passed, включая обе исходные failed проверки без изменений.
+Установленные model-only требования
+не считаются доказательством профессиональной правильности; live 866 pending.
+
 865: `test_model_result_resource_actions` проверяет реальный JSON inventory
 pointer, отдельное full read той же identity и запрет metadata без буквального
 шифра/с частичным совпадением. `test_model_rag_sheet_evidence_reads` воспроизводит

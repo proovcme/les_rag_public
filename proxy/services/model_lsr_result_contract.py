@@ -146,3 +146,23 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
             + "\n\n".join(examples.values())
         )
     return instruction
+
+
+def model_lsr_resource_decision_instruction() -> str:
+    """Professional interface for the estimate read/answer turn, not general RAG."""
+    return (
+        "До итогового ответа сопоставь показанные условия, состав работ и ресурсов "
+        "с операцией, основанием, материалом, числом слоёв/проходов, сохранением и "
+        "повторным использованием в исходнике. Название и указатель карточки "
+        "этого не подтверждают. Необоснованные совпадения не помечай yes. "
+        "Добавление материала не заменяет прежний ресурс. reuse — сохранённый "
+        "материал; не зануляй так труд или эксплуатацию машин. Для add/replace "
+        "quantity_basis=explicit: числовой quantity — полный физический расход "
+        "ресурса на работу; target_norm только для replace, source_work только для add. "
+        "Для выбранной нормы верни resource_review: status=keep_all_confirmed с reason "
+        "о неизменном составе, actions_confirmed с обоснованными действиями либо "
+        "unresolved с описанием пробела. labor_status/machine_status/material_status: "
+        "confirmed/not_present/unresolved/rejected; confirmed и rejected требуют "
+        "labor_reason/machine_reason/material_reason соответствующего компонента. "
+        "Шифр, расход, единицу и ресурсное соответствие не выдумывай."
+    )

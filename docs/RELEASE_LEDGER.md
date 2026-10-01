@@ -1,5 +1,39 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.138 / 866; установлен 0.31.137 / 865 (`dd785f05`).**
+865 установлен официальным patch deploy: commit/workspace/runtime SHA совпали,
+rollback 864 сохранён. Native RRF smoke exit0 (1.16s), базовый release smoke
+9 passed / 1 diagnostic warning / 0 failed (129.73s), alignment 96/96.
+Контроль с расширенными требованиями к карточкам выявил бизнес-провал:
+B0 за 111.28s вернул 19 строк без норм; модель исполнила поиск шестью абзацами
+самой задачи и описала невыполненные чтения. B1 за 129.50s выдал одну partial
+ревизию: 13 операций / 12 исходных работ / 19, повторного послеответного цикла
+нет, cursor и 19 remaining сохранены. 12 выбранных EXACT и 12 reuse действий
+не являются доказательством применимости; native reads фактически 0.
+Identities/source SHA обоих контролей одинаковы, download SHA проверены;
+операторский профиль восстановлен. Receipts: `artifacts/live_865/`
+`bap_professional_{baseline,candidate}/`. Приёмка FAILED.
+
+866 уточняет общий предответный контракт модели: сопоставление условий,
+состава, материалов, слойности и сохранения; точные resource_review statuses,
+component reasons и quantity_basis; различие add и replace. Чтение полного
+содержания выполняется самой моделью при недостаточном shown evidence.
+Инструкция query-фазы отделяет требования к оформлению/инструментам от
+предмета поиска. Код не фильтрует профессиональные запросы и не выбирает нормы,
+не переписывает решения и не вводит послеответный review loop.
+Первый frozen gate выявил 2 failures: добавочное сметное пояснение вытесняло
+evidence обычного non-native RAG. Guide перенесён в actual estimate read/answer
+turn обеих веток; общий field/format contract сохранён. Проверки не ослаблены:
+focused regression с обоими failures — 277 passed. Замороженный повтор:
+verify exit0 (22.02s), canonical 2664 passed / 20 existing opt-in skipped /
+5 warnings (247.15s pytest), architecture exit0 (9.45s), pinned baseline
+exit0 (7.25s), active-artifacts verify-root ok. Receipts:
+`artifacts/{verify,test,architecture,baseline}_866_second.exit.json` и
+`artifacts/active_artifacts_866.log`. Installed live 866 pending;
+первый failed receipt сохранён без перезаписи.
+Изменение настройки генерации — отдельный reversible GUI-first контроль,
+без смены модели, подключения, KV/context и без переноса его успеха на другие файлы.
+
 **Кандидат 0.31.137 / 865; установлен 0.31.136 / 864 (`acc109a8`).**
 Live 864 доставляет проверяемые файлы, но бизнес-приёмка FAILED. При одинаковых
 вложении, задаче, модели, профиле и цене B0 завершился за 231.09s: 19/19 исходных
