@@ -1,5 +1,24 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.128 / 856 (01.10, Codex):** ordinary EOM review на 854
+выявил повторение Q/H между durable старой карточкой и новой страницей:
+Q18.H2 показан модели как ГЭСНм08-03-594-18, но этим handle также назывались
+другие карточки. Новая строка без evidence_bindings получила unknown_evidence_ref.
+Новый пакет выдаёт Q после максимального saved handle; held page продолжает
+сохранённый cursor. Старые ссылки/карточки/решения не переименовываются.
+Два regression tests, focused core/query/task 226 passed. Model-owned queries,
+norms и RRF не меняются. Fresh installed comparative and restart/resume pending.
+Professional, fresh 300+ and exact installer gates остаются открыты.
+Canonical 2071 passed / 20 existing opt-in skipped / 5 warnings, 215.49 с;
+verify 2091 collected, compileall/version/architecture green. Official bounded
+dry-run 12 files, rollback 855 preserved. Installed live gates pending.
+
+**Замер 855, exact 7ec95bc0:** installed 12/12 hashes, RRF 1/1,
+basic 9 pass / 1 existing diagnostics WARN / 0 fail. Browser восстановил
+real VOR filename вместо «ЛСР · готово»; latest document доступен.
+Свой LSR job paused перед restart, 22 решения и SPb 3кв2026 сохранены.
+Три старые catalog running записи неизменны с 22.09; не изменялись/не отменялись.
+
 **Кандидат 0.31.127 / 855 (01.10, Codex):** restored download использует
 filename именно своей immutable revision через existing metadata API.
 Fallback сохраняет вид ВОР/ЛСР и revision id, не выдумывает «готово» из

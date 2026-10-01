@@ -855,6 +855,36 @@ def test_final_binding_keeps_original_card_across_packet_local_alias_collisions(
     assert missing["_evidence_check"]["unresolved_refs"] == ["Q1.H1"]
 
 
+def test_review_cited_card_remains_bindable_beside_new_packet_cards():
+    old = SimpleNamespace(content="Шифр: ГЭСН01-01-001-01", doc_name="cards", meta={
+        "model_evidence_ref": "Q18.H2", "global_evidence_id": "old-card"})
+    hit = SimpleNamespace(content="Шифр: ГЭСН01-01-001-02", doc_id="new-card",
+                          doc_name="cards", score=1, meta={})
+    offset = service.model_rag_next_query_offset([old])
+    groups, chunks, _ = service.build_model_rag_evidence_groups(
+        [("unaltered model query", [hit])], max_chars=10000, hits_per_query=1,
+        query_offset=offset, evidence_namespace="new-packet")
+    assert "Q19.H1" in groups[0]
+    # The model preserves the old citation in a new visible answer without
+    # repeating the application's evidence_bindings dictionary.
+    authored = {"source_row": "Any!R6", "norm_code": "ГЭСН01-01-001-01",
+                "evidence_refs": ["Q18.H2"]}
+    bound = service.bind_row_evidence_ids([authored], [old, *chunks])[0]
+    assert bound["evidence_bindings"] == {"Q18.H2": "old-card"}
+    assert bound["_evidence_check"]["citation_checkable"] is True
+    assert bound["_evidence_check"]["code_not_in_refs"] is False
+    assert hit.content == "Шифр: ГЭСН01-01-001-02"
+
+
+def test_query_cursor_survives_durable_evidence_roundtrip_without_renaming_old_refs():
+    chunk = service._ModelRagEvidenceChunk(content="full card", doc_id="a", doc_name="cards", score=1,
+        meta={"model_evidence_ref": "Q104.H6", "global_evidence_id": "durable"})
+    restored = service.evidence_chunk_from_record(service.durable_evidence_record(chunk))
+    assert service.model_rag_next_query_offset([restored]) == 104
+    assert service.model_rag_next_query_offset([]) == 0
+    assert restored.meta["model_evidence_ref"] == "Q104.H6"
+
+
 @pytest.mark.parametrize("answer", [
     "ВК!R42: source_row=ВК!R41, title=Работа, unit=шт, norm_code=X",
     "source_row=ВК!R41, title=A, unit=шт, norm_code=X, norm_code=Y",

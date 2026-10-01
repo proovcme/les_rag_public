@@ -1,5 +1,12 @@
 # Chat profiles
 
+856: новые sheet-pass пакеты получают Q/H identifiers после максимального
+сохранённого model_evidence_ref, включая evidence прежнего review.
+Старые карточки/ссылки/решения остаются дословными; held page продолжает
+сохранённый query_offset. Нумерация идентифицирует evidence, не меняет query
+или профессиональный выбор. GUI progress показывает группы текущей страницы,
+а omitted-card trace использует тот же offset. Live comparative gate обязателен.
+
 ## 852: исходная задача сохраняется и в запросе модели
 
 Source packet: `catalog_sheet_packet_facts` отдельно перечисляет requested и

@@ -1,5 +1,12 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 856: two regressions preserve a model's old citation in a fresh
+answer beside new evidence and preserve the next query ordinal after durable
+roundtrip. Focused core/query/task 226 passed. Existing legacy ambiguous
+handles remain fail-closed; new packets cannot shadow prior cited cards.
+Canonical 2071 passed / 20 existing opt-in skipped / 5 warnings, 215.49s;
+verify 2091 collected, architecture green.
+
 Build 855: three filename regressions distinguish VOR, a partial LSR's
 immutable filename and foreign revision metadata. Focused UI/history/documents
 188 passed. No source/norm/price choice is changed; quality gates remain open.

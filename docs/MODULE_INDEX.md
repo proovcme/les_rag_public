@@ -1,5 +1,10 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.128 / 856:** `core/chat-evidence` assigns new Q handles
+> after saved evidence via `model_rag_next_query_offset`. Held cursor unchanged;
+> old model choices/card bodies/queries unchanged. Doc↔code ✅,
+> [chat-profiles](modules/chat-profiles.md); live quality acceptance pending.
+
 > **Кандидат 0.31.127 / 855:** `ui/chat` восстанавливает реальное имя
 > immutable revision, защищает поздний metadata response и kind fallback.
 > `terminal_revision_download_name`, `_apply_terminal_job_plan`; doc↔code ✅,

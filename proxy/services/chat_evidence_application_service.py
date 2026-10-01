@@ -2662,7 +2662,7 @@ def row_evidence_provenance_check(
     }
 
 
-def model_rag_budget_omitted_cards(included_hits, chunks, omitted_refs):
+def model_rag_budget_omitted_cards(included_hits, chunks, omitted_refs, *, query_offset=0):
     """Cards found by search but dropped by the evidence budget: name them."""
 
     if not omitted_refs:
@@ -2675,7 +2675,7 @@ def model_rag_budget_omitted_cards(included_hits, chunks, omitted_refs):
         for chunk in chunks
     }
     detail = []
-    for query_index, (query_text, hits) in enumerate(list(included_hits), 1):
+    for query_index, (query_text, hits) in enumerate(list(included_hits), max(0, query_offset) + 1):
         for hit_index, hit in enumerate(list(hits), 1):
             ref = f"Q{query_index}.H{hit_index}"
             if ref not in wanted or ref in shown:
@@ -2691,6 +2691,22 @@ def model_rag_budget_omitted_cards(included_hits, chunks, omitted_refs):
                 }
             )
     return detail[:300]
+
+
+def model_rag_next_query_offset(evidence_chunks: Sequence[Any]) -> int:
+    """Allocate new Q/H handles after saved evidence, including review cards.
+
+    Old references remain literal. New packets cannot shadow cards that the
+    model was explicitly shown as the basis for its previous decisions.
+    A held page continues its persisted cursor instead of allocating again.
+    """
+    maximum = 0
+    for chunk in evidence_chunks:
+        ref = str((getattr(chunk, "meta", {}) or {}).get("model_evidence_ref") or "")
+        match = re.fullmatch(r"Q(\d+)\.H\d+", ref.strip(), re.IGNORECASE)
+        if match:
+            maximum = max(maximum, int(match.group(1)))
+    return maximum
 
 
 def bind_row_evidence_ids(
@@ -8274,7 +8290,7 @@ async def _execute_chat_evidence_application(
                         inner = 0
                         deferred_query_hits: list[tuple[str, Sequence[Any]]] = []
                         held_packet: list[str] = []
-                        evidence_query_offset = 0
+                        evidence_query_offset = model_rag_next_query_offset(sheet_pass_evidence_chunks)
                         held_query_context: dict[str, Any] = {}
                         if (
                             str(stored_held.get("sheet") or "") == sheet_name
@@ -8345,7 +8361,7 @@ async def _execute_chat_evidence_application(
                                             hits_per_query=retrieval_limits[
                                                 "model_evidence_k"
                                             ],
-                                            query_offset=0,
+                                            query_offset=evidence_query_offset,
                                         )
                                     )
                                     held_packet = []
@@ -8390,7 +8406,7 @@ async def _execute_chat_evidence_application(
                                 any_sheet_queries = True
                             else:
                                 held_packet = []
-                                evidence_query_offset = 0
+                                evidence_query_offset = model_rag_next_query_offset(sheet_pass_evidence_chunks)
                                 prior_page_chunks = []
                                 packet = adaptive_row_packet(
                                     remaining,
@@ -8807,8 +8823,8 @@ async def _execute_chat_evidence_application(
                             )
                             pass_omitted.extend(trim_omitted)
                             await _emit_row_progress(
-                                f"карточки: {evidence_query_offset + len(included_hits)}/"
-                                f"{evidence_query_offset + len(pass_hits)} групп; таблица строк",
+                                f"карточки: {len(included_hits)}/{len(pass_hits)} "
+                                "групп на этой странице; таблица строк",
                                 sheet=sheet_name,
                                 index=sheet_index,
                             )
@@ -8835,7 +8851,7 @@ async def _execute_chat_evidence_application(
                                         hits_per_query=retrieval_limits[
                                             "model_evidence_k"
                                         ],
-                                        query_offset=0,
+                                        query_offset=evidence_query_offset,
                                     )
                                 )
                                 leftover_query_hits = []
@@ -8869,6 +8885,7 @@ async def _execute_chat_evidence_application(
                                 included_hits,
                                 model_evidence_chunks,
                                 omitted_now,
+                                query_offset=evidence_query_offset,
                             )
                             context = "\n\n".join(model_rag_evidence_groups)
                             answer_source_map = _model_rag_source_map(

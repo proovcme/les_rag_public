@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.128 / 856:** `model_rag_next_query_offset` derives the next Q ordinal
+> from saved evidence before each fresh sheet-pass packet. Deferred pages use
+> their durable cursor. Omitted-card attribution uses the same offset.
+
 > **0.31.127 / 855:** `sovushka/pages/chat.py` terminal revision metadata
 > determines download filename; fallback preserves workbook kind and revision ID.
 > A session guard discards stale metadata responses. Inference unchanged.

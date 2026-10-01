@@ -1,5 +1,16 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 854: review card handle shadows another packet's card
+
+Ordinary installed EOM review shows Q18.H2 with the old selected card, while
+durable evidence reuses that alias for four different cards. The model's new
+answer preserves the old norm and literal citation but omits evidence_bindings;
+the checker correctly rejects the now ambiguous handle. 856 prevents new
+collisions by allocating Q after all saved handles. Held-page cursors are
+preserved. No old citation, query, chosen norm or card content is rewritten.
+Two regressions cover review binding beside a new packet and durable roundtrip;
+fresh installed B0/B1 and ordinary restart/resume remain mandatory.
+
 ## 2026-10-01 — 854: restored VOR labelled as ready LSR
 
 Browser startup now selects the correct latest job, but its generic filename
