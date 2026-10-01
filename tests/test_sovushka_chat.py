@@ -2043,6 +2043,17 @@ def test_restored_vor_name_preserves_kind_without_claiming_quality():
     assert "готово" not in name
 
 
+def test_reconnect_projection_preserves_vor_kind_in_terminal_notice():
+    job = {"status": "complete", "document": {
+        "state": "ready", "artifact_kind": "vor_workbook",
+        "tool": "build_vor_workbook", "final_revision_id": "rev_current"}}
+    pending = chat_page.workbook_job_to_pending_progress(job)
+    notice = chat_page.format_terminal_assembly_notice(pending)
+    assert "ВОР_current.xlsx" in notice
+    assert "ЛСР_current.xlsx" not in notice
+    assert pending["document"]["tool"] == "build_vor_workbook"
+
+
 def test_restored_partial_lsr_name_comes_from_its_immutable_revision():
     name = chat_page.terminal_revision_download_name(
         {"document": {"artifact_kind": "lsr_workbook", "state": "ready"}}, "rev_current",
@@ -2292,13 +2303,13 @@ async def test_a_fresh_chat_never_borrows_another_sessions_running_job() -> None
     )
     # потерянный job_id допустимо поискать по имени — но не подменять его чужой
     # сборкой из общего списка
-    assert calls == ["/api/workbook-research/wrj_lost"]
+    assert calls == ["/api/workbook-research/wrj_lost?view=progress"]
     assert (
         await fetch_active_workbook_research(
             session_id="session-mine", getter=getter
         )
     )["job_id"] == "wrj_foreign"
-    assert calls[-1] == "/api/workbook-research-active?session_id=session-mine"
+    assert calls[-1] == "/api/workbook-research-active?session_id=session-mine&view=progress"
 
 
 def test_the_sqlite_fallback_also_refuses_to_guess_the_session() -> None:

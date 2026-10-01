@@ -1,5 +1,17 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+857 UI transport: `view=progress` on job/last/active drops only bulk
+evidence and query_cache from the HTTP response, retaining authored rows,
+identity, task, held cursor, remaining scope and recovery projection. Default
+full response and all durable data remain unchanged; the model uses full state.
+Own 854 checkpoint is 17,643,398 bytes pretty JSON; UI does not need raw cards/cache.
+Three route regressions preserve full reads/source dictionaries; focused UI/API
+212 passed. This reduces polling traffic, not generation time. Installed size
+measurement and browser recovery after the ongoing 856 controls remain pending.
+
+> **0.31.129 / 857:** `workbook_job_to_pending_progress` copies immutable
+> document kind/tool into the reconnect state used by terminal notices.
+
 > **0.31.128 / 856:** `model_rag_next_query_offset` derives the next Q ordinal
 > from saved evidence before each fresh sheet-pass packet. Deferred pages use
 > their durable cursor. Omitted-card attribution uses the same offset.

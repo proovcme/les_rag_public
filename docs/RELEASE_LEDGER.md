@@ -1,5 +1,75 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+Installed 0.31.129 / 857 verified on 01.10: 14/14 patch hashes match
+committed source; rollback 856 retained. Post-deploy native RRF 1/1 and standard
+basic smoke 9 pass / 1 existing diagnostics WARN / 0 fail (117.14s).
+The previous 856 timeout under concurrent model load is preserved as a failed
+measurement; the standard idle smoke passed without changing its 90s timeout.
+Live progress transport: 13,750,633 → 17,908 bytes, all non-bulk fields identical;
+last/active projections also checked. Browser reload restored the own completed
+VOR notice and immutable real filename, without foreign progress. UI download
+13,568 bytes saved to Downloads; SHA c6d491e5… matches the prior revision.
+These checks prove technical delivery/UI only. Fresh source/norm/financial
+acceptance failed as recorded below; 300+ and exact Windows installer remain
+not accepted. This is an installed test build, not a customer-ready release.
+
+Fresh installed same-model/input EOM LSR control on exact 856 completed:
+B0 256.9s / 27 of 51 source rows / structural_error / no file;
+B1 1266.6s / 51 of 51 / remaining 0 / 86 decisions (32 work, 39 material,
+14 header, one unresolved), rev_2e529f5b / 83,844 bytes, downloaded SHA exact.
+Both use FreeToken Qwen3.6-35B-A3B-NVFP4 r4 and identical task/source.
+Fresh evidence handles: 936 refs, zero collisions (856 alias repair proved).
+Actual model choices still disagree with cited card ciphers (e.g. 593-19
+cites card 593-12; cable 398-02 cites culvert 30-07-006-11). No code correction
+of these professional choices was made. Four source unit/quantity errors,
+four duplicate header groups and one unresolved variant remain.
+32 named norms / 14 substantiated; composition check absent on 12 works.
+Exact SPb 3кв2026; calculated_positions 0, confirmed 0, preliminary 331226.92.
+Final gaps: 1 missing norm, 17 unsubstantiated norms, 47 price gaps;
+row reasons: 31 unresolved NR/SP, 40 price_missing, one unresolved FSEM.
+Execution/delivery succeeded; professional/financial acceptance FAILED.
+The fresh 300+ and exact-installer customer release gates remain NOT ACCEPTED.
+Active-artifact release baseline verify-root passed with 49,818 norms,
+504,891 resources, 1,576 FSEM rows and 281,223 price rows.
+
+Canonical final 2075 passed / 20 existing opt-in skipped / 5 warnings,
+224.75s; verify 2095 collected, compileall/version and explicit architecture
+gate green. Official dry-run 14 files, rollback 856 preserved; installed 857 pending.
+
+Completed ordinary 856 restart/resume: 1544.0s, 51/51 source rows,
+83 decisions (32 work/41 material/10 header), exact inherited SPb 3кв2026,
+parent rev_75c3e5e2 → rev_0d9e52fd, SHA d42bd30a8861437cc218aa5aaf43892261138b9410cf18293cf60a089fa69681.
+Five source unit/quantity errors persist after freeform review; 30 named norms,
+15 substantiated, one arithmetic-complete position with unsubstantiated applicability,
+confirmed 0 / preliminary 418317.04. Gaps: 5 missing norms, 12 unsubstantiated,
+47 price gaps; row reasons include 25 unresolved NR/SP and one unresolved FSEM.
+Execution/delivery passed; professional and financial acceptance FAILED.
+Fresh same-input B0 on 856: 256.9s, 73 rows, only 27/51 accounted, no file,
+structural_error; B1 completed (see final comparative measurement above). Fresh 300+/exact installer not accepted.
+
+857 UI transport: `view=progress` on job/last/active drops only bulk
+evidence and query_cache from the HTTP response, retaining authored rows,
+identity, task, held cursor, remaining scope and recovery projection. Default
+full response and all durable data remain unchanged; the model uses full state.
+Own 854 checkpoint is 17,643,398 bytes pretty JSON; UI does not need raw cards/cache.
+Three route regressions preserve full reads/source dictionaries; focused UI/API
+212 passed. This reduces polling traffic, not generation time. Installed size
+measurement and browser recovery after the ongoing 856 controls remain pending.
+
+**Кандидат 0.31.129 / 857 (01.10, Codex):** UI regression обнаружен
+при работе 856: full job имеет vor_workbook, но pending projection теряет
+artifact_kind/tool и повторно рисует уведомление как ЛСР. Projection сохраняет
+оба поля; реальный filename в панели уже корректен с 855. Red→green test,
+focused UI/history/documents 189 passed. Inference/RAG/расчёт unchanged from 856;
+live 856 controls идут без рестарта, customer readiness не объявляется.
+
+**Замер установленной 856, exact 48c6d2de:** 12/12 patch hashes, native RRF 1/1;
+старые собственные ВОР/ЛСР repack/replay без модели, SHA/цены совпадают.
+Mail gate 66 passed / 4 warnings, 6.75s. Basic smoke при параллельном model
+контроле: glossary pass 65.95s, project-noscope ReadTimeout 90s — fail сохранён,
+повтор в idle обязателен. Ordinary LSR restart/resume сохраняет 22 решений,
+task intent LSR и exact SPb 3кв2026. Quality/fresh 300+/exact installer gates open.
+
 **Кандидат 0.31.128 / 856 (01.10, Codex):** ordinary EOM review на 854
 выявил повторение Q/H между durable старой карточкой и новой страницей:
 Q18.H2 показан модели как ГЭСНм08-03-594-18, но этим handle также назывались

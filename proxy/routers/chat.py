@@ -13,7 +13,7 @@ import json
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Callable, Iterable, List, Optional
+from typing import Annotated, Any, Callable, Iterable, List, Literal, Optional
 from uuid import uuid4
 
 import httpx
@@ -244,17 +244,30 @@ async def pause_workbook_research(job_id: str, _user=Depends(require_user)):
 
 
 @router.get("/workbook-research/{job_id}")
-async def get_workbook_research(job_id: str, _user=Depends(require_user)):
+async def get_workbook_research(
+    job_id: str,
+    view: Annotated[Literal["full", "progress"], Query()] = "full",
+    _user=Depends(require_user),
+):
     try:
-        return WorkbookResearchJobService().get(job_id)
+        job = WorkbookResearchJobService().get(job_id)
+        return workbook_research_transport_view(job, view=view)
     except WorkbookResearchJobError as error:
         raise HTTPException(404, str(error)) from error
+
+
+def workbook_research_transport_view(job: dict, *, view: str = "full") -> dict:
+    """UI progress excludes bulk cards/cache; durable and full reads stay intact."""
+    if view != "progress":
+        return job
+    return {key: value for key, value in job.items() if key not in {"evidence", "query_cache"}}
 
 
 @router.get("/workbook-research-last")
 async def get_last_workbook_research(
     session_id: Annotated[str, Query()] = "",
     attachment_id: Annotated[str, Query()] = "",
+    view: Annotated[Literal["full", "progress"], Query()] = "full",
     _user=Depends(require_user),
 ):
     """Newest research of this session in *any* status, with its file state.
@@ -277,7 +290,7 @@ async def get_last_workbook_research(
     return {
         "schema": "les.workbook-research-last.v1",
         "found": True,
-        "job": job,
+        "job": workbook_research_transport_view(job, view=view),
         "document": job.get("document") or {},
         "document_recovery": job.get("document_recovery") or {},
     }
@@ -286,6 +299,7 @@ async def get_last_workbook_research(
 @router.get("/workbook-research-active")
 async def list_active_workbook_research(
     session_id: Annotated[str, Query()] = "",
+    view: Annotated[Literal["full", "progress"], Query()] = "full",
     _user=Depends(require_user),
 ):
     """Current LSR/VOR sheet-pass jobs for reconnect progress, without SSE."""
@@ -294,7 +308,7 @@ async def list_active_workbook_research(
         session_id=str(session_id or ""),
         limit=20,
     )
-    return {"count": len(jobs), "jobs": jobs}
+    return {"count": len(jobs), "jobs": [workbook_research_transport_view(job, view=view) for job in jobs]}
 
 
 @router.post("/chat/repack-lsr")

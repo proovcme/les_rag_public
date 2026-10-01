@@ -1,5 +1,14 @@
 # Chat profiles
 
+857 UI transport: `view=progress` on job/last/active drops only bulk
+evidence and query_cache from the HTTP response, retaining authored rows,
+identity, task, held cursor, remaining scope and recovery projection. Default
+full response and all durable data remain unchanged; the model uses full state.
+Own 854 checkpoint is 17,643,398 bytes pretty JSON; UI does not need raw cards/cache.
+Three route regressions preserve full reads/source dictionaries; focused UI/API
+212 passed. This reduces polling traffic, not generation time. Installed size
+measurement and browser recovery after the ongoing 856 controls remain pending.
+
 856: новые sheet-pass пакеты получают Q/H identifiers после максимального
 сохранённого model_evidence_ref, включая evidence прежнего review.
 Старые карточки/ссылки/решения остаются дословными; held page продолжает

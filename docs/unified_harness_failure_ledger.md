@@ -1,5 +1,15 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+856 fresh comparative: full 51/51 delivery and collision-free evidence handles proved; model-selected norms/citations, four source errors, NR/SP and price gaps still fail professional/financial acceptance. See RELEASE_LEDGER and artifacts/live_856/comparative_acceptance.json. Customer-ready status is not asserted.
+
+## 2026-10-01 — 856: reconnect projection drops the document kind
+
+Installed full job and file panel correctly say VOR, but a subsequent terminal
+notice rendered from chat_pending says LSR. workbook_job_to_pending_progress
+copied document state and IDs but dropped artifact_kind/tool. 857 preserves both
+literal fields. One red→green behavioral regression, focused UI/history/documents
+189 passed. This changes no inference, query, file or quality status.
+
 ## 2026-10-01 — 854: review card handle shadows another packet's card
 
 Ordinary installed EOM review shows Q18.H2 with the old selected card, while

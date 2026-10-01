@@ -1,5 +1,21 @@
 # UI KIT «Совушка»
 
+857 installed UI/API verification: own VOR kind/file restored after restart, native download SHA exact; view=progress 17,908 bytes versus full 13,750,633, all authored state unchanged. Standard idle smoke passed; professional/financial customer acceptance remains failed (RELEASE_LEDGER).
+
+857 UI transport: `view=progress` on job/last/active drops only bulk
+evidence and query_cache from the HTTP response, retaining authored rows,
+identity, task, held cursor, remaining scope and recovery projection. Default
+full response and all durable data remain unchanged; the model uses full state.
+Own 854 checkpoint is 17,643,398 bytes pretty JSON; UI does not need raw cards/cache.
+Three route regressions preserve full reads/source dictionaries; focused UI/API
+212 passed. This reduces polling traffic, not generation time. Installed size
+measurement and browser recovery after the ongoing 856 controls remain pending.
+
+857: `workbook_job_to_pending_progress` сохраняет artifact_kind/tool при
+reconnect projection. Иначе follow-history повторно рисовал правильный ВОР
+как ЛСР в уведомлении, хотя panel filename и full job верны. Regression
+проверяет именно projection→terminal notice; primitives/layout не менялись.
+
 855: восстановленная ссылка получает filename своей immutable revision из
 existing `/api/artifacts/{revision_id}`. Без metadata сохраняется уже известное
 имя из истории либо kind/ID fallback. ВОР не подписывается как ЛСР;

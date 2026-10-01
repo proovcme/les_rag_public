@@ -503,6 +503,8 @@ def workbook_job_to_pending_progress(job: Any, pending: Any = None) -> dict[str,
         # finished research looks like "still assembling" to the restored page.
         data["document"] = {
             "state": str(document.get("state") or ""),
+            "artifact_kind": str(document.get("artifact_kind") or ""),
+            "tool": str(document.get("tool") or ""),
             "final_revision_id": str(document.get("final_revision_id") or ""),
             "draft_revision_id": str(document.get("draft_revision_id") or ""),
             "needs_document": bool(document.get("needs_document")),
@@ -1008,7 +1010,7 @@ async def fetch_active_workbook_research(
         # completed. History selection and ordinary re-entry restore the own
         # latest state before an open ancestor. Foreign night reconnect stays
         # available only when this session has no durable job of its own.
-        last = await fetch(f"/api/workbook-research-last?session_id={sid}")
+        last = await fetch(f"/api/workbook-research-last?session_id={sid}&view=progress")
         if isinstance(last, dict):
             latest = _adopted_workbook_job(last.get("job"), sid, allow_foreign_session=False)
             if latest:
@@ -1016,7 +1018,7 @@ async def fetch_active_workbook_research(
     if not wanted and not sid:
         return None
     if wanted:
-        job = await fetch(f"/api/workbook-research/{wanted}")
+        job = await fetch(f"/api/workbook-research/{wanted}?view=progress")
         if isinstance(job, dict) and job.get("job_id"):
             if allow_foreign_session:
                 return job
@@ -1027,7 +1029,7 @@ async def fetch_active_workbook_research(
         # Есть job_id, но нет сессии: показывать чужую running-сборку вместо
         # потерянной своей — тот же дефект, что и запрос без session_id.
         return None
-    listed = await fetch(f"/api/workbook-research-active?session_id={sid}")
+    listed = await fetch(f"/api/workbook-research-active?session_id={sid}&view=progress")
     if isinstance(listed, dict):
         jobs = listed.get("jobs") or []
         for job in jobs:
@@ -5286,7 +5288,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         pending = dict(state.get("chat_pending") or {})
         job_id = str(pending.get("job_id") or "")
-        job = await api_get(f"/api/workbook-research/{job_id}") if job_id else None
+        job = await api_get(f"/api/workbook-research/{job_id}?view=progress") if job_id else None
         if not isinstance(job, dict) or not job.get("job_id"):
             _notify("Нет сохранённой сборки для продолжения", type="warning")
             return
@@ -6186,7 +6188,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if not sid or sid in _terminal_restore_attempted:
             return
         _terminal_restore_attempted.add(sid)
-        last = await api_get(f"/api/workbook-research-last?session_id={sid}")
+        last = await api_get(f"/api/workbook-research-last?session_id={sid}&view=progress")
         if str(state.get("session_id") or "") != sid:
             return
         if not isinstance(last, dict) or not last.get("found"):

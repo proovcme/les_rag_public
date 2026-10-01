@@ -1,5 +1,23 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+857 installed UI/API verification: own VOR kind/file restored after restart, native download SHA exact; view=progress 17,908 bytes versus full 13,750,633, all authored state unchanged. Standard idle smoke passed; professional/financial customer acceptance remains failed (RELEASE_LEDGER).
+
+856 fresh comparative: full 51/51 delivery and collision-free evidence handles proved; model-selected norms/citations, four source errors, NR/SP and price gaps still fail professional/financial acceptance. See RELEASE_LEDGER and artifacts/live_856/comparative_acceptance.json. Customer-ready status is not asserted.
+
+857 UI transport: `view=progress` on job/last/active drops only bulk
+evidence and query_cache from the HTTP response, retaining authored rows,
+identity, task, held cursor, remaining scope and recovery projection. Default
+full response and all durable data remain unchanged; the model uses full state.
+Own 854 checkpoint is 17,643,398 bytes pretty JSON; UI does not need raw cards/cache.
+Three route regressions preserve full reads/source dictionaries; focused UI/API
+212 passed. This reduces polling traffic, not generation time. Installed size
+measurement and browser recovery after the ongoing 856 controls remain pending.
+
+> **Кандидат 0.31.129 / 857:** `ui/chat` reconnect projection retains
+> literal document artifact_kind/tool, so terminal notice preserves VOR.
+> `workbook_job_to_pending_progress`; doc↔code ✅, [UI kit](modules/sovushka-uikit.md).
+> Model/evidence/calculation unchanged from 856; live quality gates remain open.
+
 > **Кандидат 0.31.128 / 856:** `core/chat-evidence` assigns new Q handles
 > after saved evidence via `model_rag_next_query_offset`. Held cursor unchanged;
 > old model choices/card bodies/queries unchanged. Doc↔code ✅,

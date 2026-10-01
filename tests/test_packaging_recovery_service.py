@@ -249,6 +249,35 @@ def test_router_never_invents_a_finished_research(tmp_path, monkeypatch) -> None
     assert answer == {"schema": "les.workbook-research-last.v1", "found": False, "job": None}
 
 
+@pytest.mark.parametrize("route", ["one", "last", "active"])
+def test_progress_transport_preserves_decisions_and_recovery_without_bulk_cards(monkeypatch, route):
+    import asyncio
+    from types import SimpleNamespace
+    from proxy.routers import chat as chat_router
+    job = {"job_id": "own", "identity": {"session_id": "own-session"},
+           "status": "paused", "remaining": ["Лист!R2"],
+           "accepted_rows": [{"operation_id": "op_1", "norm_code": "literal-model-choice"}],
+           "document": {"state": "draft_only", "artifact_kind": "vor_workbook"},
+           "task_context": {"original_question": "original task"},
+           "held_packet": {"queries": ["literal query"], "query_offset": 31},
+           "evidence": [{"content": "full card" * 10000}],
+           "query_cache": {"literal query": {"hits": ["full cached body" * 10000]}}}
+    service = SimpleNamespace(get=lambda _id: job, latest=lambda **_kw: job,
+                              list_active=lambda **_kw: [job])
+    monkeypatch.setattr(chat_router, "WorkbookResearchJobService", lambda: service)
+    async def read(view):
+        if route == "one":
+            return await chat_router.get_workbook_research("own", view=view, _user=None)
+        if route == "last":
+            return (await chat_router.get_last_workbook_research(session_id="own-session", view=view, _user=None))["job"]
+        return (await chat_router.list_active_workbook_research(session_id="own-session", view=view, _user=None))["jobs"][0]
+    projected = asyncio.run(read("progress"))
+    assert projected == {k: v for k, v in job.items() if k not in {"evidence", "query_cache"}}
+    assert asyncio.run(read("full")) == job
+    assert job["evidence"][0]["content"].startswith("full card")
+    assert "literal query" in job["query_cache"]
+
+
 def test_repack_from_the_interface_records_the_final_document_and_closes_the_state(
     tmp_path, monkeypatch
 ) -> None:
