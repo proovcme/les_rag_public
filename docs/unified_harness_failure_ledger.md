@@ -1,5 +1,15 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-01 — 854: restored VOR labelled as ready LSR
+
+Browser startup now selects the correct latest job, but its generic filename
+overwrites the real history filename and says «ЛСР · готово» for a VOR.
+855 uses GET /api/artifacts/{revision_id} and checks matching revision identity.
+Fallback preserves artifact kind and ID; execution completion does not claim
+document quality. A late metadata response is discarded after session switching.
+Three red→green regressions, focused UI/history/documents 188 passed.
+Inference and arithmetic unchanged; fresh large/financial gates remain open.
+
 ## 2026-10-01 — 853: ordinary reload bypasses selected-history latest priority
 
 Installed browser reload shows correct current VOR but old 7-row/46-open paused

@@ -1,5 +1,11 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Build 855: three filename regressions distinguish VOR, a partial LSR's
+immutable filename and foreign revision metadata. Focused UI/history/documents
+188 passed. No source/norm/price choice is changed; quality gates remain open.
+Canonical 2069 passed / 20 existing opt-in skipped / 5 warnings, 213.65s;
+verify 2089 collected, architecture green.
+
 Build 854: latest-over-paused regression covers explicit history selection and
 ordinary startup with saved job_id. Focused UI/history/documents 185 passed.
 Canonical 2066 passed / 20 existing opt-in skipped / 5 warnings, 211.41s;

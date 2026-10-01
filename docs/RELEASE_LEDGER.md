@@ -1,5 +1,24 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.127 / 855 (01.10, Codex):** restored download использует
+filename именно своей immutable revision через existing metadata API.
+Fallback сохраняет вид ВОР/ЛСР и revision id, не выдумывает «готово» из
+terminal execution state. Поздний metadata response не перерисовывает
+другую сессию. Три red→green regressions, focused UI/history/documents 188 passed.
+Inference, RAG и арифметика не менялись относительно 852.
+Installed quality, свежий большой ВОР и exact installer gates остаются открыты.
+Canonical 2069 passed / 20 existing opt-in skipped / 5 warnings, 213.65 с;
+verify 2089 collected, compileall/version/architecture green. Official bounded
+dry-run 12 files, rollback 854 preserved. Installed restart/resume gate pending.
+
+**Замер 854, exact 1c1c55e4:** installed 12/12 hashes, RRF 1/1,
+basic 9 pass / 1 existing diagnostics WARN / 0 fail. Browser reload правильно
+выбрал newest own completed job, но подписал ВОР как «ЛСР · готово» — дефект 855.
+Ordinary EOM ВОР→ЛСР с freeform замечаниями штатно paused 12/51,
+22 решения сохранены, exact SPb 3кв2026; preliminary 110585.69,
+confirmed 0. Контроль после реального restart/resume ещё не завершён.
+Это не customer acceptance и не доказательство полного расчёта.
+
 **Кандидат 0.31.126 / 854 (01.10, Codex):** browser reload 853 всё ещё
 принимал persisted paused ancestor, т.к. latest-own priority был только strict.
 Latest-own API/local fallback теперь имеют приоритет во всех вариантах

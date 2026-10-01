@@ -549,12 +549,19 @@ def workbook_job_is_terminal(job_or_pending: Any) -> bool:
     return workbook_job_status(job_or_pending) in TERMINAL_WORKBOOK_JOB_STATUSES
 
 
-def terminal_revision_download_name(job: Any, revision_id: str) -> str:
-    """Label for the finished document restored from a terminal job.
+def terminal_revision_download_name(
+    job: Any, revision_id: str, *, metadata: Any = None
+) -> str:
+    """Use the immutable revision's filename, or an identifiable kind fallback.
 
-    The durable revision id is always shown, so a restored client can be
-    matched against the packet log instead of presenting an anonymous "LSR".
+    Completion of the research is not a statement of document quality.
+    Metadata for another revision must never rename the selected download.
     """
+
+    if isinstance(metadata, dict) and metadata.get("revision_id") == revision_id:
+        filename = str(metadata.get("filename") or "").strip()
+        if filename:
+            return filename
 
     payload = job if isinstance(job, dict) else {}
     identity = (
@@ -562,9 +569,12 @@ def terminal_revision_download_name(job: Any, revision_id: str) -> str:
     )
     source = str(identity.get("source_name") or identity.get("original_name") or "").strip()
     stem = source.rsplit(".", 1)[0] if source else ""
-    stem = stem.replace("ВОР", "").strip(" -_") or "ЛСР"
+    document = payload.get("document") if isinstance(payload.get("document"), dict) else {}
+    kind = "ВОР" if document.get("artifact_kind") == "vor_workbook" else "ЛСР"
+    stem = stem.replace("ВОР", "").strip(" -_")
+    label = f"{kind}_{stem}" if stem else kind
     tail = str(revision_id or "").replace("rev_", "")[:8]
-    return f"{stem} · готово · {tail}.xlsx"
+    return f"{label}_{tail}.xlsx"
 
 
 def terminal_job_repair_plan(job: Any) -> dict[str, Any]:
@@ -5169,9 +5179,25 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             # new is dispatched and no second document is created.
             revision_id = str(document.get("final_revision_id") or "").strip()
             if revision_id:
+                session_id = state.get("session_id")
+                metadata = await api_get(f"/api/artifacts/{revision_id}")
+                if state.get("session_id") != session_id:
+                    return
+                url = f"/api/artifacts/{revision_id}/download"
+                existing = _file_artifacts.get(url) or {}
+                has_metadata = (
+                    isinstance(metadata, dict)
+                    and metadata.get("revision_id") == revision_id
+                    and metadata.get("filename")
+                )
+                name = (
+                    terminal_revision_download_name(job, revision_id, metadata=metadata)
+                    if has_metadata or not existing.get("name")
+                    else existing["name"]
+                )
                 _register_file_artifact(
-                    terminal_revision_download_name(job, revision_id),
-                    f"/api/artifacts/{revision_id}/download",
+                    name,
+                    url,
                     "xlsx",
                     rebuild=False,
                 )

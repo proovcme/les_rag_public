@@ -1,5 +1,11 @@
 # UI KIT «Совушка»
 
+855: восстановленная ссылка получает filename своей immutable revision из
+existing `/api/artifacts/{revision_id}`. Без metadata сохраняется уже известное
+имя из истории либо kind/ID fallback. ВОР не подписывается как ЛСР;
+terminal job не добавляет «готово» как оценку качества. Late response защищён
+session_id. Existing file panel/component registry используются без новых primitives.
+
 ## Назначение
 
 854: latest own-session state имеет приоритет также при обычном reload с

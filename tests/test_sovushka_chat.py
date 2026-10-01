@@ -2036,6 +2036,28 @@ def test_restored_document_name_keeps_the_revision_identity() -> None:
     assert name.endswith(".xlsx")
 
 
+def test_restored_vor_name_preserves_kind_without_claiming_quality():
+    name = chat_page.terminal_revision_download_name(
+        {"document": {"artifact_kind": "vor_workbook", "state": "ready"}}, "rev_current")
+    assert name.startswith("ВОР")
+    assert "готово" not in name
+
+
+def test_restored_partial_lsr_name_comes_from_its_immutable_revision():
+    name = chat_page.terminal_revision_download_name(
+        {"document": {"artifact_kind": "lsr_workbook", "state": "ready"}}, "rev_current",
+        metadata={"revision_id": "rev_current", "filename": "draft_LSR_Проект.xlsx"})
+    assert name == "draft_LSR_Проект.xlsx"
+
+
+def test_restored_document_does_not_take_another_revisions_name():
+    name = chat_page.terminal_revision_download_name(
+        {"document": {"artifact_kind": "vor_workbook", "state": "ready"}}, "rev_current",
+        metadata={"revision_id": "rev_other", "filename": "Чужая_ЛСР.xlsx"})
+    assert name.startswith("ВОР") and "current" in name
+    assert "Чужая" not in name
+
+
 def test_resume_stalled_handler_refuses_a_terminal_job_before_dispatching() -> None:
     """The «Продолжить» gesture must branch on the durable state, not resend."""
 

@@ -1,5 +1,10 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат 0.31.127 / 855:** `ui/chat` восстанавливает реальное имя
+> immutable revision, защищает поздний metadata response и kind fallback.
+> `terminal_revision_download_name`, `_apply_terminal_job_plan`; doc↔code ✅,
+> [UI kit](modules/sovushka-uikit.md). Completion не объявляет качество файла.
+
 > **Кандидат 0.31.126 / 854:** `ui/chat` latest own-session API/local state
 > применяется и к ordinary reload с persisted job_id. Foreign adoption только
 > при отсутствии своего newest job. Doc↔code ✅, UI kit, same regression оба режима.

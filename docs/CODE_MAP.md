@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.31.127 / 855:** `sovushka/pages/chat.py` terminal revision metadata
+> determines download filename; fallback preserves workbook kind and revision ID.
+> A session guard discards stale metadata responses. Inference unchanged.
+
 > **0.31.126 / 854:** fetch_active_workbook_research always prefers an existing
 > own-session latest state before a persisted ancestor; local fallback too.
 > Foreign night adoption stays as fallback for regenerated sessions without a job.
