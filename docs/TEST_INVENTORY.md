@@ -2,8 +2,14 @@
 
 858 final canonical: 2101 passed / 20 existing opt-in skipped / 5 warnings;
 verify 2121 collected. Architecture/active artifacts green. Full-path E2E proves
-literal resource code and selected-book money survive into XLSX; live quality
-is still pending. The initial stale generated-map failure is preserved.
+literal resource code and selected-book money survive into XLSX. Installed
+13/13 hashes, native RRF 1/1, idle basic 9 pass / 1 existing WARN / 0 fail.
+Fresh exact-source/model/question B0/B1 receipts saved in artifacts/live_858:
+B0 38/51 source addresses / 2 calculated / 0 source errors / 295.6s;
+B1 51/51 accounted / 1 calculated / 18 work/material source errors / 1482.6s.
+Both estimate_complete=false; customer source/norm/financial acceptance FAILED.
+No resource_code or nr_sp_rule_id authored in either live result. The initial
+stale generated-map failure is preserved. 300+ and exact installer NOT ACCEPTED.
 
 Candidate 0.31.130 / 858: `tests/test_model_result_resource_code.py` adds
 14 offline cases for an explicit model-authored `resource_code`: Markdown,
@@ -28,8 +34,8 @@ prove exact m/km, kg/t comparisons and preserve a real unequal-quantity error.
 An empty header remains empty; an unavailable cipher comparison stays unknown.
 Saved red baseline: 4 failed. This adds facts to existing page/review calls,
 without a post-model selection loop or a change to packaging admission.
-Final offline gates and installed comparative/source/norm/financial acceptance
-remain pending; the failed 856 quality measurements below are not superseded.
+Final offline/install gates passed; installed source/norm/financial acceptance
+FAILED as above. The failed 856 quality measurements below are retained.
 
 Installed 0.31.129 / 857 verified on 01.10: 14/14 patch hashes match
 committed source; rollback 856 retained. Post-deploy native RRF 1/1 and standard

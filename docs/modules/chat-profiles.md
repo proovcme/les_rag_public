@@ -1,6 +1,6 @@
 # Chat profiles
 
-## Кандидат 0.31.130 / 858: явные коды ресурсов и сравнение прежнего результата
+## Установлено 0.31.130 / 858: явные коды ресурсов и сравнение прежнего результата
 
 `parse_model_rag_result` сохраняет явно написанный `resource_code` в Markdown,
 inline, multiline block и labelled формах; `compact_estimator_draft_rows`
@@ -46,7 +46,14 @@ E2E parse→compact→immutable evidence/catalog→RIM→XLSX доказывае
 Сохранён red baseline: resource-code 12 failed / 1 passed, structural facts
 4 failed. Итоговый canonical 2101 passed / 20 existing opt-in skipped;
 verify 2121 collected, architecture/active artifacts green. Installed comparative
-control ожидается; транспортный гейт не подтверждает качество конкретной сметы.
+control завершён на том же EOM/задании/FreeToken35B: B0 38/51 адресов,
+2 calculated / 0 source errors / 295.6s; B1 51/51 учтены, но 1 calculated,
+18 ошибочных work/material решений / 1482.6s. В обоих model results нет
+resource_code и nr_sp_rule_id. B1 сохраняет 30 nr_sp_unresolved и 43 ценовых
+пробела. Technical packaging passed, estimate_complete=false; customer gate
+FAILED. Подробные receipts и SHA — RELEASE_LEDGER. Транспортный гейт не
+подтверждает качество конкретной сметы; исправление поля не доказывает, что
+модель его выбирает, а предъявление сравнения не гарантирует исправления выбора.
 
 857 UI transport: `view=progress` on job/last/active drops only bulk
 evidence and query_cache from the HTTP response, retaining authored rows,

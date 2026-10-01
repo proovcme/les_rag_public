@@ -10,7 +10,14 @@ preserves the field and separately recomputes structural facts from actual
 immutable cards/catalog for all roles. Saved diagnostics are never trusted.
 No additional model call, inference loop, professional decision or authored
 quantity changes. Mechanical source comparison now accepts equal m/km, kg/t.
-Offline red-to-green preserved; installed quality acceptance pending, not claimed.
+Offline red-to-green preserved; installed 858 technical gates passed, customer
+quality acceptance FAILED. Same-source/task/model B0: 38/51 addresses, two fully
+calculated works, zero source errors (295.6s). B1: 51/51 accounted but 18 faulty
+work/material source decisions, one fully calculated work (1482.6s). Both omit
+resource_code and nr_sp_rule_id; B1 retains 30 nr_sp_unresolved and 43 price gaps.
+This closes the field loss/comparison transport defects, not model selection,
+source accuracy or complete financial coverage. Artifacts/live_858 contains
+downloaded SHA-verified files and comparative_acceptance.json with FAILED.
 
 856 fresh comparative: full 51/51 delivery and collision-free evidence handles proved; model-selected norms/citations, four source errors, NR/SP and price gaps still fail professional/financial acceptance. See RELEASE_LEDGER and artifacts/live_856/comparative_acceptance.json. Customer-ready status is not asserted.
 

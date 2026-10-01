@@ -1,10 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Кандидат 0.31.130 / 858:** core/chat-evidence сохраняет явный resource_code
+> **Установлено 0.31.130 / 858:** core/chat-evidence сохраняет явный resource_code
 > в visible formats/replay и предъявляет отдельные prior_result_structural_facts
 > в существующих page/review calls. Attachment source comparison принимает
 > механически равные м/км, кг/т. Авторские решения/card bodies не меняются;
-> doc↔code ✅, [chat-profiles](modules/chat-profiles.md). Live quality pending.
+> doc↔code ✅, [chat-profiles](modules/chat-profiles.md). Live quality FAILED:
+> B1 51/51 адресов, но 18 ошибочных work/material решений и одна из 42 работ
+> полностью рассчитана; ни resource_code, ни nr_sp_rule_id модель не вернула.
+> B0/B1 exact input/model: 295.6s/1482.6s; customer-ready нет (RELEASE_LEDGER).
 
 857 installed UI/API verification: own VOR kind/file restored after restart, native download SHA exact; view=progress 17,908 bytes versus full 13,750,633, all authored state unchanged. Standard idle smoke passed; professional/financial customer acceptance remains failed (RELEASE_LEDGER).
 

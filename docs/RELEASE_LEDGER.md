@@ -1,5 +1,41 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Installed 0.31.130 / 858, 01.10: customer acceptance FAILED.**
+Measured code commit `74d635ee61de8ff47ac36f58566e2fb3cb0ec063`; the later
+documentation-only closeout does not change the measured executable files.
+13/13 deployed patch hashes match committed source; rollback 857 retained.
+Post-deploy native RRF 1/1; standard idle basic smoke 9 pass / 1 existing
+diagnostics WARN / 0 fail (98.77s). Fresh EOM B0/B1 used the exact same source
+SHA, question, FreeToken Qwen3.6-35B-A3B-NVFP4 r4 and SPb 3кв2026 book.
+
+B0: 295.6s, 38/51 source addresses, 76 decisions (38 work / 38 material),
+35 named norms, applicability checks absent on those 35 works; source audit
+0 unit/quantity errors and 0 repeated-role groups. Two work positions fully
+calculated: confirmed 30000.09; preliminary 476619.03. Downloaded XLSX SHA
+77f99340703d06a03e0aae805fb4c977cd5e184f7528c5254d28e287984cefbc.
+
+B1: 1482.6s, 51/51 source addresses accounted, remaining 0, 92 decisions
+(42 work / 42 material / 8 header). Source coverage still has eight gaps;
+accounting for every address is not complete professional coverage.
+42 named norms / 24 substantiated; seven NEEDS_RESEARCH decisions retain
+their named codes. Four works omit the composition check. One work position
+fully calculated: confirmed 9421.38; preliminary 390886.17.
+Independent source audit: 18 faulty decisions on seven locators, all uniquely
+matched to accepted rows: seven work and eleven material, zero header/equipment.
+16 decisions have unconfirmed quantities and eleven unit mismatches (overlap);
+five repeated-role groups occur on four locators. R63 repeats the prior blank
+group error; all four resulting operations remain unconfirmed and uncalculated.
+Final gap states: norm_missing 7, norm_unsubstantiated 11, price_missing 43,
+calculation_incomplete 41; row reasons include 30 nr_sp_unresolved and one
+fsem_unresolved. Neither control authored resource_code or nr_sp_rule_id.
+Downloaded XLSX SHA cf61ed9ef1df3ee41d19b74d28e7ab1b716b167141f0d928748250f7c26d51aa.
+Both files are packaged unchanged from the model result and technically
+complete, but estimate_complete=false. Source/norm/financial customer gate
+FAILED; fresh 300+ and exact Windows installer remain NOT ACCEPTED.
+Receipts: artifacts/live_858/{eom_lsr_baseline,eom_lsr_candidate}; comparative
+verdict: artifacts/live_858/comparative_acceptance.json. These measured failures
+are not closed by the offline transport fixes below.
+
 858 final offline gate: 2101 passed / 20 existing opt-in skipped / 5 warnings,
 211.95s; verify 2121 collected, compileall/version green. Architecture gate and
 active-artifact verify-root passed (49,818 norms / 504,891 resources / 1,576
@@ -9,7 +45,7 @@ checked. Initial failed map freshness gate is preserved in
 artifacts/test_858_first_stale_map.log; generated inventory repaired, then
 canonical repeated green. Final bridge describes resource_code conditionally;
 it never promotes resource prices to confirmed work prices. Official bounded
-dry-run 13 files, rollback 857 retained; installed live quality control pending.
+dry-run 13 files, rollback 857 retained; installed live quality failed above.
 
 **Кандидат 0.31.130 / 858:** доказаны две потери в active chat path:
 явный resource_code не проходил visible readers/compact replay; механические
@@ -20,8 +56,8 @@ prior_result_structural_facts пересчитываются по immutable ка
 Дополнительно механическая source comparison принимает равные м/км и кг/т,
 как существующий калькулятор; не меняет авторские quantity/unit. Red сохранён:
 4 feedback tests + 12/13 resource tests failed; после patch focused 241 passed.
-Полные гейты, установка и live comparative quality пока pending. 857 и его
-измеренный отказ профессиональной/финансовой приёмки остаются ниже.
+Полные гейты и установка завершены; свежая live comparative quality FAILED
+по замеру выше. 857 и его предыдущий отказ приёмки остаются ниже.
 
 Installed 0.31.129 / 857 verified on 01.10: 14/14 patch hashes match
 committed source; rollback 856 retained. Post-deploy native RRF 1/1 and standard
