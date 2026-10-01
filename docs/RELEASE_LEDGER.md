@@ -1,5 +1,35 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.137 / 865; установлен 0.31.136 / 864 (`acc109a8`).**
+Live 864 доставляет проверяемые файлы, но бизнес-приёмка FAILED. При одинаковых
+вложении, задаче, модели, профиле и цене B0 завершился за 231.09s: 19/19 исходных
+работ, 16 выбранных норм, предварительно 352 379.36 руб., подтверждено 0.
+B1 завершился за 1011.75s: 47 авторских операций на 12/19 исходных строках,
+12 duplicate-role groups, 365 805.84 руб. предварительно, подтверждено 0.
+Независимый пересчёт формул обоих XLSX совпал с API; скачанные SHA совпали.
+Профессиональный аудит выявил неподходящий материал/слойность шпатлёвки,
+комплексную замену вместо демонтажа с сохранением и повторные начисления B1.
+Это не готовые документы для заказчика. Receipts сохранены в
+`artifacts/live_864/bap_lsr_{baseline,candidate}/`.
+
+865 исправляет две измеренные механические ошибки без выбора норм кодом:
+JSON inventory pointer теперь связывает буквальный показанный шифр, а не имя
+служебного источника; metadata без показанного токена не доказывает шифр.
+После terminal model result непрочитанный хвост карточек не вызывает новое
+предметное предложение. Авторские строки сразу упаковываются в честную partial
+ревизию; literal queries, карточки и held cursor сохраняются для явного resume.
+Это устраняет принудительное повторение ответа, но само по себе не закрывает
+необработанные исходные строки и профессиональные/ценовые пробелы.
+Focused regressions 864→865: pointer 254 passed; terminal/cursor 260 passed.
+Frozen gate 865: verify exit0 (23.39s), canonical 2657 passed / 20 existing
+opt-in skipped / 5 warnings (254.22s pytest), architecture exit0 (9.73s),
+pinned baseline exit0 (7.38s), active-artifacts verify-root ok. Receipts:
+`artifacts/{verify,test,architecture,baseline}_865.exit.json` и
+`artifacts/active_artifacts_865.log`. Installed-live gates 865 пока pending;
+готовность не объявлена.
+Private installer 864 собран, но exact install/rollback/reinstall не проверены,
+он не опубликован. Production процессы не менялись во время его подготовки.
+
 **Кандидат 0.31.136 / 864; установлен 0.31.135 / 863 (`a3c3ad72`).**
 Замороженный offline gate 864: verify exit0 (23.17s), canonical **2650 passed /
 20 existing opt-in skipped / 5 warnings** (253.91s pytest), architecture exit0

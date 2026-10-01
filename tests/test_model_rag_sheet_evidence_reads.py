@@ -43,7 +43,8 @@ def _answer(*, refs=("Q1.H1", "Q2.H1")):
 
 
 async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", unknown_tool=False,
-                     reasoning_enabled=False, empty_final=False, empty_query=False):
+                     reasoning_enabled=False, empty_final=False, empty_query=False,
+                     query_count=2, group_char_budget=None, partial_final=False):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(tmp_path / "attachments"))
@@ -92,7 +93,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         assert limit == 6
         return {"cards": [{"norm_key": "immutable-norm", "norm_code": NORM_CODE,
                            "title": "Synthetic exact norm", "measure_unit": "m",
-                           "source_ref": "fixture#immutable-norm", "work_steps": ["Install"],
+                           "source_ref": "fixture#immutable-norm",
+                           "work_steps": ["Install" + (("x" * 4000) + query if group_char_budget else "")],
                            "resource_count": 24,
                            "resource_preview": [{"code": RESOURCE_A, "name": "Cable A", "unit": "m"},
                                                 {"code": RESOURCE_B, "name": "Cable B", "unit": "m"}]}],
@@ -137,7 +139,12 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         def resolve_fallback(self, *args, **kwargs):
             pytest.fail("offline model must not use fallback")
 
-    responses = [InferenceResponse(text="S!R2 — Cable A\nS!R3 — Cable B", tool_calls=(),
+    declared_queries = (["S!R2 — Cable A", "S!R3 — Cable B"] if query_count == 2 else
+                        [f"S!R{2 + index % 2} — Cable {'A' if index % 2 == 0 else 'B'} query {index}"
+                         for index in range(query_count)])
+    if group_char_budget is not None:
+        monkeypatch.setattr(service, "model_rag_group_char_budget", lambda **kwargs: group_char_budget)
+    responses = [InferenceResponse(text="\n".join(declared_queries), tool_calls=(),
                                    finish_reason="stop", usage={})]
     if empty_query:
         responses[0] = InferenceResponse(text="", tool_calls=(), finish_reason="length",
@@ -157,7 +164,23 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         # The model fixture uses the source addresses actually assigned to the
         # two book reads, including any candidate groups shown before them.
         refs = (f"Q{len(search_queries) + 2}.H1", f"Q{len(search_queries) + 3}.H1") if reads else ("Q1.H1", "Q2.H1")
-        return InferenceResponse(text="" if empty_final else _answer(refs=refs), tool_calls=(),
+        if reads and group_char_budget is not None:
+            shown_prices = {}
+            for message in requests[-1].messages:
+                for line in str(message["content"]).splitlines():
+                    try:
+                        registry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(registry, dict):
+                        for item in registry.get("previously_shown_evidence_registry", []):
+                            if item.get("doc_name") == "fgis_pricebook_resources.v1":
+                                shown_prices[item["resource_code"]] = item["evidence_ref"]
+            refs = shown_prices[RESOURCE_A], shown_prices[RESOURCE_B]
+        answer = _answer(refs=refs)
+        if partial_final:
+            answer = "\n".join(answer.splitlines()[:-1])
+        return InferenceResponse(text="" if empty_final else answer, tool_calls=(),
                                  finish_reason="length" if empty_final else "stop",
                                  usage={"completion_tokens": 120})
 
@@ -250,7 +273,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
             raise
         result = {"error": error.detail, "status": error.status_code}
     return SimpleNamespace(result=result, executions=executions, requests=requests, responses=responses,
-                           exact_reads=exact_reads, lookups=lookups, queries=search_queries, histories=histories)
+                           exact_reads=exact_reads, lookups=lookups, queries=search_queries, histories=histories,
+                           declared_queries=declared_queries)
 
 
 @pytest.mark.asyncio
@@ -320,6 +344,46 @@ async def test_plain_final_sheet_rows_do_not_force_an_evidence_read_cycle(tmp_pa
         assert "S!R2" in frame and "S!R3" in frame
     assert len(run.executions) == 1
     assert run.executions[0][1]["status"] == "complete"
+    assert [row["resource_code"] for row in run.executions[0][0]["args"]["decisions"]] == [RESOURCE_A, RESOURCE_B]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial_final", [False, True])
+async def test_terminal_sheet_result_packages_before_35_candidate_groups_are_drained(tmp_path, monkeypatch, partial_final):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35,
+                           group_char_budget=7000, partial_final=partial_final)
+    assert len(run.requests) == 4 and not run.responses
+    assert len(run.exact_reads) == 1 and len(run.executions) == 1
+    rows = run.executions[0][0]["args"]["decisions"]
+    assert [(row["source_row"], row["resource_code"], row["quantity"]) for row in rows] == (
+        [("S!R2", RESOURCE_A, 12)] if partial_final else
+        [("S!R2", RESOURCE_A, 12), ("S!R3", RESOURCE_B, 3)])
+    trace = run.result["retrieval_trace"]
+    pages = trace["grouped_model_evidence_pages"]
+    assert len(pages) == 1 and pages[0]["full_body_hit_count"] == 1
+    assert pages[0]["deferred_body_refs"]
+    from proxy.services.workbook_research_job_service import WorkbookResearchIdentity, WorkbookResearchJobService
+    store = WorkbookResearchJobService()
+    job = store.get(trace["workbook_research_job"]["job_id"])
+    assert job["resumable"] is True and job["status"] != "complete"
+    assert job["held_packet"]["queries"]
+    assert set(run.declared_queries) <= set(job["query_cache"])
+    for query in job["held_packet"]["queries"]:
+        hits = service.restore_query_hits_from_cache([query], job["query_cache"])
+        assert hits and query in hits[0][1][0].content
+    reopened = WorkbookResearchJobService(store.db_path).begin_or_resume(WorkbookResearchIdentity(**job["identity"]))
+    assert reopened["held_packet"] == job["held_packet"]
+    assert len(reopened["accepted_rows"]) == len(rows)
+    assert "source.xlsx" in str(run.requests[-1].messages)
+    assert "S!R2" in str(run.requests[-1].messages) and "S!R3" in str(run.requests[-1].messages)
+
+
+@pytest.mark.asyncio
+async def test_direct_baseline_keeps_35_literal_queries_and_single_terminal_packaging(tmp_path, monkeypatch):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant="B0_DIRECT",
+                           query_count=35, group_char_budget=7000)
+    assert len(run.requests) == 4 and len(run.executions) == 1 and not run.responses
+    assert run.queries == run.declared_queries
     assert [row["resource_code"] for row in run.executions[0][0]["args"]["decisions"]] == [RESOURCE_A, RESOURCE_B]
 
 

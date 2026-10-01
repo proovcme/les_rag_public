@@ -211,6 +211,56 @@ def test_found_pointer_is_not_proof_of_a_read_full_card():
     assert result["_resource_binding_evidence_checks"][0]["target_code_in_refs"] is True
 
 
+def test_production_inventory_pointer_uses_its_literal_norm_identity_without_body_proof():
+    from proxy.services.model_rag_grouped_evidence_service import EvidenceCard, inventory_pointer
+    from proxy.services.lsr_norm_quality_gate_service import applicability_gap_kind
+    row = authored_row()
+    row.update(norm_status="EXACT", evidence_refs=["Q1.H1"])
+    for key in ("action_match", "object_match", "condition_match", "unit_compatible", "composition_covers"):
+        row[key] = "yes"
+    meta = {"norm_key": "ГЭСН:15-01-047-16", "norm_code": row["norm_code"],
+            "source_ref": "База", "edition": "2022", "body_status": "deferred_capacity"}
+    pointer_body = inventory_pointer(EvidenceCard("Q1.H1", "norm", "identity", "raw", meta))
+    pointer = evidence("Q1.H1", "pointer", pointer_body, name="smeta_norm_cards.v1")
+    pointer.meta.update(meta)
+    result = service.bind_row_evidence_ids([row], [pointer])[0]
+    assert result["_evidence_check"]["cited_ciphers"] == [row["norm_code"]]
+    assert result["_evidence_check"]["card_body_shown"] is False
+    assert applicability_gap_kind(result) == "norm_card_body_unread"
+    assert result["norm_code"] == row["norm_code"]
+
+
+def test_exact_read_json_body_preserves_its_shown_cipher_and_discharges_same_pointer():
+    from proxy.services.model_rag_grouped_evidence_service import EvidenceCard, inventory_pointer
+    from proxy.services.lsr_norm_quality_gate_service import norm_applicability_substantiated
+    row = authored_row()
+    row.update(norm_status="EXACT", evidence_refs=["Q1.H1", "Q2.H1"])
+    for key in ("action_match", "object_match", "condition_match", "unit_compatible", "composition_covers"):
+        row[key] = "yes"
+    meta = {"norm_key": "ГЭСН:15-01-047-16", "norm_code": row["norm_code"],
+            "source_ref": "База", "edition": "2022"}
+    pointer_body = inventory_pointer(EvidenceCard("Q1.H1", "norm", "identity", "raw", meta))
+    pointer = evidence("Q1.H1", "pointer", pointer_body, name="smeta_norm_cards.v1")
+    pointer.meta.update(meta, body_status="deferred_capacity")
+    full = evidence("Q2.H1", "exact-read", json.dumps(meta, ensure_ascii=False), name="smeta_norm_cards.v1")
+    full.meta.update(meta, body_status="full", exact_card_read=True)
+    result = service.bind_row_evidence_ids([row], [pointer, full])[0]
+    assert set(result["_evidence_check"]["cited_ciphers"]) == {row["norm_code"]}
+    assert result["_evidence_check"]["card_body_shown"] is True
+    assert norm_applicability_substantiated(result) is True
+
+
+@pytest.mark.parametrize("shown", ["Служебное описание без шифра", "ГЭСН15-01-047-160"])
+def test_hidden_metadata_cipher_does_not_prove_a_shown_norm(shown):
+    row = authored_row()
+    row.update(norm_status="EXACT", evidence_refs=["Q1.H1"])
+    pointer = evidence("Q1.H1", "pointer", shown, name="smeta_norm_cards.v1")
+    pointer.meta.update(body_status="deferred_capacity", norm_code=row["norm_code"])
+    result = service.bind_row_evidence_ids([row], [pointer])[0]
+    assert row["norm_code"] not in result["_evidence_check"]["cited_ciphers"]
+    assert result["norm_code"] == row["norm_code"]
+
+
 @pytest.mark.parametrize("difference", ["parent_cipher", "source_ref", "edition"])
 def test_other_full_card_cannot_prove_a_deferred_exact_item(difference):
     row = authored_row()

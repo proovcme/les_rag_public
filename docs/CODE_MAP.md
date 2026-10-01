@@ -1,5 +1,10 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **865:** `_card_code_from_chunk` связывает literal cipher показанного JSON
+> pointer, не выдавая metadata за полную карточку. Sheet-pass terminal boundary
+> сохраняет held cursor и упаковывает partial вместо нового предметного ответа
+> только из-за deferred bodies. Native reads до terminal и explicit resume остаются.
+
 > **864:** `model_lsr_result_contract.decode_model_result_rows` читает полный
 > уникальный JSON result; `chat_evidence_application_service` сохраняет nested
 > ресурсные поля и independent immutable citations. `model_resource_binding_service`

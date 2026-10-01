@@ -1,5 +1,13 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+865: `test_model_result_resource_actions` проверяет реальный JSON inventory
+pointer, отдельное full read той же identity и запрет metadata без буквального
+шифра/с частичным совпадением. `test_model_rag_sheet_evidence_reads` воспроизводит
+хвост 35 queries с ограничением body: один terminal native-tool ход сохраняет
+полные либо partial строки, пакует один раз, сохраняет held cursor при reopen.
+B0 получает те же literal queries и native reads. Эти тесты не подтверждают
+профессиональные нормы/цены; свежая live приёмка 865 пока pending.
+
 864 регрессии включены в canonical UNIT_TESTS: `test_model_result_resource_actions`
 проверяет полный JSON-массив/объект с prose, неоднозначность и усечение без repair,
 all-format nested fields, durable alias collision, independent norm/action refs,

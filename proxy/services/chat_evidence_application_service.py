@@ -2661,6 +2661,25 @@ def _card_code_from_body(body: str, doc_name: str) -> str:
     return match.group(1) if match else str(doc_name or "")
 
 
+def _card_code_from_chunk(chunk: Any) -> str:
+    """Read a cipher in the shown legacy body or producer-owned JSON pointer.
+
+    Metadata identifies a literal shown token; it never proves delivery of the
+    card's conditions. The separate body/immutable-identity check owns that.
+    """
+    body = str(getattr(chunk, "content", "") or "")
+    code = _card_code_from_body(body, str(getattr(chunk, "doc_name", "") or ""))
+    if looks_like_cipher(code):
+        return code
+    meta = getattr(chunk, "meta", {}) or {}
+    declared = str(meta.get("norm_code") or "").strip()
+    if looks_like_cipher(declared) and re.search(
+        r"(?<![\w.-])" + re.escape(declared) + r"(?![\w.-])", body
+    ):
+        return declared
+    return code
+
+
 def row_evidence_provenance_check(
     row,
     bindings,
@@ -2802,10 +2821,7 @@ def bind_row_evidence_ids(
         alias = str(meta.get("model_evidence_ref") or "").strip().upper()
         global_id = str(meta.get("global_evidence_id") or "").strip()
         if alias and alias not in alias_to_card:
-            alias_to_card[alias] = _card_code_from_body(
-                str(getattr(chunk, "content", "") or ""),
-                str(getattr(chunk, "doc_name", "") or ""),
-            )
+            alias_to_card[alias] = _card_code_from_chunk(chunk)
             alias_to_query[alias] = str(meta.get("model_query_text") or "")
         if alias and global_id:
             if alias in alias_to_global and alias_to_global[alias] != global_id:
@@ -2825,10 +2841,7 @@ def bind_row_evidence_ids(
                 # body with the same immutable identity.
                 continue
             global_to_body_shown[global_id] = body_shown
-            global_to_card[global_id] = _card_code_from_body(
-                str(getattr(chunk, "content", "") or ""),
-                str(getattr(chunk, "doc_name", "") or ""),
-            )
+            global_to_card[global_id] = _card_code_from_chunk(chunk)
             global_to_query[global_id] = str(meta.get("model_query_text") or "")
             body = str(getattr(chunk, "content", "") or "")
             global_to_bodies[global_id] = body
@@ -8459,6 +8472,7 @@ async def _execute_chat_evidence_application(
                             index=1,
                         )
                     owns_sheet_pass = True
+                    terminal_evidence_pending = False
                     live_job_id = str((research_job or {}).get("job_id") or "")
                     if live_job_id:
                         owns_sheet_pass = await claim_or_join_sheet_pass(live_job_id)
@@ -9623,6 +9637,8 @@ async def _execute_chat_evidence_application(
                                 query_provenance=pass_query_provenance,
                                 query_addresses=pass_query_addresses)
                             held_query_context = held_payload
+                            if defer_query_packet and not last_truncated:
+                                held_payload["terminal_model_result_saved"] = True
                             if pass_transport_diagnostics:
                                 held_payload = {**dict(held_payload or {}),
                                     "model_result_transport_pending": True,
@@ -9730,6 +9746,20 @@ async def _execute_chat_evidence_application(
                             if pass_transport_diagnostics:
                                 break  # technical ambiguity cannot trigger another professional offer
                             if defer_query_packet:
+                                if not last_truncated:
+                                    # The model ended its read/answer turn. Preserve
+                                    # its result and the independent delivery cursor;
+                                    # unread candidates cannot require another
+                                    # professional offer before partial packaging.
+                                    terminal_evidence_pending = True
+                                    retrieval_trace["candidate_body_delivery"] = {
+                                        "status": "pending_after_terminal_result",
+                                        "query_count": len(leftover_query_hits),
+                                        "packet_locators": list(packet),
+                                        "query_offset": evidence_query_offset,
+                                        "saved_rows": len(kept),
+                                    }
+                                    break
                                 continue
                             if not made_progress:
                                 continue
@@ -9760,6 +9790,8 @@ async def _execute_chat_evidence_application(
                                 sheet_name,
                                 never_reached,
                             )
+                        if terminal_evidence_pending:
+                            break  # one durable cursor; continue on an explicit resume
                     except asyncio.CancelledError:
                         logger.warning("[SHEET_PASS] cancelled; preserving accepted packets")
                         research_cancelled = True

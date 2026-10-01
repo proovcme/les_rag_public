@@ -3147,7 +3147,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 11927,
+      "lines": 11959,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5442,7 +5442,8 @@
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/model_research_tool_service.py",
-        "tests/test_model_rag_grouped_evidence_service.py"
+        "tests/test_model_rag_grouped_evidence_service.py",
+        "tests/test_model_result_resource_actions.py"
       ],
       "lines": 293,
       "module": "proxy.services.model_rag_grouped_evidence_service",
@@ -7764,6 +7765,7 @@
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_scheduler_starvation_824.py",
         "tests/test_model_evidence_read_contract.py",
+        "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_result_packet_service.py",
         "tests/test_model_result_table_transport.py",
         "tests/test_packaging_recovery_service.py",
@@ -12201,7 +12203,7 @@
     },
     {
       "inbound": [],
-      "lines": 376,
+      "lines": 440,
       "module": "tests.test_model_rag_sheet_evidence_reads",
       "outbound": [
         "proxy/routers/chat.py",
@@ -12215,6 +12217,7 @@
         "proxy/services/model_pricebook_evidence_service.py",
         "proxy/services/openai_compatible_transport_service.py",
         "proxy/services/public_error_service.py",
+        "proxy/services/workbook_research_job_service.py",
         "proxy/smeta_core/norm_browser.py"
       ],
       "path": "tests/test_model_rag_sheet_evidence_reads.py",
@@ -12292,11 +12295,12 @@
     },
     {
       "inbound": [],
-      "lines": 273,
+      "lines": 323,
       "module": "tests.test_model_result_resource_actions",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
+        "proxy/services/model_rag_grouped_evidence_service.py",
         "proxy/services/rim_trace_xlsx_service.py"
       ],
       "path": "tests/test_model_result_resource_actions.py",
@@ -20076,7 +20080,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 686,
     "tracked_python_files": 1068,
-    "tracked_python_lines": 371286
+    "tracked_python_lines": 371432
   },
   "warnings": []
 }
