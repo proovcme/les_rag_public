@@ -3,21 +3,21 @@
 Канонический паспорт совместимости. Версия продукта и номер сборки берутся только из
 [`config/version.json`](../config/version.json). Полный Python-граф фиксирует `uv.lock`.
 
-Таблица описывает candidate `0.31.150`/build`878`/Tauri`5.1.878`;
-878 исправляет metadata имён/единиц ценовых кандидатов; dependency graph прежний.
-Focused131passed/canonical3177passed; install/live878 пока pending.
+Таблица описывает candidate `0.31.151`/build`879`/Tauri`5.1.879`;
+879 сохраняет техническую причину native capacity stop в итоговой диагностике.
+Dependency graph прежний; related48passed, canonical8793178passed/20existing
+skipped, verify/architecture/docs exit0. Install879 pending.
 Последний установленный контроль:
-`0.31.149`/build`877`/Tauri`5.1.877`;
-установлен Python runtime `0.31.149`/build`877` commit
-`0eea0e004c5127582fa14622d31d9de8b1cffd13`. Установленный877 устраняет перенос
-карты прошлого answer-пакета в новые sheet-pass query prompts; dependency graph
-прежний. Focused88 passed; canonical877:3175 passed; exact install/SHA/native RRF
-smoke подтверждены, basic8PASS/2WARN/0FAIL. FreeToken engine0.1.3+g52322e984:
-B0/B1 профессионально FAILED, B1 partial/confirmed0; query map leakage устранена.
+установлен Python runtime `0.31.150`/build`878` commit
+`cc6d8b5d58e8a5536bcceb1efcb8283d612b7d76`: metadata имени/единицы ценовых
+кандидатов. Focused131passed; canonical3177passed; exact install/SHA/nativeRRF
+подтверждены, basic9PASS/1WARN/0FAIL. FreeToken engine0.1.3+g52322e984:
+B0 thinking11rows/confirmed0; B1capacity54351/46171estimatedtokens, нет XLSX.
+Price-pointer path этими прогонами не вызван. Профессиональная приёмка FAILED.
 Installed876 canonical:
 3174 passed; smoke9PASS/1WARN; Alibaba B0/B1 завершились с partial XLSX,
 профессиональная готовность не подтверждена. Native EXE остаётся5.1.813.
-Состояние и точные receipts — RELEASE_LEDGER, раздел877.
+Состояние и точные receipts — RELEASE_LEDGER, раздел878/879.
 
 Ниже сохранена историческая запись875 до установки:
 candidate `0.31.147`/build`875`/Tauri`5.1.875`;
@@ -73,9 +73,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.150` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `878` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.878` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.151` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `879` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.879` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

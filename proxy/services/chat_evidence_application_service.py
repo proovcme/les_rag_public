@@ -10481,6 +10481,8 @@ async def _execute_chat_evidence_application(
                     pending_transport = (model_rag_pending_result_projection(pending_result_packets)[0]
                                          if pending_result_packets else set(transport_pending_locators))
                     pending_held = (research_job or {}).get("held_packet") or {}
+                    pending_read_stop = (str(pending_held.get("read_stop") or "")
+                                         if pending_held.get("model_read_pending") else "")
                     if ((pending_held.get("queries") and not pending_held.get("terminal_model_result_saved")) or pending_held.get("model_read_pending")
                             or pending_held.get("model_result_transport_pending")
                             or pending_held.get("model_final_output_missing")):
@@ -10511,7 +10513,7 @@ async def _execute_chat_evidence_application(
                                 research_job = research_job_service.pause(
                                     research_job["job_id"],
                                     remaining=unfinished_locators,
-                                    phase="packets",
+                                    phase=pending_read_stop or "packets",
                                     held_packet=model_rag_with_pending_results(
                                         (research_job or {}).get("held_packet") or {}, pending_result_packets),
                                 )
@@ -10542,6 +10544,13 @@ async def _execute_chat_evidence_application(
                                     for locator in unfinished_locators
                                     if locator not in set(starved) and locator not in pending_transport
                                 ]
+                                # A native read proves this held packet reached the
+                                # model even when no terminal row checkpoint exists.
+                                # This corrects diagnostics, not completion/closure.
+                                read_packet_offered = (set(pending_held.get("locators") or ())
+                                                       if pending_read_stop else set())
+                                diagnostic_starved = [locator for locator in starved
+                                                      if locator not in read_packet_offered]
                                 if (
                                     not research_cancelled
                                     and closable
@@ -10584,11 +10593,11 @@ async def _execute_chat_evidence_application(
                                         repeats,
                                         len(starved),
                                     )
-                                elif starved:
+                                elif diagnostic_starved:
                                     retrieval_trace["scheduler_gap"] = {
                                         "schema": "les.scheduler-gap.v1",
-                                        "rows_never_offered": len(starved),
-                                        "locators": [str(item) for item in starved][:80],
+                                        "rows_never_offered": len(diagnostic_starved),
+                                        "locators": [str(item) for item in diagnostic_starved][:80],
                                         "cause": str(guard.get("reason") or ""),
                                         "pause_kind": str(guard.get("pause_kind") or ""),
                                         "meaning": (
@@ -10601,7 +10610,7 @@ async def _execute_chat_evidence_application(
                                         "[SCHEDULER_GAP] %s outstanding rows were never "
                                         "put to the model; they stay open instead of "
                                         "being declared as gaps",
-                                        len(starved),
+                                        len(diagnostic_starved),
                                     )
                             else:
                                 research_job = research_job_service.finish(
@@ -11843,14 +11852,20 @@ async def _execute_chat_evidence_application(
                                 "notice": notice,
                             }
                     else:
-                        notice = format_lsr_unstructured_notice(
-                            sheet_pass_empty=bool(sheet_pass_done)
+                        read_capacity_stop = (retrieval_trace.get("tool_loop") or {}).get(
+                            "evidence_read_stop") == "evidence_read_capacity"
+                        notice = (
+                            "Чтение источников приостановлено: данные для следующего шага "
+                            "не помещаются в окно контекста модели. ЛСР ещё не собрана."
+                            if read_capacity_stop else format_lsr_unstructured_notice(
+                                sheet_pass_empty=bool(sheet_pass_done))
                         )
                         if notice not in answer:
                             answer = f"{answer.rstrip()}\n\n{notice}"
                         retrieval_trace["model_result"] = {
                             "schema": "les_model_rag_result_v1",
-                            "status": "unstructured",
+                            "status": "technical_pending" if read_capacity_stop else "unstructured",
+                            **({"reason": "evidence_read_capacity"} if read_capacity_stop else {}),
                             "packaged": False,
                             "notice": notice,
                         }

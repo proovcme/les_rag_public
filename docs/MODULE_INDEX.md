@@ -1,12 +1,20 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Кандидат878(0.31.150); установлен877 `0eea0e00`, ready НЕ подтверждено.**
+> **Кандидат879(0.31.151); установлен878 `cc6d8b5d`, ready НЕ подтверждено.**
+> `core/chat-evidence`: native capacity stop остаётся technical_pending с
+> точной job.phase; held packet исключён только из диагностики never-offered.
+> Модельные строки/решения и closure не меняются. Causal RED→focused48passed;
+> canonical8793178passed/20existing skipped, verify/architecture/docs exit0; install879 pending. Installed878 exactSHA/smoke9PASS/1WARN подтверждены.
+> Live878 thinking B0:11rows/confirmed0; B1:4norm cards prepared, continuation
+> blocked54351/46171estimated tokens. Price-pointer path не вызван. Не ready.
+>
+> **878(0.31.150), doc↔installed-code ✅:**
 > `core/chat-evidence`: `model_pricebook_evidence_service` переносит буквальные
 > имя/единицу ресурса в metadata для общего inventory_pointer. Поиск/ранжирование,
 > тело evidence и source identity неизменны; модель по-прежнему выбирает ресурс.
 > Doc↔candidate-code ✅; docs/modules/rag-evidence-flow. Regression RED2→131passed;
 > canonical878:3177passed/20existing skipped, verify/architecture/docs/assets exit0.
-> Install/live878 pending; professional gate остаётся открытым.
+> Install/live878 измерены выше; professional gate остаётся открытым.
 
 > **Установлен877(0.31.149, `0eea0e00`); ready НЕ подтверждено.**
 > `core/chat-evidence`, doc↔installed-code ✅: query-контекст sheet-pass получает

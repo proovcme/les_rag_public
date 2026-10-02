@@ -582,6 +582,30 @@ async def test_actual_native_results_exceeding_bound_pause_without_false_final(t
 
 
 @pytest.mark.asyncio
+async def test_native_capacity_stop_keeps_reason_and_does_not_call_offered_rows_unseen(tmp_path, monkeypatch):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, packet_count=2,
+                           query_count=35, input_token_limit=20_000,
+                           candidate_padding=1200, native_read_batch=True, exact_resource_padding=40_000)
+    trace = run.result["retrieval_trace"]
+    job = WorkbookResearchJobService().get(trace["workbook_research_job"]["job_id"])
+    assert len(run.requests) == 2 and not run.executions
+    assert job["accepted_rows"] == []
+    assert set(job["remaining"]) == {"S!R2", "S!R3", "S!R4", "S!R5"}
+    assert set(job["held_packet"]["locators"]) == {"S!R2", "S!R3"}
+    assert job["held_packet"]["read_stop"] == "evidence_read_capacity"
+    assert job["phase"] == trace["workbook_research_job"]["phase"] == "evidence_read_capacity"
+    assert trace["model_result"]["status"] == "technical_pending"
+    assert trace["model_result"]["reason"] == "evidence_read_capacity"
+    assert "не помещаются в окно контекста модели" in run.result["answer"]
+    assert "таблица строк не получена" not in run.result["answer"]
+    assert trace["scheduler_gap"]["locators"] == ["S!R4", "S!R5"]
+    assert trace["scheduler_gap"]["rows_never_offered"] == 2
+    assert trace["sheet_states"]["S"]["never_offered_locators"] == ["S!R4", "S!R5"]
+
+
+@pytest.mark.asyncio
 async def test_resumed_zero_decision_job_can_cite_saved_native_reads_and_preserve_delivered_status(tmp_path, monkeypatch):
     from dataclasses import replace
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService

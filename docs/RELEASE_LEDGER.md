@@ -1,6 +1,35 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-**Кандидат 0.31.150 / 878; установлен877(`0eea0e00`). Готовность НЕ подтверждена.**
+**Кандидат 0.31.151 / 879; установлен878(`cc6d8b5d`). Готовность НЕ подтверждена.**
+
+879 исправляет только техническую диагностику native capacity stop: job.phase
+сохраняет причину остановки, уже предъявленный held packet не называется
+never-offered, отсутствие финального ответа из-за ёмкости отмечается
+technical_pending, а не ошибкой формата модели. Accepted/remaining/closure и
+профессиональные решения не меняются. Causal RED воспроизведён; связанные
+sheet/native suites48passed. Isolated canonical879:3178passed/20existing skipped/
+5warnings,232,27s(wrapper233,84s). Version/compile/collect/architecture/map/docs/
+assets/metadata exit0; artifacts/gates_879/. Install/live879 pending.
+
+Установлен878 `cc6d8b5d58e8a5536bcceb1efcb8283d612b7d76`: exact API stamp и
+11raw file hashes совпали; rollback `artifacts/rollback_877_to_878/manifest.json`.
+NativeRRF smoke exit0(1,39s), basic9PASS/1WARN/0FAIL(60,75s). Native EXE5.1.813
+сохранён; нового установщика/публичного выпуска нет.
+Fresh FreeToken thinking B0/B1: comparison identity совпадает. B0 160,56s:
+11строк(9work+2unresolved), XLSX SHA проверен, coverage11/20, confirmed0,
+preliminary330096,85; книга SPbQ32026 exact. Четыре названные нормы не имеют
+подтверждённой применимости; PDF!R21 ссылается на другой шифр. Native reads0.
+B1 180,91s:12search_sources+4read_norm_card, все16receiptsok. Четыре полные
+карточки подготовлены, но продолжение остановлено Governor:54351required /
+46171available, превышение8180 оценочных(ceil(chars/2)), не provider tokens.
+XLSX/terminal rows нет; это техническая остановка, не профессиональный MISSING.
+Price-pointer fix в этих двух прогонах не вызван: price tools0. Приёмка FAILED.
+Receipts: `artifacts/live_878/audit_after_local.json`, оба thinking каталога.
+Новых Alibaba calls после предупреждения о квоте0. Обратимая локальная проба
+96Ki context отдельно фиксируется в `artifacts/live_878/context_96k_control/`;
+её результат не является принятой конфигурацией или готовностью продукта.
+
+### 878: изменение и offline gate
 
 Измеренная877 thinking-проба открыла дефект ценового inventory: у42 указателей
 из7 поисков отсутствовали название ресурса и единица, вместо названия показывался
@@ -13,7 +42,7 @@ Regression RED2 → focused131 passed(3,99s). Frozen canonical878:
 3177 passed /20 existing skipped /5 warnings,209,32s (wrapper210,73s).
 Version/compile/collect/architecture/map/docs/assets/metadata exit0;
 `artifacts/gates_878/`. Изолированный snapshot содержит только owned diff,
-сторонние UI-правки исключены. Install/live878 pending; готовность не объявляется.
+сторонние UI-правки исключены. Установка/live измерены выше; готовность не объявляется.
 
 ### Установленный877: результаты контрольных прогонов
 

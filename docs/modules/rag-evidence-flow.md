@@ -1,5 +1,18 @@
 # RAG evidence flow
 
+## 879: native read capacity не является ошибкой формата модели
+
+Если held packet содержит model_read_pending/read_stop, финализация сохраняет
+read_stop как job.phase. Уже предъявленные locators исключаются из diagnostic
+scheduler_gap.never_offered, но остаются незавершёнными: accepted rows, remaining
+и closure ledger не изменяются. При отсутствии terminal rows evidence_read_capacity
+даёт model_result.status=technical_pending с отдельным reason и понятным сообщением
+о нехватке контекста, а не unstructured/«таблица не получена».
+Регрессия проходит actual sheet/native control flow с двумя пакетами: первый
+предъявлен, второй нет; оба остаются pending, ни одной строки/XLSX не выдумано.
+Причинный RED воспроизведён, related48passed; canonical8793178passed/20existing
+skipped, verify/architecture/docs exit0. Install879 pending.
+
 ## 878: буквальные названия и единицы ценовых кандидатов
 
 `read_pricebook_evidence` сохраняет name/unit конкретной строки закреплённой
@@ -16,7 +29,9 @@ book/region/quarter, raw body, порядок кандидатов и явное
 Regression `test_model_research_evidence_actions` проходит настоящий producer
 и deferred inventory planner для search/exact read: Unicode/name/unit/code/book/SHA,
 неизменное raw resource body, без добавления полного тела или цены в pointer.
-RED2→focused131passed; canonical8783177passed/20existing skipped. Live pending.
+RED2→focused131passed; canonical8783177passed/20existing skipped. Installed878
+thinking B0/B1 не вызвали price tools, поэтому влияние исправления на live качество
+этими прогонами не измерено; B0 professional failed, B1 остановлен ёмкостью.
 
 Ниже сохранена историческая запись875 до установки:
 **Doc↔candidate code: ✅875; установлен874 `c4253e38`, professional FAILED.**

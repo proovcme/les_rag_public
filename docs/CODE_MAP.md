@@ -1,11 +1,18 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
-> **878 candidate; installed877 `0eea0e00`:**
+> **879 candidate; installed878 `cc6d8b5d`:**
+> `chat_evidence_application_service` сохраняет native read_stop в job.phase и
+> technical_pending; held read packet не попадает в diagnostic never-offered.
+> Accepted/remaining/closure и выбор норм неизменны. Regression RED→48passed;
+> canonical8793178passed/20existing skipped, verify/architecture/docs exit0; install879 pending. Live878 professional gate FAILED, детали в ledger.
+>
+> **878 installed `cc6d8b5d`:**
 > `model_pricebook_evidence_service.read_pricebook_evidence` переносит literal
 > resource name/unit в metadata, которую читает общий inventory_pointer.
 > Указатель цены больше не теряет смысл кандидата при откладывании body;
 > ни выбора ресурса, ни вычисления цены эта проекция не выполняет. Focused131passed,
-> canonical3177passed/20existing skipped. Install/live pending.
+> canonical3177passed/20existing skipped. Install/SHA/smoke пройдены; live B0/B1
+> не подтвердили качество и не вызвали price-pointer path.
 
 > **877, doc↔installed-code ✅; установлен877 `0eea0e00`:**
 > В `chat_evidence_application_service` sheet_initial_source_map фиксируется

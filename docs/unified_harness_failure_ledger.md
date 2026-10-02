@@ -1,5 +1,20 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-02 — installed878: capacity stop mislabeled as model format failure
+
+B1 thinking requested12searches+4exactnormreads; all16returnedok, but the next
+frame required54351 vs46171estimatedtokens. No terminal model decision existed.
+Finalization overwrote phase with packets, called all20rows never-offered (12had
+been presented), and reported unstructured/«таблица строк не получена».
+Candidate879 preserves technical phase/reason and corrects only the offered
+diagnostic; decisions, remaining rows and closure unchanged. Actual2packet
+regression failed before fix; related48passed. Canonical8793178passed/20existing
+skipped, verify/architecture/docs exit0. Install879 pending.
+Exactbody duplicates were not found in saved119record replay;96Ki capacity trial
+is recorded separately. B0 created11rows with0confirmed amount and incorrect
+norm references. Neither run proves price-pointer878 fix live (no price calls).
+Evidence: artifacts/live_878/audit_after_local.json and context_96k_control/.
+
 ## 2026-10-02 — installed877: context fix proven, estimate acceptance still failed
 
 Exact installed commit0eea0e00, original BAP PDF, same question/profile/runtime,
