@@ -37,6 +37,7 @@ from proxy.services.chat_evidence_application_service import (
     compact_estimator_draft_rows,
     document_price_basis_arguments,
     task_document_price_basis,
+    workbook_repack_replay_arguments,
     workbook_packaging_lineage,
     workbook_packaging_args,
     workbook_packaging_tool,
@@ -404,6 +405,57 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     )
     if inherited_basis and repack_tool == "build_lsr_workbook":
         repack_args["document_price_basis"] = inherited_basis
+    source_sha256 = ""
+    request_identity = ""
+    if job_id:
+        from proxy.services.chat_attachment_service import resolve_read_attachment
+
+        try:
+            _path, source_metadata = await asyncio.to_thread(resolve_read_attachment, attachment_id)
+            source_sha256 = str(source_metadata.get("sha256") or "")
+        except (OSError, ValueError, MemoryError):
+            # Unknown current bytes disable argument replay. The ordinary
+            # executor still validates the source inside its bounded recovery.
+            pass
+        request_identity = hashlib.sha256(json.dumps({
+            "tool": repack_tool, "session_id": req.session_id, "attachment_id": attachment_id,
+            "source_sha256": source_sha256, "saved_identity": job.get("identity") or {},
+            "question": req.question, "decisions": decisions, "confirmed_data": overlays,
+            "dataset_ids": list(req.dataset_ids or []), "profile_revision_id": req.profile_revision_id,
+            "model_identity": req.model_identity, "document_issues": document_issues,
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        try:
+            repack_events = WorkbookResearchJobService().list_events(job_id)
+            replay_args = workbook_repack_replay_arguments(
+                repack_events, tool=repack_tool,
+                request_identity=request_identity, source_sha256=source_sha256,
+                document_price_basis=inherited_basis, current_arguments=repack_args,
+            )
+        except (WorkbookResearchJobError, OSError):
+            replay_args = None
+        if replay_args is not None:
+            from proxy.services.artifact_revision_service import ArtifactRevisionError, ArtifactRevisionStore
+            from proxy.services.workflow_checkpoint_service import CheckpointError, WorkflowCheckpointService
+
+            saved = next(event["payload"] for event in reversed(repack_events)
+                         if event.get("event_type") == "workbook_packaged"
+                         and isinstance(event.get("payload"), dict) and event["payload"].get("tool") == repack_tool)
+            try:
+                artifacts = ArtifactRevisionStore(mutable_path("storage/artifacts/meta.db"), mutable_path("storage/artifacts/files"))
+                revision = artifacts.get_revision(str(saved["revision_id"]))
+                await asyncio.to_thread(artifacts.read_bytes, revision.revision_id)
+                checkpoint = WorkflowCheckpointService(mutable_path("storage/workbook_checkpoints.db")).get(revision.decision_checkpoint_id)
+                if (checkpoint.status != "complete" or checkpoint.artifact_revision_id != revision.revision_id
+                        or checkpoint.tool_name != repack_tool or checkpoint.attachment_id != attachment_id
+                        or checkpoint.attachment_sha256 != source_sha256):
+                    raise CheckpointError("saved repack checkpoint does not match the immutable artifact")
+            except (ArtifactRevisionError, CheckpointError, OSError, sqlite3.Error, MemoryError) as error:
+                # Replaying first-call args after cache loss could recalculate
+                # without the book SHA learned by that call. Preserve its pin
+                # and report the technical loss before entering the executor.
+                raise HTTPException(409, {"code": "WORKBOOK_REPACK_CACHE_UNAVAILABLE", "packaging_status": "pending",
+                    "model_called": False, "message": "Не удалось проверить сохранённый файл или checkpoint. Строки и ценовая база сохранены; повторный расчёт не выполнен."}) from error
+            repack_args = replay_args
     payload, traces = await execute_workbook_with_bounded_retry(
         _execute_chat_workbook_tool,
         {
@@ -448,6 +500,9 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
                 # the rebuilt file is the document's newest basis; store it so a
                 # later continuation inherits it instead of asking again (§ 4)
                 price_basis=harvested.get("price_basis"),
+                repack_request={"schema": "les.workbook-repack-request.v1",
+                    "request_identity": request_identity, "source_sha256": source_sha256,
+                    "arguments": repack_args, "price_basis": dict(harvested.get("price_basis") or {})},
             )
             artifact["document_state"] = service.document_state(job_id)
         except (WorkbookResearchJobError, OSError) as error:

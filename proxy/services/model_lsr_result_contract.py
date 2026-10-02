@@ -113,7 +113,17 @@ def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None)
     for segment in outside_segments:
         segment = segment.strip()
         index = 0
-        while index < len(segment) and segment[index] in "{[":
+        while index < len(segment):
+            # A standalone target label is transport, outside authored JSON.
+            # Never remove it from an object/array or a fenced candidate.
+            label = re.match(r"artifact_kind[ \t]*:[^\r\n]*(?:\r?\n|$)", segment[index:])
+            if label is not None and not segment[:index].rsplit("\n", 1)[-1].strip():
+                index += label.end()
+                while index < len(segment) and segment[index].isspace():
+                    index += 1
+                continue
+            if segment[index] not in "{[":
+                break
             try:
                 _value, end = decoder.raw_decode(segment, index)
             except (ValueError, TypeError):
@@ -353,8 +363,10 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "Для прежней операции верни operation_id из prior_model_decisions; для новой "
         "операции оставь operation_id пустым. Для изменения "
         "существующей операции верни expected_revision из её revision в prior_model_decisions "
-        "(или base_revision). Не назначай свои ID и новый revision. Верни новые и изменённые решения: "
-        "неизменённые строки prior_model_decisions повторять не обязательно. Изменение "
+        "(или base_revision). Не назначай свои ID и новый revision. При обычном продолжении верни новые и изменённые решения: "
+        "неизменённые строки prior_model_decisions повторять не обязательно. При явном пересмотре верни "
+        "все предложенные прежние операции, включая неизменённые с дословными предметными полями, "
+        "прежним operation_id и expected_revision из показанного revision. Изменение "
         "нормы/пояснения — пересмотр прежней операции, дополнительная работа — новая. "
         "Не объявляй неприменимые необязательные колонки. Дополнительно: "
         "resource_bindings: JSON-массив action=add/replace/exclude/reuse, "

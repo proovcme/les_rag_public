@@ -1,10 +1,56 @@
 # RAG evidence flow
 
-**Doc↔candidate code: ✅874; установлен873, professional FAILED.**
+**Doc↔candidate code: ✅875; установлен874 `c4253e38`, professional FAILED.**
+
+Native-capacity pause сохраняет literal query/provenance/address/offset state,
+prepared bodies и read receipts. Resume читает saved query cache; не формулирует
+новые запросы ради восстановления. Initial answer overflow включает truthful
+required/available/overflow trace до model call. `bind_model_requested_read_evidence`
+имеет internal optional reserved_query_end: max этого whole declared range и
+existing durable Q определяет первый новый native handle. Sheet передаёт
+query_offset+len(pass_hits), B0 — len(model_rag_query_hits), включая unshown/empty
+query groups. Held/deferred raw cursor увеличивается только на len(included_hits);
+native high-water mark не меняет original query aliases на следующих страницах.
+Receipts/global IDs/raw bodies и prepared/delivered semantics
+прежние. Это предотвращает новые raw/native alias collisions; старые aliases
+не чинятся. Ambiguous unbound refs остаются unresolved; exact persisted immutable
+binding не переписывается. Focused native/read suites143 passed; live875 pending.
+
+`decode_model_result_rows` отделяет standalone `artifact_kind: ...` transport line
+вне JSON/fences от единственного полного JSON результата. Строки и их literal
+fields не меняются; raw_original сохраняется в diagnostics. Marker внутри JSON
+или fence не вырезается. Duplicate/invalid/conflicting target по-прежнему
+независимо отклоняет `decode_model_artifact_kind`, а однозначные row decisions
+остаются сохранёнными до видимого packaging pending.
+
+Для неизменного UI repack с пустым question `workbook_repack_replay_arguments`
+сопоставляет server-owned business inputs с последним `workbook_packaged`
+snapshot и возвращает ровно первоначальные arguments. Learned book/provenance
+и inherited_from=self revision не создают новый расчёт; applied pricebook SHA
+сохраняется. Source bytes, decisions, overlays, trusted issues, effective profile
+и явная смена price basis нарушают cache identity. Unknown/incomplete snapshot
+идёт обычным путём. Router перед replay проверяет saved artifact bytes и complete
+checkpoint через существующие stores. Потерянный файл/checkpoint даёт explicit
+409 `WORKBOOK_REPACK_CACHE_UNAVAILABLE`, без executor/модели и без пересчёта по
+новым bytes под старой identity. Текущая цена каталога не объявляется ценой
+старого сохранённого расчёта; pinned revision остаётся immutable.
+
 Explicit plain continuation пересекает terminal packet locators с реально
 settled source keys только при новом literal resume: same-request replay,
 later terminal barriers и принятые MISSING не меняются. Freeform chat review
 остаётся отдельным model-owned пересмотром прежних решений/operation IDs.
+
+Ordinary continuation остаётся delta. При nonempty current-packet review_rows
+prior-page инструкция требует все предложенные прежние операции, включая
+неизменённые с дословными model fields/citations, прежним operation_id и
+expected_revision из показанного revision. Shared system field/table instruction
+и sheet tail явно отделяют этот режим от ordinary delta. Reopen сохраняет
+старые решения в prior history, но убирает их из active accepted; omitted review
+операции не восстанавливаются автоматически. No schema handshake, code norm
+choice/default status/auto-confirmation или новый model cycle не добавлены.
+Actual fake-chat full answer повторяет unchangedA и changedB; cut answer
+сохраняет accepted0/remaining2 и исходный prior event. Focused316 passed;
+это не доказывает живую корректность окраски R18/R19 или полноту всей ревизии.
 
 После admission каждый shown norm body (включая shown aliases) получает
 card_delivery_facts: normative_card_complete и normative_resources_status.
@@ -36,9 +82,15 @@ MODEL_OUTPUT теперь нейтральный M, не VERIFIED/UNVALIDATED/cr
 Diagnostics сохраняет прежние V/H/U quality thresholds и явно сообщает,
 что M не доказывает качество. Только-M — insufficient-validation warning.
 
-Installed873 natural BAP files имеют confirmed0/professional FAILED;
-SKS/EOM controls не дали файла. 874 offline:3080 passed/20 existing opt-in skips,
-architecture/base/root passed. Fresh874 comparative acceptance pending.
+Installed874 `c4253e38ea9539eb841e993eb373a42665079c0a`: BAP260.5s professional
+FAILED, B0~79s без файла, SKS~387s overflow. EOM821.75s дал actual partial ВОР
+46 rows/23 из56 locators; saved first packet24 rows потерял decoder из-за
+standalone marker. 875 replay восстановил все24 поля/строки без изменений.
+Физический XLSX EOM сохранил роли21 material/24 work/1 header и все authored
+количества; final remaining33 сохраняет все исходные gaps. SKS plain continue
+16.56s оставил23/75,0работ/0денег и не дошёл до answer phase: FAILED.
+BAP engineer remark738.11s дал файл; professional acceptance ещё pending.
+875 focused: cache100 passed, row transport139 passed; full gates/install/live pending.
 Проверки транспорта/арифметики не доказывают профессиональную применимость.
 
 **Doc↔candidate code: ✅ 872 literal shown-code navigation and lossless pointer replay.**

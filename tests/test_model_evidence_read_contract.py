@@ -499,3 +499,69 @@ def test_document_and_price_hits_keep_distinct_immutable_bodies_even_when_equal(
     ])["previously_shown_evidence_registry"]
     assert len(entries) == 2
     assert [item["content"] for item in entries] == ["same body", "same body"]
+
+
+@pytest.mark.parametrize("saved_index,reserved_end", [(2, 9), (14, 9), (0, 9), (2, 0)])
+def test_native_read_handles_reserve_all_declared_query_indices(saved_index, reserved_end):
+    from copy import deepcopy
+    from proxy.services import chat_evidence_application_service as service
+
+    saved = [SimpleNamespace(content="saved literal body", doc_name="saved", meta={
+        "model_evidence_ref": f"Q{saved_index}.H1", "global_evidence_id": "saved-id",
+        "model_delivery_status": "delivered"})] if saved_index else []
+    before_saved = deepcopy([chunk.meta for chunk in saved])
+    raw = [SimpleNamespace(content=f"literal exact body {i}", doc_name="exact", doc_id=f"card-{i}",
+        score=1.0, meta={"norm_key": f"key-{i}", "norm_code": f"CODE-{i}", "source_ref": "source",
+                         "source_sha256": "a" * 64, "edition": "edition", "base_type": "fixture"})
+        for i in range(3)]
+    before_raw = deepcopy([(chunk.content, chunk.meta) for chunk in raw])
+    results = [SimpleNamespace(payload={"tool": "read_norm_card", "inputs": ["first"]}, chunks=raw[:2]),
+               SimpleNamespace(payload={"tool": "read_norm_card", "inputs": ["empty"]}, chunks=[]),
+               SimpleNamespace(payload={"tool": "read_norm_card", "inputs": ["second"]}, chunks=raw[2:])]
+    receipts = [{"call": {"tool": "read_norm_card"}} for _ in results]
+
+    groups, bound, omitted = service.bind_model_requested_read_evidence(
+        results, existing_chunks=saved, reserved_query_end=reserved_end,
+        evidence_namespace="reserved-read", receipts=receipts)
+
+    start = max(saved_index, reserved_end) + 1
+    expected = [f"Q{start}.H1", f"Q{start}.H2", f"Q{start + 1}.H1"]
+    assert [chunk.meta["model_evidence_ref"] for chunk in bound] == expected
+    assert receipts[0]["evidence_refs"] == expected[:2]
+    assert "evidence_refs" not in receipts[1]
+    assert receipts[2]["evidence_refs"] == expected[2:]
+    assert all(chunk.meta["model_delivery_status"] == "prepared" for chunk in bound)
+    assert all(chunk.meta["model_inventory_delivery_status"] == "prepared" for chunk in bound)
+    assert not omitted and len(groups) == 2
+    assert [(chunk.content, chunk.meta) for chunk in raw] == before_raw
+    assert [chunk.meta for chunk in saved] == before_saved
+    assert all(chunk.meta["source_sha256"] == "a" * 64 for chunk in bound)
+    assert len({chunk.meta["global_evidence_id"] for chunk in bound}) == 3
+    assert [chunk.content for chunk in bound] == [chunk.content for chunk in raw]
+
+    later_receipt = {}
+    _, later, _ = service.bind_model_requested_read_evidence(
+        [results[2]], existing_chunks=[*saved, *bound], reserved_query_end=reserved_end,
+        evidence_namespace="reserved-next", receipts=[later_receipt])
+    assert later_receipt["evidence_refs"] == [f"Q{start + 2}.H1"]
+    assert later[0].content == raw[2].content
+
+
+def test_old_saved_alias_collision_remains_literal_and_requires_immutable_binding():
+    from copy import deepcopy
+    from proxy.services import chat_evidence_application_service as service
+
+    chunks = [SimpleNamespace(content="Шифр: ГЭСН01-01-001-01", doc_name="cards", meta={
+        "model_evidence_ref": "Q3.H1", "global_evidence_id": identity,
+        "model_query_text": identity, "model_delivery_status": "delivered"})
+        for identity in ("old-native", "original-query")]
+    before = deepcopy([(chunk.content, chunk.meta) for chunk in chunks])
+    authored = {"source_row": "S!R2", "norm_code": "ГЭСН01-01-001-01", "evidence_refs": ["Q3.H1"]}
+
+    unresolved = service.bind_row_evidence_ids([authored], chunks)[0]
+    assert unresolved["evidence_bindings"] == {}
+    assert unresolved["_evidence_check"]["unresolved_refs"] == ["Q3.H1"]
+    pinned = service.bind_row_evidence_ids([{**authored, "evidence_bindings": {"Q3.H1": "old-native"}}], chunks)[0]
+    assert pinned["evidence_bindings"] == {"Q3.H1": "old-native"}
+    assert pinned["_evidence_check"]["unresolved_refs"] == []
+    assert [(chunk.content, chunk.meta) for chunk in chunks] == before

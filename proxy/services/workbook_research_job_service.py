@@ -1170,6 +1170,7 @@ class WorkbookResearchJobService:
         draft: bool,
         parent_revision_id: str | None = None,
         price_basis: Mapping[str, Any] | None = None,
+        repack_request: Mapping[str, Any] | None = None,
     ) -> int:
         """Durable trace of a packaged workbook revision for this job.
 
@@ -1206,6 +1207,7 @@ class WorkbookResearchJobService:
                     "draft": bool(draft),
                     "parent_revision_id": str(parent_revision_id or ""),
                     "price_basis": basis,
+                    **({"repack_request": dict(repack_request)} if isinstance(repack_request, Mapping) else {}),
                 },
             )
 

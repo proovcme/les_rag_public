@@ -1,5 +1,43 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **875, doc↔candidate-code ✅; установлен874 `c4253e38`:**
+> `workbook_repack_replay_arguments` сверяет неизменный server-owned запрос,
+> saved arguments и applied price basis с pinned SHA. `record_packaging` хранит
+> optional repack_request в существующем событии; `/api/chat/repack-lsr`
+> проверяет immutable artifact bytes и complete checkpoint перед replay.
+> Missing cache даёт visible409 WORKBOOK_REPACK_CACHE_UNAVAILABLE до executor;
+> новый pricebook/source/decision/overlay/issues/profile требует обычного пути.
+> `task_document_price_basis` сохраняет явный book/SHA без stale self inheritance.
+> `decode_model_result_rows` пропускает только standalone artifact_kind transport
+> вне JSON/fences. Raw original/conflicts и authored rows сохраняются;
+> `decode_model_artifact_kind` продолжает independently reject неоднозначный target.
+> Native-capacity pause хранит model_rag_evidence_page_state с literal queries/
+> provenance/addresses/offset; resumed answer overflow публикует capacity trace.
+> `bind_model_requested_read_evidence(reserved_query_end=...)` начинает native Q
+> после всех declared query indices, даже unshown/empty groups, и durable refs.
+> Sheet caller использует query_offset+len(pass_hits), B0 — полный query count.
+> Deferred raw query cursor увеличивается только на len(included_hits);
+> native Q high-water mark не переименовывает исходный хвост при paging/resume.
+> Старые ambiguous aliases не перенумеровываются/автоматически не bindятся;
+> known exact saved binding сохраняется. Native/read focused143 passed.
+> `sheet_pass_question_tail`, `model_rag_prior_page_context`, общий
+> `model_lsr_result_field_instruction` и `lsr_result_table_instruction` различают
+> ordinary delta и reopened full response. Nonempty offered review_rows требуют
+> model-returned all prior operations с literal fields/old ID/expected revision;
+> omitted review rows не восстанавливаются кодом. Focused316 passed, cut0/remaining2.
+> Focused cache100/transport139 passed; saved EOM first packet24 rows exact-equal.
+> Second875 после последнего source freeze GREEN: verify25.59s; test3128 passed/
+> 20 existing skipped/5 warnings318.59s (wrapper320.12s); architecture10.42s,
+> baseline7.86s/active artifacts0.61s, все exit0. Exact install/live875 pending;
+> installed874 professional FAILED, ready не заявлено.
+> Receipts: `artifacts/verify_875_second.exit.json`, `artifacts/test_875_second.exit.json`,
+> `artifacts/architecture_875_second.exit.json`, `artifacts/baseline_875_second.exit.json`,
+> `artifacts/active_artifacts_875_second.exit.json`.
+> Generated counts/routes/entrypoints — `docs/CODE_RUNTIME_MAP.md` и
+> `docs/generated/code_runtime_map.json`; карты пересобраны после narrow source/tests.
+>
+> Следующие замеры относятся к прежним состояниям, не к текущей готовности.
+
 > **871, source/tests frozen (док↔candidate-code ✅):**
 > `model_rag_grouped_evidence_service.prepare_model_read_replay` сохраняет
 > mandatory exact/cited bodies и literal inventory, optional whole discovery groups.

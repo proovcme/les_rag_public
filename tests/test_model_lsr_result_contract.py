@@ -105,3 +105,81 @@ def test_format_hints_do_not_contradict_empty_cell_transport_or_force_markdown()
     assert "пояснение пиши в coverage, не вместо признака" in instruction
     assert "Неприменимые поля не выводи" not in instruction
     assert "Не объявляй неприменимые необязательные колонки" in instruction
+
+
+TRANSPORT_ROW = {"source_row": "Section!R12", "row_role": "work", "title": "Literal authored operation",
+    "unit": "m", "quantity": 2.5, "norm_code": "literal-norm", "evidence_refs": ["Q7.H3"],
+    "coverage": "Literal field containing artifact_kind: lsr", "condition_match": "unknown",
+    "open_gap": "Literal unresolved condition"}
+
+
+@pytest.mark.parametrize("kind", ["vor", "lsr"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("position", ["before", "after", "outside_fence"])
+def test_standalone_artifact_transport_preserves_literal_json_rows(kind, newline, position):
+    body = json.dumps({"rows": [TRANSPORT_ROW], "resource_bindings": []}, ensure_ascii=False)
+    marker = "\tartifact_kind : " + kind + newline
+    if position == "before":
+        raw = marker + newline + body
+    elif position == "after":
+        raw = body + newline + marker
+    else:
+        raw = marker + "```json" + newline + body + newline + "```"
+    diagnostics = []
+
+    assert contract.decode_model_result_rows(raw, diagnostics=diagnostics) == [TRANSPORT_ROW]
+    assert diagnostics == []
+    assert contract.decode_model_artifact_kind(raw)["artifact_kind"] == kind
+
+
+@pytest.mark.parametrize("marker,status", [
+    ("artifact_kind: vor\nartifact_kind: lsr\n", "conflict"),
+    ("artifact_kind: vor\nartifact_kind: vor\n", "conflict"),
+    ("artifact_kind: unknown\n", "invalid"),
+])
+def test_invalid_or_repeated_transport_target_does_not_replace_authored_rows(marker, status):
+    raw = marker + json.dumps({"rows": [TRANSPORT_ROW]}, ensure_ascii=False)
+
+    assert contract.decode_model_result_rows(raw) == [TRANSPORT_ROW]
+    assert contract.decode_model_artifact_kind(raw)["status"] == status
+    assert contract.decode_model_artifact_kind(raw)["artifact_kind"] == ""
+
+
+def test_transport_line_does_not_hide_duplicate_authored_row_or_its_literal_json():
+    duplicate = '{"source_row":"Section!R12","row_role":"work","title":"Literal","quantity":1,"quantity":2}'
+    raw = 'artifact_kind: vor\n{"rows":[' + duplicate + ']}'
+    diagnostics = []
+
+    assert contract.decode_model_result_rows(raw, diagnostics=diagnostics) is None
+    assert diagnostics[0]["code"] == "MODEL_RESULT_JSON_DUPLICATE_FIELD"
+    assert diagnostics[0]["decision"]["raw_json"] == duplicate
+    assert diagnostics[0]["duplicate_fields"][0]["field"] == "quantity"
+
+
+@pytest.mark.parametrize("raw", [
+    'artifact_kind: vor\n{"rows":[',
+    '{"rows":[\nartifact_kind: vor\n' + json.dumps(TRANSPORT_ROW) + ']}',
+])
+def test_incomplete_json_retains_full_original_transport_and_is_not_repaired(raw):
+    diagnostics = []
+
+    assert contract.decode_model_result_rows(raw, diagnostics=diagnostics) is None
+    assert diagnostics[0]["code"] == "MODEL_RESULT_JSON_INCOMPLETE_RESULT"
+    assert diagnostics[0]["decision"]["raw_json"] == raw
+
+
+@pytest.mark.parametrize("prefix", ["Prose artifact_kind: vor\n", "```json\nartifact_kind: vor\n"])
+def test_nonstandalone_or_inside_fence_transport_does_not_become_a_json_prefix(prefix):
+    raw = prefix + json.dumps({"rows": [TRANSPORT_ROW]}) + ("\n```" if prefix.startswith("```") else "")
+
+    assert contract.decode_model_result_rows(raw) is None
+
+
+def test_transport_between_two_results_keeps_ambiguity_and_original_bytes():
+    body = json.dumps({"rows": [TRANSPORT_ROW]})
+    raw = body + "\nartifact_kind: vor\n" + body
+    diagnostics = []
+
+    assert contract.decode_model_result_rows(raw, diagnostics=diagnostics) is None
+    assert diagnostics[0]["code"] == "MODEL_RESULT_JSON_AMBIGUOUS_RESULTS"
+    assert diagnostics[0]["decision"]["raw_json"] == raw

@@ -1,5 +1,46 @@
 # ALGO-tool-harness — controlled tools for LES
 
+## Candidate875: exact saved repack replay and independent artifact transport
+
+Native-capacity pause persists literal queries/provenance/addresses/offset with
+prepared read receipts; resume reuses their cache without another query turn.
+Initial answer overflow remains a visible technical bound before inference.
+The internal read binder reserves the entire original query range, including
+unshown and empty groups, before allocating native Q handles. The deferred raw
+cursor advances only by included query count, never by the native handle
+high-water mark. Saved aliases,
+immutable IDs and delivery flags remain literal; old ambiguous unbound refs are
+not repaired or auto-selected. Existing exact saved identity bindings stay intact.
+Actual prepared-read resume and same-bound overflow regressions pass; whole
+native/read focused suites143 pass. Installed874 continuation failure remains.
+
+Reopened review has a full-response transport contract; normal continuation
+still uses delta. Four system/user clauses require all currently offered prior
+review operations, including unchanged literal fields/citations with their old
+operation_id and expected_revision from shown revision. Reopen retains history
+but clears active rows; omitted review operations are not auto-restored or
+confirmed. No schema handshake, norm/role selection or extra model cycle is
+added. Actual full/cut fake-chat frames and existing related suites316 pass.
+This instruction correction does not prove live painting-row quality or recovery.
+
+The no-model repack route records first arguments and server-owned request
+identity in the existing `workbook_packaged` event. Identical empty-question UI
+requests reuse those exact arguments and the actual applied book SHA. Learned
+provenance and self revision do not create new business input; meaningful source,
+decision, overlay, issues, profile or explicit price-basis changes retain the
+ordinary calculation path. Unknown/incomplete snapshots are not replayed.
+Before replay the router validates immutable artifact bytes and its complete
+checkpoint. Missing cache returns explicit409 `WORKBOOK_REPACK_CACHE_UNAVAILABLE`
+before executor/inference; replacement current-book bytes cannot silently
+reprice an old identity. Model args, accepted rows and calculator remain unchanged.
+
+The row decoder skips only standalone `artifact_kind` transport lines outside
+JSON/fences. The separate artifact-target decoder still rejects duplicate,
+invalid or conflicting targets; raw diagnostics and independent authored rows
+remain intact. Saved EOM first-result replay returns24 exact unchanged rows.
+Focused cache100 and transport139 pass; full875 gates/install/live are pending.
+Installed874 professional acceptance is FAILED; file creation is not readiness.
+
 ## Candidate874: trusted intermediate documents and neutral model-output metrics
 
 `document_issues` is server-owned execution context, never a model-tool argument.
@@ -16,8 +57,8 @@ markers describe only actually admitted bodies and count toward context capacity
 
 `MODEL_OUTPUT` increments neutral `model_output`, not validation pass/fail.
 Diagnostics retains V/H/U thresholds and does not call neutral output verified.
-Installed873 ordinary chat/native RRF pass; professional document acceptance fails.
-Candidate874 full gates, exact installation and natural live remain pending.
+Historical874 offline gates passed3080/20 existing opt-in skips; installed exact
+`c4253e38` natural runs remain professional FAILED (see RELEASE_LEDGER).
 
 
 ## Candidate873: exact literal native replay and norm reference reads

@@ -1,5 +1,6 @@
 """A new remark is heard by the model; a plain resume keeps durable progress."""
 import hashlib
+import json
 
 import pytest
 
@@ -168,3 +169,98 @@ def test_operator_confirmations_survive_new_review_and_resume_job(tmp_path):
     assert resumed["operator_overrides"]["Схема!R14"]["confirmed_price"] == 12.5
     reopened = begin_workbook_chat_review(service, resumed, "Уточни условия", ["Схема!R14", "Схема!R15"])
     assert reopened["operator_overrides"] == resumed["operator_overrides"]
+
+
+def test_review_response_contract_is_full_while_normal_page_remains_delta():
+    rows = [{"source_row": "S!R2", "operation_id": "old-operation", "revision": 4,
+             "row_role": "work", "title": "Literal old title", "quantity": 3.2, "unit": "m2"}]
+    normal, _ = application.model_rag_prior_page_context(rows, [])
+    review, _ = application.model_rag_prior_page_context([], [], review_rows=rows,
+        review_instruction="Recheck the offered operation")
+    assert "Верни только новые и изменённые" in normal["evidence_continuation_instruction"]
+    assert "Неизменённые операции и цитаты остаются в документе" in normal["evidence_continuation_instruction"]
+    instruction = review["evidence_continuation_instruction"]
+    assert "верни все предложенные прежние операции" in instruction
+    assert "expected_revision" in instruction and "дословно" in instruction
+    assert "Верни только новые и изменённые" not in instruction
+    assert "Неизменённые операции и цитаты остаются в документе" not in instruction
+    assert [{key: projected[key] for key in original}
+            for original, projected in zip(rows, review["prior_model_decisions"])] == rows
+    shared = application.profile_system_prompt({"mode": "estimator", "prompt_text": "Evidence only"}, strict=False)
+    tail = application.sheet_pass_question_tail("Recheck", sheet="S", sheet_index=1, sheet_count=1,
+        remaining_work=["S!R2"])
+    for prompt in (shared, tail):
+        assert "При обычном продолжении" in prompt
+        assert "При явном пересмотре" in prompt
+        assert "все предложенные прежние операции" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cut", [False, True])
+async def test_actual_reopened_review_offers_all_operations_without_auto_restoring_omitted_rows(tmp_path, monkeypatch, cut):
+    from test_model_rag_sheet_evidence_reads import _run_sheet
+    from proxy.services.openai_compatible_transport_service import InferenceResponse
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, json_final=True)
+    store = WorkbookResearchJobService()
+    job_id = run.result["retrieval_trace"]["workbook_research_job"]["job_id"]
+    published = store.get(job_id)["accepted_rows"]
+    assert len(published) == 2
+    reopened = application.begin_workbook_chat_review(store, store.get(job_id), "Recheck these operations",
+        [row["source_row"] for row in published])
+    assert reopened["accepted_rows"] == []
+    fields = ("source_row", "row_role", "title", "unit", "quantity", "norm_code", "resource_code", "evidence_refs", "operation_id")
+    authored = [{**{key: row[key] for key in fields if key in row}, "expected_revision": row["revision"]}
+                for row in published]
+    authored[1]["title"] = "Model changed second title"
+    frame_rows = []
+
+    def review_response():
+        frame = run.requests[-1].messages
+        found = None
+        decoder = json.JSONDecoder()
+        for message in frame:
+            content = str(message.get("content") or "")
+            for index, char in enumerate(content):
+                if char != "{":
+                    continue
+                try:
+                    candidate, _ = decoder.raw_decode(content, index)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidate, dict) and "prior_model_decisions" in candidate:
+                    found = candidate
+                    break
+            if found is not None:
+                break
+        assert found is not None
+        assert "верни все предложенные прежние операции" in found["evidence_continuation_instruction"]
+        assert "Неизменённые операции и цитаты остаются в документе" not in found["evidence_continuation_instruction"]
+        offered = found["prior_model_decisions"]
+        assert [row["operation_id"] for row in offered] == [row["operation_id"] for row in published]
+        for prior, actual in zip(published, offered):
+            assert {key: actual.get(key) for key in (*fields, "revision")} == {
+                key: prior.get(key) for key in (*fields, "revision")}
+        frame_rows.extend(offered)
+        text = '{"artifact_kind":"lsr","rows":[' if cut else json.dumps({"artifact_kind": "lsr", "rows": authored})
+        return InferenceResponse(text=text, tool_calls=(), finish_reason="length" if cut else "stop", usage={})
+
+    run.responses[:] = [InferenceResponse(text="artifact_kind: lsr\nS!R2 literal query\nS!R3 literal query",
+        tool_calls=(), finish_reason="stop", usage={}), review_response]
+    calls_before = len(run.requests)
+    result = await run.resume_same_request()
+    current = store.get(job_id)
+    assert frame_rows and len(run.requests) == calls_before + 2 and not run.responses
+    if cut:
+        assert current["accepted_rows"] == []
+        assert set(current["remaining"]) == {row["source_row"] for row in published}
+        assert result["retrieval_trace"]["model_result_transport_diagnostics"]
+        assert len(run.executions) == 1
+    else:
+        assert len(current["accepted_rows"]) == 2 and current["remaining"] == []
+        for returned, expected in zip(current["accepted_rows"], authored):
+            assert {key: returned.get(key) for key in fields} == {key: expected.get(key) for key in fields}
+            assert returned["revision"] == expected["expected_revision"] + 1
+        assert len(run.executions) == 2
+    prior_event = store.list_events(job_id, "locators_reopened")[-1]
+    assert prior_event["payload"]["prior_rows"] == published

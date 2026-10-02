@@ -359,7 +359,66 @@ def task_document_price_basis(job: object, previous_basis: object = None) -> dic
         if requested.get(key):
             if changed or not basis.get(key):
                 basis[key] = requested[key]
+    if requested.get("pricebook"):
+        if requested["pricebook"] != basis.get("pricebook"):
+            for key in ("binding", "revision_id", "pricebook_sha256"):
+                basis.pop(key, None)
+        basis["pricebook"] = requested["pricebook"]
+        if requested.get("pricebook_sha256"):
+            basis["pricebook_sha256"] = requested["pricebook_sha256"]
     return document_price_basis_arguments(basis)
+
+
+def workbook_repack_replay_arguments(
+    events: Sequence[Mapping[str, Any]], *, tool: str, request_identity: str,
+    source_sha256: str, document_price_basis: object, current_arguments: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Replay exact server-owned arguments for an unchanged saved rebuild.
+
+    Learning the selected book and the delivered revision changes provenance,
+    not the original request. Explicit dimensions or immutable book pins still
+    have to agree with the first calculation. An older event cannot override a
+    newer packaging event which has no usable request snapshot.
+    """
+    if not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
+        return None
+    payload = next((event.get("payload") for event in reversed(events)
+                    if isinstance(event, Mapping) and event.get("event_type") == "workbook_packaged"
+                    and isinstance(event.get("payload"), Mapping)
+                    and event["payload"].get("tool") == tool), None)
+    if not isinstance(payload, Mapping) or not payload.get("revision_id"):
+        return None
+    snapshot = payload.get("repack_request")
+    if (not isinstance(snapshot, Mapping) or snapshot.get("schema") != "les.workbook-repack-request.v1"
+            or snapshot.get("request_identity") != request_identity
+            or snapshot.get("source_sha256") != source_sha256
+            or not isinstance(snapshot.get("price_basis"), Mapping)):
+        return None
+    arguments = snapshot.get("arguments")
+    if (not isinstance(arguments, Mapping) or not isinstance(arguments.get("attachment_id"), str)
+            or not arguments.get("attachment_id") or not isinstance(arguments.get("question"), str)
+            or not isinstance(arguments.get("decisions"), list) or not arguments.get("decisions")):
+        return None
+    unchanged_fields = (set(arguments) | set(current_arguments)) - {"question", "document_price_basis"}
+    if any(arguments.get(key) != current_arguments.get(key) for key in unchanged_fields):
+        return None
+    if tool == "build_lsr_workbook":
+        current = document_price_basis_arguments(document_price_basis)
+        applied = document_price_basis_arguments(snapshot["price_basis"])
+        if applied.get("pricebook") and not re.fullmatch(r"[0-9a-f]{64}", str(applied.get("pricebook_sha256") or "")):
+            return None
+        from proxy.services.lsr_workbook_adapter_service import requested_price_basis
+
+        for key in ("pricebook", "pricebook_sha256", "region", "quarter"):
+            expected, actual = current.get(key), applied.get(key)
+            if key in {"region", "quarter"}:
+                expected = requested_price_basis(str(expected or "")).get(key, expected)
+                actual = requested_price_basis(str(actual or "")).get(key, actual)
+            if expected and expected != actual:
+                return None
+    # The durable event contains JSON values. Copy them so later bookkeeping
+    # cannot alter the saved first request or its accepted model rows.
+    return json.loads(json.dumps(dict(arguments), ensure_ascii=False))
 
 
 def workbook_packaging_args(
@@ -2025,13 +2084,16 @@ def sheet_pass_question_tail(
         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
         f"\nСейчас только лист «{sheet}» ({sheet_index}/{sheet_count}). "
         "Для ещё не решённых исходных строк текущего пакета дай решения. "
-        "Если prior_model_decisions уже содержит операции, верни только новые "
+        "При обычном продолжении, если prior_model_decisions уже содержит операции, верни только новые "
         "или изменённые; неизменённые операции сохраняются приложением. "
+        "При явном пересмотре верни все предложенные прежние операции, включая неизменённые "
+        "с дословными прежними полями, operation_id и expected_revision из показанного revision. "
         "Не обрабатывай другие листы манифеста. "
     )
     remaining_clause = (
         remainder
-        + " Ответ должен вместить новые и изменённые операции текущего пакета: без вводного "
+        + " При обычном продолжении ответ должен вместить новые и изменённые операции текущего пакета; "
+        "при явном пересмотре — все предложенные прежние операции: без вводного "
         "обзора и итоговых рекомендаций. Число операций определяешь ты; "
         "одна исходная строка может обосновывать несколько операций. "
         "Не возвращай строки других пакетов; не придумывай их содержание по манифесту."
@@ -2929,10 +2991,11 @@ def model_rag_next_query_offset(evidence_chunks: Sequence[Any]) -> int:
 def bind_model_requested_read_evidence(
     results: Sequence[Any], *, existing_chunks: Sequence[Any],
     evidence_namespace: str, packet_id: str = "", receipts: Sequence[dict[str, Any]] = (),
+    reserved_query_end: int = 0,
 ) -> tuple[list[str], list[Any], list[str]]:
-    """Give exact model-requested reads fresh handles; preserve full typed bodies."""
+    """Allocate reads after saved handles and the whole declared query range."""
     groups, chunks, omitted = [], [], []
-    offset = model_rag_next_query_offset(existing_chunks)
+    offset = max(model_rag_next_query_offset(existing_chunks), max(0, int(reserved_query_end)))
     for index, result in enumerate(results):
         if not result.chunks:
             continue
@@ -5475,8 +5538,13 @@ def model_rag_prior_page_context(
             "карточками и исходными ячейками, не вердикт о применимости нормы. "
             "code_in_refs=null означает, что сравнить шифр невозможно. "
             "Проверь указанные противоречия; предметные решения принимаешь ты. "
-            "Верни только новые и изменённые операции этого пакета. Неизменённые "
-            "операции и цитаты остаются в документе. Код не изменял предметные решения."
+            + ("При явном пересмотре верни все предложенные прежние операции этого пакета, включая неизменённые. "
+               "Неизменённые предметные поля и цитаты скопируй дословно; сохрани operation_id "
+               "и укажи expected_revision из показанного revision. Пропущенные операции не возвращаются "
+               "в текущий документ автоматически. " if review_rows else
+               "Верни только новые и изменённые операции этого пакета. Неизменённые "
+               "операции и цитаты остаются в документе. ")
+            + "Код не изменял предметные решения."
         ),
     }, retained
 
@@ -9604,7 +9672,9 @@ async def _execute_chat_evidence_application(
                                     native_tools=sheet_read_tools,
                                     required_evidence=pass_evidence,
                                 )
-                            except ContextRequiredSectionOverflow:
+                            except ContextRequiredSectionOverflow as context_error:
+                                retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
+                                    context_error, purpose="sheet_pass_source_frame")
                                 pending_page = model_rag_evidence_page_state(
                                     sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
                                     query_offset=evidence_query_offset,
@@ -9794,6 +9864,8 @@ async def _execute_chat_evidence_application(
                                     messages, answer_packet = govern_inference_messages(
                                         **initial_context, required_evidence=answer_evidence)
                             except ContextRequiredSectionOverflow as context_error:
+                                retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
+                                    context_error, purpose="sheet_pass_answer")
                                 logger.warning(
                                     "[SHEET_PASS] answer overflow sheet=%s: %s",
                                     sheet_name,
@@ -9857,6 +9929,7 @@ async def _execute_chat_evidence_application(
                                 read_receipts.extend(batch_receipts)
                                 groups, chunks, omitted = bind_model_requested_read_evidence(
                                     batch_results, existing_chunks=sheet_pass_evidence_chunks,
+                                    reserved_query_end=evidence_query_offset + len(pass_hits),
                                     evidence_namespace=read_packet_id + ":read:" + str(len(read_receipts)),
                                     packet_id=read_packet_id,
                                     receipts=batch_receipts,
@@ -9933,9 +10006,13 @@ async def _execute_chat_evidence_application(
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
                                         phase=read_stop,
-                                        held_packet=model_rag_with_pending_results(
-                                            {"sheet": sheet_name, "locators": list(packet),
-                                             "model_read_pending": True, "read_stop": read_stop}, pending_result_packets),
+                                        held_packet={**model_rag_evidence_page_state(
+                                            sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
+                                            query_offset=evidence_query_offset,
+                                            query_provenance=pass_query_provenance,
+                                            query_addresses=pass_query_addresses,
+                                            pending_result_packets=pending_result_packets),
+                                            "model_read_pending": True, "read_stop": read_stop},
                                     )
                                 break
                             active_pending_tool_calls = 0
@@ -10125,10 +10202,10 @@ async def _execute_chat_evidence_application(
                             if defer_query_packet:
                                 deferred_query_hits = leftover_query_hits
                                 held_packet = list(packet)
-                                evidence_query_offset = max(
-                                    evidence_query_offset + len(included_hits),
-                                    model_rag_next_query_offset(sheet_pass_evidence_chunks),
-                                )
+                                # Advance this immutable raw-query range only.
+                                # New native/new-packet handles have a separate
+                                # high-water mark and cannot rename its tail.
+                                evidence_query_offset += len(included_hits)
                                 logger.warning(
                                     "[SHEET_PASS] defer leftover query headers "
                                     "sheet=%s shown=%s leftover=%s remaining_rows=%s",
@@ -11080,6 +11157,7 @@ async def _execute_chat_evidence_application(
                             nonlocal active_pending_tool_calls, model_requested_price_basis
                             groups, chunks, omitted = bind_model_requested_read_evidence(
                                 batch_results, existing_chunks=model_evidence_chunks,
+                                reserved_query_end=len(model_rag_query_hits),
                                 evidence_namespace="B0_DIRECT:read:" + str(len(model_evidence_chunks)),
                                 receipts=batch_receipts,
                             )

@@ -3,7 +3,31 @@
 Канонический паспорт совместимости. Версия продукта и номер сборки берутся только из
 [`config/version.json`](../config/version.json). Полный Python-граф фиксирует `uv.lock`.
 
-Таблица описывает candidate 0.31.144/build 872; установлен 0.31.143/build 871
+Таблица описывает candidate `0.31.147`/build`875`/Tauri`5.1.875`;
+установлен `0.31.146`/build`874` commit
+`c4253e38ea9539eb841e993eb373a42665079c0a`. 875 содержит narrow saved-repack
+replay guard и поддержку standalone artifact_kind transport для row decoder.
+Native-capacity resume сохраняет literal query state и truthful overflow trace;
+read binder резервирует весь original query range до новых native Q refs.
+Deferred raw cursor не зависит от native handles и сохраняет исходный alias order.
+Reopened review instruction требует все предложенные прежние операции; ordinary
+continuation сохраняет delta. Код не восстанавливает omitted review rows.
+Pinned pricebook SHA и model-authored rows сохраняются; missing immutable
+artifact/checkpoint не запускает новый расчёт под старой identity.
+Focused cache100/transport139/native-read143/review316 passed. Second875 gates
+после последнего source freeze GREEN: verify25.59s; test3128 passed/20 existing
+skipped/5 warnings318.59s (wrapper320.12s); architecture10.42s/baseline7.86s/
+active artifacts0.61s, все exit0. Receipts: `artifacts/verify_875_second.exit.json`,
+`artifacts/test_875_second.exit.json`, `artifacts/architecture_875_second.exit.json`,
+`artifacts/baseline_875_second.exit.json`, `artifacts/active_artifacts_875_second.exit.json`.
+Exact install и fresh comparative live875 pending; ready не заявлено.
+Installed874 professional FAILED: BAP260.5s, B0~79s без файла, SKS~387s overflow;
+EOM821.75s partial ВОР23/56, первое24-row JSON тело потерял parser (875 replay
+exact-equal). SKS continue16.56s без answer phase, BAP remark738.11s с файлом
+ещё не принят. Готовность заказчику не заявлена.
+
+Следующие замеры относятся к прежнему состоянию872/871:
+candidate 0.31.144/build 872; установлен 0.31.143/build 871
 (`e8657ba38eed88dac8de327b5e4dd9b2999869f4`). API/GUI и 19 runtime hashes сверены;
 native EXE858 retained. Candidate872: UTF-8 Windows prepare fixture, literal
 previously-shown full-code navigation при missing exact read и lossless unread
@@ -32,9 +56,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.146` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `874` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.874` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.147` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `875` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.875` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

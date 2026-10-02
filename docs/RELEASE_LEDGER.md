@@ -1,10 +1,76 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-**Кандидат 0.31.146 / 874; установлен 0.31.145 / 873
-(`a020e0a0ef53d5eb0c6b76c06f717424fd08e8b2`). Готовность заказчику НЕ подтверждена.**
-873 установлен официальным обратимым patch; API/GUI и hashes сверены.
-Native EXE остаётся PE5.1.813. Private873 installer подготовлен и независимо
-проверен (120/120), но installer acceptance и public release не выполнялись.
+**Кандидат 0.31.147 / 875; установлен 0.31.146 / 874
+(`c4253e38ea9539eb841e993eb373a42665079c0a`). Готовность заказчику НЕ подтверждена.**
+875 source scopes frozen: saved repack replay сохраняет exact first arguments,
+business request и applied book SHA; learned provenance/self revision не создают
+новую revision для одинакового UI request с пустым question. Все meaningful
+source/decision/overlay/issues/profile/explicit-basis изменения идут обычным путём.
+Router проверяет actual immutable artifact bytes и complete checkpoint перед
+replay. Missing cache даёт visible409 WORKBOOK_REPACK_CACHE_UNAVAILABLE до
+executor/модели, сохраняя строки и pin; current replacement book не пересчитывает
+старую identity. Controlled actual-router cache scope100 tests passed (8.75s).
+
+Standalone artifact_kind transport line вне JSON/fences больше не мешает
+декодировать единственный полный JSON результата. Target decoder сохраняет
+duplicate/invalid/conflict fail-closed; raw_original и самостоятельные строки
+остаются без правок. RED10fail/11pass → focused139passed (27.61s).
+Actual EOM saved first-result replay даёт24 exact unchanged rows; это parser
+proof, не новый model run и не профессиональная приёмка. Metadata synchronizer
+задаёт package `5.1.875`; dependency graph не менялся, uv.lock только root version.
+Повторные полные875 gates GREEN после последнего source freeze (результаты ниже).
+Exact install и fresh comparative live pending; ready не заявлено.
+
+875 native-capacity pause сохраняет original query texts, provenance, addresses
+и offset вместе с prepared read receipts. Resume восстанавливает cache и не
+генерирует запросы повторно; initial answer overflow публикует точные required/
+available/overflow tokens без model call или ложного NO_DATA. Причинный regression
+выявил native Q11/Q12 поверх ещё не показанных original queries: binder теперь
+начинает после whole reserved query range и всех durable Q refs. Sheet floor —
+query_offset+len(pass_hits), direct — len(model_rag_query_hits); raw IDs/refs/bodies
+и delivery не меняются. Курсор deferred raw queries увеличивается только на
+len(included_hits), независимо от native handles: native Q не переименовывает
+ещё не показанный исходный хвост. Старые ambiguous refs не перенумеровываются, automatic
+binding остаётся unresolved; только уже известный exact saved ID сохраняется.
+Binder RED4fail/1controlpass→40GREEN; полный focused143passed (17.55s), включая
+actual prepared-read resume и unchanged capacity overflow. Это offline proof,
+не успешный installed874 SKS continue и не fresh875 professional acceptance.
+
+Reopened engineer review теперь имеет согласованный transport contract в четырёх
+system/user clauses: обычное continuation остаётся delta; явный пересмотр
+требует все предложенные прежние операции текущего пакета. Неизменённые поля/
+цитаты модель повторяет дословно с прежним operation_id и expected_revision из
+показанного revision. Reopen удаляет эти операции из active accepted, сохраняя
+prior history; инструкция больше не обещает автоматического сохранения omitted
+review rows в текущем документе. Код не восстанавливает/подтверждает/выбирает
+нормы или роли и не запускает добавочный model cycle. RED3 → focused316passed
+(30.36s): actual fake-chat full/cut frames, normal delta, existing sheet/chat/
+research-reopen/plain-continuation. Independent read-only review без critical.
+Live874 R18/R19 остаются pending review, не authored rejection и не исправленная
+окраска. Вторые exact875 gates после последнего source freeze GREEN:
+verify25.59s; test3128 passed /20 existing skipped /5 warnings,318.59s
+(wrapper320.12s); architecture10.42s, pinned baseline7.86s, active artifacts0.61s;
+все exit0. Receipts: `artifacts/verify_875_second.exit.json`,
+`artifacts/test_875_second.exit.json`, `artifacts/architecture_875_second.exit.json`,
+`artifacts/baseline_875_second.exit.json`, `artifacts/active_artifacts_875_second.exit.json`.
+Exact install и fresh comparative live875 ещё pending; readiness не заявлена.
+
+Installed874 natural: BAP B1 260.5s/1 XLSX professional FAILED; B0~79s без файла.
+SKS~387s overflow, source/accepted decisions остаются durable. Отдельный saved
+repack дал50-row partial file; identical empty-question replay changed revision/hash
+(causal receipt `artifacts/live_874/sks_saved_repack/{before,response,replay,replay_diff}.json`).
+EOM821.75s/1 actual VOR:46 accepted rows/23 из56 locators, роли21material/24work/
+1header. Firstpacket24 rows потерял standalone-marker parser; 875 exact replay
+исправляет transport. Final remaining33 сохраняет все gaps; source unit/quantity
+issues и partial watermark остаются. Bounded audit:
+`artifacts/live_874/eom_vor_natural_candidate/inspector_causal_report_874.json`.
+SKS ordinaryContinue16.56s:23/75,0works/0money,query1/no answer phase — FAILED;
+`artifacts/live_874/sks_plain_continue`, job`wrj_76b7bc6247834ca88c2af8840be19c69`.
+BAP engineer remark738.11s создал файл, пока не принят профессионально.
+
+Ниже сохранены предыдущие измерения873 и реализация874; их тогдашний pending
+статус не описывает установленную текущую версию. Private873 installer имел
+независимую проверку120/120; installer acceptance и public release не выполнялись.
 
 Natural873 BAP baseline/candidate:339.3s/209.03s, оба с XLSX, исходные19объёмов
 совпадают; подтверждённая сумма0, предварительно319056.74/313263.80.
@@ -38,14 +104,14 @@ query repair или добавочного модельного вызова. Li
 plain continuation не меняет его молча, новое замечание может уточнить выбор.
 Repack без первой ревизии не обходит unresolved/conflicting target.
 Неоднозначный выбор остаётся видимым packaging pending, решения сохраняются.
-Активный старый профиль содержит legacy skill; attachment overlay добавлял
+До fresh874 старый профиль содержал legacy skill; attachment overlay добавлял
 также текущую инструкцию. Чистый immutable single-skill trial подготовлен,
-не активирован: модель, tools, RAG policy и token settings сохранены.
+тогда не активирован: модель, tools, RAG policy и token settings сохранены.
 
 Общие874 gates passed: verify3100 collected, test3080 passed/20 existing opt-in
 skipped (295.39s), architecture/baseline/active-root exit0. Первый gate сохраняет
 6 выявленных и затем исправленных регрессий; receipts `artifacts/*_874_second`.
-Map/docs/31 metadata tests passed. Установка и fresh comparative live ожидаются.
+Map/docs/31 metadata tests passed. Exact874 установлен; его natural results выше.
 Промежуточные файлы не являются доказательством готовности инженеру/заказчику.
 
 ## Предыдущие замеры (статус относится к моменту измерения)

@@ -885,6 +885,7 @@
         "sovushka/pages/chat.py",
         "sovushka/state.py",
         "tests/test_runtime_paths.py",
+        "tests/test_workbook_repack_target.py",
         "tools/gesn_fgis_overlay_import.py",
         "tools/gesn_update_from_fgis.py",
         "tools/smeta_generation_coordinator.py"
@@ -1678,7 +1679,7 @@
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_repack_target.py"
       ],
-      "lines": 4742,
+      "lines": 4797,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -1698,6 +1699,7 @@
         "proxy/services/candidate_acceptance_service.py",
         "proxy/services/canonical_promotion_service.py",
         "proxy/services/canonical_route_service.py",
+        "proxy/services/chat_attachment_service.py",
         "proxy/services/chat_capability_scope_service.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/chat_evidence_manifest_service.py",
@@ -2811,6 +2813,7 @@
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_vor_input_transport.py",
+        "tests/test_workbook_repack_target.py",
         "tests/test_workbook_tool_service.py"
       ],
       "lines": 225,
@@ -3082,6 +3085,7 @@
     },
     {
       "inbound": [
+        "proxy/routers/chat.py",
         "proxy/routers/datasets.py",
         "proxy/services/attachment_source_catalog_service.py",
         "proxy/services/smeta_chat_application_service.py",
@@ -3165,10 +3169,11 @@
         "tests/test_workbook_artifact_target.py",
         "tests/test_workbook_chat_refinement.py",
         "tests/test_workbook_partial_draft.py",
+        "tests/test_workbook_repack_target.py",
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12622,
+      "lines": 12700,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4148,6 +4153,7 @@
         "tests/test_smeta_chat_service.py",
         "tests/test_smeta_release_baseline.py",
         "tests/test_sovushka_chat.py",
+        "tests/test_workbook_repack_target.py",
         "tools/build_smeta_service_rag.py",
         "tools/les_mcp_server.py",
         "tools/smeta_release_baseline.py"
@@ -4893,7 +4899,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_model_result_resource_actions.py"
       ],
-      "lines": 2232,
+      "lines": 2233,
       "module": "proxy.services.lsr_norm_quality_gate_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4968,6 +4974,7 @@
         "tests/test_model_result_resource_code.py",
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_sovushka_chat.py",
+        "tests/test_workbook_repack_target.py",
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
@@ -5438,7 +5445,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 396,
+      "lines": 408,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -5764,6 +5771,7 @@
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_reasoning_control.py",
         "tests/test_openai_compatible_transport_service.py",
+        "tests/test_workbook_chat_refinement.py",
         "tools/model_connection_live_acceptance.py"
       ],
       "lines": 534,
@@ -7837,10 +7845,11 @@
         "tests/test_workbook_chat_refinement.py",
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_plain_continuation.py",
+        "tests/test_workbook_repack_target.py",
         "tests/test_workbook_research_job_service.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 2854,
+      "lines": 2856,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7893,6 +7902,7 @@
         "proxy/routers/chat.py",
         "proxy/services/workbook_tool_service.py",
         "tests/test_vor_input_transport.py",
+        "tests/test_workbook_repack_target.py",
         "tests/test_workbook_tool_service.py",
         "tests/test_workflow_checkpoint_service.py"
       ],
@@ -12189,7 +12199,7 @@
     },
     {
       "inbound": [],
-      "lines": 501,
+      "lines": 567,
       "module": "tests.test_model_evidence_read_contract",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -12230,7 +12240,7 @@
     },
     {
       "inbound": [],
-      "lines": 107,
+      "lines": 185,
       "module": "tests.test_model_lsr_result_contract",
       "outbound": [
         "proxy/services/lsr_norm_quality_gate_service.py",
@@ -12410,7 +12420,7 @@
         "tests/test_model_query_reasoning.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 1011,
+      "lines": 1050,
       "module": "tests.test_model_rag_sheet_evidence_reads",
       "outbound": [
         "proxy/routers/chat.py",
@@ -15618,10 +15628,11 @@
     },
     {
       "inbound": [],
-      "lines": 170,
+      "lines": 266,
       "module": "tests.test_workbook_chat_refinement",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/openai_compatible_transport_service.py",
         "proxy/services/workbook_research_job_service.py"
       ],
       "path": "tests/test_workbook_chat_refinement.py",
@@ -15654,11 +15665,18 @@
     },
     {
       "inbound": [],
-      "lines": 135,
+      "lines": 369,
       "module": "tests.test_workbook_repack_target",
       "outbound": [
+        "backend/runtime_paths.py",
         "proxy/routers/chat.py",
-        "proxy/services/attachment_source_catalog_service.py"
+        "proxy/services/artifact_revision_service.py",
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/fgis_price_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
+        "proxy/services/workbook_research_job_service.py",
+        "proxy/services/workflow_checkpoint_service.py"
       ],
       "path": "tests/test_workbook_repack_target.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -20356,7 +20374,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 700,
     "tracked_python_files": 1082,
-    "tracked_python_lines": 378855
+    "tracked_python_lines": 379516
   },
   "warnings": []
 }

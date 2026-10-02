@@ -1,5 +1,67 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-02 — candidate875: reopened review was contradicted by delta instructions
+
+Actual874 BAP engineer remark left painting R18/R19 transport_pending. Original
+decisions survive in prior history; reopen removes them from active accepted.
+Four system/user clauses nevertheless promised unchanged rows remain and only
+new/changed operations need return. A late user overlay cannot remove a system
+contradiction. The narrow correction separates ordinary continuation delta from
+explicit review full response: model returns all offered prior operations,
+unchanged fields/citations copied literally with old operation_id and
+expected_revision=shown revision. No old row is auto-restored/confirmed, no norm
+or role is chosen by code, no schema handshake or extra model cycle is added.
+RED3 old-wire failures → focused316passed (30.36s), actual full/cut fake-chat
+frames and existing normal-delta behavior. Full returns unchangedA+changedB;
+cut preserves active0/remaining2 and original prior event. Independent read-only
+review finds no critical issue within scope. This does not prove painting quality
+or live review completion. First875 gates predate this source freeze; second
+exact gates/install/comparative live remain necessary, customer readiness pending.
+
+## 2026-10-02 — candidate875: native-capacity resume exposed alias collision
+
+Installed874 SKS plainContinue16.56s remained23/75,0 works/0 money, query1 and
+no answer phase; this remains FAILED. Root's causal offline repair preserves
+original held query texts/provenance/addresses/offset after native capacity pause
+and reports initial answer required/available/overflow before inference. Strong
+saved-read resume then exposed native price Q11/Q12 allocated after only10 shown
+query groups while39 original queries owned that range. The binder now reserves
+all query indices (including unshown/empty groups) and existing durable handles
+before new native Q. The held raw cursor advances only by included queries;
+native high-water marks cannot rename its tail. Original aliases, bodies, identities and delivery flags are
+unchanged; old ambiguous unbound refs remain unresolved without auto-renumbering.
+Binder RED4fail/1migrationcontrolpass→40GREEN; whole focused143passed (17.55s),
+including actual unchanged saved bindings/read bodies and same-bound overflow.
+No live875 call or professional acceptance follows from these fixtures.
+
+## 2026-10-02 — installed874: empty-question repack drift and VOR marker row loss
+
+Exact runtime `c4253e38ea9539eb841e993eb373a42665079c0a`. Saved SKS partial
+repack created50 rows, but the second identical UI request with empty question
+changed revision/hash: requested region/quarter gained learned book/self-revision
+and changed origin notes. Real receipt: `artifacts/live_874/sks_saved_repack/`
+before/response/replay/replay_diff. 875 records exact first arguments plus
+server-owned immutable request/applied pin; repeated business input reuses them.
+Changed source/rows/overlays/issues/profile or explicit basis remains new input.
+Controlled replacement same-book bytes cannot reprice the old revision; missing
+artifact/checkpoint returns explicit409 before executor/inference. Focused100 pass.
+
+EOM874821.75s produced actual draft VOR46 rows/23 of56 locators, target literalvor.
+First result was standalone `artifact_kind: vor` followed by valid naked JSON24
+rows; parser found0, with finishstop/truncatedFalse/no transport diagnostics.
+875 row decoder skips only that outer transport line; saved replay returns all24
+original rows exactly. Artifact target duplicates/invalid/conflicts still fail
+independently; no quantities/norm choices are repaired. RED10fail/11pass→139GREEN.
+Bounded proof: `artifacts/live_874/eom_vor_natural_candidate/inspector_causal_report_874.json`
+and inspector_decoder_replay_proof_875.json. Final remaining33 preserves all
+unanswered locators; XLSX keeps21 material/24 work/1 header, authored quantities
+and sources unchanged. This is partial draft evidence, not professional acceptance.
+
+Installed874 BAP260.5s professional FAILED; B0~79s no artifact; SKS~387s overflow.
+SKS explicit continue16.56s still23/75,0 works/0 money/no answer phase: FAILED.
+BAP engineer remark738.11s creates a file, professional acceptance pending.
+875 full gates/install/live remain pending; no customer-ready claim.
+
 ## 2026-10-02 — installed872: answer truncation and malformed exact readers
 
 Fresh same-identity BAP controls:no overflow, neither produced XLSX. B0length at

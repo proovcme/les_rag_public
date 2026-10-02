@@ -599,16 +599,19 @@ async def test_resumed_zero_decision_job_can_cite_saved_native_reads_and_preserv
               if record["doc_name"] == "fgis_pricebook_resources.v1"}
     # A new declared runtime bound is explicit; source/model/revision/task are identical.
     run.connection.effective_preset = replace(run.connection.effective_preset, input_token_limit=100_000)
-    run.responses[:] = [InferenceResponse(text="\n".join(run.declared_queries), tool_calls=(), finish_reason="stop", usage={}),
-                        InferenceResponse(text=_answer(refs=(prices[RESOURCE_A], prices[RESOURCE_B])),
-                                          tool_calls=(), finish_reason="stop", usage={})]
+    run.responses[:] = [InferenceResponse(text=_answer(refs=(prices[RESOURCE_A], prices[RESOURCE_B])),
+                                         tool_calls=(), finish_reason="stop", usage={})]
     requests_before = len(run.requests)
     reads_before = len(run.exact_reads)
+    queries_before = list(run.queries)
     resumed = await run.resume_same_request()
-    assert len(run.requests) == requests_before + 2 and len(run.exact_reads) == reads_before
+    assert len(run.requests) == requests_before + 1 and len(run.exact_reads) == reads_before
+    assert run.queries == queries_before
     assert len(run.executions) == 1 and not run.responses
     rows = run.executions[0][0]["args"]["decisions"]
-    assert all(row["evidence_bindings"] and row["_resource_evidence_check"]["code_in_refs"] for row in rows)
+    assert all(row["evidence_bindings"] and row["_resource_evidence_check"]["code_in_refs"] for row in rows), [
+        {key: row.get(key) for key in ("source_row", "resource_code", "evidence_refs", "evidence_bindings", "_resource_evidence_check")}
+        for row in rows]
     frame = "\n".join(str(m["content"]) for m in run.requests[-1].messages)
     assert "fixture-resource-21" in frame and all(ref in frame for ref in prices.values())
     visible_refs = [item["id"] for item in resumed["retrieval_trace"]["evidence_manifest"]["model_visible"]]
@@ -622,6 +625,38 @@ async def test_resumed_zero_decision_job_can_cite_saved_native_reads_and_preserv
         assert record["meta"]["model_delivery_status"] == "delivered"
         assert record["content"] == previous["content"]
     assert resumed["retrieval_trace"]["model_execution_profile"]["context_input_tokens"]["effective"] == 100_000
+
+
+@pytest.mark.asyncio
+async def test_native_capacity_resume_reuses_literal_queries_and_exposes_unchanged_overflow(tmp_path, monkeypatch):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35, input_token_limit=20_000,
+                           candidate_padding=1200, native_read_batch=True, exact_resource_padding=40_000)
+    job_id = run.result["retrieval_trace"]["workbook_research_job"]["job_id"]
+    store = WorkbookResearchJobService()
+    paused = store.get(job_id)
+    assert paused["accepted_rows"] == []
+    saved = [row for row in paused["evidence"] if row["meta"].get("model_read_packet_id")]
+    assert saved and all(row["meta"]["model_delivery_status"] == "prepared" for row in saved)
+    requests_before, reads_before = len(run.requests), len(run.exact_reads)
+    literal_queries = list(run.queries)
+    run.responses[:] = []  # A replay that still cannot fit must not call the model again.
+
+    resumed = await run.resume_same_request()
+
+    assert len(run.requests) == requests_before and len(run.exact_reads) == reads_before
+    assert run.queries == literal_queries and not run.executions
+    capacity = resumed["retrieval_trace"]["context_governor"]["error"]
+    assert capacity["purpose"] == "sheet_pass_answer"
+    assert capacity["required_tokens"] > capacity["available_tokens"]
+    assert capacity["overflow_tokens"] == capacity["required_tokens"] - capacity["available_tokens"]
+    replayed = store.get(job_id)
+    by_id = {row["global_evidence_id"]: row for row in replayed["evidence"]}
+    for original in saved:
+        assert by_id[original["global_evidence_id"]]["content"] == original["content"]
+        assert by_id[original["global_evidence_id"]]["meta"]["model_delivery_status"] == "prepared"
+    assert replayed["remaining"] == paused["remaining"]
 
 
 @pytest.mark.asyncio
@@ -648,6 +683,10 @@ async def test_terminal_sheet_result_packages_before_35_candidate_groups_are_dra
     assert run.executions[0][1]["checkpoint"]["status"] == "complete"  # Mechanical packaging succeeded.
     assert trace["attachment_integrity"]["omitted_source_locators"] == (["S!R3"] if partial_final else [])
     assert job["held_packet"]["queries"]
+    # Native Q handles reserve their own high-water mark. They must not move
+    # the original query-tail cursor or rename its already offered aliases.
+    raw_query_count = len(job["query_cache"])
+    assert job["held_packet"]["query_offset"] == raw_query_count - len(job["held_packet"]["queries"])
     assert len(job["held_packet"]["terminal_packets"]) == 1
     assert set(run.declared_queries) <= set(job["query_cache"])
     for query in job["held_packet"]["queries"]:
