@@ -1,12 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Кандидат879(0.31.151); установлен878 `cc6d8b5d`, ready НЕ подтверждено.**
+> **Установлен879(0.31.151) `1b5c0b40`, ready НЕ подтверждено.**
 > `core/chat-evidence`: native capacity stop остаётся technical_pending с
 > точной job.phase; held packet исключён только из диагностики never-offered.
 > Модельные строки/решения и closure не меняются. Causal RED→focused48passed;
-> canonical8793178passed/20existing skipped, verify/architecture/docs exit0; install879 pending. Installed878 exactSHA/smoke9PASS/1WARN подтверждены.
+> canonical8793178passed/20existing skipped, verify/architecture/docs exit0; install879 exactSHA подтверждён. Basic879 FAILED: два timeout180s; позднее ответы завершились225/266s, один содержит raw tool markup. NativeRRF exit0.
 > Live878 thinking B0:11rows/confirmed0; B1:4norm cards prepared, continuation
 > blocked54351/46171estimated tokens. Price-pointer path не вызван. Не ready.
+> Reversible96Ki снял capacity barrier, но через1620s контролируемая пауза:
+> 19rows/confirmed0, norm/ref mismatch; KV/LES65536 восстановлены. Ledger содержит
+> corrected child-job lineage и провал обычного chat gate. Alibaba879 — отдельный
+> диагностический B0, не release acceptance.
 >
 > **878(0.31.150), doc↔installed-code ✅:**
 > `core/chat-evidence`: `model_pricebook_evidence_service` переносит буквальные

@@ -3,11 +3,15 @@
 Канонический паспорт совместимости. Версия продукта и номер сборки берутся только из
 [`config/version.json`](../config/version.json). Полный Python-граф фиксирует `uv.lock`.
 
-Таблица описывает candidate `0.31.151`/build`879`/Tauri`5.1.879`;
+Таблица описывает исходники `0.31.151`/build`879`/Tauri`5.1.879`;
 879 сохраняет техническую причину native capacity stop в итоговой диагностике.
 Dependency graph прежний; related48passed, canonical8793178passed/20existing
-skipped, verify/architecture/docs exit0. Install879 pending.
-Последний установленный контроль:
+skipped, verify/architecture/docs exit0. Установлен Python runtime879,
+commit `1b5c0b40564b199895584e20caa3a9a3663dee60`, exact stamp/rawSHA проверены.
+NativeRRF exit0; basic smoke7PASS/1WARN/2FAIL (оба chat timeout180s).
+Поздняя история: завершены225/266s, research deadline после5/8 web calls,
+raw tool markup в одном ответе. Приёмка не пройдена; native EXE5.1.813 сохранён.
+Предыдущий установленный контроль:
 установлен Python runtime `0.31.150`/build`878` commit
 `cc6d8b5d58e8a5536bcceb1efcb8283d612b7d76`: metadata имени/единицы ценовых
 кандидатов. Focused131passed; canonical3177passed; exact install/SHA/nativeRRF

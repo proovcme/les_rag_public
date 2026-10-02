@@ -1,6 +1,6 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-**Кандидат 0.31.151 / 879; установлен878(`cc6d8b5d`). Готовность НЕ подтверждена.**
+**Установлен 0.31.151 / 879 (`1b5c0b40564b199895584e20caa3a9a3663dee60`). Готовность НЕ подтверждена.**
 
 879 исправляет только техническую диагностику native capacity stop: job.phase
 сохраняет причину остановки, уже предъявленный held packet не называется
@@ -9,7 +9,66 @@ technical_pending, а не ошибкой формата модели. Accepted/
 профессиональные решения не меняются. Causal RED воспроизведён; связанные
 sheet/native suites48passed. Isolated canonical879:3178passed/20existing skipped/
 5warnings,232,27s(wrapper233,84s). Version/compile/collect/architecture/map/docs/
-assets/metadata exit0; artifacts/gates_879/. Install/live879 pending.
+assets/metadata exit0; artifacts/gates_879/.
+
+Installed879: exact API stamp/raw hashes проверены
+(`artifacts/live_879/installed_patch_hashes.json`), rollback
+`artifacts/rollback_878_to_879/manifest.json`. Native RRF smoke exit0(1,20s).
+Basic smoke FAILED:7PASS/1WARN/2FAIL,362,42s; оба chat запроса превысили180s.
+Это сохранённый провал, не исправленный увеличением timeout. Поздняя история
+подтвердила завершение:225,058s и266,086s, generation218,418s и213,466s.
+Модель выполнила5/8 web_search и достигла research deadline; первый ответ
+содержит raw tool markup. Очередь и provider затем idle; зависание не доказано.
+Диагностика overall=ok, warning только отсутствие проверяемых ответов Т.О.С.К.А.
+Receipts: `artifacts/live_879/smoke/`, включая `late_summary.json`.
+Новый установщик/публичный выпуск не создавался; native EXE5.1.813 сохранён.
+
+Отдельный 878 context96Ki контроль завершён остановкой оператора после1620,2s.
+Физический KV и LES limit действительно были98304. Сохранённые4 карточки
+прошли прежний capacity barrier; последующие3 read_norm_card также выполнены.
+Продолжение создало связанный child `wrj_971d3e995098466581ac9eb5b7290aae`
+с `continues_job_id=wrj_12209b012f684a73933e9e27ba67ac04`; прежнее поле
+observer receipt.same_job ошибочно читало parent и не является доказательством.
+Корректирующее свидетельство: `bap_ft_thinking_resume96/continuation_audit.json`.
+19 строк =16work+3unresolved, confirmed0/preliminary334539,20. PDF!R6 имеет
+несовпадение выбранного шифра с cited card. Auxiliary PDF_TEXT породил194 query
+groups; контролируемая пауза сохранила XLSX, но не доказывает естественное завершение.
+XLSX SHA44868300d80cf599ed07e819a38e114bc9c027fb32a8db679c3821db5151d380;
+физический KV/LES65536 и локальное подключениеr8 восстановлены.
+Увеличение контекста сняло конкретный технический барьер, качество не подтвердило.
+
+Alibaba879 thinking B0 на полном исходном БАП остановлен оператором после1090,53s
+(wrapper1090,92s), итогового ответа/XLSX нет: measurement_incomplete, не измерение
+качества норм. Владелец до запуска сообщил472758 бесплатных токенов и подтвердил
+Free Quota Only. Обнаружена неверная семантика установленного wire-limit:
+по [официальному API Alibaba](https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions)
+`max_tokens` исключает reasoning; без effort/budget default thinking_budget131072
+и effort xhigh. Поэтому answer limit16384 не был общим output-limit этой пробы.
+Это объясняет риск длинного рассуждения, но число потраченных токенов неизвестно:
+прерванный запрос не вернул usage. Нельзя считать472758 текущим остатком.
+Нет автоматического повтора или вывода о качестве модели по этому прерыванию.
+Перед штатным runtime restart проверено: единственный новый active chat —
+наш `codex-live-selected-1c6aeb1dfe04`, иных jobs/локального inference нет.
+Bindings/scopes/consent восстановлены: `artifacts/live_879/cloud_control/restored.json`.
+
+Через существующий публичный settings API создана Alibaba revisionr4:
+max_completion_tokens, reasoning_mode=effort, enabled_effort=medium,
+requested_output_tokens32768. Это общий per-call ceiling, а не aggregate quota
+guard; фактический лимит также ограничивается выбранным профилем. Query reasoning
+off сериализуется как effort=none. Секрет не читался/не менялся; основная роль
+осталась FreeTokenr8. Минимальные probes chat/stream/tools/models supported;
+65 offline tests chat-options/registry/transport passed. Receipts:
+`artifacts/live_879/alibaba_quota_config/`. Новая сборка для этой настройки не нужна.
+После контроля владелец сообщил: остаток бесплатной квоты0. Все дальнейшие cloud
+вызовы остановлены, включая probes. Основная модель FreeTokenr8, cloud consent
+false, scopes возвращеныP0, очередь0. Расход отдельных прерванных calls не
+реконструируется как факт без provider usage. Нулевые process-local счётчики
+после restart не означают нулевой расход. Отсутствие aggregate token guard —
+зафиксированная ошибка организации этого контроля; исправленный per-call ceiling
+не является заменой такому guard.
+История собственного прерванного B0 остаётся in_progress при пустой runtime queue:
+это stale history marker, не доказательство продолжающейся генерации. Readiness
+и восстановление такого статуса после restart остаются открытым дефектом.
 
 Установлен878 `cc6d8b5d58e8a5536bcceb1efcb8283d612b7d76`: exact API stamp и
 11raw file hashes совпали; rollback `artifacts/rollback_877_to_878/manifest.json`.

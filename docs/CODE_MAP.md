@@ -1,10 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
-> **879 candidate; installed878 `cc6d8b5d`:**
+> **879 installed `1b5c0b40`:**
 > `chat_evidence_application_service` сохраняет native read_stop в job.phase и
 > technical_pending; held read packet не попадает в diagnostic never-offered.
 > Accepted/remaining/closure и выбор норм неизменны. Regression RED→48passed;
-> canonical8793178passed/20existing skipped, verify/architecture/docs exit0; install879 pending. Live878 professional gate FAILED, детали в ledger.
+> canonical8793178passed/20existing skipped, verify/architecture/docs exit0;
+> installed stamp/rawSHA подтверждены. Basic879 FAILED: два timeout180s,
+> поздние ответы225/266s, raw tool markup в одном. NativeRRF exit0.
+> Live878 professional gate FAILED, включая reversible96Ki. Детали в ledger;
+> отдельный Alibaba879 diagnostic B0 не отменяет не пройденные гейты.
 >
 > **878 installed `cc6d8b5d`:**
 > `model_pricebook_evidence_service.read_pricebook_evidence` переносит literal
