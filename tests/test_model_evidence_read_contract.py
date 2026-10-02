@@ -85,6 +85,60 @@ def test_read_frame_preserves_source_and_decisions_without_duplicate_bodies():
     assert "previously_shown_cited_evidence" in context[0]
 
 
+def test_large_shown_inventory_replays_without_verbose_registry_inflation():
+    from proxy.services import chat_evidence_application_service as service
+    from test_model_rag_grouped_evidence_service import _body, _rules
+
+    rules = _rules()
+    hits = []
+    for index in range(150):
+        meta = {"norm_key": f"immutable-{index}", "norm_code": f"CODE-{index}",
+                "title": f"Literal candidate {index}", "measure_unit": "m",
+                "source_ref": f"literal-source-{index}-" + "s" * 150,
+                "edition": "exact-edition", "base_type": "fixture",
+                "nr_sp_candidates": rules}
+        hits.append((f"literal model query {index}", [SimpleNamespace(
+            content=_body(rules, token=f"body-{index}", padding=1500),
+            doc_name="catalog", doc_id="", score=1.0, meta=meta)]))
+    groups, chunks, deferred = service.build_model_rag_evidence_groups(
+        hits, max_chars=45_000, hits_per_query=1)
+    assert deferred and any(c.meta["body_status"] == "full" for c in chunks)
+    preset = ModelExecutionPreset(preset_id="inventory-replay", model_family="fixture",
+        input_token_limit=100_000, generation_reserve_tokens=5000, safety_reserve_tokens=100,
+        normal_tool_count=5, max_tools=5, max_batch_items=5, parallel_read_limit=1,
+        reasoning_enabled=False, source_chain=("test",))
+    source = {"original_attachment_context": "literal original attachment",
+              "source_rows": ["S!R2", "S!R3"], "prior_model_decisions": [{"operation_id": "op1"}]}
+    _, initial = govern_inference_messages(preset=preset, profile_prefix="profile",
+        request_payload="literal original question", required_evidence=[source, *groups])
+    frame = model_read_frame_evidence([source], chunks, [])
+    messages, replay = govern_inference_messages(preset=preset, profile_prefix="profile",
+        request_payload="literal original question", required_evidence=frame)
+    assert replay.included_tokens <= initial.included_tokens * 1.1
+    text = "\n".join(message["content"] for message in messages)
+    assert "literal original attachment" in text and "literal original question" in text
+    registry = next(item for item in frame if isinstance(item, dict)
+                    and "previously_shown_evidence_registry" in item)
+    full_refs = {c.meta["model_evidence_ref"] for c in chunks if c.meta["body_status"] == "full"}
+    assert {row["evidence_ref"] for row in registry["previously_shown_evidence_registry"]} == full_refs
+    for chunk in chunks:
+        if chunk.meta["body_status"] == "deferred_capacity":
+            assert chunk.content in text
+        else:
+            assert chunk.content.splitlines()[-1] in text
+
+
+def test_deferred_capacity_never_replays_an_unshown_raw_body():
+    chunk = SimpleNamespace(doc_name="catalog", content="UNSHOWN FULL RESOURCE BODY", meta={
+        "model_evidence_ref": "Q1.H1", "global_evidence_id": "immutable-deferred",
+        "body_status": "deferred_capacity", "norm_key": "literal-key", "norm_code": "CODE-1",
+        "title": "Literal identity", "source_ref": "literal-source", "measure_unit": "m"})
+    frame = model_read_frame_evidence(["literal source row"], [chunk], [])
+    text = json.dumps(frame, ensure_ascii=False)
+    assert "UNSHOWN FULL RESOURCE BODY" not in text
+    assert "Q1.H1" in text and "CODE-1" in text and "deferred_capacity" in text
+
+
 def test_native_tool_schema_payload_reserves_capacity_without_text_duplication():
     preset = ModelExecutionPreset(preset_id="native-budget", model_family="fixture",
         input_token_limit=4000, generation_reserve_tokens=200, safety_reserve_tokens=100,

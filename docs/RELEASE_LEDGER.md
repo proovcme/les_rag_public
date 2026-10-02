@@ -1,6 +1,50 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-**Кандидат 0.31.139 / 867; установлен 0.31.138 / 866 (`99d47599`).**
+**Кандидат 0.31.140 / 868; установлен 0.31.139 / 867 (`6794f8ed`).**
+867 установлен официальным patch deploy: 19 файлов совпали с HEAD/workspace/runtime,
+rollback 866 сохранён. Native RRF smoke exit0 (0.93s), basic smoke 9 passed /
+1 existing diagnostic warning / 0 failed (137.22s). Receipts:
+`artifacts/live_867/{installed_patch_hashes.json,step_*.exit.json,smoke/}`.
+При одинаковом исходнике/задаче/модели/профиле fresh B0 закончился до RAG:
+8191 completion tokens, finish=length, final_chars=0, zero accepted/rejected
+queries. Это измеренная незавершённая генерация, не отказ JSON-reader.
+B1 за 274.67s получил 72 hits по 12 searches и выполнил три native `read_norm_card`,
+но остановился с `evidence_read_capacity`, не получив итоговых строк:
+0 accepted / 19 remaining, paused, no downloadable artifact. Начальный
+answer frame использовал 46193 из 46274 input tokens; native continuation
+не записан. Receipts: `artifacts/live_867/bap_lsr_{baseline,candidate}/`.
+Исходный профиль оператора восстановлен, модель/подключение/context/GPU не менялись.
+**Профессиональная приёмка FAILED; готовность заказчику не заявлена.**
+
+868 добавляет явный optional `model_policy.query_reasoning_enabled`: отсутствие
+наследует общий режим; query и query repair используют свой typed execution preset,
+answer/native reads — общий. Параметр виден в immutable Profiles GUI и runtime
+requested/effective/source, restart=false. Это контроль транспорта/бюджета, а не
+подтверждение применимости нормы или способ заменить решение модели кодом.
+Пустой результат project-ingest получает `ERROR / NO_SEARCHABLE_CONTENT` до
+удаления старых points, lexical/rules; batch продолжает следующий файл. UI
+не выдаёт legacy `INDEXED` с нулём chunks за доступное evidence и показывает причину.
+Frozen offline gate 868: verify exit0 (22.86s), canonical **2745 passed /
+20 existing opt-in skipped / 5 warnings** (263.29s pytest, 264.80s wrapper),
+architecture exit0 (9.56s), pinned baseline exit0 (7.28s), active-artifacts
+verify-root exit0 (0.61s). Receipts: `artifacts/*_868.{log,exit.json}`.
+Final source recheck after the B0 GUI metadata fallback: verify exit0 (22.39s),
+canonical 2745 passed / 20 existing opt-in skipped / 5 warnings (263.74s pytest,
+265.19s wrapper), architecture exit0 (9.52s), pinned baseline exit0 (7.23s),
+active-artifacts verify-root exit0 (0.61s). Receipts: `artifacts/*_868_second.{log,exit.json}`.
+Installed live и exact installer 868 пока pending; бизнес-готовность не заявлена.
+Native continuation теперь сохраняет literal полные тела отдельно от компактных
+непрочитанных pointers и exact shared catalogs. Unshown stored body не выдаётся
+за прочитанный; SHA/edition не объединяются. Запас native роста вычисляется
+внутри bound answer window и ограничен минимальной первой целой группой; первая
+ранее помещавшаяся группа не блокируется резервом. Requested/effective/source
+показаны в trace и существующих технических деталях GUI. Ограничение истинно
+слишком больших новых карточек сохраняет техническую паузу и checkpoint.
+Focused: query/profile/transport 218 passed; native/context five-suite 127 passed
+и adversarial first-group margin 1 passed; documents/UIKit 56 passed;
+chat/UIKit metadata 180 passed. Это не live подтверждение качества нормы.
+
+**Предыдущий замер 0.31.139 / 867 перед установкой.**
 866 установлен официальным patch deploy; 13 файлов совпали с commit/workspace,
 rollback 865 сохранён. Native RRF smoke exit0 (0.92s), базовый release smoke
 9 passed / 1 diagnostic warning / 0 failed (141.94s), alignment 96/96.
@@ -29,7 +73,7 @@ prior-operations дефект и не нашёл новых P1/P2 в native/term
 gate: verify exit0 (22.61s), 2696 passed / 20 existing opt-in skipped / 5 warnings
 (253.71s), architecture exit0 (9.31s), pinned baseline exit0 (7.53s). Первый
 замер сохранён отдельно. `artifacts/*_867_second.{log,exit.json}`.
-Installed live и exact installer 867 пока pending; приёмка FAILED сохраняется.
+Installed live 867 измерен выше и FAILED; exact installer 867 не принят.
 
 **Кандидат 0.31.138 / 866; установлен 0.31.137 / 865 (`dd785f05`).**
 865 установлен официальным patch deploy: commit/workspace/runtime SHA совпали,

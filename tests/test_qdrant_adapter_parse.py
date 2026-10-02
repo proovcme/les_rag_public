@@ -587,6 +587,7 @@ def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch
 
 def test_sync_parse_skips_empty_sparse_noise_without_rejecting_pdf(tmp_path, monkeypatch):
     monkeypatch.setenv("RAG_QDRANT_SCHEMA", "named")
+    monkeypatch.setattr(qdrant_adapter, "current_dataset_revision_id", lambda *_args: "")
     dataset_dir = tmp_path / "ds-1"
     dataset_dir.mkdir()
     (dataset_dir / "doc.pdf").write_bytes(b"%PDF placeholder")
@@ -632,6 +633,184 @@ def test_sync_parse_skips_empty_sparse_noise_without_rejecting_pdf(tmp_path, mon
     assert len(upserts) == 1
     assert upserts[0].payload["doc_id"].startswith("valid:")
     assert upserts[0].vector["bm25_sparse"].indices
+
+
+def _preserved_evidence_parse_harness(tmp_path, monkeypatch, nodes_by_name):
+    """Exercise the real parse loop against in-memory evidence and document state."""
+    monkeypatch.setenv("RAG_QDRANT_SCHEMA", "named")
+    monkeypatch.setattr(qdrant_adapter, "current_dataset_revision_id", lambda *_args: "")
+    dataset_dir = tmp_path / "ds-1"
+    dataset_dir.mkdir()
+    for name in nodes_by_name:
+        (dataset_dir / name).write_text("Source fixture", encoding="utf-8")
+
+    old_points = {
+        name: [{"dense": [0.5], "bm25_sparse": {7: 1.0}, "text": "previous evidence"}]
+        for name in nodes_by_name
+    }
+    state = SimpleNamespace(
+        points=dict(old_points), old_points=old_points,
+        lexical={name: "previous lexical evidence" for name in nodes_by_name},
+        rules={name: "previous rules" for name in nodes_by_name},
+        deleted=[], lexical_deleted=[], embedded=[], upserts=[], fingerprints=[],
+    )
+
+    class RecordingDB(StatusTrackingDB):
+        def __init__(self):
+            super().__init__()
+            self.failures = {}
+
+        def get_pending_files(self, dataset_id, limit=None):
+            done = {row[1] for row in self.updated}
+            return [name for name in nodes_by_name if name not in done][:limit]
+
+        def mark_document_parse_error(self, dataset_id, file_name, **failure):
+            self.failures[file_name] = failure
+            self.update_document_status(
+                dataset_id, file_name, "ERROR", 0, last_error=failure["message"],
+            )
+
+        def clear_structured_rules(self, file_key):
+            state.rules.pop(file_key, None)
+
+        def set_document_source_fingerprint(self, dataset_id, file_name, **fingerprint):
+            state.fingerprints.append(file_name)
+
+    def delete_points(_client, _dataset_id, file_key):
+        state.deleted.append(file_key)
+        state.points.pop(file_key, None)
+
+    def delete_lexical(_dataset_id, file_key):
+        state.lexical_deleted.append(file_key)
+        state.lexical.pop(file_key, None)
+
+    def upsert_lexical(points):
+        for point in points:
+            state.lexical[point.payload["file_name"]] = point.payload["text"]
+
+    def encode_sync(texts):
+        state.embedded.extend(texts)
+        return [[0.25] * 1024 for _ in texts]
+
+    class FakeQdrant:
+        def __init__(self, **kwargs):
+            pass
+
+        def upsert(self, collection_name, points, *, wait=False):
+            state.upserts.extend(points)
+            for point in points:
+                state.points.setdefault(point.payload["file_name"], []).append(point)
+
+    monkeypatch.setattr(qdrant_adapter.qdrant_client, "QdrantClient", FakeQdrant)
+    db = RecordingDB()
+    adapter = SimpleNamespace(
+        content_dir=tmp_path, db=db, qdrant_url="unused", collection_name="les_rag",
+        embed=SimpleNamespace(encode_sync=encode_sync),
+        _sync_delete_file_points=delete_points,
+        _sync_delete_file_lexical=delete_lexical,
+        _sync_upsert_file_lexical=upsert_lexical,
+        _sync_count_file_points=lambda _client, _ds, key: len(state.points.get(key, [])),
+        _sync_markdown_nodes=lambda file_path, *_args: nodes_by_name[file_path.name],
+    )
+    return adapter, state
+
+
+@pytest.mark.parametrize("empty_stage", ["converter_none", "markdown_short", "sanitation", "sparse"])
+def test_empty_ingest_preserves_previous_evidence_and_records_manual_error(tmp_path, monkeypatch, empty_stage):
+    name = "Вход с пробелом «источник».md"
+    raw_nodes = {
+        "converter_none": [], "markdown_short": [],
+        "sanitation": [{"text": "x", "doc_id": "short", "payload": {}}],
+        "sparse": [{"text": "_" * 470, "doc_id": "noise", "payload": {}}],
+    }[empty_stage]
+    adapter, state = _preserved_evidence_parse_harness(tmp_path, monkeypatch, {name: raw_nodes})
+    if empty_stage in {"converter_none", "markdown_short"}:
+        converted = None if empty_stage == "converter_none" else "Short source text"
+        monkeypatch.setattr(qdrant_adapter, "convert_to_markdown_for_indexing", lambda *_args, **_kw: converted)
+        adapter._sync_markdown_nodes = QdrantLlamaIndexAdapter._sync_markdown_nodes.__get__(adapter)
+        adapter._route_payload = QdrantLlamaIndexAdapter._route_payload.__get__(adapter)
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 1
+    assert result["chunks"] == 0
+    assert result["remaining_pending"] == 0
+    assert adapter.db.updated[-1][2:4] == ("ERROR", 0)
+    failure = adapter.db.failures[name]
+    assert failure["error_code"] == "NO_SEARCHABLE_CONTENT"
+    assert failure["retryable"] is False
+    assert failure["retry_after"] == 0
+    assert "вручную" in failure["message"]
+    assert state.points[name] is state.old_points[name]
+    assert state.lexical[name] == "previous lexical evidence"
+    assert state.rules[name] == "previous rules"
+    assert state.deleted == state.lexical_deleted == state.embedded == state.upserts == state.fingerprints == []
+
+
+@pytest.mark.parametrize("prefetch", [False, True])
+def test_empty_ingest_does_not_stop_later_usable_file(tmp_path, monkeypatch, prefetch):
+    monkeypatch.setattr(qdrant_adapter, "PARSE_PREFETCH", prefetch)
+    empty_name, usable_name = "a-empty.md", "b-usable.md"
+    text = "Source contains searchable technical information and remains usable."
+    adapter, state = _preserved_evidence_parse_harness(tmp_path, monkeypatch, {
+        empty_name: [],
+        usable_name: [{"text": text, "doc_id": "usable", "payload": {}}],
+    })
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=2)
+
+    assert result["errors"] == 1
+    assert result["files_parsed"] == 2
+    assert result["chunks"] == 1
+    assert result["remaining_pending"] == 0
+    statuses = {row[1]: row[2] for row in adapter.db.updated}
+    assert statuses == {empty_name: "ERROR", usable_name: "INDEXED"}
+    assert adapter.db.failures[empty_name]["error_code"] == "NO_SEARCHABLE_CONTENT"
+    assert state.points[empty_name] is state.old_points[empty_name]
+    assert state.lexical[empty_name] == "previous lexical evidence"
+    assert state.rules[empty_name] == "previous rules"
+    assert state.deleted == state.lexical_deleted == state.fingerprints == [usable_name]
+    assert state.embedded == [text]
+    assert len(state.upserts) == 1
+    assert state.upserts[0].payload["file_name"] == usable_name
+    assert state.upserts[0].vector["dense"] == [0.25] * 1024
+    assert state.upserts[0].vector["bm25_sparse"].indices
+
+
+def test_empty_ingest_legacy_status_writer_keeps_reason_and_previous_evidence(tmp_path, monkeypatch):
+    name = "empty.md"
+    adapter, state = _preserved_evidence_parse_harness(tmp_path, monkeypatch, {name: []})
+    adapter.db.mark_document_parse_error = None
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 1
+    assert adapter.db.updated[-1][2:4] == ("ERROR", 0)
+    assert adapter.db.updated[-1][4].startswith("NO_SEARCHABLE_CONTENT: ")
+    assert "вручную" in adapter.db.updated[-1][4]
+    assert state.points[name] is state.old_points[name]
+    assert state.deleted == state.lexical_deleted == []
+
+
+@pytest.mark.asyncio
+async def test_empty_ingest_keeps_dataset_out_of_completed_state(tmp_path, monkeypatch):
+    adapter, state = _preserved_evidence_parse_harness(tmp_path, monkeypatch, {"empty.md": []})
+    statuses = []
+
+    async def ensure_collection():
+        pass
+
+    adapter._ensure_collection = ensure_collection
+    adapter._assert_dense_index_contract = lambda: None
+    adapter._sync_parse = QdrantLlamaIndexAdapter._sync_parse.__get__(adapter)
+    adapter.db.update_dataset_status = lambda _dataset_id, status: statuses.append(status)
+
+    result = await QdrantLlamaIndexAdapter.parse_dataset(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 1
+    assert statuses == ["PARSING", "ERROR"]
+    assert state.points["empty.md"] is state.old_points["empty.md"]
+    assert state.deleted == state.lexical_deleted == []
 
 
 def test_sync_parse_ignores_cached_vector_with_different_embedding_fingerprint(tmp_path, monkeypatch):

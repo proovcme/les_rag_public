@@ -2037,6 +2037,18 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
         context_window = trace.get("context_window") if isinstance(trace.get("context_window"), dict) else {}
         if context_window:
             out.append(f"CTX {context_window.get('expanded_count', 0)}/{context_window.get('input_count', 0)}")
+        pages = trace.get("grouped_model_evidence_pages")
+        if not isinstance(pages, list):
+            pages = []
+        direct = trace.get("grouped_model_evidence")
+        if isinstance(direct, dict):
+            pages = [direct, *pages]
+        if isinstance(pages, list):
+            growth = next((page.get("native_read_growth_budget") for page in reversed(pages)
+                           if isinstance(page, dict) and isinstance(page.get("native_read_growth_budget"), dict)), {})
+            if growth:
+                out.append(f"Резерв чтений: запрос {growth.get('requested_tokens', 0)}, доступно {growth.get('reserved_tokens', 0)} токенов")
+                out.append(f"Источник резерва: {growth.get('source') or '—'} · без перезапуска")
     out.append(f"CACHE {str(meta.get('cache') or 'miss').upper()}")
     if validation:
         out.append("VALIDATOR ON" if validation.get("enabled") else "VALIDATOR OFF")

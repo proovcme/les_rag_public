@@ -116,6 +116,10 @@ class UnsupportedIndexingSourceError(RuntimeError):
     """Raised when intake accepted a source that needs a typed converter first."""
 
 
+class NoSearchableContentError(RuntimeError):
+    """A conversion produced no usable replacement for existing evidence."""
+
+
 @dataclass(frozen=True)
 class ParseFailureDisposition:
     """Stable, UI-safe classification of one indexing failure."""
@@ -2633,6 +2637,13 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     if _qdrant_schema_mode() == "named":
                         file_nodes = _prepare_named_sparse_nodes(file_nodes, file_key)
 
+                    if not file_nodes:
+                        raise NoSearchableContentError(
+                            "Не извлечены пригодные для поиска фрагменты. Проверьте исходный "
+                            "файл и текстовый слой вручную; для скана может потребоваться "
+                            "распознавание (OCR). Прежние данные поиска, если они были, не изменены."
+                        )
+
                     phase_start = _t.time()
                     existing_vectors = (
                         self._sync_existing_file_vectors_by_hash(
@@ -2652,12 +2663,6 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
                     _delete_file_lexical(file_key)
                     _add_timing("delete_sec", phase_start)
-
-                    if not file_nodes:
-                        phase_start = _t.time()
-                        self.db.update_document_status(dataset_id, db_file_key, "INDEXED", 0, route=route)
-                        _add_timing("db_sec", phase_start)
-                        continue
 
                     # Стираем старые правила для этого файла перед переиндексацией
                     self.db.clear_structured_rules(file_key)
@@ -2801,6 +2806,29 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                             fingerprint_error,
                         )
                     _add_timing("db_sec", phase_start)
+
+                except NoSearchableContentError as file_err:
+                    # Empty replacement data must not enter the generic cleanup
+                    # branch: the previous dense/sparse, lexical and rules remain.
+                    logger.warning("[PARSE] NO_SEARCHABLE_CONTENT %s: %s", file_key, file_err)
+                    phase_start = _t.time()
+                    mark_parse_error = getattr(self.db, "mark_document_parse_error", None)
+                    if mark_parse_error:
+                        mark_parse_error(
+                            dataset_id,
+                            db_file_key,
+                            message=str(file_err),
+                            error_code="NO_SEARCHABLE_CONTENT",
+                            retryable=False,
+                            retry_after=0.0,
+                        )
+                    else:
+                        self.db.update_document_status(
+                            dataset_id, db_file_key, "ERROR", 0,
+                            last_error=f"NO_SEARCHABLE_CONTENT: {file_err}",
+                        )
+                    _add_timing("db_sec", phase_start)
+                    errors += 1
 
                 except UnsupportedIndexingSourceError as file_err:
                     logger.info("[PARSE] SKIPPED %s: %s", file_key, file_err)

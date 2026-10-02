@@ -116,7 +116,6 @@ from proxy.services.model_evidence_read_contract import (
     MODEL_EVIDENCE_READ_INSTRUCTION,
     model_evidence_read_tool_schemas,
     read_result_receipt,
-    shown_evidence_registry,
 )
 from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
 from proxy.services.model_rag_grouped_evidence_service import (
@@ -125,7 +124,8 @@ from proxy.services.model_rag_grouped_evidence_service import (
     plan_full_group_page,
     normative_card_identity,
     card_delivery_facts,
-    share_registry_catalogs,
+    compact_read_replay,
+    native_read_growth_budget,
 )
 from proxy.services.model_price_provenance_service import price_evidence_check
 from proxy.services.packaging_recovery_service import (
@@ -805,7 +805,7 @@ def tool_selector_request_payload(
     return payload
 from proxy.services.model_execution_preset_service import (
     ModelExecutionPreset, apply_output_budget_policy, apply_reasoning_policy,
-    model_rag_answer_execution_preset, query_generation_budget,
+    model_rag_answer_execution_preset, model_rag_query_execution_preset, query_generation_budget,
 )
 from proxy.services.model_research_tool_service import (
     MATCHED_BEFORE_CAP_META_KEY as _MATCHED_BEFORE_CAP_META_KEY,
@@ -1416,12 +1416,7 @@ def model_read_frame_evidence(source_context, chunks, receipts):
             if not item:
                 continue
         source_objects.append(item)
-    metadata = {str(c.meta.get("model_evidence_ref") or ""): c.meta for c in chunks}
-    registry = shown_evidence_registry(chunks)
-    catalogs, rows = share_registry_catalogs(registry["previously_shown_evidence_registry"], metadata)
-    registry["previously_shown_evidence_registry"] = rows
-    registry["body_delivery"] = "Full literal bodies and exact shared catalogs are shown; deferred_capacity entries are identity pointers only."
-    return [*source_objects, catalogs, registry, {"model_requested_reads": receipts}]
+    return [*source_objects, *compact_read_replay(chunks), {"model_requested_reads": receipts}]
 
 
 def govern_inference_messages(
@@ -2060,6 +2055,9 @@ def append_actual_model_call(
             "purpose": str(purpose or ""),
             "finish_reason": str(finish_reason or ""),
             "completion_tokens": int(completion_tokens or 0),
+            **({"reasoning": dict(trace["last_model_call_execution"]["reasoning"])}
+               if trace and isinstance(trace.get("last_model_call_execution"), Mapping)
+               and isinstance(trace["last_model_call_execution"].get("reasoning"), Mapping) else {}),
         }
     )
 
@@ -5392,10 +5390,18 @@ def model_query_failure(detail: Any, *, trace: Mapping[str, Any], session_id: st
         output["declared_parse"]["reason_counts"] = dict(list((parsed.get("reason_counts") or {}).items())[:32])
         saved.append(output)
     connection = trace.get("model_connection") or {}
+    execution = {"provider": str(provider), "model": str(model)}
+    if connection.get("provider"):
+        execution = {"provider": str(connection["provider"]), "model": str(connection.get("model_id") or model),
+                     "configured_provider": str(provider), "configured_model": str(model), "source": "model_connection"}
+        requested_execution = trace.get("model_execution_requested") or {}
+        for field in ("provider", "model"):
+            if requested_execution.get(field):
+                execution["requested_" + field] = str(requested_execution[field])
     diagnostics = {"schema": "les.model-query-failure.v1", "session_id": str(session_id or ""),
-                   "model_execution": {"provider": str(provider), "model": str(model)},
+                   "model_execution": execution,
                    "model_connection": {key: connection[key] for key in (
-                       "connection_id", "revision_id", "display_name", "model_id", "locality", "fallback_used") if key in connection},
+                       "connection_id", "revision_id", "display_name", "model_id", "provider", "locality", "fallback_used") if key in connection},
                    "model_query_outputs": saved, "model_query_output_count": len(outputs),
                    "model_query_outputs_truncated": len(outputs) > 8}
     return ModelQueryFailure(detail, diagnostics=diagnostics)
@@ -6984,6 +6990,12 @@ async def _execute_chat_evidence_application(
             "code": "INVALID_MODEL_OUTPUT_BUDGET",
             "detail": str(error),
         }) from error
+    query_execution_preset = model_rag_query_execution_preset(execution_preset)
+    if canonical_execution_mode is CanonicalRouteMode.ACTIVE and resolved_connection is not None:
+        retrieval_trace["model_execution_requested"] = {
+            "provider": getattr(resolved_connection, "extension_type", None) or "model_connection",
+            "model": resolved_connection.model_id,
+        }
     preset_diagnostics = execution_preset.diagnostics(
         requested_input_tokens=cache_state.get("desired_kv_tokens")
     )
@@ -7243,11 +7255,18 @@ async def _execute_chat_evidence_application(
                         transport=model_connection_transport(client, connection_secret_store),
                     )
 
-                async def _post_llm(runtime, model, hdrs, body, *, allow_stream: bool = True):
+                async def _post_llm(runtime, model, hdrs, body, *, allow_stream: bool = True,
+                                    inference_preset: ModelExecutionPreset | None = None):
                     """Один вызов LLM. token_sink задан → стрим (токены клиенту по
                     мере генерации), иначе — обычный POST (поведение неизменно).
                     Возвращает (answer_text, usage_dict)."""
                     nonlocal active_model_result, active_pending_tool_calls
+                    call_preset = inference_preset if inference_preset is not None else execution_preset
+                    if not isinstance(call_preset, ModelExecutionPreset):
+                        raise TypeError("model call needs a typed execution preset")
+                    retrieval_trace["last_model_call_execution"] = {
+                        "reasoning": call_preset.diagnostics()["reasoning"],
+                    }
                     if bound_runner is not None:
                         inference_request = InferenceRequest(
                             messages=tuple(body.get("messages") or ()),
@@ -7262,7 +7281,7 @@ async def _execute_chat_evidence_application(
                             temperature=body.get("temperature"),
                             tools=tuple(body.get("tools") or ()),
                             response_format=body.get("response_format"),
-                            reasoning_enabled=execution_preset.reasoning_enabled,
+                            reasoning_enabled=call_preset.reasoning_enabled,
                         )
 
                         async def no_legacy_call(_request):
@@ -7288,6 +7307,9 @@ async def _execute_chat_evidence_application(
                             )
                         retrieval_trace["model_connection"] = (
                             active_model_result.public_connection_payload()
+                        )
+                        retrieval_trace["model_connection"]["provider"] = (
+                            getattr(active_model_result.connection, "extension_type", None) or "model_connection"
                         )
                         retrieval_trace["model_connection"]["pending_tool_calls"] = active_pending_tool_calls
                         model_text = active_model_result.response.text
@@ -7337,7 +7359,7 @@ async def _execute_chat_evidence_application(
                             headers=hdrs, token_sink=token_sink if allow_stream else None)
                     _body = apply_transport_options(
                         _cloud_body_for_model(body, model, runtime.provider), runtime.provider,
-                        reasoning_enabled=execution_preset.reasoning_enabled,
+                        reasoning_enabled=call_preset.reasoning_enabled,
                     )
                     if token_sink is not None and allow_stream:
                         sbody = {**_body, "model": model, "stream": True}
@@ -7392,6 +7414,7 @@ async def _execute_chat_evidence_application(
 
                 async def _post_cloud_fallback(
                     runtime, hdrs, body, *, allow_stream: bool = True,
+                    inference_preset: ModelExecutionPreset | None = None,
                 ):
                     """Облако: перебор цепочки моделей с конечным таймаутом на модель.
                     Зависла/ошиблась/пустой ответ → следующая. Возвращает
@@ -7411,6 +7434,7 @@ async def _execute_chat_evidence_application(
                                     hdrs,
                                     body,
                                     allow_stream=allow_stream,
+                                    inference_preset=inference_preset,
                                 ),
                                 timeout=per_model,
                             )
@@ -7526,7 +7550,7 @@ async def _execute_chat_evidence_application(
                     rejected_model_queries = []
                     for query_attempt, query_instruction in enumerate(query_instructions, start=1):
                         query_messages, query_packet = govern_inference_messages(
-                            preset=execution_preset,
+                            preset=query_execution_preset,
                             profile_prefix=(
                                 profile_system_prompt(profile_snapshot, strict=False)
                                 + "\n\n"
@@ -7554,7 +7578,7 @@ async def _execute_chat_evidence_application(
                                 ),
                             )
                         )
-                        query_budget = governed_query_generation_budget(execution_preset, query_packet)
+                        query_budget = governed_query_generation_budget(query_execution_preset, query_packet)
                         query_body = {
                             "messages": query_messages,
                             "stream": False,
@@ -7568,6 +7592,7 @@ async def _execute_chat_evidence_application(
                             query_headers,
                             query_body,
                             allow_stream=False,
+                            inference_preset=query_execution_preset,
                         )
                         t_llm += time.time() - t_query_model
                         append_actual_model_call(
@@ -8321,7 +8346,8 @@ async def _execute_chat_evidence_application(
                             }
                         )
 
-                    async def _sheet_pass_llm(chat_body, *, purpose: str = "sheet_pass_answer"):
+                    async def _sheet_pass_llm(chat_body, *, purpose: str = "sheet_pass_answer",
+                                              inference_preset: ModelExecutionPreset | None = None):
                         nonlocal llm_model
                         if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
                             text, usage = await _post_llm(
@@ -8334,6 +8360,7 @@ async def _execute_chat_evidence_application(
                                 ),
                                 chat_body,
                                 allow_stream=False,
+                                inference_preset=inference_preset,
                             )
                             if active_model_result is not None:
                                 llm_model = active_model_result.connection.model_id
@@ -8347,6 +8374,7 @@ async def _execute_chat_evidence_application(
                                 ),
                                 chat_body,
                                 allow_stream=False,
+                                inference_preset=inference_preset,
                             )
                         else:
                             text, usage = await _post_llm(
@@ -8359,6 +8387,7 @@ async def _execute_chat_evidence_application(
                                 ),
                                 chat_body,
                                 allow_stream=False,
+                                inference_preset=inference_preset,
                             )
                         append_actual_model_call(
                             retrieval_trace,
@@ -8883,7 +8912,7 @@ async def _execute_chat_evidence_application(
                                         )
                                         query_instruction = query_directive
                                         query_messages, query_packet = govern_inference_messages(
-                                            preset=execution_preset,
+                                            preset=query_execution_preset,
                                             profile_prefix=(
                                                 profile_system_prompt(
                                                     profile_snapshot, strict=False
@@ -8912,7 +8941,7 @@ async def _execute_chat_evidence_application(
                                                 purpose=query_purpose,
                                             )
                                         )
-                                        query_budget = governed_query_generation_budget(execution_preset, query_packet)
+                                        query_budget = governed_query_generation_budget(query_execution_preset, query_packet)
                                         query_body = {
                                             "messages": query_messages,
                                             "stream": False,
@@ -8923,6 +8952,7 @@ async def _execute_chat_evidence_application(
                                         query_text, query_usage = await _sheet_pass_llm(
                                             query_body,
                                             purpose=query_purpose,
+                                            inference_preset=query_execution_preset,
                                         )
                                         t_llm += time.time() - t_query_model
                                         query_diagnostic = model_query_output_diagnostics(
@@ -9227,6 +9257,15 @@ async def _execute_chat_evidence_application(
                                 - len(pass_hits)
                                 - 2,
                             )
+                            first_read_groups, _ = _model_rag_full_groups(
+                                pass_hits, hits_per_query=retrieval_limits["model_evidence_k"],
+                                query_offset=evidence_query_offset,
+                                query_provenance=pass_query_provenance, query_addresses=pass_query_addresses)
+                            native_growth_budget = native_read_growth_budget(
+                                available_tokens=remaining_group_tokens,
+                                generation_tokens=answer_execution_preset.generation_reserve_tokens,
+                                groups=first_read_groups, enabled=bool(sheet_read_tools))
+                            remaining_group_tokens = native_growth_budget["remaining_group_tokens"]
                             group_max_chars = model_rag_group_char_budget(
                                 context_chars_limit=context_chars_limit,
                                 remaining_group_tokens=remaining_group_tokens,
@@ -9324,6 +9363,7 @@ async def _execute_chat_evidence_application(
                             pass_omitted.extend(omitted_now)
                             retrieval_trace.setdefault("grouped_model_evidence_pages", []).append({
                                 "query_offset": evidence_query_offset,
+                                "native_read_growth_budget": native_growth_budget,
                                 "returned_hit_count": sum(len(hits) for _q, hits in pass_hits),
                                 "inventory_hit_count": len(model_evidence_chunks),
                                 "full_body_hit_count": sum(c.meta.get("body_status") == "full" for c in model_evidence_chunks),
@@ -10219,6 +10259,14 @@ async def _execute_chat_evidence_application(
                             - len(model_rag_query_hits)
                             - 2,
                         )
+                        first_read_groups, _ = _model_rag_full_groups(
+                            model_rag_query_hits, hits_per_query=retrieval_limits["model_evidence_k"],
+                            query_provenance=_model_only_query_provenance(model_rag_query_hits))
+                        native_growth_budget = native_read_growth_budget(
+                            available_tokens=remaining_group_tokens,
+                            generation_tokens=answer_execution_preset.generation_reserve_tokens,
+                            groups=first_read_groups, enabled=bool(direct_read_tools))
+                        remaining_group_tokens = native_growth_budget["remaining_group_tokens"]
                         logger.warning(
                             "[MODEL_RAG_BUDGET] queries=%s hits=%s input_budget=%s "
                             "included=%s remaining_group_tokens=%s context_chars_limit=%s "
@@ -10268,6 +10316,7 @@ async def _execute_chat_evidence_application(
                         )
                         retrieval_trace["grouped_model_evidence"] = {
                             "schema": "les.model-rag-grouped-evidence.v1",
+                            "native_read_growth_budget": native_growth_budget,
                             "query_count": len(model_rag_evidence_groups),
                             "hit_count": len(model_evidence_chunks),
                             "returned_hit_count": sum(len(hits) for _q, hits in model_rag_query_hits),
@@ -10875,7 +10924,7 @@ async def _execute_chat_evidence_application(
                                     round_index
                                 )
                                 query_messages, query_packet = govern_inference_messages(
-                                    preset=execution_preset,
+                                    preset=query_execution_preset,
                                     profile_prefix=(
                                         profile_system_prompt(
                                             profile_snapshot, strict=False
@@ -10920,9 +10969,10 @@ async def _execute_chat_evidence_application(
                                         "messages": query_messages,
                                         "stream": False,
                                         "temperature": 0,
-                                        "max_tokens": 1600,
+                                        "max_tokens": min(1600, query_packet.generation_reserve_tokens),
                                     },
                                     allow_stream=False,
+                                    inference_preset=query_execution_preset,
                                 )
                                 queries, _rejected = classify_model_rag_query_lines(
                                     query_text, research_queries_task

@@ -76,6 +76,73 @@ def smeta_readiness_presentation(smeta: dict) -> dict[str, str]:
     return {"label": "Сметная база не готова", "tone": "blocked", "warning": ""}
 
 
+def _document_rag_ready(row: dict) -> bool:
+    if "rag_ready" in row:
+        return bool(row["rag_ready"])
+    return str(row.get("status") or "").upper() == "INDEXED" and int(row.get("chunk_count") or 0) > 0
+
+
+def _document_source_map_file(row: dict) -> dict:
+    """Keep document availability distinct from PDF sidecar status semantics."""
+    ready = _document_rag_ready(row)
+    return {
+        "file_name": str(row.get("file_name") or ""),
+        "doc_id": str(row.get("id") or ""),
+        "doc_role": str(row.get("doc_type") or row.get("content_type") or "документ"),
+        "discipline": str(row.get("domain") or ""),
+        "source_path": str(row.get("source_path") or ""),
+        "status": "ok" if ready else str(row.get("status") or ""),
+        "rag_ready": ready,
+        "chunk_count": int(row.get("chunk_count") or 0),
+        "last_error": str(row.get("last_error") or ""),
+        "error_code": str(row.get("error_code") or ""),
+        "layers": [str(row.get("content_type") or "")] if row.get("content_type") else [],
+    }
+
+
+def _source_map_file_ready(item: dict) -> bool:
+    if "rag_ready" in item:
+        return _document_rag_ready(item)
+    return str(item.get("status") or "").upper() in {"OK", "INDEXED", "IDLE"}
+
+
+def _composition_file(row: dict, source_map_file: dict | None = None) -> dict:
+    return {
+        "file_name": str(row.get("file_name") or ""),
+        "doc_id": str(row.get("id") or ""),
+        "status": str(row.get("status") or ""),
+        "file_size": row.get("file_size"),
+        "doc_type": str(row.get("doc_type") or row.get("content_type") or ""),
+        **(dict(source_map_file) if source_map_file else _document_source_map_file(row)),
+        "document_ingest_error": {
+            "last_error": str(row.get("last_error") or ""),
+            "error_code": str(row.get("error_code") or ""),
+        },
+    }
+
+
+def _render_document_rag_metadata(row: dict, meta: list[str], label, *, classes: str = "sov-document-meta-text") -> None:
+    """Show searchable availability and the recorded indexing failure."""
+    label(
+        "  ·  ".join([*meta, "есть в RAG" if _document_rag_ready(row) else "не готов для RAG"]),
+        size="10.4px",
+        color="var(--dim)",
+    ).classes(classes)
+    _render_document_ingest_error(row)
+
+
+def _render_document_ingest_error(row: dict) -> None:
+    """Indexing failure is independent of a previously produced PDF sidecar."""
+    last_error = str(row.get("last_error") or "").strip()
+    error_code = str(row.get("error_code") or "").strip()
+    if last_error or error_code:
+        render_feedback_state(
+            "error",
+            detail=last_error or "Индексация документа не завершена. Проверьте исходный файл и технический код ошибки.",
+            error_code=error_code,
+        )
+
+
 def build_documents(
     *,
     surface: str = "documents",
@@ -286,20 +353,7 @@ def build_documents(
             files = [item for item in (memory.get("project_pdf_extract", {}).get("files") or []) if isinstance(item, dict)]
         if files:
             return files
-        result: list[dict] = []
-        for row in state.get("documents") or []:
-            file_name = str(row.get("file_name") or "")
-            result.append(
-                {
-                    "file_name": file_name,
-                    "doc_id": str(row.get("id") or ""),
-                    "doc_role": str(row.get("doc_type") or row.get("content_type") or "документ"),
-                    "discipline": str(row.get("domain") or ""),
-                    "source_path": str(row.get("source_path") or ""),
-                    "status": "ok" if str(row.get("status") or "").upper() == "INDEXED" else str(row.get("status") or ""),
-                    "layers": [str(row.get("content_type") or "")] if row.get("content_type") else [],
-                }
-            )
+        result = [_document_source_map_file(row) for row in state.get("documents") or []]
         return sorted(result, key=_file_sort_key)
 
     def _file_group_key(item: dict) -> tuple[str, str]:
@@ -336,14 +390,7 @@ def build_documents(
         seen: set[str] = set()
         for row in state.get("documents") or []:
             file_name = str(row.get("file_name") or "")
-            enriched = {
-                "file_name": file_name,
-                "doc_id": str(row.get("id") or ""),
-                "status": str(row.get("status") or ""),
-                "file_size": row.get("file_size"),
-                "doc_type": str(row.get("doc_type") or row.get("content_type") or ""),
-                **dict(list_by_name.get(file_name) or {}),
-            }
+            enriched = _composition_file(row, list_by_name.get(file_name))
             result.append(enriched)
             seen.add(file_name)
         for item in list_files:
@@ -1661,7 +1708,7 @@ def build_documents(
                 folders.setdefault(path, {"name": directory_parts[depth - 1], "path": path, "parent": parent, "files": []})
             suffix = _file_kind(file_name)
             status = str(item.get("status") or "").upper()
-            is_ready = status in {"OK", "INDEXED", "IDLE"}
+            is_ready = _source_map_file_ready(item)
             is_waiting = status in {"PENDING", "WAITING", "PARSING"}
             ready += int(is_ready)
             waiting += int(is_waiting)
@@ -1898,7 +1945,11 @@ def build_documents(
                     meta = f"{_file_kind(file_name)} · {_format_size(item.get('file_size'))}"
                     if not compact:
                         meta = f"{_short_path(file_name, parts=4)} · {meta}"
-                    _label(meta, size="10.3px", color="var(--dim)").classes("sov-composition-file-path")
+                    if "rag_ready" in item:
+                        _render_document_rag_metadata(item, [meta], _label, classes="sov-composition-file-path")
+                    else:
+                        _label(meta, size="10.3px", color="var(--dim)").classes("sov-composition-file-path")
+                        _render_document_ingest_error(item.get("document_ingest_error") or {})
 
         def _render_tree(parent: str = "", depth: int = 0) -> None:
             for folder in children.get(parent, []):
@@ -2912,13 +2963,11 @@ def build_documents(
                                 _label(_short_path(folder, parts=3), size="10.5px", color="var(--dim)").classes(
                                     "sov-document-path"
                                 )
-                    indexed = str(row.get("status", "")).upper() == "INDEXED"
-                    meta = [
-                        _file_kind(file_name),
-                        _format_size(row.get("file_size")),
-                        "есть в RAG" if indexed else "нет текста в RAG",
-                    ]
-                    _label("  ·  ".join(meta), size="10.4px", color="var(--dim)").classes("sov-document-meta-text")
+                    _render_document_rag_metadata(
+                        row,
+                        [_file_kind(file_name), _format_size(row.get("file_size"))],
+                        _label,
+                    )
 
             open_paths = {str(item) for item in (state.get("document_tree_open") or []) if str(item)}
 

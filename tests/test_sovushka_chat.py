@@ -1928,6 +1928,20 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
     assert "WF_ACTION Выбрать табличный датасет" in tech
 
 
+def test_operator_technical_chips_show_effective_native_growth_budget():
+    meta = {"retrieval_trace": {"grouped_model_evidence_pages": [
+        {"native_read_growth_budget": {"requested_tokens": 3000, "reserved_tokens": 1200,
+                                       "source": "bound_answer_generation_reserve; capped_by_first_whole_group"}},
+        {"source_count": 1},
+    ]}}
+    chips = _operator_technical_chips(meta)
+    assert "Резерв чтений: запрос 3000, доступно 1200 токенов" in chips
+    assert "Источник резерва: bound_answer_generation_reserve; capped_by_first_whole_group · без перезапуска" in chips
+    assert all("Резерв чтений" not in item for item in _operator_technical_chips({}))
+    direct = {"retrieval_trace": {"grouped_model_evidence": meta["retrieval_trace"]["grouped_model_evidence_pages"][0]}}
+    assert "Резерв чтений: запрос 3000, доступно 1200 токенов" in _operator_technical_chips(direct)
+
+
 def test_operator_status_chips_show_long_answer_time_in_minutes():
     chips = _operator_status_chips(
         "MODEL_OUTPUT",

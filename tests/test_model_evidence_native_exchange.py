@@ -179,6 +179,42 @@ async def test_invalid_or_over_budget_native_batch_does_not_execute_partial_call
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("request_fourth_read", [False, True])
+async def test_three_native_reads_at_budget_allow_final_continuation_but_reject_fourth_read(request_fourth_read):
+    calls = [_call(f"c{index}", norm_key=f"immutable-card-{index}") for index in range(1, 4)]
+    fourth = _call("c4", norm_key="immutable-card-4")
+    final_text = "\nModel-authored final rows\n| material | 12 | selected-code |\n"
+    next_text = _encoded(fourth) if request_fourth_read else final_text
+    executed, continued = [], []
+
+    def execute(call):
+        executed.append(call)
+        return {"status": "ok", "source_ref": call["args"]["norm_key"]}
+
+    def continuation(receipts, results, exchanges):
+        continued.append((receipts, results, exchanges))
+        assert len(receipts) == len(results) == 3
+        assert len(exchanges) == 1
+        assert [call.call_id for call in exchanges[0].calls] == ["c1", "c2", "c3"]
+        assert [reply.call_id for reply in exchanges[0].replies] == ["c1", "c2", "c3"]
+        return next_text, {"completion_tokens": 11}
+
+    result = await run_model_evidence_read_turn(
+        text=_encoded(*calls), usage={"completion_tokens": 7},
+        parse_calls=_parse_model_tool_calls, execute=execute,
+        continue_native_turn=continuation, allowed_tools={"read_norm_card"}, max_calls=3,
+    )
+
+    assert executed == calls
+    assert len(continued) == 1
+    assert len(result.receipts) == len(result.results) == len(result.seen_calls) == 3
+    assert len(result.native_exchanges) == 1
+    assert result.text == next_text
+    assert result.usage == {"completion_tokens": 11}
+    assert result.stop_reason == ("evidence_read_budget" if request_fourth_read else "")
+
+
+@pytest.mark.asyncio
 async def test_native_required_history_overflow_remains_visible_without_model_continuation():
     async def continuation(_receipts, _results, exchanges):
         return chat_service.govern_inference_messages(

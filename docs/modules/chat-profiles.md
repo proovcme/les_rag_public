@@ -1,5 +1,31 @@
 # Chat profiles
 
+## Раздельное рассуждение при поиске и ответе
+
+Необязательный boolean `model_policy.query_reasoning_enabled` входит в immutable
+ревизию профиля. Отсутствие поля наследует общий `reasoning_enabled`; явные
+`true`/`false` действуют только при составлении, продолжении и исправлении
+поисковых запросов. Ответ и native-чтения источников сохраняют общий режим.
+Невалидное значение отклоняется до записи профиля; исходная ревизия и активный
+профиль не меняются при сохранении копии.
+
+Редактор использует существующий `select_field` «Рассуждение при поисковых
+запросах»: «Наследовать общее», «Включено», «Выключено». Наследование не записывает
+скрытый boolean. Фактор `query_reasoning` показывает requested/effective/source
+и `restart_required=False`; capability-ограничения остаются явными.
+
+`model_rag_query_execution_preset` связывает этот режим с существующим query
+reserve до ContextGovernor; тот же typed preset передаётся в `InferenceRequest`
+для B0/B1 и repair. Output не превышает упакованный резерв, окно, provider,
+модель и общие answer/native настройки не изменяются. Новых model calls и циклов
+нет. При query failure фактические безопасные provider/model берутся из
+исполненного подключения; legacy-конфигурация и requested assignment показываются
+отдельно, когда соответствующие данные доступны.
+
+Регрессии: `tests/test_model_query_reasoning.py` (immutable/API/GUI/фактор,
+query/global наследование, B0/B1 repair и mocked HTTP). Это проверка transport;
+живое качество модели и профессиональная приёмка требуют отдельного gate.
+
 ## 863: раздельные резервы поиска и итогового ответа
 
 Необязательные `model_policy.query_output_tokens` и `answer_output_tokens`

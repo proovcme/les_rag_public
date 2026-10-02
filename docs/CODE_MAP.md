@@ -1,5 +1,17 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **868:** `model_execution_preset_service.model_rag_query_execution_preset`
+> отделяет явный профильный режим query/repair от answer/native reads.
+> `chat_profile_service` валидирует optional boolean до записи immutable revision;
+> `runtime_config_registry_service` и `pages/profiles.py` показывают requested,
+> effective, source и наследование. `qdrant_adapter._sync_parse` проверяет final
+> nodes до удаления прежнего evidence; `pages/documents.py` требует chunks>0
+> для project RAG readiness и показывает `NO_SEARCHABLE_CONTENT`.
+> `model_rag_grouped_evidence_service.compact_read_replay` отделяет прочитанные
+> тела от deferred pointers; `native_read_growth_budget` резервирует рост внутри
+> того же окна, сохраняя первую целую группу. Shared B0/B1 callbacks и GUI
+> technical chips используют одни фактические значения; истинный overflow виден.
+
 > **867:** `workbook_research_job_service` сохраняет отдельные terminal packet
 > cursors; sheet loop переходит к ещё не предложенным source packets. Непрочитанные
 > кандидаты отделены от source gaps. Native assistant/tool обмен остаётся внутри

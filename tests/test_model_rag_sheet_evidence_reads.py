@@ -44,8 +44,10 @@ def _answer(*, refs=("Q1.H1", "Q2.H1")):
 
 
 async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", unknown_tool=False,
-                     reasoning_enabled=False, empty_final=False, empty_query=False,
-                     query_count=2, group_char_budget=None, partial_final=False, packet_count=1):
+                     reasoning_enabled=False, query_reasoning_enabled=None, query_repair=False,
+                     empty_final=False, empty_query=False,
+                     query_count=2, group_char_budget=None, partial_final=False, packet_count=1,
+                     input_token_limit=100_000, candidate_padding=0, native_read_batch=False):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(tmp_path / "attachments"))
@@ -96,7 +98,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         return {"cards": [{"norm_key": "immutable-norm", "norm_code": NORM_CODE,
                            "title": "Synthetic exact norm", "measure_unit": "m",
                            "source_ref": "fixture#immutable-norm",
-                           "work_steps": ["Install" + (("x" * 4000) + query if group_char_budget else "")],
+                           "work_steps": ["Install" + (("x" * (candidate_padding or 4000)) + query
+                                                       if group_char_budget or candidate_padding else "")],
                            "resource_count": 24,
                            "resource_preview": [{"code": RESOURCE_A, "name": "Cable A", "unit": "m"},
                                                 {"code": RESOURCE_B, "name": "Cable B", "unit": "m"}]}],
@@ -123,7 +126,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
 
     monkeypatch.setattr(norm_browser, "read_norm_card_exact", exact_card)
     preset = ModelExecutionPreset(preset_id="fixture-sheet", model_family="fixture",
-                                  input_token_limit=100_000, generation_reserve_tokens=5000,
+                                  input_token_limit=input_token_limit, generation_reserve_tokens=5000,
                                   safety_reserve_tokens=100, normal_tool_count=6, max_tools=6,
                                   max_batch_items=6, parallel_read_limit=1, reasoning_enabled=False,
                                   reasoning_supported=True,
@@ -153,6 +156,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         monkeypatch.setattr(service, "model_rag_group_char_budget", lambda **kwargs: group_char_budget)
     responses = [InferenceResponse(text="\n".join(packet_queries[0]), tool_calls=(),
                                    finish_reason="stop", usage={})]
+    if query_repair:
+        responses.insert(0, InferenceResponse(text='{"calls":[]}', tool_calls=(), finish_reason="stop", usage={}))
     if empty_query:
         responses[0] = InferenceResponse(text="", tool_calls=(), finish_reason="length",
                                          usage={"completion_tokens": 5000})
@@ -160,13 +165,18 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         responses.append(InferenceResponse(text="", tool_calls=(_native("not_a_reader", code=RESOURCE_A),),
                                           finish_reason="tool_calls", usage={}))
     elif reads:
-        responses.extend([
+        read_responses = [
             InferenceResponse(text="", tool_calls=(_native("read_norm_card", norm_key="immutable-norm"),),
                               finish_reason="tool_calls", usage={}),
             InferenceResponse(text="", tool_calls=(_native("read_resource_price", code=RESOURCE_A),
                                                     _native("read_resource_price", code=RESOURCE_B)),
                               finish_reason="tool_calls", usage={}),
-        ])
+        ]
+        if native_read_batch:
+            read_responses = [InferenceResponse(text="", tool_calls=tuple(
+                call for response in read_responses for call in response.tool_calls),
+                finish_reason="tool_calls", usage={})]
+        responses.extend(read_responses)
     def final_response(packet_index=0):
         # The model fixture uses the source addresses actually assigned to the
         # two book reads, including any candidate groups shown before them.
@@ -245,7 +255,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         compact_tool_result_for_prompt=lambda item, **kw: item,
         dataset_ids_from_chunks=lambda chunks: [], dataset_sensitivities=lambda ids: [],
         env_bool=lambda key, default=False: default, env_float=lambda key, default=0: default,
-        env_int=lambda key, default=0: default,
+        env_int=lambda key, default=0: 3 if native_read_batch and key == "LES_CHAT_TOOL_MAX_CALLS" else default,
         expand_context_windows=lambda chunks, *a, **kw: SimpleNamespace(chunks=chunks, payload=lambda: {}),
         format_tool_results_for_model=lambda rows: json.dumps(rows, ensure_ascii=False),
         generation_token_budget=lambda **kw: 5000, llm_runtime=lambda: config,
@@ -274,7 +284,9 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         class_suggestions=[], use_semantic_cache=False, use_validation=False, validation_skip_reason="test",
         route=SimpleNamespace(intent="rag"), table_result=None, request_started_at=time.time(),
         profile_snapshot={"revision_id": "fixture-profile:1", "mode": "estimator",
-                          "model_policy": {"reasoning_enabled": reasoning_enabled},
+                          "model_policy": {"reasoning_enabled": reasoning_enabled,
+                                           **({"query_reasoning_enabled": query_reasoning_enabled}
+                                              if query_reasoning_enabled is not None else {})},
                           "tools": ["search_sources", "build_lsr_workbook"],
                           "rag_policy": {"iterative": True, "system_datasets": ["smeta"],
                                          "model_authored_initial_query": True},
@@ -367,6 +379,59 @@ async def test_plain_final_sheet_rows_do_not_force_an_evidence_read_cycle(tmp_pa
     assert len(run.executions) == 1
     assert run.executions[0][1]["status"] == "complete"
     assert [row["resource_code"] for row in run.executions[0][0]["args"]["decisions"]] == [RESOURCE_A, RESOURCE_B]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_bounded_inventory_reserves_native_growth_and_finishes_after_third_read(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+                           query_count=35, input_token_limit=30_000,
+                           candidate_padding=1200, native_read_batch=True)
+    assert len(run.requests) == 3 and not run.responses
+    assert len(run.exact_reads) == 1 and len(run.executions) == 1
+    trace = run.result["retrieval_trace"]
+    grouped = (trace["grouped_model_evidence"] if variant == "B0_DIRECT"
+               else trace["grouped_model_evidence_pages"][0])
+    budget = grouped["native_read_growth_budget"]
+    assert 0 < budget["reserved_tokens"] <= budget["requested_tokens"]
+    assert budget["remaining_group_tokens"] >= budget["first_whole_group_tokens"]
+    packets = trace["context_governor"]["calls"]
+    answer_packet = next(packet for packet in packets if packet["purpose"] in {"sheet_pass_answer", "answer"})
+    read_packet = next(packet for packet in packets if packet["purpose"] in {"sheet_pass_evidence_read", "direct_evidence_read"})
+    assert answer_packet["included_tokens"] + budget["reserved_tokens"] <= answer_packet["input_budget_tokens"]
+    assert read_packet["included_tokens"] <= read_packet["input_budget_tokens"]
+    messages = run.requests[-1].messages
+    assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool", "tool", "tool"]
+    assert len(messages[2]["tool_calls"]) == 3
+    assert [message["tool_call_id"] for message in messages[3:]] == [call["id"] for call in messages[2]["tool_calls"]]
+    frame = messages[1]["content"]
+    assert "source.xlsx" in frame and "S!R2" in frame and "S!R3" in frame
+    registry = next(json.loads(line) for line in frame.splitlines()
+                    if line.startswith('{"body_delivery":'))
+    full_card = next(row["content"] for row in registry["previously_shown_evidence_registry"]
+                     if "fixture-resource-21" in row["content"])
+    assert '"per_unit": 21.25' in full_card and "resources_complete=True" in full_card
+    assert sum("fixture-resource-21" in str(message["content"]) for message in messages) == 1
+    assert not trace["tool_loop"].get("evidence_read_stop")
+    assert [(row["source_row"], row["resource_code"], row["quantity"])
+            for row in run.executions[0][0]["args"]["decisions"]] == [
+                ("S!R2", RESOURCE_A, 12), ("S!R3", RESOURCE_B, 3)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_actual_native_results_exceeding_bound_pause_without_false_final(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+                           query_count=35, input_token_limit=20_000,
+                           candidate_padding=1200, native_read_batch=True)
+    assert len(run.requests) == 2 and len(run.responses) == 1
+    assert len(run.exact_reads) == 1 and not run.executions
+    trace = run.result["retrieval_trace"]
+    assert trace["tool_loop"]["evidence_read_stop"] == "evidence_read_capacity"
+    assert len(trace["tool_loop"]["evidence_reads"]) == 3
+    assert all(read["status"] == "ok" for read in trace["tool_loop"]["evidence_reads"])
+    assert not any(call["purpose"] in {"sheet_pass_evidence_read", "direct_evidence_read"}
+                   for call in trace["actual_model_calls"]["calls"])
 
 
 @pytest.mark.asyncio

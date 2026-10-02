@@ -207,6 +207,7 @@ def test_context_factors_are_registered_with_effective_source() -> None:
         "safety_reserve",
         "reasoning",
         "query_output_tokens",
+        "query_reasoning",
         "answer_output_tokens",
     }
     assert all("effective" in row and "source" in row for row in rows)

@@ -18,6 +18,14 @@ The baseline is evidence enough for search/navigation, not for exact table
 calculation. Exact tables remain separate table/CAD/PDF enrichment work.
 This is a general PDF contract, not a smeta-specific path.
 
+In the shared indexing path, a replacement with no usable nodes after content
+sanitation and sparse validation is `ERROR / NO_SEARCHABLE_CONTENT`, not
+`INDEXED` with zero chunks. The recorded reason calls for manual inspection of
+the source/text layer; it does not require automatic OCR or retry. This check
+runs before deleting the previous dense/sparse points, lexical evidence or
+structured rules, so an empty conversion preserves the previous index while
+the current attempt remains visibly failed. Other files in the batch continue.
+
 ## Runtime behavior
 
 `backend/converter.py` uses PyMuPDF page text as the default indexing baseline

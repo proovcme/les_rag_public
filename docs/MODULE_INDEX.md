@@ -1,6 +1,24 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Кандидат 867; установлен 866, клиентская приёмка FAILED.** Terminal packets
+> **Кандидат 868; установлен 867 (`6794f8ed`), клиентская приёмка FAILED.**
+> Optional `query_reasoning_enabled` задаётся immutable profile и отдельным
+> typed query preset; absent наследует общее рассуждение. Query/repair и
+> answer/native reads различаются без смены модели, evidence или предметных решений.
+> Точки: `model_execution_preset_service`, `chat_profile_service`,
+> `chat_evidence_application_service`, `runtime_config_registry_service`,
+> `pages/profiles.py`; [chat profiles](modules/chat-profiles.md), док↔код ✅.
+> `qdrant_adapter._sync_parse` отклоняет пустые final nodes до удаления старого
+> searchable state. `pages/documents.py` не считает `INDEXED0` готовым RAG.
+> [PDF ingestion](ALGO-pdf-ingestion.md), [UI kit](modules/sovushka-uikit.md), док↔код ✅.
+> Live 867: B0 пустой query final при length; B1 native reads3, затем capacity
+> pause и 0/19 строк. Offline tests не закрывают эту профессиональную приёмку.
+> `model_rag_grouped_evidence_service.{compact_read_replay,native_read_growth_budget}`
+> сохраняет literal full bodies, compact unread pointers и exact shared catalogs;
+> запас внутри bound window не блокирует первую допустимую целую группу.
+> Обе native ветки используют общий replay, GUI technical chips показывают бюджет.
+> [RAG flow](modules/rag-evidence-flow.md), док↔код ✅; live 868 пока pending.
+>
+> **867:** Terminal packets
 > сохраняют независимые cursors; native assistant/tool exchange с matching IDs
 > остаётся обязательным целым объектом ContextGovernor. `ModelQueryFailure`
 > передаёт bounded query output/parse diagnostics в existing chat history без

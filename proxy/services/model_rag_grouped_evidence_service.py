@@ -291,3 +291,89 @@ def share_registry_catalogs(records: Sequence[Mapping[str, Any]], metadata: Mapp
             row["source_ref"] = {"shared_source_pointer": key}
         rows.append(row)
     return [{"literal_source_catalog": sources, "literal_nrsp_catalog": catalogs}, rows]
+
+
+def compact_read_replay(chunks: Sequence[Any]) -> list[Any]:
+    """Conserve shown bodies and compact unread pointers across native turns.
+
+    Durable delivery flags are not evidence text. Repeating their verbose
+    projections for every inventory entry must not consume the read frame.
+    A deferred entry never exposes a stored body that was not shown.
+    """
+    from proxy.services.model_evidence_read_contract import shown_evidence_registry
+
+    buckets: dict[str, list[Any]] = {}
+    metadata: dict[tuple[str, str], Mapping[str, Any]] = {}
+    pointers: list[str] = []
+    seen_pointers: set[str] = set()
+    sources: dict[str, str] = {}
+    for chunk in chunks:
+        raw = chunk if isinstance(chunk, Mapping) else vars(chunk)
+        meta = raw.get("meta") or {}
+        ref = str(meta.get("model_evidence_ref") or raw.get("model_evidence_ref") or raw.get("ref") or "")
+        content = str(raw.get("content") or "")
+        source = str(meta.get("source_ref") or meta.get("doc_id") or raw.get("doc_id") or "")
+        if source:
+            sources.setdefault(_source_id(source), source)
+        if meta.get("body_status") == "deferred_capacity":
+            try:
+                pointer = json.loads(content)
+            except (ValueError, TypeError):
+                pointer = None
+            if not (isinstance(pointer, list) and len(pointer) >= 2
+                    and pointer[:2] == [ref, "deferred_capacity"]):
+                content = inventory_pointer(EvidenceCard(
+                    ref, str(raw.get("doc_name") or ""), "", "", meta))
+            if content not in seen_pointers:
+                pointers.append(content)
+                seen_pointers.add(content)
+            continue
+        metadata[(str(meta.get("global_evidence_id") or raw.get("global_evidence_id") or ""), ref)] = meta
+        # The existing verified-view resolver may share only within this exact
+        # provenance bucket; a changed SHA/edition cannot promote an old alias.
+        identity = normative_card_identity(meta)
+        bucket = json.dumps([identity, meta.get("doc_id", raw.get("doc_id")),
+                             meta.get("dataset_id")], sort_keys=True, default=str)
+        buckets.setdefault(bucket, []).append(chunk)
+    records = [row for bucket in buckets.values()
+               for row in shown_evidence_registry(bucket)["previously_shown_evidence_registry"]]
+    catalogs = {"literal_source_catalog": {}, "literal_nrsp_catalog": {}}
+    rows = []
+    for row in records:
+        ref = str(row.get("evidence_ref") or "")
+        meta = metadata.get((str(row.get("global_evidence_id") or ""), ref), {})
+        shared, result = share_registry_catalogs([row], {ref: meta})
+        for name in catalogs:
+            catalogs[name].update(shared[name])
+        if meta.get("source_sha256") is not None:
+            result[0]["source_sha256"] = meta["source_sha256"]
+        rows.extend(result)
+    catalogs["literal_source_catalog"].update(sources)
+    keep = {"evidence_ref", "global_evidence_id", "doc_name", "norm_key", "norm_code",
+            "source_ref", "source_sha256", "edition", "base_type", "doc_id", "dataset_id", "resource_code",
+            "pricebook", "content", "body_available", "body_status", "body_missing",
+            "shared_body_ref", "normative_card_complete", "normative_resources_status"}
+    compact = []
+    for row in rows:
+        record = {key: value for key, value in row.items() if key in keep}
+        aliases = [alias for alias in row.get("aliases", []) if alias != {
+            "evidence_ref": row.get("evidence_ref"), "global_evidence_id": row.get("global_evidence_id")}]
+        if aliases:
+            record["aliases"] = aliases
+        compact.append(record)
+    return [catalogs, {"previously_shown_evidence_registry": compact,
+                      "body_delivery": "Full literal bodies and exact shared catalogs. Deferred entries below are unread identity pointers only."},
+            *(["Deferred identity pointers; read_norm_card/read_source remain available:\n" + "\n".join(pointers)] if pointers else [])]
+
+
+def native_read_growth_budget(*, available_tokens: int, generation_tokens: int,
+                             groups: Sequence[EvidenceGroup], enabled: bool) -> dict[str, Any]:
+    """Reserve native growth within the bound window, preserving a fitting group."""
+    available = max(0, int(available_tokens))
+    first = ((_render(groups, {card.ref for card in groups[0].cards}, 1).rendered_chars + 1) // 2 + 2
+             if groups and enabled else 0)
+    requested = min(max(0, int(generation_tokens)), available // 2) if enabled else 0
+    reserved = min(requested, max(0, available - first))
+    return {"requested_tokens": requested, "reserved_tokens": reserved,
+            "remaining_group_tokens": available - reserved, "first_whole_group_tokens": first,
+            "source": "bound_answer_generation_reserve; capped_by_first_whole_group"}

@@ -27,6 +27,7 @@ _EFFECTIVE_FACTOR_LABELS = {
     "generation_reserve": "Резерв ответа",
     "safety_reserve": "Страховой резерв",
     "reasoning": "Рассуждение модели",
+    "query_reasoning": "Рассуждение при поисковых запросах",
     "query_output_tokens": "Лимит составления поисковых запросов",
     "answer_output_tokens": "Лимит итогового ответа",
 }
@@ -348,7 +349,7 @@ def runtime_factor_rows(
                 "mutable": False,
                 "operator_action": (
                     "profile_clone"
-                    if factor_id in {"model_preset", "context_input_tokens", "reasoning", "query_output_tokens", "answer_output_tokens"}
+                    if factor_id in {"model_preset", "context_input_tokens", "reasoning", "query_reasoning", "query_output_tokens", "answer_output_tokens"}
                     else "read_only"
                 ),
             }

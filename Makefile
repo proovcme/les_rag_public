@@ -30,6 +30,7 @@ UNIT_TESTS += tests/test_workbook_chat_refinement.py
 UNIT_TESTS += tests/test_model_evidence_read_contract.py tests/test_model_evidence_read_service.py tests/test_model_lsr_result_contract.py
 UNIT_TESTS += tests/test_model_evidence_native_exchange.py
 UNIT_TESTS += tests/test_model_query_failure_diagnostics.py
+UNIT_TESTS += tests/test_model_query_reasoning.py
 UNIT_TESTS += tests/test_model_result_resource_actions.py tests/test_model_resource_binding_service.py
 UNIT_TESTS += tests/test_model_rag_grouped_evidence_service.py
 UNIT_TESTS += tests/test_model_result_table_transport.py

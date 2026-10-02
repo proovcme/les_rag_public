@@ -45,6 +45,9 @@ class ModelExecutionPreset:
     answer_output_tokens_effective: int | None = None
     answer_output_tokens_source: str = "factory_default"
     output_purpose: str = "query"
+    query_reasoning_requested: bool | None = None
+    query_reasoning_enabled: bool | None = None
+    query_reasoning_source: str = "inherit_global_reasoning"
 
     def diagnostics(self, *, requested_input_tokens: int | None = None) -> dict[str, Any]:
         """Return operator-safe requested/effective/source values."""
@@ -96,6 +99,7 @@ class ModelExecutionPreset:
                 "source": self.reasoning_source,
                 "restart_required": False,
             },
+            "query_reasoning": query_reasoning_diagnostics(self),
         }
 
 
@@ -341,6 +345,35 @@ def model_rag_answer_execution_preset(
     )
 
 
+def validate_reasoning_policy(policy: Mapping[str, Any] | None) -> None:
+    for field in ("reasoning_enabled", "query_reasoning_enabled"):
+        if field in (policy or {}) and not isinstance(policy[field], bool):
+            raise ValueError(f"{field} must be a boolean")
+
+
+def query_reasoning_diagnostics(preset: ModelExecutionPreset) -> dict[str, Any]:
+    inherits = preset.query_reasoning_enabled is None
+    return {
+        "requested": preset.query_reasoning_requested,
+        "effective": preset.reasoning_enabled if inherits else preset.query_reasoning_enabled,
+        "source": (f"inherit_global_reasoning > {preset.reasoning_source}" if inherits
+                   else preset.query_reasoning_source),
+        "restart_required": False,
+    }
+
+
+def model_rag_query_execution_preset(preset: ModelExecutionPreset) -> ModelExecutionPreset:
+    """Bind the query policy and its existing reserve before context packing."""
+    query = query_reasoning_diagnostics(preset)
+    return replace(
+        preset, reasoning_enabled=query["effective"],
+        reasoning_requested=(preset.reasoning_requested if query["requested"] is None else query["requested"]),
+        reasoning_source=query["source"], output_purpose="query",
+        query_reasoning_enabled=query["effective"], query_reasoning_source=query["source"],
+        generation_reserve_tokens=preset.query_generation_reserve_tokens or preset.generation_reserve_tokens,
+    )
+
+
 def apply_reasoning_policy(
     preset: ModelExecutionPreset,
     policy: Mapping[str, Any] | None,
@@ -348,9 +381,8 @@ def apply_reasoning_policy(
     restrictions: Mapping[str, Any] | None = None,
 ) -> ModelExecutionPreset:
     """Apply an explicit profile boolean without changing capacity or routing."""
+    validate_reasoning_policy(policy)
     requested = (policy or {}).get("reasoning_enabled", False)
-    if not isinstance(requested, bool):
-        raise ValueError("reasoning_enabled must be a boolean")
     enabled = requested
     source = "profile_model_policy" if "reasoning_enabled" in (policy or {}) else "factory_default"
     if (restrictions or {}).get("reasoning_enabled") is False:
@@ -359,7 +391,20 @@ def apply_reasoning_policy(
     elif requested and not preset.reasoning_supported:
         enabled = False
         source = "unsupported_by_transport"
-    return replace(preset, reasoning_enabled=enabled, reasoning_requested=requested, reasoning_source=source)
+    query_requested = (policy or {}).get("query_reasoning_enabled")
+    query_enabled = query_requested
+    query_source = "profile_model_policy.query_reasoning_enabled" if query_requested is not None else "inherit_global_reasoning"
+    if (restrictions or {}).get("query_reasoning_enabled") is False or (
+        query_requested is not None and (restrictions or {}).get("reasoning_enabled") is False
+    ):
+        query_enabled = False
+        query_source = "workflow_profile_restrictions"
+    elif query_requested is True and not preset.reasoning_supported:
+        query_enabled = False
+        query_source = "unsupported_by_transport"
+    return replace(preset, reasoning_enabled=enabled, reasoning_requested=requested, reasoning_source=source,
+                   query_reasoning_requested=query_requested, query_reasoning_enabled=query_enabled,
+                   query_reasoning_source=query_source)
 
 
 def query_generation_budget(
@@ -390,7 +435,8 @@ def query_generation_budget(
         source = preset.query_output_tokens_source
     else:
         requested = None
-        limit = reserve if preset.reasoning_enabled else 1600
-        source = "profile_reasoning_reserved_output" if preset.reasoning_enabled else "ordinary_query_default"
+        thinking = query_reasoning_diagnostics(preset)["effective"]
+        limit = reserve if thinking else 1600
+        source = "profile_reasoning_reserved_output" if thinking else "ordinary_query_default"
     return {"requested": requested, "effective": min(limit, reserve),
             "reserved_tokens": reserve, "source": source, "restart_required": False}

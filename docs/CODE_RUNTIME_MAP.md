@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1070 |
-| Строк Python | 372376 |
+| Python-файлов под git | 1071 |
+| Строк Python | 373476 |
 | PRODUCT_REACHABLE | 370 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 688 |
+| TEST_OR_TOOL_ONLY | 689 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 340 |
 | Ошибок разбора | 0 |
@@ -32,13 +32,13 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 12068 | 35 |
+| proxy/services/chat_evidence_application_service.py | 12118 | 36 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| sovushka/pages/chat.py | 7780 | 7 |
+| sovushka/pages/chat.py | 7792 | 7 |
 | proxy/routers/chat.py | 4717 | 45 |
-| backend/qdrant_adapter.py | 4552 | 29 |
+| backend/qdrant_adapter.py | 4580 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
-| sovushka/pages/documents.py | 3927 | 3 |
+| sovushka/pages/documents.py | 3976 | 3 |
 | proxy/routers/datasets.py | 3787 | 16 |
 | sovushka/styles.py | 3301 | 3 |
 | proxy/services/rim_lsr_trace_service.py | 3057 | 32 |

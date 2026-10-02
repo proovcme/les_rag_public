@@ -1,5 +1,25 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+868: `test_model_query_reasoning` включён в canonical UNIT_TESTS: strict optional
+bool/inheritance, immutable profile, GUI select и runtime diagnostics; реальные
+mocked FreeToken requests проверяют query=False / answer+native=True при общем
+reasoning=True и отдельные governed output reserves. `test_qdrant_adapter_parse`
+проверяет пустые final nodes без embed/delete/upsert, сохранение dense/sparse/
+lexical/rules и обработку следующего файла. `test_sovushka_documents` проверяет
+legacy INDEXED0, fallback-карту и частичный PDF-sidecar. Это транспортные и
+целостностные проверки; frozen canonical 868 — 2745 passed / 20 existing opt-in
+skipped / 5 warnings, verify/architecture/baseline/active-artifacts exit0.
+Installed live 868 пока pending.
+`test_model_rag_grouped_evidence_service` воспроизводит 150 synthetic candidates
+и запрещает раздувание compact inventory в mandatory replay, выдачу unshown
+stored body и объединение разных SHA/edition. Два теста падали до исправления.
+First-fit 6000/4800 проверяет requested reserve 3000 / effective 1200 и целый body.
+Native B0/B1 integration при достаточном окне выполняет три tool replies и
+получает финальный XLSX; узкое окно сохраняет три receipts и честный checkpoint
+без выдуманных строк. Driver не запрещает final answer после последнего read slot.
+Focused: 218 query/profile, 127+1 native/context, 56 documents/UIKit,
+180 chat/UIKit passed. Качество настоящей модели проверяется отдельным live gate.
+
 867: durable terminal packet snapshots и независимые source packets проверяются
 `test_workbook_research_job_service` и `test_model_rag_sheet_evidence_reads`:
 3 новых регрессии failed до изменения, целевой повтор с chat/refinement — 282 passed.
@@ -19,7 +39,8 @@ quoted JSON credentials и отказ от arbitrary HTTP trace promotion. Но�
 `test_model_query_failure_diagnostics` включён в canonical UNIT_TESTS.
 Frozen full gate 867: 2696 passed / 20 existing opt-in skipped / 5 warnings;
 verify/architecture/pinned baseline exit0. Установленная профессиональная
-приёмка 867 pending; offline gate её не заменяет.
+приёмка 867 FAILED: B0 query length/empty final, B1 native reads3/capacity pause,
+0 accepted / 19 remaining и no artifact; offline gate её не заменяет.
 
 866: test_model_lsr_result_contract проверяет advertised quantity_basis и review
 statuses реальными constructors ResourceBinding/ResourceReview, включая правила

@@ -21,6 +21,23 @@ from sovushka.uikit.components import (
 
 
 MODE_ORDER = ("search", "agent", "estimator", "engineer")
+QUERY_REASONING_CHOICES = {"inherit": "Наследовать общее", "on": "Включено", "off": "Выключено"}
+
+
+def query_reasoning_choice(policy: dict[str, Any]) -> str:
+    value = policy.get("query_reasoning_enabled")
+    return "inherit" if value is None else "on" if value is True else "off"
+
+
+def set_query_reasoning_choice(draft: dict[str, Any], choice: str) -> None:
+    """Inheritance stays absent in the immutable policy, never an implicit bool."""
+    if choice not in QUERY_REASONING_CHOICES:
+        raise ValueError("Неизвестный режим рассуждения при поиске")
+    policy = draft.setdefault("model_policy", {})
+    if choice == "inherit":
+        policy.pop("query_reasoning_enabled", None)
+    else:
+        policy["query_reasoning_enabled"] = choice == "on"
 
 
 def set_model_output_budget(draft: dict[str, Any], key: str, value: Any) -> None:
@@ -490,6 +507,19 @@ def build_profiles():
                         "reasoning_enabled", bool(event.value)
                     )
                 )
+                query_reasoning = select_field(
+                    QUERY_REASONING_CHOICES,
+                    value=query_reasoning_choice(draft.get("model_policy") or {}),
+                    label="Рассуждение при поисковых запросах",
+                    classes="w-full",
+                )
+                query_reasoning.tooltip(
+                    "Наследовать — использовать общее рассуждение модели. Можно отдельно включить "
+                    "или выключить рассуждение при составлении и исправлении поисковых запросов. "
+                    "Итоговый ответ и чтения источников сохраняют общий режим. "
+                    "Применяется с выбранной версией профиля без перезапуска."
+                )
+                query_reasoning.on_value_change(lambda event: set_query_reasoning_choice(draft, event.value))
                 for budget_key, budget_label in (
                     ("query_output_tokens", "Лимит составления поисковых запросов, токенов"),
                     ("answer_output_tokens", "Лимит итогового ответа, токенов"),

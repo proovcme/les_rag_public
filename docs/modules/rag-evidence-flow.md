@@ -251,6 +251,20 @@ IDs остаются отдельными. Shared-body reference разреша�
 ContextGovernor сохраняет целые обязательные source/evidence объекты и
 учитывает schemas; overflow — видимая technical capacity pause. Read receipts
 и exact cards durable, но сами по себе не отмечают source rows выполненными.
+С 868 `compact_read_replay` повторяет полные показанные тела с exact shared
+catalogs; deferred entries сохраняет как буквальные компактные identity pointers,
+не раскрывая непоказанное stored body. Повторные projections aliases/IDs/delivery
+flags не раздувают inventory в обязательный JSON registry. Source SHA/edition
+разделяют разные карточки; original attachment, question и model decisions остаются.
+До первоначальной выдачи групп B0/B1 одинаково оставляют native growth reserve:
+`min(answer generation reserve, available group tokens / 2)`, с уменьшением до
+остатка после первой целой группы. Уже помещавшаяся первая группа сохраняется;
+inventory tail имеет explicit cursor. Requested/effective reserve и источник
+расчёта видны в `native_read_growth_budget` trace, новых runtime factors нет.
+Три чтения при call budget=3 ещё допускают terminal model continuation;
+новое четвёртое чтение получает `evidence_read_budget`. Фактически слишком
+большие полные результаты дают честную capacity pause, без обрезки тела или
+подмены профессионального решения.
 
 `model_lsr_result_contract` — общий контракт таблицы, JSON и подписанного текста:
 выбранная work-норма требует пять match flags и coverage, выбранный supply

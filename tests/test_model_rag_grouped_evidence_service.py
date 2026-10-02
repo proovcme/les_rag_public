@@ -13,6 +13,8 @@ from proxy.services.model_rag_grouped_evidence_service import (
     restore_nrsp_body,
     share_registry_catalogs,
     card_delivery_facts,
+    compact_read_replay,
+    native_read_growth_budget,
 )
 
 
@@ -444,3 +446,146 @@ def test_found_inventory_and_complete_delivery_are_counted_separately_for_114_ca
     assert page.body_by_ref == {
         card.ref: card.content for group in groups for card in group.cards if card.ref in page.body_refs
     }
+
+
+def test_compact_read_replay_preserves_exact_catalog_bytes_and_full_resource_fields():
+    rules = _rules()
+    original = _body(rules)
+    resource = {"code": "fixture-resource", "unit": "м³", "per_unit": 0.125}
+    chunk = {
+        "doc_name": "fixture-norms", "content": original,
+        "meta": {**_norm_identity_meta(), "model_evidence_ref": "Q1.H1", "global_evidence_id": "g1",
+                 "nr_sp_candidates": rules, "resources": [resource], "resource_count": 1,
+                 "resources_returned": 1, "resources_complete": True},
+    }
+    unchanged = copy.deepcopy(chunk)
+
+    catalogs, registry = compact_read_replay([chunk])
+
+    row, = registry["previously_shown_evidence_registry"]
+    factored = lossless_nrsp_body(original, chunk["meta"])
+    assert catalogs["literal_nrsp_catalog"][factored.catalog_id].encode("utf-8") == _catalog_text(rules).encode("utf-8")
+    restored = row["content"].replace(
+        f"НР/СП: общий буквальный каталог [{factored.catalog_id}].",
+        catalogs["literal_nrsp_catalog"][factored.catalog_id],
+        1,
+    )
+    assert restored.encode("utf-8") == original.encode("utf-8")
+    for literal in ('"per_unit": 0.125', '"unit": "м³"', 'Ресурс с \\"кавычками\\"', "100 м²", "первая операция; вторая операция"):
+        assert literal in row["content"]
+    assert row["normative_card_complete"] is True
+    assert row["normative_resources_status"] == "complete"
+    assert row["source_sha256"] == chunk["meta"]["source_sha256"]
+    assert catalogs["literal_source_catalog"][row["source_ref"]["shared_source_pointer"]] == chunk["meta"]["source_ref"]
+    assert chunk == unchanged
+
+
+@pytest.mark.parametrize("changed", [{"source_sha256": "e" * 64}, {"edition": "fixture-edition-2027"}])
+def test_compact_read_replay_never_aliases_identical_bodies_across_changed_provenance(changed):
+    body = _body(_rules())
+    chunks = [
+        {"doc_name": "fixture-norms", "content": body,
+         "meta": {**_norm_identity_meta(), **(changed if index == 2 else {}),
+                  "model_evidence_ref": f"Q{index}.H1", "global_evidence_id": f"g{index}"}}
+        for index in (1, 2)
+    ]
+
+    _, registry = compact_read_replay(chunks)
+
+    rows = registry["previously_shown_evidence_registry"]
+    assert [row["evidence_ref"] for row in rows] == ["Q1.H1", "Q2.H1"]
+    assert [row["content"] for row in rows] == [body, body]
+    assert all("aliases" not in row and "shared_body_ref" not in row for row in rows)
+    assert rows[1]["source_sha256"] == chunks[1]["meta"]["source_sha256"]
+    assert rows[1]["edition"] == chunks[1]["meta"]["edition"]
+
+
+def test_compact_read_replay_preserves_literal_deferred_pointer_without_exposing_unshown_body():
+    pointer = json.dumps(["Q1.H1", "deferred_capacity", "literal-key", "literal-code", 'Имя с "кавычками"', "м³", "source-id"],
+                         ensure_ascii=False, indent=2)
+    hidden_body = "UNSHOWN full source body must never reach the model"
+    chunks = [
+        {"content": pointer,
+         "meta": {**_norm_identity_meta(), "model_evidence_ref": "Q1.H1", "body_status": "deferred_capacity"}},
+        {"content": hidden_body,
+         "meta": {**_norm_identity_meta(), "model_evidence_ref": "Q2.H1", "body_status": "deferred_capacity"}},
+    ]
+
+    replay = compact_read_replay(chunks)
+
+    assert replay[1]["previously_shown_evidence_registry"] == []
+    assert pointer.encode("utf-8") in replay[2].encode("utf-8")
+    assert hidden_body not in json.dumps(replay, ensure_ascii=False)
+    generated_pointer = json.loads(replay[2].splitlines()[-1])
+    assert generated_pointer[:2] == ["Q2.H1", "deferred_capacity"]
+    assert generated_pointer[2:4] == [chunks[1]["meta"]["norm_key"], chunks[1]["meta"]["norm_code"]]
+
+
+@pytest.mark.parametrize(("available", "generation", "requested"), [(2000, 300, 300), (1001, 2000, 500), (0, 100, 0)])
+def test_native_read_growth_budget_derives_request_from_generation_and_available_window(available, generation, requested):
+    budget = native_read_growth_budget(available_tokens=available, generation_tokens=generation, groups=[], enabled=True)
+
+    assert budget["requested_tokens"] == requested
+    assert budget["reserved_tokens"] == requested
+    assert budget["remaining_group_tokens"] == available - requested
+
+
+def test_native_read_growth_reserve_preserves_first_whole_group_with_long_catalog_and_inventory():
+    rules = _rules()
+    rules[0]["label"] += " длинное буквальное условие" * 100
+    groups = _groups(rules=rules, count=20, padding=3000)
+    first_alone = plan_full_group_page(groups[:1], 1_000_000)
+    available = (first_alone.rendered_chars + 1) // 2 + 1000
+
+    budget = native_read_growth_budget(available_tokens=available, generation_tokens=available, groups=groups, enabled=True)
+    page = plan_full_group_page(groups, budget["remaining_group_tokens"] * 2)
+
+    assert budget["requested_tokens"] == available // 2
+    assert 0 < budget["reserved_tokens"] < budget["requested_tokens"]
+    assert budget["reserved_tokens"] == available - budget["first_whole_group_tokens"]
+    assert page.included_count >= 1, budget
+    assert set(_refs(groups[:1])) <= set(page.body_refs)
+    assert all(page.body_by_ref[card.ref] == card.content for card in groups[0].cards)
+    assert page.deferred_refs and page.unshown_refs
+    assert page.rendered_chars <= budget["remaining_group_tokens"] * 2
+
+
+def test_native_read_growth_budget_reserves_nothing_when_first_whole_group_cannot_fit():
+    groups = _groups(rules=_rules(), count=2, padding=4000)
+    available = 1000
+
+    budget = native_read_growth_budget(available_tokens=available, generation_tokens=2000, groups=groups, enabled=True)
+    page = plan_full_group_page(groups, budget["remaining_group_tokens"] * 2)
+
+    assert budget["requested_tokens"] == 500
+    assert budget["first_whole_group_tokens"] > available
+    assert budget["reserved_tokens"] == 0
+    assert budget["remaining_group_tokens"] == available
+    assert page.included_count == 0 and page.body_refs == []
+
+
+def test_six_thousand_token_window_keeps_an_already_fitting_4800_token_whole_group():
+    card = _card("Q1.H1")
+    groups = [EvidenceGroup("literal model query", [card])]
+    initial = native_read_growth_budget(available_tokens=6000, generation_tokens=6000,
+                                       groups=groups, enabled=True)
+    padding = (4800 - initial["first_whole_group_tokens"]) * 2
+    assert padding > 0
+    groups = [EvidenceGroup(groups[0].header, [EvidenceCard(
+        card.ref, card.header, card.identity, card.content + "x" * padding, card.meta)])]
+    budget = native_read_growth_budget(available_tokens=6000, generation_tokens=6000,
+                                      groups=groups, enabled=True)
+    assert budget["first_whole_group_tokens"] == 4800
+    assert budget["requested_tokens"] == 3000
+    assert budget["reserved_tokens"] == 1200
+    assert budget["remaining_group_tokens"] == 4800
+    page = plan_full_group_page(groups, budget["remaining_group_tokens"] * 2)
+    assert page.included_count == 1 and page.body_by_ref[card.ref] == groups[0].cards[0].content
+
+
+def test_disabled_native_read_growth_budget_keeps_all_available_tokens_for_groups():
+    budget = native_read_growth_budget(available_tokens=4000, generation_tokens=2000,
+                                      groups=_groups(), enabled=False)
+
+    assert budget["requested_tokens"] == budget["reserved_tokens"] == 0
+    assert budget["remaining_group_tokens"] == 4000
