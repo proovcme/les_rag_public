@@ -589,3 +589,201 @@ def test_disabled_native_read_growth_budget_keeps_all_available_tokens_for_group
 
     assert budget["requested_tokens"] == budget["reserved_tokens"] == 0
     assert budget["remaining_group_tokens"] == 4000
+
+
+def _read_replay_chunk(ref, content, **metadata):
+    return {"doc_name": "literal-source", "content": content, "meta": {
+        **_norm_identity_meta(), "norm_key": f"literal-key-{ref}", "norm_code": f"literal-code-{ref}",
+        "source_ref": f"literal-source#{ref}", "model_evidence_ref": ref,
+        "global_evidence_id": f"immutable-{ref}", "body_status": "full", **metadata,
+    }}
+
+
+def _prepare_read_replay(chunks, **kwargs):
+    from proxy.services.model_rag_grouped_evidence_service import prepare_model_read_replay
+    return prepare_model_read_replay(chunks, **kwargs)
+
+
+@pytest.mark.parametrize("exact_metadata,required_refs", [
+    ({"model_read_tool": "read_norm_card"}, ()),
+    ({"model_read_tool": "read_resource_price"}, ()),
+    ({"model_read_tool": "read_source"}, ()),
+    ({"exact_card_read": True}, ()),
+    ({"source_read": True}, ()),
+    ({}, ("Q1.H1",)),
+    ({}, ("immutable-Q1.H1",)),
+])
+def test_read_replay_preserves_exact_body_and_raw_discovery_identity(exact_metadata, required_refs):
+    exact_body = _body(None, token="EXACT LITERAL RESOURCE RECEIPT")
+    discovery_body = "UNADMITTED DISCOVERY BODY " + "resource quantity=0.125; " * 1000
+    chunks = [_read_replay_chunk("Q1.H1", exact_body, **exact_metadata),
+              _read_replay_chunk("Q2.H1", discovery_body, model_read_tool="search_sources",
+                                 model_delivery_status="prepared", model_raw_body_retained=True)]
+    original = copy.deepcopy(chunks)
+
+    plan = _prepare_read_replay(chunks, required_refs=required_refs)
+
+    assert plan.inventory_refs == ["Q1.H1", "Q2.H1"]
+    assert plan.exact_body_refs == ["Q1.H1"]
+    row, = plan.required[1]["previously_shown_evidence_registry"]
+    assert row["content"].encode("utf-8") == exact_body.encode("utf-8")
+    assert row["global_evidence_id"] == "immutable-Q1.H1"
+    assert row["source_sha256"] == original[0]["meta"]["source_sha256"]
+    assert discovery_body not in json.dumps(plan.required, ensure_ascii=False)
+    assert plan.optional_body_refs == [["Q2.H1"]]
+    assert discovery_body in plan.optional[0]
+    assert chunks == original
+
+
+def _read_replay_governor(plan, *, remaining_tokens):
+    from proxy.services.context_governor_service import (
+        ContextCandidate, ContextGovernor, ContextKind, ContextObject, conservative_token_estimate,
+    )
+    from proxy.services.model_execution_preset_service import ModelExecutionPreset
+    required = tuple(ContextObject(f"required:{i}", value) for i, value in enumerate(plan.required))
+    cost = sum(conservative_token_estimate(item.render()) for item in required) + len(required) - 1
+    preset = ModelExecutionPreset(
+        preset_id="literal-read-budget", model_family="fixture", input_token_limit=cost + remaining_tokens + 200,
+        generation_reserve_tokens=100, safety_reserve_tokens=100, normal_tool_count=1, max_tools=5,
+        max_batch_items=6, parallel_read_limit=1, reasoning_enabled=False, source_chain=("fixture",),
+    )
+    return ContextGovernor(preset), [
+        ContextCandidate(ContextKind.EVIDENCE, required, required=True),
+        ContextCandidate(ContextKind.EVIDENCE,
+            tuple(ContextObject(f"discovery:{i}", value) for i, value in enumerate(plan.optional))),
+    ]
+
+
+def test_read_replay_budget_defers_entire_discovery_group_without_losing_exact_read():
+    from proxy.services.context_governor_service import (
+        ContextCandidate, ContextKind, ContextObject, ContextRequiredSectionOverflow,
+    )
+    exact_body = "EXACT ALL RESOURCES; unit=m; per_unit=0.125; conditions=literal"
+    chunks = [_read_replay_chunk("Q1.H1", exact_body, model_read_tool="read_norm_card")]
+    chunks.extend(_read_replay_chunk(f"Q2.H{rank}", f"DISCOVERY-{rank}-START " + "x" * 6000 + f" END-{rank}",
+                                    model_read_tool="search_sources", model_query_index=2,
+                                    model_query_text="literal model query", model_raw_body_retained=True)
+                  for rank in range(1, 7))
+    original = copy.deepcopy(chunks)
+    plan = _prepare_read_replay(chunks)
+    governor, candidates = _read_replay_governor(plan, remaining_tokens=50)
+    # The former all-body replay reproduces the required-frame overflow.
+    with pytest.raises(ContextRequiredSectionOverflow):
+        governor.pack([ContextCandidate(ContextKind.EVIDENCE,
+            tuple(ContextObject(f"old:{i}", value) for i, value in enumerate(compact_read_replay(chunks))),
+            required=True)])
+
+    packet = governor.pack(candidates)
+
+    assert packet.included_tokens <= packet.input_budget_tokens
+    assert packet.omissions[0].object_ids == ("discovery:0",)
+    assert plan.optional_body_refs == [[f"Q2.H{rank}" for rank in range(1, 7)]]
+    text = "\n".join(message["content"] for message in packet.as_messages())
+    assert exact_body in text
+    for rank in range(1, 7):
+        assert f"Q2.H{rank}" in text
+        assert f"DISCOVERY-{rank}-START" not in text
+        assert f"DISCOVERY-{rank}-START" in plan.optional[0]
+        assert f"END-{rank}" in plan.optional[0]
+    assert chunks == original
+
+
+def test_read_replay_admits_all_bodies_of_a_fitting_group_and_no_partial_next_group():
+    from proxy.services.context_governor_service import conservative_token_estimate
+    chunks = [_read_replay_chunk("Q1.H1", "EXACT FULL BODY", model_read_tool="read_source")]
+    chunks.extend(_read_replay_chunk(f"Q{query}.H{rank}", f"WHOLE-{query}-{rank} " + "x" * padding,
+                                    model_read_tool="search_sources", model_query_index=query,
+                                    model_query_text=f"literal query {query}", model_raw_body_retained=True)
+                  for query, padding in ((2, 50), (3, 4000)) for rank in (1, 2))
+    plan = _prepare_read_replay(chunks)
+    governor, candidates = _read_replay_governor(plan,
+        remaining_tokens=conservative_token_estimate(plan.optional[0]) + 1)
+
+    packet = governor.pack(candidates)
+
+    assert packet.omissions[0].object_ids == ("discovery:1",)
+    admitted = {item.object_id for section in packet.sections for item in section.objects}
+    assert "discovery:0" in admitted and "discovery:1" not in admitted
+    assert plan.optional_body_refs == [["Q2.H1", "Q2.H2"], ["Q3.H1", "Q3.H2"]]
+    text = "\n".join(message["content"] for message in packet.as_messages())
+    assert "WHOLE-2-1" in text and "WHOLE-2-2" in text
+    assert "WHOLE-3-1" not in text and "WHOLE-3-2" not in text
+
+
+def test_read_replay_never_promotes_legacy_deferred_pointer_to_an_optional_body():
+    pointer = json.dumps(["Q1.H1", "deferred_capacity", "literal-key", "literal-code", "title", "m", "source-id"])
+    retained_body = "RAW NATIVE SEARCH BODY WITH LITERAL CONDITIONS"
+    chunks = [_read_replay_chunk("Q1.H1", pointer, body_status="deferred_capacity", model_read_tool="search_sources"),
+              _read_replay_chunk("Q2.H1", retained_body, body_status="deferred_capacity", model_read_tool="search_sources",
+                                 model_raw_body_retained=True, model_delivery_status="prepared")]
+    original = copy.deepcopy(chunks)
+
+    plan = _prepare_read_replay(chunks)
+
+    assert plan.exact_body_refs == []
+    assert plan.required[1]["previously_shown_evidence_registry"] == []
+    assert pointer in plan.required[2]
+    assert retained_body not in json.dumps(plan.required)
+    assert plan.optional_body_refs == [["Q2.H1"]]
+    assert retained_body in plan.optional[0]
+    assert chunks == original
+
+
+def test_read_replay_resource_discovery_pointer_keeps_literal_code_and_pricebook_without_price_proof():
+    resource = {"code": "literal-resource-code", "unit": "kg", "price_current": 123.45}
+    content = json.dumps({"resource": resource, "pricebook": "literal-book"})
+    chunk = {"doc_name": "fgis_pricebook_resources.v1", "content": content, "meta": {
+        "resource_code": resource["code"], "pricebook": "literal-book", "pricebook_sha256": "a" * 64,
+        "source_ref": "literal-pricebook-source", "source_sha256": "a" * 64,
+        "model_evidence_ref": "Q4.H1", "global_evidence_id": "immutable-resource",
+        "model_read_tool": "search_pricebook_resources", "body_status": "deferred_capacity",
+        "model_raw_body_retained": True, "model_delivery_status": "prepared",
+    }}
+    original = copy.deepcopy(chunk)
+
+    plan = _prepare_read_replay([chunk])
+
+    assert plan.exact_body_refs == []
+    assert plan.required[1]["previously_shown_evidence_registry"] == []
+    pointer = json.loads(plan.required[2].splitlines()[-1])
+    assert pointer[0:2] == ["Q4.H1", "deferred_capacity"]
+    assert pointer[-1]["resource_code"] == resource["code"]
+    assert pointer[-1]["pricebook"] == "literal-book"
+    assert pointer[-1]["pricebook_sha256"] == "a" * 64
+    assert "123.45" not in json.dumps(plan.required)
+    assert plan.optional_body_refs == [["Q4.H1"]]
+    assert content in plan.optional[0]
+    assert chunk == original
+
+
+def test_read_replay_required_legacy_pointer_does_not_claim_a_full_body():
+    pointer = json.dumps(["Q1.H1", "deferred_capacity", "literal-key", "literal-code", "title", "m", "source-id"])
+    chunk = _read_replay_chunk("Q1.H1", pointer, body_status="deferred_capacity",
+                               model_delivery_status="prepared")
+    original = copy.deepcopy(chunk)
+
+    plan = _prepare_read_replay([chunk], required_refs=("immutable-Q1.H1",))
+
+    assert plan.inventory_refs == ["Q1.H1"]
+    assert plan.exact_body_refs == []
+    assert plan.required[1]["previously_shown_evidence_registry"] == []
+    assert pointer in plan.required[2]
+    assert plan.optional == plan.optional_body_refs == []
+    assert chunk == original
+
+
+def test_read_replay_required_retained_body_uses_full_view_without_mutating_raw():
+    content = "EXACT RETAINED BODY; all resources and literal applicability remain unchanged " + "x" * 6000
+    chunk = _read_replay_chunk("Q1.H1", content, body_status="deferred_capacity",
+                               model_delivery_status="prepared", model_raw_body_retained=True)
+    original = copy.deepcopy(chunk)
+
+    plan = _prepare_read_replay([chunk], required_refs=("immutable-Q1.H1",))
+
+    assert plan.inventory_refs == plan.exact_body_refs == ["Q1.H1"]
+    row, = plan.required[1]["previously_shown_evidence_registry"]
+    assert row["content"].encode("utf-8") == content.encode("utf-8")
+    assert row["global_evidence_id"] == original["meta"]["global_evidence_id"]
+    assert row["source_sha256"] == original["meta"]["source_sha256"]
+    assert plan.optional == plan.optional_body_refs == []
+    assert chunk == original

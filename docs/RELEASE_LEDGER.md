@@ -1,5 +1,68 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.143 / 871; установлен 0.31.142 / 870
+(`7ba406a1d90744b0917b9a4950956df77753fc52`).**
+Capacity delivery 871 source/tests frozen (8 source / 5 test files),
+**READY FOR INSTALL** по финальному второму mandatory gate. Initial focused
+10 suites **392 passed (21.54s)**; fixture admission checks **119 passed (15.60s)**.
+Installed/live 871 и exact private installer **pending**; native EXE остаётся 858.
+Профессиональная приёмка установленного runtime 870 **FAILED**;
+готовность заказчику не заявлена.
+
+871 final SECOND gate: verify exit0 (22.84s); **2925 passed / 20 existing opt-in
+skipped / 5 warnings** (281.29s pytest / 282.81s wrapper); architecture exit0
+(9.75s), pinned baseline exit0 (7.23s), active artifacts exit0 (0.61s).
+Receipts/logs: `artifacts/*_871_second.exit.json`, `artifacts/*_871_second.log`.
+Первый gate сохранён FAILED: verify exit0 (23s), 2923 passed / 2 failed /
+20 skipped / 5 warnings (286.72s pytest / 288.22s wrapper). Два прежних
+`test_model_research_evidence_actions` fixtures выполняли raw search→exact read
+без фактической inventory admission. Исправлен только этот test file (+40/−4):
+explicit binder→Governor→confirm→register, negative assertions до admission;
+исходные provenance, все 40 ресурсов/НРСП и price-proof assertions сохранены.
+Восемь production source files не менялись между прогонами. Это не real-model
+профессиональная приёмка. Generated maps: 1072 tracked Python / 376498 lines,
+370 product / 11 support / 690 test-tool / 1 dormant / 340 routes / 0 parse warnings.
+
+Финальный второй canonical gate exact 870: **2906 passed / 20 existing opt-in
+skipped / 5 warnings**; verify, architecture и pinned baseline exit0.
+Installed native RRF exit0. Basic smoke с 90s: 8 passed / 1 warning /
+1 FAIL по project timeout. Separate finite hardware-calibrated 180s run:
+exit0, **10 PASS / 0 WARN / 0 FAIL**, 85.55s; chat_glossary 31.640s,
+project 51.438s, оба ниже исходного 90s. Измеренный FreeToken request p95
+128.233s — основание явного конечного лимита, а не замена первого результата.
+Receipts: `artifacts/live_870/smoke_calibrated_180s/`; latency изменчива.
+Private installer не строился; builder 864 и проверенный baseline сохранены.
+
+Same source/task/profile/model comparison 870: B0 179.56s, без XLSX,
+`CONTEXT_REQUIRED_SECTION_OVERFLOW`: required 55639 / budget 46246 (+9393);
+4 native searches подготовили 24 refs, admission не состоялся. B1 57.97s:
+paused/resumable, 20 remaining, 0 accepted rows, без XLSX. Первый read frame
+45230 / 46246 admitted; 5 exact full results доставлены, всего 5 missing
+ответов readers сохранены. Следующие 4 searches подготовили ещё 24 refs,
+но второй frame required 72822 (+26576) не был передан модели.
+Receipts: `artifacts/live_870/bap_lsr_{baseline,candidate}/`.
+Независимый countercheck saved B1 replay: 30 разных body / 60519 chars,
+44 unread pointers и 5 сохранённых aliases, exact body duplicates 0.
+Сам replay оценивается в 50317 tokens до profile/request/native history;
+эти значения получены canonical len/2 estimate, не provider tokenizer.
+Capacity pause — техническая граница harness, не профессиональный MISSING.
+871 использует общий `prepare_model_read_replay` / `govern_model_read_messages`
+для initial saved replay, `_continue_sheet_reads` и `_continue_direct_reads`.
+Exact reads, уже cited карточки и literal inventory обязательны; полные discovery
+groups optional и допускаются целиком фактическим ContextGovernor. Raw body,
+immutable ID и все refs остаются durable. `model_inventory_delivery_status`
+отделён от body `model_delivery_status`: показанный индекс не доказывает чтение.
+Source map/manifest/row binding/price guards не используют скрытый raw body.
+Raw search больше не регистрирует карточку shown до admission. Legacy saved
+exact-price receipts сохраняют обязательное чтение; pointer-only не повышается
+до full body. Model/provider/profile, авторские запросы и решения не меняются.
+Четыре old-boundary ablations red сохранены. B0/B1 scripted integration fixtures
+проходят actual authored JSON→XLSX (confirmed 1800), сохраняют 24 raw refs,
+index-delivered отдельно от body-delivered. Это offline proof механики;
+реальная professional приёмка 871 не выполнена. Приблизительный replay margin
+не считается пройденным native protocol gate.
+
+**870: кандидат перед установкой и предыдущая приёмка 869.**
 **Кандидат 0.31.142 / 870; установлен 0.31.141 / 869 (`85d09d7e`).**
 Профессиональная приёмка 869 **FAILED**. При одинаковых source/task/profile/model
 B0 за 76.88s остановился с `evidence_read_capacity`, без завершённых строк/XLSX.
@@ -26,8 +89,9 @@ Durable fixture: 3 unambiguous accepted / 1 remaining; plain continuation не
 модели и сохраняет настоящий XLSX.
 Focused root: 109 passed (14.2s); native: 56 passed (3.5s); decoder/durable:
 22 red до fix → 73 passed. Финальные targeted parser checks: 10 red до fix →
-118 passed (15.98s); transport/persistence: 119 passed (20.44s). Canonical gates,
-установка и installed comparative/live 870 ещё **pending**; готовность не заявлена.
+118 passed (15.98s); transport/persistence: 119 passed (20.44s). Последние boundary
+regressions: 8 red / 2 prose controls green → 128 passed (14.64s). Финальный
+canonical и installed comparative 870 зафиксированы выше; professional FAILED.
 
 **Предыдущий кандидат 0.31.141 / 869 перед установкой.**
 **Кандидат 0.31.141 / 869; установлен 0.31.140 / 868 (`f2625617`).**

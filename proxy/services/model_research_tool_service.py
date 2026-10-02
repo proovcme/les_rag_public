@@ -199,7 +199,8 @@ class ModelResearchToolService:
             meta = raw.get("meta") or {}
             if not isinstance(meta, Mapping):
                 continue
-            if meta.get("model_delivery_status") not in (None, "", "delivered"):
+            if (meta.get("model_delivery_status") not in (None, "", "delivered")
+                    and meta.get("model_inventory_delivery_status") != "delivered"):
                 continue
             code = str(meta.get("norm_code") or raw.get("norm_code") or "").strip()
             key = str(meta.get("norm_key") or raw.get("norm_key") or "").strip()
@@ -354,7 +355,6 @@ class ModelResearchToolService:
                     meta[field] = row[field]
             chunks.append(_SmetaNormChunk(content=content, doc_name=str(row.get("doc_name") or name),
                                          score=float(row.get("score") or 1.0), meta=meta))
-        self.register_shown_norm_cards(chunks)
         return ModelResearchToolResult(payload=payload, chunks=tuple(chunks))
 
     @property
@@ -515,7 +515,6 @@ class ModelResearchToolService:
                 )
                 for index, card in enumerate(cards)
             )
-            self.register_shown_norm_cards(chunks)
             hits = [_chunk_payload(chunk) for chunk in chunks]
             # Honest effective status: a degraded channel stays degraded even when
             # it serves verified cards; zero verified hits is a model-visible
@@ -591,7 +590,6 @@ class ModelResearchToolService:
         ):
             return self._missing(tool, "retriever returned evidence outside explicit selected document filter", status="conflict")
         chunks = all_chunks[: self._model_evidence_k]
-        self.register_shown_norm_cards(chunks)
         trace = dict(retrieval.payload())
         matched_before_cap = _pre_cap_match_count(trace, len(all_chunks))
         _stamp_pre_cap_match_count(chunks, matched_before_cap)

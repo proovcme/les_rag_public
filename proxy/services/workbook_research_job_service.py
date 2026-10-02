@@ -328,9 +328,13 @@ def _promote_evidence_delivery(previous: dict[str, Any], incoming: Mapping[str, 
     """Advance only transport delivery of the same immutable stored evidence."""
     old_meta = previous.get("meta") or {}
     new_meta = incoming.get("meta") or {}
-    if (not isinstance(old_meta, Mapping) or not isinstance(new_meta, Mapping)
-            or old_meta.get("model_delivery_status") != "prepared"
-            or new_meta.get("model_delivery_status") != "delivered"):
+    if not isinstance(old_meta, Mapping) or not isinstance(new_meta, Mapping):
+        return
+    body_promoted = (old_meta.get("model_delivery_status") == "prepared"
+                     and new_meta.get("model_delivery_status") == "delivered")
+    inventory_promoted = (old_meta.get("model_inventory_delivery_status") != "delivered"
+                          and new_meta.get("model_inventory_delivery_status") == "delivered")
+    if not body_promoted and not inventory_promoted:
         return
     same_body = all(previous.get(field) == incoming.get(field)
                     for field in ("global_evidence_id", "content", "doc_id", "doc_name"))
@@ -342,7 +346,9 @@ def _promote_evidence_delivery(previous: dict[str, Any], incoming: Mapping[str, 
     ))
     if not same_body or not same_source:
         raise WorkbookResearchJobError("evidence delivery promotion conflicts with stored immutable body or source")
-    previous["meta"] = {**old_meta, "model_delivery_status": "delivered"}
+    previous["meta"] = {**old_meta,
+                        **({"model_delivery_status": "delivered"} if body_promoted else {}),
+                        **({"model_inventory_delivery_status": "delivered"} if inventory_promoted else {})}
 
 
 def _decision_key(item: Mapping[str, Any]) -> tuple[str, str]:

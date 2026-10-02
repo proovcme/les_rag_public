@@ -1,5 +1,59 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-02 — 871 candidate: second canonical green, first fixture failures retained
+
+SECOND mandatory gate: verify0 (22.84s), 2925 passed / 20 existing opt-in skipped /
+5 warnings (281.29s / wrapper 282.81s), architecture0 (9.75s), pinned baseline0
+(7.23s), active artifacts0 (0.61s). First gate remains FAILED: verify0 (23s),
+2923 passed / 2 failed / 20 skip / 5 warnings (286.72s / wrapper 288.22s).
+The two old `test_model_research_evidence_actions` fixtures searched then read
+exact cards before actual inventory admission. Only that test file changed
+(+40/−4): explicit binder→Governor→confirm→register, negative pre-admission
+assertions; original provenance, all 40 resources/НРСП and price-proof assertions
+retained. Focused checks: 119 passed (15.60s); source8 unchanged, now5 test files.
+Receipts/logs: `artifacts/*_871_second.exit.json`, `artifacts/*_871_second.log`;
+the failed first receipts were not overwritten. Candidate READY FOR INSTALL,
+installed/live/private exact installer871 pending; native EXE858 retained.
+Installed runtime870 `7ba406a1` professional acceptance remains FAILED.
+Offline fixtures and canonical gates are not real-model professional proof.
+
+## 2026-10-02 — installed 870: native evidence delivery exceeds bound context
+
+Exact installed commit `7ba406a1d90744b0917b9a4950956df77753fc52`, same
+source/task/profile/model B0/B1, professional acceptance FAILED. B0 179.56s:
+4 native searches / 24 prepared refs, no XLSX; required 55639 / budget 46246
+(overflow 9393). B1 57.97s: paused/resumable, 0 accepted rows / 20 remaining,
+no XLSX. First read frame 45230 admitted 5 exact full results; 5 reader missing
+results are retained in the trace. Next 4 searches prepared 24 refs, but second
+read frame required 72822 (overflow 26576) and was not delivered.
+
+Saved B1 compact replay alone estimates 50317 tokens before profile/request/
+native history: 30 byte-distinct stored body views (60519 chars), 44 unread pointers,
+5 aliases already shared. This is canonical len/2 counting, not a provider
+tokenizer result. Exact body duplicates are absent; choosing professional
+candidates in code is not a remedy. 871 source/tests are frozen: common
+`prepare_model_read_replay` / `govern_model_read_messages` retain mandatory
+exact/cited bodies and literal inventory, while whole discovery groups are
+optional and admitted by the actual Governor. Raw IDs/content/refs remain durable.
+Inventory delivery and body delivery are separate; source map/manifest/row
+binding/price guards do not use hidden raw bodies. Premature search registration
+is removed; legacy exact-price receipts remain mandatory and pointer-only views
+never claim full bodies. Final focused 10 suites: 392 passed (21.54s), four
+causal old-boundary ablations red retained. Scripted B0/B1 authored JSON→XLSX
+fixtures confirm 1800 and preserve 24 raw refs. These fixtures are not real-model
+professional proof; 871 canonical is recorded above, installed live pending. No model/
+provider/profile changes or professional rewrite are claimed.
+
+870 final canonical: 2906 passed / 20 existing opt-in skipped / 5 warnings;
+verify/architecture/pinned baseline exit0. Installed native RRF exit0. Basic 90s
+smoke: 8 passed / 1 warning / 1 project-timeout FAIL. Separate finite
+hardware-calibrated 180s smoke exit0: 10 PASS / 0 WARN / 0 FAIL (85.55s),
+glossary/project 31.640s/51.438s, both below original 90s. FT request p95
+128.233s motivated the explicit finite limit; the original failed run stays
+recorded because ordinary latency varies. Technical smoke does not close
+this professional failure.
+Receipts: `artifacts/live_870/bap_lsr_{baseline,candidate}/`.
+
 ## 2026-10-02 — 870 candidate: duplicate native body and ambiguous row isolation
 
 Installed 869 (`85d09d7e`) same-input/profile comparison FAILED. B0 stopped
@@ -22,8 +76,9 @@ Durable fixture keeps 3 valid rows / 1 remaining; plain continuation does not
 repair, existing explicit reopen with new model correction produces a real XLSX.
 Focused root 109 passed / native 56 passed / decoder-durable 22 red → 73 passed.
 Final targeted parser: 10 red before fix → 118 passed (15.98s);
-transport/persistence: 119 passed (20.44s). Canonical and installed comparative/
-live 870 remain pending. These fixes do not close the failed professional acceptance.
+transport/persistence: 119 passed (20.44s). Final boundary checks: 8 red /
+2 prose controls green → 128 passed (14.64s). Canonical and installed comparative
+870 are recorded above; these fixes do not close failed professional acceptance.
 
 ## 2026-10-02 — 869 candidate: source scope and packet transport completeness
 

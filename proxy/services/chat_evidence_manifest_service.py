@@ -50,7 +50,8 @@ def build_evidence_manifest(
     for index, chunk in enumerate(chunks, 1):
         source = source_map_item(chunk, index=index)
         identity = str(source.get("evidence_ref") or f"S{index}")
-        destination = (visible if source.get("model_delivery_status") in (None, "", "delivered")
+        destination = (visible if (source.get("model_delivery_status") in (None, "", "delivered")
+                                  or source.get("model_inventory_delivery_status") == "delivered")
                        else prepared)
         destination.append(
             {
@@ -61,6 +62,7 @@ def build_evidence_manifest(
                 "doc_id": str(source.get("doc_id") or ""),
                 "dataset_id": str(source.get("dataset_id") or ""),
                 "locator": copy.deepcopy(source.get("locator") or {}),
+                **({"body_visible": source["body_visible"]} if "body_visible" in source else {}),
             }
         )
     return {

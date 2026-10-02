@@ -148,6 +148,9 @@ def price_evidence_check(
         meta = _chunk_value(chunk, "meta", {}) or {}
         if not isinstance(meta, Mapping):
             continue
+        if (meta.get("model_delivery_status") not in (None, "", "delivered")
+                or meta.get("body_status") == "deferred_capacity"):
+            continue
         identity = str(meta.get("global_evidence_id") or "").strip()
         if not identity or identity not in cited or _is_norm_chunk(chunk, meta):
             continue

@@ -50,7 +50,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      query_count=2, group_char_budget=None, partial_final=False, packet_count=1,
                      input_token_limit=100_000, candidate_padding=0, native_read_batch=False,
                      malformed_first_packet=False, malformed_all_first_packet=False,
-                     malformed_second_packet=False, duplicate_json_first_packet=False):
+                     malformed_second_packet=False, duplicate_json_first_packet=False,
+                     native_discovery_queries=(), native_discovery_padding=0, json_final=False):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -103,6 +104,13 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
     def norm_search(query, *, limit):
         search_queries.append(query)
         assert limit == 6
+        if query in native_discovery_queries:
+            return {"cards": [{"norm_key": f"new-discovery-{index}", "norm_code": f"DISCOVERY-{index}",
+                              "title": f"Literal discovered candidate {index}", "measure_unit": "m",
+                              "source_ref": f"fixture#new-discovery-{index}",
+                              "work_steps": [f"withheld_literal_body_{index}_" + query + "x" * native_discovery_padding],
+                              "resource_count": 0, "resource_preview": []} for index in range(6)],
+                    "retrieval_trace": {"rag": {"status": "ok", "fusion": "native_rrf"}}}
         return {"cards": [{"norm_key": "immutable-norm", "norm_code": NORM_CODE,
                            "title": "Synthetic exact norm", "measure_unit": "m",
                            "source_ref": "fixture#immutable-norm",
@@ -173,6 +181,10 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         responses.append(InferenceResponse(text="", tool_calls=(_native("not_a_reader", code=RESOURCE_A),),
                                           finish_reason="tool_calls", usage={}))
     elif reads:
+        if native_discovery_queries:
+            responses.append(InferenceResponse(text="", tool_calls=tuple(
+                _native("search_sources", q=query, target="norms") for query in native_discovery_queries),
+                finish_reason="tool_calls", usage={}))
         read_responses = [
             InferenceResponse(text="", tool_calls=(_native("read_norm_card", norm_key="immutable-norm"),),
                               finish_reason="tool_calls", usage={}),
@@ -203,6 +215,12 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                                 shown_prices[item["resource_code"]] = item["evidence_ref"]
             refs = shown_prices[RESOURCE_A], shown_prices[RESOURCE_B]
         answer = _answer(refs=refs)
+        if json_final:
+            answer = json.dumps({"rows": [
+                {"source_row": "S!R2", "row_role": "material", "title": "Cable A", "unit": "m",
+                 "quantity": 12, "norm_code": "", "resource_code": RESOURCE_A, "evidence_refs": [refs[0]]},
+                {"source_row": "S!R3", "row_role": "material", "title": "Cable B", "unit": "m",
+                 "quantity": 3, "norm_code": "", "resource_code": RESOURCE_B, "evidence_refs": [refs[1]]}]})
         if packet_index:
             answer = answer.replace("S!R2", f"S!R{2 + packet_index * 2}").replace("S!R3", f"S!R{3 + packet_index * 2}")
         if partial_final and packet_index == 0:
@@ -422,6 +440,62 @@ async def test_native_sheet_reads_keep_full_resources_distinct_price_arguments_a
             assert sheet.cell(row, 12).value == f"=ROUND(G{row}*J{row}*K{row},2)"
     finally:
         rendered.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_native_discovery_inventory_keeps_exact_reads_and_real_json_workbook_within_capacity(tmp_path, monkeypatch, variant):
+    queries = tuple(f"literal discovery query {index}" for index in range(4))
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+                           input_token_limit=30_000, native_discovery_queries=queries,
+                           native_discovery_padding=10_000, json_final=True)
+    assert len(run.requests) == 5 and not run.responses
+    assert run.queries[:len(run.declared_queries)] == run.declared_queries
+    assert run.queries[-len(queries):] == list(queries)
+    assert len(run.exact_reads) == 1 and len(run.executions) == 1
+    trace = run.result["retrieval_trace"]
+    assert not trace["tool_loop"].get("evidence_read_stop")
+    reads = trace["tool_loop"]["evidence_reads"]
+    discoveries = [read for read in reads if read["call"]["tool"] == "search_sources"]
+    assert len(discoveries) == 4
+    assert all(read["model_inventory_delivery_status"] == "delivered" for read in discoveries)
+    assert all(read["model_delivery_status"] == "prepared" for read in discoveries)
+    assert all(len(read["deferred_body_evidence_refs"]) == 6 for read in discoveries)
+    frames = [call for call in trace["context_governor"]["calls"]
+              if call["purpose"] in {"sheet_pass_evidence_read", "direct_evidence_read"}]
+    assert len(frames) == 3
+    assert all(frame["included_tokens"] <= frame["input_budget_tokens"] for frame in frames)
+    first = "\n".join(message["content"] for message in run.requests[2].messages)
+    assert "new-discovery-0" in first and "withheld_literal_body_0_" not in first
+    last = "\n".join(message["content"] for message in run.requests[-1].messages)
+    registry = next(json.loads(line) for line in last.splitlines()
+                    if line.startswith('{"body_delivery":'))
+    full_card = next(row["content"] for row in registry["previously_shown_evidence_registry"]
+                     if "fixture-resource-21" in row["content"])
+    assert "resources_complete=True" in full_card and '"per_unit": 21.25' in full_card
+    assert sum("fixture-resource-21" in message["content"] for message in run.requests[-1].messages) == 1
+    inventory_refs = {ref for read in discoveries for ref in read["evidence_refs"]}
+    indexed = {item["id"]: item for item in trace["evidence_manifest"]["model_visible"]}
+    assert inventory_refs <= indexed.keys()
+    assert all(indexed[ref]["body_visible"] is False for ref in inventory_refs)
+    assert all("withheld_literal_body_" not in str(item) for item in trace["source_map"])
+    rows = run.executions[0][0]["args"]["decisions"]
+    assert [(row["source_row"], row["quantity"], row["resource_code"]) for row in rows] == [
+        ("S!R2", 12, RESOURCE_A), ("S!R3", 3, RESOURCE_B)]
+    receipt = run.executions[0][1]
+    assert receipt["status"] == "complete" and receipt["confirmed_amount"] == 1800
+    from proxy.services.artifact_revision_service import ArtifactRevisionStore
+    artifact = ArtifactRevisionStore(tmp_path / "storage/artifacts/meta.db", tmp_path / "storage/artifacts/files")
+    output = artifact.resolve_path(receipt["artifact"]["revision_id"])
+    assert output.is_file() and output.suffix == ".xlsx"
+    if variant == "B1_CANDIDATE":
+        from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+        job = WorkbookResearchJobService().get(trace["workbook_research_job"]["job_id"])
+        stored = [item for item in job["evidence"] if item["meta"].get("model_read_tool") == "search_sources"]
+        assert len(stored) == 24
+        assert all("withheld_literal_body_" in item["content"] for item in stored)
+        assert all(item["meta"]["model_delivery_status"] == "prepared" for item in stored)
+        assert all(item["meta"]["model_inventory_delivery_status"] == "delivered" for item in stored)
 
 
 @pytest.mark.asyncio

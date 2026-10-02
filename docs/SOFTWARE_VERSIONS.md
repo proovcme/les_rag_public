@@ -3,17 +3,30 @@
 Канонический паспорт совместимости. Версия продукта и номер сборки берутся только из
 [`config/version.json`](../config/version.json). Полный Python-граф фиксирует `uv.lock`.
 
-Таблица описывает candidate 0.31.142/build 870; установлен 869 (`85d09d7e`).
-Профессиональная приёмка 869 FAILED; canonical/installed live 870 pending.
+Таблица описывает candidate 0.31.143/build 871; установлен 870
+(`7ba406a1d90744b0917b9a4950956df77753fc52`). Canonical 870: 2906 passed /
+20 existing opt-in skipped / 5 warnings; architecture и pinned baseline exit0.
+Профессиональная приёмка 870 FAILED; capacity delivery 871 source/tests frozen:
+initial focused 392 passed (21.54s), fixture admission 119 passed (15.60s).
+SECOND canonical 871: 2925 passed / 20 existing opt-in skipped / 5 warnings;
+verify/architecture/baseline/active artifacts exit0. Первый FAILED gate 2923 pass /
+2 fixture failures сохранён, production source8 не менялся. Candidate READY FOR
+INSTALL; installed/live/private exact installer871 pending, native EXE858 retained.
+Это не professional proof реальной модели. Native RRF 870 exit0; basic smoke с 90s
+дал 8 passed / 1 warning / 1 project-timeout FAIL. Отдельный finite 180s
+hardware-calibrated smoke: exit0, 10 PASS / 0 WARN / 0 FAIL за 85.55s;
+glossary/project 31.640s/51.438s, оба ниже исходного 90s. Измеренный FreeToken
+request p95 128.233s объясняет явный лимит; исходный failed run сохранён.
+Техническая доступность не доказывает профессиональное качество.
 Фактические receipts и состояние выпуска — [`RELEASE_LEDGER.md`](RELEASE_LEDGER.md).
 
 ## Версия ЛЕС
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.142` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `870` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.870` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.143` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `871` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.871` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

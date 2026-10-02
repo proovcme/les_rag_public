@@ -150,6 +150,7 @@ def inventory_pointer(card: EvidenceCard, *, full: bool = False) -> str:
     if not card.meta.get("norm_key") and not card.meta.get("norm_code"):
         fields.append({name: card.meta[name] for name in (
             "doc_id", "dataset_id", "doc_name", "source_locator", "page", "sheet", "row",
+            "resource_code", "pricebook", "pricebook_sha256", "unit",
         ) if card.meta.get(name) is not None})
     return json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
 
@@ -364,6 +365,67 @@ def compact_read_replay(chunks: Sequence[Any]) -> list[Any]:
     return [catalogs, {"previously_shown_evidence_registry": compact,
                       "body_delivery": "Full literal bodies and exact shared catalogs. Deferred entries below are unread identity pointers only."},
             *(["Deferred identity pointers; read_norm_card/read_source remain available:\n" + "\n".join(pointers)] if pointers else [])]
+
+
+@dataclass(frozen=True)
+class ModelReadReplay:
+    required: list[Any]
+    optional: list[str]
+    inventory_refs: list[str]
+    exact_body_refs: list[str]
+    optional_body_refs: list[list[str]]
+
+
+def prepare_model_read_replay(chunks: Sequence[Any], *, required_refs: Sequence[str] = ()) -> ModelReadReplay:
+    """Keep exact reads required; budget whole discovery views without changing storage.
+
+    Inventory admission and full-body admission are separate facts. Raw native
+    results retain their content and immutable IDs even when only their index
+    fits. Previously deferred views never manufacture an unseen stored body.
+    """
+    required_ids = set(required_refs)
+    replay, inventory, exact = [], [], []
+    groups: dict[str, list[EvidenceCard]] = {}
+    seen: set[tuple[str, str]] = set()
+    for chunk in chunks:
+        raw = dict(chunk) if isinstance(chunk, Mapping) else dict(vars(chunk))
+        meta = dict(raw.get("meta") or {})
+        ref = str(meta.get("model_evidence_ref") or raw.get("model_evidence_ref") or "")
+        key = (str(meta.get("global_evidence_id") or raw.get("global_evidence_id") or ""), ref)
+        if key in seen:
+            continue
+        seen.add(key)
+        if ref:
+            inventory.append(ref)
+        is_exact = (meta.get("model_read_tool") in {"read_norm_card", "read_resource_price", "read_source"}
+                    or meta.get("exact_card_read") is True or meta.get("source_read") is True
+                    or ref in required_ids or key[0] in required_ids)
+        content = str(raw.get("content") or "")
+        has_body = bool(content) and (meta.get("body_status") != "deferred_capacity"
+                                     or meta.get("model_raw_body_retained") is True)
+        if is_exact:
+            # Legacy deferred chunks can contain only an identity pointer. A
+            # retained raw body may be replayed through this view clone, while
+            # the stored chunk and its historical delivery flags stay intact.
+            replay.append({**raw, "meta": {**meta, "body_status": "full"}} if has_body else raw)
+            if ref and has_body:
+                exact.append(ref)
+            continue
+        if has_body:
+            group_key = str(meta.get("model_query_index") or ref)
+            groups.setdefault(group_key, []).append(EvidenceCard(
+                ref, f"[{ref} | {raw.get('doc_name') or ''}]", normative_card_identity(meta), content, meta))
+        # This is a view clone. Neither raw bodies nor historical delivery flags
+        # are overwritten by their present inventory-only representation.
+        replay.append({**raw, "meta": {**meta, "body_status": "deferred_capacity"}})
+    optional, optional_refs = [], []
+    for cards in groups.values():
+        query = str(cards[0].meta.get("model_query_text") or "")
+        group = EvidenceGroup(f"Discovery query: {query}", cards)
+        page = plan_full_group_page([group], 2**63 - 1)
+        optional.append("\n\n".join(page.groups))
+        optional_refs.append(list(page.body_refs))
+    return ModelReadReplay(compact_read_replay(replay), optional, inventory, exact, optional_refs)
 
 
 def native_read_growth_budget(*, available_tokens: int, generation_tokens: int,

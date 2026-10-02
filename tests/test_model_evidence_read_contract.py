@@ -133,6 +133,92 @@ def test_mixed_read_frame_keeps_legacy_receipt_without_repeating_native_reply():
     assert json.loads(exchange.replies[0].content) == native
 
 
+def test_legacy_saved_exact_price_receipt_keeps_raw_body_required_on_tight_resume(monkeypatch):
+    from proxy.services import chat_evidence_application_service as service
+    price = SimpleNamespace(doc_name="quote.pdf", doc_id="doc", score=1.0, content="LITERAL_PRICE 25 m" + "x" * 3000,
+                            meta={"global_evidence_id": "old-price", "model_evidence_ref": "Q8.H1",
+                                  "model_read_packet_id": "packet", "resource_code": "literal-code",
+                                  "pricebook": "literal-book", "model_delivery_status": "prepared", "body_status": "full"})
+    discovery = SimpleNamespace(doc_name="catalog", doc_id="doc", score=1.0, content="OPTIONAL_DISCOVERY" + "y" * 8000,
+                                meta={"global_evidence_id": "other", "model_evidence_ref": "Q9.H1", "body_status": "full"})
+    receipt = {"call": {"tool": "read_resource_price", "args": {"code": "literal-code"}},
+               "status": "ok", "evidence_refs": ["Q8.H1"], "evidence_bindings": {"Q8.H1": "old-price"}}
+    preset = ModelExecutionPreset(preset_id="legacy-resume", model_family="fixture",
+        input_token_limit=3000, generation_reserve_tokens=0, safety_reserve_tokens=0,
+        normal_tool_count=5, max_tools=5, max_batch_items=5, parallel_read_limit=1,
+        reasoning_enabled=False, source_chain=("test",))
+    original = dict(price.meta)
+    real_govern = service.govern_inference_messages
+    governed_inputs = []
+    def record_govern(**kwargs):
+        governed_inputs.append(kwargs)
+        return real_govern(**kwargs)
+    monkeypatch.setattr(service, "govern_inference_messages", record_govern)
+    messages, packet, inventory, bodies = service.govern_model_read_messages(
+        preset=preset, profile_prefix="profile", request_payload="original question",
+        source_context=["original source"], chunks=[price, discovery], receipts=[receipt])
+    assert packet.included_tokens <= packet.input_budget_tokens
+    assert "Q8.H1" in bodies and "Q9.H1" not in bodies
+    assert inventory == ["Q8.H1", "Q9.H1"]
+    assert "LITERAL_PRICE" in messages[1]["content"] and "OPTIONAL_DISCOVERY" not in messages[1]["content"]
+    # The saved literal tool receipt is authoritative even without the new
+    # model_read_tool stamp. This body must survive optional-view omission.
+    assert "LITERAL_PRICE" in json.dumps(governed_inputs[0]["required_evidence"])
+    assert "LITERAL_PRICE" not in json.dumps(governed_inputs[0]["evidence"])
+    assert price.meta == original and price.meta["global_evidence_id"] == "old-price"
+    service.confirm_model_read_delivery([price, discovery], inventory_refs=inventory, body_refs=bodies)
+    assert price.meta["model_delivery_status"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_native_search_pointer_is_readable_only_after_actual_inventory_admission(monkeypatch):
+    from proxy.services import chat_evidence_application_service as application
+    from proxy.services import model_research_tool_service as research
+    monkeypatch.setattr(research.nr_sp_service, "model_candidates", lambda **_kw: [])
+    reads = []
+    card = {"norm_key": "literal-key", "norm_code": "CODE-1", "source_ref": "literal-source",
+            "title": "Literal title", "measure_unit": "m", "work_steps": ["Literal exact work"],
+            "resources": [], "resource_count": 0, "resources_complete": True}
+    def exact_reader(**kwargs):
+        reads.append(kwargs)
+        return {"status": "ok", "card": card}
+    async def no_general_search(**_kwargs):
+        pytest.fail("norm search must use the configured canonical route")
+    tools = research.ModelResearchToolService(
+        retrieve=no_general_search, frozen_dataset_ids=(), retrieval_kwargs={},
+        fallback=lambda *_args: pytest.fail("fallback must not run"), norm_card_reader=exact_reader,
+        smeta_norm_retrieve=lambda _q, **_kw: {"cards": [{**card, "resource_preview": [{
+            "resource_code": "literal-preview", "name": "UNSHOWN_RAW_BODY" + "x" * 8000}]}],
+            "retrieval_trace": {"rag": {"status": "ok"}}})
+    search_call = {"tool": "search_sources", "args": {"q": "literal model query"}}
+    search = await tools.execute(search_call)
+    exact_call = {"tool": "read_norm_card", "args": {"norm_key": "literal-key", "norm_code": "CODE-1"}}
+    # Both calls can belong to one native assistant batch. Search execution
+    # alone has not put its result in any answer frame.
+    premature = await tools.execute(exact_call)
+    assert premature.payload["status"] == "conflict" and reads == []
+    receipt = {"call": search_call, "status": "ok"}
+    _, chunks, _ = application.bind_model_requested_read_evidence(
+        [search], existing_chunks=[], evidence_namespace="literal-scope", receipts=[receipt])
+    tools.register_shown_norm_cards(chunks)
+    assert (await tools.execute(exact_call)).payload["status"] == "conflict" and reads == []
+    preset = ModelExecutionPreset(preset_id="inventory-before-reader", model_family="fixture",
+        input_token_limit=2000, generation_reserve_tokens=0, safety_reserve_tokens=0,
+        normal_tool_count=5, max_tools=5, max_batch_items=5, parallel_read_limit=1,
+        reasoning_enabled=False, source_chain=("test",))
+    messages, _, inventory, bodies = application.govern_model_read_messages(
+        preset=preset, profile_prefix="profile", request_payload="original question",
+        source_context=["original source"], chunks=chunks, receipts=[receipt])
+    assert inventory and bodies == [] and "UNSHOWN_RAW_BODY" not in str(messages)
+    application.confirm_model_read_delivery(chunks, [receipt], inventory_refs=inventory, body_refs=bodies)
+    tools.register_shown_norm_cards(chunks)
+    exact = await tools.execute(exact_call)
+    assert exact.payload["status"] == "ok" and reads == [{"norm_key": "literal-key", "norm_code": "CODE-1"}]
+    assert chunks[0].meta["model_delivery_status"] == "prepared"
+    assert chunks[0].meta["model_inventory_delivery_status"] == "delivered"
+    assert "Literal exact work" in exact.chunks[0].content
+
+
 def test_large_shown_inventory_replays_without_verbose_registry_inflation():
     from proxy.services import chat_evidence_application_service as service
     from test_model_rag_grouped_evidence_service import _body, _rules

@@ -167,4 +167,4 @@ def read_result_receipt(call: Mapping[str, Any], payload: Mapping[str, Any]) -> 
             "missing": list(payload.get("missing") or []),
             "warnings": list(payload.get("warnings") or []),
             "trace": dict(payload.get("trace") or {}),
-            "result_body": "Shown as cited evidence in this frame"}
+            "result_body": "Index/full bodies are marked in this frame."}

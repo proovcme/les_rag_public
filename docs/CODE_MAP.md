@@ -1,5 +1,26 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **871, source/tests frozen (док↔candidate-code ✅):**
+> `model_rag_grouped_evidence_service.prepare_model_read_replay` сохраняет
+> mandatory exact/cited bodies и literal inventory, optional whole discovery groups.
+> `chat_evidence_application_service.govern_model_read_messages` использует
+> actual Governor admission в initial saved replay и `_continue_sheet_reads` /
+> `_continue_direct_reads`. Raw body/immutable ID/refs остаются durable;
+> inventory/body delivery раздельны. `confirm_model_read_delivery` и
+> `register_shown_norm_cards` выполняются после admitted model frame; source map,
+> manifest, row binding и `price_evidence_check` не используют непоказанный body.
+> Legacy exact-price receipts mandatory; pointer-only не утверждает full body.
+> Installed 870 `7ba406a1`: canonical 2906 passed / 20 existing skipped /
+> 5 warnings; verify/architecture/pinned baseline exit0. B0/B1 professional FAILED
+> с required-section overflow, оба без XLSX. 871 focused 392 passed (21.54s),
+> 4 causal old-boundary ablations red. Второй canonical 871: 2925 passed /
+> 20 existing skipped / 5 warnings, verify/architecture/baseline/active artifacts exit0.
+> Первый 2923 passed / 2 fixture failures сохранён; source8 неизменён, только
+> explicit-admission test fixture обновлён (119 passed). Candidate READY FOR INSTALL;
+> installed/live/private exact installer pending, native EXE858 retained.
+> Generated maps: 1072 tracked Python / 376498 lines / 370 product / 11 support /
+> 690 test-tool / 1 dormant / 340 routes / 0 parse warnings.
+
 > **870:** `model_read_frame_evidence` передаёт native receipts через обязательные
 > tool replies один раз; `model_read_capacity_trace` сохраняет фактический overflow.
 > `bind_model_requested_read_evidence` отмечает prepared bodies;

@@ -1,5 +1,38 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+871 capacity delivery source/5 tests frozen, 8 production source files reviewed.
+Initial focused 10 suites **392 passed (21.54s)**; четыре causal old-boundary
+ablations red сохранены. Scripted B0/B1 actual JSON→XLSX fixtures подтверждают
+1800 и сохраняют 24 raw refs; inventory-delivered не означает body-delivered.
+Existing `test_model_rag_grouped_evidence_service`, `test_model_rag_sheet_evidence_reads`,
+`test_model_evidence_read_contract`, `test_model_price_provenance_service` проверяют
+общий mandatory exact/cited replay + optional whole discovery groups, legacy
+exact-price receipts и pointer-only price/body guards. Это offline механика,
+не real-model/professional proof. SECOND canonical 871: **2925 passed /
+20 existing opt-in skipped / 5 warnings** (281.29s / wrapper 282.81s), verify0
+(22.84s), architecture0 (9.75s), baseline0 (7.23s), active artifacts0 (0.61s).
+Первый FAILED gate сохранён: 2923 passed / 2 failed / 20 skip / 5 warnings
+(286.72s / wrapper 288.22s), verify0 (23s). Два old rawsearch→exactread fixtures
+не выполняли inventory admission; только `test_model_research_evidence_actions`
+обновлён explicit binder→Governor→confirm→register и before-admission negative
+assertions (+40/−4), original provenance/40 resources/НРСП/price assertions сохранены.
+Focused fixture checks: 119 passed (15.60s), source8 без изменений. Receipts/logs:
+`artifacts/*_871_second.exit.json`, `artifacts/*_871_second.log`; первый run не заменён.
+Candidate READY FOR INSTALL, installed/live/private exact installer pending;
+native EXE858 retained. Это не professional readiness.
+Установлен exact 870 `7ba406a1`; финальный
+canonical 2906 passed / 20 existing opt-in skipped / 5 warnings, verify/
+architecture/pinned baseline exit0. Installed native RRF exit0; basic 90s:
+8 passed / 1 warning / 1 project-timeout FAIL. Separate finite hardware-calibrated
+180s smoke exit0: 10 PASS / 0 WARN / 0 FAIL (85.55s), glossary/project
+31.640s/51.438s, оба ниже исходного 90s; FT request p95 128.233s.
+Первый failed результат сохраняется: обычная latency изменчива.
+Professional comparison 870 FAILED: B0 179.56s required 55639 / budget 46246,
+4 searches / 24 prepared refs, no XLSX; B1 57.97s paused, 0 rows / 20 remaining,
+first read frame 45230 admitted, second required 72822 / budget 46246, no XLSX.
+Offline checks и выполненные reads не доказывают delivery или профессиональную
+приёмку. Receipts: `artifacts/live_870/bap_lsr_{baseline,candidate}/`.
+
 870 focused transport/source/contract checks: root 109 passed (14.2s), native
 exchange/read 56 passed (3.5s), decoder/durable 22 red → 73 passed. Existing
 `test_model_evidence_native_exchange`, `test_model_evidence_read_contract`,
@@ -11,8 +44,9 @@ duplicate fields сохраняют conflict raw в durable snapshot, три н�
 решения принимаются, один locator остаётся; plain continue не запускает repair,
 explicit reopen с новым model correction сохраняет реальный XLSX.
 Final targeted parser: 10 red до fix → 118 passed (15.98s);
-transport/persistence: 119 passed (20.44s). Frozen canonical/live 870 **pending**.
-Installed 869 comparison **FAILED**: B0 capacity/no XLSX (76.88s), B1 paused
+transport/persistence: 119 passed (20.44s). Последние boundary checks:
+8 red / 2 prose controls green → 128 passed (14.64s); canonical 870 зафиксирован выше.
+Предыдущий installed 869 comparison **FAILED**: B0 capacity/no XLSX (76.88s), B1 paused
 draft (311.64s), 11 operations / 8 scope locators = 7/19 реальных работ плюс
 header; предварительно 64 545.14, подтверждено 0. SHA/revision и known-part
 Decimal совпали; это не доказательство применимости норм/ресурсов/полной цены.

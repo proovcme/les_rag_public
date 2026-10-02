@@ -125,6 +125,8 @@ from proxy.services.model_rag_grouped_evidence_service import (
     normative_card_identity,
     card_delivery_facts,
     compact_read_replay,
+    prepare_model_read_replay,
+    inventory_pointer,
     native_read_growth_budget,
 )
 from proxy.services.model_price_provenance_service import price_evidence_check
@@ -1421,7 +1423,30 @@ def model_read_frame_evidence(source_context, chunks, receipts, *, native_exchan
                        if (receipt.get("call") or {}).get("call_id") not in native_ids]
     receipt_context = ([{"model_requested_reads": legacy_receipts}]
                        if legacy_receipts or not native_exchanges else [])
-    return [*source_objects, *compact_read_replay(chunks), *receipt_context]
+    return [*source_objects, *(compact_read_replay(chunks) if chunks else []), *receipt_context]
+
+
+def govern_model_read_messages(*, source_context, chunks, receipts=(), **context):
+    """Use one capacity contract for initial replay and both native continuations."""
+    required_refs = [str(record.get("global_evidence_id") or record.get("ref") or "")
+                     for item in source_context if isinstance(item, Mapping)
+                     for record in item.get("previously_shown_cited_evidence", ())
+                     if isinstance(record, Mapping)]
+    required_refs.extend(str(ref) for receipt in receipts
+                         if (receipt.get("call") or {}).get("tool") in {
+                             "read_norm_card", "read_resource_price", "read_source"}
+                         for ref in [*(receipt.get("evidence_refs") or ()),
+                                     *(receipt.get("evidence_bindings") or {}).values()])
+    replay = prepare_model_read_replay(chunks, required_refs=required_refs)
+    exchanges = context.get("native_exchanges", ())
+    required = model_read_frame_evidence(source_context, (), receipts, native_exchanges=exchanges)
+    messages, packet = govern_inference_messages(
+        **context, required_evidence=[*required, *replay.required], evidence=replay.optional)
+    admitted_objects = {obj.object_id for section in packet.sections for obj in section.objects}
+    body_refs = [*replay.exact_body_refs,
+                 *(ref for index, refs in enumerate(replay.optional_body_refs)
+                   if f"evidence:{index}" in admitted_objects for ref in refs)]
+    return messages, packet, replay.inventory_refs, body_refs
 
 
 def model_read_capacity_trace(error: ContextRequiredSectionOverflow, *, purpose: str) -> dict[str, Any]:
@@ -2696,11 +2721,13 @@ def _card_code_from_chunk(chunk: Any) -> str:
     Metadata identifies a literal shown token; it never proves delivery of the
     card's conditions. The separate body/immutable-identity check owns that.
     """
-    body = str(getattr(chunk, "content", "") or "")
+    meta = getattr(chunk, "meta", {}) or {}
+    body = str((meta.get("model_inventory_view")
+                if meta.get("model_delivery_status") not in (None, "", "delivered")
+                else getattr(chunk, "content", "")) or "")
     code = _card_code_from_body(body, str(getattr(chunk, "doc_name", "") or ""))
     if looks_like_cipher(code):
         return code
-    meta = getattr(chunk, "meta", {}) or {}
     declared = str(meta.get("norm_code") or "").strip()
     if looks_like_cipher(declared) and re.search(
         r"(?<![\w.-])" + re.escape(declared) + r"(?![\w.-])", body
@@ -2811,15 +2838,20 @@ def bind_model_requested_read_evidence(
         tool = str(result.payload.get("tool") or "read_source")
         inputs = result.payload.get("inputs") or []
         label = tool + " " + json.dumps(inputs, ensure_ascii=False, sort_keys=True)
-        full_chars = sum(len(str(getattr(c, "content", "") or "")) for c in result.chunks) + 16_000
         new_groups, new_chunks, new_omitted = build_model_rag_evidence_groups(
-            [(label, result.chunks)], max_chars=full_chars,
+            [(label, result.chunks)], max_chars=2**63 - 1,
             hits_per_query=max(len(result.chunks), 1),
             evidence_namespace=evidence_namespace + ":" + str(index),
             query_offset=offset, query_provenance={label: "model"}, query_addresses={},
         )
         for chunk in new_chunks:
             chunk.meta["model_delivery_status"] = "prepared"
+            chunk.meta["model_inventory_delivery_status"] = "prepared"
+            chunk.meta["model_read_tool"] = tool
+            chunk.meta["model_raw_body_retained"] = True
+            chunk.meta["model_inventory_view"] = inventory_pointer(EvidenceCard(
+                str(chunk.meta.get("model_evidence_ref") or ""), chunk.doc_name,
+                normative_card_identity(chunk.meta), chunk.content, chunk.meta))
             if packet_id:
                 chunk.meta["model_read_packet_id"] = packet_id
         if index < len(receipts):
@@ -2835,18 +2867,30 @@ def bind_model_requested_read_evidence(
     return groups, chunks, omitted
 
 
-def confirm_model_read_delivery(chunks, receipts=()):
+def confirm_model_read_delivery(chunks, receipts=(), *, inventory_refs=None, body_refs=None):
     """Confirm read feedback only after the provider has answered its admitted frame.
 
     A retrieved body stays durable and replayable when context packing fails,
     but cannot masquerade as evidence already received by the model.
     """
+    inventory = set(inventory_refs) if inventory_refs is not None else None
+    bodies = set(body_refs) if body_refs is not None else None
     for chunk in chunks:
-        if chunk.meta.get("model_delivery_status") == "prepared":
+        ref = str(chunk.meta.get("model_evidence_ref") or "")
+        if inventory is None or ref in inventory:
+            chunk.meta["model_inventory_delivery_status"] = "delivered"
+        if chunk.meta.get("model_delivery_status") == "prepared" and (bodies is None or ref in bodies):
             chunk.meta["model_delivery_status"] = "delivered"
     for receipt in receipts:
-        if receipt.get("model_delivery_status") == "prepared":
-            receipt["model_delivery_status"] = "delivered"
+        refs = set(receipt.get("evidence_refs") or ())
+        if inventory is None or refs <= inventory:
+            receipt["model_inventory_delivery_status"] = "delivered"
+        if bodies is None or refs <= bodies:
+            if receipt.get("model_delivery_status") == "prepared":
+                receipt["model_delivery_status"] = "delivered"
+        if bodies is not None:
+            receipt["full_body_evidence_refs"] = [ref for ref in receipt.get("evidence_refs", ()) if ref in bodies]
+            receipt["deferred_body_evidence_refs"] = [ref for ref in receipt.get("evidence_refs", ()) if ref not in bodies]
 
 
 def bind_row_evidence_ids(
@@ -2868,7 +2912,8 @@ def bind_row_evidence_ids(
     ambiguous_aliases: set[str] = set()
     for chunk in evidence_chunks:
         meta = getattr(chunk, "meta", {}) or {}
-        if meta.get("model_delivery_status") not in (None, "", "delivered"):
+        if (meta.get("model_delivery_status") not in (None, "", "delivered")
+                and meta.get("model_inventory_delivery_status") != "delivered"):
             continue
         alias = str(meta.get("model_evidence_ref") or "").strip().upper()
         global_id = str(meta.get("global_evidence_id") or "").strip()
@@ -2881,7 +2926,8 @@ def bind_row_evidence_ids(
             else:
                 alias_to_global[alias] = global_id
         if global_id:
-            body_shown = meta.get("body_status") != "deferred_capacity"
+            body_shown = (meta.get("model_delivery_status") in (None, "", "delivered")
+                          and meta.get("body_status") != "deferred_capacity")
             norm_identity = (normative_card_identity(meta)
                              if meta.get("norm_code") or meta.get("norm_key") else global_id)
             if body_shown:
@@ -2895,7 +2941,7 @@ def bind_row_evidence_ids(
             global_to_body_shown[global_id] = body_shown
             global_to_card[global_id] = _card_code_from_chunk(chunk)
             global_to_query[global_id] = str(meta.get("model_query_text") or "")
-            body = str(getattr(chunk, "content", "") or "")
+            body = str((getattr(chunk, "content", "") if body_shown else meta.get("model_inventory_view")) or "")
             global_to_bodies[global_id] = body
             resource_codes = {str(meta.get("resource_code") or "").strip()}
             for resource in [*(meta.get("resources") or []), *(meta.get("resource_preview") or [])]:
@@ -9363,15 +9409,6 @@ async def _execute_chat_evidence_application(
                                 chunk for chunk in sheet_pass_evidence_chunks
                                 if chunk.meta.get("model_read_packet_id") == current_read_packet
                             ]
-                            if saved_read_chunks:
-                                pass_evidence.append({
-                                    "previous_model_requested_exact_reads": [
-                                        {"ref": c.meta.get("model_evidence_ref"),
-                                         "global_evidence_id": c.meta.get("global_evidence_id"),
-                                         "content": c.content}
-                                        for c in saved_read_chunks
-                                    ]
-                                })
                             # Every continuation retains the complete original
                             # attachment, independently of the current row packet.
                             if attachment_context and not any(
@@ -9550,8 +9587,11 @@ async def _execute_chat_evidence_application(
                                 *pass_evidence,
                                 *model_rag_evidence_groups,
                             ]
+                            saved_read_receipts = list(((research_job or {}).get("task_context") or {}).get(
+                                "model_evidence_reads", {}).get(current_read_packet, ()))
+                            resumed_inventory_refs = resumed_body_refs = None
                             try:
-                                messages, answer_packet = govern_inference_messages(
+                                initial_context = dict(
                                     preset=answer_execution_preset,
                                     profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail,
@@ -9561,11 +9601,18 @@ async def _execute_chat_evidence_application(
                                         memory_candidates,
                                         registered=workspace_memory_registered,
                                     ),
-                                    required_evidence=[*pass_evidence, *model_rag_evidence_groups],
                                     source_map=(),
                                     tool_exchange=[],
                                     dialogue=[session_block] if session_block else [],
                                 )
+                                if saved_read_chunks:
+                                    messages, answer_packet, resumed_inventory_refs, resumed_body_refs = govern_model_read_messages(
+                                        **initial_context, source_context=pass_evidence,
+                                        chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                        receipts=saved_read_receipts)
+                                else:
+                                    messages, answer_packet = govern_inference_messages(
+                                        **initial_context, required_evidence=answer_evidence)
                             except ContextRequiredSectionOverflow as context_error:
                                 logger.warning(
                                     "[SHEET_PASS] answer overflow sheet=%s: %s",
@@ -9610,7 +9657,8 @@ async def _execute_chat_evidence_application(
                             t_llm_call = time.time()
                             pass_answer, usage = await _sheet_pass_llm(chat_body)
                             t_llm += time.time() - t_llm_call
-                            confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks])
+                            confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks],
+                                                        inventory_refs=resumed_inventory_refs, body_refs=resumed_body_refs)
                             model_research_tools.register_shown_norm_cards([*prior_page_chunks, *saved_read_chunks])
                             replayed_ids = {str(c.meta.get("global_evidence_id") or "") for c in model_evidence_chunks}
                             for chunk in [*prior_page_chunks, *saved_read_chunks]:
@@ -9651,14 +9699,13 @@ async def _execute_chat_evidence_application(
 
                             async def _continue_sheet_reads(receipts, _results, native_exchanges):
                                 nonlocal t_llm, research_job
-                                messages, read_frame = govern_inference_messages(
+                                messages, read_frame, inventory_refs, body_refs = govern_model_read_messages(
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail, native_tools=sheet_read_tools,
                                     native_exchanges=native_exchanges,
-                                    required_evidence=model_read_frame_evidence(
-                                        pass_evidence,
-                                        [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks], receipts,
-                                        native_exchanges=native_exchanges),
+                                    source_context=pass_evidence,
+                                    chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                    receipts=[*saved_read_receipts, *receipts],
                                 )
                                 retrieval_trace["context_governor"]["calls"].append(
                                     context_packet_trace(read_frame, purpose="sheet_pass_evidence_read")
@@ -9669,7 +9716,8 @@ async def _execute_chat_evidence_application(
                                     {**chat_body, "messages": messages}, purpose="sheet_pass_evidence_read"
                                 )
                                 t_llm += time.time() - started
-                                confirm_model_read_delivery(model_evidence_chunks, receipts)
+                                confirm_model_read_delivery(model_evidence_chunks, receipts,
+                                                            inventory_refs=inventory_refs, body_refs=body_refs)
                                 model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.record_evidence_read(
@@ -10858,13 +10906,12 @@ async def _execute_chat_evidence_application(
 
                         async def _continue_direct_reads(receipts, _results, native_exchanges):
                             nonlocal t_llm, llm_model
-                            read_messages, read_frame = govern_inference_messages(
+                            read_messages, read_frame, inventory_refs, body_refs = govern_model_read_messages(
                                 preset=answer_execution_preset, profile_prefix=sys_msg,
                                 request_payload=question_tail, native_tools=direct_read_tools,
                                 native_exchanges=native_exchanges,
-                                required_evidence=model_read_frame_evidence(
-                                    fixed_model_rag_evidence, model_evidence_chunks, receipts,
-                                    native_exchanges=native_exchanges),
+                                source_context=fixed_model_rag_evidence,
+                                chunks=model_evidence_chunks, receipts=receipts,
                             )
                             retrieval_trace["context_governor"]["calls"].append(
                                 context_packet_trace(read_frame, purpose="direct_evidence_read")
@@ -10875,7 +10922,8 @@ async def _execute_chat_evidence_application(
                                 {**chat_body, "messages": read_messages}, allow_stream=False,
                             )
                             t_llm += time.time() - started
-                            confirm_model_read_delivery(model_evidence_chunks, receipts)
+                            confirm_model_read_delivery(model_evidence_chunks, receipts,
+                                                        inventory_refs=inventory_refs, body_refs=body_refs)
                             model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                             if active_model_result is not None:
                                 llm_model = active_model_result.connection.model_id

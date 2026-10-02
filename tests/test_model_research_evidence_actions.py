@@ -61,6 +61,28 @@ def chosen_book():
                        json.dumps(rows, ensure_ascii=False).encode("utf-8"))
 
 
+def admit_search_inventory(reader, result, call):
+    """Model-visible search admission precedes restoring its exact reader handles."""
+    from proxy.services import chat_evidence_application_service as application
+    from proxy.services.model_execution_preset_service import ModelExecutionPreset
+    receipt = {"call": call, "status": result.payload["status"]}
+    _, chunks, _ = application.bind_model_requested_read_evidence(
+        [result], existing_chunks=[], evidence_namespace="action-fixture", receipts=[receipt])
+    preset = ModelExecutionPreset(preset_id="action-admission", model_family="fixture",
+        input_token_limit=20_000, generation_reserve_tokens=0, safety_reserve_tokens=0,
+        normal_tool_count=5, max_tools=5, max_batch_items=5, parallel_read_limit=1,
+        reasoning_enabled=False, source_chain=("test",))
+    messages, packet, inventory, bodies = application.govern_model_read_messages(
+        preset=preset, profile_prefix="fixture profile", request_payload="literal model question",
+        source_context=["literal current source"], chunks=chunks, receipts=[receipt])
+    assert packet.included_tokens <= packet.input_budget_tokens
+    assert inventory == receipt["evidence_refs"]
+    assert all(ref in str(messages) for ref in inventory)
+    application.confirm_model_read_delivery(chunks, [receipt], inventory_refs=inventory, body_refs=bodies)
+    reader.register_shown_norm_cards(chunks)
+    return chunks
+
+
 @pytest.mark.asyncio
 async def test_visible_deferred_norm_pointer_reads_full_resources_without_another_search():
     from proxy.services import chat_evidence_application_service as chat_evidence
@@ -153,8 +175,15 @@ async def test_read_source_uses_a_shown_document_and_preserves_quote_provenance(
         ]}}
 
     reader = service(retrieve=retrieve, fallback=fallback)
-    await reader.execute({"tool": "search_sources", "args": {"q": "offer", "target": "documents"}})
-    result = await reader.execute({"tool": "read_source", "args": {"doc_id": "offer-1"}})
+    search_call = {"tool": "search_sources", "args": {"q": "offer", "target": "documents"}}
+    found = await reader.execute(search_call)
+    exact_call = {"tool": "read_source", "args": {"doc_id": "offer-1"}}
+    unshown = await reader.execute(exact_call)
+    assert unshown.payload["status"] in {"missing", "conflict"} and unshown.chunks == ()
+    assert calls == []  # Retained raw search data does not authorize a fallback read.
+    admitted = admit_search_inventory(reader, found, search_call)
+    assert admitted[0].meta["model_inventory_delivery_status"] == "delivered"
+    result = await reader.execute(exact_call)
     assert calls == [("read_source", {"doc_id": "offer-1", "dataset_id": "selected", "doc_name": "Offer.pdf"})]
     assert result.chunks[0].meta["dataset_id"] == "selected"
     assert result.chunks[0].meta["chunk_id"] == "quote-2"
@@ -211,8 +240,15 @@ async def test_exact_norm_read_keeps_all_resource_consumption_and_nrsp_choices(m
         }, "missing": [], "warnings": []}
 
     reader = service(norm_card_reader=exact_reader)
-    await reader.execute({"tool": "search_sources", "args": {"q": "chosen norm"}})
-    result = await reader.execute({"tool": "read_norm_card", "args": {"norm_key": "norm-immutable"}})
+    search_call = {"tool": "search_sources", "args": {"q": "chosen norm"}}
+    found = await reader.execute(search_call)
+    exact_call = {"tool": "read_norm_card", "args": {"norm_key": "norm-immutable"}}
+    unshown = await reader.execute(exact_call)
+    assert unshown.payload["status"] in {"missing", "conflict"} and unshown.chunks == ()
+    assert calls == []  # The typed reader has not been called before actual admission.
+    admitted = admit_search_inventory(reader, found, search_call)
+    assert admitted[0].meta["model_inventory_delivery_status"] == "delivered"
+    result = await reader.execute(exact_call)
     assert calls == [{"norm_key": "norm-immutable", "norm_code": NORM_CODE}]
     assert len(result.payload["result"]["card"]["resources"]) == 40
     assert '"code": "literal-39"' in result.chunks[0].content

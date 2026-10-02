@@ -1,5 +1,39 @@
 # RAG evidence flow
 
+**Doc↔candidate code: ✅ 871 source/5 tests frozen; READY FOR INSTALL.**
+SECOND canonical: 2925 passed / 20 existing opt-in skipped / 5 warnings,
+verify/architecture/baseline/active artifacts exit0. Первый FAILED 2923 passed /
+2 rawsearch-before-admission fixture failures сохранён; исправлен только test
+fixture explicit admission (119 passed / 15.60s), source8 неизменён.
+Installed/live/private exact installer871 pending; native EXE858 retained.
+Review охватил 8 source files; initial focused 10 suites 392 passed (21.54s),
+4 causal old-boundary ablations red сохранены. Это не professional proof.
+Установлен exact 870 `7ba406a1`; professional 870 FAILED: B0 179.56s,
+required 55639 / budget 46246, 4 searches / 24 prepared refs, no XLSX;
+B1 57.97s paused, 0 rows / 20 remaining, first read frame 45230 admitted,
+second required 72822 / budget 46246, no XLSX. Prepared≠delivered остаётся
+обязательной границей. 30 разных saved body и их provenance не являются
+повтором native receipt; код не выбирает, какие нормы профессионально верны.
+`prepare_model_read_replay` сохраняет exact reads и уже cited bodies mandatory
+вместе с literal inventory; discovery bodies входят optional whole query groups.
+`govern_model_read_messages` получает фактически admitted objects от Governor
+в initial saved replay, `_continue_sheet_reads` и `_continue_direct_reads`.
+Raw body, immutable IDs и все refs остаются durable, view clone не стирает их.
+`model_inventory_delivery_status` и body `model_delivery_status` независимы:
+индекс разрешает точное чтение, но не доказывает полный body или цену.
+Source map показывает inventory view и body_visible; manifest/row binding/
+`price_evidence_check` не используют непоказанный raw body. Raw search не
+регистрирует shown card до admission; delivery подтверждается после ответа
+провайдера. Legacy saved exact-price receipts обязательны, pointer-only не
+производит full-body receipt. Scripted B0/B1 JSON→XLSX fixtures дают confirmed
+1800 при 24 сохранённых raw refs; это offline proof транспорта и расчёта.
+Canonical 870: 2906 passed / 20 existing opt-in skipped / 5 warnings,
+verify/architecture/pinned baseline exit0. Native RRF exit0; basic 90s project
+timeout сохранён отдельно от finite hardware-calibrated 180s smoke:
+10 PASS / 0 WARN / 0 FAIL (85.55s), glossary/project 31.640s/51.438s,
+оба ниже исходного 90s. Измеренный FT request p95 128.233s объясняет явный
+лимит; технический smoke не снимает professional capacity failure.
+
 870: governed native continuation получает один полный receipt body и сохраняет
 original source/question, prior decisions и exact evidence identities. Убрана
 повторная копия body в evidence projection; сохранённая 869 форма уменьшилась
@@ -22,7 +56,8 @@ locator той же модели для нового решения. Прове�
 3 независимые строки / 1 remaining, correction даёт настоящий XLSX.
 Focused root 109/native 56/decoder-durable 73 passed; final targeted parser
 118 passed (15.98s), transport/persistence 119 passed (20.44s).
-Canonical/installed live 870 pending. Installed 869 professional FAILED:
+Последние boundary regressions: 8 red / 2 prose controls green → 128 passed
+(14.64s). Canonical/installed 870 отражены выше. Предыдущий 869 professional FAILED:
 draft 7/19 реальных работ, header учитывается отдельно; 64 545.14 known draft,
 confirmed 0. Доступный файл и арифметика не подтверждают применимость карточек.
 
@@ -370,7 +405,11 @@ Supply price/unit/source и optional quote context проверяются по �
 Source catalog не обрезает клетки до 480 символов, сохраняет 0/False и пустые
 колонки. PDF catalog использует conversion без preview character cap; это не
 гарантия распознавания произвольного скана. ВОР из authored decisions принимает
-PDF/XLSX/XLSM/DOCX/CSV; DOCX сохраняет literal body/table/header/footer locators,
+PDF/XLSX/XLSM/DOCX/CSV; это поддержка source reader, а не обход upload policy.
+XLSM входит в default `RAG_UPLOAD_SUFFIXES` и picker без исполнения macros;
+явный operator override сохраняется. Actual saved 870/871-control override
+не содержит `.xlsm`, поэтому такой upload не разрешён текущей политикой.
+DOCX сохраняет literal body/table/header/footer locators,
 unread images/textboxes/embedded content отмечаются source_extraction_incomplete.
 Примечания другого листа видны как reference_only_source_rows и не расширяют
 requested_source_rows. RTF/ZIP не поддержаны этим workbook-путём; пустой ВОР

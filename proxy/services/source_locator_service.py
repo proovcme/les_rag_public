@@ -157,7 +157,9 @@ def source_locator(
 
 def source_map_item(chunk: Any, *, index: int, excerpt_chars: int = 360) -> dict[str, Any]:
     meta = _mapping(getattr(chunk, "meta", {}))
-    excerpt = _text(getattr(chunk, "content", ""))[: max(1, int(excerpt_chars))]
+    view = (meta.get("model_inventory_view") if meta.get("model_delivery_status") not in (None, "", "delivered")
+            else getattr(chunk, "content", ""))
+    excerpt = _text(view)[: max(1, int(excerpt_chars))]
     locator = source_locator(chunk, excerpt=excerpt)
     item: dict[str, Any] = {
         "index": int(index),
@@ -181,6 +183,10 @@ def source_map_item(chunk: Any, *, index: int, excerpt_chars: int = 360) -> dict
         item["norm_code"] = norm_code
     if meta.get("model_delivery_status"):
         item["model_delivery_status"] = str(meta["model_delivery_status"])
+    if meta.get("model_inventory_delivery_status"):
+        item["model_inventory_delivery_status"] = str(meta["model_inventory_delivery_status"])
+        item["body_visible"] = (meta.get("model_delivery_status") in (None, "", "delivered")
+                                and meta.get("body_status") != "deferred_capacity")
     return item
 
 
@@ -197,7 +203,8 @@ def evidence_counts(
     visible_count = 0
     for position, raw in enumerate(source_map, 1):
         item = _mapping(raw)
-        if item.get("model_delivery_status") not in (None, "", "delivered"):
+        if (item.get("model_delivery_status") not in (None, "", "delivered")
+                and item.get("model_inventory_delivery_status") != "delivered"):
             continue
         visible_count += 1
         index = int(item.get("index") or position)

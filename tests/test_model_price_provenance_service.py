@@ -32,6 +32,21 @@ def test_no_model_price_has_no_price_check():
     assert _check({"evidence_refs": ["Q1.H1"]}, [_chunk()]) is None
 
 
+@pytest.mark.parametrize("delivery,body_status", [("prepared", "full"), ("delivered", "deferred_capacity")])
+def test_retained_raw_price_with_only_inventory_admitted_cannot_confirm_quote(delivery, body_status):
+    chunk = _chunk(model_delivery_status=delivery, body_status=body_status,
+                   model_inventory_delivery_status="delivered",
+                   price_evidence={"price": 25, "unit": "m"})
+    check = _check(_row(), [chunk])
+    assert not _complete(check)
+    trace = build_lsr_trace_from_visible_rows([{**_row(), "_price_evidence_check": check,
+                                               "evidence_bindings": {"Q1.H1": "actual-quote"}}])
+    assert trace["summary"]["confirmed_amount"] == 0
+    assert trace["summary"]["preliminary_amount"] == 75
+    chunk.meta.update(model_delivery_status="delivered", body_status="full")
+    assert _complete(_check(_row(), [chunk]))
+
+
 @pytest.mark.parametrize("amount,literal", [
     (25, "25"), (25, "25,00"), (1234.56, "1 234,56"), (1234.56, "1\u202f234,56"),
     (1234.56, "1,234.56"), (1234.56, "1.234,56"), (1234567, "1,234,567"), (0, "0,00"),
