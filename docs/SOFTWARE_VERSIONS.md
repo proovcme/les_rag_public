@@ -3,11 +3,18 @@
 Канонический паспорт совместимости. Версия продукта и номер сборки берутся только из
 [`config/version.json`](../config/version.json). Полный Python-граф фиксирует `uv.lock`.
 
-Таблица описывает candidate `0.31.149`/build`877`/Tauri`5.1.877`;
-установлен `0.31.148`/build`876` commit
-`8653963c2b5c72e6ca786e2ff9edcba2fb625411`. Кандидат877 устраняет перенос
+Таблица описывает candidate `0.31.150`/build`878`/Tauri`5.1.878`;
+878 исправляет metadata имён/единиц ценовых кандидатов; dependency graph прежний.
+Focused131passed/canonical3177passed; install/live878 пока pending.
+Последний установленный контроль:
+`0.31.149`/build`877`/Tauri`5.1.877`;
+установлен Python runtime `0.31.149`/build`877` commit
+`0eea0e004c5127582fa14622d31d9de8b1cffd13`. Установленный877 устраняет перенос
 карты прошлого answer-пакета в новые sheet-pass query prompts; dependency graph
-прежний. Focused88 passed; canonical877:3175 passed, install/live pending. Installed876 canonical:
+прежний. Focused88 passed; canonical877:3175 passed; exact install/SHA/native RRF
+smoke подтверждены, basic8PASS/2WARN/0FAIL. FreeToken engine0.1.3+g52322e984:
+B0/B1 профессионально FAILED, B1 partial/confirmed0; query map leakage устранена.
+Installed876 canonical:
 3174 passed; smoke9PASS/1WARN; Alibaba B0/B1 завершились с partial XLSX,
 профессиональная готовность не подтверждена. Native EXE остаётся5.1.813.
 Состояние и точные receipts — RELEASE_LEDGER, раздел877.
@@ -66,9 +73,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.149` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `877` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.877` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.150` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `878` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.878` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

@@ -61,6 +61,42 @@ def chosen_book():
                        json.dumps(rows, ensure_ascii=False).encode("utf-8"))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool, args", [
+    ("search_pricebook_resources", {"q": RESOURCE_CODE}),
+    ("read_resource_price", {"code": RESOURCE_CODE}),
+])
+async def test_price_inventory_preserves_literal_candidate_name_unit_and_source(tool, args):
+    from proxy.services.model_rag_grouped_evidence_service import (
+        EvidenceCard, EvidenceGroup, plan_full_group_page,
+    )
+
+    row = {"code": RESOURCE_CODE, "name": 'Кабель «Свет» 4×1,5 / "FRHF"',
+           "unit": "100 м²", "price_current": 123.45,
+           "source_note": "Полный текст источника. " * 1000}
+    source = book_source(PriceBook([row], region=BASIS["region"], quarter=BASIS["quarter"]),
+                         json.dumps(row, ensure_ascii=False).encode("utf-8"))
+    result = await service(price_basis=BASIS, pricebook_provider=lambda _: source).execute(
+        {"tool": tool, "args": args})
+    hit = result.chunks[0]
+    body = json.loads(hit.content)
+    assert {key: body["resource"][key] for key in row} == row
+    page = plan_full_group_page([EvidenceGroup("Literal model query", [
+        EvidenceCard("Q1.H1", hit.doc_name, "", hit.content, hit.meta),
+    ])], 1400)
+    assert page.inventory_refs == ["Q1.H1"] and page.body_refs == []
+    literal_pointer = page.pointer_by_ref["Q1.H1"]
+    pointer = json.loads(literal_pointer)
+    assert pointer[1] == "deferred_capacity"
+    assert pointer[4:6] == [row["name"], row["unit"]]
+    assert pointer[-1]["resource_code"] == RESOURCE_CODE
+    assert pointer[-1]["pricebook"] == BASIS["pricebook"]
+    assert pointer[-1]["pricebook_sha256"] == source.source_sha256
+    assert body["source_ref"] in "\n\n".join(page.groups)
+    assert row["source_note"] not in literal_pointer and "price_current" not in literal_pointer
+    assert len(literal_pointer) < 1000
+
+
 def admit_search_inventory(reader, result, call):
     """Model-visible search admission precedes restoring its exact reader handles."""
     from proxy.services import chat_evidence_application_service as application

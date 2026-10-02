@@ -1,12 +1,21 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
-> **877, doc↔candidate-code ✅; установлен876 `8653963c`:**
+> **878 candidate; installed877 `0eea0e00`:**
+> `model_pricebook_evidence_service.read_pricebook_evidence` переносит literal
+> resource name/unit в metadata, которую читает общий inventory_pointer.
+> Указатель цены больше не теряет смысл кандидата при откладывании body;
+> ни выбора ресурса, ни вычисления цены эта проекция не выполняет. Focused131passed,
+> canonical3177passed/20existing skipped. Install/live pending.
+
+> **877, doc↔installed-code ✅; установлен877 `0eea0e00`:**
 > В `chat_evidence_application_service` sheet_initial_source_map фиксируется
 > до sheet-pass; query Governor добавляет только prior_page_chunks текущего
 > пакета. Обновляемый selector_source_map остаётся картой answer-показа.
 > Две группы source rows/native reads/XLSX проверены regression-тестом;
-> focused88 passed; canonical877:3175 passed, install/live pending. Installed876 cloud B0/B1
-> технически завершились, профессиональная приёмка FAILED.
+> focused88 passed; canonical877:3175 passed, exact install/SHA/native RRF smoke
+> подтверждены. Live877 query-map tokens0 во всех трёх пакетах. FreeToken B0/B1
+> профессионально FAILED: B0 без XLSX, B1 partial/confirmed0 и12 pending rows.
+> Три синтетических native-call пробы проходят; full-card reads в реальном ВОР0.
 >
 > Следующая запись875 сохранена как история до установки.
 

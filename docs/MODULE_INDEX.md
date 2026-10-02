@@ -1,11 +1,24 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Кандидат877(0.31.149), установлен876(`8653963c`); ready НЕ подтверждено.**
-> `core/chat-evidence`, doc↔candidate-code ✅: query-контекст sheet-pass получает
+> **Кандидат878(0.31.150); установлен877 `0eea0e00`, ready НЕ подтверждено.**
+> `core/chat-evidence`: `model_pricebook_evidence_service` переносит буквальные
+> имя/единицу ресурса в metadata для общего inventory_pointer. Поиск/ранжирование,
+> тело evidence и source identity неизменны; модель по-прежнему выбирает ресурс.
+> Doc↔candidate-code ✅; docs/modules/rag-evidence-flow. Regression RED2→131passed;
+> canonical878:3177passed/20existing skipped, verify/architecture/docs/assets exit0.
+> Install/live878 pending; professional gate остаётся открытым.
+
+> **Установлен877(0.31.149, `0eea0e00`); ready НЕ подтверждено.**
+> `core/chat-evidence`, doc↔installed-code ✅: query-контекст sheet-pass получает
 > исходную source map + refs решений текущего пакета. Карта прошлого answer-пакета
 > больше не переносится в новую query. Raw evidence/решения/XLSX сохраняются.
 > ALGO-context-memory описывает границу; focused88 passed, canonical877:3175 passed,
-> 20 existing skipped; verify/architecture/docs/assets exit0. Install/live877 pending.
+> 20 existing skipped; verify/architecture/docs/assets exit0. Exact install/SHA и
+> native RRF smoke подтверждены; basic8PASS/2WARN/0FAIL, последующая diag overall=ok.
+> FreeToken877 B0/B1:60,91s/397,58s, B0 без XLSX, B1 partial/confirmed0;
+> model output первого пакета обрезан и структурно повреждён, полных reads0.
+> Query source-map leakage отсутствует во всех трёх frames. Native wire отдельно
+> исполнил3 синтетических tool-call probes. Это не приёмка качества сметы.
 > Installed876: canonical3174 passed; smoke9PASS/1WARN; Alibaba B0/B1 дали XLSX
 > за103,22/170,67s, но профессиональная приёмка FAILED (B1:1 complete position).
 > FreeToken восстановлен; новых cloud calls после предупреждения о квоте нет.

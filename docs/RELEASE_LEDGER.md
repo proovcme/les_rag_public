@@ -1,7 +1,24 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-**Кандидат 0.31.149 / 877; установлен 0.31.148 / 876
-(`8653963c2b5c72e6ca786e2ff9edcba2fb625411`). Готовность заказчику НЕ подтверждена.**
+**Кандидат 0.31.150 / 878; установлен877(`0eea0e00`). Готовность НЕ подтверждена.**
+
+Измеренная877 thinking-проба открыла дефект ценового inventory: у42 указателей
+из7 поисков отсутствовали название ресурса и единица, вместо названия показывался
+служебный `fgis_pricebook_resources.v1`. Модель затем запросила40 отдельных цен;
+это наблюдаемая последовательность, не доказательство единственной причины.
+878 переносит буквальные name/unit из выбранной книги в общий pointer-контракт.
+Ранжирование, цены, нормы, source SHA и решения модели не меняются. Full source
+body сохраняется; pointer остаётся навигацией и не подтверждает применимость.
+Regression RED2 → focused131 passed(3,99s). Frozen canonical878:
+3177 passed /20 existing skipped /5 warnings,209,32s (wrapper210,73s).
+Version/compile/collect/architecture/map/docs/assets/metadata exit0;
+`artifacts/gates_878/`. Изолированный snapshot содержит только owned diff,
+сторонние UI-правки исключены. Install/live878 pending; готовность не объявляется.
+
+### Установленный877: результаты контрольных прогонов
+
+**Установлен 0.31.149 / 877
+(`0eea0e004c5127582fa14622d31d9de8b1cffd13`). Готовность заказчику НЕ подтверждена.**
 
 877 исправляет измеренный перенос source map прошлого answer-пакета в query
 нового пакета. Сохраняется исходная selected-scope map плюс refs прежних решений
@@ -11,7 +28,46 @@ Isolated canonical877:3175 passed /20 existing skipped /5 warnings,219,21s
 (wrapper220,75s). Version/compile/collect/architecture/map/docs/assets/metadata
 exit0; `artifacts/gates_877/`. Изолированный checkout содержит только owned diff,
 import location и hashes сверены; параллельные UI-правки сохранены отдельно.
-Install/live877 pending; экономия провайдерских токенов ещё не измерена.
+Installed877: exact API stamp/raw file hashes verified;
+`artifacts/live_877/installed_patch_hashes.json`, rollback
+`artifacts/rollback_876_to_877/manifest.json`. Native EXE остаётся5.1.813;
+новый установщик/публичный выпуск не создавался. Native RRF smoke exit0(1,03s);
+basic smoke exit0(95,28s):8PASS/2WARN/0FAIL. Последующая `/api/diag` overall=ok,
+единственное предупреждение — отсутствие проверяемых ответов Т.О.С.К.А.
+Внешние FreeToken/Ollama запущены штатными установленными приложениями;
+Qdrant включил владелец. Reindex, изменение корпуса и cloud calls не выполнялись.
+
+Fresh installed877 FreeToken Qwen3.6-35B-A3B-NVFP4 B0/B1, engine0.1.3+g52322e984:
+comparison identity полностью совпадает (original PDF/question/profile/runtime).
+B0:60,91s, XLSX отсутствует, `ARTIFACT_KIND_UNRESOLVED`, строки без валидных
+исходных locators/citations. B1:397,58s, downloadable SHA-verified draft XLSX,
+7works+5materials+1unresolved; source coverage8/20 (7 из19 реальных позиций),
+12 строк остались pending. `priced_partial`, confirmed0, preliminary11819,69;
+price basis `sankt-peterburg_3kv2026` exact. Первый пакет: answer `length`16383,
+повторяющаяся таблица (128 parsed rows) и повреждённая ширина строк; принятые
+решения других пакетов сохранены. Полные native cards не прочитаны в обоих
+контролях. Ни цена, ни наличие файла не доказывают профессиональную готовность.
+
+В877 query source-map tokens во всех трёх B1 query frames равны0: устранение
+межпакетного переноса подтверждено live; экономия billable Alibaba tokens не
+измерена. Отдельный синтетический local-wire probe получил настоящий
+`read_norm_card(Q1.H1)` при auto/no-thinking, forced/no-thinking и auto/thinking;
+это доказательство протокола, не качества подбора норм. Обычный capability
+probe `tools=supported` означает HTTP acceptance и сам по себе слабее этого
+доказательства. Receipts: `artifacts/live_877/audit_after_local.json`,
+`native_wire_probe/`, `bap_ft_baseline/`, `bap_ft_candidate/`.
+Создана отдельная GUI-visible ревизия профиля с единственным изменением
+`reasoning_enabled=true`; глобальный активный профиль не изменён.
+Контроль B0 с рассуждением завершился за226,69s без XLSX:
+7 `search_pricebook_resources` +40 `read_resource_price`, все47 receipts `ok`,
+но `read_norm_card`0. Продолжение остановлено `evidence_read_capacity`:
+85410 required tokens при46171 available,35 objects (31source-required,
+2native-exchanges, profile/request). Отличался только ответный reasoning;
+query reasoning по-прежнемуfalse, параметры/файл/модель/поиск прежние.
+Это подтверждает реальные native calls в установленном пути, но не выбор норм
+и не готовность; увеличение окна без отдельного обоснования не применялось.
+Receipt: `artifacts/live_877/thinking_trial/result.json`.
+
 Сохранённый876 B1 trace:331489/539864 (61,4%) оценённых input tokens — повторные
 query maps; это консервативный Governor estimate, не счёт Alibaba.
 Receipt: `artifacts/gates_877/context_cost_audit.json`. Новых cloud calls после

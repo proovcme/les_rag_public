@@ -5492,7 +5492,7 @@
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_research_evidence_actions.py"
       ],
-      "lines": 207,
+      "lines": 209,
       "module": "proxy.services.model_pricebook_evidence_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5511,6 +5511,7 @@
         "tests/test_model_rag_grouped_evidence_service.py",
         "tests/test_model_rag_norm_body_markers.py",
         "tests/test_model_rag_pointer_alias_replay.py",
+        "tests/test_model_research_evidence_actions.py",
         "tests/test_model_result_resource_actions.py"
       ],
       "lines": 500,
@@ -12522,7 +12523,7 @@
     },
     {
       "inbound": [],
-      "lines": 541,
+      "lines": 577,
       "module": "tests.test_model_research_evidence_actions",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -12530,6 +12531,7 @@
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/model_execution_preset_service.py",
         "proxy/services/model_pricebook_evidence_service.py",
+        "proxy/services/model_rag_grouped_evidence_service.py",
         "proxy/services/model_research_tool_service.py"
       ],
       "path": "tests/test_model_research_evidence_actions.py",
@@ -20432,7 +20434,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 702,
     "tracked_python_files": 1084,
-    "tracked_python_lines": 380452
+    "tracked_python_lines": 380490
   },
   "warnings": []
 }

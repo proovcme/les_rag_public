@@ -1,5 +1,29 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-02 — installed877: context fix proven, estimate acceptance still failed
+
+Exact installed commit0eea0e00, original BAP PDF, same question/profile/runtime,
+FreeToken Qwen3.6-35B-A3B-NVFP4 engine0.1.3+g52322e984. B0 60.91s did not
+package (`ARTIFACT_KIND_UNRESOLVED`, missing valid locators/citations). B1 397.58s
+preserved a downloaded draft with verified SHA, but only7/19 real positions,
+12 remaining source rows, confirmed0/preliminary11819.69. Requested SPbQ3 book
+resolved exactly. First packet emitted128 parsed rows, repeated entries,
+malformed Markdown cells and a length16383 cut; no guessed parser repairs applied.
+Neither real run requested full native norm cards. Query source-map tokens0 in
+all3 B1 queries proves the877 leakage fix; it does not prove professional quality
+or billable cloud savings. Separate synthetic wire tests obtained actual native
+read_norm_card calls with auto/off, forced/off and auto/on thinking. Thus native
+tool emission works on a small prompt; success on the real task remains unproven.
+Capability tools=supported alone merely proves HTTP acceptance, not tool execution.
+Evidence: artifacts/live_877/audit_after_local.json, bap_ft_baseline/,
+bap_ft_candidate/, native_wire_probe/. No Alibaba calls after the quota warning.
+An isolated per-chat thinking profile finished226.69s without an artifact:
+7 price searches +40 exact price reads,47ok receipts,0 norm reads. Its continuation
+required85410 estimated tokens vs46171 available and stopped evidence_read_capacity.
+Only answer thinking changed; the operator's active profile stayed unchanged.
+This proves real native execution but not norm applicability or quality. Receipt:
+artifacts/live_877/thinking_trial/result.json. No larger-context override applied.
+
 ## 2026-10-02 — candidate875: reopened review was contradicted by delta instructions
 
 Actual874 BAP engineer remark left painting R18/R19 transport_pending. Original

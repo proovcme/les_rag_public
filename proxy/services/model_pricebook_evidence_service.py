@@ -188,6 +188,8 @@ def read_pricebook_evidence(
             "region": actual_region,
             "quarter": actual_quarter,
             "resource_code": record["code"],
+            "title": record.get("name"),
+            "measure_unit": record.get("unit"),
             "resource_evidence_complete": bool(record.get("code") and record.get("unit")),
             "price_available": any(_known_price(record.get(key)) for key in ("price_current", "price_current_eff"))
             or (_known_price(record.get("price_base")) and _known_price(record.get("index"))),

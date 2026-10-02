@@ -1,5 +1,24 @@
 # RAG evidence flow
 
+## 878: буквальные названия и единицы ценовых кандидатов
+
+`read_pricebook_evidence` сохраняет name/unit конкретной строки закреплённой
+книги в metadata, которую читает общий inventory_pointer. Поэтому отложенное
+тело ценового кандидата остаётся различимым по названию, единице и коду, а не
+только по служебному имени источника. Это точная проекция имеющейся строки,
+без выбора ресурса, подтверждения применимости или изменения цены. Source SHA,
+book/region/quarter, raw body, порядок кандидатов и явное чтение сохраняются.
+
+Причина: installed877 thinking B0 показал42 ценовых указателя без name/unit;
+модель затем выполнила40 отдельных чтений цен и остановилась по ёмкости.
+Последовательность измерена, причинное влияние на качество требует live878.
+Исправление не означает, что выбранная модель уже корректно подбирает нормы.
+Regression `test_model_research_evidence_actions` проходит настоящий producer
+и deferred inventory planner для search/exact read: Unicode/name/unit/code/book/SHA,
+неизменное raw resource body, без добавления полного тела или цены в pointer.
+RED2→focused131passed; canonical8783177passed/20existing skipped. Live pending.
+
+Ниже сохранена историческая запись875 до установки:
 **Doc↔candidate code: ✅875; установлен874 `c4253e38`, professional FAILED.**
 
 Native-capacity pause сохраняет literal query/provenance/address/offset state,
