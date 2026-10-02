@@ -22,7 +22,7 @@ def _cited_ids(answer: str, visible: Sequence[Mapping[str, Any]]) -> list[str]:
     for position, raw in enumerate(visible, 1):
         item = _mapping(raw)
         identity = str(item.get("id") or f"S{position}").strip().upper()
-        index_to_id[position] = identity
+        index_to_id[int(item.get("index") or position)] = identity
         valid.add(identity)
     cited: set[str] = set()
     for value in citation_indexes(answer):
@@ -46,12 +46,16 @@ def build_evidence_manifest(
     """Freeze the evidence that actually entered the model context for one turn."""
 
     visible: list[dict[str, Any]] = []
+    prepared: list[dict[str, Any]] = []
     for index, chunk in enumerate(chunks, 1):
         source = source_map_item(chunk, index=index)
         identity = str(source.get("evidence_ref") or f"S{index}")
-        visible.append(
+        destination = (visible if source.get("model_delivery_status") in (None, "", "delivered")
+                       else prepared)
+        destination.append(
             {
                 "id": identity,
+                "index": int(source.get("index") or index),
                 "label": str(source.get("label") or f"Источник {index}"),
                 "doc_name": str(source.get("doc_name") or ""),
                 "doc_id": str(source.get("doc_id") or ""),
@@ -64,6 +68,7 @@ def build_evidence_manifest(
         "query": str(query or ""),
         "scope": copy.deepcopy(dict(scope or {})),
         "model_visible": copy.deepcopy(visible),
+        **({"prepared_not_delivered": copy.deepcopy(prepared)} if prepared else {}),
         "cited_ids": _cited_ids(answer, visible),
     }
 

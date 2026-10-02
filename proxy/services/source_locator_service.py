@@ -179,6 +179,8 @@ def source_map_item(chunk: Any, *, index: int, excerpt_chars: int = 360) -> dict
     norm_code = _text(meta.get("norm_code"))
     if norm_code:
         item["norm_code"] = norm_code
+    if meta.get("model_delivery_status"):
+        item["model_delivery_status"] = str(meta["model_delivery_status"])
     return item
 
 
@@ -192,8 +194,12 @@ def evidence_counts(
 
     index_to_handle: dict[int, str] = {}
     valid_handles: set[str] = set()
+    visible_count = 0
     for position, raw in enumerate(source_map, 1):
         item = _mapping(raw)
+        if item.get("model_delivery_status") not in (None, "", "delivered"):
+            continue
+        visible_count += 1
         index = int(item.get("index") or position)
         handle = _text(item.get("evidence_ref")).upper() or f"S{index}"
         index_to_handle[index] = handle
@@ -210,6 +216,6 @@ def evidence_counts(
             cited.add(normalized)
     return {
         "found": max(0, int(found_count)),
-        "model_visible": len(source_map),
+        "model_visible": visible_count,
         "cited": len(cited),
     }

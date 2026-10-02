@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import openpyxl
@@ -49,8 +50,13 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      query_count=2, group_char_budget=None, partial_final=False, packet_count=1,
                      input_token_limit=100_000, candidate_padding=0, native_read_batch=False,
                      malformed_first_packet=False, malformed_all_first_packet=False,
-                     malformed_second_packet=False):
+                     malformed_second_packet=False, duplicate_json_first_packet=False):
     # All stores, attachment bytes, norm cards and prices belong to this test.
+    from proxy.services import nr_sp_service
+    real_load_catalog = nr_sp_service._load
+    catalog_path = str(Path(__file__).resolve().parents[1] / "config/domain/nr_sp_catalog.json")
+    # Changing the fixture cwd must not cache an absent catalog for later tests.
+    monkeypatch.setattr(nr_sp_service, "_load", lambda path=None: real_load_catalog(path or catalog_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(tmp_path / "attachments"))
     source = tmp_path / "source.xlsx"
@@ -208,6 +214,14 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
             answer = answer.replace(f"| {RESOURCE_A} | {refs[0]} |", f"| {RESOURCE_A} |")
             if malformed_all_first_packet:
                 answer = answer.replace(f"| {RESOURCE_B} | {refs[1]} |", f"| {RESOURCE_B} |")
+        if duplicate_json_first_packet and packet_index == 0:
+            conflict = ('{"source_row":"S!R2","row_role":"material","title":"Cable A",'
+                        '"unit":"m","quantity":12,"norm_code":"authored-first","norm_code":"",'
+                        '"resource_code":' + json.dumps(RESOURCE_A) + ',"evidence_refs":' + json.dumps([refs[0]])
+                        + ',"evidence_refs":[]}')
+            unique = {"source_row": "S!R3", "row_role": "material", "title": "Cable B", "unit": "m",
+                      "quantity": 3, "norm_code": "", "resource_code": RESOURCE_B, "evidence_refs": [refs[1]]}
+            answer = '{"rows":[' + conflict + ',' + json.dumps(unique) + ']}'
         return InferenceResponse(text="" if empty_final else answer, tool_calls=(),
                                  finish_reason="length" if empty_final else "stop",
                                  usage={"completion_tokens": 120})
@@ -349,7 +363,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
     return SimpleNamespace(result=result, executions=executions, requests=requests, responses=responses,
                            exact_reads=exact_reads, lookups=lookups, queries=search_queries, histories=histories,
                            declared_queries=declared_queries, resume_same_request=resume_same_request,
-                           corrected_source_row=corrected_source_row)
+                           corrected_source_row=corrected_source_row, connection=connection)
 
 
 @pytest.mark.asyncio
@@ -384,6 +398,9 @@ async def test_native_sheet_reads_keep_full_resources_distinct_price_arguments_a
     assert run.lookups.count(RESOURCE_B) == 2
     assert len(run.executions) == 1
     call, receipt = run.executions[0]
+    trace = run.result["retrieval_trace"]
+    assert all(read["model_delivery_status"] == "delivered" for read in trace["tool_loop"]["evidence_reads"])
+    assert not trace["evidence_manifest"].get("prepared_not_delivered")
     assert call["tool"] == "build_lsr_workbook" and receipt["status"] == "complete"
     rows = call["args"]["decisions"]
     assert [(row["source_row"], row["resource_code"], row["quantity"]) for row in rows] == [
@@ -471,8 +488,56 @@ async def test_actual_native_results_exceeding_bound_pause_without_false_final(t
     assert trace["tool_loop"]["evidence_read_stop"] == "evidence_read_capacity"
     assert len(trace["tool_loop"]["evidence_reads"]) == 3
     assert all(read["status"] == "ok" for read in trace["tool_loop"]["evidence_reads"])
+    assert all(read["model_delivery_status"] == "prepared" for read in trace["tool_loop"]["evidence_reads"])
+    prepared_refs = {ref for read in trace["tool_loop"]["evidence_reads"] for ref in read["evidence_refs"]}
+    visible_refs = {item["id"] for item in trace["evidence_manifest"]["model_visible"]}
+    assert not prepared_refs.intersection(visible_refs)
+    assert prepared_refs == {item["id"] for item in trace["evidence_manifest"]["prepared_not_delivered"]}
     assert not any(call["purpose"] in {"sheet_pass_evidence_read", "direct_evidence_read"}
                    for call in trace["actual_model_calls"]["calls"])
+
+
+@pytest.mark.asyncio
+async def test_resumed_zero_decision_job_can_cite_saved_native_reads_and_preserve_delivered_status(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35, input_token_limit=20_000,
+                           candidate_padding=1200, native_read_batch=True)
+    store = WorkbookResearchJobService()
+    job_id = run.result["retrieval_trace"]["workbook_research_job"]["job_id"]
+    paused = store.get(job_id)
+    assert paused["accepted_rows"] == []
+    assert run.result["retrieval_trace"]["tool_loop"]["evidence_read_stop"] == "evidence_read_capacity"
+    saved = [record for record in paused["evidence"] if record["meta"].get("model_read_packet_id")]
+    assert len(saved) == 3 and all(record["meta"]["model_delivery_status"] == "prepared" for record in saved)
+    prices = {record["meta"]["resource_code"]: record["meta"]["model_evidence_ref"] for record in saved
+              if record["doc_name"] == "fgis_pricebook_resources.v1"}
+    # A new declared runtime bound is explicit; source/model/revision/task are identical.
+    run.connection.effective_preset = replace(run.connection.effective_preset, input_token_limit=100_000)
+    run.responses[:] = [InferenceResponse(text="\n".join(run.declared_queries), tool_calls=(), finish_reason="stop", usage={}),
+                        InferenceResponse(text=_answer(refs=(prices[RESOURCE_A], prices[RESOURCE_B])),
+                                          tool_calls=(), finish_reason="stop", usage={})]
+    requests_before = len(run.requests)
+    reads_before = len(run.exact_reads)
+    resumed = await run.resume_same_request()
+    assert len(run.requests) == requests_before + 2 and len(run.exact_reads) == reads_before
+    assert len(run.executions) == 1 and not run.responses
+    rows = run.executions[0][0]["args"]["decisions"]
+    assert all(row["evidence_bindings"] and row["_resource_evidence_check"]["code_in_refs"] for row in rows)
+    frame = "\n".join(str(m["content"]) for m in run.requests[-1].messages)
+    assert "fixture-resource-21" in frame and all(ref in frame for ref in prices.values())
+    visible_refs = [item["id"] for item in resumed["retrieval_trace"]["evidence_manifest"]["model_visible"]]
+    mapped_refs = [item["evidence_ref"] for item in resumed["retrieval_trace"]["source_map"]]
+    for ref in prices.values():
+        assert visible_refs.count(ref) == 1 and mapped_refs.count(ref) == 1
+    recovered = WorkbookResearchJobService(store.db_path).get(job_id)
+    by_id = {r["global_evidence_id"]: r for r in recovered["evidence"]}
+    for previous in saved:
+        record = by_id[previous["global_evidence_id"]]
+        assert record["meta"]["model_delivery_status"] == "delivered"
+        assert record["content"] == previous["content"]
+    assert resumed["retrieval_trace"]["model_execution_profile"]["context_input_tokens"]["effective"] == 100_000
 
 
 @pytest.mark.asyncio
@@ -566,7 +631,13 @@ async def test_malformed_packet_keeps_raw_pending_and_advances_only_unseen_sourc
     store = WorkbookResearchJobService()
     job = store.get(trace["workbook_research_job"]["job_id"])
     assert job["status"] == "paused" and job["status_dimensions"]["completeness"] == "partial"
-    assert job["remaining"] == ["S!R2", "S!R3"]
+    assert job["remaining"] == (["S!R2", "S!R3"] if all_malformed else ["S!R2"]), {
+        "held_flags": {key: job["held_packet"].get(key) for key in
+                       ("model_result_transport_pending", "model_read_pending", "model_final_output_missing")},
+        "projection": sorted(service.model_rag_pending_result_projection(
+            service.model_rag_pending_result_packets(job["held_packet"]))[0]),
+        "accepted_locators": [row["source_row"] for row in job["accepted_rows"]],
+    }
     assert [row["source_row"] for row in job["accepted_rows"]] == (
         ([] if all_malformed else ["S!R3"]) + ([] if packet_count == 1 else ["S!R4", "S!R5"]))
     assert diagnostic["decision"] in [proposal["decision"] for proposal in job["unapplied_proposals"]]
@@ -648,6 +719,47 @@ async def test_joined_sheet_refreshes_owner_transport_pending_before_empty_query
     assert trace["workbook_research_job"]["remaining"] == 2
     assert trace["model_result"]["status"] == "unstructured" and trace["model_result"]["packaged"] is False
     assert trace["model_result_transport_diagnostics"][0]["decision"]["source_row"] == "S!R2"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_json_row_keeps_other_decisions_and_only_conflicting_locator_pending_until_explicit_correction(tmp_path, monkeypatch):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, packet_count=2, duplicate_json_first_packet=True)
+    store = WorkbookResearchJobService()
+    job = store.latest(session_id="sheet-session")
+    assert len(run.requests) == 8 and not run.responses
+    assert run.result["retrieval_trace"]["tool_loop"]["passes"][0]["parsed_rows"] == 1
+    accepted = {row["source_row"]: row for row in job["accepted_rows"]}
+    assert set(accepted) == {"S!R3", "S!R4", "S!R5"}
+    assert job["status"] == "paused" and job["remaining"] == ["S!R2"]
+    assert accepted["S!R3"]["quantity"] == 3 and accepted["S!R3"]["resource_code"] == RESOURCE_B
+    pending = service.model_rag_pending_result_packets(job["held_packet"])
+    assert service.model_rag_pending_result_projection(pending)[0] == {"S!R2"}
+    assert len(job["unapplied_proposals"]) == 1
+    raw_proposal = job["unapplied_proposals"][0]
+    assert raw_proposal["code"] == "MODEL_RESULT_JSON_DUPLICATE_FIELD"
+    assert raw_proposal["decision"]["source_row"] == "S!R2"
+    assert raw_proposal["decision"]["raw_json"].count('"norm_code":') == 2
+    assert raw_proposal["decision"]["raw_json"].count('"evidence_refs":') == 2
+    assert "norm_code" not in raw_proposal["decision"]
+    assert run.result["retrieval_trace"]["model_result"]["packaged"] is False
+    request_count = len(run.requests)
+    await run.resume_same_request()
+    assert len(run.requests) == request_count  # plain continuation cannot repair it
+    reopened = await chat.patch_lsr_rows(chat.LsrPatchRequest(
+        session_id="sheet-session", job_id=job["job_id"], reopen_locators=["S!R2"], repack=False), _user=SimpleNamespace())
+    assert reopened["job"]["remaining"] == ["S!R2"]
+    result = await run.corrected_source_row("S!R2")
+    resolved = store.get(job["job_id"])
+    assert resolved["status"] == "complete" and resolved["remaining"] == []
+    assert service.model_rag_pending_result_packets(resolved["held_packet"]) == []
+    assert resolved["unapplied_proposals"] == [raw_proposal]
+    for row in resolved["accepted_rows"]:
+        if row["source_row"] in accepted:
+            assert row == accepted[row["source_row"]]
+    assert result["retrieval_trace"]["model_result_transport_diagnostics"] == []
+    assert result["retrieval_trace"]["model_result"]["packaged"] is True
+    assert len(run.executions) == 1
 
 
 @pytest.mark.asyncio

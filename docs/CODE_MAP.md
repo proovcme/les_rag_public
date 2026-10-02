@@ -1,5 +1,15 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **870:** `model_read_frame_evidence` передаёт native receipts через обязательные
+> tool replies один раз; `model_read_capacity_trace` сохраняет фактический overflow.
+> `bind_model_requested_read_evidence` отмечает prepared bodies;
+> `confirm_model_read_delivery` подтверждает доставку после ответа провайдера.
+> Manifest/source counts не выдают подготовленное за показанное. Сохранённые reads
+> входят в reference admission после literal replay; job service повышает только
+> delivery state того же immutable body. `decode_model_result_rows` сохраняет
+> duplicate-field raw proposals отдельно от однозначных строк; pending targets
+> не возвращают уже принятые соседние строки в remaining.
+
 > **869:** `workbook_research_job_service._is_plain_continuation` проверяет
 > incoming question/hash, `_latest_compatible_continuation` выбирает последнего
 > совместимого потомка старой exact revision. Все scope поля проверяются на каждом

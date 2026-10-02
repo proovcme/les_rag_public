@@ -60,6 +60,37 @@ def test_manifest_accepts_model_written_source_ranges():
     assert manifest["cited_ids"] == ["Q1.H1", "Q1.H2", "Q1.H3", "Q1.H4"]
 
 
+def test_prepared_native_read_is_not_model_visible_or_citable_before_delivery():
+    delivered = _chunk("Q1.H1", "CODE-1")
+    prepared = _chunk("Q2.H1", "CODE-2")
+    prepared.meta["model_delivery_status"] = "prepared"
+    manifest = build_evidence_manifest(
+        query="read", scope={}, chunks=[delivered, prepared], answer="Q1.H1 Q2.H1"
+    )
+    assert [item["id"] for item in manifest["model_visible"]] == ["Q1.H1"]
+    assert manifest["cited_ids"] == ["Q1.H1"]
+    assert [item["id"] for item in manifest["prepared_not_delivered"]] == ["Q2.H1"]
+    prepared.meta["model_delivery_status"] = "delivered"
+    next_manifest = build_evidence_manifest(
+        query="read", scope={}, chunks=[delivered, prepared], answer="Q2.H1"
+    )
+    assert [item["id"] for item in next_manifest["model_visible"]] == ["Q1.H1", "Q2.H1"]
+    assert next_manifest["cited_ids"] == ["Q2.H1"]
+    assert manifest["prepared_not_delivered"][0]["id"] == "Q2.H1"
+
+
+def test_manifest_keeps_original_source_numbers_when_prepared_precedes_delivered():
+    prepared = _chunk("Q1.H1", "CODE-1")
+    prepared.meta["model_delivery_status"] = "prepared"
+    delivered = _chunk("Q2.H1", "CODE-2")
+    delivered.meta["model_delivery_status"] = "delivered"
+    for answer, cited in (("[Источник 1]", []), ("[Источник 2]", ["Q2.H1"])):
+        manifest = build_evidence_manifest(query="read", scope={}, chunks=[prepared, delivered], answer=answer)
+        assert manifest["cited_ids"] == cited
+        assert manifest["model_visible"][0]["index"] == 2
+        assert manifest["prepared_not_delivered"][0]["index"] == 1
+
+
 def test_compact_prior_index_keeps_locators_but_not_full_evidence_bodies():
     manifest = build_evidence_manifest(
         query="подбор норм",

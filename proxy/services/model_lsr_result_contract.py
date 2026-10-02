@@ -38,30 +38,159 @@ def _unique_json_object(pairs):
     return value
 
 
-def decode_model_result_rows(raw: str) -> list[dict] | None:
-    """Read a complete, uniquely labelled JSON result without repairing values."""
+class _AuthoredJSONPairs(list):
+    """Object boundaries and repeated labels, before any value can be selected."""
+
+
+def _json_duplicate_fields(value, path=()):
+    duplicates = []
+    if isinstance(value, _AuthoredJSONPairs):
+        fields = {}
+        for key, item in value:
+            fields.setdefault(key, []).append(item)
+            duplicates.extend(_json_duplicate_fields(item, (*path, key)))
+        duplicates.extend({"field": key, "path": list((*path, key)), "occurrences": len(items),
+                           "same_values": all(item == items[0] for item in items)}
+                          for key, items in fields.items() if len(items) > 1)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            duplicates.extend(_json_duplicate_fields(item, (*path, index)))
+    return duplicates
+
+
+def _json_unique_value(value):
+    if isinstance(value, _AuthoredJSONPairs):
+        return {key: _json_unique_value(item) for key, item in value}
+    if isinstance(value, list):
+        return [_json_unique_value(item) for item in value]
+    return value
+
+
+def _json_row_texts(candidate, decoder):
+    """Get literal row objects using the standard JSON parser's syntax ends."""
+    def skip_space(index):
+        while index < len(candidate) and candidate[index].isspace():
+            index += 1
+        return index
+
+    index = skip_space(0)
+    if candidate[index] == "{":
+        index = skip_space(index + 1)
+        while candidate[index] != "}":
+            key, index = decoder.raw_decode(candidate, index)
+            value_start = skip_space(skip_space(index) + 1)  # validated colon
+            _value, index = decoder.raw_decode(candidate, value_start)
+            if key == "rows":
+                index = value_start
+                break
+            index = skip_space(index)
+            if candidate[index] == ",":
+                index = skip_space(index + 1)
+    texts = []
+    index = skip_space(index + 1)  # validated rows-array opener
+    while candidate[index] != "]":
+        start = index
+        _value, index = decoder.raw_decode(candidate, start)
+        texts.append(candidate[start:index])
+        index = skip_space(index)
+        if candidate[index] == ",":
+            index = skip_space(index + 1)
+    return texts
+
+
+def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None) -> list[dict] | None:
+    """Keep unique authored rows; preserve duplicate-label objects as proposals."""
     candidates = []
-    text = str(raw or "").strip()
-    if text.startswith(("{", "[")):
-        candidates.append(text)
-    candidates.extend(re.findall(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text))
+    original_text = str(raw or "")
+    text = original_text.strip()
+    decoder = json.JSONDecoder(object_pairs_hook=_AuthoredJSONPairs)
+    outside_segments, start = [], 0
+    for fence in re.finditer(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text):
+        outside_segments.append(text[start:fence.start()])
+        candidates.append(fence.group(1))
+        start = fence.end()
+    outside_segments.append(text[start:])
+    for segment in outside_segments:
+        segment = segment.strip()
+        index = 0
+        while index < len(segment) and segment[index] in "{[":
+            try:
+                _value, end = decoder.raw_decode(segment, index)
+            except (ValueError, TypeError):
+                # A quoted object member or an object inside a row array starts
+                # JSON syntax; a prose citation such as [Source] does not.
+                opener = segment[index]
+                after_opener = segment[index + 1:].lstrip()
+                if after_opener.startswith('"' if opener == "{" else "{"):
+                    if diagnostics is not None:
+                        diagnostics.append({"code": "MODEL_RESULT_JSON_INCOMPLETE_RESULT",
+                            "reason": "incomplete_authored_json_result",
+                            "decision": {"raw_json": original_text}})
+                    return None
+                break
+            if end < len(segment) and not segment[end].isspace():
+                break
+            candidates.append(segment[index:end])
+            index = end
+            while index < len(segment) and segment[index].isspace():
+                index += 1
     decoded = []
     for candidate in candidates:
         try:
-            value = json.loads(candidate, object_pairs_hook=_unique_json_object)
+            value = decoder.decode(candidate)
         except (ValueError, TypeError):
             continue
-        rows = value.get("rows") if isinstance(value, Mapping) else value
-        if isinstance(rows, list) and all(
-            isinstance(row, Mapping)
-            and "title" in row
-            and ({"unit", "norm_code"}.issubset(row)
-                 or str(row.get("row_role") or "").strip().casefold()
-                 in {"work", "material", "equipment", "resource", "header", "unresolved"})
-            and row.get("source_row") not in (None, "") for row in rows
-        ):
-            decoded.append(rows)
-    return decoded[0] if len(decoded) == 1 else None
+        envelope_conflicts = []
+        if isinstance(value, _AuthoredJSONPairs):
+            names = [key for key, _item in value]
+            envelope_conflicts = [{"field": key, "path": [key], "occurrences": names.count(key)}
+                                  for key in dict.fromkeys(names) if names.count(key) > 1]
+            for key, item in value:
+                if key != "rows":
+                    envelope_conflicts.extend(_json_duplicate_fields(item, (key,)))
+            if envelope_conflicts:
+                decoded.append(([], [{"code": "MODEL_RESULT_JSON_DUPLICATE_FIELD",
+                    "reason": "duplicate_authored_json_field", "duplicate_fields": envelope_conflicts,
+                    "decision": {"raw_json": candidate}}]))
+                continue
+            rows = next((item for key, item in value if key == "rows"), None)
+        else:
+            rows = value
+        if not isinstance(rows, list) or isinstance(rows, _AuthoredJSONPairs):
+            continue
+        proposals, unique_rows, row_shape_valid = [], [], True
+        raw_rows = _json_row_texts(candidate, decoder)
+        for index, row in enumerate(rows):
+            conflicts = _json_duplicate_fields(row)
+            if isinstance(row, _AuthoredJSONPairs) and conflicts:
+                decision = {"raw_json": raw_rows[index], "json_row_index": index}
+                locators = [item for key, item in row if key == "source_row"]
+                if len(locators) == 1 and isinstance(locators[0], (str, int)) and not isinstance(locators[0], bool):
+                    decision["source_row"] = locators[0]
+                proposals.append({"code": "MODEL_RESULT_JSON_DUPLICATE_FIELD",
+                    "reason": "duplicate_authored_json_field", "duplicate_fields": conflicts,
+                    "decision": decision})
+                continue
+            unique = _json_unique_value(row)
+            if not (isinstance(unique, Mapping) and "title" in unique
+                    and ({"unit", "norm_code"}.issubset(unique)
+                         or str(unique.get("row_role") or "").strip().casefold()
+                         in {"work", "material", "equipment", "resource", "header", "unresolved"})
+                    and unique.get("source_row") not in (None, "")):
+                row_shape_valid = False
+                break
+            unique_rows.append(unique)
+        if row_shape_valid:
+            decoded.append((unique_rows, proposals))
+    if len(decoded) != 1:
+        if len(decoded) > 1 and diagnostics is not None:
+            diagnostics.append({"code": "MODEL_RESULT_JSON_AMBIGUOUS_RESULTS",
+                "reason": "multiple_complete_json_results", "decision": {"raw_json": original_text}})
+        return None
+    rows, proposals = decoded[0]
+    if diagnostics is not None:
+        diagnostics.extend(proposals)
+    return rows if rows or not proposals else None
 
 
 def decode_model_resource_field(value):

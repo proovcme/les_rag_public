@@ -1,5 +1,31 @@
 # RAG evidence flow
 
+870: governed native continuation получает один полный receipt body и сохраняет
+original source/question, prior decisions и exact evidence identities. Убрана
+повторная копия body в evidence projection; сохранённая 869 форма уменьшилась
+на 3092 governed input tokens без увеличения context/GPU/runtime budget.
+Числовая capacity проверяется до admission. `prepared` означает подготовленный
+результат, а не evidence, прочитанное моделью: delivered относится к frame,
+фактически переданному модели. Сохранённые native `read_chunks` участвуют
+в binding только после admission в resumed answer frame. Повтор immutable global ID может
+повысить prepared→delivered для того же literal body; иной body/identity этим
+не объединяется. Точки: `chat_evidence_application_service`,
+`chat_evidence_manifest_service`, `model_research_tool_service`,
+`source_locator_service`.
+
+Row-local повтор JSON field не выбирает значение: конфликтная авторская строка
+с literal diagnostics сохраняется в pending durable snapshot, независимые
+строки остаются доступными для admission. Неоднозначный envelope остаётся
+packet-level technical failure. Ordinary continuation не исправляет конфликт
+и не запускает предметный цикл; existing explicit reopen предлагает выбранный
+locator той же модели для нового решения. Проверенная durable fixture сохраняет
+3 независимые строки / 1 remaining, correction даёт настоящий XLSX.
+Focused root 109/native 56/decoder-durable 73 passed; final targeted parser
+118 passed (15.98s), transport/persistence 119 passed (20.44s).
+Canonical/installed live 870 pending. Installed 869 professional FAILED:
+draft 7/19 реальных работ, header учитывается отдельно; 64 545.14 known draft,
+confirmed 0. Доступный файл и арифметика не подтверждают применимость карточек.
+
 869: повторная буквальная команда «Продолжи» при совпадении прежнего identity
 следует к более позднему исправлению в той же lineage. Проверяются session,
 attachment, source SHA, datasets, profile и model binding на каждом звене;
@@ -10,7 +36,7 @@ attachment, source SHA, datasets, profile и model binding на каждом з�
 исправленные rows, price_basis, evidence и overrides; paused возобновляется,
 guards уже работающей ревизии не сбрасываются. Точки:
 `workbook_research_job_service.{_is_plain_continuation,_latest_compatible_continuation}`.
-17 focused regressions и 138 related tests passed; установленная приёмка 869 pending.
+17 focused regressions и 138 related tests passed; установленная приёмка 869 FAILED.
 
 869: общий `model_lsr_result_field_instruction` ставит явно запрошенный пользователем
 формат структурированных строк выше общих рекомендаций оформления. Без заданного

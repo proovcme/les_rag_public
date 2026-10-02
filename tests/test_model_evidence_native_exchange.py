@@ -59,6 +59,47 @@ async def test_active_sheet_second_request_has_native_assistant_and_matching_rep
     assert [message["tool_call_id"] for message in final_messages[5:]] == [item["id"] for item in final_calls]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_active_native_callbacks_do_not_repeat_tool_receipts_in_user_evidence(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant)
+    for request in run.requests[2:]:
+        user = next(message["content"] for message in request.messages if message["role"] == "user")
+        assert "model_requested_reads" not in user
+        replies = [json.loads(message["content"]) for message in request.messages if message["role"] == "tool"]
+        assert replies and all(reply["call"]["call_id"] and reply["evidence_bindings"] for reply in replies)
+    assert len(run.executions) == 1 and not run.responses
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_active_native_capacity_stop_records_safe_actual_exception_facts(tmp_path, monkeypatch, variant):
+    real_govern = chat_service.govern_inference_messages
+    error = ContextRequiredSectionOverflow(object_ids=("profile:bound", "request:current", "source-required:0",
+        "native-exchange:1", "private-body-do-not-persist"), budget=12000, required_tokens=14000)
+
+    def governed(**kwargs):
+        if kwargs.get("native_exchanges"):
+            raise error
+        return real_govern(**kwargs)
+
+    monkeypatch.setattr(chat_service, "govern_inference_messages", governed)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant)
+    trace = run.result["retrieval_trace"]
+    assert trace["tool_loop"]["evidence_read_stop"] == "evidence_read_capacity"
+    diagnostic = trace["context_governor"]["error"]
+    assert diagnostic["code"] == error.code
+    assert diagnostic["budget"] == diagnostic["available_tokens"] == error.budget
+    assert diagnostic["required_tokens"] == error.required_tokens
+    assert diagnostic["overflow_tokens"] == 2000
+    assert diagnostic["required_objects"] == 5
+    assert diagnostic["required_section_object_counts"] == {
+        "profile": 1, "request": 1, "source-required": 1, "native-exchange": 1, "other": 1}
+    assert diagnostic["purpose"] == ("direct_evidence_read" if variant == "B0_DIRECT" else "sheet_pass_evidence_read")
+    assert "private-body-do-not-persist" not in json.dumps(diagnostic)
+    assert len(run.requests) == 2 and not run.executions
+
+
 def test_native_exchange_is_required_whole_and_does_not_promote_plain_role_dicts():
     exchange = _exchange("c1", "c2")
     messages, packet = chat_service.govern_inference_messages(

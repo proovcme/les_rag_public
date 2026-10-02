@@ -199,6 +199,8 @@ class ModelResearchToolService:
             meta = raw.get("meta") or {}
             if not isinstance(meta, Mapping):
                 continue
+            if meta.get("model_delivery_status") not in (None, "", "delivered"):
+                continue
             code = str(meta.get("norm_code") or raw.get("norm_code") or "").strip()
             key = str(meta.get("norm_key") or raw.get("norm_key") or "").strip()
             source = str(meta.get("source_ref") or raw.get("source_ref") or "").strip()

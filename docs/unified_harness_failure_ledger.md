@@ -1,5 +1,30 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-02 — 870 candidate: duplicate native body and ambiguous row isolation
+
+Installed 869 (`85d09d7e`) same-input/profile comparison FAILED. B0 stopped
+at evidence_read_capacity after 76.88s, without final rows or XLSX. B1 after
+311.64s delivered a SHA/revision-verified draft: 11 operations across 8/20
+source locators, one customer header included, therefore only 7/19 real works;
+12 works remain. Known preliminary amount 64 545.14, confirmed 0; actual
+Saint Petersburg 2026 Q3 book matches and has a saved SHA. Known-part Decimal
+matches, but full cards, applicability, resource review and prices remain open.
+The repeated first packet is a transport/progress defect, not a professional
+MISSING decision for unaccepted source rows.
+
+870 removes the duplicate native receipt body from governed evidence
+(saved-shaped frame −3092 tokens), validates numeric capacity and distinguishes
+prepared results from actually admitted evidence. Immutable-ID promotion needs
+the same literal body; durable read chunks become bindable after resumed frame
+admission. Row-local duplicate JSON field ambiguity preserves the disputed row
+and raw diagnostics while admitting independent rows; it never chooses a value.
+Durable fixture keeps 3 valid rows / 1 remaining; plain continuation does not
+repair, existing explicit reopen with new model correction produces a real XLSX.
+Focused root 109 passed / native 56 passed / decoder-durable 22 red → 73 passed.
+Final targeted parser: 10 red before fix → 118 passed (15.98s);
+transport/persistence: 119 passed (20.44s). Canonical and installed comparative/
+live 870 remain pending. These fixes do not close the failed professional acceptance.
+
 ## 2026-10-02 — 869 candidate: source scope and packet transport completeness
 
 Installed 868 malformed first packet starved seven never-reached source rows.
@@ -12,12 +37,14 @@ bounded not_shown manifest and visual/OCR warnings replace that claim (71 relate
 passed; six new cases failed before fix). Current attachment exact native reads
 and old completed-job scope expansion verified by 169/374 related tests.
 Literal table/prose spans and PDF-only packet facts avoid condition-order loss
-and nonPDF context pollution (226 related passed). Fresh installed proof pending.
+and nonPDF context pollution (226 related passed). Completed installed 869
+professional proof FAILED; the current 870 record above preserves that result.
 Archive unpacking previously skipped nonempty partial output and returned zero
 on failures. Source-bound completion marker plus manifest, safe paths and
 preserved user conflicts now give honest nonzero failures (21 passed). Retired
 previous-manifest paths cannot silently enter the next completed archive revision.
-These are offline fixes; installed and professional 869 gates remain pending.
+These are offline fixes; completed installed professional 869 gate FAILED,
+as recorded above. The transport tests do not establish customer readiness.
 
 ## 2026-10-02 — 869 candidate: repeated continuation selected stale correction state
 
@@ -26,7 +53,7 @@ newer corrected revision. Repeating that text restored old quantities/basis.
 Seven fixture cases failed before the fix; seventeen focused cases and 138
 related cases pass afterward. The selector follows only a same-scope descendant
 and validates every lineage step; explicit task reruns remain idempotent and
-running guards are preserved. Installed acceptance is pending; no live readiness
+running guards are preserved. Installed 869 acceptance FAILED; no live readiness
 is inferred from these tests. Installed 868 comparison independently failed:
 B0 truncated JSON at length; B1 malformed Markdown and zero native reads, both
 without a downloaded artifact (`artifacts/live_868/bap_lsr_{baseline,candidate}/`).

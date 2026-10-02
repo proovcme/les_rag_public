@@ -112,3 +112,15 @@ def test_evidence_counts_accept_model_written_source_ranges():
     )
 
     assert counts == {"found": 12, "model_visible": 4, "cited": 4}
+
+
+def test_source_counts_exclude_prepared_native_reads_without_renumbering_inventory():
+    source_map = [
+        {"index": 1, "evidence_ref": "Q1.H1"},
+        {"index": 2, "evidence_ref": "Q2.H1", "model_delivery_status": "prepared"},
+        {"index": 3, "evidence_ref": "Q3.H1", "model_delivery_status": "delivered"},
+    ]
+    counts = evidence_counts(
+        answer="[Источник 2] [Источник 3] Q2.H1 Q3.H1", source_map=source_map, found_count=3
+    )
+    assert counts == {"found": 3, "model_visible": 2, "cited": 1}

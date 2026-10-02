@@ -85,6 +85,54 @@ def test_read_frame_preserves_source_and_decisions_without_duplicate_bodies():
     assert "previously_shown_cited_evidence" in context[0]
 
 
+@pytest.mark.parametrize("native", [False, True])
+def test_read_frame_receipt_appears_once_in_its_real_protocol(native):
+    from dataclasses import replace
+    from proxy.services.model_evidence_read_service import native_evidence_read_exchange
+
+    call = {"tool": "read_source", "args": {"source_row": "SOURCE!R2"}}
+    if native:
+        call["call_id"] = "literal_read_id"
+    receipt = {"call": call, "status": "ok", "trace": {"literal_trace_marker": "x" * 2400}}
+    exchanges = (native_evidence_read_exchange([call], [receipt]),) if native else ()
+    chunk = SimpleNamespace(doc_name="source", content="FULL_LITERAL_BODY", meta={
+        "model_evidence_ref": "Q1.H1", "global_evidence_id": "source_identity", "body_status": "full"})
+    frame = model_read_frame_evidence(["literal source"], [chunk], [receipt], native_exchanges=exchanges)
+    preset = ModelExecutionPreset(preset_id="receipt-once", model_family="fixture",
+        input_token_limit=10_000, generation_reserve_tokens=0, safety_reserve_tokens=0,
+        normal_tool_count=5, max_tools=5, max_batch_items=5, parallel_read_limit=1,
+        reasoning_enabled=False, source_chain=("test",))
+    messages, packet = govern_inference_messages(preset=preset, profile_prefix="profile",
+        request_payload="request", required_evidence=frame, native_exchanges=exchanges)
+    serialized = json.dumps(messages)
+    assert serialized.count("literal_trace_marker") == 1
+    assert "FULL_LITERAL_BODY" in messages[1]["content"]
+    if native:
+        assert "model_requested_reads" not in messages[1]["content"]
+        assert messages[-1]["role"] == "tool" and messages[-1]["tool_call_id"] == call["call_id"]
+        assert json.loads(messages[-1]["content"]) == receipt
+    else:
+        assert len(messages) == 2 and "model_requested_reads" in messages[1]["content"]
+    tight = replace(preset, input_token_limit=packet.included_tokens)
+    governed, _ = govern_inference_messages(preset=tight, profile_prefix="profile", request_payload="request",
+                                           required_evidence=frame, native_exchanges=exchanges)
+    assert governed == messages
+
+
+def test_mixed_read_frame_keeps_legacy_receipt_without_repeating_native_reply():
+    from proxy.services.model_evidence_read_service import native_evidence_read_exchange
+
+    call = {"call_id": "native_read", "tool": "read_source", "args": {"source_row": "SOURCE!R2"}}
+    native = {"call": call, "status": "ok", "trace": {"native_receipt_marker": True}}
+    legacy = {"call": {"tool": "read_source", "args": {"doc_id": "literal_doc"}},
+              "status": "ok", "trace": {"legacy_receipt_marker": True}}
+    exchange = native_evidence_read_exchange([call], [native])
+    frame = model_read_frame_evidence(["literal source"], [], [native, legacy], native_exchanges=[exchange])
+    encoded = json.dumps(frame)
+    assert "native_receipt_marker" not in encoded and "legacy_receipt_marker" in encoded
+    assert json.loads(exchange.replies[0].content) == native
+
+
 def test_large_shown_inventory_replays_without_verbose_registry_inflation():
     from proxy.services import chat_evidence_application_service as service
     from test_model_rag_grouped_evidence_service import _body, _rules

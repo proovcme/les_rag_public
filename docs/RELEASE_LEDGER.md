@@ -1,5 +1,35 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.142 / 870; установлен 0.31.141 / 869 (`85d09d7e`).**
+Профессиональная приёмка 869 **FAILED**. При одинаковых source/task/profile/model
+B0 за 76.88s остановился с `evidence_read_capacity`, без завершённых строк/XLSX.
+B1 за 311.64s сохранил paused/resumable draft: 11 операций по 8 из 20 source
+locators, включая customer header `PDF_TEXT!R1`; это 7 из 19 реальных работ,
+12 работ остаются. Количества 10 содержательных операций совпали с literal
+источником, same-role дублей нет. Повтор первого packet — техническая потеря
+progress, а не профессиональный MISSING-вердикт модели по оставшимся работам.
+Известная предварительная сумма 64 545.14, подтверждено 0; actual book
+`sankt-peterburg_3kv2026`, регион/период совпадают, SHA книги сохранён.
+Downloaded draft SHA/bytes связаны с final revision; Decimal known-part
+пересчёт совпал, но применимость/полные карточки/ресурсы/цены не закрыты.
+Receipts: `artifacts/live_869/bap_lsr_{baseline,candidate}/`.
+
+870 устраняет повтор полного native receipt body в governed evidence frame
+(на сохранённой форме: −3092 input tokens), проверяет числовую capacity и
+различает подготовленную карточку и body, фактически допущенный в model frame.
+Повтор immutable global ID может повысить prepared→delivered только для того же
+literal body; saved read chunks доступны references после admission в resumed
+answer frame. Row-local duplicate JSON conflict сохраняет спорную авторскую
+строку в durable diagnostics, не теряя независимые строки и не выбирая значение.
+Durable fixture: 3 unambiguous accepted / 1 remaining; plain continuation не
+запускает цикл исправления, existing explicit reopen допускает новое решение
+модели и сохраняет настоящий XLSX.
+Focused root: 109 passed (14.2s); native: 56 passed (3.5s); decoder/durable:
+22 red до fix → 73 passed. Финальные targeted parser checks: 10 red до fix →
+118 passed (15.98s); transport/persistence: 119 passed (20.44s). Canonical gates,
+установка и installed comparative/live 870 ещё **pending**; готовность не заявлена.
+
+**Предыдущий кандидат 0.31.141 / 869 перед установкой.**
 **Кандидат 0.31.141 / 869; установлен 0.31.140 / 868 (`f2625617`).**
 868 official patch: 22 files HEAD/workspace/runtime identical; rollback 867 retained.
 Installed native RRF exit0, basic 9 passed / 1 existing diagnostic warning /
@@ -30,7 +60,8 @@ SHA plus extracted-file manifest; partial/conflicting extraction cannot claim su
 Frozen canonical 869: verify exit0 (23.31s), 2838 passed / 20 existing opt-in
 skipped / 5 warnings (271.51s pytest, 273.03s wrapper), architecture exit0
 (9.55s), pinned baseline exit0 (7.33s), active artifacts exit0 (0.62s).
-Deployed 869 and business controls remain pending.
+После этой candidate-проверки установлен 869 (`85d09d7e`); completed business
+controls FAILED, как зафиксировано в текущей записи выше.
 
 **Предыдущий кандидат 0.31.140 / 868 перед установкой.**
 **Кандидат 0.31.140 / 868; установлен 0.31.139 / 867 (`6794f8ed`).**

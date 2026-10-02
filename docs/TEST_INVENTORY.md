@@ -1,11 +1,28 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+870 focused transport/source/contract checks: root 109 passed (14.2s), native
+exchange/read 56 passed (3.5s), decoder/durable 22 red → 73 passed. Existing
+`test_model_evidence_native_exchange`, `test_model_evidence_read_contract`,
+`test_chat_evidence_manifest_service`, `test_source_locator_service`,
+`test_model_result_resource_actions` и `test_model_rag_sheet_evidence_reads`
+проверяют один native body, safe numeric capacity, prepared≠delivered,
+same-body immutable-ID promotion и admission saved read chunks. Row-local
+duplicate fields сохраняют conflict raw в durable snapshot, три независимых
+решения принимаются, один locator остаётся; plain continue не запускает repair,
+explicit reopen с новым model correction сохраняет реальный XLSX.
+Final targeted parser: 10 red до fix → 118 passed (15.98s);
+transport/persistence: 119 passed (20.44s). Frozen canonical/live 870 **pending**.
+Installed 869 comparison **FAILED**: B0 capacity/no XLSX (76.88s), B1 paused
+draft (311.64s), 11 operations / 8 scope locators = 7/19 реальных работ плюс
+header; предварительно 64 545.14, подтверждено 0. SHA/revision и known-part
+Decimal совпали; это не доказательство применимости норм/ресурсов/полной цены.
+
 869: `test_workbook_research_job_service` добавляет 17 regressions повторной
 plain continuation после correction/restart: latest rows/basis/evidence/overrides,
 completed/paused, legacy caller, explicit rerun, шесть scope границ, running guards,
 foreign intermediate и question/hash mismatch. Before fix 7 failed / 7 passed;
 after 17 passed, related job/context/refinement/packaging/sheet bundle 138 passed.
-Это offline доказательство; установленная приёмка 869 pending.
+Это offline доказательство; completed установленная приёмка 869 FAILED.
 `test_model_lsr_result_contract`: 3 новых red→green регрессии приоритета явного
 формата и порядка общего контракта; examples не меняют выбор пользователя.
 Related format/research/gap/packet bundle: 59 passed; parsers не ограничены.
@@ -28,7 +45,7 @@ Completed scope expansion/join: 2 scope + 2 join regressions failed before;
 retains old rows/evidence/basis and gives a new final revision.
 Frozen canonical 869: 2838 passed / 20 existing opt-in skipped / 5 warnings;
 verify, architecture, pinned baseline и active-artifacts exit0. Installed
-professional acceptance remains pending; offline results do not replace it.
+professional acceptance FAILED; offline results do not replace it.
 
 868: `test_model_query_reasoning` включён в canonical UNIT_TESTS: strict optional
 bool/inheritance, immutable profile, GUI select и runtime diagnostics; реальные

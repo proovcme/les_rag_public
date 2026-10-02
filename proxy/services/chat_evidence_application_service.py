@@ -1406,8 +1406,8 @@ def workspace_note_objects(
     )
 
 
-def model_read_frame_evidence(source_context, chunks, receipts):
-    """Replay each literal shown body once; retain source rows and prior decisions."""
+def model_read_frame_evidence(source_context, chunks, receipts, *, native_exchanges=()):
+    """Replay literal bodies once; native receipts remain in mandatory tool replies."""
     source_objects = []
     for item in source_context:
         if isinstance(item, Mapping):
@@ -1416,7 +1416,25 @@ def model_read_frame_evidence(source_context, chunks, receipts):
             if not item:
                 continue
         source_objects.append(item)
-    return [*source_objects, *compact_read_replay(chunks), {"model_requested_reads": receipts}]
+    native_ids = {reply.call_id for exchange in native_exchanges for reply in exchange.replies}
+    legacy_receipts = [receipt for receipt in receipts
+                       if (receipt.get("call") or {}).get("call_id") not in native_ids]
+    receipt_context = ([{"model_requested_reads": legacy_receipts}]
+                       if legacy_receipts or not native_exchanges else [])
+    return [*source_objects, *compact_read_replay(chunks), *receipt_context]
+
+
+def model_read_capacity_trace(error: ContextRequiredSectionOverflow, *, purpose: str) -> dict[str, Any]:
+    """Expose actual capacity numbers and producer-owned section counts, never bodies."""
+    counts: dict[str, int] = {}
+    for object_id in error.object_ids:
+        prefix = str(object_id).partition(":")[0]
+        section = prefix if prefix in {"profile", "request", "source-required", "native-exchange"} else "other"
+        counts[section] = counts.get(section, 0) + 1
+    return {"code": error.code, "purpose": purpose, "budget": error.budget,
+            "available_tokens": error.budget, "required_tokens": error.required_tokens,
+            "overflow_tokens": max(0, error.required_tokens - error.budget),
+            "required_objects": len(error.object_ids), "required_section_object_counts": counts}
 
 
 def govern_inference_messages(
@@ -2801,6 +2819,7 @@ def bind_model_requested_read_evidence(
             query_offset=offset, query_provenance={label: "model"}, query_addresses={},
         )
         for chunk in new_chunks:
+            chunk.meta["model_delivery_status"] = "prepared"
             if packet_id:
                 chunk.meta["model_read_packet_id"] = packet_id
         if index < len(receipts):
@@ -2808,11 +2827,26 @@ def bind_model_requested_read_evidence(
                         str(chunk.meta.get("global_evidence_id") or "") for chunk in new_chunks}
             receipts[index]["evidence_refs"] = [ref for ref in bindings if ref]
             receipts[index]["evidence_bindings"] = {ref: identity for ref, identity in bindings.items() if ref and identity}
+            receipts[index]["model_delivery_status"] = "prepared"
         groups.extend(new_groups)
         chunks.extend(new_chunks)
         omitted.extend(new_omitted)
         offset = max(offset + 1, model_rag_next_query_offset(chunks))
     return groups, chunks, omitted
+
+
+def confirm_model_read_delivery(chunks, receipts=()):
+    """Confirm read feedback only after the provider has answered its admitted frame.
+
+    A retrieved body stays durable and replayable when context packing fails,
+    but cannot masquerade as evidence already received by the model.
+    """
+    for chunk in chunks:
+        if chunk.meta.get("model_delivery_status") == "prepared":
+            chunk.meta["model_delivery_status"] = "delivered"
+    for receipt in receipts:
+        if receipt.get("model_delivery_status") == "prepared":
+            receipt["model_delivery_status"] = "delivered"
 
 
 def bind_row_evidence_ids(
@@ -2834,6 +2868,8 @@ def bind_row_evidence_ids(
     ambiguous_aliases: set[str] = set()
     for chunk in evidence_chunks:
         meta = getattr(chunk, "meta", {}) or {}
+        if meta.get("model_delivery_status") not in (None, "", "delivered"):
+            continue
         alias = str(meta.get("model_evidence_ref") or "").strip().upper()
         global_id = str(meta.get("global_evidence_id") or "").strip()
         if alias and alias not in alias_to_card:
@@ -3917,7 +3953,9 @@ def parse_model_rag_result(
     from proxy.services.model_lsr_result_contract import (
         decode_model_result_rows, decode_model_resource_field,
     )
-    json_rows = decode_model_result_rows(raw)
+    json_rows = decode_model_result_rows(raw, diagnostics=transport_diagnostics)
+    if diagnostics is not None:
+        diagnostics.extend(transport_diagnostics)
     resource_fields = {"resource_bindings", "resource_review"}
     numeric_fields = {
         "revision",
@@ -4047,14 +4085,26 @@ def parse_model_rag_result(
         # cannot author application trust flags or operator confirmations.
         public_rows = []
         for row in json_rows:
+            mapped = [(field_name(str(key)), value) for key, value in row.items()
+                      if field_name(str(key))]
+            names = [key for key, _value in mapped]
+            duplicate_aliases = [key for key in dict.fromkeys(names) if names.count(key) > 1]
+            if duplicate_aliases:
+                decision = {"raw_proposal": row}
+                source_values = [value for key, value in mapped if key == "source_row"]
+                if len(source_values) == 1:
+                    decision["source_row"] = source_values[0]
+                proposal = {"code": "MODEL_RESULT_JSON_DUPLICATE_FIELD_ALIAS",
+                            "reason": "duplicate_json_field_alias", "fields": duplicate_aliases,
+                            "decision": decision}
+                transport_diagnostics.append(proposal)
+                if diagnostics is not None:
+                    diagnostics.append(proposal)
+                continue
             public = {}
             for key, value in row.items():
                 canonical = field_name(str(key))
                 if canonical:
-                    if canonical in public:
-                        if diagnostics is not None:
-                            diagnostics.append({"reason": "duplicate_json_field_alias", "field": canonical, "raw_proposal": row})
-                        return None
                     public[canonical] = value
             if isinstance(public.get("evidence_refs"), str):
                 public["evidence_refs"] = extract_model_evidence_refs(public["evidence_refs"])
@@ -4062,6 +4112,9 @@ def parse_model_rag_result(
                 public[key] = decode_model_resource_field(public[key])
             public_rows.append(public)
         return str(raw or ""), public_rows
+
+    if transport_diagnostics:
+        return str(raw or ""), []
 
     # Table lines are read through one shared contract (task § 3): the model's own
     # presentation — a pipe-opened line, a line opened without the optional outer
@@ -5125,7 +5178,7 @@ def model_rag_pending_result_projection(packets: Sequence[Mapping[str, Any]]) ->
     diagnostics: list[dict[str, Any]] = []
     for packet in packets:
         resolved = set(map(str, packet.get("resolved_source_rows") or ()))
-        locators.update(set(map(str, packet.get("locators") or ())) - resolved)
+        locators.update(model_rag_pending_result_targets(packet) - resolved)
         for diagnostic in packet.get("transport_diagnostics") or ():
             source = str((diagnostic.get("decision") or {}).get("source_row") or "")
             if source not in resolved and diagnostic not in diagnostics:
@@ -9557,6 +9610,16 @@ async def _execute_chat_evidence_application(
                             t_llm_call = time.time()
                             pass_answer, usage = await _sheet_pass_llm(chat_body)
                             t_llm += time.time() - t_llm_call
+                            confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks])
+                            model_research_tools.register_shown_norm_cards([*prior_page_chunks, *saved_read_chunks])
+                            replayed_ids = {str(c.meta.get("global_evidence_id") or "") for c in model_evidence_chunks}
+                            for chunk in [*prior_page_chunks, *saved_read_chunks]:
+                                identity = str(chunk.meta.get("global_evidence_id") or "")
+                                if identity and identity not in replayed_ids:
+                                    model_evidence_chunks.append(chunk)
+                                    replayed_ids.add(identity)
+                            answer_source_map = _model_rag_source_map(model_evidence_chunks)
+                            selector_source_map = answer_source_map
                             read_packet_id = row_packet_id(source_catalog, sheet=sheet_name, locators=packet)
                             read_groups = []
                             read_receipts = []
@@ -9587,14 +9650,15 @@ async def _execute_chat_evidence_application(
                                 return "evidence_read_capacity" if omitted else ""
 
                             async def _continue_sheet_reads(receipts, _results, native_exchanges):
-                                nonlocal t_llm
+                                nonlocal t_llm, research_job
                                 messages, read_frame = govern_inference_messages(
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail, native_tools=sheet_read_tools,
                                     native_exchanges=native_exchanges,
                                     required_evidence=model_read_frame_evidence(
                                         pass_evidence,
-                                        [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks], receipts),
+                                        [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks], receipts,
+                                        native_exchanges=native_exchanges),
                                 )
                                 retrieval_trace["context_governor"]["calls"].append(
                                     context_packet_trace(read_frame, purpose="sheet_pass_evidence_read")
@@ -9605,6 +9669,15 @@ async def _execute_chat_evidence_application(
                                     {**chat_body, "messages": messages}, purpose="sheet_pass_evidence_read"
                                 )
                                 t_llm += time.time() - started
+                                confirm_model_read_delivery(model_evidence_chunks, receipts)
+                                model_research_tools.register_shown_norm_cards(model_evidence_chunks)
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.record_evidence_read(
+                                        research_job["job_id"], packet_id=read_packet_id,
+                                        evidence=[durable_evidence_record(c) for c in model_evidence_chunks],
+                                        read_receipts=read_receipts,
+                                        price_basis=model_requested_price_basis if model_requested_price_basis.get("pricebook_sha256") else None,
+                                    )
                                 return result
 
                             try:
@@ -9621,7 +9694,9 @@ async def _execute_chat_evidence_application(
                                 if not read_stop and active_model_result is not None and active_model_result.response.tool_calls:
                                     read_stop = "evidence_read_unknown_tool"
                                     active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
-                            except ContextRequiredSectionOverflow:
+                            except ContextRequiredSectionOverflow as context_error:
+                                retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
+                                    context_error, purpose="sheet_pass_evidence_read")
                                 read_stop = "evidence_read_capacity"
                             if read_stop:
                                 retrieval_trace["tool_loop"]["evidence_read_stop"] = read_stop
@@ -9676,11 +9751,11 @@ async def _execute_chat_evidence_application(
                             if parsed_pass is not None:
                                 _visible, pass_rows = parsed_pass
                             pass_rows = bind_row_evidence_ids(
-                                pass_rows, [*prior_page_chunks, *model_evidence_chunks]
+                                pass_rows, [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks]
                             )
                             pass_errors = validate_model_rag_result_structure(
                                 pass_rows,
-                                [*prior_page_chunks, *model_evidence_chunks],
+                                [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                 expected_source_rows=len(packet),
                                 source_catalog=source_catalog,
                                 source_incomplete_locators=source_incomplete_locators,
@@ -9953,7 +10028,7 @@ async def _execute_chat_evidence_application(
                                     ],
                                     evidence=[
                                         durable_evidence_record(chunk)
-                                        for chunk in model_evidence_chunks
+                                        for chunk in [*saved_read_chunks, *model_evidence_chunks]
                                     ],
                                     omitted=pass_omitted,
                                     remaining=remaining,
@@ -10083,12 +10158,20 @@ async def _execute_chat_evidence_application(
                         for locator in source_catalog.work_locators()
                         if locator not in settled_keys
                     ]
-                    pending_transport = set(transport_pending_locators)
+                    pending_transport = (model_rag_pending_result_projection(pending_result_packets)[0]
+                                         if pending_result_packets else set(transport_pending_locators))
                     pending_held = (research_job or {}).get("held_packet") or {}
                     if ((pending_held.get("queries") and not pending_held.get("terminal_model_result_saved")) or pending_held.get("model_read_pending")
                             or pending_held.get("model_result_transport_pending")
                             or pending_held.get("model_final_output_missing")):
-                        pending_transport.update(pending_held.get("locators") or ())
+                        if pending_held.get("model_result_transport_pending"):
+                            pending_held_targets = model_rag_pending_result_targets(pending_held)
+                        elif pending_held.get("model_read_pending") or pending_held.get("model_final_output_missing"):
+                            pending_held_targets = set(pending_held.get("locators") or ())
+                        else:
+                            pending_held_targets = {locator for locator in pending_held.get("locators") or ()
+                                                    if locator not in settled_keys or locator in pending_transport}
+                        pending_transport.update(pending_held_targets)
                         unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
                     # Unanswered source rows remain gaps; unused candidates do
                     # not make accepted/proven/priced rows incomplete.
@@ -10098,7 +10181,8 @@ async def _execute_chat_evidence_application(
                         for locator in pending.get("resolved_source_rows") or ()
                     }
                     for proposal in retrieval_trace.get("model_result_transport_diagnostics", []):
-                        pending_transport.update(locator for locator in proposal.get("packet_locators") or ()
+                        pending_transport.update(locator for locator in model_rag_pending_result_targets(
+                            {"transport_diagnostics": [proposal], "locators": proposal.get("packet_locators") or ()})
                                                  if locator not in resolved_transport_locators)
                     unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
                     if research_job_service is not None and research_job is not None:
@@ -10779,7 +10863,8 @@ async def _execute_chat_evidence_application(
                                 request_payload=question_tail, native_tools=direct_read_tools,
                                 native_exchanges=native_exchanges,
                                 required_evidence=model_read_frame_evidence(
-                                    fixed_model_rag_evidence, model_evidence_chunks, receipts),
+                                    fixed_model_rag_evidence, model_evidence_chunks, receipts,
+                                    native_exchanges=native_exchanges),
                             )
                             retrieval_trace["context_governor"]["calls"].append(
                                 context_packet_trace(read_frame, purpose="direct_evidence_read")
@@ -10790,6 +10875,8 @@ async def _execute_chat_evidence_application(
                                 {**chat_body, "messages": read_messages}, allow_stream=False,
                             )
                             t_llm += time.time() - started
+                            confirm_model_read_delivery(model_evidence_chunks, receipts)
+                            model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                             if active_model_result is not None:
                                 llm_model = active_model_result.connection.model_id
                             append_actual_model_call(retrieval_trace, purpose="direct_evidence_read",
@@ -10812,7 +10899,9 @@ async def _execute_chat_evidence_application(
                                 active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
                             usage = {**usage, "completion_tokens": read_turn.extra_completion_tokens
                                      + (0 if direct_read_stop else int(usage.get("completion_tokens") or 0))}
-                        except ContextRequiredSectionOverflow:
+                        except ContextRequiredSectionOverflow as context_error:
+                            retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
+                                context_error, purpose="direct_evidence_read")
                             direct_read_stop = "evidence_read_capacity"
                         retrieval_trace["tool_loop"]["evidence_read_stop"] = direct_read_stop
                         answer_source_map = _model_rag_source_map(model_evidence_chunks)

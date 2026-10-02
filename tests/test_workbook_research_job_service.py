@@ -23,6 +23,49 @@ def _identity(service: WorkbookResearchJobService, question: str = "Собери
     )
 
 
+def _record_delivery_fixture(service, job_id, record, method):
+    if method == "read":
+        return service.record_evidence_read(job_id, packet_id="packet", evidence=[record], read_receipts=[])
+    return service.record_packet(job_id, sheet="S", packet_locators=["S!R2"], accepted_rows=[],
+                                 evidence=[record], remaining=["S!R2"])
+
+
+@pytest.mark.parametrize("method", ["read", "packet"])
+def test_same_literal_evidence_delivery_promotes_durably_without_other_overwrites(tmp_path, method):
+    service = WorkbookResearchJobService(tmp_path / "delivery.sqlite")
+    job = service.begin_or_resume(_identity(service))
+    prepared = {"global_evidence_id": "immutable-read", "content": "exact body", "doc_name": "source", "doc_id": "d1",
+                "meta": {"model_delivery_status": "prepared", "source_ref": "literal-source", "source_sha256": "a" * 64,
+                         "norm_key": "exact-key", "norm_code": "exact-code", "edition": "2026", "base_type": "GESN",
+                         "resources": [{"code": "literal-resource", "quantity": 2}], "old_fact": "retain"}}
+    _record_delivery_fixture(service, job["job_id"], prepared, method)
+    delivered = {**prepared, "meta": {**prepared["meta"], "model_delivery_status": "delivered", "old_fact": "ignored-new"}}
+    _record_delivery_fixture(service, job["job_id"], delivered, method)
+    restored = WorkbookResearchJobService(service.db_path).get(job["job_id"])
+    assert restored["evidence"] == [{**prepared, "meta": {**prepared["meta"], "model_delivery_status": "delivered"}}]
+    assert restored["accepted_rows"] == []
+
+
+@pytest.mark.parametrize("method", ["read", "packet"])
+@pytest.mark.parametrize("changed_field", ["content", "doc_name", "doc_id", "source_ref", "source_sha256", "norm_key", "norm_code", "edition", "base_type"])
+def test_conflicting_delivery_promotion_cannot_replace_literal_evidence(tmp_path, method, changed_field):
+    service = WorkbookResearchJobService(tmp_path / "delivery-conflict.sqlite")
+    job = service.begin_or_resume(_identity(service))
+    prepared = {"global_evidence_id": "immutable-read", "content": "exact body", "doc_name": "source", "doc_id": "d1",
+                "meta": {"model_delivery_status": "prepared", "source_ref": "literal-source", "source_sha256": "a" * 64,
+                         "norm_key": "exact-key", "norm_code": "exact-code", "edition": "2026", "base_type": "GESN",
+                         "resources": [{"code": "literal-resource", "quantity": 2}]}}
+    _record_delivery_fixture(service, job["job_id"], prepared, method)
+    delivered = {**prepared, "meta": {**prepared["meta"], "model_delivery_status": "delivered"}}
+    if changed_field in {"content", "doc_name", "doc_id"}:
+        delivered[changed_field] = "different literal"
+    else:
+        delivered["meta"][changed_field] = "different literal"
+    with pytest.raises(WorkbookResearchJobError, match="delivery promotion conflicts"):
+        _record_delivery_fixture(service, job["job_id"], delivered, method)
+    assert WorkbookResearchJobService(service.db_path).get(job["job_id"])["evidence"] == [prepared]
+
+
 def _later_corrected_research(service, first_identity, *, first_question, later_identity=None, status="complete"):
     first = service.begin_or_resume(first_identity, task_context={
         "original_question": first_question,

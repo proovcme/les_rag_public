@@ -50,7 +50,70 @@ def test_complete_json_keeps_authored_role_with_absent_blank_fields(role):
 ])
 def test_duplicate_json_keys_or_aliases_do_not_silently_select_last_value(extra):
     raw = '{"rows":[{"source_row":"S!R7","title":"Первая работа","unit":"м",' + extra + '}]}'
-    assert service.parse_model_rag_result(raw) is None
+    diagnostics = []
+    assert service.parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [])
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["decision"]["source_row"] == "S!R7"
+    assert diagnostics[0]["code"].startswith("MODEL_RESULT_JSON_DUPLICATE_FIELD")
+
+
+@pytest.mark.parametrize("wrapper", ["object", "array", "fenced_object", "fenced_array"])
+@pytest.mark.parametrize("conflict", [
+    '"norm_code":"A","norm_code":"B","evidence_refs":["Q1.H1"],"evidence_refs":[]',
+    '"norm_code":"A","norm_code":"A"',
+    '"norm_code":"A","resource_bindings":[{"action":"exclude","action":"reuse"}]',
+    '"norm_code":"A","resource_review":{"status":"unresolved","status":"actions_confirmed"}',
+])
+def test_json_duplicate_conflict_isolated_by_object_boundary_preserves_other_authored_rows(wrapper, conflict):
+    good = authored_row()
+    bad = ('{ "source_row": "S!R2", "row_role":"work", '
+           '"title":"Literal braces } ] and quote \\\" stay data", "unit":"m", ' + conflict + ' }')
+    rows = '[' + json.dumps(good, ensure_ascii=False) + ',' + bad + ']'
+    raw = '{"rows":' + rows + '}' if "object" in wrapper else rows
+    if wrapper.startswith("fenced"):
+        raw = "Authored explanation\n```json\n" + raw + "\n```\nEnd"
+    diagnostics = []
+    parsed = service.parse_model_rag_result(raw, diagnostics=diagnostics)
+    assert parsed == (raw, [good])
+    assert len(diagnostics) == 1
+    rejected = diagnostics[0]
+    assert rejected["code"] == "MODEL_RESULT_JSON_DUPLICATE_FIELD"
+    assert rejected["reason"] == "duplicate_authored_json_field"
+    assert rejected["decision"]["source_row"] == "S!R2"
+    assert rejected["decision"]["json_row_index"] == 1
+    assert rejected["decision"]["raw_json"] == bad
+    assert "norm_code" not in rejected["decision"]
+    assert "evidence_refs" not in rejected["decision"]
+
+
+def test_conflicting_json_source_locators_are_preserved_without_choosing_one():
+    good = authored_row()
+    bad = '{"source_row":"S!R2","source_row":"S!R3","title":"Literal work","unit":"m","norm_code":"A"}'
+    raw = '{"rows":[' + json.dumps(good, ensure_ascii=False) + ',' + bad + ']}'
+    diagnostics = []
+    assert service.parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [good])
+    assert "source_row" not in diagnostics[0]["decision"]
+    assert diagnostics[0]["decision"]["raw_json"] == bad
+
+
+def test_json_alias_conflict_is_row_local_and_preserves_unrelated_authored_rows():
+    good = authored_row()
+    bad = {"source_row": "S!R2", "row_role": "header", "title": "First authored title", "Наименование": "Second title"}
+    raw = json.dumps({"rows": [bad, good]}, ensure_ascii=False)
+    diagnostics = []
+    assert service.parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [good])
+    assert diagnostics[0]["reason"] == "duplicate_json_field_alias"
+    assert diagnostics[0]["decision"]["source_row"] == "S!R2"
+    assert diagnostics[0]["decision"]["raw_proposal"] == bad
+
+
+def test_json_envelope_duplicate_rows_cannot_select_either_result():
+    good = authored_row()
+    raw = '{"rows":' + json.dumps([good], ensure_ascii=False) + ',"rows":[]}'
+    diagnostics = []
+    assert service.parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [])
+    assert diagnostics[0]["decision"]["raw_json"] == raw
+    assert "source_row" not in diagnostics[0]["decision"]
 
 
 @pytest.mark.parametrize("format_name", ["json", "markdown", "inline", "block"])
@@ -85,6 +148,68 @@ def test_two_complete_fenced_results_are_not_arbitrarily_chosen():
     block = "```json\n" + json.dumps([row], ensure_ascii=False) + "\n```"
     parsed = service.parse_model_rag_result(block + "\n" + block)
     assert parsed is None or parsed[1] == []
+
+
+@pytest.mark.parametrize("leading_wrapper", ["object", "array"])
+@pytest.mark.parametrize("following_wrapper", ["object", "array", "fenced_object", "fenced_array"])
+def test_leading_complete_json_and_another_result_are_visibly_ambiguous(leading_wrapper, following_wrapper):
+    first = authored_row()
+    second = {**first, "source_row": "S!R8", "title": "Separate authored result"}
+    leading = json.dumps({"rows": [first]} if leading_wrapper == "object" else [first], ensure_ascii=False)
+    following = json.dumps({"rows": [second]} if "object" in following_wrapper else [second], ensure_ascii=False)
+    if following_wrapper.startswith("fenced"):
+        following = "```json\n" + following + "\n```"
+    raw = leading + "\n" + following
+    diagnostics = []
+    assert service.parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [])
+    assert diagnostics == [{"code": "MODEL_RESULT_JSON_AMBIGUOUS_RESULTS",
+        "reason": "multiple_complete_json_results", "decision": {"raw_json": raw}}]
+
+
+@pytest.mark.parametrize("wrapper", ["object", "array"])
+def test_leading_complete_json_with_ordinary_trailing_prose_keeps_literal_rows(wrapper):
+    row = authored_row()
+    raw = json.dumps({"rows": [row]} if wrapper == "object" else [row], ensure_ascii=False)
+    raw += "\nAuthored explanation after the completed result."
+    diagnostics = []
+    assert service.parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [row])
+    assert diagnostics == []
+
+
+@pytest.mark.parametrize("first_wrapper", ["object", "array"])
+@pytest.mark.parametrize("second_wrapper", ["object", "array"])
+def test_fenced_complete_json_then_bare_complete_result_is_visibly_ambiguous(first_wrapper, second_wrapper):
+    first = authored_row()
+    second = {**first, "source_row": "S!R8", "title": "Separate authored result"}
+    first_json = json.dumps({"rows": [first]} if first_wrapper == "object" else [first], ensure_ascii=False)
+    second_json = json.dumps({"rows": [second]} if second_wrapper == "object" else [second], ensure_ascii=False)
+    raw = "```json\n" + first_json + "\n```\n" + second_json
+    diagnostics = []
+    assert service.parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [])
+    assert diagnostics == [{"code": "MODEL_RESULT_JSON_AMBIGUOUS_RESULTS",
+        "reason": "multiple_complete_json_results", "decision": {"raw_json": raw}}]
+
+
+@pytest.mark.parametrize("first_wrapper", ["object", "array"])
+@pytest.mark.parametrize("unfinished", ['{"rows":[{"source_row":"S!R8"', '[{"source_row":"S!R8"'])
+def test_complete_json_then_unfinished_bare_result_preserves_visible_packet_conflict(first_wrapper, unfinished):
+    row = authored_row()
+    raw = json.dumps({"rows": [row]} if first_wrapper == "object" else [row], ensure_ascii=False)
+    raw += "\n" + unfinished
+    diagnostics = []
+    assert service.parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [])
+    assert diagnostics == [{"code": "MODEL_RESULT_JSON_INCOMPLETE_RESULT",
+        "reason": "incomplete_authored_json_result", "decision": {"raw_json": raw}}]
+
+
+@pytest.mark.parametrize("wrapper", ["object", "array"])
+def test_complete_json_then_source_citation_is_ordinary_prose(wrapper):
+    row = authored_row()
+    raw = json.dumps({"rows": [row]} if wrapper == "object" else [row], ensure_ascii=False)
+    raw += "\n[Источник] Authored explanation."
+    diagnostics = []
+    assert service.parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [row])
+    assert diagnostics == []
 
 
 def test_truncated_json_array_is_not_repaired():

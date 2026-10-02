@@ -324,6 +324,27 @@ class WorkbookResearchJobError(ValueError):
     pass
 
 
+def _promote_evidence_delivery(previous: dict[str, Any], incoming: Mapping[str, Any]) -> None:
+    """Advance only transport delivery of the same immutable stored evidence."""
+    old_meta = previous.get("meta") or {}
+    new_meta = incoming.get("meta") or {}
+    if (not isinstance(old_meta, Mapping) or not isinstance(new_meta, Mapping)
+            or old_meta.get("model_delivery_status") != "prepared"
+            or new_meta.get("model_delivery_status") != "delivered"):
+        return
+    same_body = all(previous.get(field) == incoming.get(field)
+                    for field in ("global_evidence_id", "content", "doc_id", "doc_name"))
+    same_source = all(old_meta.get(field) == new_meta.get(field) for field in (
+        "norm_key", "norm_code", "source_ref", "source_sha256", "edition", "base_type", "normative_card_identity",
+        "source_file_id", "source_locator", "source_row", "source_start", "source_end", "doc_id", "chunk_id",
+        "dataset_id", "page", "sheet", "row", "resource_code", "pricebook", "pricebook_sha256",
+        "price_evidence", "model_evidence_ref",
+    ))
+    if not same_body or not same_source:
+        raise WorkbookResearchJobError("evidence delivery promotion conflicts with stored immutable body or source")
+    previous["meta"] = {**old_meta, "model_delivery_status": "delivered"}
+
+
 def _decision_key(item: Mapping[str, Any]) -> tuple[str, str]:
     """One durable decision is a source locator plus its authored role."""
 
@@ -1175,13 +1196,15 @@ class WorkbookResearchJobService:
             if str(row["status"]) in TERMINAL_STATUSES:
                 return self._row(row)
             saved = _json_list(row, "evidence_json")
-            ids = {str(item.get("global_evidence_id") or "") for item in saved}
+            by_id = {str(item.get("global_evidence_id") or ""): item for item in saved}
             for item in evidence:
                 value = dict(item)
                 identity = str(value.get("global_evidence_id") or "")
-                if identity and identity not in ids:
+                if identity and identity not in by_id:
                     saved.append(value)
-                    ids.add(identity)
+                    by_id[identity] = value
+                elif identity:
+                    _promote_evidence_delivery(by_id[identity], value)
             context = _json_object(row, "task_context_json")
             snapshot = dict(price_basis) if isinstance(price_basis, Mapping) else {}
             if "pricebook_sha256" in snapshot:
@@ -1356,15 +1379,17 @@ class WorkbookResearchJobService:
                 active_shas[op_id] = sha
                 new_revisions.append((op_id, 1, origin, payload))
             existing_evidence = json.loads(str(row["evidence_json"]))
-            evidence_ids = {
-                str(item.get("global_evidence_id") or "") for item in existing_evidence
+            evidence_by_id = {
+                str(item.get("global_evidence_id") or ""): item for item in existing_evidence
             }
             for item in evidence:
                 payload = dict(item)
                 key = str(payload.get("global_evidence_id") or "")
-                if key and key not in evidence_ids:
+                if key and key not in evidence_by_id:
                     existing_evidence.append(payload)
-                    evidence_ids.add(key)
+                    evidence_by_id[key] = payload
+                elif key:
+                    _promote_evidence_delivery(evidence_by_id[key], payload)
             existing_omitted = list(json.loads(str(row["omitted_json"])))
             existing_omitted.extend(
                 item for item in map(str, omitted) if item not in existing_omitted
