@@ -1,5 +1,26 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **869:** `workbook_research_job_service._is_plain_continuation` проверяет
+> incoming question/hash, `_latest_compatible_continuation` выбирает последнего
+> совместимого потомка старой exact revision. Все scope поля проверяются на каждом
+> звене. Accepted rows/basis/evidence/overrides остаются выбранной ревизии;
+> explicit rerun и running guards сохраняют прежний контракт.
+> `model_lsr_result_contract.model_lsr_result_field_instruction` и
+> `lsr_norm_quality_gate_service.lsr_result_table_instruction` сохраняют выбор
+> формата пользователя до условных hints Markdown; parser/decision semantics прежние.
+> `model_rag_pending_result_packets` сохраняет transport snapshots;
+> `_execute_chat_evidence_application` продолжает только NEVER_REACHED source scope.
+> `attachment_source_catalog_service._pdf_text_rows` добавляет literal PDF_TEXT
+> scope без изменения PDF!Rn. `ModelResearchToolService` получает server-bound
+> catalog/SHA для `read_source(source_row=...)`; обычный dataset reader прежний.
+> `CatalogRow.source_start/source_end` — zero-based converter Markdown char
+> offsets; PDF rendering/packet facts сохраняют literal порядок.
+> `workbook_research_job_service._reconcile_source_scope` дополняет новые адреса;
+> `_scope_document` сохраняет прошлый файл отдельно от current-scope readiness.
+> XLSM policy/picker используют уже существующий offline workbook reader.
+> `tools/unpack_archives.py` подтверждает completion source-bound marker/manifest;
+> ошибка любого batch archive даёт nonzero, существующий output сохраняется.
+
 > **868:** `model_execution_preset_service.model_rag_query_execution_preset`
 > отделяет явный профильный режим query/repair от answer/native reads.
 > `chat_profile_service` валидирует optional boolean до записи immutable revision;

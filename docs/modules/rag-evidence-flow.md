@@ -1,5 +1,65 @@
 # RAG evidence flow
 
+869: повторная буквальная команда «Продолжи» при совпадении прежнего identity
+следует к более позднему исправлению в той же lineage. Проверяются session,
+attachment, source SHA, datasets, profile и model binding на каждом звене;
+чужое промежуточное звено не допускает перенос. Incoming original_question
+должен соответствовать question hash; legacy caller без контекста распознаёт
+только конечный набор существующих команд продолжения. Явный повтор исходной
+задачи сохраняет exact/idempotent поведение. Completed revision сохраняет
+исправленные rows, price_basis, evidence и overrides; paused возобновляется,
+guards уже работающей ревизии не сбрасываются. Точки:
+`workbook_research_job_service.{_is_plain_continuation,_latest_compatible_continuation}`.
+17 focused regressions и 138 related tests passed; установленная приёмка 869 pending.
+
+869: общий `model_lsr_result_field_instruction` ставит явно запрошенный пользователем
+формат структурированных строк выше общих рекомендаций оформления. Без заданного
+формата предпочтителен компактный JSON rows; прежние Markdown/text parsers доступны.
+`lsr_result_table_instruction` передаёт общий контракт до условных подсказок Markdown.
+Это не schema API и не исправление авторских значений; факт соблюдения реальной
+моделью проверяется installed live gate. Три новые регрессии failed до изменения;
+59 related tests passed после него.
+
+869: malformed результат сохраняется в durable `pending_model_result_packets`
+вместе с literal diagnostics/cursor/query provenance. Он не запускает repair
+и не останавливает ещё не предложенные строки. Обычное продолжение не меняет
+его решения; существующий explicit reopen позволяет модели исправить только
+выбранные source rows. Снимаются лишь разрешённые snapshots; до разрешения
+технической неоднозначности готовность и упаковка не объявляются. Join перечитывает
+состояние owner; raw исторические proposals остаются в аудите.
+
+PDF-каталог сохраняет нетабличный literal текст отдельными `PDF_TEXT!Rn`
+блоками до 4096 chars. Прежние `PDF!Rn`, source SHA и табличные объёмы стабильны.
+Роль текстовых блоков определяет модель; они входят в scope учёта исходника.
+Малый контекст показан целиком; большой имеет явный `model_context_partial`,
+точный диапазон непоказанных locator и отдельные source packets.
+`source_extraction_complete` и полнота показанного контекста различаются;
+image/SVG/OCR warnings исключают ложную полноту извлечения.
+Converter Markdown `source_start/source_end` сохраняют буквальный порядок таблиц
+и примечаний; одинаковые таблицы имеют разные source spans. Catalog/packet
+rendering используют этот порядок, не предметную связь условий. PDF-specific
+facts не увеличивают пакеты XLSX/CSV/DOCX; 226 catalog/chat checks passed.
+Native `read_source(source_row=...)` читает literal строку текущего bound
+каталога с SHA/source_file_id; произвольные paths/другие вложения не доступны.
+Native receipt содержит полный literal body и offsets; governed replay не
+дублирует body. Reader/native integration: 169 passed, без изменения budget.
+`begin_or_resume(source_locators=...)` принимает только server-owned catalogue
+scope. Новый адрес того же SHA дополняет remaining, сохраняя прежние решения;
+old completed file остаётся previous_final_revision_id, а текущий scope pending
+до новой упаковки. Watermark принадлежит своему job; legacy/inherited revisions
+и price basis сохранены. Scope/join/sheet/recovery bundle: 374 passed.
+Свежая installed приёмка этих границ обязательна; offline не доказывает качество.
+
+Archive intake использует `tools/unpack_archives.py` до обычной индексации файлов.
+Завершение подтверждается marker с SHA исходного архива и manifest извлечённых
+файлов. Частичный каталог без валидного marker повторно проверяется;
+пользовательские файлы не перезаписываются. Ошибка любого архива видна и даёт
+ненулевой exit; traversal/link targets отклоняются. Оставшийся prior-owned файл,
+которого больше нет в новой версии архива, даёт stale-output blocker и сохраняется;
+новая completion marker не выдаёт старое evidence за текущую revision.
+Прямое chat-вложение ZIP/RTF
+не объявляется поддержанным только на основании этого препроцесса.
+
 866 уточняет только общий model-owned контракт до final: исходные ограничения
 сравниваются с реально показанным составом и ресурсами; указатель не доказывает
 условия. MODEL_EVIDENCE_READ_INSTRUCTION требует настоящий вызов при недостатке

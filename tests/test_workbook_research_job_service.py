@@ -23,6 +23,150 @@ def _identity(service: WorkbookResearchJobService, question: str = "Собери
     )
 
 
+def _later_corrected_research(service, first_identity, *, first_question, later_identity=None, status="complete"):
+    first = service.begin_or_resume(first_identity, task_context={
+        "original_question": first_question,
+        "price_basis": {"region": "Санкт-Петербург", "quarter": "3 квартал 2026"},
+    })
+    first = service.record_packet(first["job_id"], sheet="S", packet_locators=["S!R2"],
+        accepted_rows=[{"source_row": "S!R2", "row_role": "work", "title": "Монтаж", "quantity": 10}],
+        evidence=[{"global_evidence_id": "old-card", "content": "old literal body"}], remaining=[])
+    service.finish(first["job_id"], status="complete")
+    later = service.begin_or_resume(later_identity or _identity(service, "Исправь объёмы"), task_context={
+        "original_question": "Исправь объёмы",
+        "price_basis": {"region": "Москва", "quarter": "4 квартал 2026"},
+    })
+    revised = {**first["accepted_rows"][0], "quantity": 20}
+    later = service.record_packet(later["job_id"], sheet="S", packet_locators=["S!R2", "S!R3"],
+        accepted_rows=[revised, {"source_row": "S!R3", "row_role": "material", "title": "Кабель", "quantity": 5}],
+        evidence=[{"global_evidence_id": "new-card", "content": "new literal body"}], remaining=[])
+    later = service.record_overrides(later["job_id"], {"S!R2": {"conversion_factor": 2, "conversion_source": "оператор"}})
+    if status == "paused":
+        later = service.pause(later["job_id"], remaining=["S!R4"],
+                              held_packet={"sheet": "S", "locators": ["S!R4"], "queries": ["new literal query"]})
+    elif status != "running":
+        later = service.finish(later["job_id"], status=status)
+    return service.get(first["job_id"]), later
+
+
+@pytest.mark.parametrize("question", ["Продолжи", "Продолжить!", "continue"])
+@pytest.mark.parametrize("status", ["complete", "paused"])
+def test_repeated_plain_continuation_after_correction_keeps_latest_rows_and_basis(tmp_path, question, status):
+    service = WorkbookResearchJobService(tmp_path / "continuation.sqlite")
+    first, later = _later_corrected_research(service, _identity(service, question),
+                                            first_question=question, status=status)
+    restarted = WorkbookResearchJobService(service.db_path)
+
+    resumed = restarted.begin_or_resume(_identity(restarted, question), task_context={
+        "original_question": question, "price_basis": {},
+    })
+
+    assert resumed["job_id"] == later["job_id"]
+    assert resumed["accepted_rows"] == later["accepted_rows"]
+    assert resumed["accepted_rows"][0]["quantity"] == 20
+    assert len(resumed["accepted_rows"]) == 2
+    assert resumed["task_context"] == later["task_context"]
+    assert resumed["task_context"]["price_basis"] == {"region": "Москва", "quarter": "4 квартал 2026"}
+    assert resumed["evidence"] == later["evidence"]
+    assert resumed["operator_overrides"] == later["operator_overrides"]
+    assert resumed["remaining"] == later["remaining"]
+    assert resumed["held_packet"] == later["held_packet"]
+    assert resumed["status"] == ("running" if status == "paused" else "complete")
+    assert restarted.get(first["job_id"])["accepted_rows"] == first["accepted_rows"]
+
+
+def test_repeated_plain_continuation_without_task_context_keeps_latest_revision(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "continuation.sqlite")
+    _, later = _later_corrected_research(service, _identity(service, "Продолжи"), first_question="Продолжи")
+
+    resumed = WorkbookResearchJobService(service.db_path).begin_or_resume(_identity(service, "Продолжи"))
+
+    assert resumed["job_id"] == later["job_id"]
+    assert resumed["accepted_rows"] == later["accepted_rows"]
+
+
+def test_explicit_original_task_repeat_keeps_its_exact_revision(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "continuation.sqlite")
+    question = "Собери ЛСР, Санкт-Петербург, 3 квартал 2026"
+    first, _ = _later_corrected_research(service, _identity(service, question), first_question=question)
+
+    resumed = service.begin_or_resume(_identity(service, question), task_context={"original_question": question})
+
+    assert resumed["job_id"] == first["job_id"]
+    assert resumed["accepted_rows"] == first["accepted_rows"]
+    assert resumed["task_context"] == first["task_context"]
+
+
+@pytest.mark.parametrize("changed", [
+    {"session_id": "other-session"}, {"attachment_id": "other-attachment"},
+    {"source_sha256": "b" * 64}, {"dataset_ids": ["other-dataset"]},
+    {"profile_revision_id": "other-profile"}, {"model_identity": "other-model"},
+])
+def test_repeated_plain_continuation_does_not_reuse_other_binding_scope(tmp_path, changed):
+    service = WorkbookResearchJobService(tmp_path / "continuation.sqlite")
+    args = dict(session_id="session-1", attachment_id="read_123456abcdef", source_sha256="a" * 64,
+                dataset_ids=["smeta"], profile_revision_id="factory", model_identity="qwen-35b",
+                question="Исправь объёмы")
+    args.update(changed)
+    first, _ = _later_corrected_research(service, _identity(service, "Продолжи"),
+        first_question="Продолжи", later_identity=service.identity(**args))
+
+    resumed = service.begin_or_resume(_identity(service, "Продолжи"), task_context={"original_question": "Продолжи"})
+
+    assert resumed["job_id"] == first["job_id"]
+    assert resumed["accepted_rows"] == first["accepted_rows"]
+    assert resumed["task_context"] == first["task_context"]
+
+
+def test_repeated_plain_continuation_preserves_newer_running_guards(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "continuation.sqlite")
+    _, later = _later_corrected_research(service, _identity(service, "Продолжи"),
+                                        first_question="Продолжи", status="running")
+    with sqlite3.connect(service.db_path) as conn:
+        conn.execute(
+            "UPDATE workbook_research_jobs SET cancel_requested=1,run_round_count=7,"
+            "stall_count=2,held_attempts=2,held_fingerprint='active' WHERE job_id=?",
+            (later["job_id"],),
+        )
+    later = service.get(later["job_id"])
+
+    resumed = service.begin_or_resume(_identity(service, "Продолжи"),
+                                     task_context={"original_question": "Продолжи"})
+
+    assert resumed["job_id"] == later["job_id"]
+    assert resumed["status"] == "running"
+    assert resumed["cancel_requested"] is True
+    assert resumed["stall_guard"] == later["stall_guard"]
+
+
+def test_repeated_plain_continuation_rejects_foreign_intermediate_scope(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "continuation.sqlite")
+    foreign = service.identity(session_id="session-1", attachment_id="read_123456abcdef",
+        source_sha256="a" * 64, dataset_ids=["smeta"], profile_revision_id="other-profile",
+        model_identity="qwen-35b", question="Исправь объёмы")
+    first, middle = _later_corrected_research(service, _identity(service, "Продолжи"),
+                                            first_question="Продолжи", later_identity=foreign)
+    last = service.begin_or_resume(_identity(service, "Добавь строку"))
+    assert last["continues_job_id"] == middle["job_id"]
+
+    resumed = service.begin_or_resume(_identity(service, "Продолжи"),
+                                     task_context={"original_question": "Продолжи"})
+
+    assert resumed["job_id"] == first["job_id"]
+    assert resumed["accepted_rows"] == first["accepted_rows"]
+
+
+def test_repeated_plain_continuation_requires_incoming_question_to_match_identity(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "continuation.sqlite")
+    first, _ = _later_corrected_research(service, _identity(service, "Продолжи"), first_question="Продолжи")
+
+    resumed = service.begin_or_resume(_identity(service, "Продолжи"),
+                                     task_context={"original_question": "Собери новую ЛСР"})
+
+    assert resumed["job_id"] == first["job_id"]
+    assert resumed["accepted_rows"] == first["accepted_rows"]
+
+
 def test_terminal_packet_cursors_survive_other_packets_restart_and_explicit_reopen(tmp_path):
     service = WorkbookResearchJobService(tmp_path / "terminal-packets.sqlite")
     job = service.begin_or_resume(_identity(service))
@@ -225,6 +369,97 @@ def test_complete_job_is_not_reopened(tmp_path) -> None:
     again = service.begin_or_resume(_identity(service))
     assert again["status"] == "complete"
     assert again["resumable"] is False
+
+
+@pytest.mark.parametrize("registered_scope", [False, True])
+def test_completed_job_reopens_only_new_catalog_locators_without_losing_saved_state(tmp_path, registered_scope):
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    identity = _identity(service)
+    old_scope = ["PDF!R4", "PDF!R6"]
+    job = service.begin_or_resume(identity, task_context={
+        "original_question": "Собери ЛСР", "artifact_intent": "lsr",
+        "price_basis": {"region": "Санкт-Петербург", "quarter": "3 квартал 2026"},
+    }, **({"source_locators": old_scope} if registered_scope else {}))
+    old_rows = [{"source_row": locator, "row_role": "work", "title": "Literal work",
+                 "quantity": quantity, "norm_code": "ГЭСН99-01-001-01"}
+                for locator, quantity in zip(old_scope, [12, 3])]
+    saved = service.record_packet(job["job_id"], sheet="PDF", packet_locators=old_scope,
+        accepted_rows=old_rows, evidence=[{"global_evidence_id": "card:old", "content": "literal body"}],
+        remaining=[], held_packet={"terminal_model_result_saved": True, "sheet": "PDF", "locators": old_scope})
+    service.record_search_cache(job["job_id"], {"literal old query": [{"content": "old search hit"}]})
+    service.record_overrides(job["job_id"], {"PDF!R4": {"conversion_factor": 2, "conversion_source": "operator"}})
+    service.finish(job["job_id"], status="complete")
+    service.record_packaging(job["job_id"], tool="build_lsr_workbook", revision_id="old-final", draft=False,
+        price_basis={"pricebook": "literal-book", "region": "Санкт-Петербург", "quarter": "3 квартал 2026"})
+    before = service.get(job["job_id"])
+    before_events = service.events_after(job["job_id"])
+    assert before["document"]["state"] == "ready"
+
+    expanded_scope = [*old_scope, "PDF_TEXT!R1", "PDF_TEXT!R2"]
+    reopened = service.begin_or_resume(identity, source_locators=expanded_scope)
+    assert reopened["job_id"] == job["job_id"]
+    assert reopened["status"] == "running"
+    assert reopened["status_dimensions"]["completeness"] == "partial"
+    assert reopened["remaining"] == ["PDF_TEXT!R1", "PDF_TEXT!R2"]
+    for field in ("accepted_rows", "evidence", "query_cache", "operator_overrides", "held_packet"):
+        assert reopened[field] == before[field]
+    assert reopened["accepted_rows"] == saved["accepted_rows"]
+    assert service.events_after(job["job_id"])[:len(before_events)] == before_events
+    assert reopened["document"]["state"] != "ready"
+    assert reopened["document"]["previous_final_revision_id"] == "old-final"
+    assert reopened["price_basis"] == before["price_basis"]
+
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    restarted = service.begin_or_resume(identity, source_locators=expanded_scope)
+    assert restarted["remaining"] == reopened["remaining"]
+    assert restarted["accepted_rows"] == before["accepted_rows"]
+    assert service.document_state(job["job_id"])["state"] != "ready"
+    assert service.latest(session_id="session-1", attachment_id=identity.attachment_id)["document"]["state"] != "ready"
+    for locator in expanded_scope[2:]:
+        new_row = {"source_row": locator, "row_role": "header", "title": "Literal PDF text context"}
+        restarted = service.record_packet(job["job_id"], sheet="PDF_TEXT", packet_locators=[locator],
+            accepted_rows=[new_row], evidence=[], remaining=[item for item in expanded_scope[2:] if item > locator])
+        assert locator in {item["source_row"] for item in restarted["accepted_rows"]}
+    complete = service.finish(job["job_id"], status="complete")
+    assert complete["accepted_rows"][:2] == before["accepted_rows"]
+    assert complete["document"]["state"] == "pending"
+    assert complete["document"]["needs_document"] is True
+    service.record_packaging(job["job_id"], tool="build_lsr_workbook", revision_id="expanded-final", draft=False,
+        parent_revision_id="old-final")
+    final = service.begin_or_resume(identity, source_locators=expanded_scope)
+    assert final["status"] == "complete"
+    assert final["document"]["state"] == "ready"
+    assert final["document"]["final_revision_id"] == "expanded-final"
+    assert final["accepted_rows"] == complete["accepted_rows"]
+    # A narrower view is not permission to remove saved decisions or artifacts.
+    unchanged = service.begin_or_resume(identity, source_locators=old_scope)
+    assert unchanged["status"] == "complete"
+    assert unchanged["accepted_rows"] == final["accepted_rows"]
+    assert unchanged["document"] == final["document"]
+    expansion_events = [event for event in service.events_after(job["job_id"])
+                        if event["event"] == "source_scope_expanded"]
+    assert len(expansion_events) == 1
+    assert expansion_events[0]["data"]["added_locators"] == expanded_scope[2:]
+    assert expansion_events[0]["data"]["scope_author"] == "application"
+    assert "decision_author" not in expansion_events[0]["data"]
+
+
+def test_source_scope_packaging_watermark_is_owned_by_its_job(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "meta.db")
+    first = service.begin_or_resume(_identity(service), source_locators=["PDF!R4"])
+    service.record_packet(first["job_id"], sheet="PDF", packet_locators=["PDF!R4"],
+        accepted_rows=[{"source_row": "PDF!R4", "row_role": "work", "quantity": 12}], evidence=[])
+    service.finish(first["job_id"], status="complete")
+    first = service.begin_or_resume(_identity(service), source_locators=["PDF!R4", "PDF_TEXT!R1"])
+    service.record_packet(first["job_id"], sheet="PDF_TEXT", packet_locators=["PDF_TEXT!R1"],
+        accepted_rows=[{"source_row": "PDF_TEXT!R1", "row_role": "header", "title": "Literal context"}], evidence=[])
+    service.finish(first["job_id"], status="complete")
+    later = service.begin_or_resume(_identity(service, "Исправь этот документ"),
+        source_locators=["PDF!R4", "PDF_TEXT!R1"])
+    assert later["accepted_rows"] == service.get(first["job_id"])["accepted_rows"]
+    service.finish(later["job_id"], status="complete")
+    service.record_packaging(later["job_id"], tool="build_lsr_workbook", revision_id="later-final", draft=False)
+    assert service.get(later["job_id"])["document"]["state"] == "ready"
 
 
 def test_pause_keeps_should_cancel_true_until_resume(tmp_path) -> None:

@@ -6,6 +6,28 @@ from proxy.services import model_lsr_result_contract as contract
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 
 
+@pytest.mark.parametrize("instruction_factory", [
+    contract.model_lsr_result_field_instruction,
+    lsr_result_table_instruction,
+])
+def test_explicit_result_format_overrides_general_presentation_hints(instruction_factory):
+    instruction = instruction_factory()
+
+    assert "соблюдай явно заданный пользователем формат" in instruction
+    assert 'Без указания формата предпочти компактный JSON {"rows":[...]}; допустимы Markdown или текст' in instruction
+    assert "JSON не обязателен" not in instruction
+
+
+def test_format_choice_precedes_markdown_hints_and_examples_do_not_override_it():
+    shared = contract.model_lsr_result_field_instruction()
+    instruction = lsr_result_table_instruction()
+    examples = contract.model_lsr_result_field_instruction(include_examples=True)
+
+    assert instruction.index(shared) < instruction.index("Если выбран Markdown")
+    assert "не разрешение менять явно запрошенный формат" in examples
+    assert all(value in examples for value in contract.model_lsr_result_examples().values())
+
+
 @pytest.mark.parametrize("action,basis", [("add", "explicit"), ("replace", "explicit"),
                                         ("add", "source_work"), ("replace", "target_norm")])
 def test_resource_quantity_instruction_matches_the_actual_binding_contract(action, basis):
@@ -62,8 +84,8 @@ def test_result_table_contract_allows_delta_and_ordinary_text_without_weaker_fla
 
     assert shared in instruction
     assert instruction.startswith("SHEET ") and instruction.endswith(" REMAINING")
-    assert "обычным текстом" in instruction
-    assert "JSON не обязателен" in instruction
+    assert "допустимы Markdown или текст" in instruction
+    assert "Без указания формата" in instruction
     assert "Не выводи JSON" not in instruction
     assert "неизменённые строки prior_model_decisions повторять не обязательно" in instruction
     assert "expected_revision из её revision в prior_model_decisions" in instruction
@@ -78,8 +100,8 @@ def test_format_hints_do_not_contradict_empty_cell_transport_or_force_markdown()
     assert "не перечисляй пустые поля" not in instruction
     assert "Если выбран Markdown" in instruction
     assert "сохраняй пустую ячейку" in instruction
-    assert "предпочти JSON rows" in instruction
-    assert "JSON не обязателен" in instruction
+    assert "предпочти компактный JSON" in instruction
+    assert "Без указания формата" in instruction
     assert "пояснение пиши в coverage, не вместо признака" in instruction
     assert "Неприменимые поля не выводи" not in instruction
     assert "Не объявляй неприменимые необязательные колонки" in instruction

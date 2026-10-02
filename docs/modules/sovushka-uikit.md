@@ -1,5 +1,10 @@
 # UI KIT «Совушка»
 
+869: существующий attachment picker принимает XLSM, уже поддерживаемый
+workbook reader. Default upload policy также содержит XLSM; явный operator
+override suffixes не расширяется. Макросы не исполняются, новый UI primitive
+не добавлен. Chat/UIKit/input transport regression bundle: 200 passed.
+
 Документ показывается как доступный в RAG только при `INDEXED` и положительном
 числе фрагментов. Пустая или неуспешная индексация показывается как «не готов
 для RAG»; сохранённые `last_error` и технический `error_code` выводятся через

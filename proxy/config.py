@@ -54,6 +54,7 @@ DEFAULT_RAG_UPLOAD_SUFFIXES = (
     ".emlx",
     ".msg",
     ".xlsx",
+    ".xlsm",
     ".xls",
     ".csv",
     ".json",

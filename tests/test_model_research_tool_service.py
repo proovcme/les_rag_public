@@ -472,3 +472,119 @@ async def test_non_search_tool_delegates_unchanged():
     assert delegated == [("read_source", {"doc_id": "d1"})]
     assert result.payload is payload
     assert result.chunks == ()
+
+
+def _attachment_catalog(*, sha="a" * 64, complete=True):
+    from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog, CatalogRow
+
+    body = "Literal late condition  123\n" + "full source detail\n" * 160 + "LAST_LITERAL_BLOCK"
+    row = CatalogRow(locator="PDF_TEXT!R6", sheet="PDF_TEXT", excel_row=6,
+                     values=(body,), line="PDF_TEXT!R6: " + body, numbers=(),
+                     source_start=27000, source_end=27000 + len(body))
+    return AttachmentSourceCatalog(original_name="Исходник с пробелами.pdf", sheets=(("PDF_TEXT", 1),),
+                                   rows=(row,), source_file_sha256=sha, source_file_id="bound_source",
+                                   extraction_complete=complete,
+                                   extraction_warnings=() if complete else ("pdf_unread_visual_content",))
+
+
+def _attachment_reader(catalog, expected_sha, *, dedicated=False):
+    return ModelResearchToolService(
+        retrieve=lambda **_kwargs: pytest.fail("exact attachment read must not retrieve"),
+        frozen_dataset_ids=(), retrieval_kwargs={},
+        fallback=lambda *_args: pytest.fail("exact attachment read must not delegate or open a path"),
+        smeta_norm_retrieve=(lambda *_args, **_kwargs: pytest.fail("attachment is not a norm")) if dedicated else None,
+        attachment_catalog=catalog, expected_attachment_sha256=expected_sha,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dedicated", [False, True])
+async def test_read_source_delivers_full_application_bound_attachment_row(dedicated):
+    catalog = _attachment_catalog()
+    result = await _attachment_reader(catalog, catalog.source_file_sha256, dedicated=dedicated).execute(
+        {"tool": "read_source", "args": {"source_row": "PDF_TEXT!R6"}})
+
+    assert result.payload["status"] == "ok"
+    assert len(result.chunks) == 1 and result.chunks[0].content == catalog.rows[0].line
+    assert result.chunks[0].content.endswith("LAST_LITERAL_BLOCK")
+    trace = result.payload["trace"]
+    assert trace["source_row"] == "PDF_TEXT!R6" and trace["body_complete"] is True
+    assert trace["source_sha256"] == catalog.source_file_sha256
+    assert trace["source_file_id"] == catalog.source_file_id
+    assert trace["source_start"] == 27000 and trace["source_end"] == 27000 + len(catalog.rows[0].values[0])
+    assert trace["source_order_basis"] == "converter_markdown_char_offsets"
+    assert result.chunks[0].meta["source_locator"] == "PDF_TEXT!R6"
+    assert result.chunks[0].meta["content_complete"] is True
+    assert not {"norm_code", "row_role", "quantity", "coverage_status"}.intersection(result.chunks[0].meta)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("locator", ["PDF!R4", "Мой лист!R14", "DOCX_TEXT!R3", "DOCX_TABLE_1!R2"])
+async def test_attachment_row_reader_is_generic_and_retains_unicode_source_identity(locator):
+    from dataclasses import replace
+
+    catalog = _attachment_catalog()
+    row = replace(catalog.rows[0], locator=locator, sheet=locator.split("!", 1)[0],
+                  line=locator + ": " + catalog.rows[0].values[0], source_start=None, source_end=None)
+    catalog = replace(catalog, rows=(row,), sheets=((row.sheet, 1),))
+    result = await _attachment_reader(catalog, catalog.source_file_sha256).execute(
+        {"tool": "read_source", "args": {"source_row": locator}})
+    assert result.payload["status"] == "ok" and result.chunks[0].content == row.line
+    assert result.chunks[0].doc_name == "Исходник с пробелами.pdf"
+    assert result.payload["trace"]["source_row"] == locator
+    assert "source_start" not in result.payload["trace"] and "source_end" not in result.payload["trace"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("binding", ["absent", "no_expected_sha", "wrong_sha", "invalid_sha", "no_file_id"])
+async def test_attachment_read_fails_closed_without_exact_application_binding(binding):
+    from dataclasses import replace
+
+    catalog = _attachment_catalog()
+    expected = catalog.source_file_sha256
+    if binding == "absent":
+        catalog = None
+    elif binding == "no_expected_sha":
+        expected = None
+    elif binding == "wrong_sha":
+        expected = "b" * 64
+    elif binding == "invalid_sha":
+        catalog = replace(catalog, source_file_sha256="unverified")
+        expected = "unverified"
+    else:
+        catalog = replace(catalog, source_file_id="")
+    result = await _attachment_reader(catalog, expected).execute(
+        {"tool": "read_source", "args": {"source_row": "PDF_TEXT!R6"}})
+    assert result.payload["status"] in {"missing", "conflict"} and result.payload["missing"]
+    assert result.chunks == () and result.payload["result"]["hits"] == []
+    assert "LAST_LITERAL_BLOCK" not in str(result.payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("args", [
+    {"source_row": "PDF_TEXT!R999"}, {"source_row": ""}, {"source_row": True}, {"source_row": 6},
+    {"source_row": "PDF_TEXT!R6", "doc_id": "other_document"},
+    {"source_row": "PDF_TEXT!R6", "dataset_id": "other_dataset"},
+    {"source_row": "PDF_TEXT!R6", "doc_name": "other.pdf"},
+    {"source_row": "PDF_TEXT!R6", "q": "replace body"},
+    {"source_row": "PDF_TEXT!R6", "path": "C:/private/other.pdf"},
+    {"source_row": "PDF_TEXT!R6", "attachment_id": "other_attachment"},
+    {"source_row": "PDF_TEXT!R6", "source_sha256": "b" * 64},
+])
+async def test_attachment_read_rejects_unknown_or_mixed_selectors_without_fallback(args):
+    catalog = _attachment_catalog()
+    result = await _attachment_reader(catalog, catalog.source_file_sha256).execute(
+        {"tool": "read_source", "args": args})
+    assert result.payload["status"] in {"missing", "conflict"} and result.payload["missing"]
+    assert not result.chunks and not result.payload["result"]["hits"]
+    assert "LAST_LITERAL_BLOCK" not in str(result.payload)
+
+
+@pytest.mark.asyncio
+async def test_full_attachment_block_read_keeps_converter_incompleteness_separate():
+    catalog = _attachment_catalog(complete=False)
+    result = await _attachment_reader(catalog, catalog.source_file_sha256).execute(
+        {"tool": "read_source", "args": {"source_row": "PDF_TEXT!R6"}})
+    assert result.payload["status"] == "ok" and result.payload["trace"]["body_complete"] is True
+    assert result.payload["trace"]["source_extraction_complete"] is False
+    assert result.payload["warnings"] == ["pdf_unread_visual_content"]

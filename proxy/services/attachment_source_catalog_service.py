@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -17,6 +18,8 @@ from typing import Any, Mapping, Sequence
 from proxy.smeta_core.unit_contract import norm_measure
 
 CATALOG_SCHEMA = "les.attachment-source-catalog.v2"
+_PDF_TEXT_BLOCK_CHARS = 4096
+_PDF_REFERENCE_CONTEXT_CHARS = 8192
 _WORK_UNITS = {
     "м", "м2", "м3", "шт", "кг", "т", "л", "компл", "комплект",
     "машч", "челч", "100м", "100м2", "100м3", "100шт", "1000шт",
@@ -113,11 +116,13 @@ def _column_letter(column: int) -> str:
     return letters
 
 
-def _markdown_table_rows(text: str) -> list[tuple[str, ...]]:
+def _markdown_table_row_spans(text: str) -> list[tuple[tuple[str, ...], int, int]]:
     """Read converter-produced Markdown tables without interpreting their domain content."""
 
-    rows: list[tuple[str, ...]] = []
-    for raw_line in str(text or "").splitlines():
+    rows: list[tuple[tuple[str, ...], int, int]] = []
+    offset = 0
+    for raw_line in str(text or "").splitlines(keepends=True):
+        start, offset = offset, offset + len(raw_line)
         line = raw_line.strip()
         if not (line.startswith("|") and line.endswith("|")):
             continue
@@ -126,8 +131,12 @@ def _markdown_table_rows(text: str) -> list[tuple[str, ...]]:
             continue
         if all(item and set(item.replace(":", "")) <= {"-"} for item in values):
             continue
-        rows.append(values)
+        rows.append((values, start, offset))
     return rows
+
+
+def _markdown_table_rows(text: str) -> list[tuple[str, ...]]:
+    return [values for values, _start, _end in _markdown_table_row_spans(text)]
 
 
 def _is_numeric_column_legend(values: Sequence[str]) -> bool:
@@ -177,6 +186,10 @@ class CatalogRow:
     # column from a service column (totals, money, numbering) needs the label as a
     # field, not re-parsed out of the ``"<value> [<label>]"`` text.
     column_headers: tuple[tuple[int, str], ...] = ()
+    # Zero-based, end-exclusive character offsets in the literal converter
+    # Markdown, not PDF byte offsets or inferred professional associations.
+    source_start: int | None = None
+    source_end: int | None = None
 
     def is_work_row(self) -> bool:
         # Ambiguous rows remain in the completeness denominator.  The catalog
@@ -425,6 +438,8 @@ class AttachmentSourceCatalog:
         return "\n".join(lines)
 
     def interleaved_row_lines(self) -> list[str]:
+        if self.rows and all(row.source_start is not None for row in self.rows):
+            return [row.line for row in sorted(self.rows, key=lambda row: row.source_start)]
         by_sheet: dict[str, list[CatalogRow]] = {}
         for row in self.rows:
             by_sheet.setdefault(row.sheet, []).append(row)
@@ -501,24 +516,50 @@ def catalog_sheet_pack_lines(
 
     wanted = str(sheet or "").strip()
     work_sheets = set(catalog_work_sheet_names(catalog))
+    pdf_references, pdf_reference_omissions = _pdf_text_reference_rows(catalog, wanted)
+    visible_pdf_references = {row.locator for row in pdf_references}
     remaining = (
         {str(item).strip() for item in remaining_work}
         if remaining_work is not None
         else None
     )
     lines: list[str] = []
-    for row in catalog.rows:
+    ordered_rows = (sorted(catalog.rows, key=lambda row: row.source_start)
+                    if catalog.rows and all(row.source_start is not None for row in catalog.rows)
+                    else catalog.rows)
+    for row in ordered_rows:
         if row.sheet != wanted:
             # A separate conditions/notes sheet otherwise never reaches a work
             # packet. Its literal rows are references, not new requested work.
-            if row.sheet not in work_sheets or row.classification_reason == "docx_text_requires_model_role":
+            if (row.sheet not in work_sheets
+                or row.classification_reason == "docx_text_requires_model_role"
+                or row.locator in visible_pdf_references):
                 lines.append(row.line)
             continue
         descriptor_context = row.quantity_column_known and row.header_quantity is None
         if remaining is not None and row.is_work_row() and row.locator not in remaining and not descriptor_context:
             continue
         lines.append(row.line)
+    if pdf_reference_omissions:
+        first, last = pdf_reference_omissions[0], pdf_reference_omissions[-1]
+        lines.append(
+            "model_context_partial: нетабличный PDF-текст не показан в этом пакете целиком. "
+            f"Точный каталог: {len(pdf_reference_omissions)} блоков, "
+            f"{first.locator} — {last.locator}. Полное содержание сохранено в отдельных "
+            "пакетах PDF_TEXT; диапазон адресов не является прочитанным содержанием. "
+            "Не считай отсутствующими или просмотренными непоказанные условия исходника."
+        )
     return lines
+
+
+def _pdf_text_reference_rows(
+    catalog: AttachmentSourceCatalog, sheet: str,
+) -> tuple[list[CatalogRow], list[CatalogRow]]:
+    """Show small literal prose context; otherwise expose exact unshown scope."""
+    rows = [row for row in catalog.rows if row.sheet != sheet
+            and row.classification_reason == "pdf_text_requires_model_role"]
+    size = sum(len(row.line) + 1 for row in rows)
+    return (rows, []) if size <= _PDF_REFERENCE_CONTEXT_CHARS else ([], rows)
 
 
 def catalog_sheets_as_lines(
@@ -536,6 +577,7 @@ def catalog_sheet_packet_facts(
     """Mechanical packet scope and literal header-bound quantity cells."""
     lines = set(catalog_sheet_pack_lines(catalog, sheet, remaining_work))
     visible = [row for row in catalog.rows if row.line in lines]
+    _pdf_references, omitted_pdf_references = _pdf_text_reference_rows(catalog, str(sheet or "").strip())
     requested = (set(remaining_work) if remaining_work is not None else {
         row.locator for row in visible if row.sheet == sheet and row.is_work_row()
     })
@@ -547,7 +589,7 @@ def catalog_sheet_packet_facts(
         if row.quantity_column_known:
             item.update(quantity=row.header_quantity, unit=header_bound_unit(row))
         cells.append(item)
-    return {
+    facts = {
         "source_extraction_complete": catalog.extraction_complete,
         "source_extraction_warnings": list(catalog.extraction_warnings),
         "requested_source_rows": [row.locator for row in visible if row.locator in requested],
@@ -564,6 +606,24 @@ def catalog_sheet_packet_facts(
             "Код не изменял роли, нормы или операции."
         ),
     }
+    if any(row.source_start is not None or row.classification_reason == "pdf_text_requires_model_role"
+           for row in catalog.rows):
+        facts.update(
+            source_context_complete=not omitted_pdf_references,
+            reference_omitted_source_count=len(omitted_pdf_references),
+            reference_omitted_source_locator_range=({
+                "sheet": "PDF_TEXT", "first": omitted_pdf_references[0].locator,
+                "last": omitted_pdf_references[-1].locator,
+                "count": len(omitted_pdf_references), "content_status": "not_shown",
+            } if omitted_pdf_references else None),
+        )
+    if visible and all(row.source_start is not None for row in visible):
+        facts["source_order_basis"] = "converter_markdown_char_offsets"
+        facts["source_order"] = [
+            {"source_row": row.locator, "source_start": row.source_start, "source_end": row.source_end}
+            for row in sorted(visible, key=lambda row: row.source_start)
+        ]
+    return facts
 
 
 def _docx_source_sheets(
@@ -671,6 +731,69 @@ def _docx_source_sheets(
             if any(marker in name for marker in ("footnotes", "endnotes")):
                 warnings.append(f"docx_unread_part:{name.rsplit('/', 1)[-1]}")
     return sheets, tuple(dict.fromkeys(warnings))
+
+
+def _pdf_text_block_spans(markdown: str) -> list[tuple[str, int, int]]:
+    """Keep non-table converter text in exact bounded blocks, without role inference."""
+    runs: list[tuple[str, int]] = []
+    current: list[str] = []
+    source_offset = run_start = 0
+    for line in str(markdown or "").splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.endswith("|"):
+            if current:
+                runs.append(("".join(current), run_start))
+                current = []
+        else:
+            if not current:
+                run_start = source_offset
+            current.append(line)
+        source_offset += len(line)
+    if current:
+        runs.append(("".join(current), run_start))
+    blocks: list[tuple[str, int, int]] = []
+    for run, run_start in runs:
+        offset = 0
+        while offset < len(run):
+            end = min(len(run), offset + _PDF_TEXT_BLOCK_CHARS)
+            if end < len(run):
+                newline = run.rfind("\n", offset, end)
+                if newline >= offset:
+                    end = newline + 1
+            block = run[offset:end]
+            start = offset
+            offset = end
+            if block.strip():
+                blocks.append((block, run_start + start, run_start + end))
+    return blocks
+
+
+def _pdf_text_blocks(markdown: str) -> list[str]:
+    return [text for text, _start, _end in _pdf_text_block_spans(markdown)]
+
+
+def _pdf_text_rows(markdown: str, source_sha256: str) -> tuple[list[CatalogRow], tuple[str, ...]]:
+    sheet = "PDF_TEXT"
+    sheet_id = _stable_id(source_sha256, sheet, prefix="sheet")
+    rows: list[CatalogRow] = []
+    for index, (text, source_start, source_end) in enumerate(_pdf_text_block_spans(markdown), 1):
+        locator = f"{sheet}!R{index}"
+        rows.append(CatalogRow(
+            locator=locator, sheet=sheet, excel_row=index, values=(text,),
+            line=f"{locator}: {text}", numbers=(),
+            row_id=_stable_id(source_sha256, sheet_id, index, prefix="row"), sheet_id=sheet_id,
+            cells=(CatalogCell(coordinate=f"A{index}", column=1, raw_value=text,
+                               display_value=text, data_type="s", number_format="General"),),
+            row_classification="ambiguous", classification_reason="pdf_text_requires_model_role",
+            classification_confidence=0.0, ambiguities=("row_role_unconfirmed",),
+            source_start=source_start, source_end=source_end,
+        ))
+    warnings: list[str] = []
+    if re.search(r"!\[[^\]]*\](?:\(|\[)|<\s*(?:svg|img)\b", markdown, re.IGNORECASE):
+        warnings.append("pdf_unread_visual_content")
+    if re.search(r"\[WARN\]|\[Ошибка распознавания страницы:", markdown, re.IGNORECASE):
+        warnings.append("pdf_converter_incomplete_content")
+    return rows, tuple(warnings)
 
 
 def load_tabular_source_catalog(
@@ -858,7 +981,7 @@ def load_tabular_source_catalog(
         sheet_id = _stable_id(source_sha256, 0, sheet, prefix="sheet")
         rows = []
         section_context = ""
-        for pdf_row, values in enumerate(_markdown_table_rows(markdown), 1):
+        for pdf_row, (values, source_start, source_end) in enumerate(_markdown_table_row_spans(markdown), 1):
             numbers = _numbers_in_values(values)
             row_class, reason, confidence, ambiguities = _classify_row(
                 values, numbers, excel_row=pdf_row
@@ -898,11 +1021,17 @@ def load_tabular_source_catalog(
                     classification_confidence=confidence,
                     ambiguities=ambiguities,
                     section_context=section_context,
+                    source_start=source_start,
+                    source_end=source_end,
                 )
             )
-        if not rows:
+        text_rows, extraction_warnings = _pdf_text_rows(str(markdown or ""), source_sha256)
+        if rows:
+            sheets.append((sheet, sheet_id, False, rows))
+        if text_rows:
+            sheets.append(("PDF_TEXT", text_rows[0].sheet_id, False, text_rows))
+        if not rows and not text_rows:
             return None
-        sheets.append((sheet, sheet_id, False, rows))
     else:
         return None
 

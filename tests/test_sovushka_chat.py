@@ -1319,6 +1319,17 @@ def test_chat_attachment_upload_uses_nicegui_file_api_not_stale_content_api():
     assert "e.content.read()" not in attach_block
 
 
+def test_chat_attachment_accepts_supported_xlsm_without_enabling_macro_execution(monkeypatch):
+    from proxy.config import rag_upload_suffixes
+
+    monkeypatch.delenv("RAG_UPLOAD_SUFFIXES", raising=False)
+    assert ".xlsm" in rag_upload_suffixes()
+    source = inspect.getsource(chat_page.build_chat)
+    assert "accept=.xlsx,.xlsm,.xls,.csv,.pdf,.docx" in source
+    monkeypatch.setenv("RAG_UPLOAD_SUFFIXES", ".pdf,.xlsx")
+    assert rag_upload_suffixes() == {".pdf", ".xlsx"}
+
+
 def test_samovar_parse_actions_keep_nicegui_slot_context():
     source = inspect.getsource(samovar_page.build_samovar)
     legacy_source = inspect.getsource(samovar_page.build_samovar_legacy)

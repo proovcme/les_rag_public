@@ -16,9 +16,9 @@ def model_evidence_read_tool_schemas() -> list[dict[str, Any]]:
          {"q": {"type": "string"}}, ["q"]),
         ("read_resource_price", "Read price, unit and origin of one literal code in the bound pricebook.",
          {"code": {"type": "string"}}, ["code"]),
-        ("read_source", "Read a shown document or named document of an explicitly selected dataset.",
+        ("read_source", "Read a current attachment row (source_row only), or a shown/named document in selected datasets.",
          {"doc_id": {"type": "string"}, "dataset_id": {"type": "string"},
-          "doc_name": {"type": "string"}, "q": {"type": "string"}}, []),
+          "doc_name": {"type": "string"}, "q": {"type": "string"}, "source_row": {"type": "string"}}, []),
     )
     return [{"type": "function", "function": {
         "name": name, "description": description,
@@ -36,6 +36,7 @@ MODEL_EVIDENCE_READ_INSTRUCTION = (
     "Книга региона и периода закреплена приложением, сам другую не выбирай. "
     "Для коммерческого предложения или другого документа в выбранном датасете используй "
     "search_sources с target=documents и read_source. Нормы ищутся с target=norms. "
+    "Для строки текущего вложения используй read_source с source_row — точным адресом показанного каталога. "
     "Можно вызвать несколько независимых чтений одновременно. Чтения выполняются "
     "в твоём текущем ходе до итоговых строк; при достаточном уже показанном содержании "
     "повторное чтение не требуется. Используй вызов инструмента, а не описание вызова "

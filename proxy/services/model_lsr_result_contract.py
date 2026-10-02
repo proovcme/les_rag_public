@@ -110,7 +110,8 @@ def model_lsr_result_examples() -> dict[str, str]:
 def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str:
     """Explain conditional row fields identically for Markdown, JSON and text."""
     instruction = (
-        "Ответ: предпочти JSON rows; можно Markdown или обычным текстом. JSON не обязателен. "
+        "Итоговые строки: соблюдай явно заданный пользователем формат. "
+        "Без указания формата предпочти компактный JSON {\"rows\":[...]}; допустимы Markdown или текст. "
         "В Markdown сохраняй объявленные "
         "ячейки, включая пустые, и экранируй | внутри значения. "
         "Поля строки: " + ", ".join(BASE_FIELDS) + ". "
@@ -142,7 +143,8 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         examples = model_lsr_result_examples()
         instruction += (
             "\nПримеры одной и той же строки в трёх допустимых форматах. SOURCE_* и "
-            "SELECTED_CARD_CODE — обозначения полей источника, не значения для копирования.\n"
+            "SELECTED_CARD_CODE — обозначения полей источника, не значения для копирования. "
+            "Это альтернативные представления, не разрешение менять явно запрошенный формат.\n"
             + "\n\n".join(examples.values())
         )
     return instruction

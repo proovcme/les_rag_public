@@ -3105,7 +3105,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     auto_upload=True,
                     max_files=1,
                     on_upload=_do_attach,
-                ).props("flat accept=.xlsx,.xls,.csv,.pdf,.docx").classes(
+                ).props("flat accept=.xlsx,.xlsm,.xls,.csv,.pdf,.docx").classes(
                     "sov-chat-file-picker"
                 )
 

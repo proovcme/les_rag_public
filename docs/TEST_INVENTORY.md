@@ -1,5 +1,35 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+869: `test_workbook_research_job_service` добавляет 17 regressions повторной
+plain continuation после correction/restart: latest rows/basis/evidence/overrides,
+completed/paused, legacy caller, explicit rerun, шесть scope границ, running guards,
+foreign intermediate и question/hash mismatch. Before fix 7 failed / 7 passed;
+after 17 passed, related job/context/refinement/packaging/sheet bundle 138 passed.
+Это offline доказательство; установленная приёмка 869 pending.
+`test_model_lsr_result_contract`: 3 новых red→green регрессии приоритета явного
+формата и порядка общего контракта; examples не меняют выбор пользователя.
+Related format/research/gap/packet bundle: 59 passed; parsers не ограничены.
+`test_model_rag_sheet_evidence_reads`: queue starvation, all-malformed join,
+explicit reopen и последовательное снятие одного/нескольких snapshots;
+7 новых focused passed, related bundle 368 passed. PDF source catalogue:
+6 новых tests failed до fix, mixed text/table/full literal/visual warnings
+и стабильные PDF!Rn после fix — 71 related passed.
+`test_sovushka_chat` проверяет XLSM picker + default policy и сохранение
+operator override; chat/UIKit/input bundle 200 passed (red до fix).
+`test_unpack_archives` зарегистрирован в canonical UNIT_TESTS; marker/SHA,
+partial retry, conflict preservation и безопасные targets: 21 passed,
+15 failed до fix; retired prior-owned output блокирует ложный complete без удаления.
+Native attached-source: 21 failed before, 169 related passed after;
+governor/native receipt/durable replay сохраняют полный body, SHA и source offsets.
+PDF source order и непригодные для nonPDF fact keys: 226 catalog/chat passed,
+оба прежних budget-bound chat cases восстановлены без ослабления assertions.
+Completed scope expansion/join: 2 scope + 2 join regressions failed before;
+374 related passed after. Real XLSX fixture adds only newly catalogued context,
+retains old rows/evidence/basis and gives a new final revision.
+Frozen canonical 869: 2838 passed / 20 existing opt-in skipped / 5 warnings;
+verify, architecture, pinned baseline и active-artifacts exit0. Installed
+professional acceptance remains pending; offline results do not replace it.
+
 868: `test_model_query_reasoning` включён в canonical UNIT_TESTS: strict optional
 bool/inheritance, immutable profile, GUI select и runtime diagnostics; реальные
 mocked FreeToken requests проверяют query=False / answer+native=True при общем
@@ -9,7 +39,9 @@ lexical/rules и обработку следующего файла. `test_sovus
 legacy INDEXED0, fallback-карту и частичный PDF-sidecar. Это транспортные и
 целостностные проверки; frozen canonical 868 — 2745 passed / 20 existing opt-in
 skipped / 5 warnings, verify/architecture/baseline/active-artifacts exit0.
-Installed live 868 пока pending.
+Installed 868 smoke: native RRF exit0, basic 9 passed / 1 diagnostic warning /
+0 failed. Comparative quality FAILED: B0 length with incomplete JSON, B1 stop
+with ten malformed Markdown rows; zero downloaded artifacts in both controls.
 `test_model_rag_grouped_evidence_service` воспроизводит 150 synthetic candidates
 и запрещает раздувание compact inventory в mandatory replay, выдачу unshown
 stored body и объединение разных SHA/edition. Два теста падали до исправления.

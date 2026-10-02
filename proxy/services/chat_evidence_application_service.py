@@ -5081,21 +5081,90 @@ def _model_rag_shared_body_ref(ref: str) -> str:
     return f"То же содержимое и источник, что у {ref}; см. показанный там текст."
 
 
+def model_rag_pending_result_packets(held_packet: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Keep unresolved authored transport cursors apart from the active packet."""
+    candidates = list(held_packet.get("pending_model_result_packets") or ())
+    if held_packet.get("model_result_transport_pending"):
+        candidates.append(held_packet)
+    packets: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping) or not candidate.get("model_result_transport_pending"):
+            continue
+        packet = {key: value for key, value in candidate.items()
+                  if key not in {"pending_model_result_packets", "terminal_packets", "reopened_locators"}}
+        marker = json.dumps(packet, ensure_ascii=False, sort_keys=True)
+        if marker not in seen:
+            seen.add(marker)
+            packets.append(packet)
+    return packets
+
+
+def model_rag_with_pending_results(
+    held_packet: Mapping[str, Any], pending_packets: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    payload = dict(held_packet)
+    if pending_packets:
+        payload["pending_model_result_packets"] = [dict(packet) for packet in pending_packets]
+    else:
+        payload.pop("pending_model_result_packets", None)
+    return payload
+
+
+def model_rag_pending_result_targets(packet: Mapping[str, Any]) -> set[str]:
+    locators = set(map(str, packet.get("locators") or ()))
+    targets: set[str] = set()
+    for diagnostic in packet.get("transport_diagnostics") or ():
+        source = str((diagnostic.get("decision") or {}).get("source_row") or "")
+        targets.update({source} if source in locators else locators)
+    return targets or locators
+
+
+def model_rag_pending_result_projection(packets: Sequence[Mapping[str, Any]]) -> tuple[set[str], list[dict[str, Any]]]:
+    locators: set[str] = set()
+    diagnostics: list[dict[str, Any]] = []
+    for packet in packets:
+        resolved = set(map(str, packet.get("resolved_source_rows") or ()))
+        locators.update(set(map(str, packet.get("locators") or ())) - resolved)
+        for diagnostic in packet.get("transport_diagnostics") or ():
+            source = str((diagnostic.get("decision") or {}).get("source_row") or "")
+            if source not in resolved and diagnostic not in diagnostics:
+                diagnostics.append(dict(diagnostic))
+    return locators, diagnostics
+
+
+def model_rag_resolve_pending_results(
+    packets: Sequence[Mapping[str, Any]], resolved_source_rows: set[str],
+) -> list[dict[str, Any]]:
+    pending = []
+    for packet in packets:
+        resolved = set(map(str, packet.get("resolved_source_rows") or ()))
+        resolved.update(resolved_source_rows & set(map(str, packet.get("locators") or ())))
+        if model_rag_pending_result_targets(packet) <= resolved:
+            continue
+        payload = dict(packet)
+        if resolved:
+            payload["resolved_source_rows"] = sorted(resolved)
+        pending.append(payload)
+    return pending
+
+
 def model_rag_evidence_page_state(
     *, sheet: str, packet: Sequence[str],
     leftover_query_hits: Sequence[tuple[str, Sequence[Any]]], query_offset: int,
     query_provenance: Mapping[str, str], query_addresses: Mapping[str, Sequence[str]],
+    pending_result_packets: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Durable transport cursor, independent of the model's professional verdict."""
     queries = [str(query) for query, _hits in leftover_query_hits if str(query).strip()]
     if not queries:
-        return {}
-    return {
+        return model_rag_with_pending_results({}, pending_result_packets)
+    return model_rag_with_pending_results({
         "sheet": sheet, "locators": list(packet), "queries": queries,
         "query_offset": query_offset,
         "query_provenance": {q: query_provenance.get(q, "model") for q in queries},
         "query_addresses": {q: list(query_addresses.get(q, ())) for q in queries},
-    }
+    }, pending_result_packets)
 
 
 def model_rag_prior_page_context(
@@ -7634,6 +7703,8 @@ async def _execute_chat_evidence_application(
                         )
 
                     model_research_tools = ModelResearchToolService(
+                        attachment_catalog=source_catalog,
+                        expected_attachment_sha256=(source_catalog.source_file_sha256 if source_catalog else None),
                         retrieve=retrieve_chat_chunks,
                         frozen_dataset_ids=tuple(
                             str(item) for item in _dataset_ids if str(item)
@@ -7756,6 +7827,8 @@ async def _execute_chat_evidence_application(
                         )
 
                     model_research_tools = ModelResearchToolService(
+                        attachment_catalog=source_catalog,
+                        expected_attachment_sha256=(source_catalog.source_file_sha256 if source_catalog else None),
                         retrieve=retrieve_chat_chunks,
                         frozen_dataset_ids=tuple(
                             str(item) for item in _dataset_ids if str(item)
@@ -7803,6 +7876,8 @@ async def _execute_chat_evidence_application(
                             return await asyncio.to_thread(tool_harness.call, tool_name, args)
 
                         model_research_tools = ModelResearchToolService(
+                            attachment_catalog=source_catalog,
+                            expected_attachment_sha256=(source_catalog.source_file_sha256 if source_catalog else None),
                             retrieve=retrieve_chat_chunks,
                             frozen_dataset_ids=tuple(str(item) for item in _dataset_ids if str(item)),
                             retrieval_kwargs={
@@ -8433,6 +8508,7 @@ async def _execute_chat_evidence_application(
                             from proxy.services.lsr_workbook_adapter_service import requested_price_basis
                             research_job = research_job_service.begin_or_resume(
                                 research_identity,
+                                source_locators=source_catalog.work_locators(),
                                 task_context={
                                     "original_question": str(req.question or ""),
                                     "artifact_intent": workbook_artifact_intent(str(req.question or "")),
@@ -8529,7 +8605,19 @@ async def _execute_chat_evidence_application(
                         else {}
                     )
                     terminal_packet_locators = WorkbookResearchJobService.terminal_packet_locators(stored_held)
-                    if stored_held.get("terminal_model_result_saved"):
+                    pending_result_packets = model_rag_pending_result_packets(stored_held)
+                    transport_pending_locators, pending_diagnostics = model_rag_pending_result_projection(pending_result_packets)
+                    if pending_diagnostics:
+                        retrieval_trace["model_result_transport_diagnostics"] = pending_diagnostics
+                    explicit_reopened_locators: set[str] = set()
+                    if research_job_service is not None and research_job is not None:
+                        for event in research_job_service.list_events_with_lineage(research_job["job_id"]):
+                            event_payload = event.get("payload") or {}
+                            if event.get("event_type") == "packet_checkpoint":
+                                explicit_reopened_locators.difference_update(event_payload.get("packet_locators") or ())
+                            elif event.get("event_type") == "locators_reopened":
+                                explicit_reopened_locators.update(event_payload.get("locators") or ())
+                    if stored_held.get("terminal_model_result_saved") or stored_held.get("model_result_transport_pending"):
                         # A completed packet's unused candidates stay durable;
                         # they are not an automatic professional re-offer.
                         stored_held = {}
@@ -8600,6 +8688,12 @@ async def _execute_chat_evidence_application(
                         )
                         if research_job_service is not None and live_job_id:
                             research_job = research_job_service.get(live_job_id) or research_job
+                        latest_held = (research_job or {}).get("held_packet") or {}
+                        terminal_packet_locators = WorkbookResearchJobService.terminal_packet_locators(latest_held)
+                        pending_result_packets = model_rag_pending_result_packets(latest_held)
+                        transport_pending_locators, pending_diagnostics = model_rag_pending_result_projection(pending_result_packets)
+                        if pending_diagnostics or "model_result_transport_diagnostics" in retrieval_trace:
+                            retrieval_trace["model_result_transport_diagnostics"] = pending_diagnostics
                         accumulated_rows = [
                             dict(item)
                             for item in ((research_job or {}).get("accepted_rows") or ())
@@ -8634,8 +8728,10 @@ async def _execute_chat_evidence_application(
                             sheet_name,
                             settled_source_keys(accumulated_rows, source_catalog),
                         )
-                        remaining = [locator for locator in remaining if locator not in terminal_packet_locators]
-                        exhausted_locators: set[str] = set()
+                        remaining = [locator for locator in remaining
+                                     if locator not in terminal_packet_locators
+                                     and (locator not in transport_pending_locators or locator in explicit_reopened_locators)]
+                        exhausted_locators: set[str] = transport_pending_locators - explicit_reopened_locators
                         # Rows already put to the model in this sheet pass.  The
                         # packet pool is ordered least-offered-first so no row can
                         # be starved by a leading row that keeps a quality gap.
@@ -9243,7 +9339,8 @@ async def _execute_chat_evidence_application(
                                     sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
                                     query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
-                                    query_addresses=pass_query_addresses)
+                                    query_addresses=pass_query_addresses,
+                                    pending_result_packets=pending_result_packets)
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
@@ -9309,7 +9406,8 @@ async def _execute_chat_evidence_application(
                                     leftover_query_hits=leftover_query_hits,
                                     query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
-                                    query_addresses=pass_query_addresses)
+                                    query_addresses=pass_query_addresses,
+                                    pending_result_packets=pending_result_packets)
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
@@ -9425,7 +9523,8 @@ async def _execute_chat_evidence_application(
                                     sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
                                     query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
-                                    query_addresses=pass_query_addresses)
+                                    query_addresses=pass_query_addresses,
+                                    pending_result_packets=pending_result_packets)
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
@@ -9531,8 +9630,9 @@ async def _execute_chat_evidence_application(
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
                                         phase=read_stop,
-                                        held_packet={"sheet": sheet_name, "locators": list(packet),
-                                                     "model_read_pending": True, "read_stop": read_stop},
+                                        held_packet=model_rag_with_pending_results(
+                                            {"sheet": sheet_name, "locators": list(packet),
+                                             "model_read_pending": True, "read_stop": read_stop}, pending_result_packets),
                                     )
                                 break
                             active_pending_tool_calls = 0
@@ -9549,8 +9649,9 @@ async def _execute_chat_evidence_application(
                                         research_job = research_job_service.pause(
                                             research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
                                             phase="model_final_output_missing",
-                                            held_packet={"sheet": sheet_name, "locators": list(packet),
-                                                         "model_final_output_missing": True},
+                                            held_packet=model_rag_with_pending_results(
+                                                {"sheet": sheet_name, "locators": list(packet),
+                                                 "model_final_output_missing": True}, pending_result_packets),
                                         )
                                 break
                             tokens = int(tokens or 0) + int(
@@ -9769,12 +9870,20 @@ async def _execute_chat_evidence_application(
                                             ),
                                             offers=int(packet_attempts[fingerprint]),
                                         )
+                            if pending_result_packets and not last_truncated:
+                                # Only an explicit user reopen plus newly admitted
+                                # literal rows resolves prior transport ambiguity.
+                                pending_result_packets = model_rag_resolve_pending_results(
+                                    pending_result_packets,
+                                    {str(row.get("source_row") or "") for row in kept} & explicit_reopened_locators,
+                                )
                             held_payload = model_rag_evidence_page_state(
                                 sheet=sheet_name, packet=packet,
                                 leftover_query_hits=leftover_query_hits,
                                 query_offset=evidence_query_offset,
                                 query_provenance=pass_query_provenance,
-                                query_addresses=pass_query_addresses)
+                                query_addresses=pass_query_addresses,
+                                pending_result_packets=pending_result_packets)
                             held_query_context = held_payload
                             if not last_truncated and not pass_transport_diagnostics:
                                 held_payload.update({
@@ -9787,7 +9896,12 @@ async def _execute_chat_evidence_application(
                                     "model_result_transport_pending": True,
                                     "locators": list(packet),
                                     "transport_diagnostics": pass_transport_diagnostics}
+                                pending_result_packets = model_rag_pending_result_packets(held_payload)
+                                held_payload = model_rag_with_pending_results(held_payload, pending_result_packets)
                                 held_query_context = held_payload
+                            transport_pending_locators, pending_diagnostics = model_rag_pending_result_projection(pending_result_packets)
+                            if pending_diagnostics or "model_result_transport_diagnostics" in retrieval_trace:
+                                retrieval_trace["model_result_transport_diagnostics"] = pending_diagnostics
                             if leftover_query_hits and research_job_service is not None and research_job is not None:
                                 leftover_cache = {
                                     str(query): [durable_research_hit(item) for item in hits]
@@ -9857,6 +9971,7 @@ async def _execute_chat_evidence_application(
                                     dict(row) for row in research_job["accepted_rows"]
                                     if isinstance(row, Mapping)
                                 ]
+                            explicit_reopened_locators.difference_update(packet)
                             # Blocker § 1 wants the whole chain readable from one
                             # trace: response -> parsed -> kept -> durable merge ->
                             # settled keys -> packet pool -> stall guard.  The guard
@@ -9887,7 +10002,16 @@ async def _execute_chat_evidence_application(
                                     }
                                 )
                             if pass_transport_diagnostics:
-                                break  # technical ambiguity cannot trigger another professional offer
+                                # Preserve the literal failed result without a repair
+                                # offer; its technical ambiguity cannot starve new source rows.
+                                transport_pending_locators.update(packet)
+                                exhausted_locators.update(packet)
+                                remaining = [locator for locator in remaining
+                                             if locator not in offered_locators and not offer_counts.get(locator, 0)]
+                                deferred_query_hits = []
+                                held_packet = []
+                                held_query_context = {}
+                                continue
                             if not last_truncated:
                                 # The final answer is scoped to this source packet.
                                 # Keep its cursor; only NEVER_REACHED rows may follow.
@@ -9943,7 +10067,8 @@ async def _execute_chat_evidence_application(
                     finally:
                         if live_job_id and owns_sheet_pass:
                             release_sheet_pass(live_job_id)
-                    if not any_sheet_queries and not accumulated_rows and not research_cancelled and not terminal_packet_locators:
+                    if (not any_sheet_queries and not accumulated_rows and not research_cancelled
+                            and not terminal_packet_locators and not pending_result_packets):
                         raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
                             session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
                             secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
@@ -9958,7 +10083,7 @@ async def _execute_chat_evidence_application(
                         for locator in source_catalog.work_locators()
                         if locator not in settled_keys
                     ]
-                    pending_transport = set()
+                    pending_transport = set(transport_pending_locators)
                     pending_held = (research_job or {}).get("held_packet") or {}
                     if ((pending_held.get("queries") and not pending_held.get("terminal_model_result_saved")) or pending_held.get("model_read_pending")
                             or pending_held.get("model_result_transport_pending")
@@ -9968,8 +10093,13 @@ async def _execute_chat_evidence_application(
                     # Unanswered source rows remain gaps; unused candidates do
                     # not make accepted/proven/priced rows incomplete.
                     pending_transport.update(locator for locator in terminal_packet_locators if locator not in settled_keys)
+                    resolved_transport_locators = {
+                        str(locator) for pending in pending_result_packets
+                        for locator in pending.get("resolved_source_rows") or ()
+                    }
                     for proposal in retrieval_trace.get("model_result_transport_diagnostics", []):
-                        pending_transport.update(proposal.get("packet_locators") or ())
+                        pending_transport.update(locator for locator in proposal.get("packet_locators") or ()
+                                                 if locator not in resolved_transport_locators)
                     unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
                     if research_job_service is not None and research_job is not None:
                         if owns_sheet_pass:
@@ -9978,6 +10108,8 @@ async def _execute_chat_evidence_application(
                                     research_job["job_id"],
                                     remaining=unfinished_locators,
                                     phase="packets",
+                                    held_packet=model_rag_with_pending_results(
+                                        (research_job or {}).get("held_packet") or {}, pending_result_packets),
                                 )
                                 # A cancelled run stays resumable: the operator
                                 # stopped it, so nothing here may close rows the

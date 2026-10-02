@@ -1827,11 +1827,11 @@ def _evidence_cards(chunks: Sequence[Any]) -> dict[str, dict[str, Any]]:
 def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: str = "") -> str:
     return (
         f"{sheet_clause}"
+        + model_lsr_result_field_instruction()
+        + " "
         "Если выбран Markdown: Начни ответ с таблицы результата; пояснения — после таблицы. "
         "Неприменимые необязательные колонки можно не объявлять. Для объявленной "
         "колонки сохраняй пустую ячейку, чтобы остальные значения не сдвигались. "
-        + model_lsr_result_field_instruction()
-        + " "
         "row_role только: work, material, equipment, resource, header или unresolved. "
         "header — заголовок, раздел, примечание или итог исходника: строка учтена "
         "и не требует монтажной нормы ни кодом, ни моделью. "

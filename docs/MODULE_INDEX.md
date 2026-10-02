@@ -1,6 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Кандидат 868; установлен 867 (`6794f8ed`), клиентская приёмка FAILED.**
+> **Кандидат 869; установлен 868 (`f2625617`), клиентская приёмка FAILED.**
+> `core/workbook-research`: повторная plain continuation следует к последней
+> совместимой исправленной ревизии, проверяя всю lineage и scope. Explicit rerun
+> остаётся exact/idempotent, guards текущего running job не сбрасываются.
+> `workbook_research_job_service`, [RAG flow](modules/rag-evidence-flow.md), док↔код ✅.
+> `model_lsr_result_contract`/`lsr_norm_quality_gate_service`: явно запрошенный
+> формат строк имеет приоритет; default compact JSON, прежние parsers сохранены.
+> [RAG flow](modules/rag-evidence-flow.md), док↔код ✅; installed gate pending.
+>
 > Optional `query_reasoning_enabled` задаётся immutable profile и отдельным
 > typed query preset; absent наследует общее рассуждение. Query/repair и
 > answer/native reads различаются без смены модели, evidence или предметных решений.
@@ -16,7 +24,26 @@
 > сохраняет literal full bodies, compact unread pointers и exact shared catalogs;
 > запас внутри bound window не блокирует первую допустимую целую группу.
 > Обе native ветки используют общий replay, GUI technical chips показывают бюджет.
-> [RAG flow](modules/rag-evidence-flow.md), док↔код ✅; live 868 пока pending.
+> [RAG flow](modules/rag-evidence-flow.md), док↔код ✅. Live 868 FAILED: B0 length
+> truncated JSON, B1 ten malformed Markdown rows; both have no downloaded XLSX.
+>
+> **869:** malformed packet snapshots не блокируют NEVER_REACHED строки;
+> explicit reopen разрешает только новые модельные исправления. PDF_TEXT
+> сохраняет literal нетабличные условия с отдельным scope и честным not_shown;
+> scoped native read_source доступен только текущему attachment SHA.
+> Точки: `attachment_source_catalog_service`, `model_research_tool_service`,
+> `chat_evidence_application_service`; [RAG flow](modules/rag-evidence-flow.md),
+> scope expansion `_reconcile_source_scope` и `_scope_document` сохраняют old
+> revisions с честной current readiness; related374 passed. Literal PDF offsets
+> и governed attached-source receipts: 226/169 related passed, installed pending.
+> XLSM доступен в существующем picker/upload policy;
+> макросы не исполняются, operator suffix override сохраняется.
+> `tools/unpack_archives.py` проверяет source SHA + output manifest, повторяет
+> partial extraction и возвращает nonzero при conflict/safety failure;
+> existing user output не перезаписывается; retired old archive files не становятся
+> молча evidence новой revision. Exact regression suite: 21 passed.
+> Frozen canonical869: 2838 passed / 20 opt-in skipped; verify/architecture/
+> baseline/active-artifacts exit0. Installed/professional proof pending.
 >
 > **867:** Terminal packets
 > сохраняют независимые cursors; native assistant/tool exchange с matching IDs

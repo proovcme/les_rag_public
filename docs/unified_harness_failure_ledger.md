@@ -1,5 +1,36 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-02 — 869 candidate: source scope and packet transport completeness
+
+Installed 868 malformed first packet starved seven never-reached source rows.
+Durable pending snapshots now remain distinct from fresh source packets; only
+an explicit reopen plus newly admitted model rows can resolve them. Seven new
+focused cases and 368 related cases passed. No parser or professional repair.
+PDF tables previously erased non-table source context and could falsely claim
+complete extraction. Stable table locators plus separate literal PDF_TEXT scope,
+bounded not_shown manifest and visual/OCR warnings replace that claim (71 related
+passed; six new cases failed before fix). Current attachment exact native reads
+and old completed-job scope expansion verified by 169/374 related tests.
+Literal table/prose spans and PDF-only packet facts avoid condition-order loss
+and nonPDF context pollution (226 related passed). Fresh installed proof pending.
+Archive unpacking previously skipped nonempty partial output and returned zero
+on failures. Source-bound completion marker plus manifest, safe paths and
+preserved user conflicts now give honest nonzero failures (21 passed). Retired
+previous-manifest paths cannot silently enter the next completed archive revision.
+These are offline fixes; installed and professional 869 gates remain pending.
+
+## 2026-10-02 — 869 candidate: repeated continuation selected stale correction state
+
+An exact identity for an earlier literal continuation preceded the document's
+newer corrected revision. Repeating that text restored old quantities/basis.
+Seven fixture cases failed before the fix; seventeen focused cases and 138
+related cases pass afterward. The selector follows only a same-scope descendant
+and validates every lineage step; explicit task reruns remain idempotent and
+running guards are preserved. Installed acceptance is pending; no live readiness
+is inferred from these tests. Installed 868 comparison independently failed:
+B0 truncated JSON at length; B1 malformed Markdown and zero native reads, both
+without a downloaded artifact (`artifacts/live_868/bap_lsr_{baseline,candidate}/`).
+
 ## 2026-10-01 — 858: explicit resource code lost; known contradictions hidden
 
 Same-input installed EOM 856 delivered 51/51 rows but failed quality/financial

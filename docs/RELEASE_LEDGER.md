@@ -1,5 +1,38 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.141 / 869; установлен 0.31.140 / 868 (`f2625617`).**
+868 official patch: 22 files HEAD/workspace/runtime identical; rollback 867 retained.
+Installed native RRF exit0, basic 9 passed / 1 existing diagnostic warning /
+0 failed (117.08s wrapper). Profile control: query=False, answer/native=True,
+temperature 0.6, output 8192/16384; same source/task/profile/model, native read
+limit 48. B0 427.25s: finish=length, truncated JSON, no XLSX. B1 202.08s:
+finish=stop, ten Markdown width mismatches (18 cells vs 19), accepted 2/19,
+no native reads or XLSX. Original profile and read limit restored afterward.
+Receipts: `artifacts/live_868/{step_*.exit.json,smoke/,bap_lsr_baseline/,bap_lsr_candidate/}`.
+**Профессиональная приёмка FAILED; готовность заказчику не заявлена.**
+869 corrects stale exact plain-continuation selection after a later correction,
+within the same full scope and compatible lineage. Explicit task reruns and
+active-run guards retain their contracts. Before: 7 failed / 7 passed; after:
+17 focused passed, 138 related passed. Canonical/installed gates pending.
+Shared format instruction now honours explicit user format before conditional
+Markdown guidance; default compact JSON rows, existing parsers unchanged.
+Three new regressions failed before the fix; 59 related tests passed afterward.
+Candidate also preserves malformed snapshots while reaching fresh source rows,
+with explicit user correction and selective durable resolution (368 related passed).
+PDF_TEXT retains all converter prose with honest shown/unshown scope and visual
+warnings (71 related passed); original PDF locators/volumes stay fixed. Current
+attachment exact native read verified by governed/durable integration (169 related
+passed); completed-job scope admission and owner join verified (374 related passed).
+Literal PDF table/prose source order and PDF-only packet metadata: 226 related passed.
+XLSM upload/picker correction: 200 related passed. Archive completion uses source
+SHA plus extracted-file manifest; partial/conflicting extraction cannot claim success
+(21 passed; retired prior-owned evidence is an explicit blocker, retained).
+Frozen canonical 869: verify exit0 (23.31s), 2838 passed / 20 existing opt-in
+skipped / 5 warnings (271.51s pytest, 273.03s wrapper), architecture exit0
+(9.55s), pinned baseline exit0 (7.33s), active artifacts exit0 (0.62s).
+Deployed 869 and business controls remain pending.
+
+**Предыдущий кандидат 0.31.140 / 868 перед установкой.**
 **Кандидат 0.31.140 / 868; установлен 0.31.139 / 867 (`6794f8ed`).**
 867 установлен официальным patch deploy: 19 файлов совпали с HEAD/workspace/runtime,
 rollback 866 сохранён. Native RRF smoke exit0 (0.93s), basic smoke 9 passed /

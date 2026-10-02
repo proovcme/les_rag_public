@@ -159,6 +159,92 @@ def test_native_tool_schema_payload_reserves_capacity_without_text_duplication()
             request_payload="request", native_tools=[oversized], required_evidence=["complete body"])
 
 
+def test_read_source_schema_exposes_current_attachment_row_without_file_selector():
+    from proxy.services.model_evidence_read_contract import (
+        MODEL_EVIDENCE_READ_INSTRUCTION, model_evidence_read_tool_schemas,
+    )
+
+    tool = next(item["function"] for item in model_evidence_read_tool_schemas()
+                if item["function"]["name"] == "read_source")
+    properties = tool["parameters"]["properties"]
+    assert properties["source_row"] == {"type": "string"}
+    assert {"doc_id", "dataset_id", "doc_name", "q"}.issubset(properties)
+    assert not {"path", "attachment_id", "source_sha256"}.intersection(properties)
+    assert tool["parameters"]["additionalProperties"] is False
+    assert "source_row" in MODEL_EVIDENCE_READ_INSTRUCTION and "текущего вложения" in MODEL_EVIDENCE_READ_INSTRUCTION
+
+
+@pytest.mark.asyncio
+async def test_native_attachment_read_reaches_governed_frame_and_durable_immutable_receipt(tmp_path):
+    from proxy.services import chat_evidence_application_service as service
+    from proxy.services.model_evidence_read_contract import model_evidence_read_tool_schemas
+    from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
+    from proxy.services.smeta_chat_adapter_service import _parse_model_tool_calls
+    from test_model_research_tool_service import _attachment_catalog, _attachment_reader
+
+    catalog = _attachment_catalog()
+    tools = _attachment_reader(catalog, catalog.source_file_sha256)
+    db = tmp_path / "attachment_native.sqlite"
+    jobs = WorkbookResearchJobService(db)
+    identity = jobs.identity(session_id="s", attachment_id="a", source_sha256=catalog.source_file_sha256,
+                             dataset_ids=[], profile_revision_id="r", model_identity="m", question="literal request")
+    job = jobs.begin_or_resume(identity)
+    reads = []
+    all_chunks = []
+    frames = []
+    preset = ModelExecutionPreset(preset_id="attachment-native", model_family="fixture",
+        input_token_limit=20_000, generation_reserve_tokens=500, safety_reserve_tokens=100,
+        normal_tool_count=5, max_tools=5, max_batch_items=5, parallel_read_limit=1,
+        reasoning_enabled=False, source_chain=("test",))
+
+    async def on_read(receipts, results):
+        groups, chunks, omitted = service.bind_model_requested_read_evidence(
+            results, existing_chunks=all_chunks, evidence_namespace="table-packet:read",
+            packet_id="table-packet", receipts=receipts)
+        assert groups and not omitted
+        reads.extend(receipts)
+        all_chunks.extend(chunks)
+        jobs.record_evidence_read(job["job_id"], packet_id="table-packet",
+                                 evidence=[service.durable_evidence_record(c) for c in all_chunks],
+                                 read_receipts=reads)
+
+    async def continuation(receipts, _results, exchanges):
+        messages, _packet = govern_inference_messages(
+            preset=preset, profile_prefix="profile", request_payload="literal request",
+            native_tools=model_evidence_read_tool_schemas(), native_exchanges=exchanges,
+            required_evidence=model_read_frame_evidence([{"source_rows": ["PDF!R4"]}], all_chunks, receipts))
+        frames.append(messages)
+        return '{"rows": []}', {}
+
+    call = {"call_id": "source_c1", "tool": "read_source", "args": {"source_row": "PDF_TEXT!R6"}}
+    outcome = await run_model_evidence_read_turn(text=json.dumps({"calls": [call]}), usage={},
+        parse_calls=_parse_model_tool_calls, execute=tools.execute, on_read_results=on_read,
+        continue_native_turn=continuation, allowed_tools={"read_source"})
+
+    assert outcome.text == '{"rows": []}' and not outcome.stop_reason
+    assert len(outcome.native_exchanges) == 1 and len(frames) == 1
+    messages = frames[0]
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "tool"]
+    assert messages[2]["tool_calls"][0]["id"] == messages[3]["tool_call_id"] == "source_c1"
+    assert messages[2]["tool_calls"][0]["function"]["name"] == "read_source"
+    reply = json.loads(messages[3]["content"])
+    assert reply["trace"]["body_complete"] is True
+    assert reply["trace"]["source_row"] == "PDF_TEXT!R6"
+    assert reply["trace"]["source_sha256"] == catalog.source_file_sha256
+    assert reply["trace"]["source_file_id"] == catalog.source_file_id
+    assert reply["trace"]["source_start"] == catalog.rows[0].source_start
+    assert reply["trace"]["source_end"] == catalog.rows[0].source_end
+    assert reply["trace"]["source_order_basis"] == "converter_markdown_char_offsets"
+    assert reply["evidence_refs"] and reply["evidence_bindings"]
+    assert "LAST_LITERAL_BLOCK" in messages[1]["content"] and "LAST_LITERAL_BLOCK" not in messages[3]["content"]
+    recovered = WorkbookResearchJobService(db).get(job["job_id"])
+    stored = recovered["task_context"]["model_evidence_reads"]["table-packet"][0]
+    assert stored["trace"] == reply["trace"] and stored["call"] == reply["call"]
+    assert recovered["accepted_rows"] == []
+    assert recovered["evidence"][0]["content"] == catalog.rows[0].line
+    assert recovered["evidence"][0]["meta"]["source_sha256"] == catalog.source_file_sha256
+
+
 def test_json_model_cannot_inject_application_confirmation_or_evidence_binding():
     row = {"source_row": "S!R2", "row_role": "material", "title": "Cable", "unit": "m",
            "quantity": 12, "norm_code": "—", "confirmed_price": 100,

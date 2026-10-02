@@ -47,7 +47,9 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      reasoning_enabled=False, query_reasoning_enabled=None, query_repair=False,
                      empty_final=False, empty_query=False,
                      query_count=2, group_char_budget=None, partial_final=False, packet_count=1,
-                     input_token_limit=100_000, candidate_padding=0, native_read_batch=False):
+                     input_token_limit=100_000, candidate_padding=0, native_read_batch=False,
+                     malformed_first_packet=False, malformed_all_first_packet=False,
+                     malformed_second_packet=False):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(tmp_path / "attachments"))
@@ -199,6 +201,13 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
             answer = answer.replace("S!R2", f"S!R{2 + packet_index * 2}").replace("S!R3", f"S!R{3 + packet_index * 2}")
         if partial_final and packet_index == 0:
             answer = "\n".join(answer.splitlines()[:-1])
+        if ((malformed_first_packet and packet_index == 0)
+                or (malformed_second_packet and packet_index == 1)):
+            # Keep the authored line literal but omit one declared cell. The
+            # harness may preserve this proposal; it must not repair its fields.
+            answer = answer.replace(f"| {RESOURCE_A} | {refs[0]} |", f"| {RESOURCE_A} |")
+            if malformed_all_first_packet:
+                answer = answer.replace(f"| {RESOURCE_B} | {refs[1]} |", f"| {RESOURCE_B} |")
         return InferenceResponse(text="" if empty_final else answer, tool_calls=(),
                                  finish_reason="length" if empty_final else "stop",
                                  usage={"completion_tokens": 120})
@@ -306,9 +315,41 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
             save_chat_history=lambda **row: histories.append(row) or "history-resume", token_sink=None,
             version_stamp=lambda: {}))
 
+    async def corrected_source_row(locator):
+        resource, title, quantity = ((RESOURCE_A, "Cable A", 12) if int(locator.rsplit("R", 1)[1]) % 2 == 0
+                                     else (RESOURCE_B, "Cable B", 3))
+        responses.extend([
+            InferenceResponse(text=f"{locator} — {title} correction", tool_calls=(), finish_reason="stop", usage={}),
+            InferenceResponse(text="", tool_calls=(_native("read_norm_card", norm_key="immutable-norm"),),
+                              finish_reason="tool_calls", usage={}),
+            InferenceResponse(text="", tool_calls=(_native("read_resource_price", code=RESOURCE_A),
+                                                    _native("read_resource_price", code=RESOURCE_B)),
+                              finish_reason="tool_calls", usage={}),
+        ])
+        def corrected_response():
+            shown_ref = None
+            for message in requests[-1].messages:
+                for line in str(message["content"]).splitlines():
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(payload, dict):
+                        for item in payload.get("previously_shown_evidence_registry", []):
+                            if item.get("doc_name") == "fgis_pricebook_resources.v1" and item.get("resource_code") == resource:
+                                shown_ref = item["evidence_ref"]
+            assert shown_ref
+            rows = [{"source_row": locator, "row_role": "material", "title": title, "unit": "m",
+                     "quantity": quantity, "norm_code": "", "resource_code": resource, "evidence_refs": shown_ref}]
+            return InferenceResponse(text=json.dumps({"rows": rows}), tool_calls=(),
+                                     finish_reason="stop", usage={"completion_tokens": 80})
+        responses.append(corrected_response)
+        return await resume_same_request()
+
     return SimpleNamespace(result=result, executions=executions, requests=requests, responses=responses,
                            exact_reads=exact_reads, lookups=lookups, queries=search_queries, histories=histories,
-                           declared_queries=declared_queries, resume_same_request=resume_same_request)
+                           declared_queries=declared_queries, resume_same_request=resume_same_request,
+                           corrected_source_row=corrected_source_row)
 
 
 @pytest.mark.asyncio
@@ -498,6 +539,202 @@ async def test_terminal_packets_continue_only_unseen_rows_and_keep_independent_e
     await run.resume_same_request()
     assert len(run.requests) == request_count
     assert store.get(job["job_id"])["accepted_rows"] == job["accepted_rows"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("packet_count,all_malformed", [(1, False), (2, False), (1, True), (2, True)])
+async def test_malformed_packet_keeps_raw_pending_and_advances_only_unseen_source_rows(tmp_path, monkeypatch, packet_count, all_malformed):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35,
+                           group_char_budget=7000, packet_count=packet_count,
+                           malformed_first_packet=True, malformed_all_first_packet=all_malformed)
+    assert len(run.requests) == packet_count * 4 and not run.responses
+    assert [query for query in run.queries if query in run.declared_queries] == run.declared_queries
+    assert run.executions == []
+    trace = run.result["retrieval_trace"]
+    assert [entry["packet_locators"] for entry in trace["tool_loop"]["passes"]] == (
+        [["S!R2", "S!R3"]] if packet_count == 1 else
+        [["S!R2", "S!R3"], ["S!R4", "S!R5"]])
+    blocked_status = "unstructured" if all_malformed and packet_count == 1 else "structural_error"
+    assert trace["model_result"]["status"] == blocked_status
+    assert trace["model_result"]["packaged"] is False
+    diagnostic = trace["model_result_transport_diagnostics"][0]
+    assert diagnostic["code"] == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH"
+    assert diagnostic["expected_cells"] == 8 and diagnostic["actual_cells"] == 7
+    assert diagnostic["decision"]["source_row"] == "S!R2"
+    assert f"| {RESOURCE_A} |" in diagnostic["decision"]["raw_line"]
+    from proxy.services.workbook_research_job_service import WorkbookResearchIdentity, WorkbookResearchJobService
+    store = WorkbookResearchJobService()
+    job = store.get(trace["workbook_research_job"]["job_id"])
+    assert job["status"] == "paused" and job["status_dimensions"]["completeness"] == "partial"
+    assert job["remaining"] == ["S!R2", "S!R3"]
+    assert [row["source_row"] for row in job["accepted_rows"]] == (
+        ([] if all_malformed else ["S!R3"]) + ([] if packet_count == 1 else ["S!R4", "S!R5"]))
+    assert diagnostic["decision"] in [proposal["decision"] for proposal in job["unapplied_proposals"]]
+    pending = job["held_packet"]["pending_model_result_packets"]
+    assert len(pending) == 1 and pending[0]["model_result_transport_pending"] is True
+    assert pending[0]["locators"] == ["S!R2", "S!R3"] and pending[0]["queries"]
+    assert pending[0]["transport_diagnostics"] == trace["model_result_transport_diagnostics"]
+    for query in pending[0]["queries"]:
+        assert service.restore_query_hits_from_cache([query], job["query_cache"])
+    restarted = WorkbookResearchJobService(store.db_path).begin_or_resume(WorkbookResearchIdentity(**job["identity"]))
+    assert restarted["held_packet"] == job["held_packet"]
+    assert restarted["unapplied_proposals"] == job["unapplied_proposals"]
+    request_count = len(run.requests)
+    resumed = await run.resume_same_request()
+    assert len(run.requests) == request_count and run.executions == []
+    assert resumed["retrieval_trace"]["model_result"]["status"] == blocked_status
+    assert resumed["retrieval_trace"]["model_result"]["packaged"] is False
+    assert store.get(job["job_id"])["accepted_rows"] == job["accepted_rows"]
+    assert store.get(job["job_id"])["held_packet"]["pending_model_result_packets"] == pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_packet", [False, True])
+async def test_explicit_reopen_api_resolves_only_the_corrected_pending_source_packet(tmp_path, monkeypatch, same_packet):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35,
+                           group_char_budget=7000, packet_count=1 if same_packet else 2,
+                           malformed_first_packet=True, malformed_second_packet=not same_packet,
+                           malformed_all_first_packet=same_packet)
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    store = WorkbookResearchJobService()
+    job = store.get(run.result["retrieval_trace"]["workbook_research_job"]["job_id"])
+    original_proposals = job["unapplied_proposals"]
+    unchanged_rows = job["accepted_rows"]
+    assert len(job["held_packet"]["pending_model_result_packets"]) == (1 if same_packet else 2)
+    for index, locator in enumerate(("S!R2", "S!R3" if same_packet else "S!R4")):
+        patched = await chat.patch_lsr_rows(chat.LsrPatchRequest(
+            session_id="sheet-session", job_id=job["job_id"], reopen_locators=[locator], repack=False,
+        ), _user=SimpleNamespace())
+        assert patched["model_called"] is False
+        corrected = await run.corrected_source_row(locator)
+        assert len(run.requests) == (8 if same_packet else 12) + index * 4 and not run.responses
+        job = store.get(job["job_id"])
+        assert job["unapplied_proposals"] == original_proposals
+        assert all(row in job["accepted_rows"] for row in unchanged_rows)
+        pending = job["held_packet"].get("pending_model_result_packets", [])
+        if index == 0:
+            assert len(pending) == 1
+            assert pending[0]["locators"] == (["S!R2", "S!R3"] if same_packet else ["S!R4", "S!R5"])
+            if same_packet:
+                assert pending[0]["resolved_source_rows"] == ["S!R2"]
+                assert job["remaining"] == ["S!R3"]
+            assert job["status"] == "paused" and run.executions == []
+            assert [item["decision"]["source_row"] for item in corrected["retrieval_trace"]["model_result_transport_diagnostics"]] == ["S!R3" if same_packet else "S!R4"]
+        else:
+            assert pending == [] and job["status"] == "complete" and job["remaining"] == []
+            assert len(run.executions) == 1 and run.executions[0][1]["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_joined_sheet_refreshes_owner_transport_pending_before_empty_query_guard(tmp_path, monkeypatch):
+    async def owner_saved_malformed_packet(job_id):
+        from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+        store = WorkbookResearchJobService()
+        diagnostic = {"code": "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH", "reason": "ambiguous_markdown_row_width",
+                      "expected_cells": 8, "actual_cells": 7, "packet_locators": ["S!R2", "S!R3"],
+                      "decision": {"source_row": "S!R2", "raw_line": "| S!R2 | material | Cable A | m | 12 | | |"}}
+        pending = {"sheet": "S", "locators": ["S!R2", "S!R3"], "queries": ["S!R2 — Cable A"],
+                   "model_result_transport_pending": True, "transport_diagnostics": [diagnostic]}
+        store.record_packet(job_id, sheet="S", packet_locators=["S!R2", "S!R3"], accepted_rows=[],
+                            evidence=[], remaining=["S!R2", "S!R3"], unapplied_proposals=[diagnostic],
+                            held_packet=service.model_rag_with_pending_results(pending, [pending]))
+        store.pause(job_id, remaining=["S!R2", "S!R3"])
+        return False
+    monkeypatch.setattr(service, "claim_or_join_sheet_pass", owner_saved_malformed_packet)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False)
+    assert run.requests == [] and run.executions == []
+    trace = run.result["retrieval_trace"]
+    assert trace["workbook_research_job"]["status"] == "paused"
+    assert trace["workbook_research_job"]["remaining"] == 2
+    assert trace["model_result"]["status"] == "unstructured" and trace["model_result"]["packaged"] is False
+    assert trace["model_result_transport_diagnostics"][0]["decision"]["source_row"] == "S!R2"
+
+
+@pytest.mark.asyncio
+async def test_joined_sheet_clears_diagnostics_resolved_by_owner(tmp_path, monkeypatch):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True,
+                           malformed_first_packet=True, malformed_all_first_packet=True)
+    store = WorkbookResearchJobService()
+    job = store.latest(session_id="sheet-session")
+    assert run.result["retrieval_trace"]["model_result_transport_diagnostics"]
+    old_proposals = job["unapplied_proposals"]
+    request_count = len(run.requests)
+
+    async def owner_resolved_packet(job_id):
+        store.record_packet(job_id, sheet="S", packet_locators=["S!R2", "S!R3"],
+            accepted_rows=[{"source_row": locator, "row_role": "header", "title": "Authored context"}
+                           for locator in ["S!R2", "S!R3"]], evidence=[], remaining=[],
+            held_packet={"terminal_model_result_saved": True, "sheet": "S", "locators": ["S!R2", "S!R3"]})
+        store.finish(job_id, status="complete")
+        return False
+    monkeypatch.setattr(service, "claim_or_join_sheet_pass", owner_resolved_packet)
+    resumed = await run.resume_same_request()
+    assert len(run.requests) == request_count
+    trace = resumed["retrieval_trace"]
+    assert trace["model_result_transport_diagnostics"] == []
+    assert trace["workbook_research_job"]["remaining"] == 0
+    assert store.get(job["job_id"])["unapplied_proposals"] == old_proposals
+
+
+@pytest.mark.asyncio
+async def test_joined_sheet_refreshes_owner_terminal_locators_before_empty_query_guard(tmp_path, monkeypatch):
+    async def owner_completed_empty_packet(job_id):
+        from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+        store = WorkbookResearchJobService()
+        store.record_packet(job_id, sheet="S", packet_locators=["S!R2", "S!R3"], accepted_rows=[],
+            evidence=[], remaining=["S!R2", "S!R3"],
+            held_packet={"terminal_model_result_saved": True, "sheet": "S", "locators": ["S!R2", "S!R3"]})
+        store.pause(job_id, remaining=["S!R2", "S!R3"])
+        return False
+    monkeypatch.setattr(service, "claim_or_join_sheet_pass", owner_completed_empty_packet)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False)
+    assert run.requests == [] and run.executions == []
+    trace = run.result["retrieval_trace"]
+    assert trace["workbook_research_job"]["remaining"] == 2
+    assert trace["model_result"]["status"] == "unstructured" and trace["model_result"]["packaged"] is False
+
+
+@pytest.mark.asyncio
+async def test_completed_sheet_admits_new_catalog_context_for_unchanged_attachment_bytes(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from proxy.services.attachment_source_catalog_service import CatalogRow
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True)
+    store = WorkbookResearchJobService()
+    before = store.latest(session_id="sheet-session")
+    assert before["status"] == "complete" and before["document"]["state"] == "ready"
+    old_decisions = before["accepted_rows"]
+    old_revision = before["document"]["final_revision_id"]
+    original_bind = service.bind_tabular_estimator_profile
+    literal = "Literal source context now exposed by the server catalog"
+    def expanded_catalog(*args, **kwargs):
+        profile, catalog, bound = original_bind(*args, **kwargs)
+        extra = CatalogRow(locator="PDF_TEXT!R1", sheet="PDF_TEXT", excel_row=1, values=(literal,),
+            line="PDF_TEXT!R1: " + literal, numbers=(), row_classification="ambiguous",
+            classification_reason="pdf_text_requires_model_role")
+        return profile, replace(catalog, rows=(*catalog.rows, extra), sheets=(*catalog.sheets, ("PDF_TEXT", 1))), bound
+    monkeypatch.setattr(service, "bind_tabular_estimator_profile", expanded_catalog)
+    run.responses.extend([
+        InferenceResponse(text="PDF_TEXT!R1 — literal source context", tool_calls=(), finish_reason="stop", usage={}),
+        InferenceResponse(text=json.dumps({"rows": [{"source_row": "PDF_TEXT!R1", "row_role": "header", "title": literal}]}),
+                          tool_calls=(), finish_reason="stop", usage={"completion_tokens": 30}),
+    ])
+    request_count = len(run.requests)
+    resumed = await run.resume_same_request()
+    after = store.get(before["job_id"])
+    assert len(run.requests) == request_count + 2 and not run.responses
+    assert after["identity"]["source_sha256"] == before["identity"]["source_sha256"]
+    assert after["accepted_rows"][:2] == old_decisions
+    assert after["accepted_rows"][2]["source_row"] == "PDF_TEXT!R1"
+    assert after["accepted_rows"][2]["row_role"] == "header"
+    assert after["remaining"] == [] and after["status"] == "complete"
+    assert after["document"]["state"] == "ready" and after["document"]["final_revision_id"] != old_revision
+    expansion = [event for event in store.events_after(before["job_id"]) if event["event"] == "source_scope_expanded"]
+    assert expansion[0]["data"]["added_locators"] == ["PDF_TEXT!R1"]
+    assert resumed["retrieval_trace"]["model_result"]["packaged"] is True
+    assert run.executions[-1][0]["args"]["decisions"][:2] == run.executions[0][0]["args"]["decisions"]
+    assert run.executions[-1][0]["args"]["decisions"][2]["source_row"] == "PDF_TEXT!R1"
 
 
 @pytest.mark.asyncio

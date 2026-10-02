@@ -46,6 +46,16 @@ SCHEMA = "les.workbook-research-job.v1"
 _PRICE_BASIS_KEY = "_price_basis"
 TERMINAL_STATUSES = {"complete", "failed"}
 RESUMABLE_STATUSES = {"running", "paused", "failed", "cancelled"}
+_PLAIN_CONTINUATION_QUESTIONS = frozenset({
+    "продолжи", "продолжить", "continue",
+    "продолжи это же задание по тому же прикреплённому документу",
+})
+_PLAIN_CONTINUATION_HASHES = frozenset(
+    hashlib.sha256((form + suffix).encode("utf-8")).hexdigest()
+    for question in _PLAIN_CONTINUATION_QUESTIONS
+    for form in (question, question.capitalize(), question.upper())
+    for suffix in ("", ".", "!")
+)
 
 
 def research_cache_entry(
@@ -491,6 +501,28 @@ class WorkbookResearchIdentity:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _is_plain_continuation(
+    identity: WorkbookResearchIdentity, task_context: Mapping[str, Any] | None,
+) -> bool:
+    question = str((task_context or {}).get("original_question") or "")
+    if question:
+        # Incoming text must describe this request, rather than inherited context.
+        if hashlib.sha256(question.encode("utf-8")).hexdigest() != identity.question_sha256:
+            return False
+        return question.strip().rstrip(".! ").casefold() in _PLAIN_CONTINUATION_QUESTIONS
+    # Older callers pass only the identity. Recognise literal continuation hashes
+    # without changing the identity format or guessing an explicit task's intent.
+    return identity.question_sha256 in _PLAIN_CONTINUATION_HASHES
+
+
+def _same_research_scope(row: sqlite3.Row, identity: WorkbookResearchIdentity) -> bool:
+    stored = _json_object(row, "identity_json")
+    return all(
+        stored.get(key) == (list(value) if key == "dataset_ids" else value)
+        for key, value in identity.__dict__.items() if key != "question_sha256"
+    )
+
+
 class WorkbookResearchJobService:
     @staticmethod
     def terminal_packet_locators(held_packet: Mapping[str, Any]) -> set[str]:
@@ -592,16 +624,25 @@ class WorkbookResearchJobService:
         )
 
     def begin_or_resume(
-        self, identity: WorkbookResearchIdentity, *, task_context: Mapping[str, Any] | None = None
+        self, identity: WorkbookResearchIdentity, *, task_context: Mapping[str, Any] | None = None,
+        source_locators: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         digest = identity.digest()
         identity_json = json.dumps(identity.__dict__, ensure_ascii=False, sort_keys=True)
         prior_elapsed = 0.0
+        retargeted = False
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT * FROM workbook_research_jobs WHERE identity_hash=?", (digest,)
+                "SELECT rowid AS creation_order,* FROM workbook_research_jobs WHERE identity_hash=?", (digest,)
             ).fetchone()
+            if row is not None:
+                if str(row["identity_json"]) != identity_json:
+                    raise WorkbookResearchJobError("identity hash collision")
+                if _is_plain_continuation(identity, task_context):
+                    matched_id = str(row["job_id"])
+                    row = self._latest_compatible_continuation(conn, row, identity)
+                    retargeted = str(row["job_id"]) != matched_id
             if row is None:
                 job_id = f"wrj_{uuid4().hex}"
                 conn.execute(
@@ -619,13 +660,12 @@ class WorkbookResearchJobService:
                 prior_elapsed = float(inherited.get("parent_elapsed_seconds") or 0.0)
             else:
                 job_id = str(row["job_id"])
-                if str(row["identity_json"]) != identity_json:
-                    raise WorkbookResearchJobError("identity hash collision")
                 prior_elapsed = self.elapsed_seconds_between(
                     str(row["created_at"]), str(row["updated_at"])
                 )
                 status = str(row["status"])
-                if status in RESUMABLE_STATUSES:
+                if status in RESUMABLE_STATUSES and not (retargeted and status == "running"):
+                    # Merely finding a newer active run must not reset its guards.
                     # Directive §1: resuming starts a fresh run budget and clears
                     # the stall/retry streaks, so a job previously stopped by the
                     # old cumulative ceiling continues without immediately
@@ -668,9 +708,89 @@ class WorkbookResearchJobService:
                     "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
                     (json.dumps(context, ensure_ascii=False), job_id),
                 )
+            if source_locators is not None:
+                self._reconcile_source_scope(conn, job_id, source_locators)
         job = self.get(job_id)
         job["prior_elapsed_seconds"] = prior_elapsed
         return job
+
+    def _reconcile_source_scope(
+        self, conn: sqlite3.Connection, job_id: str, source_locators: Sequence[str],
+    ) -> None:
+        """Admit newly catalogued addresses without reopening saved model choices."""
+        row = conn.execute("SELECT * FROM workbook_research_jobs WHERE job_id=?", (job_id,)).fetchone()
+        context = _json_object(row, "task_context_json")
+        current = list(dict.fromkeys(str(item).strip() for item in source_locators if str(item).strip()))
+        previous = context.get("_source_catalog_locators")
+        if not isinstance(previous, list):
+            # Older jobs have no catalog snapshot. Their durable addresses are
+            # enough to retain completed rows while admitting new literal context.
+            previous = [str(item.get("source_row") or "") for item in _json_list(row, "accepted_rows_json")
+                        if isinstance(item, Mapping)]
+            previous.extend(_json_list(row, "remaining_json"))
+            previous.extend(_json_list(row, "packet_json"))
+            held = _json_object(row, "held_packet_json")
+            for packet in [held, *(held.get("terminal_packets") or ())]:
+                if isinstance(packet, Mapping):
+                    previous.extend(packet.get("locators") or ())
+        previous = list(dict.fromkeys(str(item).strip() for item in previous if str(item).strip()))
+        previous_set = set(previous)
+        added = [locator for locator in current if locator not in previous_set]
+        context["_source_catalog_locators"] = list(dict.fromkeys([*previous, *current]))
+        if added:
+            remaining = list(dict.fromkeys([*_json_list(row, "remaining_json"), *added]))
+            if str(row["status"]) == "complete":
+                conn.execute(
+                    """UPDATE workbook_research_jobs SET status='running',phase='catalog',
+                       cancel_requested=0,stall_count=0,stall_reason='',pause_kind='',
+                       run_round_count=0,held_attempts=0,held_fingerprint='',
+                       stall_fingerprint='',stall_occurrences=0 WHERE job_id=?""", (job_id,),
+                )
+            conn.execute(
+                "UPDATE workbook_research_jobs SET remaining_json=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=?",
+                (json.dumps(remaining, ensure_ascii=False), job_id),
+            )
+            if previous or str(row["status"]) == "complete":
+                sequence = self._append_event(conn, job_id, "source_scope_expanded", {
+                    "added_locators": added, "previous_source_count": len(previous),
+                    "source_count": len(context["_source_catalog_locators"]),
+                    "scope_author": "application", "catalog_author": "attachment_source_catalog",
+                })
+                context["_source_scope_expanded_sequence"] = sequence
+                context["_source_scope_expanded_job_id"] = job_id
+        conn.execute("UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
+                     (json.dumps(context, ensure_ascii=False), job_id))
+
+    @staticmethod
+    def _latest_compatible_continuation(
+        conn: sqlite3.Connection, matched: sqlite3.Row, identity: WorkbookResearchIdentity,
+    ) -> sqlite3.Row:
+        """A repeated plain resume follows later corrections in this same lineage."""
+        rows = conn.execute(
+            "SELECT rowid AS creation_order,* FROM workbook_research_jobs"
+            " WHERE rowid>=?"
+            "   AND json_extract(identity_json,'$.attachment_id')=?"
+            "   AND json_extract(identity_json,'$.source_sha256')=?"
+            " ORDER BY rowid DESC",
+            (matched["creation_order"], identity.attachment_id, identity.source_sha256),
+        ).fetchall()
+        by_id = {str(row["job_id"]): row for row in rows}
+        matched_id = str(matched["job_id"])
+        for candidate in rows:
+            current = candidate
+            seen: set[str] = set()
+            while _same_research_scope(current, identity):
+                current_id = str(current["job_id"])
+                if current_id == matched_id:
+                    return candidate
+                if current_id in seen:
+                    break
+                seen.add(current_id)
+                parent = by_id.get(str(current["continues_job_id"] or ""))
+                if parent is None:
+                    break
+                current = parent
+        return matched
 
     def _inherit_document_progress(
         self,
@@ -2312,9 +2432,7 @@ class WorkbookResearchJobService:
             # not hold this job.
             raise WorkbookResearchJobError("workbook research job not found")
         job = self._row(row)
-        job["document"] = workbook_document_from_events(
-            events, status=str(job.get("status") or "")
-        )
+        job["document"] = self._scope_document(job, events)
         # ADR-16 § 7 asks every surface for the same basis; § 10 for one state.
         # The job answers with the basis its own packaged document carries.
         basis = job["document"].get("price_basis")
@@ -2335,15 +2453,35 @@ class WorkbookResearchJobService:
 
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT status FROM workbook_research_jobs WHERE job_id=?",
+                "SELECT * FROM workbook_research_jobs WHERE job_id=?",
                 (str(job_id),),
             ).fetchone()
             if row is None:
                 raise WorkbookResearchJobError("workbook research job not found")
             events = self._events(conn, str(job_id), "workbook_packaged")
-        return workbook_document_from_events(
-            events, status=str(row["status"] or "")
+        return self._scope_document(self._row(row), events)
+
+    @staticmethod
+    def _scope_document(job: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        """An old file stays available, but cannot cover newly admitted addresses."""
+        status = str(job.get("status") or "")
+        previous = workbook_document_from_events(events, status=status)
+        context = job.get("task_context") or {}
+        sequence = (int(context.get("_source_scope_expanded_sequence") or 0)
+                    if context.get("_source_scope_expanded_job_id") == job.get("job_id") else 0)
+        if not sequence:
+            return previous
+        current = workbook_document_from_events(
+            [event for event in events if int(event.get("sequence") or 0) > sequence], status=status,
         )
+        if previous.get("final_revision_id") and current.get("final_revision_id") != previous["final_revision_id"]:
+            current["previous_final_revision_id"] = previous["final_revision_id"]
+        if not current.get("price_basis"):
+            current["price_basis"] = previous.get("price_basis") or {}
+        # A still-open expanded document must not offer final-only recovery.
+        # Existing packaging records/files are neither deleted nor reclassified.
+        current["source_scope_expanded_sequence"] = sequence
+        return current
 
     @staticmethod
     def _events(
@@ -2465,9 +2603,7 @@ class WorkbookResearchJobService:
         if found is None:
             return None
         job = self._row(found)
-        job["document"] = workbook_document_from_events(
-            events, status=str(job.get("status") or "")
-        )
+        job["document"] = self._scope_document(job, events)
         basis = job["document"].get("price_basis")
         job["price_basis"] = dict(basis) if isinstance(basis, Mapping) else {}
         if job["document"]["needs_document"]:

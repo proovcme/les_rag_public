@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
 from proxy.services import nr_sp_service
+from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog
 from proxy.services.model_rag_grouped_evidence_service import card_delivery_facts, normative_card_identity
 
 
@@ -146,6 +147,8 @@ class ModelResearchToolService:
         price_basis: Mapping[str, Any] | None = None,
         norm_card_reader: Callable[..., Mapping[str, Any]] | None = None,
         pricebook_provider: Callable[[str], Any] | None = None,
+        attachment_catalog: AttachmentSourceCatalog | None = None,
+        expected_attachment_sha256: str | None = None,
     ) -> None:
         self._retrieve = retrieve
         self._dataset_ids = tuple(str(item) for item in frozen_dataset_ids if str(item))
@@ -163,6 +166,8 @@ class ModelResearchToolService:
         self._model_evidence_k = max(int(model_evidence_k), 1)
         self._norm_card_reader = norm_card_reader
         self._pricebook_provider = pricebook_provider
+        self._attachment_catalog = attachment_catalog
+        self._expected_attachment_sha256 = expected_attachment_sha256
         self._shown_norm_cards: list[dict[str, str]] = []
         self._shown_documents: dict[str, tuple[str, str]] = {}
         self.set_price_basis(price_basis or {})
@@ -263,6 +268,44 @@ class ModelResearchToolService:
             "trace": {"previously_shown_pointer": pointer}, "decision_required_from_model": True,
         }, chunks=(chunk,))
 
+    def _read_attachment_source(self, args: Mapping[str, Any]) -> ModelResearchToolResult:
+        """Read literal catalog bytes already bound by the application; never open a file."""
+        if set(args) != {"source_row"}:
+            return self._missing("read_source", "source_row cannot be mixed with any other selector", status="conflict")
+        locator = args["source_row"]
+        if not isinstance(locator, str) or not locator.strip():
+            return self._missing("read_source", "source_row must be a nonempty exact catalog locator")
+        catalog = self._attachment_catalog
+        expected_sha = self._expected_attachment_sha256
+        if not isinstance(catalog, AttachmentSourceCatalog):
+            return self._missing("read_source", "no current application-bound attachment catalog")
+        if (not isinstance(expected_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha)
+                or catalog.source_file_sha256 != expected_sha or not catalog.source_file_id):
+            return self._missing("read_source", "attachment catalog does not match the application's expected source hash",
+                                 status="conflict")
+        row = catalog.lookup(locator)
+        if row is None:
+            return self._missing("read_source", "source_row is absent from the current attachment catalog")
+        content = row.line
+        facts = {"source_row": row.locator, "source_locator": row.locator,
+                 "source_file_id": catalog.source_file_id, "source_sha256": expected_sha,
+                 "source_ref": f"{catalog.source_file_id}#{row.locator}",
+                 "body_complete": True, "source_extraction_complete": catalog.extraction_complete}
+        if row.source_start is not None and row.source_end is not None:
+            facts.update(source_start=row.source_start, source_end=row.source_end,
+                         source_order_basis="converter_markdown_char_offsets")
+        chunk = _SmetaNormChunk(content=content, doc_name=catalog.original_name, score=1.0, meta={
+            **facts, "doc_id": catalog.source_file_id, "source_read": True, "attachment_source_read": True,
+            "content_complete": True, "body_status": "full", "minimum_evidence_body_chars": len(content),
+        })
+        return ModelResearchToolResult(payload={
+            "schema": "les_tool_result_v1", "tool": "read_source", "operation": "typed_attachment_source_read",
+            "status": "ok", "inputs": [dict(args)],
+            "result": {"hits": [_chunk_payload(chunk)], "count": 1, **facts},
+            "sources": [facts], "missing": [], "warnings": list(catalog.extraction_warnings),
+            "trace": facts, "decision_required_from_model": True,
+        }, chunks=(chunk,))
+
     async def _read_source(self, args: Mapping[str, Any]) -> ModelResearchToolResult:
         for field in ("doc_id", "dataset_id", "doc_name", "q"):
             if field in args and not isinstance(args[field], str):
@@ -323,6 +366,8 @@ class ModelResearchToolService:
             return self._missing("", "tool call and args must be objects")
         tool = str(call.get("tool") or "")
         args = dict(call.get("args") or {})
+        if tool == "read_source" and "source_row" in args:
+            return self._read_attachment_source(args)
         if tool == "read_norm_card":
             return await self._read_norm_card(args)
         if tool in {"search_pricebook_resources", "read_resource_price"}:

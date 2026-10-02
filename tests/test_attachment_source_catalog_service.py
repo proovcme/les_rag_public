@@ -146,8 +146,9 @@ def test_pdf_markdown_catalog_has_stable_locators_and_only_work_rows(monkeypatch
     catalog = service.load_tabular_source_catalog(source)
 
     assert catalog is not None
-    assert catalog.sheets == (("PDF", 6),)
-    assert catalog.work_locators() == ["PDF!R4", "PDF!R6"]
+    assert catalog.sheets == (("PDF", 6), ("PDF_TEXT", 1))
+    assert catalog.work_locators() == ["PDF!R4", "PDF!R6", "PDF_TEXT!R1"]
+    assert catalog.lookup("PDF_TEXT!R1").row_classification == "ambiguous"
     assert catalog.lookup("PDF!R6").section_context.startswith("Раздел 2")
     assert catalog.lookup("PDF!R2").row_classification == "header"
 
@@ -156,6 +157,200 @@ def test_markdown_table_parser_ignores_separator_and_prose():
     assert service._markdown_table_rows(
         "prose\n| A | B |\n| :--- | ---: |\n| x | 2 |\n"
     ) == [("A", "B"), ("x", "2")]
+
+
+def test_mixed_pdf_keeps_non_table_conditions_after_the_chat_preview(monkeypatch, tmp_path):
+    source = tmp_path / "Mixed source.pdf"
+    source.write_bytes(b"%PDF-fixture")
+    before = "Literal source introduction\n" * 800
+    after = "Late literal condition: keep and reinstall existing equipment."
+    markdown = before + "\n| Наименование | Ед. изм. | Кол-во |\n|---|---|---|\n| Ресурс | м | 7 |\n\n" + after
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path, **_kwargs: markdown)
+
+    catalog = service.load_tabular_source_catalog(source)
+
+    assert catalog.lookup("PDF!R2").header_quantity == 7
+    text_rows = [row for row in catalog.rows if row.sheet == "PDF_TEXT"]
+    assert text_rows
+    assert any(after in row.values[0] for row in text_rows)
+    assert "Literal source introduction" in "\n".join(row.values[0] for row in text_rows)
+    assert all(row.row_classification == "ambiguous" for row in text_rows)
+    assert all(row.classification_reason == "pdf_text_requires_model_role" for row in text_rows)
+    assert all(row.locator in catalog.work_locators() for row in text_rows)
+    assert catalog.lookup("PDF!R2").numbers == (7.0,)
+    assert any(error.startswith("source_coverage_incomplete") for error in service.coverage_errors(
+        [{"source_row": "PDF!R2"}], catalog,
+    ))
+
+
+def test_pdf_without_tables_preserves_model_owned_text_scope(monkeypatch, tmp_path):
+    source = tmp_path / "Text source.pdf"
+    source.write_bytes(b"%PDF-fixture")
+    markdown = "Literal first condition.\n\nLiteral unquantified operation.\n\n123\n"
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path, **_kwargs: markdown)
+
+    catalog = service.load_tabular_source_catalog(source)
+
+    assert catalog is not None
+    assert all(row.sheet == "PDF_TEXT" for row in catalog.rows)
+    assert "Literal unquantified operation." in "\n".join(row.values[0] for row in catalog.rows)
+    assert all(row.row_classification == "ambiguous" for row in catalog.rows)
+    assert all(service.quantity_candidates(row) == () for row in catalog.rows)
+    assert all(row.header_quantity is None for row in catalog.rows)
+
+
+def test_pdf_text_blocks_are_literal_bounded_and_old_table_ids_are_stable(monkeypatch, tmp_path):
+    source = tmp_path / "Long literal source.pdf"
+    source.write_bytes(b"%PDF-fixture")
+    before = "  First literal line.  \n" + "X" * 20000 + "\n"
+    after = "  Final condition with original spacing.  \n"
+    markdown = before + "| Наименование | Ед. изм. | Кол-во |\n|---|---|---|\n| Ресурс | м | 7 |\n" + after
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path, **_kwargs: markdown)
+
+    catalog = service.load_tabular_source_catalog(source)
+    again = service.load_tabular_source_catalog(source)
+    text_rows = [row for row in catalog.rows if row.sheet == "PDF_TEXT"]
+
+    assert "".join(row.values[0] for row in text_rows) == before + after
+    assert all(len(row.values[0]) <= 4096 for row in text_rows)
+    assert [row.locator for row in text_rows] == [f"PDF_TEXT!R{index}" for index in range(1, len(text_rows) + 1)]
+    assert [row.row_id for row in catalog.rows] == [row.row_id for row in again.rows]
+    assert catalog.lookup("PDF!R1").row_classification == "header"
+    assert catalog.lookup("PDF!R2").header_quantity == 7
+    assert catalog.lookup("PDF!R3") is None
+
+
+def test_pdf_repeated_tables_retain_original_order_and_literal_note_offsets(monkeypatch, tmp_path):
+    source = tmp_path / "Ordered repeated tables.pdf"
+    source.write_bytes(b"%PDF-fixture")
+    header = "| Наименование | Ед. изм. | Кол-во |\n"
+    work = "| Ресурс | м | 7 |\n"
+    table = header + "|---|---|---|\n" + work
+    first_note = "First table: condition A.\n"
+    second_note = "Second table: condition B.\n"
+    markdown = table + first_note + table + second_note
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path, **_kwargs: markdown)
+
+    catalog = service.load_tabular_source_catalog(source)
+    ordered = ["PDF!R1", "PDF!R2", "PDF_TEXT!R1", "PDF!R3", "PDF!R4", "PDF_TEXT!R2"]
+    assert catalog.interleaved_row_lines() == [catalog.lookup(locator).line for locator in ordered]
+    for locator, raw_line, start in (
+        ("PDF!R1", header, 0),
+        ("PDF!R2", work, markdown.index(work)),
+        ("PDF_TEXT!R1", first_note, markdown.index(first_note)),
+        ("PDF!R3", header, markdown.rindex(header)),
+        ("PDF!R4", work, markdown.rindex(work)),
+        ("PDF_TEXT!R2", second_note, markdown.index(second_note)),
+    ):
+        row = catalog.lookup(locator)
+        assert row.source_start == start
+        assert row.source_end == start + len(raw_line)
+        assert markdown[row.source_start:row.source_end] == raw_line
+    assert catalog.lookup("PDF!R2").header_quantity == catalog.lookup("PDF!R4").header_quantity == 7
+    facts = service.catalog_sheet_packet_facts(catalog, "PDF", ["PDF!R2", "PDF!R4"])
+    assert facts["source_order_basis"] == "converter_markdown_char_offsets"
+    assert [item["source_row"] for item in facts["source_order"]] == ordered
+    assert service.catalog_sheet_pack_lines(catalog, "PDF", ["PDF!R2", "PDF!R4"]) == catalog.interleaved_row_lines()
+
+
+def test_pdf_late_text_blocks_keep_raw_offsets_after_table_and_bounded_splits(monkeypatch, tmp_path):
+    source = tmp_path / "Late offset source.pdf"
+    source.write_bytes(b"%PDF-fixture")
+    table = "| Наименование | Ед. изм. | Кол-во |\n|---|---|---|\n| Ресурс | м | 7 |\n"
+    prose = "Before the table.\n"
+    late = "X" * 20000 + "\nFinal literal condition.\n"
+    markdown = prose + table + late
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path, **_kwargs: markdown)
+
+    catalog = service.load_tabular_source_catalog(source)
+    text_rows = [row for row in catalog.rows if row.sheet == "PDF_TEXT"]
+    assert "".join(markdown[row.source_start:row.source_end] for row in text_rows) == prose + late
+    assert all(markdown[row.source_start:row.source_end] == row.values[0] for row in text_rows)
+    assert all(len(row.values[0]) <= 4096 for row in text_rows)
+    assert text_rows[-1].source_end == len(markdown)
+
+
+def test_non_pdf_catalog_retains_sheet_interleave_without_pdf_order_fields(tmp_path):
+    from openpyxl import Workbook
+    source = tmp_path / "Two sheets.xlsx"
+    book = Workbook()
+    book.active.title = "A"
+    book.active.append(["Resource A", "m", 7])
+    book.create_sheet("B").append(["Resource B", "m", 9])
+    book.save(source)
+    catalog = service.load_tabular_source_catalog(source)
+    assert catalog.interleaved_row_lines() == [catalog.lookup("A!R1").line, catalog.lookup("B!R1").line]
+    facts = service.catalog_sheet_packet_facts(catalog, "A", ["A!R1"])
+    assert set(facts) == {
+        "source_extraction_complete", "source_extraction_warnings", "requested_source_rows",
+        "reference_source_rows", "reference_only_source_rows", "source_quantity_cells", "source_scope_instruction",
+    }
+
+
+@pytest.mark.parametrize("large", [False, True])
+def test_pdf_cross_sheet_context_is_bounded_and_unshown_text_remains_its_own_packet(
+    monkeypatch, tmp_path, large,
+):
+    source = tmp_path / "Packet source.pdf"
+    source.write_bytes(b"%PDF-fixture")
+    prose = ("Literal condition.\n" * (1000 if large else 2)) + "Late exact condition."
+    markdown = "| Наименование | Ед. изм. | Кол-во |\n|---|---|---|\n| Ресурс | м | 7 |\n" + prose
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path, **_kwargs: markdown)
+
+    catalog = service.load_tabular_source_catalog(source)
+    text_rows = [row for row in catalog.rows if row.sheet == "PDF_TEXT"]
+    lines = service.catalog_sheet_pack_lines(catalog, "PDF", ["PDF!R2"])
+    facts = service.catalog_sheet_packet_facts(catalog, "PDF", ["PDF!R2"])
+
+    assert facts["requested_source_rows"] == ["PDF!R2"]
+    assert facts["source_extraction_complete"] is True
+    assert facts["source_context_complete"] is (not large)
+    if large:
+        assert len("\n".join(lines)) < 8192
+        assert all(row.line not in lines for row in text_rows)
+        assert facts["reference_only_source_rows"] == []
+        assert facts["reference_omitted_source_count"] == len(text_rows)
+        assert facts["reference_omitted_source_locator_range"] == {
+            "sheet": "PDF_TEXT", "first": text_rows[0].locator,
+            "last": text_rows[-1].locator, "count": len(text_rows), "content_status": "not_shown",
+        }
+        assert "model_context_partial" in "\n".join(lines)
+        assert text_rows[-1].locator in "\n".join(lines)
+    else:
+        assert all(row.line in lines for row in text_rows)
+        assert facts["reference_only_source_rows"] == [row.locator for row in text_rows]
+        assert facts["reference_omitted_source_count"] == 0
+        assert facts["reference_omitted_source_locator_range"] is None
+    own_lines = service.catalog_sheet_pack_lines(catalog, "PDF_TEXT", [text_rows[-1].locator])
+    own_facts = service.catalog_sheet_packet_facts(catalog, "PDF_TEXT", [text_rows[-1].locator])
+    assert text_rows[-1].line in own_lines
+    assert "Late exact condition." in text_rows[-1].values[0]
+    assert own_facts["requested_source_rows"] == [text_rows[-1].locator]
+    assert own_facts["source_context_complete"] is True
+    assert own_facts["reference_omitted_source_count"] == 0
+
+
+@pytest.mark.parametrize("unread", [
+    "![Unread diagram](source.png)",
+    "![Unread diagram][source]",
+    "<svg><text>Diagram annotation</text></svg>",
+    "[WARN] Source.pdf: текст не извлечён (сканированный PDF?)",
+    "[Ошибка распознавания страницы: provider unavailable]",
+])
+def test_pdf_converter_unread_signals_do_not_claim_complete_extraction(monkeypatch, tmp_path, unread):
+    source = tmp_path / "Unread content.pdf"
+    source.write_bytes(b"%PDF-fixture")
+    markdown = "| Наименование | Ед. изм. | Кол-во |\n|---|---|---|\n| Ресурс | м | 7 |\n\n" + unread
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path, **_kwargs: markdown)
+
+    catalog = service.load_tabular_source_catalog(source)
+
+    assert catalog.extraction_complete is False
+    assert catalog.extraction_warnings
+    assert "source_extraction_incomplete" in service.coverage_errors(
+        [{"source_row": row.locator} for row in catalog.rows], catalog,
+    )
+    assert unread in "\n".join(row.values[0] for row in catalog.rows if row.sheet == "PDF_TEXT")
 
 
 def test_packet_keeps_unquantified_group_description_beside_variant(tmp_path):
