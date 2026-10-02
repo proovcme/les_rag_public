@@ -1,5 +1,44 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-02 — installed871: bounded native continuation still has capacity failure
+
+Public comparative identity byte-equal. B0 331.73s, seven read frames,
+required46993/budget46246 (+747), no XLSX. B1 92.17s, paused20remaining/0accepted,
+required47433 (+1187), no XLSX; six exact full cards actually delivered,
+then four searches prepared but not admitted. Professional871 FAILED.
+Seven B0 missing reads used parent/table ciphers without their full suffix;
+some literal matching full-code siblings were already shown. Candidate872
+missing feedback exposes only admitted prefix+dash neighbors/refs/literal title/
+immutable provenance via native receipt trace. Status/hits/count, exact resolver
+and model choice stay unchanged; no reader, fuzzy lookup, requery or hidden body.
+Navigation RED2/control6 then8GREEN; source/tests mechanical proof, not live quality.
+Lossless unread pointer-field aliases preserve all identities/provenance and do
+not prove a body was read. Full canonical/exact installer872 pending.
+Visible131k trial did not change observed physical KV65536 pages×page_size1,
+despite advertised262144; original65k policy restored in public bindingr6.
+No GPU/KV/server/model change. TOKEN_COUNT investigation remains separate.
+
+## 2026-10-02 — 872 candidate: extracted Windows prepare fixture lost production UTF-8 setup
+
+Private official prepare871 retained 2924 passed / 1 failed / 20 skipped /
+6 warnings (219.48s). `test_actual_windows_prepare_cache_is_bound_to_baseline_bytes`
+extracted only `Read-PreparedUpdate`, omitting the production Console UTF-8
+preamble. With Python UTF-8 and inherited CP866, missing-baseline stderr contains
+byte0xaa; the subprocess reader thread raises UnicodeDecodeError and returns
+stderr=None. Exact isolated RED: 1 failed / 16 deselected / 1 warning (2.72s).
+Two-line fixture fix restores the production UTF-8 writer contract and strict
+UTF-8 capture; all17 release-local tests pass (4.18s) under CP866/PYTHONUTF8=1.
+No skip, decode replacement, production change or relaxed assertions.
+Receipt: `artifacts/test_release_encoding_871_red_green.json`.
+Candidate872 metadata verify0 (23.48s), 2945 collected; version/docs/release
+fixtures31 passed (4.99s), documentation contract0. Full canonical872 pending.
+
+Installed871 `e8657ba3`: API/GUI/19 hashes aligned, native EXE858 retained;
+native RRF exit0. Original90s smoke7 pass/1 warn/2 timeout fail remains recorded;
+separate finite180s smoke exit0/10 pass/0 warn/0 fail (112.66s), glossary61.547s,
+project48.687s. Professional871 live FAILED (both same-identity controls/no XLSX);
+exact private prepare872 pending. Technical smoke does not prove model quality.
+
 ## 2026-10-02 — 871 candidate: second canonical green, first fixture failures retained
 
 SECOND mandatory gate: verify0 (22.84s), 2925 passed / 20 existing opt-in skipped /
@@ -12,9 +51,9 @@ exact cards before actual inventory admission. Only that test file changed
 assertions; original provenance, all 40 resources/НРСП and price-proof assertions
 retained. Focused checks: 119 passed (15.60s); source8 unchanged, now5 test files.
 Receipts/logs: `artifacts/*_871_second.exit.json`, `artifacts/*_871_second.log`;
-the failed first receipts were not overwritten. Candidate READY FOR INSTALL,
-installed/live/private exact installer871 pending; native EXE858 retained.
-Installed runtime870 `7ba406a1` professional acceptance remains FAILED.
+the failed first receipts were not overwritten. The candidate was installed as
+exact871 `e8657ba3`; professional871 FAILED/private exact installer pending,
+native EXE858 retained. Previous runtime870 `7ba406a1` professional acceptance remains FAILED.
 Offline fixtures and canonical gates are not real-model professional proof.
 
 ## 2026-10-02 — installed 870: native evidence delivery exceeds bound context
@@ -41,7 +80,7 @@ is removed; legacy exact-price receipts remain mandatory and pointer-only views
 never claim full bodies. Final focused 10 suites: 392 passed (21.54s), four
 causal old-boundary ablations red retained. Scripted B0/B1 authored JSON→XLSX
 fixtures confirm 1800 and preserve 24 raw refs. These fixtures are not real-model
-professional proof; 871 canonical is recorded above, installed live pending. No model/
+professional proof; 871 canonical is recorded above, installed live FAILED. No model/
 provider/profile changes or professional rewrite are claimed.
 
 870 final canonical: 2906 passed / 20 existing opt-in skipped / 5 warnings;

@@ -1,13 +1,80 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-**Кандидат 0.31.143 / 871; установлен 0.31.142 / 870
-(`7ba406a1d90744b0917b9a4950956df77753fc52`).**
-Capacity delivery 871 source/tests frozen (8 source / 5 test files),
-**READY FOR INSTALL** по финальному второму mandatory gate. Initial focused
-10 suites **392 passed (21.54s)**; fixture admission checks **119 passed (15.60s)**.
-Installed/live 871 и exact private installer **pending**; native EXE остаётся 858.
-Профессиональная приёмка установленного runtime 870 **FAILED**;
-готовность заказчику не заявлена.
+**Кандидат 0.31.144 / 872; установлен 0.31.143 / 871
+(`e8657ba38eed88dac8de327b5e4dd9b2999869f4`).** API/GUI сверены;
+HEAD/workspace/runtime совпадают по 19 installed patch hashes. Native EXE остаётся858.
+872 включает двухстрочный encoding fixture `test_release_local_full.py`, generic
+missing exact-norm navigation и lossless unread pointer-field aliases.
+Production defaults, модель и авторские запросы/решения не меняются.
+Private official prepare872 exact commit pending; версия ещё не установлена.
+Профессиональная приёмка871 **FAILED**, готовность заказчику не заявлена.
+
+Актуальный frozen canonical872: verify exit0 (22.75s), **2955 passed / 20 existing
+opt-in skipped / 5 warnings** (285.72s pytest / 287.20s wrapper); architecture
+exit0 (9.52s), pinned baseline exit0 (7.17s), active artifacts exit0 (0.61s).
+Новые 22 pointer-alias и 8 norm-navigation tests включены в `Makefile` mandatory
+gate. Focused pointer154 passed (15.91s), navigation206 passed (15.86s).
+Первый navigation/combined205 pass / 1 failure сохранён: старый20K overflow
+fixture зависел от объёма pointer overhead и стал помещаться. Только negative
+fixture получил заведомо большой literal exact-resource body; исходные pause/
+raw refs/no false final assertions сохранены. Generated maps:1074 Python /
+376984 lines /370 product /11 support /692 test-tool /1 dormant /340 routes /
+0 parse warnings. Receipts:`artifacts/*_872.{log,exit.json}`; это offline proof,
+не professional live acceptance.
+
+Отдельный обратимый GUI profile control перед live872: query8192/answer8192,
+temperature0.7, query/answer reasoning=false; прежний answer reserve16384 сохранён
+для отката. Максимальный прежний завершённый answer5052 tokens — основание
+контрольного8K резерва, не универсальная гарантия вместимости. Prompt/skill/tools/
+RAG неизменны. Current profile revision:`6c8476ed-f1ae-42a0-9867-8386355bce93`,
+FT connection head/bindingr6 requested/effective65536. Server/GPU/KV не менялись.
+Receipts:`artifacts/live_871/profile_answer_8k_control/`. Профиль не считается
+принятым production default до новой live проверки, включая большой документ.
+
+Fresh871 same-identity controls (public comparative identity byte-equal): B0
+**331.73s**, 7 read frames, required46993/budget46246 (+747), без XLSX. B1
+**92.17s**, paused/resumable20remaining/0accepted, required47433 (+1187), без XLSX;
+6 exact full cards delivered, следующие4 searches prepared и blocked capacity.
+Receipts: `artifacts/live_871/bap_lsr_{baseline,candidate}/`.
+Семь B0 missing norm reads запросили parent/table codes без полного suffix;
+показанные sibling codes остаются выбором модели. Candidate872 missing feedback
+показывает только literal admitted prefix+dash neighbors с refs/title/provenance,
+status/hits/count не меняются, reader/SQLite не вызывается. Options проходят через
+реальный native receipt trace; скрытые raw titles/новые queries не используются.
+Exact full cipher reader не меняется. Lossless pointer aliases не объединяют
+разные source/SHA/edition/identity и не подтверждают непрочитанное тело.
+Visible131k context trial не изменил physical KV65536 pages×page_size1 при model
+advertised262144. Исходная65k policy полностью восстановлена в public bindingr6;
+GPU/KV/server/model не менялись. Authoritative TOKEN_COUNT investigation отдельно,
+не считается исправлением или пройденным live gate.
+
+Installed871 native RRF exit0 (0.91s). Original smoke90s: **7 pass / 1 warn /
+2 fail**, оба chat ReadTimeout90s; basic182.59s / wrapper183.91s. Отдельный
+finite calibrated180s run: **exit0 / 10 pass / 0 warn / 0 fail / 112.66s**,
+glossary61.547s, project48.687s. Исходный failed run не заменён.
+Receipts: `artifacts/live_871/smoke/basic.json`, `step_smoke.exit.json`,
+`smoke_calibrated_180s/{basic,exit}.json`, `installed_patch_hashes.json`.
+
+Private official prepare871: **2924 passed / 1 failed / 20 skipped / 6 warnings,
+219.48s**. Extracted PowerShell fixture потерял UTF-8 Console preamble production;
+при Python UTF-8 и inherited CP866 byte0xaa сломал stderr reader thread.
+Точный isolated RED: 1 failed / 16 deselected / 1 warning (2.72s), stderr=None;
+GREEN под теми же CP866/PYTHONUTF8=1: **17 passed (4.18s)**. Fixture повторяет
+production UTF-8 setup; capture строго `encoding='utf-8', errors='strict'`.
+HIT/MISS, nonzero missing-baseline и baseline/installer byte assertions сохранены.
+Receipt с точными командами: `artifacts/test_release_encoding_871_red_green.json`.
+
+Candidate872 metadata gates: **verify exit0 / 2945 collected / 23.48s**;
+version/docs/release fixtures **31 passed (4.99s)** под CP866/PYTHONUTF8=1;
+documentation contract exit0, scoped diff check clean. Version sync выполнен
+каноническим `sync_version_contract`; `uv.lock` изменил только root project version.
+Receipts: `artifacts/{verify_872_metadata.exit,metadata_docs_872_checks}.json`.
+Этот verify выполнен до новых navigation/pointer tests. Полный актуальный
+canonical и private prepare exact872 ещё не выполнены.
+
+**871: сохранённое offline-доказательство capacity delivery.**
+Source/tests frozen (8 source / 5 test files); initial focused10 suites
+**392 passed (21.54s)**; fixture admission **119 passed (15.60s)**.
 
 871 final SECOND gate: verify exit0 (22.84s); **2925 passed / 20 existing opt-in
 skipped / 5 warnings** (281.29s pytest / 282.81s wrapper); architecture exit0

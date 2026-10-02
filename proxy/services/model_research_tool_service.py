@@ -169,6 +169,7 @@ class ModelResearchToolService:
         self._attachment_catalog = attachment_catalog
         self._expected_attachment_sha256 = expected_attachment_sha256
         self._shown_norm_cards: list[dict[str, str]] = []
+        self._shown_norm_navigation: list[dict[str, Any]] = []
         self._shown_documents: dict[str, tuple[str, str]] = {}
         self.set_price_basis(price_basis or {})
 
@@ -192,6 +193,33 @@ class ModelResearchToolService:
             }
         )
 
+    @staticmethod
+    def _shown_navigation_pointer(raw, meta, pointer):
+        """Read a literal displayed title, never a retained undisclosed body."""
+        view = meta.get("model_inventory_view")
+        if not view and meta.get("body_status") == "deferred_capacity":
+            view = raw.get("content")
+        try:
+            displayed = json.loads(view) if isinstance(view, str) else None
+        except ValueError:
+            displayed = None
+        if (isinstance(displayed, list) and len(displayed) >= 5
+                and isinstance(displayed[0], str) and isinstance(displayed[4], str)
+                and displayed[3] == pointer["norm_code"]):
+            ref, title = displayed[0], displayed[4]
+        elif (meta.get("model_delivery_status") in (None, "", "delivered")
+              and meta.get("body_status") != "deferred_capacity"):
+            ref = meta.get("model_evidence_ref") or raw.get("model_evidence_ref") or ""
+            title = next((line[len("Наименование: "):] for line in str(raw.get("content") or "").splitlines()
+                          if line.startswith("Наименование: ")), "")
+        else:
+            return None
+        record = {**pointer, "evidence_ref": ref, "title": title}
+        record.update({name: meta.get(name, raw.get(name)) for name in (
+            "global_evidence_id", "normative_card_identity", "source_sha256", "edition", "base_type")
+            if meta.get(name, raw.get(name)) is not None})
+        return record
+
     def register_shown_norm_cards(self, chunks) -> None:
         """Restore exact pointers from previously shown application-owned evidence."""
         for chunk in chunks:
@@ -209,6 +237,9 @@ class ModelResearchToolService:
                 pointer = {"norm_code": code, "norm_key": key, "source_ref": source}
                 if pointer not in self._shown_norm_cards:
                     self._shown_norm_cards.append(pointer)
+                navigation = self._shown_navigation_pointer(raw, meta, pointer)
+                if navigation is not None and navigation not in self._shown_norm_navigation:
+                    self._shown_norm_navigation.append(navigation)
             dataset = str(meta.get("dataset_id") or raw.get("dataset_id") or "").strip()
             doc_id = str(meta.get("doc_id") or raw.get("doc_id") or "").strip()
             doc_name = str(raw.get("doc_name") or meta.get("doc_name") or "").strip()
@@ -234,8 +265,14 @@ class ModelResearchToolService:
         pointers = [row for row in self._shown_norm_cards
                     if (not key or row["norm_key"] == key) and (not code or row["norm_code"] == code)]
         if len(pointers) != 1:
-            return self._missing("read_norm_card", "exact pointer must identify one previously shown norm card",
-                                 status="conflict" if pointers or (key and code) else "missing")
+            missing = self._missing("read_norm_card", "exact pointer must identify one previously shown norm card",
+                                    status="conflict" if pointers or (key and code) else "missing")
+            options = [dict(row) for row in self._shown_norm_navigation
+                       if code and row["norm_code"].startswith(code + "-")
+                       and (not key or row["norm_key"] == key)]
+            if options:
+                missing.payload["trace"]["previously_shown_exact_options"] = options
+            return missing
         pointer = pointers[0]
         reader = self._norm_card_reader
         if reader is None:

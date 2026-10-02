@@ -1,14 +1,25 @@
 # RAG evidence flow
 
-**Doc↔candidate code: ✅ 871 source/5 tests frozen; READY FOR INSTALL.**
+**Doc↔candidate code: ✅ 872 literal shown-code navigation and lossless pointer replay.**
+Missing parent/table code feedback uses only admitted literal prefix+dash siblings
+with refs/title/source/edition/identity. It remains missing/conflict, hits/count0;
+no reader, norm selection, fuzzy lookup or query rewrite. Separate navigation
+records do not change exact resolver uniqueness. Actual inventory view supplies
+titles; hidden raw body titles are never used. Options survive native receipt trace.
+Unread pointer-field aliases preserve each ref and provenance; no body confirmation.
+Installed871 `e8657ba3`: API/GUI/19 hashes aligned; native RRF exit0, EXE858 retained.
+Original90s smoke7 pass/1 warn/2 timeout fail is retained; finite180s exit0,
+10 pass/0 warn/0 fail (112.66s). Professional871 FAILED, readiness not asserted:
+B0/B1 same identity,331.73s/92.17s,required46993/47433 at budget46246,no XLSX.
+B1 six exact cards delivered, thenfour searches blocked;20remaining/0accepted.
 SECOND canonical: 2925 passed / 20 existing opt-in skipped / 5 warnings,
 verify/architecture/baseline/active artifacts exit0. Первый FAILED 2923 passed /
 2 rawsearch-before-admission fixture failures сохранён; исправлен только test
 fixture explicit admission (119 passed / 15.60s), source8 неизменён.
-Installed/live/private exact installer871 pending; native EXE858 retained.
+Professional871 FAILED/private exact installer pending; native EXE858 retained.
 Review охватил 8 source files; initial focused 10 suites 392 passed (21.54s),
 4 causal old-boundary ablations red сохранены. Это не professional proof.
-Установлен exact 870 `7ba406a1`; professional 870 FAILED: B0 179.56s,
+Предыдущий exact870 `7ba406a1`; professional870 FAILED: B0 179.56s,
 required 55639 / budget 46246, 4 searches / 24 prepared refs, no XLSX;
 B1 57.97s paused, 0 rows / 20 remaining, first read frame 45230 admitted,
 second required 72822 / budget 46246, no XLSX. Prepared≠delivered остаётся

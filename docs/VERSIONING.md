@@ -2,22 +2,28 @@
 
 Канонический машинный источник — [`config/version.json`](../config/version.json).
 
-Текущий контракт — candidate 0.31.143/build 871; установлен 870
-(`7ba406a1d90744b0917b9a4950956df77753fc52`). Профессиональная приёмка 870 FAILED;
-Capacity delivery кандидата 871 source/tests frozen; SECOND canonical 2925 passed /
-20 existing opt-in skipped / 5 warnings, verify/architecture/baseline/active artifacts0.
-Первый gate 2923 pass / 2 fixture failures сохранён; source8 неизменён.
-Candidate READY FOR INSTALL по offline gates; installed/live/private exact installer
-871 pending, native EXE858 retained. Professional readiness не заявлена.
+Текущий контракт — candidate 0.31.144/build 872; установлен 0.31.143/build 871
+(`e8657ba38eed88dac8de327b5e4dd9b2999869f4`), API/GUI и 19 runtime hashes сверены.
+872 включает двухстрочный encoding fixture Windows prepare, literal navigation
+показанных полных шифров при missing exact read и lossless replay pointer aliases.
+Модель и runtime-профиль не меняются. Private prepare 871: 2924 passed /
+1 encoding fixture failure / 20 skipped / 6 warnings (219.48s). Точный CP866/UTF-8
+репро сохранён; исправленный suite — 17 passed (4.18s). Exact private prepare 872 pending.
+Metadata872: canonical verify exit0 (23.48s), 2945 collected; version/docs/release
+fixtures31 passed (4.99s), documentation contract0. Полный canonical872 pending.
+Native RRF 871 exit0; original 90s smoke: 7 pass / 1 warn / 2 timeout fail.
+Отдельный finite 180s smoke: 10 pass / 0 warn / 0 fail, exit0 (112.66s);
+исходный failed run сохранён. Native EXE858 retained. Professional871 **FAILED**:
+same-identity B0/B1 без XLSX, required46993/47433 при budget46246; готовность не заявлена.
 Точные результаты и состояние установки — [`RELEASE_LEDGER.md`](RELEASE_LEDGER.md).
 
 ## Три разных назначения
 
 | Поле | Пример | Для чего |
 |---|---:|---|
-| `product_version` | `0.31.143` | Единственная версия, которую видит пользователь; обычный SemVer `X.Y.Z` |
-| `build_number` | `871` | Монотонный номер Windows-сборки; не является четвёртой частью версии |
-| `desktop_version` | `5.1.871` | Внутренняя версия Tauri/NSIS для обновления ранее выпущенных `5.1.x` пакетов |
+| `product_version` | `0.31.144` | Единственная версия, которую видит пользователь; обычный SemVer `X.Y.Z` |
+| `build_number` | `872` | Монотонный номер Windows-сборки; не является четвёртой частью версии |
+| `desktop_version` | `5.1.872` | Внутренняя версия Tauri/NSIS для обновления ранее выпущенных `5.1.x` пакетов |
 | `harness_schema_version` | `0.24` | Версия внутреннего строительного контракта, а не продукта |
 
 `proxy/services/version_service.py` читает этот файл и сохраняет старые поля API только для

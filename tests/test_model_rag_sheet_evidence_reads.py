@@ -51,7 +51,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      input_token_limit=100_000, candidate_padding=0, native_read_batch=False,
                      malformed_first_packet=False, malformed_all_first_packet=False,
                      malformed_second_packet=False, duplicate_json_first_packet=False,
-                     native_discovery_queries=(), native_discovery_padding=0, json_final=False):
+                     native_discovery_queries=(), native_discovery_padding=0, json_final=False,
+                     exact_resource_padding=0):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -127,6 +128,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
     full_resources = [{"kind": "material", "code": f"fixture-resource-{i}",
                        "name": f"Resource {i}", "unit": "m", "per_unit": i + 0.25}
                       for i in range(24)]
+    full_resources[0]["name"] += "x" * exact_resource_padding
     full_resources[-2] = {"kind": "material", "code": RESOURCE_A, "name": "Cable A", "unit": "m", "per_unit": 12}
     full_resources[-1] = {"kind": "material", "code": RESOURCE_B, "name": "Cable B", "unit": "m", "per_unit": 3}
 
@@ -553,12 +555,17 @@ async def test_bounded_inventory_reserves_native_growth_and_finishes_after_third
 @pytest.mark.asyncio
 @pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
 async def test_actual_native_results_exceeding_bound_pause_without_false_final(tmp_path, monkeypatch, variant):
+    # The exact card itself must exceed the bound, independently of how much
+    # lossless sharing saves on repeated unread inventory fields.
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
                            query_count=35, input_token_limit=20_000,
-                           candidate_padding=1200, native_read_batch=True)
+                           candidate_padding=1200, native_read_batch=True, exact_resource_padding=40_000)
     assert len(run.requests) == 2 and len(run.responses) == 1
     assert len(run.exact_reads) == 1 and not run.executions
     trace = run.result["retrieval_trace"]
+    capacity = trace["context_governor"]["error"]
+    assert capacity["required_tokens"] > capacity["available_tokens"]
+    assert capacity["overflow_tokens"] > 0
     assert trace["tool_loop"]["evidence_read_stop"] == "evidence_read_capacity"
     assert len(trace["tool_loop"]["evidence_reads"]) == 3
     assert all(read["status"] == "ok" for read in trace["tool_loop"]["evidence_reads"])

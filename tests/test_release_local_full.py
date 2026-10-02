@@ -259,6 +259,7 @@ def test_actual_windows_prepare_cache_is_bound_to_baseline_bytes(tmp_path):
     script.write_text(
         'param([string]$SmetaBaselineArchive,[string]$ManifestPath,[string]$CachedInstaller)\n'
         '$ErrorActionPreference="Stop"\n$Version="0.31.132"\n$BuildNumber=860\n'
+        '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)\n'
         f'$BuildCommit="{TARGET}"\n' + function + '\n'
         '$result=Read-PreparedUpdate\nif ($null -eq $result) { "MISS" } else { "HIT" }\n',
         encoding="utf-8",
@@ -266,7 +267,7 @@ def test_actual_windows_prepare_cache_is_bound_to_baseline_bytes(tmp_path):
     command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
                "-SmetaBaselineArchive", str(baseline), "-ManifestPath", str(manifest), "-CachedInstaller", str(installer)]
     def call():
-        return subprocess.run(command, capture_output=True, text=True)
+        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="strict")
     same = call()
     assert same.returncode == 0 and same.stdout.strip() == "HIT"
     baseline.write_bytes(b"verified-baseline-b")

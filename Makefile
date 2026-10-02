@@ -33,6 +33,7 @@ UNIT_TESTS += tests/test_model_query_failure_diagnostics.py
 UNIT_TESTS += tests/test_model_query_reasoning.py
 UNIT_TESTS += tests/test_model_result_resource_actions.py tests/test_model_resource_binding_service.py
 UNIT_TESTS += tests/test_model_rag_grouped_evidence_service.py
+UNIT_TESTS += tests/test_model_rag_pointer_alias_replay.py tests/test_model_norm_pointer_navigation.py
 UNIT_TESTS += tests/test_model_result_table_transport.py
 UNIT_TESTS += tests/test_model_reasoning_control.py
 UNIT_TESTS += tests/test_release_local_full.py

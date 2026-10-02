@@ -1,6 +1,32 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
-871 capacity delivery source/5 tests frozen, 8 production source files reviewed.
+Candidate872 — UTF-8 Windows prepare fixture, literal shown-code navigation и
+lossless unread pointer-field aliases. `test_model_norm_pointer_navigation.py`:
+2 RED / 6 control pass → 8 GREEN; admitted literal siblings/aliases/source/edition/
+identity, no hidden title/no reader before admission, exact dash boundary,
+conflicting key unchanged и real native receipt feedback. Exact full read unchanged.
+`test_release_local_full.py` повторяет production UTF-8 Console preamble и
+строгий UTF-8 capture. Inherited CP866 + UTF-8 Python воспроизвели byte0xaa и
+stderr=None: 1 failed / 16 deselected / 1 warning (2.72s). Под тем же codepage
+и PYTHONUTF8=1 после paired encoding — **17 passed (4.18s)**, исходные cache/
+baseline/provenance assertions сохранены, production неизменён.
+Private prepare871 отдельно: **2924 passed / 1 failed / 20 skipped / 6 warnings,
+219.48s**; exact private prepare872 pending. RED/GREEN commands сохранены в
+`artifacts/test_release_encoding_871_red_green.json`.
+Candidate872 metadata: verify exit0 (23.48s), 2945 collected; version/docs/
+release fixtures31 passed (4.99s) под CP866/PYTHONUTF8=1; documentation contract0.
+Receipts: `artifacts/{verify_872_metadata.exit,metadata_docs_872_checks}.json`.
+Это не полный canonical872 и не installed/private acceptance.
+Installed871 `e8657ba3`: API/GUI/19 hashes сверены, native EXE858 retained.
+Native RRF exit0; original90s smoke **7 pass / 1 warn / 2 timeout fail**
+(182.59s / wrapper183.91s). Separate finite180s smoke **exit0 / 10 pass /
+0 warn / 0 fail / 112.66s**, glossary61.547s/project48.687s; первый run сохранён.
+Professional871 **FAILED**: same-identity B0 331.73s required46993/budget46246,
+7 read frames; B1 92.17s required47433/budget46246, paused20remaining/0accepted,
+6 exact cards delivered. Оба без XLSX; это не professional readiness.
+
+871 capacity delivery: сохранённое offline-доказательство, source/5 tests frozen,
+8 production source files reviewed.
 Initial focused 10 suites **392 passed (21.54s)**; четыре causal old-boundary
 ablations red сохранены. Scripted B0/B1 actual JSON→XLSX fixtures подтверждают
 1800 и сохраняют 24 raw refs; inventory-delivered не означает body-delivered.
@@ -18,9 +44,9 @@ exact-price receipts и pointer-only price/body guards. Это offline меха�
 assertions (+40/−4), original provenance/40 resources/НРСП/price assertions сохранены.
 Focused fixture checks: 119 passed (15.60s), source8 без изменений. Receipts/logs:
 `artifacts/*_871_second.exit.json`, `artifacts/*_871_second.log`; первый run не заменён.
-Candidate READY FOR INSTALL, installed/live/private exact installer pending;
-native EXE858 retained. Это не professional readiness.
-Установлен exact 870 `7ba406a1`; финальный
+Установка871 сверена; exact private installer pending, native EXE858 retained.
+Это не professional readiness.
+Предыдущий exact870 `7ba406a1`: финальный
 canonical 2906 passed / 20 existing opt-in skipped / 5 warnings, verify/
 architecture/pinned baseline exit0. Installed native RRF exit0; basic 90s:
 8 passed / 1 warning / 1 project-timeout FAIL. Separate finite hardware-calibrated

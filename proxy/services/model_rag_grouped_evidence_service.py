@@ -294,6 +294,38 @@ def share_registry_catalogs(records: Sequence[Mapping[str, Any]], metadata: Mapp
     return [{"literal_source_catalog": sources, "literal_nrsp_catalog": catalogs}, rows]
 
 
+def _compact_unread_pointer_records(
+    records: Sequence[tuple[str, list[Any], Mapping[str, Any]]],
+) -> tuple[list[str], bool]:
+    """Share equal literal fields, never bodies or per-alias evidence identities."""
+    ref_counts: dict[str, int] = {}
+    for _, pointer, _ in records:
+        ref_counts[pointer[0]] = ref_counts.get(pointer[0], 0) + 1
+    owners: dict[str, str] = {}
+    result = []
+    shared = False
+    for literal, pointer, provenance in records:
+        ref = pointer[0]
+        if not ref or ref_counts[ref] != 1:
+            result.append(literal)
+            continue
+        try:
+            key = json.dumps([pointer[1:], provenance], ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False)
+        except (TypeError, ValueError):
+            result.append(literal)
+            continue
+        owner = owners.setdefault(key, ref)
+        alias = json.dumps([ref, {"same_pointer_fields_as": owner}], ensure_ascii=False,
+                           separators=(",", ":"))
+        if owner != ref and len(alias) < len(literal):
+            result.append(alias)
+            shared = True
+        else:
+            result.append(literal)
+    return result, shared
+
+
 def compact_read_replay(chunks: Sequence[Any]) -> list[Any]:
     """Conserve shown bodies and compact unread pointers across native turns.
 
@@ -305,7 +337,7 @@ def compact_read_replay(chunks: Sequence[Any]) -> list[Any]:
 
     buckets: dict[str, list[Any]] = {}
     metadata: dict[tuple[str, str], Mapping[str, Any]] = {}
-    pointers: list[str] = []
+    pointer_records: list[tuple[str, list[Any], Mapping[str, Any]]] = []
     seen_pointers: set[str] = set()
     sources: dict[str, str] = {}
     for chunk in chunks:
@@ -325,8 +357,16 @@ def compact_read_replay(chunks: Sequence[Any]) -> list[Any]:
                     and pointer[:2] == [ref, "deferred_capacity"]):
                 content = inventory_pointer(EvidenceCard(
                     ref, str(raw.get("doc_name") or ""), "", "", meta))
+                pointer = json.loads(content)
             if content not in seen_pointers:
-                pointers.append(content)
+                # Global IDs belong to individual aliases and remain in raw
+                # storage. Equal wire fields cannot discharge those identities.
+                provenance = {name: meta.get(name, raw.get(name)) for name in (
+                    "norm_key", "norm_code", "source_ref", "source_sha256", "edition", "base_type",
+                    "doc_id", "dataset_id", "title", "measure_unit", "resource_code", "pricebook",
+                    "pricebook_sha256", "source_locator", "page", "sheet", "row", "unit",
+                ) if name in meta or name in raw}
+                pointer_records.append((content, pointer, provenance))
                 seen_pointers.add(content)
             continue
         metadata[(str(meta.get("global_evidence_id") or raw.get("global_evidence_id") or ""), ref)] = meta
@@ -362,9 +402,19 @@ def compact_read_replay(chunks: Sequence[Any]) -> list[Any]:
         if aliases:
             record["aliases"] = aliases
         compact.append(record)
+    pointers, shared_pointer_fields = _compact_unread_pointer_records(pointer_records)
+    pointer_header = "Deferred identity pointers; read_norm_card/read_source remain available"
+    if shared_pointer_fields:
+        instruction = (". same_pointer_fields_as copies all owner pointer fields except ref; "
+                       "distinct evidence identities, unread bodies")
+        saved_chars = sum(len(record[0]) - len(pointer) for record, pointer in zip(pointer_records, pointers))
+        if saved_chars > len(instruction):
+            pointer_header += instruction
+        else:
+            pointers = [record[0] for record in pointer_records]
     return [catalogs, {"previously_shown_evidence_registry": compact,
                       "body_delivery": "Full literal bodies and exact shared catalogs. Deferred entries below are unread identity pointers only."},
-            *(["Deferred identity pointers; read_norm_card/read_source remain available:\n" + "\n".join(pointers)] if pointers else [])]
+            *([pointer_header + ":\n" + "\n".join(pointers)] if pointers else [])]
 
 
 @dataclass(frozen=True)

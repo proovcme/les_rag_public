@@ -3,20 +3,28 @@
 Канонический паспорт совместимости. Версия продукта и номер сборки берутся только из
 [`config/version.json`](../config/version.json). Полный Python-граф фиксирует `uv.lock`.
 
-Таблица описывает candidate 0.31.143/build 871; установлен 870
-(`7ba406a1d90744b0917b9a4950956df77753fc52`). Canonical 870: 2906 passed /
-20 existing opt-in skipped / 5 warnings; architecture и pinned baseline exit0.
-Профессиональная приёмка 870 FAILED; capacity delivery 871 source/tests frozen:
-initial focused 392 passed (21.54s), fixture admission 119 passed (15.60s).
-SECOND canonical 871: 2925 passed / 20 existing opt-in skipped / 5 warnings;
-verify/architecture/baseline/active artifacts exit0. Первый FAILED gate 2923 pass /
-2 fixture failures сохранён, production source8 не менялся. Candidate READY FOR
-INSTALL; installed/live/private exact installer871 pending, native EXE858 retained.
-Это не professional proof реальной модели. Native RRF 870 exit0; basic smoke с 90s
-дал 8 passed / 1 warning / 1 project-timeout FAIL. Отдельный finite 180s
-hardware-calibrated smoke: exit0, 10 PASS / 0 WARN / 0 FAIL за 85.55s;
-glossary/project 31.640s/51.438s, оба ниже исходного 90s. Измеренный FreeToken
-request p95 128.233s объясняет явный лимит; исходный failed run сохранён.
+Таблица описывает candidate 0.31.144/build 872; установлен 0.31.143/build 871
+(`e8657ba38eed88dac8de327b5e4dd9b2999869f4`). API/GUI и 19 runtime hashes сверены;
+native EXE858 retained. Candidate872: UTF-8 Windows prepare fixture, literal
+previously-shown full-code navigation при missing exact read и lossless unread
+pointer-field aliases. Код не выбирает норму и не расширяет context/GPU budget.
+SECOND canonical 871: 2925 passed / 20 existing opt-in skipped / 5 warnings,
+verify/architecture/baseline/active artifacts exit0. Private prepare 871 отдельно
+сохранил 2924 passed / 1 encoding fixture failure / 20 skipped / 6 warnings
+(219.48s). CP866 + UTF-8 Python воспроизвели byte0xaa; после восстановления
+production UTF-8 preamble и strict capture — 17 passed (4.18s). Exact prepare872 pending.
+Metadata872 verify0 (23.48s), 2945 collected; version/docs/release31 passed (4.99s),
+documentation contract0. Полный canonical872 pending.
+Installed native RRF871 exit0 (0.91s). Original basic90s: 7 pass / 1 warn /
+2 timeout fail (182.59s; wrapper183.91s), glossary/project по90s. Separate finite
+180s run: exit0, 10 PASS / 0 WARN / 0 FAIL за112.66s; glossary61.547s,
+project48.687s. Исходный failed run сохранён; latency изменчива.
+Professional871 **FAILED**: same-identity B0 331.73s required46993/budget46246
+(+747), семь read frames; B1 92.17s required47433 (+1187), paused20remaining/
+0accepted, шесть exact cards delivered; оба без XLSX. Visible131k trial не изменил
+observed physical KV65536 pages×page_size1 при advertised262144. Исходная65k
+policy восстановлена в public bindingr6; GPU/KV/server/model не менялись.
+Готовность заказчику не заявлена.
 Техническая доступность не доказывает профессиональное качество.
 Фактические receipts и состояние выпуска — [`RELEASE_LEDGER.md`](RELEASE_LEDGER.md).
 
@@ -24,9 +32,9 @@ request p95 128.233s объясняет явный лимит; исходный 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.143` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `871` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.871` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.144` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `872` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.872` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,
