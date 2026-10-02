@@ -7,11 +7,22 @@ from proxy.services.chat_evidence_application_service import (
     compact_estimator_draft_rows, parse_model_rag_result, model_read_frame_evidence,
     govern_inference_messages,
 )
-from proxy.services.model_evidence_read_contract import shown_evidence_registry
+from proxy.services.model_evidence_read_contract import (
+    MODEL_EVIDENCE_READ_INSTRUCTION, shown_evidence_registry,
+)
 from proxy.services.model_result_packet_service import admit_model_result_packet
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from proxy.services.model_execution_preset_service import ModelExecutionPreset
 from proxy.services.context_governor_service import ContextRequiredSectionOverflow
+
+
+def test_preview_count_does_not_claim_consumption_or_prove_missing_norm():
+    instruction = MODEL_EVIDENCE_READ_INSTRUCTION
+    assert "Обзор ресурсов, даже N из N" in instruction
+    assert "не подтверждает их расходы" in instruction
+    assert "либо явно оставь этот конкретный пробел" in instruction
+    assert "Отсутствие цены не означает отсутствие нормы" in instruction
+    assert "непрочитанный указатель не доказывает отсутствие подходящей нормы" in instruction
 
 
 @pytest.mark.parametrize("representation", ["json", "table", "text"])

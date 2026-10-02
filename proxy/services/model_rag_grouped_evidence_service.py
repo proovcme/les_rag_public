@@ -189,6 +189,15 @@ def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int)
                 continue
             body_refs.append(card.ref)
             bodies[card.ref] = card.content
+            facts = card_delivery_facts(card.meta, raw_body_shown=True)
+            if facts["evidence_body_kind"] == "norm_card":
+                marker = {"evidence_ref": card.ref, "card_delivery_facts": {
+                    "normative_card_complete": facts["normative_card_complete"],
+                    "normative_resources_status": facts["normative_resources_status"],
+                }}
+                if facts["normative_resources_status"] in ("preview", "unknown"):
+                    marker["available_read"] = {"tool": "read_norm_card", "args": {"evidence_ref": card.ref}}
+                parts.append(json.dumps(marker, ensure_ascii=False, separators=(",", ":")))
             identity = (card.identity, card.content)
             owner = owners.setdefault(identity, card.ref)
             if owner != card.ref:

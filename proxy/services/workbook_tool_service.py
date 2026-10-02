@@ -232,6 +232,7 @@ class WorkbookExecutionContext:
     lsr_adapter: WorkbookAdapter | None = None
     vor_adapter: WorkbookAdapter | None = None
     progress_sink: Callable[[Mapping[str, Any]], None] | None = None
+    document_issues: tuple[Mapping[str, Any], ...] = ()
 
 
 _MODEL_COMPUTED_FIELDS = {
@@ -307,6 +308,7 @@ _CALCULATION_SNAPSHOT_FIELDS = (
     "calculated_positions", "row_projection", "positions_built", "confirmed_amount",
     "preliminary_amount",
     "vor_source_errors",
+    "document_issues",
 )
 
 
@@ -317,10 +319,13 @@ def _result_from_revision(
     if not source_rows and revision.tool_calls:
         source_rows = int(revision.tool_calls[-1].get("source_rows") or 0)
     snapshot = (revision.tool_calls[-1].get("calculation_snapshot") or {}) if revision.tool_calls else {}
+    artifact = revision.to_dict()
+    if revision.tool_calls and revision.tool_calls[-1].get("draft"):
+        artifact["draft"] = True
     return {
         "schema": "les.workbook_tool_result.v1",
-        "status": "complete",
-        "artifact": revision.to_dict(),
+        "status": "partial" if snapshot.get("document_issues") else "complete",
+        "artifact": artifact,
         "source": {
             "attachment_id": attachment_meta["attachment_id"],
             "name": attachment_meta["original_name"],
@@ -586,6 +591,8 @@ async def _build_workbook(
             key: value for key, value in normalized.items() if key != "draft"
         }
         adapter_args = {**adapter_payload, "_source_name": str(attachment_meta["original_name"])}
+        if ctx.document_issues and artifact_kind == "lsr_workbook":
+            adapter_args["_document_issues"] = [dict(issue) for issue in ctx.document_issues]
         generated = await _call_adapter(adapter, source_path, adapter_args, output_path, progress)
         generated_path = Path(str(generated.get("file_path") or output_path))
         display_name = workbook_download_filename(

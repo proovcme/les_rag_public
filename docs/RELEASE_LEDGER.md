@@ -1,5 +1,55 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.146 / 874; установлен 0.31.145 / 873
+(`a020e0a0ef53d5eb0c6b76c06f717424fd08e8b2`). Готовность заказчику НЕ подтверждена.**
+873 установлен официальным обратимым patch; API/GUI и hashes сверены.
+Native EXE остаётся PE5.1.813. Private873 installer подготовлен и независимо
+проверен (120/120), но installer acceptance и public release не выполнялись.
+
+Natural873 BAP baseline/candidate:339.3s/209.03s, оба с XLSX, исходные19объёмов
+совпадают; подтверждённая сумма0, предварительно319056.74/313263.80.
+Профессиональная приёмка FAILED: неправильная применимость и непрочитанные
+карточки; техническая выдача файла не является полноценной ЛСР. Reasoning-only
+trial не подтвердил улучшение: candidate358.16s, length16383 без итоговой таблицы;
+исходный профиль восстановлен. SKS367.94s:35/75,50 сохранённых решений, без файла
+из-за ширины отдельных строк и evidence_read_repeat. EOM→ВОР840.88s:84решения,
+без файла; future-purpose «составить смету» ошибочно выбрало artifact_intent=lsr.
+Это воспроизводимые дефекты, а не объявленная нехватка исходников.
+
+873 ordinary-chat smoke:9pass/1fail; оба chat controls прошли, native RRF1/1.
+Единственный fail — legacy diagnostics: MODEL_OUTPUT учитывался как UNVALIDATED.
+874 отделяет нейтральный M от V/H/U; прежние пороги качества сохранены, M не
+подтверждает качество. Исторические U не переинтерпретируются.
+
+874: explicit plain continuation вновь предлагает только исходные строки без
+сохранённого решения; idempotent replay и принятые MISSING не переоткрываются.
+Показанные norm bodies имеют truthful completeness flags и optional literal
+read_norm_card args; preview N/N не означает подтверждённые расходы.
+Durable accepted subset может дать промежуточную ЛСР: trusted document_issues,
+полные неприменённые предложения и transport errors доходят до XLSX/readiness.
+Model rows и расчёт позиций не меняются; незавершённый документ не получает
+подтверждённый итог. Повторная упаковка сохраняет revision identity и не вызывает
+модель. Unknown mandatory blockers/all-invalid не обходятся.
+
+Для смешанных упоминаний целевой документ выбирает та же модель в своём
+query/final результате; назначение будущего использования не заставляет код выбрать ЛСР.
+Model-declared ВОР с queries=[] использует достаточный исходник без поиска норм,
+query repair или добавочного модельного вызова. Literal target хранится в task_context;
+plain continuation не меняет его молча, новое замечание может уточнить выбор.
+Repack без первой ревизии не обходит unresolved/conflicting target.
+Неоднозначный выбор остаётся видимым packaging pending, решения сохраняются.
+Активный старый профиль содержит legacy skill; attachment overlay добавлял
+также текущую инструкцию. Чистый immutable single-skill trial подготовлен,
+не активирован: модель, tools, RAG policy и token settings сохранены.
+
+Общие874 gates passed: verify3100 collected, test3080 passed/20 existing opt-in
+skipped (295.39s), architecture/baseline/active-root exit0. Первый gate сохраняет
+6 выявленных и затем исправленных регрессий; receipts `artifacts/*_874_second`.
+Map/docs/31 metadata tests passed. Установка и fresh comparative live ожидаются.
+Промежуточные файлы не являются доказательством готовности инженеру/заказчику.
+
+## Предыдущие замеры (статус относится к моменту измерения)
+
 **Текущий кандидат 0.31.145 / 873; установлен 0.31.144 / 872
 (`e34e9791aa64bed2593b2eb1884f165ce86adc5b`). Готовность заказчику НЕ подтверждена.**
 API/GUI и12patch hashes сверены, rollback871 сохранён. Native установленный

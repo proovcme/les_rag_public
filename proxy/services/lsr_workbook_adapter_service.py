@@ -7,6 +7,7 @@ and renders that trace to XLSX.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -1484,6 +1485,25 @@ async def build_lsr_workbook_from_decisions(
         name=identity["title"],
         confirmed_data=overlays,
     )
+    document_issues = [dict(issue) for issue in args.get("_document_issues") or ()
+                       if isinstance(issue, Mapping)]
+    if document_issues:
+        # Only document completeness changes. Authored rows, per-position prices,
+        # quantities, confirmations and arithmetic remain the calculator's values.
+        summary = trace["summary"]
+        summary["result_status"] = "priced_partial"
+        summary["amount_status"] = "partial"
+        summary["full_amount"] = None
+        summary["confirmed_amount"] = 0.0
+        summary["preliminary_amount"] = float(summary.get("known_amount", summary.get("total")) or 0.0)
+        warnings = list(trace.get("warnings") or ())
+        for issue in document_issues:
+            raw = json.dumps(issue, ensure_ascii=False, sort_keys=True)
+            # Excel cells are finite; split mechanically, never truncate diagnostics.
+            for offset in range(0, len(raw), 30000):
+                warnings.append({"code": str(issue.get("code") or "DOCUMENT_INCOMPLETE"),
+                                 "reason": raw[offset:offset + 30000]})
+        trace["warnings"] = warnings
     source_label = "" if is_question_like_title(Path(source_name).stem) else source_name
     card_priced = collect_lsr_card_prices(trace)
     if card_priced:
@@ -1534,6 +1554,7 @@ async def build_lsr_workbook_from_decisions(
         "source_rows": len(decisions),
         "pricebook": pricebook_name,
         "pricing_status": str((trace.get("summary") or {}).get("result_status") or ""),
+        "document_issues": document_issues,
         "norms_status": str((trace.get("summary") or {}).get("norms_status") or ""),
         # which explicit source bound the book, and why nothing was bound
         "price_basis_choice": basis_choice,

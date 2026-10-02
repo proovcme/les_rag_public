@@ -335,6 +335,7 @@ def build_lsr_result_readiness(
     document_state: str = "",
     download_url: str = "",
     job_status: str = "",
+    document_issues: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Split technical file readiness from coverage, norms, and prices.
 
@@ -723,7 +724,8 @@ def build_lsr_result_readiness(
     if preliminary_amount >= 0:
         counts["preliminary_amount"] = round(float(preliminary_amount), 2)
 
-    technical_complete = file_status == "ready"
+    technical_issues = [dict(item) for item in document_issues if isinstance(item, Mapping)]
+    technical_complete = file_status == "ready" and not technical_issues
     # A row the application closed on its own because no model offer produced a
     # decision is an admitted hole in the estimate, so it must block every
     # "complete" claim even though coverage is closed and no norm/price gap is
@@ -738,6 +740,7 @@ def build_lsr_result_readiness(
     )
 
     dimensions = {
+        "document_integrity": {"complete": not technical_issues, "issues": technical_issues},
         "file": {
             "ready": file_status == "ready",
             "status": file_status,
@@ -948,6 +951,7 @@ def build_lsr_result_readiness(
         "catalog_work_count": int(catalog_work_count or len(wanted) or 0),
         "row_count": len(work_rows),
         "technical_complete": technical_complete,
+        "document_issues": technical_issues,
         "estimate_complete": estimate_complete,
         "counts": counts,
         # § 4: the same per-operation projection the «Проверка» sheet prints, so the

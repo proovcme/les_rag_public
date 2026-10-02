@@ -39,6 +39,8 @@ from proxy.services.chat_evidence_application_service import (
     task_document_price_basis,
     workbook_packaging_lineage,
     workbook_packaging_args,
+    workbook_packaging_tool,
+    workbook_document_issues,
     build_vor_result_readiness,
 )
 from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
@@ -361,7 +363,22 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     # already carries (§ 4); the durable document projection is the source, so
     # the file does not depend on how the button was reached.
     document_block = (job or {}).get("document") if isinstance(job, dict) else None
-    repack_tool = str((document_block or {}).get("tool") or "build_lsr_workbook")
+    task_context = job.get("task_context") or {}
+    if not job_id:
+        repack_tool = "build_lsr_workbook"
+    elif (document_block or {}).get("final_revision_id") or (document_block or {}).get("draft_revision_id"):
+        repack_tool = str((document_block or {}).get("tool") or "")
+    else:
+        targets = workbook_packaging_tool(
+            ["build_vor_workbook", "build_lsr_workbook"], "", task_context=task_context,
+            model_declaration={"status": str(task_context.get("artifact_kind_status") or "missing"),
+                               "artifact_kind": task_context.get("model_artifact_kind") or ""},
+        )
+        if not targets:
+            raise HTTPException(409, {"code": "ARTIFACT_KIND_UNRESOLVED", "packaging_status": "pending",
+                                      "model_called": False,
+                                      "message": "Тип итогового документа пока не определён. Строки сохранены; уточните в чате, нужна ВОР или ЛСР."})
+        repack_tool = targets[0]
     if repack_tool not in {"build_lsr_workbook", "build_vor_workbook"}:
         raise HTTPException(400, "unsupported saved workbook tool")
     inherited_basis = document_price_basis_arguments(
@@ -369,8 +386,8 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         if isinstance(document_block, dict)
         else None
     )
-    task_context = job.get("task_context") or {}
     inherited_basis = task_document_price_basis(job, inherited_basis)
+    document_issues = workbook_document_issues(job) if repack_tool == "build_lsr_workbook" else []
     repack_args = workbook_packaging_args(
         packaging_tool=repack_tool,
         attachment_id=attachment_id,
@@ -380,6 +397,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         )),
         decisions=decisions,
         operator_overrides=overlays,
+        draft=bool(document_issues),
         # The workbook service resolves the session's parent only on a new
         # build. Feeding the last delivered file back into this call would
         # change its identity on every identical recovery request.
@@ -393,6 +411,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             "args": repack_args,
         },
         {
+            "document_issues": document_issues,
             "session_id": str(req.session_id or ""),
             "question": str(req.question or ""),
             "dataset_ids": list(req.dataset_ids or []),
@@ -443,6 +462,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             rows=decisions,
             missing=list(harvested.get("missing") or []),
             pricing_status=str(harvested.get("pricing_status") or ""),
+            document_issues=list(harvested.get("document_issues") or []),
             remaining_locators=remaining,
             job_status=str(job.get("status") or ""),
             price_gaps=list(harvested.get("price_gaps") or []),
@@ -1336,6 +1356,10 @@ async def _execute_chat_workbook_tool(
         "args": args,
         "profile_revision_id": str(request_context.get("profile_revision_id") or ""),
     }
+    document_issues = [dict(item) for item in request_context.get("document_issues") or ()
+                       if isinstance(item, dict)]
+    if document_issues:
+        identity_payload["document_issues"] = document_issues
     identity = hashlib.sha256(
         json.dumps(identity_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -1385,6 +1409,7 @@ async def _execute_chat_workbook_tool(
         lsr_adapter=workbook_adapters.get("build_lsr_workbook"),
         vor_adapter=workbook_adapters.get("build_vor_workbook"),
         progress_sink=emit_progress,
+        document_issues=tuple(document_issues),
     )
     contract, builder = contracts[tool_name]
 

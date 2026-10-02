@@ -113,7 +113,10 @@ from proxy.services.model_answer_table_service import (
 )
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from proxy.services.model_result_packet_service import admit_model_result_packet
-from proxy.services.model_lsr_result_contract import model_lsr_result_field_instruction
+from proxy.services.model_lsr_result_contract import (
+    model_lsr_result_field_instruction, decode_model_artifact_kind,
+    decode_model_query_envelope, merge_model_artifact_kind,
+)
 from proxy.services.model_evidence_read_contract import (
     MODEL_EVIDENCE_READ_INSTRUCTION,
     model_evidence_read_tool_schemas,
@@ -195,15 +198,15 @@ _LSR_INTENT_TERMS = ("лср", "смет", "локальн")
 def workbook_artifact_intent(question: str) -> str:
     """Classify the artifact the operator's own words ask to produce.
 
-    This is intent, not a filename rule and not a norm choice. A сметa/ЛСР noun
-    wins over a ВОР noun so "собери ЛСР из ВОР" stays the priced route; a bare
-    ВОР/ведомость request means the row-preserving route. Returns "vor", "lsr"
-    or "both" (unspecified -> leave the decision to the model).
+    Mixed mentions retain both capabilities: code does not distinguish the
+    requested result from an input document or a future purpose.
     """
     q = (question or "").casefold()
-    if any(term in q for term in _LSR_INTENT_TERMS):
+    lsr = any(term in q for term in _LSR_INTENT_TERMS)
+    vor = any(term in q for term in _VOR_INTENT_TERMS)
+    if lsr and not vor:
         return "lsr"
-    if any(term in q for term in _VOR_INTENT_TERMS):
+    if vor and not lsr:
         return "vor"
     return "both"
 
@@ -238,6 +241,7 @@ def prioritize_workbook_tools(
 
 def workbook_packaging_tool(
     profile_tools: Sequence[str], question: str, *, task_context: Mapping[str, Any] | None = None,
+    model_declaration: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """Choose the packaging tool for the sheet-pass result by intent.
 
@@ -251,13 +255,21 @@ def workbook_packaging_tool(
     never selects a norm.
     """
     tools = set(profile_tools)
-    intent = workbook_artifact_intent(question)
+    declaration = model_declaration or {}
+    if declaration.get("status") in {"conflict", "invalid"}:
+        return []
+    intent = (str(declaration.get("artifact_kind") or "") if declaration.get("status") == "declared"
+              else workbook_artifact_intent(question))
     if intent == "both":
         context = task_context or {}
+        if context.get("artifact_kind_status") in {"conflict", "invalid"}:
+            return []
+        if context.get("model_artifact_kind") in {"vor", "lsr"}:
+            intent = context["model_artifact_kind"]
         saved = str(context.get("artifact_intent") or "")
-        intent = saved if saved in {"vor", "lsr"} else workbook_artifact_intent(
-            str(context.get("original_question") or "")
-        )
+        if intent == "both":
+            intent = saved if saved in {"vor", "lsr"} else workbook_artifact_intent(
+                str(context.get("original_question") or ""))
     if intent == "vor":
         # The operator named a ВОР: package the row-preserving ВОР even when an
         # un-narrowed profile list still carries build_lsr_workbook (sheet-pass
@@ -266,9 +278,6 @@ def workbook_packaging_tool(
         return ["build_vor_workbook"] if "build_vor_workbook" in tools else []
     if intent == "lsr":
         return ["build_lsr_workbook"] if "build_lsr_workbook" in tools else []
-    # Unspecified ("both"): keep the priced route when it is actually available.
-    if "build_lsr_workbook" in tools:
-        return ["build_lsr_workbook"]
     return []
 
 
@@ -287,6 +296,8 @@ def workbook_model_question(question: str, job: Mapping[str, Any] | None) -> str
     effective: dict[str, Any] = {}
     if context.get("artifact_intent") in {"vor", "lsr"}:
         effective["artifact_intent"] = context["artifact_intent"]
+    if context.get("model_artifact_kind") in {"vor", "lsr"}:
+        effective["model_artifact_kind"] = context["model_artifact_kind"]
     basis = context.get("price_basis")
     if isinstance(basis, Mapping):
         effective["price_basis"] = {key: basis[key] for key in ("region", "quarter", "pricebook", "pricebook_sha256") if basis.get(key)}
@@ -768,6 +779,41 @@ def terminal_research_packaging_rows(
     ]
 
 
+def workbook_document_issues(
+    research_job: Mapping[str, Any] | None,
+    *,
+    errors: Sequence[str] = (),
+    transport_diagnostics: Sequence[Mapping[str, Any]] = (),
+) -> list[dict[str, Any]]:
+    """Server-owned document gaps, separate from every model-authored decision."""
+    job = research_job if isinstance(research_job, Mapping) else {}
+    issues: list[dict[str, Any]] = []
+    remaining = list(job.get("remaining") or ())
+    if job and (str(job.get("status") or "") != "complete" or remaining):
+        issues.append({"code": "WORKBOOK_RESEARCH_INCOMPLETE",
+                       "reason": ("Промежуточная ревизия: исходные строки ещё не закрыты." if remaining
+                                  else "Промежуточная ревизия: исследование ещё не завершено."),
+                       "job_status": str(job.get("status") or ""),
+                       "remaining_locators": remaining})
+    for error in errors:
+        issues.append({"code": str(error), "reason": str(error)})
+    for proposal in (job.get("unapplied_proposals") or ()) if str(job.get("status") or "") != "complete" else ():
+        if isinstance(proposal, Mapping):
+            issues.append({"code": "MODEL_PROPOSAL_UNAPPLIED",
+                           "reason": "Неприменённое предложение сохранено без исправления ячеек.",
+                           "proposal": dict(proposal)})
+    for diagnostic in transport_diagnostics:
+        if isinstance(diagnostic, Mapping):
+            issues.append({"code": str(diagnostic.get("code") or "MODEL_RESULT_TRANSPORT_ERROR"),
+                           "reason": "Техническая ошибка таблицы; строка не включена в расчёт.",
+                           "diagnostic": dict(diagnostic)})
+    held = job.get("held_packet") or {}
+    if str(job.get("status") or "") != "complete" and isinstance(held, Mapping) and held.get("read_stop"):
+        issues.append({"code": "MODEL_EVIDENCE_READ_STOP",
+                       "reason": str(held["read_stop"])})
+    return issues
+
+
 def model_answer_timeout_seconds() -> float:
     """One end-to-end window for an explicitly assigned answer connection.
 
@@ -1183,6 +1229,7 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
             # § 4: «сколько позиций построено» and «сколько из них полностью
             # рассчитано» are two different numbers and must not be conflated here.
             "positions_built",
+            "document_issues",
             "error_type", "memory_pressure",
         ),
     )
@@ -1232,6 +1279,7 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
             "artifact_id", "revision_id", "revision_no", "parent_revision_id",
             "sha256", "byte_size", "download_url", "source_scope",
             "decision_checkpoint_id", "filename", "artifact_kind",
+            "draft",
         ),
     )
     checkpoint = selected(
@@ -1301,6 +1349,7 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         "checkpoint": dict(checkpoint),
         "workbook_status": str(result.get("status") or ""),
         "pricing_status": str(result.get("pricing_status") or ""),
+        "document_issues": list(result.get("document_issues") or []),
         "norms_status": str(result.get("norms_status") or ""),
         "missing": list(result.get("missing") or []),
         "price_gaps": list(result.get("price_gaps") or []),
@@ -1695,7 +1744,7 @@ def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configur
 
 
 TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE = "tabular_attachment_estimator_path_v1"
-_TABULAR_ESTIMATOR_TOOLS = ("search_sources", "read_source", "build_lsr_workbook")
+_TABULAR_ESTIMATOR_TOOLS = ("search_sources", "read_source", "build_vor_workbook", "build_lsr_workbook")
 _TABULAR_LSR_VOLUME_INSTRUCTION = model_lsr_result_field_instruction() + (
     "Пустые ценовые колонки не мешают сборке. Код рассчитывает выбранные нормы "
     "и ресурсы в явно заданной книге цен. quantity сохраняет исходный объём; "
@@ -1709,9 +1758,13 @@ _TABULAR_LSR_VOLUME_INSTRUCTION = model_lsr_result_field_instruction() + (
     "Отсутствие цены не делает норму MISSING."
 )
 _MODEL_RAG_QUERY_INSTRUCTION = (
-    "Прочитай приложенный материал целиком. Сформулируй поисковые "
-    "запросы к выбранным датасетам, необходимые для подбора evidence "
-    "по всем фактическим строкам исходного материала. Число запросов "
+    "Прочитай приложенный материал целиком. Определи требуемый итоговый документ. "
+    "Если упомянуты ВОР и ЛСР/смета, отличай результат от исходника и дальнейшего назначения. "
+    "В этом же ответе можешь объявить artifact_kind (vor или lsr) и queries в корне JSON; "
+    "queries содержит твои дословные поисковые строки. Для ВОР, если исходника достаточно, "
+    "допустим ответ {\"artifact_kind\":\"vor\",\"queries\":[]}; он не требует поиска норм. "
+    "Когда для задачи нужен поиск: Сформулируй поисковые запросы к выбранным датасетам, "
+    "необходимые для подбора evidence по всем фактическим строкам исходного материала. Число запросов "
     "определяешь ты; фиксированного лимита нет. В запросах сохраняй язык "
     "и профессиональную терминологию исходных строк; не переводи и не "
     "транслитерируй их. Сейчас не выбирай нормы "
@@ -1731,8 +1784,8 @@ _MODEL_RAG_QUERY_REPAIR_INSTRUCTION = (
 _MODEL_RAG_QUERY_VOLUME_HINT = (
     "Пустые ценовые колонки исходника не ищи. Запросы — по работам и "
     "измерителям строк, не по прайсу. Если исходник называет изделие, "
-    "по задаче и данным сформулируй обоснованную монтажную операцию "
-    "для поиска её нормы; не ограничивайся артикулом поставки. "
+    "если задача требует подбора нормы, по задаче и данным сформулируй обоснованную монтажную операцию "
+    "для поиска её нормы; ВОР без такой необходимости не требует поиска нормы. "
     "Не добавляй неизвестные условия, размеры или объёмы."
 )
 #: The marker spellings the prompt names and the reader strips.  One tuple feeds
@@ -4008,6 +4061,18 @@ def parse_model_rag_queries(raw: str) -> list[str]:
 
     accepted, _rejected = classify_model_rag_query_lines(raw)
     return accepted
+
+
+def read_model_query_response(raw: str, **kwargs) -> dict:
+    """Adapt an explicit query envelope to the unchanged literal query reader."""
+    envelope = decode_model_query_envelope(raw)
+    declaration = decode_model_artifact_kind(raw)
+    query_text = "\n".join(envelope["queries"]) if envelope is not None else raw
+    declared = read_declared_query_list(query_text, **kwargs)
+    declared["artifact_kind_declaration"] = declaration
+    declared["intentional_empty"] = bool(envelope is not None and not envelope["queries"]
+        and declaration.get("status") == "declared" and declaration.get("artifact_kind") == "vor")
+    return declared
 
 
 _MODEL_EVIDENCE_REF = re.compile(r"^Q(\d+)\.H(\d+)$", re.IGNORECASE)
@@ -7462,6 +7527,7 @@ async def _execute_chat_evidence_application(
                 tokens = 0
                 active_model_result = None
                 active_pending_tool_calls = 0
+                artifact_kind_declaration = {"status": "missing", "artifact_kind": "", "declarations": [], "errors": []}
                 bound_runner = None
                 if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
                     if connection_resolver is None or connection_secret_store is None:
@@ -7824,8 +7890,10 @@ async def _execute_chat_evidence_application(
                         retrieval_trace.setdefault("model_query_outputs", []).append(query_diagnostic)
                         query_failure_final_texts.append(query_text)
                         query_failure_final_texts = query_failure_final_texts[-8:]
-                        declared = read_declared_query_list(
+                        declared = read_model_query_response(
                             query_text, instruction=query_instruction, finish_reason=llm_usage_finish_reason(query_usage))
+                        artifact_kind_declaration = merge_model_artifact_kind(
+                            artifact_kind_declaration, declared["artifact_kind_declaration"])
                         query_diagnostic["declared_parse"] = declared_query_output_diagnostics(query_text, declared)
                         logger.info("[MODEL_RAG_QUERY_OUTPUT] %s", query_diagnostic)
                         if query_diagnostic["output_incomplete"]:
@@ -7834,9 +7902,9 @@ async def _execute_chat_evidence_application(
                                 secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
                         model_queries = [item.text for item in declared["queries"]]
                         rejected_model_queries = [str(item.get("line") or "") for item in declared["accompanying_answer"]]
-                        if model_queries:
+                        if model_queries or declared.get("intentional_empty"):
                             break
-                    if not model_queries:
+                    if not model_queries and not declared.get("intentional_empty"):
                         raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
                             session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
                             secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
@@ -8295,6 +8363,9 @@ async def _execute_chat_evidence_application(
                                     and canonical_execution_mode is CanonicalRouteMode.ACTIVE
                                     and workbook_tool_executor is not None
                                 ):
+                                    native_kind = "vor" if tool_name == "build_vor_workbook" else "lsr"
+                                    artifact_kind_declaration = merge_model_artifact_kind(artifact_kind_declaration,
+                                        {"status": "declared", "artifact_kind": native_kind, "declarations": [native_kind], "errors": []})
                                     async def workbook_progress(event: dict[str, Any]) -> None:
                                         if token_sink is not None:
                                             await token_sink({"event": "tool_progress", "data": event})
@@ -8333,7 +8404,10 @@ async def _execute_chat_evidence_application(
                                                 "document_price_basis", carried_basis
                                             )
 
-                                    payload = await workbook_tool_executor(
+                                    payload = ({"status": "failed", "code": "ARTIFACT_KIND_UNRESOLVED",
+                                                "message": "Тип документа неоднозначен; упаковка ожидает согласованного решения модели."}
+                                               if artifact_kind_declaration.get("status") in {"conflict", "invalid"}
+                                               else await workbook_tool_executor(
                                         call,
                                         {
                                             "session_id": str(req.session_id or ""),
@@ -8353,7 +8427,7 @@ async def _execute_chat_evidence_application(
                                             "model_preset": execution_preset.preset_id,
                                         },
                                         workbook_progress,
-                                    )
+                                    ))
                                 else:
                                     research_result = await model_research_tools.execute(call)
                                     payload = research_result.payload
@@ -8713,6 +8787,13 @@ async def _execute_chat_evidence_application(
                             }
                             research_job_service = None
                             research_job = None
+                    if (research_job is not None and research_job_service is not None
+                            and research_job_service.is_plain_continuation(
+                                research_identity, {"original_question": str(req.question or "")})):
+                        artifact_kind_declaration = merge_model_artifact_kind(
+                            artifact_kind_declaration,
+                            (research_job.get("task_context") or {}).get("artifact_kind_declaration") or
+                            {"status": "missing", "artifact_kind": "", "declarations": [], "errors": []})
                     review_notice = ""
                     review_prior_rows: list[dict[str, Any]] = []
                     review_instruction = ""
@@ -8791,6 +8872,13 @@ async def _execute_chat_evidence_application(
                         else {}
                     )
                     terminal_packet_locators = WorkbookResearchJobService.terminal_packet_locators(stored_held)
+                    if (research_job_service is not None and research_job is not None
+                            and research_job_service.is_plain_continuation(
+                                research_identity, {"original_question": str(req.question or "")})):
+                        # A new explicit resume may reach sources with no saved decision.
+                        # Same-request replay and this run's later terminal barriers stay intact.
+                        terminal_packet_locators.intersection_update(
+                            settled_source_keys(accumulated_rows, source_catalog))
                     pending_result_packets = model_rag_pending_result_packets(stored_held)
                     transport_pending_locators, pending_diagnostics = model_rag_pending_result_projection(pending_result_packets)
                     if pending_diagnostics:
@@ -9263,7 +9351,7 @@ async def _execute_chat_evidence_application(
                                         # the prompt states the format, this adapter
                                         # reads it, and nothing re-splits the answer a
                                         # second time with different rules.
-                                        declared_now = read_declared_query_list(
+                                        declared_now = read_model_query_response(
                                             query_text,
                                             finish_reason=llm_usage_finish_reason(
                                                 query_usage
@@ -9272,6 +9360,11 @@ async def _execute_chat_evidence_application(
                                             row_literals=packet_row_literals,
                                             instruction=query_directive,
                                         )
+                                        artifact_kind_declaration = merge_model_artifact_kind(
+                                            artifact_kind_declaration, declared_now["artifact_kind_declaration"])
+                                        if research_job_service is not None and research_job is not None:
+                                            research_job = research_job_service.record_artifact_kind(
+                                                research_job["job_id"], declaration=artifact_kind_declaration)
                                         query_answer_cut = bool(
                                             declared_now.get("answer_cut")
                                         )
@@ -9334,7 +9427,7 @@ async def _execute_chat_evidence_application(
                                         # is quoted back verbatim, so no half-read
                                         # query is searched and no unmade query is read
                                         # as "the model decided nothing".
-                                        next_phase, next_suffix = declared_query_attempt_plan(
+                                        next_phase, next_suffix = ("", "") if declared_now.get("intentional_empty") else declared_query_attempt_plan(
                                             declared=declared_now,
                                             already_declared=model_queries,
                                             phase=query_phase,
@@ -9359,7 +9452,7 @@ async def _execute_chat_evidence_application(
                                     break
                                 pass_rejected.extend(rejected_now)
                                 pass_rejected_reasons.extend(rejected_reasons_now)
-                                if not model_queries:
+                                if not model_queries and not declared_now.get("intentional_empty"):
                                     break
                                 any_sheet_queries = True
                                 pass_hits: list[tuple[str, Sequence[Any]]] = []
@@ -9427,7 +9520,7 @@ async def _execute_chat_evidence_application(
                                         search_block_status,
                                     )
                                     break
-                                candidate_added = await _execute_system_candidate_queries(
+                                candidate_added = 0 if artifact_kind_declaration.get("artifact_kind") == "vor" else await _execute_system_candidate_queries(
                                     catalog=source_catalog,
                                     sheet=sheet_name,
                                     packet=packet,
@@ -9873,6 +9966,11 @@ async def _execute_chat_evidence_application(
                                 or model_rag_answer_is_truncated(pass_answer)
                             )
                             pass_transport_diagnostics: list[dict[str, Any]] = []
+                            artifact_kind_declaration = merge_model_artifact_kind(
+                                artifact_kind_declaration, decode_model_artifact_kind(pass_answer))
+                            if research_job_service is not None and research_job is not None:
+                                research_job = research_job_service.record_artifact_kind(
+                                    research_job["job_id"], declaration=artifact_kind_declaration)
                             parsed_pass = parse_model_rag_result(
                                 pass_answer, diagnostics=pass_transport_diagnostics,
                             )
@@ -11088,6 +11186,8 @@ async def _execute_chat_evidence_application(
                             (answer, sheet_pass_rows) if sheet_pass_rows else None
                         )
                     else:
+                        artifact_kind_declaration = merge_model_artifact_kind(
+                            artifact_kind_declaration, decode_model_artifact_kind(answer))
                         parsed_model_result = parse_model_rag_result(
                             answer, diagnostics=retrieval_trace.setdefault("model_result_transport_diagnostics", []),
                         )
@@ -11666,7 +11766,10 @@ async def _execute_chat_evidence_application(
                             "packaged": False,
                             "notice": notice,
                         }
-                    result_meta = retrieval_trace.get("model_result")
+                    result_meta = retrieval_trace.setdefault("model_result", {
+                        "schema": "les_model_rag_result_v1", "status": "accepted_unchanged",
+                        "row_count": len(model_result_rows), "packaged": False,
+                    })
                     if isinstance(result_meta, dict):
                         result_meta["finish_reason"] = answer_finish_reason
                     transport_diagnostics = retrieval_trace.get("model_result_transport_diagnostics") or []
@@ -11688,15 +11791,50 @@ async def _execute_chat_evidence_application(
                     packaging_tools = workbook_packaging_tool(
                         profile_tools, str(getattr(req, "question", "") or ""),
                         task_context=(research_job or {}).get("task_context"),
+                        model_declaration=artifact_kind_declaration,
                     )
+                    retrieval_trace["artifact_target"] = dict(artifact_kind_declaration)
+                    if not packaging_tools and (model_result_rows or durable_packaging_rows):
+                        target_notice = "Тип итогового документа пока не определён. Строки сохранены; уточните в чате, нужна ВОР или ЛСР."
+                        if target_notice not in answer:
+                            answer = f"{answer.rstrip()}\n\n{target_notice}"
+                        if isinstance(result_meta, dict):
+                            result_meta["packaging_status"] = "pending"
+                            result_meta["packaging_reason"] = "ARTIFACT_KIND_UNRESOLVED"
+                            result_meta["packaged"] = False
+                        if token_sink is not None:
+                            await token_sink({"event": "reset", "data": ""})
+                            await token_sink({"event": "token", "data": answer})
+                    saved_draft_rows = [dict(row) for row in (research_job or {}).get("accepted_rows") or ()
+                                        if isinstance(row, Mapping)]
+                    can_package_saved_draft = bool(
+                        saved_draft_rows and packaging_tools == ["build_lsr_workbook"]
+                        and str((research_job or {}).get("status") or "") == "paused"
+                        and all(str(error) == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH"
+                                or str(error).startswith(("source_quantity_unconfirmed:", "source_quantity_mismatch:"))
+                                for error in model_result_blocking_errors)
+                    )
+                    document_issues = workbook_document_issues(
+                        research_job, errors=model_result_blocking_errors,
+                        transport_diagnostics=transport_diagnostics,
+                    )
+                    if can_package_saved_draft:
+                        model_result_rows = saved_draft_rows
+                        packaging_is_draft = True
+                        if model_result_blocking_errors and isinstance(result_meta, dict):
+                            old_notice = str(result_meta.get("notice") or "")
+                            draft_notice = "Сохранённые корректные строки включены в промежуточную ЛСР; технические ошибки и неприменённые строки остаются открытыми."
+                            if old_notice:
+                                answer = answer.replace(old_notice, draft_notice, 1)
+                            result_meta["notice"] = draft_notice
                     if (
-                        (parsed_model_result is not None or bool(durable_packaging_rows))
+                        (parsed_model_result is not None or bool(durable_packaging_rows) or can_package_saved_draft)
                         and (
                             bool(model_result_rows)
                             or bool(durable_packaging_rows)
                             or packaging_tools == ["build_vor_workbook"]
                         )
-                        and not model_result_blocking_errors
+                        and (not model_result_blocking_errors or can_package_saved_draft)
                         and attachment_id
                         and packaging_tools
                         and workbook_tool_executor is not None
@@ -11792,6 +11930,7 @@ async def _execute_chat_evidence_application(
                                 ),
                             }
                             execution_context = {
+                                "document_issues": document_issues if packaging_tool == "build_lsr_workbook" else [],
                                 "session_id": str(req.session_id or ""),
                                 "question": str(req.question or ""),
                                 "dataset_ids": [str(item) for item in _dataset_ids],
@@ -11955,6 +12094,7 @@ async def _execute_chat_evidence_application(
                             pricing_status=str(
                                 (workbook_chat_meta or {}).get("pricing_status") or ""
                             ),
+                            document_issues=list((workbook_chat_meta or {}).get("document_issues") or []),
                             paused=str(job_meta.get("status") or "") == "paused"
                             or "workbook_research_cancelled" in model_result_errors,
                             job_status=str(job_meta.get("status") or ""),
@@ -12093,12 +12233,16 @@ async def _execute_chat_evidence_application(
                                     await token_sink({"event": "token", "data": answer})
                         retrieval_trace["model_result"] = {
                             "schema": "les_model_rag_result_v1",
-                            "status": "accepted_unchanged",
+                            "status": (str((result_meta or {}).get("status"))
+                                       if can_package_saved_draft and (result_meta or {}).get("status") in {"structural_error", "unstructured"}
+                                       else "accepted_unchanged"),
                             "row_count": len(model_result_rows),
                             "packaged": bool(workbook_files),
                             "packaging": packaging_trace,
                             "decision_rows": compact_estimator_draft_rows(model_result_rows),
                             "warnings": packaging_warnings,
+                            "document_issues": document_issues,
+                            "transport_diagnostics": transport_diagnostics,
                             "notice": packaged_notice,
                             "finish_reason": answer_finish_reason,
                         }
@@ -12123,7 +12267,9 @@ async def _execute_chat_evidence_application(
                 elif crag_status == "VERIFIED":
                     state.crag_stats["verified"] += 1
                     state.chat_metrics["crag_pass"] += 1
-                elif crag_status in {"UNVALIDATED", "MODEL_OUTPUT"}:
+                elif crag_status == "MODEL_OUTPUT":
+                    state.crag_stats["model_output"] = state.crag_stats.get("model_output", 0) + 1
+                elif crag_status == "UNVALIDATED":
                     state.crag_stats["unvalidated"] = state.crag_stats.get("unvalidated", 0) + 1
                     state.chat_metrics["crag_fail"] += 1
                 else:

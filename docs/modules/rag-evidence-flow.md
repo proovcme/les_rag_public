@@ -1,29 +1,45 @@
 # RAG evidence flow
 
-**Doc↔candidate code: ✅873; установлен872, professional FAILED.**
-Agent research сохраняет literal provider IDs/arguments/assistant content как
-NativeToolExchange с matching tool replies в следующих selectors/final/fallback.
-Safe native payload не копируется ещё раз в user tool_exchange; Governor считает
-schema/history. Queries, scope, budgets и выбор не заменяются. Точки:
-native_research_call_batch/native_research_exchange в chat-evidence service.
-Live872history704 имел42webhits/5повторов запроса без native history;
-RED→274 focused passed: остановка целого пакета на лимите вызовов и сохранение
-всех настоящих replies при смешанном workbook/read пакете. Native batch
-завершается целиком до workbook_complete; legacy остановка не меняется.
-Canonical 873:3007passed/20 opt-in skips, architecture/baseline/active artifacts
-exit0; map/docs contract и31metadata tests зелёные. Живая проверка 873 ещё не проведена.
+**Doc↔candidate code: ✅874; установлен873, professional FAILED.**
+Explicit plain continuation пересекает terminal packet locators с реально
+settled source keys только при новом literal resume: same-request replay,
+later terminal barriers и принятые MISSING не меняются. Freeform chat review
+остаётся отдельным model-owned пересмотром прежних решений/operation IDs.
 
-read_norm_card принимает exclusive evidence_ref:одна admitted literal alias →
-тот же exact reader; без поиска/выбора нормы, prepared/unknown не читаются.
-Известные source/SHA/edition/base/key/code должны совпадать. Ошибочное
-read_source.source_row с той же показанной norm alias возвращает только trace
-для следующего явного чтения. Новый body подтверждается после реальной доставки;
-применимость/расход/resource decisions остаются модельными.
+После admission каждый shown norm body (включая shown aliases) получает
+card_delivery_facts: normative_card_complete и normative_resources_status.
+Preview/unknown имеет optional read_norm_card(evidence_ref=literal ref).
+Raw body, index, immutable IDs остаются прежними; deferred/unshown не получают
+body proof. Новые маркеры входят в реальную стоимость capacity planner.
+Инструкция отделяет применимость от расхода: обзор N/N не содержит доказанного
+per_unit; отсутствие цены/прочитанного тела не доказывает отсутствие нормы.
 
-Fresh872B0length8К/B1bad selectors:нет XLSX,accepted0/remaining20,без overflow.
-26source locators сохранены по packet scopes; nofile prose не доказывает утрату
-файла.8Кtrial отменён(answer16К). Professional acceptance873pending.
-Более ранние статусы ниже относятся к моменту их измерения.
+Durable accepted subset при локальной transport/quantity ошибке может быть
+упакован как промежуточная ЛСР. Unapplied proposals сохраняются целиком;
+trusted document_issues проходят application/router/context/adapter/snapshot.
+Позиции и model decisions не чинятся. Только summary документа остаётся
+priced_partial/full_amount=None/confirmed_amount=0, known subtotal preliminary;
+watermark и «Проверка» показывают технические причины. Readiness блокирует
+estimate_complete при document issues; повторная упаковка idempotent, без модели.
+All-invalid/unknown mandatory errors остаются blocking.
+
+Тип итогового документа при смешанных ВОР/ЛСР упоминаниях объявляет модель
+в том же query/final ходе. `decode_model_artifact_kind` читает только literal target;
+`read_model_query_response` сохраняет дословные запросы. Для model-declared ВОР
+queries=[] не запускает repair, нормо-поисковые candidate queries или extra call.
+`WorkbookResearchJobService.record_artifact_kind` хранит target отдельно от rows.
+Plain continuation наследует его; новое замечание может разрешить прежний конфликт.
+Native builder и repack не обходят target ambiguity. Без допустимого выбора упаковка pending;
+исходные решения не теряются и дополнительный предметный вызов не запускается.
+
+MODEL_OUTPUT теперь нейтральный M, не VERIFIED/UNVALIDATED/crag_fail.
+Diagnostics сохраняет прежние V/H/U quality thresholds и явно сообщает,
+что M не доказывает качество. Только-M — insufficient-validation warning.
+
+Installed873 natural BAP files имеют confirmed0/professional FAILED;
+SKS/EOM controls не дали файла. 874 offline:3080 passed/20 existing opt-in skips,
+architecture/base/root passed. Fresh874 comparative acceptance pending.
+Проверки транспорта/арифметики не доказывают профессиональную применимость.
 
 **Doc↔candidate code: ✅ 872 literal shown-code navigation and lossless pointer replay.**
 Missing parent/table code feedback uses only admitted literal prefix+dash siblings

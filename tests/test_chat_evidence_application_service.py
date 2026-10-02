@@ -497,8 +497,8 @@ def test_workbook_artifact_intent_narrows_visible_tools_by_operator_noun():
     assert service.workbook_artifact_intent("Собери ВОР из спецификации") == "vor"
     assert service.workbook_artifact_intent("сделай ведомость объёмов работ") == "vor"
     assert service.workbook_artifact_intent("Собери смету") == "lsr"
-    # A сметa/LSR noun wins over a ВОР noun: this is the priced route.
-    assert service.workbook_artifact_intent("Собери ЛСР из прикреплённого ВОР") == "lsr"
+    # Code retains both capabilities when target and input nouns are mixed.
+    assert service.workbook_artifact_intent("Собери ЛСР из прикреплённого ВОР") == "both"
     assert service.workbook_artifact_intent("что видно в документе") == "both"
 
     # A bare ВОР request must not keep the priced ЛСР tool visible.
@@ -508,9 +508,9 @@ def test_workbook_artifact_intent_narrows_visible_tools_by_operator_noun():
     assert vor_only == ["build_vor_workbook", "search_sources", "read_source"]
     assert "build_lsr_workbook" not in vor_only
 
-    # An explicit ЛСР request keeps only the priced workbook tool.
+    # A sole ЛСР mention keeps only the priced workbook tool.
     lsr_only = service.prioritize_workbook_tools(
-        tools, workbook_phase=True, question="Собери ЛСР из ВОР"
+        tools, workbook_phase=True, question="Собери ЛСР"
     )
     assert "build_lsr_workbook" in lsr_only
     assert "build_vor_workbook" not in lsr_only
@@ -3494,7 +3494,13 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             base_url="http://127.0.0.1:1919/v1",
             secret_ref=None,
             effective_preset=_governor_preset(
-                input_tokens=6000,
+                # Positive handoff cases need both source rows and whole cards:
+                # truthful markers add 392 wire chars; target declarations add
+                # shared instruction framing. Keep whole-card handoff assertions.
+                # Exact capacity rejection is covered by the marker boundary test.
+                input_tokens=(7000 if scenario in {
+                    "active_model_rag_result", "active_model_rag_recovery",
+                } else 6000),
                 preset_id="active-preset",
             ),
         )
@@ -3587,7 +3593,8 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                                 "| source_row | section | title | unit | quantity | norm_code | analogue | coverage | coefficient | evidence_refs |\n"
                                 "|---:|---|---|---|---:|---|---|---|---:|---|\n"
                                 "| 1 | ЭОМ | монтаж шкафа управления | шт. | 2 | ГЭСНм08-02-401-01 | "
-                                "Монтаж оборудования по найденной карточке нормы | прямое соответствие | | Q1.H1 |"
+                                "Монтаж оборудования по найденной карточке нормы | прямое соответствие | | Q1.H1 |\n"
+                                "\nartifact_kind: lsr"
                             ),
                             tool_calls=(),
                             finish_reason="stop",
@@ -3972,7 +3979,8 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert "Q2.H1" in final_messages
         first_messages = str(active_transport.requests[0].messages)
         assert "Строка 1: монтаж шкафа управления — 2 шт." in first_messages
-        assert '"queries"' not in first_messages
+        assert "можешь объявить artifact_kind" in first_messages
+        assert "каждый с новой строки" in first_messages  # plain-text queries remain accepted
         assert "верни только сами поисковые запросы" in first_messages
         assert "фиксированного лимита нет" in first_messages
         assert "по всем фактическим строкам" in first_messages
@@ -4802,14 +4810,15 @@ def test_workbook_packaging_tool_follows_operator_intent():
     assert service.workbook_packaging_tool(
         vor_only, "Собери ВОР из прикреплённой спецификации"
     ) == ["build_vor_workbook"]
-    # A priced request keeps the priced packager even with both available.
-    assert service.workbook_packaging_tool(both, "Собери ЛСР из ВОР") == [
+    # A priced-only request keeps the priced packager with both available.
+    assert service.workbook_packaging_tool(both, "Собери ЛСР") == [
         "build_lsr_workbook"
     ]
-    # Unspecified request defaults to the priced packager when available.
-    assert service.workbook_packaging_tool(both, "Что видно в документе") == [
-        "build_lsr_workbook"
-    ]
+    # Unspecified/mixed requests require the model's literal target.
+    assert service.workbook_packaging_tool(both, "Что видно в документе") == []
+    assert service.workbook_packaging_tool(both, "Собери ЛСР из ВОР") == []
+    assert service.workbook_packaging_tool(both, "Собери ЛСР из ВОР",
+        model_declaration={"status": "declared", "artifact_kind": "lsr"}) == ["build_lsr_workbook"]
     assert service.workbook_packaging_tool(vor_only, "Что видно в документе") == []
     assert service.workbook_packaging_tool(["search_sources"], "Собери ВОР") == []
 

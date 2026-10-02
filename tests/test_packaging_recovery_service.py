@@ -197,7 +197,9 @@ def _finished_job_without_document(tmp_path):
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 
     service = WorkbookResearchJobService(tmp_path / "meta.db")
-    job = service.begin_or_resume(_identity(service))
+    job = service.begin_or_resume(_identity(service), task_context={"original_question": "Собери ЛСР по ВОР", "artifact_intent": "both"})
+    job = service.record_artifact_kind(job["job_id"], declaration={
+        "status": "declared", "artifact_kind": "lsr", "declarations": ["lsr"], "errors": []})
     service.record_packet(
         job["job_id"],
         sheet="АР",

@@ -144,9 +144,9 @@ def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None)
         if isinstance(value, _AuthoredJSONPairs):
             names = [key for key, _item in value]
             envelope_conflicts = [{"field": key, "path": [key], "occurrences": names.count(key)}
-                                  for key in dict.fromkeys(names) if names.count(key) > 1]
+                                  for key in dict.fromkeys(names) if names.count(key) > 1 and key != "artifact_kind"]
             for key, item in value:
-                if key != "rows":
+                if key not in {"rows", "artifact_kind"}:
                     envelope_conflicts.extend(_json_duplicate_fields(item, (key,)))
             if envelope_conflicts:
                 decoded.append(([], [{"code": "MODEL_RESULT_JSON_DUPLICATE_FIELD",
@@ -191,6 +191,96 @@ def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None)
     if diagnostics is not None:
         diagnostics.extend(proposals)
     return rows if rows or not proposals else None
+
+
+def decode_model_artifact_kind(raw: str) -> dict:
+    """Read a document-level literal declaration, without choosing its purpose.
+
+    Target ambiguity is independent of row admission: no repeated declaration
+    is selected, even when repeated values are identical.
+    """
+    text = str(raw or "").strip()
+    decoder = json.JSONDecoder(object_pairs_hook=_AuthoredJSONPairs)
+    candidates, segments, declarations, errors = [], [], [], []
+    start = 0
+    for fence in re.finditer(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text):
+        segments.append(text[start:fence.start()])
+        candidates.append(fence.group(1))
+        start = fence.end()
+    segments.append(text[start:])
+    for segment in segments:
+        # This label is a transport field, not an interpretation of prose.
+        labels = list(re.finditer(r"(?m)^[ \t]*artifact_kind[ \t]*:[ \t]*(.*?)[ \t]*$", segment))
+        declarations.extend(match.group(1).strip() for match in labels)
+        segment = re.sub(r"(?m)^[ \t]*artifact_kind[ \t]*:[^\r\n]*", "", segment).strip()
+        index = 0
+        while index < len(segment) and segment[index] in "{[":
+            try:
+                _value, end = decoder.raw_decode(segment, index)
+            except (ValueError, TypeError):
+                if '"artifact_kind"' in segment[index:]:
+                    errors.append("ARTIFACT_KIND_INCOMPLETE_JSON")
+                break
+            if end < len(segment) and not segment[end].isspace():
+                break
+            candidates.append(segment[index:end])
+            index = end
+            while index < len(segment) and segment[index].isspace():
+                index += 1
+    for candidate in candidates:
+        try:
+            value = decoder.decode(candidate)
+        except (ValueError, TypeError):
+            if '"artifact_kind"' in candidate:
+                errors.append("ARTIFACT_KIND_INCOMPLETE_JSON")
+            continue
+        if isinstance(value, _AuthoredJSONPairs):
+            declarations.extend(item for key, item in value if key == "artifact_kind")
+    if len(declarations) > 1:
+        errors.append("ARTIFACT_KIND_AMBIGUOUS")
+        status = "conflict"
+    elif errors or (declarations and declarations[0] not in ("vor", "lsr")):
+        errors.append("ARTIFACT_KIND_INVALID")
+        status = "invalid"
+    else:
+        status = "declared" if declarations else "missing"
+    return {"status": status, "artifact_kind": declarations[0] if status == "declared" else "",
+            "declarations": declarations, "errors": list(dict.fromkeys(errors))}
+
+
+def merge_model_artifact_kind(previous: Mapping | None, current: Mapping) -> dict:
+    """Accumulate declarations from distinct model turns without picking a conflict."""
+    previous = dict(previous or {})
+    current = dict(current)
+    if current.get("status") == "missing":
+        return previous or current
+    if not previous or previous.get("status") == "missing":
+        return current
+    if (previous.get("status") == current.get("status") == "declared"
+            and previous.get("artifact_kind") == current.get("artifact_kind")):
+        return current
+    return {"status": "conflict", "artifact_kind": "",
+            "declarations": [*previous.get("declarations", []), *current.get("declarations", [])],
+            "errors": list(dict.fromkeys([*previous.get("errors", []), *current.get("errors", []),
+                                         "ARTIFACT_KIND_AMBIGUOUS"]))}
+
+
+def decode_model_query_envelope(raw: str) -> dict | None:
+    """An optional literal query list; ordinary query text keeps its old reader."""
+    text = str(raw or "").strip()
+    fence = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text)
+    if fence:
+        text = fence.group(1)
+    try:
+        value = json.loads(text, object_pairs_hook=_unique_json_object)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(value, dict) or value.get("artifact_kind") not in ("vor", "lsr"):
+        return None
+    queries = value.get("queries")
+    if not isinstance(queries, list) or any(not isinstance(q, str) or not q.strip() or "\n" in q or "\r" in q for q in queries):
+        return None
+    return {"queries": queries}
 
 
 def decode_model_resource_field(value):
@@ -241,6 +331,10 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
     instruction = (
         "Итоговые строки: соблюдай явно заданный пользователем формат. "
         "Без указания формата предпочти компактный JSON {\"rows\":[...]}; допустимы Markdown или текст. "
+        "Если задание упоминает и ВОР, и ЛСР/смету либо не называет тип результата, "
+        "выбери сам требуемый итоговый документ с учётом цели пользователя, входного документа и дальнейшего назначения. "
+        "В том же итоговом ответе объяви один artifact_kind: vor или artifact_kind: lsr "
+        "(в корне JSON либо отдельной строкой); это тип результата, не тип исходника. "
         "В Markdown сохраняй объявленные "
         "ячейки, включая пустые, и экранируй | внутри значения. "
         "Поля строки: " + ", ".join(BASE_FIELDS) + ". "

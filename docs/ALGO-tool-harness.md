@@ -1,5 +1,25 @@
 # ALGO-tool-harness — controlled tools for LES
 
+## Candidate874: trusted intermediate documents and neutral model-output metrics
+
+`document_issues` is server-owned execution context, never a model-tool argument.
+It participates in revision identity and the immutable calculation snapshot.
+An accepted subset remains byte-equivalent to persisted model decisions; rejected
+raw proposals remain visible in the XLSX check sheet. The document is draft/partial,
+with no full confirmed total; position arithmetic remains unchanged. Existing
+unknown mandatory blockers and all-invalid results are not bypassed.
+
+Recovery carries the same technical issues and draft flag, returns the same
+revision for identical input, and does not invoke inference. Readiness independently
+blocks full completion on document issues. Optional per-card completeness/read
+markers describe only actually admitted bodies and count toward context capacity.
+
+`MODEL_OUTPUT` increments neutral `model_output`, not validation pass/fail.
+Diagnostics retains V/H/U thresholds and does not call neutral output verified.
+Installed873 ordinary chat/native RRF pass; professional document acceptance fails.
+Candidate874 full gates, exact installation and natural live remain pending.
+
+
 ## Candidate873: exact literal native replay and norm reference reads
 
 Ordinary Agent calls retain provider IDs, literal JSON arguments and assistant

@@ -552,6 +552,13 @@ def _same_research_scope(row: sqlite3.Row, identity: WorkbookResearchIdentity) -
 
 class WorkbookResearchJobService:
     @staticmethod
+    def is_plain_continuation(
+        identity: WorkbookResearchIdentity, task_context: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """Recognise only the existing explicit continuation signal for this request."""
+        return _is_plain_continuation(identity, task_context)
+
+    @staticmethod
     def terminal_packet_locators(held_packet: Mapping[str, Any]) -> set[str]:
         """Packets already completed by the model, excluding explicit user reopen."""
         snapshots = list(held_packet.get("terminal_packets") or ())
@@ -883,7 +890,8 @@ class WorkbookResearchJobService:
         held = _json_object(parent, "held_packet_json")
         remaining = _json_list(parent, "remaining_json")
         overrides = _json_object(parent, "operator_overrides_json")
-        if not (accepted or evidence or omitted or cache or deferrals or remaining or held or overrides):
+        if not (accepted or evidence or omitted or cache or deferrals or remaining or held or overrides
+                or _json_object(parent, "task_context_json").get("artifact_kind_declaration")):
             # No decisions, evidence, pending work or held page to continue.
             return {}
         watermark = len(evidence) + len(cache)
@@ -1134,6 +1142,24 @@ class WorkbookResearchJobService:
         # by the research they belong to, oldest research first.
         ordered.sort(key=lambda item: item[:3])
         return [item[3] for item in ordered]
+
+    def record_artifact_kind(self, job_id: str, *, declaration: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist the model's literal document target independently of its rows."""
+        if str(declaration.get("status") or "missing") == "missing":
+            return self.get(job_id)
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)).fetchone()
+            if row is None:
+                raise WorkbookResearchJobError("workbook research job not found")
+            context = _json_object(row, "task_context_json")
+            context["artifact_kind_status"] = str(declaration.get("status") or "invalid")
+            context["model_artifact_kind"] = (str(declaration.get("artifact_kind") or "")
+                if declaration.get("status") == "declared" else "")
+            context["artifact_kind_declaration"] = dict(declaration)
+            conn.execute("UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
+                         (json.dumps(context, ensure_ascii=False), str(job_id)))
+            self._append_event(conn, str(job_id), "model_artifact_kind", dict(declaration))
+        return self.get(job_id)
 
     def record_packaging(
         self,

@@ -36,6 +36,7 @@ def _native(tool, **arguments):
 def _answer(*, refs=("Q1.H1", "Q2.H1")):
     first, second = refs
     return (
+        "artifact_kind: lsr\n"
         "Model-authored final rows\n\n"
         "| source_row | row_role | title | unit | quantity | norm_code | resource_code | evidence_refs |\n"
         "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
@@ -52,7 +53,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      malformed_first_packet=False, malformed_all_first_packet=False,
                      malformed_second_packet=False, duplicate_json_first_packet=False,
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
-                     exact_resource_padding=0):
+                     exact_resource_padding=0, query_declaration=None):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -174,6 +175,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         monkeypatch.setattr(service, "model_rag_group_char_budget", lambda **kwargs: group_char_budget)
     responses = [InferenceResponse(text="\n".join(packet_queries[0]), tool_calls=(),
                                    finish_reason="stop", usage={})]
+    if query_declaration is not None:
+        responses[0] = InferenceResponse(text=query_declaration, tool_calls=(), finish_reason="stop", usage={})
     if query_repair:
         responses.insert(0, InferenceResponse(text='{"calls":[]}', tool_calls=(), finish_reason="stop", usage={}))
     if empty_query:
@@ -218,7 +221,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
             refs = shown_prices[RESOURCE_A], shown_prices[RESOURCE_B]
         answer = _answer(refs=refs)
         if json_final:
-            answer = json.dumps({"rows": [
+            answer = json.dumps({"artifact_kind": "lsr", "rows": [
                 {"source_row": "S!R2", "row_role": "material", "title": "Cable A", "unit": "m",
                  "quantity": 12, "norm_code": "", "resource_code": RESOURCE_A, "evidence_refs": [refs[0]]},
                 {"source_row": "S!R3", "row_role": "material", "title": "Cable B", "unit": "m",
@@ -241,7 +244,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                         + ',"evidence_refs":[]}')
             unique = {"source_row": "S!R3", "row_role": "material", "title": "Cable B", "unit": "m",
                       "quantity": 3, "norm_code": "", "resource_code": RESOURCE_B, "evidence_refs": [refs[1]]}
-            answer = '{"rows":[' + conflict + ',' + json.dumps(unique) + ']}'
+            answer = '{"artifact_kind":"lsr","rows":[' + conflict + ',' + json.dumps(unique) + ']}'
         return InferenceResponse(text="" if empty_final else answer, tool_calls=(),
                                  finish_reason="length" if empty_final else "stop",
                                  usage={"completion_tokens": 120})
@@ -330,7 +333,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                           "model_policy": {"reasoning_enabled": reasoning_enabled,
                                            **({"query_reasoning_enabled": query_reasoning_enabled}
                                               if query_reasoning_enabled is not None else {})},
-                          "tools": ["search_sources", "build_lsr_workbook"],
+                          "tools": ["search_sources", "build_vor_workbook", "build_lsr_workbook"],
                           "rag_policy": {"iterative": True, "system_datasets": ["smeta"],
                                          "model_authored_initial_query": True},
                           "prompt_text": "Answer only from shown evidence."},
@@ -375,7 +378,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
             assert shown_ref
             rows = [{"source_row": locator, "row_role": "material", "title": title, "unit": "m",
                      "quantity": quantity, "norm_code": "", "resource_code": resource, "evidence_refs": shown_ref}]
-            return InferenceResponse(text=json.dumps({"rows": rows}), tool_calls=(),
+            return InferenceResponse(text=json.dumps({"artifact_kind": "lsr", "rows": rows}), tool_calls=(),
                                      finish_reason="stop", usage={"completion_tokens": 80})
         responses.append(corrected_response)
         return await resume_same_request()
@@ -641,7 +644,8 @@ async def test_terminal_sheet_result_packages_before_35_candidate_groups_are_dra
     job = store.get(trace["workbook_research_job"]["job_id"])
     assert job["status"] == ("paused" if partial_final else "complete")
     assert job["remaining"] == (["S!R3"] if partial_final else [])
-    assert run.executions[0][1]["status"] == "complete"  # Packaging succeeded independently of source coverage.
+    assert run.executions[0][1]["status"] == ("partial" if partial_final else "complete")
+    assert run.executions[0][1]["checkpoint"]["status"] == "complete"  # Mechanical packaging succeeded.
     assert trace["attachment_integrity"]["omitted_source_locators"] == (["S!R3"] if partial_final else [])
     assert job["held_packet"]["queries"]
     assert len(job["held_packet"]["terminal_packets"]) == 1
@@ -676,7 +680,8 @@ async def test_terminal_packets_continue_only_unseen_rows_and_keep_independent_e
     assert set(run.declared_queries) <= set(job["query_cache"])
     assert job["remaining"] == (["S!R3"] if partial_final else [])
     assert job["status"] == ("paused" if partial_final else "complete")
-    assert run.executions[0][1]["status"] == "complete"
+    assert run.executions[0][1]["status"] == ("partial" if partial_final else "complete")
+    assert run.executions[0][1]["checkpoint"]["status"] == "complete"
     assert run.result["retrieval_trace"]["attachment_integrity"]["omitted_source_locators"] == (["S!R3"] if partial_final else [])
     assert job["status_dimensions"]["completeness"] == ("partial" if partial_final else "full")
     reopened = WorkbookResearchJobService(store.db_path).get(job["job_id"])
@@ -695,14 +700,19 @@ async def test_malformed_packet_keeps_raw_pending_and_advances_only_unseen_sourc
                            malformed_first_packet=True, malformed_all_first_packet=all_malformed)
     assert len(run.requests) == packet_count * 4 and not run.responses
     assert [query for query in run.queries if query in run.declared_queries] == run.declared_queries
-    assert run.executions == []
+    has_draft = not all_malformed or packet_count > 1
+    assert len(run.executions) == int(has_draft)
+    if has_draft:
+        assert run.executions[-1][1]["artifact"]["draft"] is True
+        assert run.executions[-1][1]["pricing_status"] == "priced_partial"
+        assert run.executions[-1][1]["document_issues"]
     trace = run.result["retrieval_trace"]
     assert [entry["packet_locators"] for entry in trace["tool_loop"]["passes"]] == (
         [["S!R2", "S!R3"]] if packet_count == 1 else
         [["S!R2", "S!R3"], ["S!R4", "S!R5"]])
     blocked_status = "unstructured" if all_malformed and packet_count == 1 else "structural_error"
     assert trace["model_result"]["status"] == blocked_status
-    assert trace["model_result"]["packaged"] is False
+    assert trace["model_result"]["packaged"] is has_draft
     diagnostic = trace["model_result_transport_diagnostics"][0]
     assert diagnostic["code"] == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH"
     assert diagnostic["expected_cells"] == 8 and diagnostic["actual_cells"] == 7
@@ -721,6 +731,8 @@ async def test_malformed_packet_keeps_raw_pending_and_advances_only_unseen_sourc
     }
     assert [row["source_row"] for row in job["accepted_rows"]] == (
         ([] if all_malformed else ["S!R3"]) + ([] if packet_count == 1 else ["S!R4", "S!R5"]))
+    if has_draft:
+        assert run.executions[-1][0]["args"]["decisions"] == job["accepted_rows"]
     assert diagnostic["decision"] in [proposal["decision"] for proposal in job["unapplied_proposals"]]
     pending = job["held_packet"]["pending_model_result_packets"]
     assert len(pending) == 1 and pending[0]["model_result_transport_pending"] is True
@@ -733,9 +745,10 @@ async def test_malformed_packet_keeps_raw_pending_and_advances_only_unseen_sourc
     assert restarted["unapplied_proposals"] == job["unapplied_proposals"]
     request_count = len(run.requests)
     resumed = await run.resume_same_request()
-    assert len(run.requests) == request_count and run.executions == []
+    assert len(run.requests) == request_count
+    assert len(run.executions) == 2 * int(has_draft)
     assert resumed["retrieval_trace"]["model_result"]["status"] == blocked_status
-    assert resumed["retrieval_trace"]["model_result"]["packaged"] is False
+    assert resumed["retrieval_trace"]["model_result"]["packaged"] is has_draft
     assert store.get(job["job_id"])["accepted_rows"] == job["accepted_rows"]
     assert store.get(job["job_id"])["held_packet"]["pending_model_result_packets"] == pending
 
@@ -770,11 +783,15 @@ async def test_explicit_reopen_api_resolves_only_the_corrected_pending_source_pa
             if same_packet:
                 assert pending[0]["resolved_source_rows"] == ["S!R2"]
                 assert job["remaining"] == ["S!R3"]
-            assert job["status"] == "paused" and run.executions == []
+            assert job["status"] == "paused"
+            assert run.executions[-1][1]["artifact"]["draft"] is True
+            assert run.executions[-1][0]["args"]["decisions"] == job["accepted_rows"]
             assert [item["decision"]["source_row"] for item in corrected["retrieval_trace"]["model_result_transport_diagnostics"]] == ["S!R3" if same_packet else "S!R4"]
         else:
             assert pending == [] and job["status"] == "complete" and job["remaining"] == []
-            assert len(run.executions) == 1 and run.executions[0][1]["status"] == "complete"
+            assert len(run.executions) == (2 if same_packet else 3)
+            assert run.executions[-1][1]["status"] == "complete"
+            assert not run.executions[-1][1]["document_issues"]
 
 
 @pytest.mark.asyncio
@@ -823,7 +840,8 @@ async def test_duplicate_json_row_keeps_other_decisions_and_only_conflicting_loc
     assert raw_proposal["decision"]["raw_json"].count('"norm_code":') == 2
     assert raw_proposal["decision"]["raw_json"].count('"evidence_refs":') == 2
     assert "norm_code" not in raw_proposal["decision"]
-    assert run.result["retrieval_trace"]["model_result"]["packaged"] is False
+    assert run.result["retrieval_trace"]["model_result"]["packaged"] is True
+    assert run.executions[-1][1]["artifact"]["draft"] is True
     request_count = len(run.requests)
     await run.resume_same_request()
     assert len(run.requests) == request_count  # plain continuation cannot repair it
@@ -840,7 +858,8 @@ async def test_duplicate_json_row_keeps_other_decisions_and_only_conflicting_loc
             assert row == accepted[row["source_row"]]
     assert result["retrieval_trace"]["model_result_transport_diagnostics"] == []
     assert result["retrieval_trace"]["model_result"]["packaged"] is True
-    assert len(run.executions) == 1
+    assert len(run.executions) == 3
+    assert not run.executions[-1][1]["document_issues"]
 
 
 @pytest.mark.asyncio

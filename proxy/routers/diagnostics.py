@@ -231,6 +231,7 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
         no_data = state.crag_stats.get("no_data", 0)
         hallucination = state.crag_stats.get("hallucination", 0)
         unvalidated = state.crag_stats.get("unvalidated", 0)
+        model_output = state.crag_stats.get("model_output", 0)
         verifiable = verified + hallucination + unvalidated
         pct = verified / verifiable * 100 if verifiable else 0.0
         if verifiable == 0:
@@ -242,7 +243,9 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
         else:
             status = "ok" if pct >= 70 else ("warn" if pct >= 40 else "err")
             message = ""
-        return status, f"V:{verified} N:{no_data} H:{hallucination} U:{unvalidated} ({pct:.0f}% verified)", ">=70%", message
+        neutral_note = "MODEL_OUTPUT — нейтральный статус, не доказательство качества"
+        message = f"{message}; {neutral_note}" if message else neutral_note
+        return status, f"V:{verified} N:{no_data} H:{hallucination} U:{unvalidated} M:{model_output} ({pct:.0f}% verified)", ">=70%", message
 
     await _check("Т.О.С.К.А. статистика", _chk_crag())
 
