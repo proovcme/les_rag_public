@@ -1,5 +1,50 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Текущий кандидат 0.31.145 / 873; установлен 0.31.144 / 872
+(`e34e9791aa64bed2593b2eb1884f165ce86adc5b`). Готовность заказчику НЕ подтверждена.**
+API/GUI и12patch hashes сверены, rollback871 сохранён. Native установленный
+les-desktop.exe: PE5.1.813, SHA256
+`6b7ae2e9aed946f031da2b83607fad0340cb71bcf23c39174a75fe0e8aed2d64`;
+предыдущее утверждение EXE858 ниже не является проверенной PE-версией.
+Private exact installer872 подготовлен (exit0/588.41s), 505340129bytes,
+SHA256 `a3a53b1226e60f909324731165b33931771047719c8c4eadeb3f156a4d32969c`.
+Независимая целостность35/35; installer acceptance НЕ выполнялся,
+`local_only_full=true`, `publishable=false`, public release не выполнялся.
+
+Fresh872same-identity BAP B0/B1:225.97s/387.81s, оба БЕЗ XLSX/без Governor
+overflow. B0 terminal length:8Ktrial оборвал JSON;21полных частичных объектов/
+16source locators НЕ приняты, неправильная применимость и2wrong-code citations
+остаются профессиональными дефектами. B1:0accepted/20remaining, paused после
+native read repeat,7searches+7неверных selectors,0полных exact cards.
+Исчезновение исходника НЕ доказано:26locators видимы по packet scopes; final
+prose/stop взяты из первого packet, не последнего native response. PDF_TEXT2/2
+в последнем progress — label упаковки, не model call. Независимый audit:
+`artifacts/live_872/expert_audit/pair_expert_summary_v1.json`.
+8Ktrial отменён через GUI profile API:query8192/answer16384,temperature0.7,
+query/answer reasoning=false (`fa85f666…`), FT r6effective65536, server/GPU/KV
+не менялись. Receipt:`artifacts/live_872/profile_answer_8k_restore.json`.
+
+872native RRF exit0; basic180s:8pass/1warn/1FAIL, glossary timeout180s.
+Его history704 завершился193.105s:11web calls/42hits/5одинаковых запросов;
+результаты не были пустыми. Native protocol replay обычного Agent отсутствовал.
+873 сохраняет providerIDs/literal arguments/assistant content и tool replies
+через Governor в rounds/final; не меняет запросы, выбор, caps/deadlines.
+Явное exact read_norm_card(evidence_ref=...) разрешает фактически показанную
+ссылку: immutable pointer resolution, unshown/ambiguous/version mismatch
+fail closed, inventory не становится body proof.
+
+Окончательный source 873: verify 3027 collected / 23.61s, canonical test
+3007 passed / 20 существующих opt-in skips / 5 warnings / 284.81s pytest
+(286.28s wrapper); architecture 9.75s, baseline archive 7.31s и active artifacts
+0.62s — все exit0. Mixed native workbook/read исправлен в этой же сборке после
+отдельного RED 3 сценариев; final focused 274 passed. Карта:1076 Python files,
+377710 lines,340 routes,0 parse warnings. Post-doc metadata:31 passed; map --check
+и documentation_contract exit0. Receipts: `artifacts/*_873_second.exit.json`,
+`artifacts/postdoc_*_873.exit.json`. Installed/live 873 pending; customer-ready
+статус не объявлен.
+
+## Предыдущие замеры (статус относится к моменту измерения)
+
 **Кандидат 0.31.144 / 872; установлен 0.31.143 / 871
 (`e8657ba38eed88dac8de327b5e4dd9b2999869f4`).** API/GUI сверены;
 HEAD/workspace/runtime совпадают по 19 installed patch hashes. Native EXE остаётся858.

@@ -1,5 +1,30 @@
 # RAG evidence flow
 
+**Doc↔candidate code: ✅873; установлен872, professional FAILED.**
+Agent research сохраняет literal provider IDs/arguments/assistant content как
+NativeToolExchange с matching tool replies в следующих selectors/final/fallback.
+Safe native payload не копируется ещё раз в user tool_exchange; Governor считает
+schema/history. Queries, scope, budgets и выбор не заменяются. Точки:
+native_research_call_batch/native_research_exchange в chat-evidence service.
+Live872history704 имел42webhits/5повторов запроса без native history;
+RED→274 focused passed: остановка целого пакета на лимите вызовов и сохранение
+всех настоящих replies при смешанном workbook/read пакете. Native batch
+завершается целиком до workbook_complete; legacy остановка не меняется.
+Canonical 873:3007passed/20 opt-in skips, architecture/baseline/active artifacts
+exit0; map/docs contract и31metadata tests зелёные. Живая проверка 873 ещё не проведена.
+
+read_norm_card принимает exclusive evidence_ref:одна admitted literal alias →
+тот же exact reader; без поиска/выбора нормы, prepared/unknown не читаются.
+Известные source/SHA/edition/base/key/code должны совпадать. Ошибочное
+read_source.source_row с той же показанной norm alias возвращает только trace
+для следующего явного чтения. Новый body подтверждается после реальной доставки;
+применимость/расход/resource decisions остаются модельными.
+
+Fresh872B0length8К/B1bad selectors:нет XLSX,accepted0/remaining20,без overflow.
+26source locators сохранены по packet scopes; nofile prose не доказывает утрату
+файла.8Кtrial отменён(answer16К). Professional acceptance873pending.
+Более ранние статусы ниже относятся к моменту их измерения.
+
 **Doc↔candidate code: ✅ 872 literal shown-code navigation and lossless pointer replay.**
 Missing parent/table code feedback uses only admitted literal prefix+dash siblings
 with refs/title/source/edition/identity. It remains missing/conflict, hits/count0;

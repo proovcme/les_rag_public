@@ -66,7 +66,9 @@ from proxy.services.context_governor_service import (
     ContextObject,
     ContextPacket,
     ContextRequiredSectionOverflow,
+    NativeToolCall,
     NativeToolExchange,
+    NativeToolReply,
     conservative_token_estimate,
 )
 from proxy.services.context_expander_service import expand_context_windows
@@ -779,6 +781,52 @@ def model_answer_timeout_seconds() -> float:
     except (TypeError, ValueError):
         return 300.0
 
+
+
+def native_research_call_batch(
+    response: InferenceResponse | None,
+    executed_calls: Sequence[Mapping[str, Any]],
+    previous_exchanges: Sequence[NativeToolExchange] = (),
+) -> tuple[NativeToolCall, ...]:
+    """Retain the provider's literal calls, separately from bound execution args."""
+    raw_calls = response.tool_calls if response is not None else ()
+    if not raw_calls:
+        return ()
+    if len(raw_calls) != len(executed_calls):
+        raise ValueError("native research batch must execute every provider call")
+    seen_ids = {call.call_id for exchange in previous_exchanges for call in exchange.calls}
+    calls = []
+    for raw, executed in zip(raw_calls, executed_calls, strict=True):
+        function = raw.get("function") or {}
+        arguments = function.get("arguments")
+        if isinstance(arguments, Mapping):
+            arguments = json.dumps(dict(arguments), ensure_ascii=False, separators=(",", ":"))
+        call = NativeToolCall(raw.get("id"), function.get("name"), arguments)
+        if call.call_id in seen_ids:
+            raise ValueError("native research history has duplicate provider IDs")
+        if call.call_id != executed.get("call_id") or call.name != executed.get("tool"):
+            raise ValueError("native research execution belongs to another call")
+        executed_args = executed.get("args") or {}
+        if any(executed_args.get(key) != value for key, value in json.loads(call.arguments).items()):
+            raise ValueError("native research execution changes provider arguments")
+        seen_ids.add(call.call_id)
+        calls.append(call)
+    return tuple(calls)
+
+
+def native_research_exchange(
+    calls: Sequence[NativeToolCall], payloads: Sequence[Mapping[str, Any]], *, assistant_content: str,
+) -> NativeToolExchange:
+    """Replay whole safe result objects in matching tool roles, without body copies."""
+    if len(calls) != len(payloads):
+        raise ValueError("native research batch needs exactly one result per call")
+    return NativeToolExchange(
+        calls=tuple(calls),
+        replies=tuple(NativeToolReply(call.call_id, call.name, json.dumps(
+            dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
+        )) for call, payload in zip(calls, payloads, strict=True)),
+        assistant_content=assistant_content,
+    )
 
 
 def tool_selector_request_payload(
@@ -7618,6 +7666,8 @@ async def _execute_chat_evidence_application(
                     raise last_err
 
                 tool_results_for_model: list[dict[str, Any]] = []
+                research_native_exchanges: list[NativeToolExchange] = []
+                research_legacy_results: list[dict[str, Any]] = []
                 workbook_chat_meta: dict[str, Any] = {}
                 tool_context = ""
                 model_rag_query_hits: list[tuple[str, Sequence[Any]]] = []
@@ -8077,12 +8127,14 @@ async def _execute_chat_evidence_application(
                         research_deadline = time.monotonic() + research_deadline_seconds
                         research_round = 0
                         calls_remaining = max_calls
+                        unexecuted_native_call_count = 0
                         stop_reason = "deadline"
+                        research_legacy_results = list(tool_results_for_model)
                         while time.monotonic() < research_deadline and calls_remaining > 0:
                             research_round += 1
                             prior_results = [
                                 _compact_tool_result_for_prompt(item, max_chars=2400)
-                                for item in tool_results_for_model[-max_calls:]
+                                for item in research_legacy_results[-max_calls:]
                             ]
                             tool_call_instruction = (
                                 "Вызывай предоставленные инструменты напрямую. "
@@ -8147,6 +8199,8 @@ async def _execute_chat_evidence_application(
                                 evidence=selector_evidence,
                                 source_map=selector_source_map,
                                 tool_exchange=prior_results,
+                                native_tools=native_tools if canonical_execution_mode is CanonicalRouteMode.ACTIVE else (),
+                                native_exchanges=research_native_exchanges,
                             )
                             retrieval_trace["context_governor"]["calls"].append(
                                 context_packet_trace(selector_packet, purpose="tool_decision")
@@ -8204,6 +8258,28 @@ async def _execute_chat_evidence_application(
                                 retrieval_trace["canonical_shadow"] = shadow_trace
                                 canonical_shadow_recorded = True
                             calls = list(proposed_calls[:calls_remaining])
+                            native_response = (
+                                active_model_result.response
+                                if canonical_execution_mode is CanonicalRouteMode.ACTIVE and active_model_result is not None
+                                else None
+                            )
+                            if native_response is not None and len(native_response.tool_calls) > calls_remaining:
+                                # A native assistant batch and all matching replies
+                                # are indivisible. Retain completed exchanges but
+                                # execute none of a batch that exceeds the budget.
+                                unexecuted_native_call_count = len(native_response.tool_calls)
+                                active_pending_tool_calls += unexecuted_native_call_count
+                                research_rounds.append({
+                                    "round": research_round, "proposed": unexecuted_native_call_count,
+                                    "executed": 0, "unexecuted": unexecuted_native_call_count,
+                                    "reason": "calls_budget",
+                                })
+                                stop_reason = "calls_budget"
+                                break
+                            native_calls = native_research_call_batch(
+                                native_response, calls, research_native_exchanges,
+                            )
+                            native_payloads: list[dict[str, Any]] = []
                             research_rounds.append(
                                 {"round": research_round, "proposed": len(proposed_calls), "executed": len(calls)}
                             )
@@ -8336,9 +8412,12 @@ async def _execute_chat_evidence_application(
                                 selected_calls.append(call)
                                 calls_remaining -= 1
                                 safe_payload = safe_workbook_history_projection(payload)
-                                tool_results_for_model.append(
-                                    safe_payload if safe_payload else payload
-                                )
+                                visible_payload = safe_payload if safe_payload else payload
+                                tool_results_for_model.append(visible_payload)
+                                if native_calls:
+                                    native_payloads.append(visible_payload)
+                                else:
+                                    research_legacy_results.append(visible_payload)
                                 answer_source_map = _merge_web_source_map(
                                     answer_source_map,
                                     tool_results_for_model,
@@ -8370,7 +8449,13 @@ async def _execute_chat_evidence_application(
                                             )
                                     workbook_chat_meta = harvested
                                     stop_reason = "workbook_complete"
-                                    break
+                                    if not native_calls:
+                                        break
+                            if native_calls:
+                                research_native_exchanges.append(native_research_exchange(
+                                    native_calls, native_payloads,
+                                    assistant_content=native_response.text,
+                                ))
                             if workbook_chat_meta:
                                 break
                             if calls_remaining <= 0:
@@ -8420,6 +8505,8 @@ async def _execute_chat_evidence_application(
                             "max_calls_per_model_response": max_calls,
                             "max_calls_total": max_calls,
                             "calls_remaining": calls_remaining,
+                            **({"unexecuted_native_call_count": unexecuted_native_call_count}
+                               if unexecuted_native_call_count else {}),
                             "native_tool_schemas": bool(native_tools),
                             "web_research": web_research_trace,
                         }
@@ -10640,7 +10727,7 @@ async def _execute_chat_evidence_application(
                         if model_driven_retrieval
                         else [
                             _compact_tool_result_for_prompt(item, max_chars=2400)
-                            for item in tool_results_for_model
+                            for item in (research_legacy_results if research_native_exchanges else tool_results_for_model)
                         ]
                     )
                     answer_evidence = (
@@ -10666,6 +10753,7 @@ async def _execute_chat_evidence_application(
                             required_evidence=answer_evidence if model_driven_retrieval else (),
                             source_map=(() if model_driven_retrieval else answer_source_map),
                             tool_exchange=answer_tool_exchange,
+                            native_exchanges=research_native_exchanges,
                             dialogue=[session_block] if session_block else [],
                         )
                     except ContextRequiredSectionOverflow as context_error:
@@ -10834,6 +10922,7 @@ async def _execute_chat_evidence_application(
                                     () if model_driven_retrieval else answer_source_map
                                 ),
                                 tool_exchange=answer_tool_exchange,
+                                native_exchanges=research_native_exchanges,
                                 dialogue=[session_block] if session_block else [],
                             )
                         except ContextRequiredSectionOverflow as context_error:

@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1074 |
-| Строк Python | 376984 |
+| Python-файлов под git | 1076 |
+| Строк Python | 377710 |
 | PRODUCT_REACHABLE | 370 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 692 |
+| TEST_OR_TOOL_ONLY | 694 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 340 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 12387 | 38 |
+| proxy/services/chat_evidence_application_service.py | 12476 | 40 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7792 | 7 |
 | proxy/routers/chat.py | 4717 | 45 |
@@ -58,7 +58,7 @@
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
-| proxy/services/tool_harness_service.py | 1408 | 12 |
+| proxy/services/tool_harness_service.py | 1408 | 13 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/attachment_source_catalog_service.py | 1209 | 18 |

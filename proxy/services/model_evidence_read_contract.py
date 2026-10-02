@@ -10,8 +10,9 @@ def model_evidence_read_tool_schemas() -> list[dict[str, Any]]:
     definitions = (
         ("search_sources", "Search norms or explicitly selected documents. The query is executed verbatim.",
          {"q": {"type": "string"}, "target": {"type": "string", "enum": ["norms", "documents"]}}, ["q"]),
-        ("read_norm_card", "Read all resources and consumption of one previously shown exact norm card.",
-         {"norm_key": {"type": "string"}, "norm_code": {"type": "string"}}, []),
+        ("read_norm_card", "Read all resources and consumption of one previously shown exact norm card. Use literal evidence_ref alone, or norm_key/norm_code.",
+         {"evidence_ref": {"type": "string", "description": "Exact admitted inventory ref; use alone."},
+          "norm_key": {"type": "string"}, "norm_code": {"type": "string"}}, []),
         ("search_pricebook_resources", "Search resource candidates in the application's bound region/quarter pricebook; this does not choose applicability.",
          {"q": {"type": "string"}}, ["q"]),
         ("read_resource_price", "Read price, unit and origin of one literal code in the bound pricebook.",
@@ -31,12 +32,14 @@ MODEL_EVIDENCE_READ_INSTRUCTION = (
     "До итогового ответа проверь выбранную карточку по показанным условиям и составу. "
     "Индекс/указатель не является полной карточкой. Если показанного содержания "
     "не хватает для сравнения или определения расхода, вызови read_norm_card "
-    "с буквальным norm_key или norm_code уже показанной карточки. Для подбора поставки "
+    "с буквальным evidence_ref уже показанного указателя нормы отдельно, без norm_key/norm_code; "
+    "либо с буквальным norm_key или norm_code уже показанной карточки. Для подбора поставки "
     "используй search_pricebook_resources, для цены выбранного кода — read_resource_price. "
     "Книга региона и периода закреплена приложением, сам другую не выбирай. "
     "Для коммерческого предложения или другого документа в выбранном датасете используй "
     "search_sources с target=documents и read_source. Нормы ищутся с target=norms. "
     "Для строки текущего вложения используй read_source с source_row — точным адресом показанного каталога. "
+    "Указатель нормы Qx.Hy передавай в read_norm_card.evidence_ref, а не в read_source.source_row. "
     "Можно вызвать несколько независимых чтений одновременно. Чтения выполняются "
     "в твоём текущем ходе до итоговых строк; при достаточном уже показанном содержании "
     "повторное чтение не требуется. Используй вызов инструмента, а не описание вызова "

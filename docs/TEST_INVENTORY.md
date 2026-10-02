@@ -1,5 +1,14 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Candidate873 adds mandatory test_chat_native_research_exchange.py (actual ordinary
+chat rounds/final, literal native protocol, invalid IDs/args, physical overflow,
+legacy unchanged) and test_model_norm_evidence_ref_reads.py (actual admission,
+exclusive refs, prepared/unknown/ambiguous/source-version negatives, delivery).
+Mixed workbook/read native batch covers first, last and prior-round order through
+the actual application and Broker, with all literal calls and real replies retained.
+Both are generic synthetic regression fixtures, not real engineering acceptance.
+Installed872 B0/B1 professional FAILED; answer8К trial reverted, live873pending.
+
 Candidate872 — UTF-8 Windows prepare fixture, literal shown-code navigation и
 lossless unread pointer-field aliases. `test_model_norm_pointer_navigation.py`:
 2 RED / 6 control pass → 8 GREEN; admitted literal siblings/aliases/source/edition/

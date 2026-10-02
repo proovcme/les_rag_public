@@ -1,5 +1,27 @@
 # ALGO-tool-harness — controlled tools for LES
 
+## Candidate873: exact literal native replay and norm reference reads
+
+Ordinary Agent calls retain provider IDs, literal JSON arguments and assistant
+content. Each safe result is replayed as its matching tool reply through the
+ContextGovernor in later rounds and final/fallback answer; it is not copied
+again as ordinary user JSON. Queries and professional decisions remain model-owned.
+Parallel calls retain separate IDs; invalid/duplicate IDs or mismatched execution
+cannot become a valid history. Existing budgets/deadlines remain unchanged.
+The full native batch finishes through the ordinary Broker before workbook_complete.
+A workbook call does not discard subsequent reads or previous replies; the legacy
+early break remains unchanged. Actual application regression covers workbook first,
+last and after a prior native round.
+
+Existing read_norm_card adds exclusive evidence_ref for one actually shown norm
+alias. It resolves an immutable exact pointer, never a candidate search or norm
+selection. Unshown/prepared/ambiguous aliases and known source-version mismatches
+fail closed. An erroneous attachment source_row matching that same norm alias
+returns only diagnostic trace, not a body. Exact card delivery still needs actual
+Governor admission. Tests: test_chat_native_research_exchange.py and
+test_model_norm_evidence_ref_reads.py; installed live873 remains pending.
+Installed872 professional acceptance FAILED (no XLSX); offline green is not readiness.
+
 ## Model-owned research loop (0.30.1 / build 635)
 
 С build 839 карточка также предъявляет все exact варианты НР/СП для своего

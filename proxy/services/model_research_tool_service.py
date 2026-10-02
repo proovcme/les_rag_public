@@ -12,7 +12,9 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from proxy.services import nr_sp_service
 from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog
-from proxy.services.model_rag_grouped_evidence_service import card_delivery_facts, normative_card_identity
+from proxy.services.model_rag_grouped_evidence_service import (
+    EvidenceCard, card_delivery_facts, inventory_pointer, normative_card_identity,
+)
 
 
 @dataclass(frozen=True)
@@ -170,6 +172,7 @@ class ModelResearchToolService:
         self._expected_attachment_sha256 = expected_attachment_sha256
         self._shown_norm_cards: list[dict[str, str]] = []
         self._shown_norm_navigation: list[dict[str, Any]] = []
+        self._shown_norm_refs: list[dict[str, Any]] = []
         self._shown_documents: dict[str, tuple[str, str]] = {}
         self.set_price_basis(price_basis or {})
 
@@ -240,11 +243,38 @@ class ModelResearchToolService:
                 navigation = self._shown_navigation_pointer(raw, meta, pointer)
                 if navigation is not None and navigation not in self._shown_norm_navigation:
                     self._shown_norm_navigation.append(navigation)
+                if (navigation is not None and self._admitted_norm_reference(raw, meta, navigation)
+                        and navigation not in self._shown_norm_refs):
+                    self._shown_norm_refs.append(navigation)
             dataset = str(meta.get("dataset_id") or raw.get("dataset_id") or "").strip()
             doc_id = str(meta.get("doc_id") or raw.get("doc_id") or "").strip()
             doc_name = str(raw.get("doc_name") or meta.get("doc_name") or "").strip()
             if dataset in self._dataset_ids and doc_id and self._document_allowed(doc_name):
                 self._shown_documents[doc_id] = (dataset, doc_name)
+
+    @staticmethod
+    def _admitted_norm_reference(raw, meta, navigation) -> bool:
+        """Explicit references require delivery and a consistent literal view."""
+        if (meta.get("model_inventory_delivery_status") != "delivered"
+                and meta.get("model_delivery_status") != "delivered"):
+            return False
+        ref = meta.get("model_evidence_ref", raw.get("model_evidence_ref"))
+        if not isinstance(ref, str) or not ref or navigation["evidence_ref"] != ref:
+            return False
+        view = meta.get("model_inventory_view")
+        if not view and meta.get("body_status") == "deferred_capacity":
+            view = raw.get("content")
+        if not view:
+            return (meta.get("model_delivery_status") == "delivered"
+                    and meta.get("body_status") != "deferred_capacity")
+        try:
+            displayed = json.loads(view) if isinstance(view, str) else None
+        except ValueError:
+            return False
+        expected = json.loads(inventory_pointer(EvidenceCard(ref, "", "", "", meta)))
+        return (isinstance(displayed, list) and len(displayed) >= 7
+                and displayed[0] == ref and displayed[1] in ("full", "deferred_capacity")
+                and displayed[2:4] == expected[2:4] and displayed[6] == expected[6])
 
     @staticmethod
     def _missing(tool: str, message: str, *, status: str = "missing") -> ModelResearchToolResult:
@@ -255,6 +285,18 @@ class ModelResearchToolService:
         })
 
     async def _read_norm_card(self, args: Mapping[str, Any]) -> ModelResearchToolResult:
+        reference = "evidence_ref" in args
+        if reference:
+            if set(args) != {"evidence_ref"}:
+                return self._missing("read_norm_card", "evidence_ref must be used alone", status="conflict")
+            ref = args["evidence_ref"]
+            if not isinstance(ref, str) or not ref:
+                return self._missing("read_norm_card", "evidence_ref must be a nonempty literal string")
+            pointers = [row for row in self._shown_norm_refs if row["evidence_ref"] == ref]
+            if len(pointers) != 1:
+                return self._missing("read_norm_card", "evidence_ref must identify one admitted norm pointer",
+                                     status="conflict" if pointers else "missing")
+            return await self._read_norm_pointer(pointers[0], args, verify_source=True)
         for field in ("norm_key", "norm_code"):
             if field in args and (not isinstance(args[field], str) or not args[field].strip()):
                 return self._missing("read_norm_card", f"{field} must be a nonempty string")
@@ -273,7 +315,9 @@ class ModelResearchToolService:
             if options:
                 missing.payload["trace"]["previously_shown_exact_options"] = options
             return missing
-        pointer = pointers[0]
+        return await self._read_norm_pointer(pointers[0], args)
+
+    async def _read_norm_pointer(self, pointer, args, *, verify_source=False) -> ModelResearchToolResult:
         reader = self._norm_card_reader
         if reader is None:
             from proxy.smeta_core.norm_browser import read_norm_card_exact
@@ -288,6 +332,10 @@ class ModelResearchToolService:
             pointer["norm_key"] and str(card.get("norm_key") or "") != pointer["norm_key"]
         ):
             return self._missing("read_norm_card", "reader returned a different norm pointer", status="conflict")
+        if verify_source and any(card.get(name) != pointer[name] for name in (
+            "norm_key", "norm_code", "source_ref", "source_sha256", "edition", "base_type",
+        ) if name in pointer):
+            return self._missing("read_norm_card", "reader returned a different immutable norm pointer", status="conflict")
         card = {**card, "nr_sp_candidates": nr_sp_service.model_candidates(code=pointer["norm_code"])}
         content = _full_norm_card_content(card)
         card_meta = {
@@ -406,7 +454,14 @@ class ModelResearchToolService:
         tool = str(call.get("tool") or "")
         args = dict(call.get("args") or {})
         if tool == "read_source" and "source_row" in args:
-            return self._read_attachment_source(args)
+            result = self._read_attachment_source(args)
+            if result.payload["status"] != "ok" and set(args) == {"source_row"}:
+                pointers = [row for row in self._shown_norm_refs if row["evidence_ref"] == args["source_row"]]
+                if len(pointers) == 1:
+                    result.payload["trace"]["previously_shown_norm_read"] = {
+                        "tool": "read_norm_card", "args": {"evidence_ref": pointers[0]["evidence_ref"]},
+                    }
+            return result
         if tool == "read_norm_card":
             return await self._read_norm_card(args)
         if tool in {"search_pricebook_resources", "read_resource_price"}:

@@ -3023,6 +3023,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     monkeypatch,
     tmp_path,
     scenario,
+    application_setup=None,
 ) -> None:
     selector_overflow = scenario == "selector_overflow"
     cloud_retry = scenario in {"cloud_retry", "cloud_retry_output_budgets"}
@@ -3898,6 +3899,9 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         token_sink=(lambda event: _async_append(progress_events, event)) if active_workbook else None,
         version_stamp=lambda: {},
     )
+
+    if application_setup is not None:
+        return await application_setup(request, runtime, boundary)
 
     if selector_overflow:
         with pytest.raises(service.HTTPException) as error:

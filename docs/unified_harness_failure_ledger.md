@@ -1,5 +1,17 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-02 — installed872: answer truncation and malformed exact readers
+
+Fresh same-identity BAP controls:no overflow, neither produced XLSX. B0length at
+8Kanswer limit (trial restored to16K); B1 paused0accepted/20remaining after
+7searches+7malformed readers.26source locators preserved across packet scopes;
+source loss not proven. Model's partial norm applicability/citation mistakes remain
+professional failures. Independent facts:live_872/expert_audit/pair_expert_summary_v1.json.
+Ordinary smoke alsoFAILED:180s timeout; history704 finished193.105s with42webhits
+and5identical queries. Native assistant/tool history was absent in following rounds.
+Candidate873 adds literal protocol replay and exclusive admitted norm evidence_ref
+reads. Offline/live gates pending; neither fix licenses a customer-ready verdict.
+
 ## 2026-10-02 — installed871: bounded native continuation still has capacity failure
 
 Public comparative identity byte-equal. B0 331.73s, seven read frames,
