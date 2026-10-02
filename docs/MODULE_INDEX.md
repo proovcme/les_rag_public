@@ -1,12 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Кандидат876(0.31.148), установлен875(`cde0a14c`); ready НЕ подтверждено.**
-> Immutable connection `chat_options` управляют лимитом ответа, температурой
-> и явным reasoning protocol через общий probe/inference renderer. GUI/API
-> показывают requested/observed отдельно; default `{}` сохраняет старые ревизии.
-> Focused465 passed; canonical876/install/live pending. Installed875 technical
-> smoke/repack прошли; новые профессиональные прогоны пока не приняты.
-> Детали текущего состояния и ограничения — RELEASE_LEDGER, раздел876.
+> **Кандидат877(0.31.149), установлен876(`8653963c`); ready НЕ подтверждено.**
+> `core/chat-evidence`, doc↔candidate-code ✅: query-контекст sheet-pass получает
+> исходную source map + refs решений текущего пакета. Карта прошлого answer-пакета
+> больше не переносится в новую query. Raw evidence/решения/XLSX сохраняются.
+> ALGO-context-memory описывает границу; focused88 passed, canonical877:3175 passed,
+> 20 existing skipped; verify/architecture/docs/assets exit0. Install/live877 pending.
+> Installed876: canonical3174 passed; smoke9PASS/1WARN; Alibaba B0/B1 дали XLSX
+> за103,22/170,67s, но профессиональная приёмка FAILED (B1:1 complete position).
+> FreeToken восстановлен; новых cloud calls после предупреждения о квоте нет.
+> Детали и точные receipts — RELEASE_LEDGER, раздел877.
 >
 > Следующая запись875 сохранена как история до установки.
 

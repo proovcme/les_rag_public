@@ -1,5 +1,45 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.149 / 877; установлен 0.31.148 / 876
+(`8653963c2b5c72e6ca786e2ff9edcba2fb625411`). Готовность заказчику НЕ подтверждена.**
+
+877 исправляет измеренный перенос source map прошлого answer-пакета в query
+нового пакета. Сохраняется исходная selected-scope map плюс refs прежних решений
+текущего пакета; поиск, инженерные решения, durable evidence и XLSX не меняются.
+Причинный regression до исправления RED; после focused88 passed(17,51s).
+Isolated canonical877:3175 passed /20 existing skipped /5 warnings,219,21s
+(wrapper220,75s). Version/compile/collect/architecture/map/docs/assets/metadata
+exit0; `artifacts/gates_877/`. Изолированный checkout содержит только owned diff,
+import location и hashes сверены; параллельные UI-правки сохранены отдельно.
+Install/live877 pending; экономия провайдерских токенов ещё не измерена.
+Сохранённый876 B1 trace:331489/539864 (61,4%) оценённых input tokens — повторные
+query maps; это консервативный Governor estimate, не счёт Alibaba.
+Receipt: `artifacts/gates_877/context_cost_audit.json`. Новых cloud calls после
+сообщения владельца об остатке менее половины бесплатной квоты не выполнялось.
+
+Installed876: 19 owned files, exact SHA/stamp verified;
+`artifacts/live_876/installed_patch_hashes.json`, rollback
+`artifacts/rollback_875_to_876/manifest.json`. Native EXE5.1.813 сохранён.
+Native RRF smoke exit0(1,17s); basic smoke exit0:9PASS/1WARN/0FAIL(167,75s).
+Последующая public diag: RAM pressure и отсутствие проверяемых ответов Т.О.С.К.А.;
+других warning/error нет (`artifacts/live_876/diagnostic_after_cloud.json`).
+Alibaba r3 probe: models/chat/stream/tools/structured HTTP200,5,17s.
+
+Свежий installed876 Alibaba Qwen3.8-Max comparative B0/B1, один PDF/запрос/профиль,
+явный `enable_thinking=false`, fallback нет:103,22s/170,67s, оба XLSX скачаны и
+SHA сверены. B0:17work+2material+4header, confirmed0; B1:18work+1material+1header,
+confirmed35128,65, preliminary583180,97; complete position только PDF!R23.
+Все19 реальных исходных позиций B1 учтены; price basis SPbQ3 exact сохранён.
+Оба priced_partial; model choice содержит спорные аналоги/пропуски. Полные карточки
+через native reads не запрошены (0 calls), показаны previews/inventory.
+Профессиональная приёмка FAILED; это не предел способности модели с thinking=true.
+Receipts/final/jobs/XLSX: `artifacts/live_876/bap_alibaba_baseline/` и
+`artifacts/live_876/bap_alibaba_candidate/`. Роль ANSWER возвращена FreeToken,
+временные cloud consent/P2 scope возвращены исходным значениям:
+`artifacts/live_876/alibaba_assignment.json`, `cloud_scope_prep.json`.
+
+### Историческая запись кандидата876 перед установкой
+
 **Кандидат 0.31.148 / 876; установлен 0.31.147 / 875
 (`cde0a14c0c2a27df38876d1d84956f78e7c7515a`). Готовность заказчику НЕ подтверждена.**
 876 добавляет явные Chat Completions параметры immutable подключения: поле

@@ -35,6 +35,21 @@ Prompt dumps не сохраняются. `dataset_ids=None` и `[]` имеют 
 
 ## Единый ContextGovernor
 
+В кандидате877 sheet-pass query generation сохраняет исходную карту выбранных
+источников до обработки пакетов и добавляет ссылки только из решений текущего
+пакета (`model_rag_prior_page_context`). Изменяемая карта показа предыдущего
+answer-пакета в новый query prompt не переносится. Это исправляет утечку контекста
+между пакетами, не меняя запросов/решений модели, raw evidence, durable cache,
+answer-контекста и упаковки. Regression проходит через настоящий chat-service,
+две группы строк, native reads и XLSX: новая query-карта пуста при отсутствии
+исходной карты/прежних решений этого пакета, все четыре решения и их bindings
+сохранены, сумма fixture прежняя. Focused88/canonical3175 passed;
+installed live877 pending.
+
+Основание — сохранённый installed876 B1 trace:331489 из539864 оценённых входных
+токенов относились к повторным query SOURCE_MAP (61,4%). Это оценки Governor,
+не биллинг провайдера и не уже измеренная экономия кандидата877.
+
 Канонический кандидат больше не обрезает prompt независимыми строковыми лимитами.
 Все производители отдают типизированные объекты девяти видов: profile prefix,
 tool shortlist, request, evidence, source map, tool exchange, checkpoint,

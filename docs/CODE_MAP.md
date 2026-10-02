@@ -1,13 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
-> **876, doc↔candidate-code ✅; установлен875 `cde0a14c`:**
-> `ChatOptions` задаёт один renderer для capability probe и inference;
-> immutable registry хранит `chat_options_json` с backward-compatible `{}`.
-> Resolver передаёт ограничения и явный reasoning protocol в execution preset;
-> GUI/API различают операторскую декларацию и наблюдаемую ёмкость.
-> Qwen `enable_thinking` — явный top-level boolean, без provider-name эвристик.
-> Focused465 passed; canonical876/install/live pending. Installed875 technical
-> smoke/repack прошли; профессиональная готовность ещё не подтверждена.
+> **877, doc↔candidate-code ✅; установлен876 `8653963c`:**
+> В `chat_evidence_application_service` sheet_initial_source_map фиксируется
+> до sheet-pass; query Governor добавляет только prior_page_chunks текущего
+> пакета. Обновляемый selector_source_map остаётся картой answer-показа.
+> Две группы source rows/native reads/XLSX проверены regression-тестом;
+> focused88 passed; canonical877:3175 passed, install/live pending. Installed876 cloud B0/B1
+> технически завершились, профессиональная приёмка FAILED.
 >
 > Следующая запись875 сохранена как история до установки.
 

@@ -8753,6 +8753,11 @@ async def _execute_chat_evidence_application(
                             }
                         )
 
+                    # The answer display map changes after every packet. Query
+                    # generation must retain its original scope plus evidence
+                    # cited by this packet, not inherit another packet's map.
+                    sheet_initial_source_map = list(selector_source_map)
+
                     async def _sheet_pass_llm(chat_body, *, purpose: str = "sheet_pass_answer",
                                               inference_preset: ModelExecutionPreset | None = None):
                         nonlocal llm_model
@@ -9374,7 +9379,8 @@ async def _execute_chat_evidence_application(
                                                 registered=workspace_memory_registered,
                                             ),
                                             required_evidence=pass_evidence,
-                                            source_map=selector_source_map,
+                                            source_map=[*sheet_initial_source_map,
+                                                        *_model_rag_source_map(prior_page_chunks)],
                                             tool_exchange=(),
                                         )
                                         retrieval_trace["context_governor"]["calls"].append(

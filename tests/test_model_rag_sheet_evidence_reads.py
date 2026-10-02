@@ -732,6 +732,30 @@ async def test_terminal_packets_continue_only_unseen_rows_and_keep_independent_e
 
 
 @pytest.mark.asyncio
+async def test_fresh_packet_query_does_not_inherit_previous_packets_display_map(tmp_path, monkeypatch):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35,
+                           group_char_budget=7000, packet_count=2)
+    trace = run.result["retrieval_trace"]
+    queries = [call for call in trace["context_governor"]["calls"]
+               if call["purpose"] == "model_rag_sheet_queries"]
+    assert len(queries) == 2
+    # Query generation sees the current source packet, but not the last
+    # packet's presentation map. Exact evidence stays in the job and XLSX.
+    assert not any(section["kind"] == "source_map" and section["items"]
+                   for section in queries[1]["sections"])
+    assert "source.xlsx" in str(run.requests[4].messages)
+    assert all(locator in str(run.requests[4].messages) for locator in ("S!R4", "S!R5"))
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    job = WorkbookResearchJobService().get(trace["workbook_research_job"]["job_id"])
+    assert job["status"] == "complete" and job["evidence"]
+    assert set(run.declared_queries) <= set(job["query_cache"])
+    rows = run.executions[0][0]["args"]["decisions"]
+    assert [row["source_row"] for row in rows] == ["S!R2", "S!R3", "S!R4", "S!R5"]
+    assert all(row["evidence_bindings"] for row in rows)
+    assert run.executions[0][1]["confirmed_amount"] == 3600
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("packet_count,all_malformed", [(1, False), (2, False), (1, True), (2, True)])
 async def test_malformed_packet_keeps_raw_pending_and_advances_only_unseen_source_rows(tmp_path, monkeypatch, packet_count, all_malformed):
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35,
