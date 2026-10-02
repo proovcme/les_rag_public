@@ -145,8 +145,8 @@ class OpenAICompatibleTransport:
 
     @staticmethod
     def _output_field(connection: ResolvedModelConnection) -> str:
-        return connection.capability_snapshot.transport_options.get(
-            "max_output_field", "max_tokens"
+        return connection.chat_options.output_field(
+            connection.capability_snapshot.transport_options.get("max_output_field", "max_tokens")
         )
 
     def _chat_body(
@@ -167,10 +167,12 @@ class OpenAICompatibleTransport:
         body: dict[str, Any] = {
             "model": connection.model_id,
             "messages": system_messages + conversation,
-            self._output_field(connection): request.max_output_tokens,
+            **connection.chat_options.parameters(
+                max_output_tokens=request.max_output_tokens, temperature=request.temperature,
+                reasoning_enabled=request.reasoning_enabled, legacy_field=self._output_field(connection),
+                include_reasoning=not provider_is_local(connection.extension_type),
+            ),
         }
-        if request.temperature is not None:
-            body["temperature"] = request.temperature
         if request.tools:
             self._require(connection, CapabilityName.TOOLS)
             body["tools"] = [dict(item) for item in request.tools]
@@ -201,10 +203,10 @@ class OpenAICompatibleTransport:
         request: InferenceRequest,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {
-            "num_predict": request.max_output_tokens,
+            "num_predict": min(request.max_output_tokens, connection.chat_options.requested_output_tokens or request.max_output_tokens),
             "num_ctx": int(connection.effective_preset.input_token_limit),
         }
-        if request.temperature is not None:
+        if request.temperature is not None and connection.chat_options.temperature_mode == "profile":
             options["temperature"] = request.temperature
         body: dict[str, Any] = {
             "model": connection.model_id,

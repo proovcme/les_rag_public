@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, Mapping
 
 
 class ConnectionLocality(str, Enum):
@@ -46,6 +46,8 @@ class CapabilityState(str, Enum):
 _EVIDENCE_SOURCES = frozenset({"probe", "operator_declaration", "template_default", "unavailable"})
 _MAX_OUTPUT_FIELDS = frozenset({"max_tokens", "max_completion_tokens"})
 _CHAT_PROTOCOLS = frozenset({"openai_chat_v1", "native_chat_v1"})
+_REASONING_MODES = frozenset({"unconfigured", "effort", "enabled", "enable_thinking"})
+_ENABLED_EFFORTS = frozenset({"minimal", "low", "medium", "high", "xhigh", "max"})
 
 
 def _required_text(value: str, field_name: str) -> str:
@@ -59,6 +61,63 @@ def _aware(value: datetime, field_name: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field_name} must be timezone-aware")
     return value
+
+
+@dataclass(frozen=True)
+class ChatOptions:
+    """Operator-declared Chat Completions wire controls, never provider facts."""
+
+    max_output_field: str | None = None
+    reasoning_mode: str = "unconfigured"
+    enabled_effort: str | None = None
+    temperature_mode: str = "profile"
+    requested_output_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_output_field is not None and self.max_output_field not in _MAX_OUTPUT_FIELDS:
+            raise ValueError("unsupported max_output_field")
+        if self.reasoning_mode not in _REASONING_MODES:
+            raise ValueError("unsupported reasoning_mode")
+        if self.temperature_mode not in {"profile", "omit"}:
+            raise ValueError("unsupported temperature_mode")
+        if self.reasoning_mode == "effort":
+            if self.enabled_effort not in _ENABLED_EFFORTS:
+                raise ValueError("effort mode requires declared enabled_effort")
+        elif self.enabled_effort is not None:
+            raise ValueError("enabled_effort requires effort mode")
+        value = self.requested_output_tokens
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+            raise ValueError("requested_output_tokens must be a positive integer")
+
+    @classmethod
+    def from_value(cls, value: ChatOptions | Mapping[str, Any] | None) -> ChatOptions:
+        return value if isinstance(value, cls) else cls(**dict(value or {}))
+
+    def to_dict(self) -> dict[str, Any]:
+        defaults = ChatOptions()
+        return {name: getattr(self, name) for name in self.__dataclass_fields__
+                if getattr(self, name) != getattr(defaults, name)}
+
+    def output_field(self, legacy_field: str = "max_tokens") -> str:
+        return self.max_output_field or legacy_field
+
+    def parameters(
+        self, *, max_output_tokens: int, temperature: float | None,
+        reasoning_enabled: bool, legacy_field: str = "max_tokens",
+        include_reasoning: bool = True,
+    ) -> dict[str, Any]:
+        """One renderer for probe and inference; omission is intentional."""
+        output = min(max_output_tokens, self.requested_output_tokens or max_output_tokens)
+        result: dict[str, Any] = {self.output_field(legacy_field): output}
+        if temperature is not None and self.temperature_mode == "profile":
+            result["temperature"] = temperature
+        if include_reasoning and self.reasoning_mode == "effort":
+            result["reasoning_effort"] = self.enabled_effort if reasoning_enabled else "none"
+        elif include_reasoning and self.reasoning_mode == "enabled":
+            result["reasoning"] = {"enabled": reasoning_enabled}
+        elif include_reasoning and self.reasoning_mode == "enable_thinking":
+            result["enable_thinking"] = reasoning_enabled
+        return result
 
 
 @dataclass(frozen=True)
@@ -77,8 +136,10 @@ class ModelConnectionRevision:
     enabled: bool
     created_at: str
     created_by: str
+    chat_options: ChatOptions = field(default_factory=ChatOptions)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "chat_options", ChatOptions.from_value(self.chat_options))
         for name in ("connection_id", "revision_id", "display_name", "base_url", "model_id", "created_at", "created_by"):
             object.__setattr__(self, name, _required_text(getattr(self, name), name))
         if self.revision_no < 1:

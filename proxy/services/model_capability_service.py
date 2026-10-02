@@ -54,8 +54,10 @@ def _probe_request(
     chat_body: dict[str, object] = {
         "model": model,
         "messages": [{"role": "user", "content": "capability probe"}],
-        "max_tokens": 1,
-        "temperature": 0,
+        **connection.chat_options.parameters(
+            max_output_tokens=1, temperature=0, reasoning_enabled=False,
+            include_reasoning=str(connection.extension_type or "").strip().casefold() != "freetoken",
+        ),
     }
     if str(connection.extension_type or "").strip().casefold() == "freetoken":
         chat_body["chat_template_kwargs"] = {"enable_thinking": False}
@@ -331,7 +333,7 @@ class CapabilityProbe:
                 )
             )
 
-        transport_options = {"max_output_field": "max_tokens"}
+        transport_options = {"max_output_field": connection.chat_options.output_field()}
         chat_observation = next(
             (
                 item
@@ -351,7 +353,8 @@ class CapabilityProbe:
                 "messages": [{"role": "user", "content": "capability probe"}],
                 "think": False,
                 "stream": False,
-                "options": {"num_predict": 1, "temperature": 0},
+                "options": {"num_predict": 1, **({"temperature": 0}
+                            if connection.chat_options.temperature_mode == "profile" else {})},
             }
             try:
                 async with self.client.stream(

@@ -67,6 +67,44 @@ SQLite-источники открываются `mode=ro`: projection не со
 
 ## Обычный чат
 
+Кандидат 876 добавляет к immutable revision подключения `chat_options`:
+выбор `max_tokens | max_completion_tokens`, передачу температуры из профиля либо
+её явное отсутствие, протокол рассуждения и положительный `requested_output_tokens`.
+Миграция добавляет только JSON-колонку с `{}`; прежние revisions, bindings и capability
+snapshots сохраняются. Пустые options наследуют прежнее поле output из snapshot.
+Create/copy/edit проходят существующий API и CAS, назначения ролей не меняются.
+
+Один `ChatOptions.parameters()` формирует параметры capability probe и inference.
+Оператор явно выбирает `unconfigured | effort | enabled | enable_thinking`:
+в первом режиме remote не получает control и фактический reasoning неизвестен;
+`effort` передаёт `reasoning_effort=none` для false и заявленное `enabled_effort` для true;
+`enabled` передаёт nested `reasoning.enabled`, `enable_thinking` — top-level boolean.
+Значение boolean берётся из выбранного профиля; имя модели/провайдера не выбирает протокол.
+Прежние FreeToken `chat_template_kwargs.enable_thinking` и Ollama-native `think`
+сохраняются. Probe не требует `tool_choice`; отклонённый параметр остаётся видимым
+HTTP 400/UNKNOWN и не вызывает скрытый повтор с другими options.
+
+Запрошенные context/output — декларация оператора, не наблюдаемая ёмкость backend.
+Для remote с обоими положительными пределами профиль может задать больший purpose
+reserve внутри этих границ; output-only способен только сузить прежний default.
+Наблюдаемое локальное окно и workflow restrictions остаются жёсткими верхними пределами,
+generation/safety reserves вычитаются один раз. GUI и trace разделяют requested,
+effective, source, наблюдаемое окно и restart=false; базовый резерв подключения
+не подписывается как лимит фактического вызова после применения профиля.
+
+Граница совместимости: транспорт не сохраняет и не возвращает историческое
+`reasoning_content`. Поэтому многоходовое thinking=true у provider, требующего его
+повторной передачи, ещё не подтверждено (например, [Alibaba preserved thinking](https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions)).
+Явный профиль false с режимом `enable_thinking` передаёт false, а не полагается на
+provider default. Offline wire/migration/CAS/GUI/capacity suite: 465 passed;
+architecture guard: exit 0. Облачная live-приёмка и профессиональная готовность
+этими проверками не доказаны. Точки входа — `model_connection_contracts`,
+`model_connection_registry_service`, `model_connection_resolver_service`,
+`model_capability_service`, `openai_compatible_transport_service`,
+`llm_transport_profile_service`, `model_execution_preset_service`,
+`routers/model_connections`, `sovushka/pages/model_connections`;
+регрессии — `test_model_connection_chat_options{,_registry}.py`.
+
 После окончательного выбора provider чат один раз разрешает execution preset.
 Тот же preset ограничивает shortlist/batch и оба фактических обращения модели:
 `tool_decision`, затем `answer`. Для каждого обращения строится отдельный

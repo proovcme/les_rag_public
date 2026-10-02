@@ -1,5 +1,45 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+**Кандидат 0.31.148 / 876; установлен 0.31.147 / 875
+(`cde0a14c0c2a27df38876d1d84956f78e7c7515a`). Готовность заказчику НЕ подтверждена.**
+876 добавляет явные Chat Completions параметры immutable подключения: поле
+лимита ответа, объявленный предел ответа, передачу температуры и протокол
+рассуждения (`reasoning_effort`, `reasoning.enabled`, `enable_thinking`).
+Probe и inference используют общий renderer; по имени модели ничего не угадывается.
+Миграция добавляет nullable-free JSON `{}` и сохраняет прежние ревизии/назначения.
+Операторский лимит контекста/ответа отделён от наблюдаемой ёмкости; физическое
+локальное окно по-прежнему ограничивает запрос. GUI показывает происхождение
+значений и неизвестный режим провайдера при незаданном протоколе.
+Focused 465 passed / 1 existing warning (25.96s), architecture/compileall/docs
+exit0. Isolated canonical876: 3174 passed / 20 existing skipped / 5 warnings,
+216.23s (wrapper217.75s); version/compile/collect/architecture/map/docs/assets/
+metadata exit0. Первая попытка имела1049 setup errors из-за отсутствующей
+`.test-tmp` и53 failures из-за отсутствующей нормативной базы. После создания
+папки и штатного `provision` проверенного baseline bundle, без правок кода или
+тестов, повтор прошёл. Оба замера сохранены в `artifacts/gates_876/`.
+Изолированный checkout исключает четыре параллельных UI-файла; import preflight
+подтвердил исполнение именно из него. Установка ещё pending. Reasoning history
+не реализована: Qwen с `preserve_thinking` не заявлен проверенным в многоходовом
+thinking режиме. Контроль сначала использует явный `enable_thinking=false`.
+
+875 installed technical checks: API stamp и hashes совпали с commit; native RRF
+smoke exit0. Первый basic smoke: 9 PASS / 1 diagnostics FAIL, причина компонента
+не сохранена; последующая диагностика overall=ok. Повторный тот же release smoke
+exit0 за171.73s (`artifacts/live_875/smoke/basic_second.exit.json`); первый замер
+сохранён. Actual UI repack трижды вернул ту же ревизию/SHA/price basis без модели,
+50 сохранённых строк: `artifacts/live_875/sks_saved_repack/`. Это не профессиональная
+приёмка новых норм. Fresh quality gate после провалов874 остаётся открытым.
+
+Alibaba `qwen3.8-max`: пользователь настроил ключ через masked GUI и подтвердил
+Free Quota Only. Штатный probe875 вернул HTTP200 для models/chat за9.86s;
+документы не передавались, роли не менялись. Receipt:
+`artifacts/live_875/alibaba_api_probe.json`. Tools/streaming и качество документов
+этим не доказаны. OpenRouter с этой машины не прошёл сетевой probe; точная причина
+внешнего отказа не установлена. Проверка облачных вложений отдельно требует
+соблюдения действующей P0/P1/P2 политики; guard не ослабляется.
+
+### Историческая запись кандидата875 перед установкой
+
 **Кандидат 0.31.147 / 875; установлен 0.31.146 / 874
 (`c4253e38ea9539eb841e993eb373a42665079c0a`). Готовность заказчику НЕ подтверждена.**
 875 source scopes frozen: saved repack replay сохраняет exact first arguments,

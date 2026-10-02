@@ -2098,7 +2098,7 @@
         "proxy/app.py",
         "tests/test_model_connections_router.py"
       ],
-      "lines": 627,
+      "lines": 658,
       "module": "proxy.routers.model_connections",
       "outbound": [
         "proxy/__init__.py",
@@ -3173,7 +3173,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12700,
+      "lines": 12704,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4824,13 +4824,14 @@
         "tests/test_llm_transport_profile_service.py",
         "tests/test_model_reasoning_control.py"
       ],
-      "lines": 373,
+      "lines": 385,
       "module": "proxy.services.llm_transport_profile_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/services/__init__.py",
         "proxy/services/context_governor_service.py",
         "proxy/services/freetoken_cache_profile_service.py",
+        "proxy/services/model_connection_contracts.py",
         "proxy/services/model_execution_preset_service.py"
       ],
       "path": "proxy/services/llm_transport_profile_service.py",
@@ -5214,7 +5215,7 @@
         "proxy/services/model_connection_resolver_service.py",
         "tests/test_model_capability_service.py"
       ],
-      "lines": 510,
+      "lines": 513,
       "module": "proxy.services.model_capability_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5236,11 +5237,13 @@
         "proxy/services/canonical_promotion_service.py",
         "proxy/services/canonical_route_service.py",
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/llm_transport_profile_service.py",
         "proxy/services/model_capability_service.py",
         "proxy/services/model_connection_registry_service.py",
         "proxy/services/model_connection_resolver_service.py",
         "proxy/services/model_connection_security_service.py",
         "proxy/services/openai_compatible_transport_service.py",
+        "sovushka/pages/model_connections.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_mail_query.py",
         "tests/test_live_workbook_acceptance_contract.py",
@@ -5257,7 +5260,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 175,
+      "lines": 236,
       "module": "proxy.services.model_connection_contracts",
       "outbound": [
         "proxy/__init__.py",
@@ -5281,7 +5284,7 @@
         "tests/test_model_reasoning_control.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 601,
+      "lines": 611,
       "module": "proxy.services.model_connection_registry_service",
       "outbound": [
         "backend/rag_config.py",
@@ -5306,7 +5309,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 346,
+      "lines": 351,
       "module": "proxy.services.model_connection_resolver_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5427,7 +5430,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 442,
+      "lines": 465,
       "module": "proxy.services.model_execution_preset_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5774,7 +5777,7 @@
         "tests/test_workbook_chat_refinement.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 534,
+      "lines": 536,
       "module": "proxy.services.openai_compatible_transport_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8913,9 +8916,10 @@
         "sovushka_ng.py",
         "tests/test_sovushka_model_connections.py"
       ],
-      "lines": 255,
+      "lines": 316,
       "module": "sovushka.pages.model_connections",
       "outbound": [
+        "proxy/services/model_connection_contracts.py",
         "sovushka/__init__.py",
         "sovushka/pages/__init__.py",
         "sovushka/state.py",
@@ -20374,7 +20378,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 700,
     "tracked_python_files": 1082,
-    "tracked_python_lines": 379516
+    "tracked_python_lines": 379728
   },
   "warnings": []
 }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import ipaddress
 from typing import Callable, Mapping
@@ -17,6 +17,7 @@ from proxy.services.model_capability_service import (
 )
 from proxy.services.model_connection_contracts import (
     CapabilityName,
+    ChatOptions,
     CapabilitySnapshot,
     ConnectionLocality,
     ConnectionRole,
@@ -99,6 +100,7 @@ class ResolvedModelConnection:
     capability_snapshot: CapabilitySnapshot
     endpoint: ValidatedEndpoint
     effective_preset: ModelExecutionPreset
+    chat_options: ChatOptions = field(default_factory=ChatOptions)
 
 
 @dataclass(frozen=True)
@@ -315,6 +317,8 @@ class ModelConnectionResolver:
             observed_source=(
                 "capability_snapshot" if observed_context is not None else "unavailable"
             ),
+            chat_options=revision.chat_options,
+            remote=revision.locality is ConnectionLocality.REMOTE,
         )
         return ResolvedModelConnection(
             connection_id=revision.connection_id,
@@ -329,6 +333,7 @@ class ModelConnectionResolver:
             capability_snapshot=snapshot,
             endpoint=endpoint,
             effective_preset=preset,
+            chat_options=revision.chat_options,
         )
 
     def resolve_fallback(

@@ -1,5 +1,16 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **876, doc↔candidate-code ✅; установлен875 `cde0a14c`:**
+> `ChatOptions` задаёт один renderer для capability probe и inference;
+> immutable registry хранит `chat_options_json` с backward-compatible `{}`.
+> Resolver передаёт ограничения и явный reasoning protocol в execution preset;
+> GUI/API различают операторскую декларацию и наблюдаемую ёмкость.
+> Qwen `enable_thinking` — явный top-level boolean, без provider-name эвристик.
+> Focused465 passed; canonical876/install/live pending. Installed875 technical
+> smoke/repack прошли; профессиональная готовность ещё не подтверждена.
+>
+> Следующая запись875 сохранена как история до установки.
+
 > **875, doc↔candidate-code ✅; установлен874 `c4253e38`:**
 > `workbook_repack_replay_arguments` сверяет неизменный server-owned запрос,
 > saved arguments и applied price basis с pinned SHA. `record_packaging` хранит

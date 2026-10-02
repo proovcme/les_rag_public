@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from typing import Any, Mapping
 
 from proxy.services.freetoken_cache_profile_service import (
@@ -14,7 +15,9 @@ from proxy.services.model_execution_preset_service import (
     ModelExecutionPreset,
     is_qwen_35b,
     resolve_execution_preset,
+    apply_output_budget_policy,
 )
+from proxy.services.model_connection_contracts import ChatOptions
 from proxy.services.context_governor_service import (
     ContextCandidate,
     ContextGovernor,
@@ -85,6 +88,8 @@ def resolve_connection_execution_profile(
     restrictions: Mapping[str, Any] | None = None,
     provider: str = "model_connection",
     reasoning_supported: bool = False,
+    chat_options: ChatOptions | Mapping[str, Any] | None = None,
+    remote: bool = False,
 ) -> ModelExecutionPreset:
     """Resolve execution limits from one saved, capability-observed connection."""
     operator = (
@@ -92,7 +97,8 @@ def resolve_connection_execution_profile(
         if requested_context_tokens is not None and requested_context_tokens > 0
         else None
     )
-    return resolve_transport_execution_profile(
+    options = ChatOptions.from_value(chat_options)
+    preset = resolve_transport_execution_profile(
         provider=provider,
         model_id=model_id,
         observed_context_tokens=observed_context_tokens,
@@ -100,8 +106,14 @@ def resolve_connection_execution_profile(
         observed_source=observed_source,
         operator=operator,
         restrictions=restrictions,
-        reasoning_supported=reasoning_supported,
+        reasoning_supported=reasoning_supported or (remote and options.reasoning_mode != "unconfigured"),
     )
+    preset = replace(
+        preset, declared_output_tokens=options.requested_output_tokens,
+        output_capacity_declared=bool(remote and requested_context_tokens and options.requested_output_tokens),
+        reasoning_control_mode=options.reasoning_mode if remote else "legacy",
+    )
+    return apply_output_budget_policy(preset, None)
 
 
 def effective_model_execution_diagnostics() -> dict[str, Any]:

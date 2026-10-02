@@ -48,6 +48,10 @@ class ModelExecutionPreset:
     query_reasoning_requested: bool | None = None
     query_reasoning_enabled: bool | None = None
     query_reasoning_source: str = "inherit_global_reasoning"
+    reasoning_control_mode: str = "legacy"
+    declared_output_tokens: int | None = None
+    output_capacity_declared: bool = False
+    observed_context_tokens: int | None = None
 
     def diagnostics(self, *, requested_input_tokens: int | None = None) -> dict[str, Any]:
         """Return operator-safe requested/effective/source values."""
@@ -66,6 +70,16 @@ class ModelExecutionPreset:
                              else self.query_output_tokens_requested)
         reserve_source = (self.answer_output_tokens_source if self.output_purpose == "answer"
                           else self.query_output_tokens_source)
+        reasoning = {
+            "requested": self.reasoning_requested,
+            "effective": self.reasoning_enabled,
+            "source": self.reasoning_source,
+            "restart_required": False,
+        }
+        query_reasoning = query_reasoning_diagnostics(self)
+        if self.reasoning_control_mode == "unconfigured":
+            for item in (reasoning, query_reasoning):
+                item.update(effective=None, source="connection_chat_options.unconfigured > provider_default_unknown")
         return {
             "model_preset": {
                 "requested": self.model_family,
@@ -78,6 +92,17 @@ class ModelExecutionPreset:
                 "effective": self.input_token_limit,
                 "source": source,
                 "restart_required": False,
+            },
+            "observed_context_tokens": {
+                "requested": None, "effective": self.observed_context_tokens,
+                "source": "observed_backend_capacity" if self.observed_context_tokens is not None else "unavailable",
+                "restart_required": False,
+            },
+            "connection_output_tokens": {
+                "requested": self.declared_output_tokens,
+                "effective": self.declared_output_tokens,
+                "source": "operator_declaration" if self.declared_output_tokens is not None else "unconfigured",
+                "observed": False, "restart_required": False,
             },
             "generation_reserve": {
                 "requested": reserve_requested,
@@ -93,13 +118,8 @@ class ModelExecutionPreset:
                 "source": "workflow_invariants",
                 "restart_required": False,
             },
-            "reasoning": {
-                "requested": self.reasoning_requested,
-                "effective": self.reasoning_enabled,
-                "source": self.reasoning_source,
-                "restart_required": False,
-            },
-            "query_reasoning": query_reasoning_diagnostics(self),
+            "reasoning": reasoning,
+            "query_reasoning": query_reasoning,
         }
 
 
@@ -251,7 +271,7 @@ def resolve_execution_preset(
                 default_generation_reserve_tokens=resolved.generation_reserve_tokens,
                 output_capacity_observed=has_observed_capacity, reasoning_supported=(
             capacity.provider.strip().casefold() == "freetoken" or capacity.reasoning_supported
-        )), operator, restrictions=restrictions
+        ), observed_context_tokens=(int(capacity.context_tokens) if has_observed_capacity else None)), operator, restrictions=restrictions
     )
     return apply_output_budget_policy(resolved, operator)
 
@@ -269,12 +289,15 @@ def validate_output_budget_policy(policy: Mapping[str, Any] | None) -> None:
 def _bounded_output_budget(
     preset: ModelExecutionPreset, *, requested: int | None, default: int, source: str,
 ) -> tuple[int, str]:
-    if requested is None:
+    if requested is None and preset.declared_output_tokens is None:
         return default, source
-    effective = requested
-    if not preset.output_capacity_observed and effective > default:
+    effective = requested if requested is not None else default
+    if not preset.output_capacity_observed and not preset.output_capacity_declared and effective > default:
         effective = default
         source += " > unobserved_capacity_default"
+    if preset.declared_output_tokens is not None:
+        effective = min(effective, preset.declared_output_tokens)
+        source += " > operator_declared_output_bound"
     maximum = (preset.input_token_limit - preset.safety_reserve_tokens
                - MIN_OUTPUT_BUDGET_INPUT_HEADROOM_TOKENS)
     if maximum < 1:

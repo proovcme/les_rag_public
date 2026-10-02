@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат876(0.31.148), установлен875(`cde0a14c`); ready НЕ подтверждено.**
+> Immutable connection `chat_options` управляют лимитом ответа, температурой
+> и явным reasoning protocol через общий probe/inference renderer. GUI/API
+> показывают requested/observed отдельно; default `{}` сохраняет старые ревизии.
+> Focused465 passed; canonical876/install/live pending. Installed875 technical
+> smoke/repack прошли; новые профессиональные прогоны пока не приняты.
+> Детали текущего состояния и ограничения — RELEASE_LEDGER, раздел876.
+>
+> Следующая запись875 сохранена как история до установки.
+
 > **Кандидат875(0.31.147), установлен874(`c4253e38`); professional FAILED.**
 > 875 сохраняет exact repack arguments и pinned pricebook SHA для неизменного
 > бизнес-запроса; replay требует существующие immutable bytes и complete checkpoint.
@@ -1467,6 +1477,21 @@ measurement and browser recovery after the ongoing 856 controls remain pending.
 > role bindings, requested→effective context, capability evidence и guarded
 > create/copy/edit/test/secret/bind/disable actions; mobile contract закреплён
 > `tests/test_sovushka_model_connections.py`.
+> **Candidate 876 — явные Chat Completions options:** immutable revision хранит
+> additive `chat_options` JSON; `{}` сохраняет legacy wire/snapshot, CAS/edit/copy
+> не переназначают роли. `ChatOptions.parameters()` общий для probe/inference:
+> output field, profile/omit temperature, `unconfigured | effort | enabled |
+> enable_thinking`; последний передаёт top-level boolean из профиля, без vendor/model
+> policy. Remote unconfigured показывает actual reasoning неизвестным, локальные
+> FreeToken/Ollama-native boolean сохраняются. Declared context/output отделены от
+> наблюдения; physical local clamp и однократные reserves остаются обязательными.
+> GUI использует существующие поля и отдельно подписывает базовый резерв.
+> [Контракт и thinking-history boundary](ALGO-context-memory.md): исторический
+> `reasoning_content` не replay-ится, многоходовая thinking=true совместимость
+> отдельно не доказана. Новые регрессии — `test_model_connection_chat_options.py` и
+> `test_model_connection_chat_options_registry.py`; focused 465 passed,
+> architecture guard exit 0. Статус док↔код: ✅
+> source/offline; installed/cloud live и профессиональная готовность не заявлены.
 > С 0.30.27 bind роли автоматически probe-ит непроверенную/непригодную точную
 > ревизию и требует подтверждённый `chat_completions` либо `embeddings`.
 > Ollama-native chat выбирается только live capability snapshot и отключает

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictInt, model_validator
 
 from proxy.config import ENV_PATH
 from proxy.security import RequestUser, require_admin, require_user
@@ -21,6 +21,7 @@ from proxy.services.model_connection_contracts import (
     CapabilityName,
     CapabilitySnapshot,
     CapabilityState,
+    ChatOptions,
     ConnectionLocality,
     ConnectionRole,
     ModelConnectionRevision,
@@ -131,6 +132,21 @@ def _secret_ref(connection_id: str) -> str:
     return f"env:LES_MODEL_CONNECTION_{suffix}_API_KEY"
 
 
+class ChatOptionsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_output_field: Literal["max_tokens", "max_completion_tokens"] | None = None
+    reasoning_mode: Literal["unconfigured", "effort", "enabled", "enable_thinking"] = "unconfigured"
+    enabled_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    temperature_mode: Literal["profile", "omit"] = "profile"
+    requested_output_tokens: StrictInt | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_options(self):
+        ChatOptions.from_value(self.model_dump())
+        return self
+
+
 class ConnectionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -141,6 +157,7 @@ class ConnectionCreateRequest(BaseModel):
     requested_context_tokens: int | None = Field(default=None, ge=1)
     extension_type: str | None = Field(default=None, max_length=80)
     secret_value: SecretStr | None = None
+    chat_options: ChatOptionsRequest = Field(default_factory=ChatOptionsRequest)
 
 
 class ConnectionRevisionRequest(BaseModel):
@@ -153,6 +170,7 @@ class ConnectionRevisionRequest(BaseModel):
     locality: ConnectionLocality | None = None
     requested_context_tokens: int | None = Field(default=None, ge=1)
     extension_type: str | None = Field(default=None, max_length=80)
+    chat_options: ChatOptionsRequest = Field(default_factory=ChatOptionsRequest)
 
 
 class DisableRequest(BaseModel):
@@ -214,6 +232,9 @@ class ConnectionAdminPublic(BaseModel):
     created_by: str
     secret_status: str
     capabilities: list[CapabilityPublic]
+    chat_options: dict[str, Any]
+    observed_context_tokens: int | None = None
+    observed_chat_protocol: str | None = None
 
 
 class ConnectionSafePublic(BaseModel):
@@ -225,6 +246,8 @@ class ConnectionSafePublic(BaseModel):
     fallback_used: bool = False
     preset_id: str
     input_token_limit: int
+    chat_options: dict[str, Any]
+    execution_diagnostics: dict[str, Any]
 
 
 class BindingPublic(BaseModel):
@@ -260,6 +283,8 @@ def _admin_projection(
         secret_status = secret_store.status(revision.secret_ref)
     except ModelSecretError:
         secret_status = "invalid_reference"
+    snapshot = registry.latest_capability_snapshot(revision.revision_id)
+    observed_context = (snapshot.transport_options.get("observed_context_tokens") if snapshot else None)
     return ConnectionAdminPublic(
         connection_id=revision.connection_id,
         revision_id=revision.revision_id,
@@ -275,9 +300,10 @@ def _admin_projection(
         created_at=revision.created_at,
         created_by=revision.created_by,
         secret_status=secret_status,
-        capabilities=_capabilities(
-            registry.latest_capability_snapshot(revision.revision_id)
-        ),
+        capabilities=_capabilities(snapshot),
+        chat_options=revision.chat_options.to_dict(),
+        observed_context_tokens=int(observed_context) if observed_context and observed_context.isdecimal() else None,
+        observed_chat_protocol=snapshot.transport_options.get("chat_protocol") if snapshot else None,
     )
 
 
@@ -381,6 +407,7 @@ async def create_connection(
             model_id=req.model_id,
             locality=req.locality,
             requested_context_tokens=req.requested_context_tokens,
+            chat_options=req.chat_options.model_dump(),
             secret_ref=None,
             extension_type=req.extension_type,
             actor=actor,
@@ -612,6 +639,10 @@ async def effective_connections(_user: RequestUser = Depends(require_user)):
                 locality=connection.locality.value,
                 preset_id=connection.effective_preset.preset_id,
                 input_token_limit=connection.effective_preset.input_token_limit,
+                chat_options=connection.chat_options.to_dict(),
+                execution_diagnostics=connection.effective_preset.diagnostics(
+                    requested_input_tokens=connection.requested_context_tokens,
+                ),
             ).model_dump()
         except ModelConnectionResolutionError as error:
             revision = registry.get_revision(binding.connection_revision_id)

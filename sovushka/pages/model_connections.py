@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 
 from nicegui import ui
+from proxy.services.model_connection_contracts import ChatOptions
 
 from sovushka.state import api_get, api_post, api_put, last_api_error_text
 from sovushka.uikit import action_button, panel, section_heading, select_field, status_badge, text_field
@@ -38,6 +39,42 @@ def connection_save_error(raw_error: str) -> str:
     if "DISPLAY_NAME_IN_USE" in str(raw_error or ""):
         return "Такое название уже используется. Укажите другое название подключения."
     return str(raw_error or "Не удалось сохранить подключение")
+
+
+def connection_chat_options_payload(
+    *, max_output_field: str | None, reasoning_mode: str, enabled_effort: str | None,
+    temperature_mode: str, requested_output_tokens: Any,
+) -> dict[str, Any]:
+    """Normalize only the integral number produced by the existing UI control."""
+    value = requested_output_tokens
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    options = ChatOptions(
+        max_output_field=None if max_output_field == "inherit" else max_output_field,
+        reasoning_mode=reasoning_mode, enabled_effort=enabled_effort,
+        temperature_mode=temperature_mode, requested_output_tokens=value,
+    )
+    return options.to_dict()
+
+
+def connection_chat_options_summary(connection: dict[str, Any]) -> str:
+    options = ChatOptions.from_value(connection.get("chat_options"))
+    reasoning = {
+        "unconfigured": "Неизвестно: управление провайдером не задано",
+        "effort": f"По профилю: включено → {options.enabled_effort}, выключено → none",
+        "enabled": "По профилю: переключатель reasoning.enabled",
+        "enable_thinking": "По профилю: переключатель enable_thinking",
+    }[options.reasoning_mode]
+    if (connection.get("extension_type") == "freetoken"
+            or connection.get("observed_chat_protocol") == "native_chat_v1"):
+        reasoning = "Локальный переключатель по профилю; удалённый протокол не применяется"
+    output = options.requested_output_tokens or "автоматически"
+    field = options.max_output_field or "из проверки / max_tokens"
+    temperature = "по профилю" if options.temperature_mode == "profile" else "не передаётся"
+    observed = connection.get("observed_context_tokens") or "Неизвестно"
+    return (f"Лимит ответа: запрошено {output} · Поле: {field} · Рассуждение: {reasoning} · "
+            f"Температура: {temperature} · Наблюдалось окно: {observed} · "
+            "Источник: декларация оператора; наблюдение отдельно · Перезапуск не требуется")
 
 
 def build_model_connections():
@@ -121,6 +158,7 @@ def build_model_connections():
         current = dict(connection or {})
         editing = bool(connection and not copy)
         selected_extension = {"value": current.get("extension_type")}
+        options = ChatOptions.from_value(current.get("chat_options"))
         with ui.dialog() as dialog, ui.card().classes("sov-model-dialog"):
             section_heading("Изменить подключение" if editing else "Новое подключение", "Секрет вводится вслепую и не возвращается из Л.Е.С.")
             template_options = {item["template_id"]: item["display_name"] for item in data["templates"]}
@@ -135,7 +173,17 @@ def build_model_connections():
             endpoint = text_field(label="OpenAI-compatible URL", value=current.get("base_url", ""), classes="w-full")
             model = text_field(label="Модель", value=current.get("model_id", ""), classes="w-full")
             locality = select_field(_LOCALITY, value=current.get("locality", "loopback"), label="Расположение", classes="w-full")
-            context = ui.number("Контекст, токены", value=current.get("requested_context_tokens"), min=1).props("outlined").classes("sov-ui-input w-full")
+            context = ui.number("Запрошенный контекст, токены", value=current.get("requested_context_tokens"), min=1).props("outlined").classes("sov-ui-input w-full")
+            output = ui.number("Лимит ответа, токены", value=options.requested_output_tokens, min=1).props("outlined").classes("sov-ui-input w-full")
+            output_field = select_field({"inherit": "Из проверки / max_tokens", "max_tokens": "max_tokens", "max_completion_tokens": "max_completion_tokens"},
+                                        value=options.max_output_field or "inherit", label="Поле лимита ответа", classes="w-full")
+            reasoning_mode = select_field({"unconfigured": "Не задано: поведение провайдера неизвестно", "effort": "Усилие reasoning_effort", "enabled": "Переключатель reasoning.enabled", "enable_thinking": "Переключатель enable_thinking"},
+                                          value=options.reasoning_mode, label="Рассуждение: протокол", classes="w-full")
+            effort = select_field({"minimal": "Минимальное", "low": "Низкое", "medium": "Среднее", "high": "Высокое", "xhigh": "Очень высокое", "max": "Максимальное"},
+                                  value=options.enabled_effort, label="Усилие при включённом рассуждении", clearable=True, classes="w-full")
+            temperature = select_field({"profile": "Передавать значение профиля", "omit": "Не передавать параметр"},
+                                       value=options.temperature_mode, label="Температура", classes="w-full")
+            ui.label("Лимиты заданы оператором и не доказывают ёмкость провайдера. Локальное наблюдаемое окно ограничивает запрос. Рассуждение включается выбранным профилем; без протокола его фактический режим неизвестен.").classes("sov-ui-section-detail")
             secret_value = text_field(label="Новый ключ", placeholder="Оставьте пустым, если ключ не нужен", classes="w-full").props('type="password"')
 
             def _template_changed(event) -> None:
@@ -152,6 +200,15 @@ def build_model_connections():
 
             async def _save() -> None:
                 payload = {"display_name": name.value or "", "base_url": endpoint.value or "", "model_id": model.value or "", "locality": locality.value or "loopback", "requested_context_tokens": int(context.value) if context.value else None, "extension_type": selected_extension["value"]}
+                try:
+                    payload["chat_options"] = connection_chat_options_payload(
+                        max_output_field=output_field.value, reasoning_mode=reasoning_mode.value,
+                        enabled_effort=effort.value if reasoning_mode.value == "effort" else None,
+                        temperature_mode=temperature.value, requested_output_tokens=output.value,
+                    )
+                except ValueError:
+                    ui.notify("Проверьте положительный целый лимит ответа и усилие для выбранного протокола рассуждения", type="negative")
+                    return
                 if locality.value != "loopback":
                     ok = await ui.run_javascript("confirm(" + repr(f"Сохранить {_LOCALITY.get(locality.value, locality.value)}: {endpoint.value}?") + ")")
                     if not ok: return
@@ -220,6 +277,9 @@ def build_model_connections():
                                 if role == "answer" and effective.get("status") != "blocked":
                                     status_badge("Работает в чате", "ok")
                                 ui.label(f"Действует: {effective.get('input_token_limit', '—')} токенов · Источник: {effective.get('preset_id', '—')}").classes("sov-ui-section-detail")
+                                diagnostics = effective.get("execution_diagnostics") or {}
+                                answer = diagnostics.get("answer_output_tokens") or {}
+                                ui.label(f"Базовый резерв до применения профиля: {answer.get('effective', '—')} · Источник: {answer.get('source', '—')} · Перезапуск не требуется").classes("sov-ui-section-detail")
             connections = data["connections"]
             if not connections:
                 render_feedback_state("empty", detail="Создайте первое подключение модели.")
@@ -235,6 +295,7 @@ def build_model_connections():
                     ui.label(connection.get("base_url") or "").classes("sov-ui-source-chip")
                     requested = connection.get("requested_context_tokens") or "автоматически"
                     ui.label(f"Запрошено: {requested} · Действует: после назначения · Источник: capability/preset · Перезапуск не требуется").classes("sov-ui-section-detail")
+                    ui.label(connection_chat_options_summary(connection)).classes("sov-ui-section-detail")
                     ui.label("Состояние проверки: " + ("; ".join(f"{_CAPS.get(x.get('name'), x.get('name'))}: {x.get('state')} · {x.get('observed_at')}" for x in caps) if caps else "ещё не проверялось")).classes("sov-ui-section-detail")
                     with ui.row().classes("sov-model-actions"):
                         action_button("Проверить", icon="o_fact_check", on_click=lambda _e, c=connection: _test(c), compact=True)

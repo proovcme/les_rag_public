@@ -7328,6 +7328,8 @@ async def _execute_chat_evidence_application(
                 requested_context_tokens=resolved_connection.requested_context_tokens,
                 observed_context_tokens=observed_context_tokens,
                 observed_source=observed_source,
+                chat_options=getattr(resolved_connection, "chat_options", None),
+                remote=getattr(resolved_connection, "locality", None) is ConnectionLocality.REMOTE,
             )
         else:
             execution_preset = resolved_connection.effective_preset
@@ -7346,7 +7348,9 @@ async def _execute_chat_evidence_application(
             "model": resolved_connection.model_id,
         }
     preset_diagnostics = execution_preset.diagnostics(
-        requested_input_tokens=cache_state.get("desired_kv_tokens")
+        requested_input_tokens=(getattr(resolved_connection, "requested_context_tokens", cache_state.get("desired_kv_tokens"))
+                                if canonical_execution_mode is CanonicalRouteMode.ACTIVE and resolved_connection is not None
+                                else cache_state.get("desired_kv_tokens"))
     )
     preset_diagnostics["model_preset"]["requested"] = llm_runtime.model
     retrieval_trace["model_execution_profile"] = preset_diagnostics

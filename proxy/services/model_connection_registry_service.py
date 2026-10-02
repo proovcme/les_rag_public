@@ -41,6 +41,7 @@ _REVISION_FIELDS = frozenset(
         "secret_ref",
         "extension_type",
         "enabled",
+        "chat_options",
     }
 )
 
@@ -85,6 +86,7 @@ class ModelConnectionRegistry:
                 enabled INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
                 created_by TEXT NOT NULL,
+                chat_options_json TEXT NOT NULL DEFAULT '{}',
                 UNIQUE(connection_id, revision_no)
             );
             CREATE TABLE IF NOT EXISTS les_model_connection_heads (
@@ -119,6 +121,10 @@ class ModelConnectionRegistry:
             );
             """
         )
+        conn.execute("BEGIN IMMEDIATE")
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(les_model_connection_revisions)")}
+        if "chat_options_json" not in columns:
+            conn.execute("ALTER TABLE les_model_connection_revisions ADD COLUMN chat_options_json TEXT NOT NULL DEFAULT '{}'")
 
     @staticmethod
     def _revision_from_row(row: sqlite3.Row) -> ModelConnectionRevision:
@@ -137,6 +143,7 @@ class ModelConnectionRegistry:
             enabled=bool(row["enabled"]),
             created_at=row["created_at"],
             created_by=row["created_by"],
+            chat_options=json.loads(row["chat_options_json"]),
         )
 
     @staticmethod
@@ -182,8 +189,8 @@ class ModelConnectionRegistry:
             INSERT INTO les_model_connection_revisions (
                 revision_id,connection_id,revision_no,display_name,protocol,base_url,
                 model_id,locality,requested_context_tokens,secret_ref,extension_type,
-                enabled,created_at,created_by
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                enabled,created_at,created_by,chat_options_json
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 revision.revision_id,
@@ -200,6 +207,7 @@ class ModelConnectionRegistry:
                 int(revision.enabled),
                 revision.created_at,
                 revision.created_by,
+                _json(revision.chat_options.to_dict()),
             ),
         )
 
@@ -231,6 +239,7 @@ class ModelConnectionRegistry:
         secret_ref: str | None,
         extension_type: str | None,
         actor: str,
+        chat_options: dict[str, Any] | None = None,
     ) -> ModelConnectionRevision:
         connection_id = f"conn:{uuid4().hex}"
         revision = ModelConnectionRevision(
@@ -248,6 +257,7 @@ class ModelConnectionRegistry:
             enabled=True,
             created_at=_now(),
             created_by=actor,
+            chat_options=chat_options,
         )
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
