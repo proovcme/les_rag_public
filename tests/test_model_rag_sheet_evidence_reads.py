@@ -57,6 +57,35 @@ def _native(tool, **arguments):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stop_at", [5, 6, 7])
+async def test_budget_stop_after_terminal_packet_delivers_partial_workbook_without_more_inference(tmp_path, monkeypatch, stop_at):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, packet_count=2, budget_stop_at=stop_at)
+    assert len(run.requests) == stop_at
+    assert len(run.executions) == 1
+    trace = run.result["retrieval_trace"]
+    assert trace["tool_loop"]["evidence_read_stop"] == "cloud_token_budget"
+    job = WorkbookResearchJobService().get(trace["workbook_research_job"]["job_id"])
+    assert job["status"] == "paused" and job["phase"] == "cloud_token_budget"
+    assert {r["source_row"] for r in job["accepted_rows"]} == {"S!R2", "S!R3"}
+    assert set(job["remaining"]) == {"S!R4", "S!R5"}
+    assert job["held_packet"]["read_stop"] == "cloud_token_budget"
+    assert job["held_packet"]["cloud_budget_pending"] is True
+    if stop_at in {5, 6}:
+        assert trace["scheduler_gap"]["rows_never_offered"] == 2
+        assert not job["held_packet"].get("model_read_pending")
+    call, result = run.executions[0]
+    assert call["tool"] == "build_lsr_workbook"
+    assert {r["source_row"] for r in call["args"]["decisions"]} == {"S!R2", "S!R3"}
+    assert result["artifact"]["download_url"]
+    assert result["pricing_status"] == "priced_partial"
+    assert result["price_basis"]["actual_book"] == BOOK
+    assert any(issue["code"] == "WORKBOOK_RESEARCH_INCOMPLETE" for issue in result["document_issues"])
+    assert result["confirmed_amount"] == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
 async def test_remote_wire_budget_defers_discovery_bodies_but_keeps_exact_reads(tmp_path, monkeypatch, variant):
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
@@ -573,6 +602,14 @@ async def test_native_sheet_reads_keep_full_resources_distinct_price_arguments_a
             assert sheet.cell(row, 12).value == f"=ROUND(G{row}*J{row}*K{row},2)"
     finally:
         rendered.close()
+    cached = openpyxl.load_workbook(output, data_only=True)
+    try:
+        sheet = cached["ЛСР РИМ"]
+        for code, amount in ((RESOURCE_A, 1200), (RESOURCE_B, 600)):
+            row = next(cells for cells in sheet if cells[1].value == code)
+            assert row[11].value == amount
+    finally:
+        cached.close()
 
 
 @pytest.mark.asyncio

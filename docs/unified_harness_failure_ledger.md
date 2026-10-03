@@ -1,5 +1,26 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-03 — formula-only XLSX unreadable without recalculation (candidate889)
+
+Live888 repack has226 formulas with empty cached values. Offline arithmetic matches
+the API preliminary274783.91, while data_only readers see blank monetary totals.
+889 keeps original numeric trace values in OOXML caches beside unchanged formulas.
+Unknown prices remain blank; automatic recalculation after edits remains enabled.
+No model decisions or calculation rates change. Formula/cache/export regressions
+cover single/multiple positions, complete/partial totals, and actual artifact storage.
+
+## 2026-10-03 — cloud budget hid already accepted workbook rows (candidate889)
+
+Installed888 Flash BAP controls used455669+38520 tokens and retained12/19 rows,
+but returned only budget errors. The public no-model repack returned a verified
+28101-byte partial XLSX using the correct pinned SPbQ32026 pricebook.
+Candidate889 routes budget stops after accepted packets through ordinary partial
+packaging, preserves remaining rows/cursor, and makes no additional model call.
+Before any decision,429 remains. No model choices are inferred or corrected.
+Related91passed; canonical889:3249passed/20existing skipped, other offline gates exit0.
+Installed/live889 pending. Professional quality remains failed:
+unresolved groups/analogues and a model-authored duplicate combined ceiling norm.
+
 ## 2026-10-03 — installed887 raw tool frame accepted as final (candidate888)
 
 History768 returned only Qwen XML web_search after calls_budget; basic smoke falsely

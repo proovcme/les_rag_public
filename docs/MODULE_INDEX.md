@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Дополнение889:** `smeta/lsr`, doc↔candidate-code ✅.
+> XLSX сохраняет уже рассчитанные числа вместе с формулами. Независимые
+> `data_only` readers видят деньги без Excel; unknown остаётся blank.
+> [Алгоритм экспорта](ALGO-lsr-assembly.md). Объединённый gate:3249passed/20existing skipped.
+
+> **Кандидат889 / 0.31.161:** `core/chat-evidence`, doc↔candidate-code ✅.
+> Остановка cloud budget после терминальных пакетов выдаёт штатный частичный XLSX;
+> нет новых inference/решений, checkpoint и остаток сохраняются. До решений —429.
+> [Поток](modules/rag-evidence-flow.md). Related91passed; canonical passed, install/live pending.
+> Installed888: БАП12/19,3 рассчитанные позиции, confirmed0; приёмка ЛСР не пройдена.
+
 > **Кандидат888 / 0.31.160:** `core/chat-evidence`, doc↔candidate-code ✅.
 > `model_output_protocol_service`: распознаёт незавершённый protocol frame без исполнения.
 > Финальная фаза обычного native research явно закрывает инструменты; невыполненный

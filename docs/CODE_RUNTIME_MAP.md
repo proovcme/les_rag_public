@@ -19,9 +19,9 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1084 |
-| Строк Python | 381554 |
-| PRODUCT_REACHABLE | 370 |
+| Python-файлов под git | 1085 |
+| Строк Python | 381749 |
+| PRODUCT_REACHABLE | 371 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 702 |
 | DORMANT_CANDIDATE | 1 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 12880 | 44 |
+| proxy/services/chat_evidence_application_service.py | 12903 | 44 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7792 | 7 |
 | proxy/routers/chat.py | 4807 | 47 |

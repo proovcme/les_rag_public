@@ -574,11 +574,9 @@ def test_the_unit_the_operator_price_was_multiplied_by_reaches_the_file(tmp_path
 def test_the_tabular_preview_shows_an_uncached_total_as_a_formula_not_as_empty(tmp_path):
     """§ 4: «формулы без кеша могут выглядеть пустыми» — проверено на самом просмотре.
 
-    The delivered ЛСР writes every total as a live formula and stores no cached value
-    beside it, so a reader that asks for values only shows an empty money column — the
-    way the artifact panel used to render a finished document as if it calculated
-    nothing.  The preview now prints the formula and states that the arithmetic of the
-    revision is checked from its own calculation data, not from this screen.
+    Older revisions contain live formulas without cached values. Preserve the
+    preview fallback for those immutable files even though newly rendered workbooks
+    also store the amounts already computed by the calculation trace.
     """
     from proxy.services.xlsx_preview_service import spreadsheet_preview
 
@@ -586,14 +584,23 @@ def test_the_tabular_preview_shows_an_uncached_total_as_a_formula_not_as_empty(t
     out = tmp_path / "lsr.xlsx"
     render_lsr_xlsx(lsr, out)
 
-    # what a values-only read of the same file returns today: nothing in the money cells
     cached = load_workbook(out, data_only=True)
     sheet = cached[cached.sheetnames[0]]
     total_row = next(
         row for row in range(1, sheet.max_row + 1)
         if str(sheet.cell(row=row, column=3).value or "").startswith("Всего по позиции")
     )
-    assert sheet.cell(row=total_row, column=12).value is None
+    assert sheet.cell(row=total_row, column=12).value == 3000.0
+    cached.close()
+
+    # An openpyxl round trip retains formulas and drops their numeric caches,
+    # reproducing the format of revisions exported before build 889.
+    legacy = load_workbook(out)
+    legacy.save(out)
+    legacy.close()
+    cached = load_workbook(out, data_only=True)
+    assert cached[cached.sheetnames[0]].cell(row=total_row, column=12).value is None
+    cached.close()
 
     rows, note = spreadsheet_preview(out.read_bytes(), "xlsx")
     flat = "\n".join(str(value) for row in rows for value in row.values())

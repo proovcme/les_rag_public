@@ -16,8 +16,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import math
 from pathlib import Path
+import tempfile
 from typing import Any, Optional
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 # trace.columns (str) → колонка openpyxl (1-индекс) по форме Приложения 3.
 # Графа № п/п → A (col 1, только строки-работы), графы 2-12 ложатся напрямую.
@@ -70,6 +74,7 @@ def _styles() -> dict[str, Any]:
         "fill_grand": PatternFill("solid", fgColor="CFE2F3"),   # «ВСЕГО по смете»
         "fill_warning": PatternFill("solid", fgColor="FCE8E6"),
         "warning": Font(bold=True, size=10, color="9C0006"),
+        "formula_values": {},
     }
 
 
@@ -199,6 +204,52 @@ def _sum_formula(rows: list[int], column: str = "L") -> str:
     return "=SUM(" + ",".join(f"{column}{row}" for row in rows) + ")" if rows else "=0"
 
 
+def _set_formula(ws, row: int, column: int, formula: str, values: dict) -> None:
+    """Keep the calculator's numeric value while making the cell editable."""
+    cell = ws.cell(row=row, column=column)
+    value = cell.value
+    if type(value) in (int, float) and math.isfinite(value):
+        values[cell.coordinate] = value
+    else:
+        values.pop(cell.coordinate, None)
+    cell.value = formula
+
+
+def _save_calculated_workbook(wb, path: Path, values: dict) -> None:
+    """Store trace values as OOXML formula caches; never evaluate workbook code.
+
+    openpyxl emits empty <v> nodes for formulas. Preserve its formula and all
+    other parts, injecting only numeric values already supplied by the trace.
+    Unknown prices stay blank. Excel still recalculates after an engineer edits.
+    """
+    wb.calculation.fullCalcOnLoad = True
+    wb.calculation.forceFullCalc = True
+    wb.calculation.calcMode = "auto"
+    wb.save(path)
+    ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".xlsx", delete=False) as handle:
+        temporary = Path(handle.name)
+    try:
+        with ZipFile(path) as source, ZipFile(temporary, "w") as target:
+            for info in source.infolist():
+                content = source.read(info)
+                if info.filename == "xl/worksheets/sheet1.xml":
+                    sheet = ElementTree.fromstring(content)
+                    for cell in sheet.iter(ns + "c"):
+                        address = cell.get("r")
+                        if address not in values or cell.find(ns + "f") is None:
+                            continue
+                        cached = cell.find(ns + "v")
+                        if cached is None:
+                            cached = ElementTree.SubElement(cell, ns + "v")
+                        cached.text = str(values[address])
+                    content = ElementTree.tostring(sheet, encoding="utf-8")
+                target.writestr(info, content)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _xlsx_work_name(row: dict[str, Any], value: Any) -> Any:
     source = str(value or "").strip()
     official = str((row.get("meta") or {}).get("official_name") or "").strip()
@@ -244,9 +295,9 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     for rtype in ("resource_labor", "resource_machine", "resource_machinist", "resource_material"):
         for row_no in by_type.get(rtype, []):
             if ws.cell(row=row_no, column=8).value not in (None, "") and ws.cell(row=row_no, column=9).value not in (None, ""):
-                ws.cell(row=row_no, column=10, value=f"=ROUND(H{row_no}*I{row_no},2)")
+                _set_formula(ws, row_no, 10, f"=ROUND(H{row_no}*I{row_no},2)", S["formula_values"])
             if ws.cell(row=row_no, column=10).value not in (None, "") and ws.cell(row=row_no, column=11).value not in (None, ""):
-                ws.cell(row=row_no, column=12, value=f"=ROUND(G{row_no}*J{row_no}*K{row_no},2)")
+                _set_formula(ws, row_no, 12, f"=ROUND(G{row_no}*J{row_no}*K{row_no},2)", S["formula_values"])
             else:
                 ws.cell(row=row_no, column=12).value = None
     group_rows = {
@@ -264,11 +315,11 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     for kind, row_no in group_rows.items():
         if row_no is None:
             continue
-        ws.cell(row=row_no, column=7, value=_sum_formula(detail_rows[kind], "G"))
+        _set_formula(ws, row_no, 7, _sum_formula(detail_rows[kind], "G"), S["formula_values"])
         cost_rows = detail_rows[kind]
         if kind == "machine":
             cost_rows = cost_rows + detail_rows["machinist"]
-        ws.cell(row=row_no, column=12, value=_sum_formula(cost_rows))
+        _set_formula(ws, row_no, 12, _sum_formula(cost_rows), S["formula_values"])
     direct_row = (by_type.get("direct_total") or [None])[0]
     fot_row = (by_type.get("fot") or [None])[0]
     nr_row = (by_type.get("nr") or [None])[0]
@@ -276,14 +327,14 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     total_row = (by_type.get("position_total") or [None])[0]
     if direct_row:
         refs = [group_rows[k] for k in ("labor", "machine", "material") if group_rows[k]]
-        ws.cell(row=direct_row, column=12, value=_sum_formula(refs))
+        _set_formula(ws, direct_row, 12, _sum_formula(refs), S["formula_values"])
     if fot_row:
         refs = [group_rows[k] for k in ("labor", "machinist") if group_rows[k]]
-        ws.cell(row=fot_row, column=12, value=_sum_formula(refs))
+        _set_formula(ws, fot_row, 12, _sum_formula(refs), S["formula_values"])
     if nr_row and fot_row:
-        ws.cell(row=nr_row, column=12, value=f"=ROUND(L{fot_row}*E{nr_row}/100,2)")
+        _set_formula(ws, nr_row, 12, f"=ROUND(L{fot_row}*E{nr_row}/100,2)", S["formula_values"])
     if sp_row and fot_row:
-        ws.cell(row=sp_row, column=12, value=f"=ROUND(L{fot_row}*E{sp_row}/100,2)")
+        _set_formula(ws, sp_row, 12, f"=ROUND(L{fot_row}*E{sp_row}/100,2)", S["formula_values"])
     if total_row:
         operator_price_value = (
             row_meta_by_type.get("position_total") or {}
@@ -296,7 +347,7 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
             )
         else:
             refs = [row_no for row_no in (direct_row, nr_row, sp_row) if row_no]
-            ws.cell(row=total_row, column=12, value=_sum_formula(refs))
+            _set_formula(ws, total_row, 12, _sum_formula(refs), S["formula_values"])
     return r, pp, by_type
 
 
@@ -315,7 +366,7 @@ def _section_subtotal(
     put(r, 3, f"Итого по разделу {idx}", font=S["bold"])
     put(r, 12, _f(total), font=S["bold"], num=True)
     if position_total_rows is not None:
-        ws.cell(row=r, column=12, value=_sum_formula(position_total_rows))
+        _set_formula(ws, r, 12, _sum_formula(position_total_rows), S["formula_values"])
     _border_row(ws, S, r, fill=S["fill_total"])
     return r + 1
 
@@ -331,7 +382,7 @@ def _grand_summary(
         summary_key = "direct" if key == "direct_total" else key
         put(r, 12, _f(summary.get(summary_key, 0)), font=S["bold"], num=True)
         if formula_rows is not None:
-            ws.cell(row=r, column=12, value=_sum_formula(formula_rows.get(key, [])))
+            _set_formula(ws, r, 12, _sum_formula(formula_rows.get(key, [])), S["formula_values"])
         output_rows[key] = r
         _border_row(ws, S, r, fill=S["fill_total"])
         r += 1
@@ -339,21 +390,21 @@ def _grand_summary(
     put(r, 3, total_label, font=S["bold"])
     put(r, 12, _f(summary.get("total_without_vat", summary.get("total", 0))), font=S["bold"], num=True)
     if formula_rows is not None:
-        ws.cell(row=r, column=12, value=_sum_formula(formula_rows.get("position_total", [])))
+        _set_formula(ws, r, 12, _sum_formula(formula_rows.get("position_total", [])), S["formula_values"])
     output_rows["total_without_vat"] = r
     _border_row(ws, S, r, fill=S["fill_grand"])
     if summary.get("vat_pct") not in (None, ""):
         r += 1
         put(r, 3, f"НДС {float(summary.get('vat_pct')):g}%", font=S["bold"])
         put(r, 12, _f(summary.get("vat", 0)), font=S["bold"], num=True)
-        ws.cell(row=r, column=12, value=f"=ROUND(L{output_rows['total_without_vat']}*{float(summary.get('vat_pct')):g}/100,2)")
+        _set_formula(ws, r, 12, f"=ROUND(L{output_rows['total_without_vat']}*{float(summary.get('vat_pct')):g}/100,2)", S["formula_values"])
         output_rows["vat"] = r
         _border_row(ws, S, r, fill=S["fill_total"])
         r += 1
         gross_label = "ВСЕГО по смете с НДС" if summary.get("full_amount") is not None else "ИЗВЕСТНАЯ РАССЧИТАННАЯ ЧАСТЬ С НДС"
         put(r, 3, gross_label, font=S["bold"])
         put(r, 12, _f(summary.get("total_with_vat", 0)), font=S["bold"], num=True)
-        ws.cell(row=r, column=12, value=f"=L{output_rows['total_without_vat']}+L{output_rows['vat']}")
+        _set_formula(ws, r, 12, f"=L{output_rows['total_without_vat']}+L{output_rows['vat']}", S["formula_values"])
         output_rows["total_with_vat"] = r
         _border_row(ws, S, r, fill=S["fill_grand"])
     return r + 1, output_rows
@@ -393,7 +444,7 @@ def _new_sheet():
     return wb, ws, S, _make_put(ws, S)
 
 
-def _set_header_total_formula(ws, total_row: int | None) -> None:
+def _set_header_total_formula(ws, total_row: int | None, values: dict) -> None:
     if not total_row:
         return
     for row_no in range(1, min(ws.max_row, 40) + 1):
@@ -401,7 +452,7 @@ def _set_header_total_formula(ws, total_row: int | None) -> None:
         if label in {"Сметная стоимость", "Стоимость рассчитанной части"} or label.startswith(
             "Стоимость только привязанной части"
         ):
-            ws.cell(row=row_no, column=4, value=f"=L{total_row}")
+            _set_formula(ws, row_no, 4, f"=L{total_row}", values)
             return
 
 
@@ -667,9 +718,9 @@ def render_trace_xlsx(trace: dict[str, Any], out_path: str | Path, *,
                            summary=trace.get("summary", {}) or {}, meta=meta)
     _table_header(ws, put, S, head_r)
     _, _, formula_rows = _position_rows(ws, put, S, trace.get("rows", []), head_r + 1, 0)
-    _set_header_total_formula(ws, (formula_rows.get("position_total") or [None])[0])
+    _set_header_total_formula(ws, (formula_rows.get("position_total") or [None])[0], S["formula_values"])
     _finalize(ws, head_r)
-    wb.save(path)
+    _save_calculated_workbook(wb, path, S["formula_values"])
     return path
 
 
@@ -711,11 +762,9 @@ def render_lsr_xlsx(lsr: dict[str, Any], out_path: str | Path, *,
     _set_header_total_formula(
         ws,
         grand_rows.get("total_with_vat") or grand_rows.get("total_without_vat"),
+        S["formula_values"],
     )
     _finalize(ws, head_r)
     _review_sheet(wb, lsr)
-    wb.calculation.fullCalcOnLoad = True
-    wb.calculation.forceFullCalc = True
-    wb.calculation.calcMode = "auto"
-    wb.save(path)
+    _save_calculated_workbook(wb, path, S["formula_values"])
     return path

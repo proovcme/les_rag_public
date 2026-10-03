@@ -1132,6 +1132,7 @@
         "proxy/services/model_evidence_read_service.py",
         "proxy/services/model_execution_preset_service.py",
         "proxy/services/model_lsr_result_contract.py",
+        "proxy/services/model_output_protocol_service.py",
         "proxy/services/model_price_provenance_service.py",
         "proxy/services/model_pricebook_evidence_service.py",
         "proxy/services/model_rag_grouped_evidence_service.py",
@@ -2598,6 +2599,7 @@
         "proxy/services/model_evidence_read_service.py",
         "proxy/services/model_execution_preset_service.py",
         "proxy/services/model_lsr_result_contract.py",
+        "proxy/services/model_output_protocol_service.py",
         "proxy/services/model_price_provenance_service.py",
         "proxy/services/model_pricebook_evidence_service.py",
         "proxy/services/model_rag_grouped_evidence_service.py",
@@ -2714,9 +2716,7 @@
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
         "proxy/services/workflow_plan_service.py",
-        "proxy/services/xlsx_preview_service.py",
-        "tests/test_chat_native_research_exchange.py",
-        "tools/basic_function_smoke.py"
+        "proxy/services/xlsx_preview_service.py"
       ],
       "lines": 2,
       "module": "proxy.services",
@@ -3179,7 +3179,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12880,
+      "lines": 12903,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3215,6 +3215,7 @@
         "proxy/services/model_evidence_read_service.py",
         "proxy/services/model_execution_preset_service.py",
         "proxy/services/model_lsr_result_contract.py",
+        "proxy/services/model_output_protocol_service.py",
         "proxy/services/model_price_provenance_service.py",
         "proxy/services/model_rag_grouped_evidence_service.py",
         "proxy/services/model_research_tool_service.py",
@@ -5477,6 +5478,22 @@
     {
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
+        "tests/test_chat_native_research_exchange.py",
+        "tools/basic_function_smoke.py"
+      ],
+      "lines": 45,
+      "module": "proxy.services.model_output_protocol_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/model_output_protocol_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/services/chat_evidence_application_service.py",
         "tests/test_model_price_provenance_service.py"
       ],
       "lines": 194,
@@ -6772,7 +6789,7 @@
         "tests/test_rim_trace_xlsx.py",
         "tools/smeta_vor_finalize.py"
       ],
-      "lines": 721,
+      "lines": 770,
       "module": "proxy.services.rim_trace_xlsx_service",
       "outbound": [
         "proxy/__init__.py",
@@ -9991,9 +10008,9 @@
       "lines": 364,
       "module": "tests.test_chat_native_research_exchange",
       "outbound": [
-        "proxy/services/__init__.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/context_governor_service.py",
+        "proxy/services/model_output_protocol_service.py",
         "proxy/services/openai_compatible_transport_service.py",
         "proxy/services/tool_harness_service.py",
         "proxy/services/web_research_config_service.py"
@@ -12486,7 +12503,7 @@
         "tests/test_model_query_reasoning.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 1226,
+      "lines": 1263,
       "module": "tests.test_model_rag_sheet_evidence_reads",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13861,7 +13878,7 @@
     },
     {
       "inbound": [],
-      "lines": 652,
+      "lines": 659,
       "module": "tests.test_revision_projection_830",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -14053,7 +14070,7 @@
     },
     {
       "inbound": [],
-      "lines": 465,
+      "lines": 499,
       "module": "tests.test_rim_trace_xlsx",
       "outbound": [
         "proxy/routers/lsr.py",
@@ -16163,7 +16180,7 @@
       "lines": 337,
       "module": "tools.basic_function_smoke",
       "outbound": [
-        "proxy/services/__init__.py",
+        "proxy/services/model_output_protocol_service.py",
         "tools/__init__.py"
       ],
       "path": "tools/basic_function_smoke.py",
@@ -20439,12 +20456,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 370,
+    "product_reachable": 371,
     "registered_api_routes": 340,
     "runtime_support": 11,
     "test_or_tool_only": 702,
-    "tracked_python_files": 1084,
-    "tracked_python_lines": 381554
+    "tracked_python_files": 1085,
+    "tracked_python_lines": 381749
   },
   "warnings": []
 }

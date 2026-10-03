@@ -21,6 +21,7 @@ stage_b/live_830/seed_vs_base_reconcile_830.md and nothing below reproduces them
 
 import asyncio
 from pathlib import Path
+import pytest
 
 from proxy.services import lsr_assembly_service as la
 from proxy.services import rim_lsr_trace_service as rim
@@ -236,6 +237,36 @@ def test_render_produces_valid_xlsx(tmp_path):
     assert str(total_row[11].value).startswith("=SUM(")
 
 
+@pytest.mark.parametrize("draft", [False, True])
+@pytest.mark.parametrize("multiple", [False, True])
+def test_export_keeps_calculated_values_readable_without_excel_recalculation(tmp_path, draft, multiple):
+    import copy
+    import openpyxl
+
+    trace = (_draft_lsr_trace() if draft else _lsr_trace()) if multiple else (_draft_trace() if draft else _trace())
+    original = copy.deepcopy(trace)
+    renderer = rim_xlsx.render_lsr_xlsx if multiple else rim_xlsx.render_trace_xlsx
+    out = renderer(trace, tmp_path / "ЛСР с пробелом 'тест'.xlsx")
+    formulas = openpyxl.load_workbook(out, data_only=False)
+    cached = openpyxl.load_workbook(out, data_only=True)
+    ws, values = formulas.active, cached.active
+    label = (DRAFT_SUMMARY_LABEL if draft else "ВСЕГО по смете без НДС") if multiple else (DRAFT_TOTAL_LABEL if draft else COMPLETE_TOTAL_LABEL)
+    total = next(row[11] for row in ws if row[2].value == label)
+    assert total.data_type == "f"
+    assert values[total.coordinate].value == pytest.approx(trace["summary"]["total"])
+    header = next(row[3] for row in ws if row[3].data_type == "f")
+    assert values[header.coordinate].value == pytest.approx(trace["summary"]["total"])
+    labor = next(row[11] for row in ws if row[1].value == "1-100-25")
+    assert labor.data_type == "f"
+    assert values[labor.coordinate].value == pytest.approx(12.94 * (CARD_LABOR_RATE if draft else 500))
+    assert formulas.calculation.calcMode == "auto" and formulas.calculation.fullCalcOnLoad
+    assert ws.print_area and ws.column_dimensions["L"].width == 18
+    assert total.border.left.style == "thin"
+    assert trace == original
+    formulas.close()
+    cached.close()
+
+
 def test_appendix3_rim_header_and_graphs_present(tmp_path):
     import openpyxl
 
@@ -272,6 +303,9 @@ def test_missing_resource_price_stays_blank_in_editable_xlsx(tmp_path):
     row = next(row for row in ws.iter_rows() if row[2].value == "Материал без цены")
     assert row[9].value is None
     assert row[11].value is None
+    cached = openpyxl.load_workbook(out, data_only=True)
+    assert cached.active.cell(row[11].row, 12).value is None
+    cached.close()
 
 
 def test_xlsx_work_row_keeps_official_norm_title_and_source_description(tmp_path):

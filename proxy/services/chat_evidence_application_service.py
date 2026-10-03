@@ -10555,6 +10555,28 @@ async def _execute_chat_evidence_application(
                                 sheet_name,
                                 never_reached,
                             )
+                    except CloudBudgetStop:
+                        # Earlier packets already contain terminal model decisions.
+                        # Deliver their ordinary partial workbook without another
+                        # inference; unfinished packets remain technical checkpoints.
+                        if not accumulated_rows or research_job_service is None or research_job is None:
+                            raise
+                        budget_snapshot = getattr(getattr(bound_runner, "transport", None), "cloud_budget_snapshot", None)
+                        if callable(budget_snapshot):
+                            retrieval_trace["cloud_token_budget"] = budget_snapshot()
+                            if token_sink is not None:
+                                await token_sink({"event": "cloud_budget", "data": retrieval_trace["cloud_token_budget"]})
+                        held = dict(research_job.get("held_packet") or {})
+                        if list(held.get("locators") or ()) != list(packet):
+                            held = {}
+                        held.update({"cloud_budget_pending": True, "read_stop": "cloud_token_budget"})
+                        held.setdefault("sheet", sheet_name)
+                        held.setdefault("locators", list(packet))
+                        research_job = research_job_service.pause(
+                            research_job["job_id"], phase="cloud_token_budget",
+                            held_packet=model_rag_with_pending_results(held, pending_result_packets),
+                        )
+                        retrieval_trace["tool_loop"]["evidence_read_stop"] = "cloud_token_budget"
                     except asyncio.CancelledError:
                         logger.warning("[SHEET_PASS] cancelled; preserving accepted packets")
                         research_cancelled = True
@@ -10581,13 +10603,14 @@ async def _execute_chat_evidence_application(
                                          if pending_result_packets else set(transport_pending_locators))
                     pending_held = (research_job or {}).get("held_packet") or {}
                     pending_read_stop = (str(pending_held.get("read_stop") or "")
-                                         if pending_held.get("model_read_pending") else "")
+                                         if pending_held.get("model_read_pending") or pending_held.get("cloud_budget_pending") else "")
                     if ((pending_held.get("queries") and not pending_held.get("terminal_model_result_saved")) or pending_held.get("model_read_pending")
+                            or pending_held.get("cloud_budget_pending")
                             or pending_held.get("model_result_transport_pending")
                             or pending_held.get("model_final_output_missing")):
                         if pending_held.get("model_result_transport_pending"):
                             pending_held_targets = model_rag_pending_result_targets(pending_held)
-                        elif pending_held.get("model_read_pending") or pending_held.get("model_final_output_missing"):
+                        elif pending_held.get("model_read_pending") or pending_held.get("cloud_budget_pending") or pending_held.get("model_final_output_missing"):
                             pending_held_targets = set(pending_held.get("locators") or ())
                         else:
                             pending_held_targets = {locator for locator in pending_held.get("locators") or ()
@@ -10647,7 +10670,7 @@ async def _execute_chat_evidence_application(
                                 # model even when no terminal row checkpoint exists.
                                 # This corrects diagnostics, not completion/closure.
                                 read_packet_offered = (set(pending_held.get("locators") or ())
-                                                       if pending_read_stop else set())
+                                                       if pending_held.get("model_read_pending") else set())
                                 diagnostic_starved = [locator for locator in starved
                                                       if locator not in read_packet_offered]
                                 if (

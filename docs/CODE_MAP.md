@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build889 export: `rim_trace_xlsx_service._set_formula` запоминает готовые
+числа трассы; `_save_calculated_workbook` записывает OOXML formula caches
+основного листа без исполнения формул. Оба render entrypoints используют его.
+
+Build889: sheet-pass в `chat_evidence_application_service` перехватывает
+CloudBudgetStop после принятых модельных решений и завершает только механическую
+упаковку частичного файла. `cloud_budget_pending` сохраняет курсор без ложного
+утверждения о доставке строк модели. Регрессия: test_model_rag_sheet_evidence_reads.
+
 Build888: `model_output_protocol_service.has_unconsumed_tool_frame` используется
 обычным chat final boundary и `tools/basic_function_smoke.py`. Он не исполняет
 XML/JSON команды и не принимает предметных решений; fenced примеры сохраняются.

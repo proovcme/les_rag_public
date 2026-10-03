@@ -1,5 +1,11 @@
 # Версии программного контура ЛЕС
 
+Кандидат `0.31.161` / build `889`: выдача частичного workbook при cloud budget stop.
+Зависимости неизменны. Installed888 `e84afdee`: offline3242passed/20existing skipped,
+RRF PASS, basic9PASS/1WARN; liveFlash БАП12/19, customer-ready false.
+Canonical889:3249passed/20existing skipped, остальные offline gates exit0.
+Install/live889 pending. NativeEXE5.1.813 не пересобран.
+
 Кандидат `0.31.160` / build `888`: финальный protocol guard и строгий basic smoke.
 Зависимости неизменны. Installed887 `962d965b`: RRF PASS, basic9PASS/1WARN,
 answer audit FAIL (raw tool frame). Canonical888:3242passed/20existing skipped,
@@ -129,9 +135,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.160` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `888` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.888` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.161` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `889` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.889` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,
