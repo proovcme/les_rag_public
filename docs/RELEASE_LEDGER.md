@@ -1,5 +1,24 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.152 / 880 — ограничение облачного расхода
+
+Владелец разрешил контроль через отдельное Alibaba Qwen3.8-Flash с заявленной
+квотой1млн, Free Quota Only выключен. Ключ импортирован через штатный API из
+выданного CSV без вывода секрета. Revision `conn:0252f1d1529843c0a3a64a2fe4a2186c:r2`:
+max_completion_tokens16384, effort low; три однотокенных capability-запроса
+HTTP200, documents_sent=false. Основная роль остаётся FreeTokenr8, cloud consent=false.
+Receipts `artifacts/live_879/flash_connection/`; точный расход probe неизвестен.
+
+880 добавляет видимый в GUI `LES_CLOUD_TURN_TOKEN_BUDGET` default0, резерв до
+каждого remote HTTP, settlement по валидному usage, удержание неизвестного расхода
+и отдельную остановку без fallback. Бюджет одного сообщения, не аккаунта/job;
+новое продолжение требует отдельного бюджета. Запросы/решения модели не меняются.
+Initial regression RED3; focused69passed и related74passed; budget-stop integration2passed.
+Frozen canonical880:3189passed/20existing skipped/5warnings,216,28s(wrapper217,72s).
+Version/compile/collect/architecture/map/docs/active artifacts/metadata exit0;
+`artifacts/gates_880/`. Установка и облачная профессиональная приёмка ещё не
+выполнены. Готовность не заявлена.
+
 **Установлен 0.31.151 / 879 (`1b5c0b40564b199895584e20caa3a9a3663dee60`). Готовность НЕ подтверждена.**
 
 879 исправляет только техническую диагностику native capacity stop: job.phase

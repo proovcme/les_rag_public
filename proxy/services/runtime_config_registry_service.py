@@ -32,6 +32,19 @@ _EFFECTIVE_FACTOR_LABELS = {
     "answer_output_tokens": "Лимит итогового ответа",
 }
 _FACTOR_PRESENTATION = {
+    "LES_CLOUD_TURN_TOKEN_BUDGET": {
+        "secret": False,
+        "label": "Бюджет облачных токенов на одно сообщение чата",
+        "help_text": (
+            "0 — без общего ограничения. Суммирует вход и полный выход всех облачных вызовов "
+            "в одном ходе, включая повторы. До отправки резервирует UTF-8 размер запроса, "
+            "служебный запас и max_completion_tokens; после ответа учитывает usage. "
+            "Без usage резерв сохраняется. Поддерживает текст и требует лимит полного выхода. "
+            "Новое сообщение, включая продолжение, получает новый бюджет. Это не баланс счёта "
+            "провайдера. Действует со следующего сообщения, без перезапуска."
+        ),
+        "category": "models",
+    },
     "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS": {
         "secret": False,  # numeric output limit, never an authentication token
         "label": "Лимит ответа модели при составлении поисковых запросов",
@@ -439,6 +452,8 @@ def update_factors(
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         if key == "LES_WEB_SEARCH_MODE" and value not in {"simple", "extended"}:
+            raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
+        if key == "LES_CLOUD_TURN_TOKEN_BUDGET" and (not value.isascii() or not value.isdecimal()):
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         normalized[key] = value
     backup = _backup_env(env_path())

@@ -55,6 +55,7 @@ from proxy.services.canonical_promotion_service import resolve_promoted_route
 from proxy.services.candidate_acceptance_service import execution_mode_for_candidate_acceptance
 from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
 from proxy.services.openai_compatible_transport_service import (
+    CloudBudgetStop,
     InferenceRequest,
     InferenceResponse,
     ModelTransportError,
@@ -7645,15 +7646,20 @@ async def _execute_chat_evidence_application(
                             set(_dataset_ids_from_chunks(chunks))
                             | {str(item) for item in (_dataset_ids or [])}
                         )
-                        active_model_result = await bound_runner.complete(
-                            mode=canonical_execution_mode,
-                            request=inference_request,
-                            legacy_complete=no_legacy_call,
-                            remote_allowed=cloud_allowed(
-                                sensitivities,
-                                consent=_env_bool("LES_CLOUD_CONSENT", False),
-                            ),
-                        )
+                        try:
+                            active_model_result = await bound_runner.complete(
+                                mode=canonical_execution_mode,
+                                request=inference_request,
+                                legacy_complete=no_legacy_call,
+                                remote_allowed=cloud_allowed(
+                                    sensitivities,
+                                    consent=_env_bool("LES_CLOUD_CONSENT", False),
+                                ),
+                            )
+                        finally:
+                            budget_snapshot = getattr(getattr(bound_runner, "transport", None), "cloud_budget_snapshot", None)
+                            if callable(budget_snapshot):
+                                retrieval_trace["cloud_token_budget"] = budget_snapshot()
                         active_pending_tool_calls += active_model_result.pending_tool_calls
                         if token_sink is not None and allow_stream and active_model_result.response.text:
                             await token_sink(
@@ -12650,6 +12656,18 @@ async def _execute_chat_evidence_application(
         except httpx.TimeoutException as e:
             logger.error("[CHAT] LLM TIMEOUT: %s", e)
             raise HTTPException(504, "Истёк таймаут назначенной модели — проверь подключение или повтори запрос.")
+        except CloudBudgetStop as e:
+            if research_job_service is not None and research_job is not None:
+                research_job = research_job_service.pause(
+                    research_job["job_id"], phase="cloud_token_budget",
+                )
+            raise HTTPException(429, {
+                "code": "CLOUD_TURN_TOKEN_BUDGET",
+                "message": "Облачный прогон остановлен лимитом расхода. Следующий запрос к модели не отправлен.",
+                "reason": str(e),
+                "budget": retrieval_trace.get("cloud_token_budget", {}),
+                "job_id": (research_job or {}).get("job_id"),
+            }) from e
         except ModelTransportError as e:
             logger.error("[CHAT] ASSIGNED MODEL ERROR: %s", e)
             raise HTTPException(502, f"Назначенная модель не ответила: {e}")

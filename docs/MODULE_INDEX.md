@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат880 / 0.31.152:** `core/runtime-config`, doc↔candidate-code ✅.
+> `OpenAICompatibleTransport` резервирует общий облачный бюджет одного хода до
+> каждого HTTP, включая retry; `CloudBudgetStop` не допускает fallback.
+> `chat_evidence_application_service` сохраняет безопасные счётчики в trace,
+> возвращает отдельную техническую остановку. GUI использует существующий реестр,
+> `LES_CLOUD_TURN_TOKEN_BUDGET`, default0. [Контракт](modules/chat-profiles.md).
+> Frozen canonical880:3189passed/20existing skipped; verify/architecture/docs exit0.
+> Live-приёмка и готовность880 пока не подтверждены; установлен879.
+
 > **Установлен879(0.31.151) `1b5c0b40`, ready НЕ подтверждено.**
 > `core/chat-evidence`: native capacity stop остаётся technical_pending с
 > точной job.phase; held packet исключён только из диагностики never-offered.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import inspect
 import json
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -30,6 +31,92 @@ from proxy.services.openai_compatible_transport_service import (
 
 
 NOW = datetime(2026, 8, 28, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_cloud_budget_stop_does_not_use_model_fallback(tmp_path, monkeypatch):
+    from proxy.services.canonical_route_service import BoundModelChatRunner, CanonicalRouteMode
+    from proxy.services.openai_compatible_transport_service import CloudBudgetStop
+    monkeypatch.setenv("LES_CLOUD_TURN_TOKEN_BUDGET", "1")
+    remote = replace(_resolved(max_output_field="max_completion_tokens"), locality=ConnectionLocality.REMOTE)
+    class Resolver:
+        def resolve(self, role):
+            return remote
+        def resolve_fallback(self, revision):
+            pytest.fail("budget stop must not spend through another model")
+    def handler(request):
+        pytest.fail("budget denied before HTTP")
+    transport, client = _transport(tmp_path, handler)
+    try:
+        with pytest.raises(CloudBudgetStop):
+            await BoundModelChatRunner(resolver=Resolver(), transport=transport).complete(
+                mode=CanonicalRouteMode.ACTIVE,
+                request=InferenceRequest(messages=({"role": "user", "content": "test"},), max_output_tokens=32),
+                legacy_complete=lambda _: pytest.fail("no legacy fallback"))
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloud_budget_counts_every_wire_attempt_and_stops_before_send(tmp_path, monkeypatch):
+    from proxy.services.openai_compatible_transport_service import CloudBudgetStop
+    monkeypatch.setenv("LES_CLOUD_TURN_TOKEN_BUDGET", "4000")
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}],
+                                        "usage": {"prompt_tokens": 2800, "completion_tokens": 100}})
+    transport, client = _transport(tmp_path, handler)
+    remote = replace(_resolved(max_output_field="max_completion_tokens"), locality=ConnectionLocality.REMOTE)
+    request = InferenceRequest(messages=({"role": "user", "content": "Кабель"},), max_output_tokens=512)
+    try:
+        await transport.complete(remote, request)
+        with pytest.raises(CloudBudgetStop, match="CLOUD_TURN_TOKEN_BUDGET"):
+            await transport.complete(remote, request)
+        assert len(requests) == 1
+        assert transport.cloud_budget_snapshot()["accounted_tokens"] == 2900
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloud_budget_keeps_reservation_without_usage_and_for_retry(tmp_path, monkeypatch):
+    from proxy.services.openai_compatible_transport_service import CloudBudgetStop
+    monkeypatch.setenv("LES_CLOUD_TURN_TOKEN_BUDGET", "2500")
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(502, content=b"System message must be at the beginning")
+    transport, client = _transport(tmp_path, handler)
+    remote = replace(_resolved(max_output_field="max_completion_tokens"), locality=ConnectionLocality.REMOTE)
+    request = InferenceRequest(messages=({"role": "system", "content": "test"}, {"role": "user", "content": "test"}), max_output_tokens=512)
+    try:
+        with pytest.raises(CloudBudgetStop):
+            await transport.complete(remote, request)
+        assert len(requests) == 1
+        assert transport.cloud_budget_snapshot()["requests_sent"] == 1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cloud_budget_requires_total_output_cap_but_does_not_block_local(tmp_path, monkeypatch):
+    from proxy.services.openai_compatible_transport_service import CloudBudgetStop
+    monkeypatch.setenv("LES_CLOUD_TURN_TOKEN_BUDGET", "2000")
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+    transport, client = _transport(tmp_path, handler)
+    request = InferenceRequest(messages=({"role": "user", "content": "test"},), max_output_tokens=512)
+    try:
+        with pytest.raises(CloudBudgetStop, match="TOTAL_OUTPUT_CAP_REQUIRED"):
+            await transport.complete(replace(_resolved(), locality=ConnectionLocality.REMOTE), request)
+        await transport.complete(_resolved(), request)
+        assert len(requests) == 1
+        assert transport.cloud_budget_snapshot()["accounted_tokens"] == 0
+    finally:
+        await client.aclose()
 
 
 def _resolved(

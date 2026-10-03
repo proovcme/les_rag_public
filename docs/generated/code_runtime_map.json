@@ -3053,7 +3053,8 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_model_connection_chat_integration.py",
         "tests/test_model_connections_router.py",
-        "tests/test_model_rag_sheet_evidence_reads.py"
+        "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_openai_compatible_transport_service.py"
       ],
       "lines": 285,
       "module": "proxy.services.canonical_route_service",
@@ -3176,7 +3177,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12725,
+      "lines": 12743,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5794,7 +5795,7 @@
         "tests/test_workbook_chat_refinement.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 536,
+      "lines": 592,
       "module": "proxy.services.openai_compatible_transport_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6811,7 +6812,7 @@
         "tests/test_model_reasoning_control.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 461,
+      "lines": 476,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -12479,7 +12480,7 @@
         "tests/test_model_query_reasoning.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 1098,
+      "lines": 1119,
       "module": "tests.test_model_rag_sheet_evidence_reads",
       "outbound": [
         "proxy/routers/chat.py",
@@ -12828,9 +12829,10 @@
         "tests/test_model_query_reasoning.py",
         "tests/test_model_reasoning_control.py"
       ],
-      "lines": 522,
+      "lines": 609,
       "module": "tests.test_openai_compatible_transport_service",
       "outbound": [
+        "proxy/services/canonical_route_service.py",
         "proxy/services/model_connection_contracts.py",
         "proxy/services/model_connection_resolver_service.py",
         "proxy/services/model_connection_security_service.py",
@@ -14121,7 +14123,7 @@
     },
     {
       "inbound": [],
-      "lines": 346,
+      "lines": 365,
       "module": "tests.test_runtime_config_registry_service",
       "outbound": [
         "proxy/services/runtime_config_registry_service.py"
@@ -20434,7 +20436,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 702,
     "tracked_python_files": 1084,
-    "tracked_python_lines": 380529
+    "tracked_python_lines": 380745
   },
   "warnings": []
 }

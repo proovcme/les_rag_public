@@ -27,6 +27,24 @@ RESOURCE_B = "20.4.01.01-0002"
 BOOK = "sankt-peterburg_3kv2026"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant, stop_at", [("B0_DIRECT", 1), ("B1_CANDIDATE", 2)])
+async def test_budget_stop_is_technical_and_preserves_unresolved_job(tmp_path, monkeypatch, variant, stop_at):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant, budget_stop_at=stop_at)
+    assert run.result["status"] == 429
+    assert run.result["error"]["code"] == "CLOUD_TURN_TOKEN_BUDGET"
+    assert len(run.requests) == stop_at and run.executions == []
+    job_id = run.result["error"]["job_id"]
+    if variant == "B1_CANDIDATE":
+        job = WorkbookResearchJobService().get(job_id)
+        assert job["status"] == "paused" and job["phase"] == "cloud_token_budget"
+        assert set(job["remaining"]) == {"S!R2", "S!R3"}
+        assert job["accepted_rows"] == []
+    else:
+        assert job_id is None
+
+
 def _native(tool, **arguments):
     identity = hashlib.sha256(json.dumps(arguments, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     return {"id": tool + ":" + identity, "type": "function",
@@ -53,7 +71,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      malformed_first_packet=False, malformed_all_first_packet=False,
                      malformed_second_packet=False, duplicate_json_first_packet=False,
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
-                     exact_resource_padding=0, query_declaration=None):
+                     exact_resource_padding=0, query_declaration=None, budget_stop_at=None):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -265,6 +283,9 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         async def complete(self, selected, request):
             assert selected.revision_id == connection.revision_id
             requests.append(request)
+            if budget_stop_at == len(requests):
+                from proxy.services.openai_compatible_transport_service import CloudBudgetStop
+                raise CloudBudgetStop("CLOUD_TURN_TOKEN_BUDGET: fixture exhausted")
             assert responses, "harness forced another model cycle after final rows"
             response = responses.pop(0)
             return response() if callable(response) else response
@@ -344,7 +365,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
             save_chat_history=lambda **row: histories.append(row) or "history-sheet", token_sink=None,
             version_stamp=lambda: {}))
     except service.HTTPException as error:
-        if not empty_query:
+        if not empty_query and budget_stop_at is None:
             raise
         result = {"error": error.detail, "status": error.status_code}
     async def resume_same_request():

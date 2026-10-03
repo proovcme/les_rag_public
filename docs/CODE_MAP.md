@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> Кандидат880: общий технический бюджет remote-вызовов одного хода находится в
+> `openai_compatible_transport_service.OpenAICompatibleTransport`: резерв перед
+> `_open`, settlement по usage в `complete`, без автоматического fallback при
+> `CloudBudgetStop`. Реестр `LES_CLOUD_TURN_TOKEN_BUDGET` виден в Совушке;
+> `_post_llm` сохраняет `cloud_token_budget` в trace. Полный контракт и ограничения:
+> `modules/chat-profiles.md`. Профессиональные решения не меняются.
+
 > **879 installed `1b5c0b40`:**
 > `chat_evidence_application_service` сохраняет native read_stop в job.phase и
 > technical_pending; held read packet не попадает в diagnostic never-offered.

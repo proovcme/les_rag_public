@@ -54,6 +54,25 @@ def test_registry_reports_literal_default_as_effective_value(monkeypatch):
     assert factor["declared_default"] == "64"
 
 
+def test_cloud_turn_budget_is_visible_numeric_not_secret(monkeypatch):
+    monkeypatch.delenv("LES_CLOUD_TURN_TOKEN_BUDGET", raising=False)
+    registry.declared_env_defaults.cache_clear()
+    factor = registry._factor("LES_CLOUD_TURN_TOKEN_BUDGET", {})
+    assert factor["effective_value"] == "0"
+    assert factor["secret"] is False and factor["mutable"] is True
+    assert factor["restart_required"] is False
+    assert "Новое сообщение" in factor["help_text"]
+
+
+@pytest.mark.parametrize("value", ["-1", "bad", "1.2", ""])
+def test_cloud_turn_budget_invalid_value_rejected_before_write(tmp_path, monkeypatch, value):
+    monkeypatch.setattr(registry, "env_path", lambda: tmp_path / ".env")
+    monkeypatch.setattr(registry, "declared_env_keys", lambda: frozenset({"LES_CLOUD_TURN_TOKEN_BUDGET"}))
+    with pytest.raises(registry.RuntimeConfigRegistryError, match="INVALID_VALUE"):
+        registry.update_factors({"LES_CLOUD_TURN_TOKEN_BUDGET": value})
+    assert not (tmp_path / ".env").exists()
+
+
 def test_query_output_limit_is_editable_auto_factor_with_no_restart(monkeypatch):
     monkeypatch.delenv("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", raising=False)
     registry.declared_env_defaults.cache_clear()

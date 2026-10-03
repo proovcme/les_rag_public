@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 import json
+import os
 from types import MappingProxyType
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -18,7 +19,7 @@ from proxy.services.llm_transport_profile_service import (
     FinalTextFilter,
     provider_is_local,
 )
-from proxy.services.model_connection_contracts import CapabilityName, CapabilityState
+from proxy.services.model_connection_contracts import CapabilityName, CapabilityState, ConnectionLocality
 from proxy.services.model_connection_resolver_service import ResolvedModelConnection
 from proxy.services.model_connection_security_service import (
     ValidatedEndpoint,
@@ -33,6 +34,10 @@ CHAT_RESPONSE_BODY_LIMIT = 512 * 1024
 
 class ModelTransportError(RuntimeError):
     """The exact resolved connection could not complete a safe request."""
+
+
+class CloudBudgetStop(RuntimeError):
+    """A technical spending stop; never a transport failure eligible for fallback."""
 
 
 PeerVerifier = Callable[[httpx.Response, ValidatedEndpoint], None]
@@ -122,6 +127,54 @@ class OpenAICompatibleTransport:
         self.peer_verifier = peer_verifier
         self.response_body_limit = response_body_limit
         self.timeout = timeout
+        # One transport is shared by all calls in one chat turn, including retries.
+        # This is deliberately not an account balance or a resumable-job allowance.
+        self._cloud_budget_limit = int(os.getenv("LES_CLOUD_TURN_TOKEN_BUDGET", "0"))
+        if self._cloud_budget_limit < 0:
+            raise ValueError("LES_CLOUD_TURN_TOKEN_BUDGET must be nonnegative")
+        self._cloud_accounted = 0
+        self._cloud_requests = 0
+        self._cloud_usage_requests = 0
+
+    def cloud_budget_snapshot(self) -> dict[str, Any]:
+        return {"limit_tokens": self._cloud_budget_limit, "accounted_tokens": self._cloud_accounted,
+                "requests_sent": self._cloud_requests, "requests_with_usage": self._cloud_usage_requests,
+                "remaining_tokens": max(0, self._cloud_budget_limit - self._cloud_accounted),
+                "reservation_method": "utf8_wire_bytes_plus_1024_plus_total_output_cap_plus_10",
+                "scope": "one_chat_turn", "provider_balance": "unknown"}
+
+    def _reserve_cloud(self, connection: ResolvedModelConnection, body: Mapping[str, Any]) -> int:
+        if not self._cloud_budget_limit or connection.locality is not ConnectionLocality.REMOTE:
+            return 0
+        limit = body.get("max_completion_tokens")
+        if type(limit) is not int or limit <= 0:
+            raise CloudBudgetStop("CLOUD_TURN_TOKEN_BUDGET: TOTAL_OUTPUT_CAP_REQUIRED")
+        # Byte-based reservation is conservative for text; it is not a tokenizer
+        # or a valid estimate for images/audio. Do not silently admit those inputs.
+        if any(not isinstance(m.get("content", ""), (str, type(None))) for m in body.get("messages", ())):
+            raise CloudBudgetStop("CLOUD_TURN_TOKEN_BUDGET: TEXT_INPUT_REQUIRED")
+        reserve = len(json.dumps(body, ensure_ascii=False).encode("utf-8")) + 1024 + limit + 10
+        if self._cloud_accounted + reserve > self._cloud_budget_limit:
+            raise CloudBudgetStop(
+                f"CLOUD_TURN_TOKEN_BUDGET: limit={self._cloud_budget_limit}, "
+                f"accounted={self._cloud_accounted}, next_reservation={reserve}"
+            )
+        self._cloud_accounted += reserve
+        self._cloud_requests += 1
+        return reserve
+
+    def _settle_cloud(self, response: httpx.Response, usage: object) -> None:
+        reserved = response.extensions.pop("les_cloud_reservation", 0)
+        if not reserved or not isinstance(usage, Mapping):
+            return
+        prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
+        if type(prompt) is not int or type(completion) is not int or prompt <= 0 or completion < 0:
+            return  # Failed/unknown usage remains charged at the full reservation.
+        total = usage.get("total_tokens", prompt + completion)
+        if type(total) is not int or total < prompt + completion:
+            return
+        self._cloud_accounted += total - reserved
+        self._cloud_usage_requests += 1
 
     @staticmethod
     def _require(connection: ResolvedModelConnection, capability: CapabilityName) -> None:
@@ -344,6 +397,7 @@ class OpenAICompatibleTransport:
         url: str,
         body: Mapping[str, Any],
     ) -> httpx.Response:
+        reservation = self._reserve_cloud(connection, body) if url.endswith("/chat/completions") else 0
         request = self.client.build_request(
             "POST",
             url,
@@ -355,6 +409,7 @@ class OpenAICompatibleTransport:
             response = await self.client.send(request, stream=True, follow_redirects=False)
         except (httpx.HTTPError, OSError) as exc:
             raise ModelTransportError(f"UPSTREAM_REQUEST_FAILED: {type(exc).__name__}") from exc
+        response.extensions["les_cloud_reservation"] = reservation
         if 300 <= response.status_code < 400:
             await response.aclose()
             raise ModelTransportError("UPSTREAM_REDIRECT_REJECTED")
@@ -420,6 +475,7 @@ class OpenAICompatibleTransport:
             tool_calls = tuple(
                 MappingProxyType(dict(item)) for item in tool_calls_raw if isinstance(item, Mapping)
             )
+            self._settle_cloud(response, payload.get("usage"))
             return InferenceResponse(
                 text=_message_text(message),
                 tool_calls=tool_calls,
