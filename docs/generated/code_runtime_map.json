@@ -7871,7 +7871,7 @@
         "tests/test_workbook_research_job_service.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 2882,
+      "lines": 2883,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -15748,7 +15748,7 @@
     },
     {
       "inbound": [],
-      "lines": 1644,
+      "lines": 1668,
       "module": "tests.test_workbook_research_job_service",
       "outbound": [
         "proxy/services/workbook_research_job_service.py"
@@ -20438,7 +20438,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 702,
     "tracked_python_files": 1084,
-    "tracked_python_lines": 381126
+    "tracked_python_lines": 381151
   },
   "warnings": []
 }

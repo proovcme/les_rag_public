@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> Кандидат885: `WorkbookResearchJobService.evidence_read_receipts` использует
+> существующий `list_events_with_lineage` с фильтром packet_id. Восстановление
+> старого журнала охватывает и новый job после сообщения «Продолжи».
+
 > Кандидат884: `read_receipts` в sheet native loop начинается с
 > `saved_read_receipts`; `confirm_model_read_delivery` получает старые receipts
 > после успешного resumed frame. `WorkbookResearchJobService.evidence_read_receipts`

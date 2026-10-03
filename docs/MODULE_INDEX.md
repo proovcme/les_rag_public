@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат885 / 0.31.157:** `core/chat-evidence`, doc↔code ✅.
+> `WorkbookResearchJobService.evidence_read_receipts` читает события через
+> `list_events_with_lineage`: legacy ledger восстанавливается и после нового
+> сообщения продолжения. [Поток](modules/rag-evidence-flow.md). Related154passed.
+> Installed884: RRF PASS, basic9PASS/1WARN; 19 receipts восстановлены read-only.
+> Canonical3206passed/20existing skipped; verify/architecture/docs exit0.
+> Install885 pending; готовность профессиональной ЛСР не подтверждена.
+
 > **Кандидат884 / 0.31.156:** `core/chat-evidence`, doc↔candidate-code ✅.
 > `_accept_sheet_reads` сохраняет cumulative receipts предыдущего хода;
 > initial resume подтверждает их фактическую доставку; `evidence_read_receipts`

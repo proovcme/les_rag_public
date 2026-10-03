@@ -1,4 +1,5 @@
 import sqlite3
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -48,6 +49,29 @@ def test_read_ledger_recovers_legacy_overwrite_from_same_packet_events(tmp_path)
     assert restarted.evidence_read_receipts(job_id, "other") == [second]
     assert restarted.evidence_read_receipts(job_id, "absent") == []
     assert restarted.get(job_id)["accepted_rows"] == []
+
+
+def test_read_ledger_recovers_legacy_events_across_document_continuation(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "read-ledger-lineage.sqlite")
+    parent = service.begin_or_resume(_identity(service))["job_id"]
+    first = {"call": {"tool": "read_norm_card", "args": {"evidence_ref": "Q1.H1"}},
+             "evidence_bindings": {"Q2.H1": "norm"}, "model_delivery_status": "delivered"}
+    second = {"call": {"tool": "read_source", "args": {"evidence_ref": "Q3.H1"}},
+              "evidence_bindings": {"Q4.H1": "source"}, "model_delivery_status": "prepared"}
+    literal = {"global_evidence_id": "norm", "content": "literal norm body"}
+    for receipts in ([first], [second]):
+        service.record_evidence_read(parent, packet_id="packet", evidence=[literal], read_receipts=receipts)
+    child = service.begin_or_resume(_identity(service, "Продолжи это же задание"))
+    assert child["job_id"] != parent and child["continues_job_id"] == parent
+    assert child["task_context"]["model_evidence_reads"]["packet"] == [second]
+    restarted = WorkbookResearchJobService(service.db_path)
+    assert restarted.evidence_read_receipts(child["job_id"], "packet") == [first, second]
+    assert restarted.evidence_read_receipts(child["job_id"], "other") == []
+    assert restarted.get(child["job_id"])["evidence"] == [literal]
+    assert restarted.get(child["job_id"])["accepted_rows"] == []
+    other = restarted.begin_or_resume(replace(_identity(service), source_sha256="b" * 64))
+    assert not other["continues_job_id"]
+    assert restarted.evidence_read_receipts(other["job_id"], "packet") == []
 
 
 @pytest.mark.parametrize("method", ["read", "packet"])

@@ -1216,10 +1216,11 @@ class WorkbookResearchJobService:
 
         Historical events retain the original receipts even when an older
         caller replaced task_context with only its new turn's reads. This is a
-        read-only projection; accepted rows and literal evidence never change.
+        read-only projection across this document's continuation lineage;
+        accepted rows and literal evidence never change.
         """
         packets = []
-        for event in self.list_events(job_id, event_type="model_evidence_read"):
+        for event in self.list_events_with_lineage(job_id, event_type="model_evidence_read"):
             payload = event.get("payload") or {}
             if str(payload.get("packet_id") or "") == str(packet_id):
                 packets.extend(payload.get("read_receipts") or ())

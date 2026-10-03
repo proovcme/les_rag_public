@@ -1,5 +1,15 @@
 # RAG evidence flow
 
+## 885: восстановление журнала охватывает цепочку продолжений
+
+Сообщение с другим question_sha может создать новый research job с inherited
+task_context/evidence. Для старых повреждённых журналов этого недостаточно:
+полные receipts сохранились в событиях родителя. `evidence_read_receipts`
+использует `list_events_with_lineage` (существующая ограниченная цепочка),
+сохраняя фильтр packet_id и ключ call+bindings. Другой исходный SHA не наследует
+эти события. Доставка монотонна, тексты evidence и решения не изменяются.
+Регрессия: `test_read_ledger_recovers_legacy_events_across_document_continuation`.
+
 ## 884: журнал чтений переживает следующий resumed read
 
 Live883 доказал14 успешных чтений по ссылкам. Повторный ход при новом чтении
