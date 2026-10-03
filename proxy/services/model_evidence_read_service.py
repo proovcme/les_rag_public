@@ -76,7 +76,8 @@ def native_evidence_read_exchange(
         replies.append(NativeToolReply(call.call_id, call.name, json.dumps(
             dict(receipt), ensure_ascii=False, sort_keys=True, separators=(",", ":"))))
     return NativeToolExchange(calls=typed_calls, replies=tuple(replies),
-                              assistant_content=calls[0].get("native_assistant_content", ""))
+                              assistant_content=calls[0].get("native_assistant_content", ""),
+                              reasoning_content=calls[0].get("native_reasoning_content"))
 
 
 async def _invoke(callback: Callable, *args: Any) -> Any:

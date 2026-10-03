@@ -159,7 +159,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      malformed_second_packet=False, duplicate_json_first_packet=False,
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
                      exact_resource_padding=0, query_declaration=None, budget_stop_at=None,
-                     wire_budget_bytes=None, norm_ref_read=None, native_repeats=0):
+                     wire_budget_bytes=None, norm_ref_read=None, native_repeats=0,
+                     native_reasoning=None):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -390,7 +391,11 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                 raise CloudBudgetStop("CLOUD_TURN_TOKEN_BUDGET: fixture exhausted")
             assert responses, "harness forced another model cycle after final rows"
             response = responses.pop(0)
-            return response() if callable(response) else response
+            response = response() if callable(response) else response
+            if response.tool_calls and native_reasoning is not None:
+                from dataclasses import replace
+                response = replace(response, reasoning_content=native_reasoning)
+            return response
 
     monkeypatch.setattr(service, "resolve_canonical_route", lambda **kw: CanonicalRouteDecision(
         requested=CanonicalRouteMode.ACTIVE, effective=CanonicalRouteMode.ACTIVE,

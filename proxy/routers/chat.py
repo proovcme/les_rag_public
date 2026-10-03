@@ -1260,7 +1260,12 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 def _parse_model_tool_calls(text: str, *, allowed_tools: set[str], max_calls: int = 3) -> list[dict[str, Any]]:
-    parsed = _extract_json_object(text)
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = None
+    if not isinstance(parsed, dict):
+        parsed = _extract_json_object(text)
     if not parsed:
         return []
     calls_raw = parsed.get("calls")
@@ -1268,6 +1273,11 @@ def _parse_model_tool_calls(text: str, *, allowed_tools: set[str], max_calls: in
         calls_raw = [calls_raw]
     if not isinstance(calls_raw, list):
         return []
+    if any(isinstance(item, dict) and "call_id" in item for item in calls_raw):
+        # Provider batches are indivisible. Preserve their literal arguments and
+        # assistant protocol state; the driver validates/budgets before execution.
+        from proxy.services.smeta_chat_adapter_service import _parse_model_tool_calls as parse_native
+        return parse_native(text, allowed_tools=allowed_tools, max_calls=max_calls)
     calls: list[dict[str, Any]] = []
     for item in calls_raw:
         if not isinstance(item, dict):

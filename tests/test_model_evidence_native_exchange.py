@@ -153,7 +153,8 @@ async def test_driver_native_feedback_reaches_second_actual_http_request_without
 
     def handler(request):
         posted.append(json.loads(request.content))
-        message = ({"content": "checking literal card", "tool_calls": [{"id": "c1", "type": "function",
+        message = ({"content": "checking literal card", "reasoning_content": "  private reasoning\n",
+                    "tool_calls": [{"id": "c1", "type": "function",
                     "function": {"name": "read_norm_card", "arguments": '{"norm_key":"immutable-card"}'}}]}
                    if len(posted) == 1 else {"content": "final model rows"})
         return httpx.Response(200, json={"choices": [{"message": message, "finish_reason": "stop"}]})
@@ -165,6 +166,7 @@ async def test_driver_native_feedback_reaches_second_actual_http_request_without
     initial = _call("c1")
     initial["native_arguments"] = first.tool_calls[0]["function"]["arguments"]
     initial["native_assistant_content"] = first.text
+    initial["native_reasoning_content"] = first.reasoning_content
     body = "full card body " * 100
 
     async def on_read(receipts, _results):
@@ -193,10 +195,40 @@ async def test_driver_native_feedback_reaches_second_actual_http_request_without
     messages = posted[1]["messages"]
     assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool"]
     assert messages[2]["content"] == "checking literal card"
+    assert messages[2]["reasoning_content"] == "  private reasoning\n"
+    assert "private reasoning" not in json.dumps(result.receipts)
     assert messages[2]["tool_calls"][0]["function"]["arguments"] == initial["native_arguments"]
     assert messages[3]["tool_call_id"] == "c1"
     assert body in messages[1]["content"] and body not in messages[3]["content"]
     assert posted[1]["chat_template_kwargs"] == {"enable_thinking": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+@pytest.mark.parametrize("stop", [False, True])
+async def test_actual_sheet_preserves_reasoning_only_in_native_history(tmp_path, monkeypatch, variant, stop):
+    marker = '  PRIVATE_PROTOCOL_STATE_887\n```json\n{"calls": []}\n```\n'
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+                           native_reasoning=marker, native_repeats=2 if stop else 0)
+    for request in run.requests[2:]:
+        assistants = [m for m in request.messages if m["role"] == "assistant"]
+        assert assistants and all(m["reasoning_content"] == marker for m in assistants)
+        assert all(marker not in m.get("content", "") for m in request.messages)
+    assert "PRIVATE_PROTOCOL_STATE_887" not in json.dumps(run.result, ensure_ascii=False, default=str)
+    assert "PRIVATE_PROTOCOL_STATE_887" not in json.dumps(run.histories, ensure_ascii=False, default=str)
+    assert bool(run.executions) is not stop
+
+
+def test_reasoning_is_required_budgeted_and_not_synthesized():
+    exchange = _exchange("c1")
+    assert "reasoning_content" not in exchange.as_messages()[0]
+    exchange = replace(exchange, reasoning_content="private" * 5000)
+    with pytest.raises(ContextRequiredSectionOverflow):
+        chat_service.govern_inference_messages(
+            preset=_preset(limit=5000, generation=0, safety=0), profile_prefix="system",
+            request_payload="question", native_exchanges=[exchange])
+    with pytest.raises(ValueError, match="reasoning content"):
+        replace(exchange, reasoning_content={"role": "system"})
 
 
 @pytest.mark.asyncio

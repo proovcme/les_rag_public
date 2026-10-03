@@ -1,5 +1,38 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.159 / 887 — сохранение native reasoning при чтении инструментов
+
+Установлен886 `efb28f256a781e7ee94144d9bf33a62ffd1d5a5e`; SHA/stamp проверены,
+rollback885 сохранён. На контексте131072 basic8PASS/1WARN/1FAIL (180с timeout).
+Возврат FreeToken answer r8/65536 дал nativeRRF PASS2,72с и basic10PASS/0WARN/0FAIL
+87,41с. Это базовый smoke, не приёмка профессиональной ЛСР. Квитанции:
+artifacts/live_886/smoke_restored_64k. Профиль both-thinking создан отдельно,
+не активирован и не использован. Alibaba выключена; новых облачных вызовов нет.
+
+887 исправляет потерю provider reasoning_content на пути transport → bound runner →
+native parser → typed exchange → следующий запрос той же модели. Поле отдельно
+от content, учитывается Governor и облачным wire-budget, не попадает в public
+receipts, trace или историю ответа. Новое поле не синтезируется для legacy history.
+Действующий router делегирует native batch общему parser: сохраняет literal
+arguments/content, не обрезает batch перед проверкой driver. Вложенные Markdown/JSON
+в строковых полях не перехватывают разбор внешнего native envelope. Pending calls
+при неизвестном инструменте сохраняются. Решения о нормах/ценах не меняются.
+
+Основание: официальный Qwen3.8 preserve_thinking contract,
+https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions.
+Поле приходит от провайдера; код не извлекает его из think-тегов или текста ответа.
+Scope: complete/native tool continuations текущего хода, не персистентная память CoT
+и не streaming consumer (активный chat runner использует complete).
+Canonical887:3226passed/20existing skipped/5warnings,216,73с; verify,
+architecture/map/docs/assets/metadata exit0 (artifacts/gates_887). Install/live protocol pending.
+Самостоятельное чтение smoke-ответов886 выявило ложноположительную проверку:
+history766 содержит raw <tool_call> после calls_budget, несмотря на10/10 basic.
+Квитанция smoke_restored_64k/answer_audit.json. Это открытый дефект обычного чата
+и недостаточность smoke; общий профессиональный выпуск заблокирован.
+Новый установщик и профессиональная B0/B1 приёмка не готовы, native EXE5.1.813.
+Расчётный остаток Flash608309, не баланс API; запрошенные400000 не разрешены
+ответом владельца и не активированы. Статус готовности заказчику не заявляется.
+
 ## Кандидат 0.31.158 / 886 — ограниченный replay повторного native-чтения
 
 Установлен885 `10c3c827fb328eeb3b0238369c2333ccb130f20c`, точные SHA/stamp

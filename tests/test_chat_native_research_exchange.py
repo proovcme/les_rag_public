@@ -48,6 +48,7 @@ async def test_two_native_web_rounds_preserve_ids_literal_arguments_and_results(
                 emitted_content.append(content)
                 result = replace(result, response=replace(
                     result.response, text=content, tool_calls=(native,),
+                    reasoning_content=f"private reasoning round {index + 1}",
                 ))
             return result
 
@@ -61,6 +62,7 @@ async def test_two_native_web_rounds_preserve_ids_literal_arguments_and_results(
         for index in range(completed):
             assistant, reply = protocol[index * 2:index * 2 + 2]
             assert assistant["content"] == emitted_content[index]
+            assert assistant["reasoning_content"] == f"private reasoning round {index + 1}"
             assert assistant["tool_calls"] == [emitted_calls[index]]
             assert reply["tool_call_id"] == emitted_calls[index]["id"]
             assert reply["name"] == emitted_calls[index]["function"]["name"]
@@ -73,6 +75,7 @@ async def test_two_native_web_rounds_preserve_ids_literal_arguments_and_results(
             else:
                 assert payload["result"]["text"] == "Цемент — 650 руб.; арматура — 72 000 руб./т."
         user_content = "\n".join(message.get("content", "") for message in messages if message["role"] == "user")
+        assert all("private reasoning" not in message.get("content", "") for message in messages)
         assert "tool result trimmed for prompt only" not in user_content
         assert '"operation":"search"' not in user_content
         if request_index < 3:

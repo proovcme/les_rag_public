@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import inspect
 import os
@@ -128,12 +128,7 @@ class BoundModelChatRunner:
     ) -> ModelChatResult:
         calls = tuple(response.tool_calls)
         visible_calls = calls if preserve_all_tool_calls else calls[:1]
-        bounded = InferenceResponse(
-            text=response.text,
-            tool_calls=visible_calls,
-            finish_reason=response.finish_reason,
-            usage=response.usage,
-        )
+        bounded = replace(response, tool_calls=visible_calls)
         return ModelChatResult(
             response=bounded,
             connection=connection,

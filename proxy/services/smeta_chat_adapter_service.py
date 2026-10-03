@@ -372,7 +372,9 @@ def _extract_mapping_json(text: str) -> dict[str, Any] | None:
     return None
 
 def _parse_model_tool_calls(text: str, *, allowed_tools: set[str], max_calls: int = 3) -> list[dict[str, Any]]:
-    parsed = _extract_json_object(text)
+    # Native envelopes may contain quoted Markdown/JSON in reasoning or content.
+    # Decode the envelope before attempting the legacy fenced-text extraction.
+    parsed = _loads_json_dict(text) or _extract_json_object(text)
     if not parsed:
         return []
     calls_raw = parsed.get("calls")
@@ -394,14 +396,15 @@ def _parse_model_tool_calls(text: str, *, allowed_tools: set[str], max_calls: in
         call = {"tool": tool, "args": dict(args)}
         if "call_id" in item:
             call["call_id"] = item.get("call_id")
-            for field in ("native_arguments", "native_assistant_content"):
+            for field in ("native_arguments", "native_assistant_content", "native_reasoning_content"):
                 if field in item:
                     call[field] = item[field]
         calls.append(call)
         if len(calls) >= max(1, max_calls) and not native_batch:
             break
-    if calls and "native_assistant_content" in parsed:
-        calls[0]["native_assistant_content"] = parsed["native_assistant_content"]
+    for field in ("native_assistant_content", "native_reasoning_content"):
+        if calls and native_batch and field in parsed:
+            calls[0][field] = parsed[field]
     return calls
 
 def _strip_think(text: str) -> str:

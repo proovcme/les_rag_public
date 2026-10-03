@@ -923,6 +923,7 @@ def native_research_call_batch(
 
 def native_research_exchange(
     calls: Sequence[NativeToolCall], payloads: Sequence[Mapping[str, Any]], *, assistant_content: str,
+    reasoning_content: str | None = None,
 ) -> NativeToolExchange:
     """Replay whole safe result objects in matching tool roles, without body copies."""
     if len(calls) != len(payloads):
@@ -933,6 +934,7 @@ def native_research_exchange(
             dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
         )) for call, payload in zip(calls, payloads, strict=True)),
         assistant_content=assistant_content,
+        reasoning_content=reasoning_content,
     )
 
 
@@ -7728,8 +7730,11 @@ async def _execute_chat_evidence_application(
                                         else json.dumps(raw_arguments, ensure_ascii=False, separators=(",", ":")),
                                     }
                                 )
+                            native_payload = {"calls": canonical_calls, "native_assistant_content": model_text}
+                            if active_model_result.response.reasoning_content is not None:
+                                native_payload["native_reasoning_content"] = active_model_result.response.reasoning_content
                             model_text = json.dumps(
-                                {"calls": canonical_calls, "native_assistant_content": model_text},
+                                native_payload,
                                 ensure_ascii=False,
                                 separators=(",", ":"),
                             )
@@ -8639,6 +8644,7 @@ async def _execute_chat_evidence_application(
                                 research_native_exchanges.append(native_research_exchange(
                                     native_calls, native_payloads,
                                     assistant_content=native_response.text,
+                                    reasoning_content=native_response.reasoning_content,
                                 ))
                             if workbook_chat_meta:
                                 break
@@ -10078,8 +10084,8 @@ async def _execute_chat_evidence_application(
                                 pass_answer, usage = read_turn.text, read_turn.usage
                                 tokens = int(tokens or 0) + read_turn.extra_completion_tokens
                                 read_stop = read_turn.stop_reason
-                                if not read_stop and active_model_result is not None and active_model_result.response.tool_calls:
-                                    read_stop = "evidence_read_unknown_tool"
+                                if active_model_result is not None and active_model_result.response.tool_calls:
+                                    read_stop = read_stop or "evidence_read_unknown_tool"
                                     active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
                             except CloudBudgetStop:
                                 if research_job_service is not None and research_job is not None:
@@ -11330,8 +11336,8 @@ async def _execute_chat_evidence_application(
                             )
                             answer, usage = read_turn.text, read_turn.usage
                             direct_read_stop = read_turn.stop_reason
-                            if not direct_read_stop and active_model_result is not None and active_model_result.response.tool_calls:
-                                direct_read_stop = "evidence_read_unknown_tool"
+                            if active_model_result is not None and active_model_result.response.tool_calls:
+                                direct_read_stop = direct_read_stop or "evidence_read_unknown_tool"
                                 active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
                             usage = {**usage, "completion_tokens": read_turn.extra_completion_tokens
                                      + (0 if direct_read_stop else int(usage.get("completion_tokens") or 0))}

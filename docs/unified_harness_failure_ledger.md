@@ -1,5 +1,19 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-03 — provider reasoning lost before native continuation (candidate887)
+
+Transport discarded reasoning_content; bound runner reconstructed a reduced response;
+active router parser also discarded native assistant content/literal arguments.
+Qwen3.8 preserve_thinking requires separate historical assistant reasoning_content.
+887 carries provider state through all three boundaries into typed budgeted exchanges.
+No visible answer/receipt/trace exposure, no fabricated resume history; cloud disabled.
+Regression covers actual B0/B1 callbacks, ordinary research, mock second HTTP, quoted
+Markdown/JSON and required context/cloud budgets. Canonical887:3226passed/20existing
+skipped, other offline gates exit0; installed/live acceptance pending.
+Installed886 smoke after 64k restoration:10PASS/0WARN/0FAIL, but history766 contains
+raw tool-call markup after calls_budget. Direct answer audit FAIL, release blocked:
+artifacts/live_886/smoke_restored_64k/answer_audit.json. Nonempty smoke is insufficient.
+
 ## 2026-10-03 — installed885: native repeat aborted without cached feedback
 
 Original19work BAP, FreeToken B0, physicalKV131072:1007.74s, no XLSX.

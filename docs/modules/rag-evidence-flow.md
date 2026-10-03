@@ -1,5 +1,23 @@
 # RAG evidence flow
 
+## 887: provider reasoning сохраняется в native protocol
+
+OpenAICompatibleTransport.complete читает только явное строковое reasoning_content.
+BoundModelChatRunner сохраняет весь response, меняя только список допустимых calls.
+Обычный research и сметные B0/B1 передают reasoning через typed NativeToolExchange
+отдельно от assistant content. Для отсутствующего поля не создаётся пустая имитация;
+для переданного пустого/многострочного поля сохраняются точные байты текста.
+Router native parser делегирует общему smeta parser, не режет пакет до driver и
+сохраняет исходные arguments/content. Сначала декодируется внешний JSON, затем
+legacy fenced text: вложенные Markdown/JSON не перехватывают envelope.
+
+Контекст и облачный расход учитывают это поле; overflow виден технически.
+Публичные receipts, ответ, trace и история reasoning не сохраняют. После resume
+новый ход использует durable evidence; утраченное старое reasoning не выдумывается.
+Регрессии проверяют фактические B0/B1 callbacks, обычный research, второй mock HTTP,
+unknown-reader stops, privacy и оба бюджета. Это не живая приёмка качества норм.
+Provider contract: https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions.
+
 ## 886: повтор native-чтения получает сохранённый результат
 
 Live885 B0 на FreeToken с физическим KV131072 завершился через1007,74с без XLSX:

@@ -1,5 +1,10 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build887: OpenAICompatibleTransport.complete → InferenceResponse.reasoning_content →
+BoundModelChatRunner → native tool parser → NativeToolExchange.as_messages.
+Сметные B0/B1 и обычный native research сохраняют поле отдельно от visible content;
+ContextGovernor и cloud wire-budget считают его в полном assistant message.
+
 > Кандидат886: `model_evidence_read_service.run_model_evidence_read_turn`
 > сохраняет один native receipt replay на identity. `_accept_sheet_read_replays`
 > записывает его в durable ledger, `_accept_direct_read_replays` — в trace.

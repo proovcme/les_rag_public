@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат887 / 0.31.159:** `core/chat-evidence`, doc↔candidate-code ✅.
+> Native reasoning_content сохраняется через transport/runner/router/typed exchange;
+> отдельное поле бюджетируется и не публикуется. См. rag-evidence-flow и ALGO-context-memory.
+> Installed886 `efb28f25`, FreeToken r8/64k: nativeRRF PASS, basic10PASS/0WARN/0FAIL.
+> Canonical887:3226passed/20existing skipped, остальные offline gates exit0.
+> Install/live protocol pending. Basic886 пропустил raw tool-call в history766;
+> самостоятельный answer audit FAIL, профессиональная приёмка не пройдена.
+
 > **Кандидат886 / 0.31.158:** `core/chat-evidence`, doc↔candidate-code ✅.
 > Native read driver возвращает сохранённый receipt при первом точном повторе;
 > бюджет/защита от циклов и immutable refs сохраняются, replay записывается в job.

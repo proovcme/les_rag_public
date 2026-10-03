@@ -1,5 +1,14 @@
 # ALGO-context-memory — память чата и паспорт датасета
 
+## 887: бюджетирование provider reasoning
+
+NativeToolExchange содержит optional reasoning_content как точную строку протокола.
+as_messages передаёт его в assistant field, render считает его вместе с calls/replies.
+Весь exchange остаётся обязательным и неделимым; reasoning не превращается в
+evidence/content и не обрезается для обхода capacity или cloud budget. Public trace
+показывает только размер и IDs tool-exchange, без тела. Persisted receipts не содержат
+reasoning, новый ход не синтезирует старую CoT. Активный runner использует complete.
+
 ## Кандидат882: ограничение полного wire-body при облачном бюджете
 
 `ContextGovernor.pack(admit_messages=...)` дополнительно проверяет целые messages

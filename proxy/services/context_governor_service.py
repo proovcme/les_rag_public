@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Sequence
 
@@ -79,6 +79,7 @@ class NativeToolExchange:
     calls: tuple[NativeToolCall, ...]
     replies: tuple[NativeToolReply, ...]
     assistant_content: str = ""
+    reasoning_content: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "calls", tuple(self.calls))
@@ -96,10 +97,15 @@ class NativeToolExchange:
             raise ValueError("native exchange replies must match every call in order")
         if not isinstance(self.assistant_content, str):
             raise ValueError("native assistant content must be literal text")
+        if self.reasoning_content is not None and not isinstance(self.reasoning_content, str):
+            raise ValueError("native reasoning content must be literal text or absent")
 
     def as_messages(self) -> list[dict[str, Any]]:
-        return [{"role": "assistant", "content": self.assistant_content,
-                 "tool_calls": [call.as_payload() for call in self.calls]},
+        assistant = {"role": "assistant", "content": self.assistant_content,
+                     "tool_calls": [call.as_payload() for call in self.calls]}
+        if self.reasoning_content is not None:
+            assistant["reasoning_content"] = self.reasoning_content
+        return [assistant,
                 *({"role": "tool", "tool_call_id": reply.call_id,
                    "name": reply.name, "content": reply.content} for reply in self.replies)]
 

@@ -311,8 +311,51 @@ async def test_complete_preserves_tool_calls_auth_and_output_field(tmp_path):
     assert captured["body"]["max_completion_tokens"] == 21
     assert "max_tokens" not in captured["body"]
     assert result.text == ""
+    assert result.reasoning_content == "checked"
+    assert "checked" not in repr(result)
     assert result.tool_calls[0]["function"]["name"] == "read_file"
     assert result.finish_reason == "tool_calls"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reasoning", [None, "", "  private protocol state\n", {"invalid": "object"}])
+async def test_complete_reasoning_is_separate_literal_protocol_state(tmp_path, reasoning):
+    def handler(_request):
+        return httpx.Response(200, json={"choices": [{"message": {
+            "content": "Visible answer", "reasoning_content": reasoning}}]})
+    transport, client = _transport(tmp_path, handler)
+    try:
+        request = InferenceRequest(messages=({"role": "user", "content": "question"},), max_output_tokens=256)
+        if isinstance(reasoning, dict):
+            with pytest.raises(ModelTransportError, match="UPSTREAM_REASONING_CONTENT_INVALID"):
+                await transport.complete(_resolved(), request)
+        else:
+            result = await transport.complete(_resolved(), request)
+            assert result.reasoning_content == reasoning
+            assert result.text == "Visible answer"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_preserved_reasoning_cannot_bypass_cloud_wire_budget(tmp_path, monkeypatch):
+    from proxy.services.openai_compatible_transport_service import CloudBudgetStop
+    monkeypatch.setenv("LES_CLOUD_TURN_TOKEN_BUDGET", "2500")
+    transport, client = _transport(tmp_path, lambda _: pytest.fail("must stop before HTTP"))
+    remote = replace(_resolved(max_output_field="max_completion_tokens"), locality=ConnectionLocality.REMOTE)
+    assistant = {"role": "assistant", "content": "", "reasoning_content": "private" * 600,
+                 "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{}"}}]}
+    request = InferenceRequest(messages=({"role": "user", "content": "question"}, assistant,
+        {"role": "tool", "tool_call_id": "c1", "content": "ok"}), max_output_tokens=32)
+    try:
+        assert not transport.cloud_request_fits(remote, request)
+        with pytest.raises(CloudBudgetStop):
+            await transport.complete(remote, request)
+        snapshot = transport.cloud_budget_snapshot()
+        assert snapshot["requests_sent"] == 0
+        assert "private" not in json.dumps(snapshot)
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from types import MappingProxyType
@@ -70,6 +70,8 @@ class InferenceResponse:
     finish_reason: str
     usage: Mapping[str, int]
     model_id: str = ""
+    # Provider protocol state, never visible answer text or a public receipt.
+    reasoning_content: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -508,12 +510,16 @@ class OpenAICompatibleTransport:
                 MappingProxyType(dict(item)) for item in tool_calls_raw if isinstance(item, Mapping)
             )
             self._settle_cloud(response, payload.get("usage"))
+            reasoning_content = message.get("reasoning_content")
+            if reasoning_content is not None and not isinstance(reasoning_content, str):
+                raise ModelTransportError("UPSTREAM_REASONING_CONTENT_INVALID")
             return InferenceResponse(
                 text=_message_text(message),
                 tool_calls=tool_calls,
                 finish_reason=str(choice.get("finish_reason") or ""),
                 usage=_usage(payload.get("usage")),
                 model_id=str(payload.get("model") or ""),
+                reasoning_content=reasoning_content,
             )
         finally:
             await response.aclose()
