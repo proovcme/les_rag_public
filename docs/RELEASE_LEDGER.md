@@ -1,5 +1,35 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.165 / 893 — инструкции по этапам без повторного контракта строк
+
+892 установлен: d26f0df2, SHA/rollback сохранены; canonical3274passed/20existing
+skipped, nativeRRF PASS. Basic8PASS/1WARN/1FAIL: ordinary project chat завершил
+calls_budget запросом нового действия вместо финала (history787); это блокер,
+не зелёная приёмка. B1 synthetic304.45s: запросов5 вместо25, нужная карточка
+Q1.H1; авторский source_row='ВОР!R2, ВОР!R3' не является одним locator,
+принятых строк0, XLSX отсутствует. Новые материалы не исключены автором.
+
+Изолированный диагностический контроль той же FreeToken r8, той же карточки
+и двух исходных работ, без поиска/упаковки: reasoning4096 — incomplete69.74s;
+off4096 — ответ8.30s с необоснованным исключением техники; on8192 — ответ41.75s,
+однократное начисление, масштаб0.15, исключение новых панелей и вопрос о высоте.
+Это качественное наблюдение на одном кейсе, не production acceptance и не
+доказательство универсального качества модели. artifacts/live_892/compact_decision*.
+Облачный расход0; глобальные профили и роль не менялись.
+
+893 убирает только app-owned контракт готовых строк из query-фазы и его точный
+дубль из system при наличии в result request. Пользовательский prompt/skill,
+все данные, карточки, запросы, решения и бюджеты сохраняются. Порядок B0/B1 и
+native reads прежний; новых предметных циклов нет. Red2 подтвердил дефект;
+Focused309passed; canonical3276passed/20existing skipped/5warnings,224.92s;
+verify/architecture/map/docs/assets PASS, metadata31passed (artifacts/gates_893).
+Install/live893 pending. Native EXE остаётся5.1.813.
+
+Готовые RTF заказчика прочитаны локально:46 позиций ТЕР/ТЕРм/ТЕРп и95 позиций
+ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр. Реестр artifacts/live_892/reference_inventory отмечен
+reference_candidate_not_certified_oracle: редакция/условия требуют сверки;
+ни строки, ни ответы не добавлялись в production RAG.
+
 ## Кандидат 0.31.164 / 892 — поисковые строки отделены от commentary
 
 Installed891 `4f435358`: canonical3272passed/20existing skipped; nativeRRF PASS,

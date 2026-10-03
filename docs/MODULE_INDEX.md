@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 893 — инструкции соответствуют этапу (✅ код/док; live pending)
+
+`chat_evidence_application_service.profile_system_prompt(purpose)` оставляет
+bound prompt/skill дословными. query не получает app-owned контракт итоговых
+строк; workbook_result получает его один раз в question, включая native reads.
+B0/B1 actual-application тест: test_model_query_reasoning.py. Данные/решения,
+схема строк, бюджеты и число профессиональных вызовов не меняются.
+Док: modules/rag-evidence-flow.md. 892 live качество не прошло; см. RELEASE_LEDGER.
+
 ## 892 — query envelope/commentary (✅ код/док; live pending)
 
 `model_lsr_result_contract.decode_model_query_envelope` сохраняет отдельное

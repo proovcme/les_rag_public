@@ -19,6 +19,19 @@ def _preset(policy):
         presets.BackendCapacity("freetoken", "Qwen3.6-35B", 35000, True, "fixture"), operator=policy)
 
 
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+@pytest.mark.asyncio
+async def test_query_has_no_workbook_fields_and_each_decision_has_one_contract(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant)
+    fields = chat_service.model_lsr_result_field_instruction()
+    texts = ["\n".join(str(message.get("content") or "") for message in request.messages)
+             for request in run.requests]
+    assert len(texts) == 4 and not run.responses
+    assert fields not in texts[0], "query-only inference must not request final workbook fields"
+    assert all(text.count(fields) == 1 for text in texts[1:]), "answer/native-read phases must keep one complete field contract"
+    assert len(run.executions) == 1 and run.result["answer"]
+
+
 @pytest.mark.parametrize("query, expected", [(None, True), (False, False), (True, True)])
 def test_query_reasoning_override_is_optional_and_keeps_answer_global(query, expected):
     policy = {"reasoning_enabled": True, **({"query_reasoning_enabled": query} if query is not None else {})}

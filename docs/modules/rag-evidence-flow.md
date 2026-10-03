@@ -1,5 +1,17 @@
 # RAG evidence flow
 
+## 893 — разделение инструкций поиска и результата
+
+`profile_system_prompt` имеет внутренний purpose: answer/query/workbook_result.
+Bound prompt_text/skill_text сохраняются без интерпретации и удаления. Только
+app-owned инструкции различаются: query не просит готовые строки; workbook_result
+сохраняет операционные правила, а полный field contract получает в question.
+Default answer сохраняет прежний полный контракт. И direct B0, и sheet B1,
+и продолжения native reads получают ровно один контракт полей итогового ответа.
+Это техническое устранение дублирования: нет новых model calls, выбора норм,
+автоматического пересмотра либо удаления решений. Критерий подтверждён тестом
+actual application через реальные InferenceRequest; живой контроль обязателен.
+
 ## 892 — явная граница запроса и пояснения
 
 Query prompt предпочитает существующий optional envelope artifact_kind/queries,

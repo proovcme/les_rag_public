@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from backend.runtime_paths import mutable_path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence
 
 import httpx
 from fastapi import HTTPException
@@ -1815,7 +1815,7 @@ def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configur
 
 TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE = "tabular_attachment_estimator_path_v1"
 _TABULAR_ESTIMATOR_TOOLS = ("search_sources", "read_source", "build_vor_workbook", "build_lsr_workbook")
-_TABULAR_LSR_VOLUME_INSTRUCTION = model_lsr_result_field_instruction() + (
+_TABULAR_LSR_OPERATION_INSTRUCTION = (
     "Пустые ценовые колонки не мешают сборке. Код рассчитывает выбранные нормы "
     "и ресурсы в явно заданной книге цен. quantity сохраняет исходный объём; "
     "calc_quantity не подменяет его, conversion_source обосновывает перевод единиц. "
@@ -1827,6 +1827,7 @@ _TABULAR_LSR_VOLUME_INSTRUCTION = model_lsr_result_field_instruction() + (
     "insufficient_source_data либо no_suitable_candidate и объясни причину. "
     "Отсутствие цены не делает норму MISSING."
 )
+_TABULAR_LSR_VOLUME_INSTRUCTION = model_lsr_result_field_instruction() + _TABULAR_LSR_OPERATION_INSTRUCTION
 _MODEL_RAG_QUERY_INSTRUCTION = (
     "Прочитай приложенный материал целиком. Определи требуемый итоговый документ. "
     "Если упомянуты ВОР и ЛСР/смета, отличай результат от исходника и дальнейшего назначения. "
@@ -6388,8 +6389,16 @@ def model_runtime_facts(
     return facts
 
 
-def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bool) -> str:
-    """Compile the exact per-chat prompt/skill snapshot for grounded generation."""
+def profile_system_prompt(
+    profile_snapshot: dict[str, Any] | None, *, strict: bool,
+    purpose: Literal["answer", "query", "workbook_result"] = "answer",
+) -> str:
+    """Keep the bound profile literal; add application contracts for this phase only.
+
+    Query generation does not produce workbook rows. Workbook result requests
+    already carry the full field contract in their question, including native
+    read continuations, so the system message must not repeat that contract.
+    """
 
     snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
     prompt = str(snapshot.get("prompt_text") or "").strip()
@@ -6415,7 +6424,9 @@ def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bo
         str(snapshot.get("mode") or "").strip().casefold() == "estimator"
         or profile_uses_tabular_estimator_path(snapshot)
     ):
-        parts.append(_TABULAR_LSR_VOLUME_INSTRUCTION)
+        if purpose != "query":
+            parts.append(_TABULAR_LSR_OPERATION_INSTRUCTION if purpose == "workbook_result"
+                         else _TABULAR_LSR_VOLUME_INSTRUCTION)
     return "\n\n".join(parts)
 
 
@@ -7959,7 +7970,7 @@ async def _execute_chat_evidence_application(
                         query_messages, query_packet = govern_inference_messages(
                             preset=query_execution_preset,
                             profile_prefix=(
-                                profile_system_prompt(profile_snapshot, strict=False)
+                                profile_system_prompt(profile_snapshot, strict=False, purpose="query")
                                 + "\n\n"
                                 + query_instruction
                             ),
@@ -8884,7 +8895,7 @@ async def _execute_chat_evidence_application(
                         )
                         return text, usage
 
-                    sheet_sys_msg = sys_normal + (
+                    sheet_sys_msg = profile_system_prompt(profile_snapshot, strict=False, purpose="workbook_result") + (
                         f" {answer_form.instruction}" if answer_form.instruction else ""
                     )
                     sheet_read_tools = model_evidence_read_tool_schemas()
@@ -9435,7 +9446,7 @@ async def _execute_chat_evidence_application(
                                             preset=query_execution_preset,
                                             profile_prefix=(
                                                 profile_system_prompt(
-                                                    profile_snapshot, strict=False
+                                                    profile_snapshot, strict=False, purpose="query"
                                                 )
                                                 + "\n\n"
                                                 + query_instruction
@@ -10887,7 +10898,9 @@ async def _execute_chat_evidence_application(
                                 },
                             })
                         # ADR-12 §2: каркас формы под интент добавляем к нормальному промпту.
-                        sys_msg = sys_normal + (f" {answer_form.instruction}" if answer_form.instruction else "")
+                        answer_profile = (profile_system_prompt(profile_snapshot, strict=False, purpose="workbook_result")
+                                          if model_driven_retrieval else sys_normal)
+                        sys_msg = answer_profile + (f" {answer_form.instruction}" if answer_form.instruction else "")
                         # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
                         # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-директиву).
                         if req.output_directive and req.output_directive.strip():
