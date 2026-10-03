@@ -8000,7 +8000,7 @@ async def _execute_chat_evidence_application(
                         query_body = {
                             "messages": query_messages,
                             "stream": False,
-                            "temperature": 0,
+                            "temperature": profile_temperature(profile_snapshot, fallback=_env_float("CHAT_TEMPERATURE", 0.2)),
                             "max_tokens": query_budget["effective"],
                         }
                         t_query_model = time.time()
@@ -8021,13 +8021,13 @@ async def _execute_chat_evidence_application(
                             query_text, query_usage, purpose="model_rag_queries" if query_attempt == 1 else "model_rag_query_repair",
                             budget=query_budget,
                         )
+                        query_diagnostic["temperature"] = query_body["temperature"]
                         retrieval_trace.setdefault("model_query_outputs", []).append(query_diagnostic)
                         query_failure_final_texts.append(query_text)
                         query_failure_final_texts = query_failure_final_texts[-8:]
                         declared = read_model_query_response(
                             query_text, instruction=query_instruction, finish_reason=llm_usage_finish_reason(query_usage))
-                        artifact_kind_declaration = merge_model_artifact_kind(
-                            artifact_kind_declaration, declared["artifact_kind_declaration"])
+                        query_diagnostic["artifact_kind_declaration"] = declared["artifact_kind_declaration"]
                         query_diagnostic["declared_parse"] = declared_query_output_diagnostics(query_text, declared)
                         logger.info("[MODEL_RAG_QUERY_OUTPUT] %s", query_diagnostic)
                         if query_diagnostic["output_incomplete"]:
@@ -8037,6 +8037,10 @@ async def _execute_chat_evidence_application(
                         model_queries = [item.text for item in declared["queries"]]
                         rejected_model_queries = [str(item.get("line") or "") for item in declared["accompanying_answer"]]
                         if model_queries or declared.get("intentional_empty"):
+                            # A rejected query response is repaired as one transport
+                            # attempt. It cannot veto the later accepted response.
+                            artifact_kind_declaration = merge_model_artifact_kind(
+                                artifact_kind_declaration, declared["artifact_kind_declaration"])
                             break
                     if not model_queries and not declared.get("intentional_empty"):
                         raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
@@ -9477,7 +9481,7 @@ async def _execute_chat_evidence_application(
                                         query_body = {
                                             "messages": query_messages,
                                             "stream": False,
-                                            "temperature": 0,
+                                            "temperature": profile_temperature(profile_snapshot, fallback=_env_float("CHAT_TEMPERATURE", 0.2)),
                                             "max_tokens": query_budget["effective"],
                                         }
                                         t_query_model = time.time()
@@ -9490,6 +9494,7 @@ async def _execute_chat_evidence_application(
                                         query_diagnostic = model_query_output_diagnostics(
                                             query_text, query_usage, purpose=query_purpose, budget=query_budget,
                                         )
+                                        query_diagnostic["temperature"] = query_body["temperature"]
                                         retrieval_trace.setdefault("model_query_outputs", []).append(query_diagnostic)
                                         query_failure_final_texts.append(query_text)
                                         query_failure_final_texts = query_failure_final_texts[-8:]
@@ -9522,11 +9527,16 @@ async def _execute_chat_evidence_application(
                                             row_literals=packet_row_literals,
                                             instruction=query_directive,
                                         )
-                                        artifact_kind_declaration = merge_model_artifact_kind(
-                                            artifact_kind_declaration, declared_now["artifact_kind_declaration"])
-                                        if research_job_service is not None and research_job is not None:
-                                            research_job = research_job_service.record_artifact_kind(
-                                                research_job["job_id"], declaration=artifact_kind_declaration)
+                                        query_diagnostic["artifact_kind_declaration"] = declared_now["artifact_kind_declaration"]
+                                        if declared_now["queries"] or declared_now.get("intentional_empty"):
+                                            # Only an admitted query attempt contributes
+                                            # document state; failed attempts remain above
+                                            # in diagnostics, including after a repair.
+                                            artifact_kind_declaration = merge_model_artifact_kind(
+                                                artifact_kind_declaration, declared_now["artifact_kind_declaration"])
+                                            if research_job_service is not None and research_job is not None:
+                                                research_job = research_job_service.record_artifact_kind(
+                                                    research_job["job_id"], declaration=artifact_kind_declaration)
                                         query_answer_cut = bool(
                                             declared_now.get("answer_cut")
                                         )

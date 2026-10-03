@@ -189,7 +189,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
                      exact_resource_padding=0, query_declaration=None, budget_stop_at=None,
                      wire_budget_bytes=None, norm_ref_read=None, native_repeats=0,
-                     native_reasoning=None):
+                     native_reasoning=None, temperature=None):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -317,7 +317,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
     if query_declaration is not None:
         responses[0] = InferenceResponse(text=query_declaration, tool_calls=(), finish_reason="stop", usage={})
     if query_repair:
-        responses.insert(0, InferenceResponse(text='{"calls":[]}', tool_calls=(), finish_reason="stop", usage={}))
+        responses.insert(0, InferenceResponse(text=query_repair if isinstance(query_repair, str) else '{"calls":[]}',
+                                             tool_calls=(), finish_reason="stop", usage={}))
     if empty_query:
         responses[0] = InferenceResponse(text="", tool_calls=(), finish_reason="length",
                                          usage={"completion_tokens": 5000})
@@ -487,7 +488,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         class_suggestions=[], use_semantic_cache=False, use_validation=False, validation_skip_reason="test",
         route=SimpleNamespace(intent="rag"), table_result=None, request_started_at=time.time(),
         profile_snapshot={"revision_id": "fixture-profile:1", "mode": "estimator",
-                          "model_policy": {"reasoning_enabled": reasoning_enabled,
+                          "model_policy": {**({"temperature": temperature} if temperature is not None else {}),
+                                           "reasoning_enabled": reasoning_enabled,
                                            **({"query_reasoning_enabled": query_reasoning_enabled}
                                               if query_reasoning_enabled is not None else {})},
                           "tools": ["search_sources", "build_vor_workbook", "build_lsr_workbook"],

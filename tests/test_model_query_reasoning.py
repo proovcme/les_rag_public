@@ -20,6 +20,37 @@ def _preset(policy):
 
 
 @pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+@pytest.mark.parametrize("temperature", [0.0, 0.65])
+@pytest.mark.asyncio
+async def test_profile_temperature_reaches_initial_query_repair_and_answer(tmp_path, monkeypatch, variant, temperature):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+                           query_repair=True, temperature=temperature)
+    assert not run.responses and len(run.requests) == 5 and len(run.executions) == 1
+    assert [request.temperature for request in run.requests] == [temperature] * 5
+    assert [item["temperature"] for item in run.result["retrieval_trace"]["model_query_outputs"]] == [temperature] * 2
+
+
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+@pytest.mark.asyncio
+async def test_rejected_query_attempt_cannot_poison_repaired_document_target(tmp_path, monkeypatch, variant):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+        query_repair='{"artifact_kind":"lsr","queries":["unfinished',
+        query_declaration='{"artifact_kind":"lsr","queries":["S!R2 — Cable A","S!R3 — Cable B"]}')
+    trace = run.result["retrieval_trace"]
+    assert len(run.executions) == 1 and not run.responses
+    assert trace["artifact_target"]["status"] == "declared"
+    assert trace["artifact_target"]["artifact_kind"] == "lsr"
+    attempts = trace["model_query_outputs"]
+    assert attempts[0]["artifact_kind_declaration"]["status"] == "invalid"
+    assert attempts[1]["artifact_kind_declaration"]["status"] == "declared"
+    if variant == "B1_CANDIDATE":
+        job = WorkbookResearchJobService().get(trace["workbook_research_job"]["job_id"])
+        assert job["task_context"]["model_artifact_kind"] == "lsr"
+        assert job["document"]["final_revision_id"] or job["document"]["draft_revision_id"]
+
+
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
 @pytest.mark.asyncio
 async def test_query_has_no_workbook_fields_and_each_decision_has_one_contract(tmp_path, monkeypatch, variant):
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant)

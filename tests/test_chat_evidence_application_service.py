@@ -4005,7 +4005,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert len(active_transport.requests) == 2
         if output_budgets:
             assert [call.max_output_tokens for call in active_transport.requests] == [16000, 24000]
-            assert [call.temperature for call in active_transport.requests] == [0, 0.15]
+            assert [call.temperature for call in active_transport.requests] == [0.15, 0.15]
             assert all(call.reasoning_enabled is True for call in active_transport.requests)
             assert active_connection.requested_context_tokens == 65536
             assert active_connection.effective_preset.input_token_limit == 6000

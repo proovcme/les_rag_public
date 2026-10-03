@@ -1,5 +1,18 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+894 также устраняет скрытую нулевую температуру query: применяется GUI-профиль
+либо зарегистрированный CHAT_TEMPERATURE, значение видно в model_query_outputs.
+Тесты actual InferenceRequest покрывают B0/B1, repair и явный0; field contract
+и принятие предметных решений прежние. Док: modules/rag-evidence-flow.md.
+
+## 894 — принятие query-попытки и тип документа (✅ код/док; live pending)
+
+`chat_evidence_application_service`: B0/B1 сохраняют target от принятой query-
+попытки; отвергнутый транспорт остаётся в model_query_outputs. Это устраняет
+блокировку файла после успешного repair, не отменяет реальные конфликты.
+Регрессия: test_model_query_reasoning.py; модуль: modules/rag-evidence-flow.md.
+Измерен отдельный долг canonical/overlay: подробнее RELEASE_LEDGER, ALGO-gesn.
+
 ## 893 — инструкции соответствуют этапу (✅ код/док; live pending)
 
 `chat_evidence_application_service.profile_system_prompt(purpose)` оставляет
