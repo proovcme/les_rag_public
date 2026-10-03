@@ -1,5 +1,37 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.156 / 884 — сохранение журнала чтений при продолжении
+
+Установлен883 (`22a88e81e57acf9ccdcc1ca57a480d89b4f9d130`), stamp/rawSHA
+проверены. NativeRRF PASS1,11s; basic9PASS/1WARN/0FAIL69,88s. Warning:
+нет статистики проверяемых ответов ТОСКА, не отказ сервиса.
+
+Live883 БАП/Flash B1:13 успешных read_norm_card и5 search_sources,231,88s,
+171234 provider-reported tokens. Следующий запрос остановлен резервом
+221933 при остатке лимита128766. Job `wrj_c6537cbfdff94accbb7d73e8ba727cf8`
+paused,0accepted/20remaining, XLSX нет. Ошибка чтения initial refs исправлена
+и подтверждена живым прогоном, но профессиональная приёмка не пройдена.
+
+Одно продолжение того же задания:143,45s,1 вызов85858 tokens, ещё1 успешное
+read_norm_card. Начальные queries не повторялись. Новое чтение заменило18
+предыдущих receipts в task_context одной записью; сами122 evidence сохранились.
+884 исправляет накопление packet ledger и подтверждение доставки старых receipts
+после успешного resumed frame. Дефект воспроизведён локальным RED→GREEN тестом.
+`evidence_read_receipts` восстанавливает старый ledger из событий именно этого
+job/packet перед resume; исходные evidence и решения не меняются. После нового
+чтения полный ledger снова сохраняется в task_context.
+
+Оба хода завершились CLOUD_TURN_TOKEN_BUDGET, до итоговых строк и XLSX.
+Расход883 суммарно257092. После баланса владельца931765 учтены88166364 и
+883257092; расчётный остаток608309, не сверенный с кабинетом провайдера.
+Облачная роль/consent/доступы возвращены в исходное состояние. Новых облачных
+вызовов не запускать до устранения причины чрезмерного контекста/согласования
+бюджета. B0/B1 сравнительный gate не закрыт; customer-ready не подтверждён.
+Receipts: `artifacts/live_883/{bap_flash_candidate,bap_flash_resume}/`.
+Frozen canonical884:3205passed/20existing skipped/5warnings,216,19s.
+Version/compile/collect/architecture/map/docs/assets/metadata exit0;
+receipts `artifacts/gates_884/`. Установка884 и проверка установленного рантайма pending.
+
 ## Кандидат 0.31.155 / 883 — доставка исходных ссылок норм
 
 Установлен882 (`1b09191cef8aa03700e8aaae4e93456d72385cb2`), stamp/rawSHA

@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат884 / 0.31.156:** `core/chat-evidence`, doc↔candidate-code ✅.
+> `_accept_sheet_reads` сохраняет cumulative receipts предыдущего хода;
+> initial resume подтверждает их фактическую доставку; `evidence_read_receipts`
+> восстанавливает legacy ledger из событий job/packet. [Поток](modules/rag-evidence-flow.md).
+> Installed883:13+1 успешных чтений норм, оба хода остановлены бюджетом,
+> XLSX нет. Canonical/install884 pending; customer-ready не подтверждён.
+
 > **Кандидат883 / 0.31.155:** `core/chat-evidence`, doc↔candidate-code ✅.
 > `confirm_model_read_delivery` подтверждает начальные B0/B1 evidence после
 > ответа модели; resume использует фактический governor admission. Полное тело

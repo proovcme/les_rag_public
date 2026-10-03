@@ -1,5 +1,20 @@
 # RAG evidence flow
 
+## 884: журнал чтений переживает следующий resumed read
+
+Live883 доказал14 успешных чтений по ссылкам. Повторный ход при новом чтении
+записывал только текущий `read_receipts=[]`, заменяя накопленный журнал18
+операций одной записью. Evidence bytes сохранялись, но audit/resume терял
+историю вызовов. Теперь список начинается с `saved_read_receipts`; после
+успешной передачи initial resumed frame подтверждаются и старые receipts.
+Новые чтения добавляются к ним. Старые883 записи восстанавливает read-only
+`WorkbookResearchJobService.evidence_read_receipts(job_id, packet_id)` по
+сохранённым событиям model_evidence_read и текущему task_context. Доставка
+монотонна; разные calls/bindings не сливаются. Решения не пересчитываются.
+Полный ledger сохраняется при следующем новом чтении. Регрессионный тест
+`test_resumed_new_read_preserves_prior_receipts` воспроизводит stop→resume→new read.
+Профессиональные решения и лимит бюджета не меняются.
+
 ## 883: начальные ссылки должны быть доступны exact reader
 
 Live881: семь вызовов `read_norm_card(evidence_ref=...)` отклонены, хотя среди

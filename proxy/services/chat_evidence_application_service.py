@@ -9885,8 +9885,10 @@ async def _execute_chat_evidence_application(
                                 *pass_evidence,
                                 *model_rag_evidence_groups,
                             ]
-                            saved_read_receipts = list(((research_job or {}).get("task_context") or {}).get(
-                                "model_evidence_reads", {}).get(current_read_packet, ()))
+                            saved_read_receipts = (
+                                research_job_service.evidence_read_receipts(research_job["job_id"], current_read_packet)
+                                if research_job_service is not None and research_job is not None else []
+                            )
                             resumed_inventory_refs = {
                                 str(c.meta.get("model_evidence_ref") or "") for c in model_evidence_chunks
                             }
@@ -9977,6 +9979,7 @@ async def _execute_chat_evidence_application(
                             pass_answer, usage = await _sheet_pass_llm(chat_body)
                             t_llm += time.time() - t_llm_call
                             confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                                        saved_read_receipts,
                                                         inventory_refs=resumed_inventory_refs, body_refs=resumed_body_refs)
                             model_research_tools.register_shown_norm_cards([*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks])
                             replayed_ids = {str(c.meta.get("global_evidence_id") or "") for c in model_evidence_chunks}
@@ -9989,7 +9992,9 @@ async def _execute_chat_evidence_application(
                             selector_source_map = answer_source_map
                             read_packet_id = row_packet_id(source_catalog, sheet=sheet_name, locators=packet)
                             read_groups = []
-                            read_receipts = []
+                            # The checkpoint owns the cumulative packet ledger,
+                            # including reads from earlier chat turns.
+                            read_receipts = list(saved_read_receipts)
 
                             async def _accept_sheet_reads(batch_receipts, batch_results):
                                 nonlocal research_job, active_pending_tool_calls, model_requested_price_basis

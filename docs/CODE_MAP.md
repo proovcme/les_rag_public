@@ -1,5 +1,10 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> Кандидат884: `read_receipts` в sheet native loop начинается с
+> `saved_read_receipts`; `confirm_model_read_delivery` получает старые receipts
+> после успешного resumed frame. `WorkbookResearchJobService.evidence_read_receipts`
+> собирает сохранённые события и текущий ledger; новое чтение не стирает историю.
+
 > Кандидат883: `confirm_model_read_delivery` в chat evidence application
 > отмечает исходные карточки/указатели после успешного первого ответа B0/B1,
 > затем повторно регистрирует ссылки в `ModelResearchToolService`.

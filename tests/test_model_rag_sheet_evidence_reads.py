@@ -115,6 +115,29 @@ def test_delivery_confirmation_marks_only_admitted_initial_bodies():
     assert "model_delivery_status" not in omitted.meta
 
 
+@pytest.mark.asyncio
+async def test_resumed_new_read_preserves_prior_receipts(tmp_path, monkeypatch):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, budget_stop_at=3)
+    store = WorkbookResearchJobService()
+    job_id = run.result["error"]["job_id"]
+    before = store.get(job_id)["task_context"]["model_evidence_reads"]
+    packet_id, old_reads = next(iter(before.items()))
+    assert len(old_reads) == 1 and old_reads[0]["call"]["tool"] == "read_norm_card"
+    run.responses[:] = [
+        InferenceResponse(text="", tool_calls=(_native("read_resource_price", code=RESOURCE_A),),
+                          finish_reason="tool_calls", usage={}),
+        InferenceResponse(text="Model has not provided document rows.", tool_calls=(),
+                          finish_reason="stop", usage={}),
+    ]
+    await run.resume_same_request()
+    after = store.get(job_id)["task_context"]["model_evidence_reads"][packet_id]
+    assert [r["call"]["tool"] for r in after] == ["read_norm_card", "read_resource_price"]
+    assert after[0]["call"] == old_reads[0]["call"]
+    assert after[0]["evidence_bindings"] == old_reads[0]["evidence_bindings"]
+    assert after[0]["model_delivery_status"] == "delivered"
+
+
 def _answer(*, refs=("Q1.H1", "Q2.H1")):
     first, second = refs
     return (

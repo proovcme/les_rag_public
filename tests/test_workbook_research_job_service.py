@@ -30,6 +30,26 @@ def _record_delivery_fixture(service, job_id, record, method):
                                  evidence=[record], remaining=["S!R2"])
 
 
+def test_read_ledger_recovers_legacy_overwrite_from_same_packet_events(tmp_path):
+    service = WorkbookResearchJobService(tmp_path / "read-ledger.sqlite")
+    job_id = service.begin_or_resume(_identity(service))["job_id"]
+    first = {"call": {"tool": "read_norm_card", "call_id": "first", "args": {"evidence_ref": "Q1.H1"}},
+             "status": "ok", "evidence_bindings": {"Q2.H1": "immutable"},
+             "model_delivery_status": "prepared"}
+    delivered = {**first, "model_delivery_status": "delivered"}
+    second = {"call": {"tool": "read_resource_price", "call_id": "second", "args": {"code": "resource"}},
+              "status": "ok", "evidence_bindings": {"Q3.H1": "price"}}
+    for receipts in ([first], [delivered], [second]):
+        service.record_evidence_read(job_id, packet_id="packet", evidence=[], read_receipts=receipts)
+    service.record_evidence_read(job_id, packet_id="other", evidence=[], read_receipts=[second])
+    assert service.get(job_id)["task_context"]["model_evidence_reads"]["packet"] == [second]
+    restarted = WorkbookResearchJobService(service.db_path)
+    assert restarted.evidence_read_receipts(job_id, "packet") == [delivered, second]
+    assert restarted.evidence_read_receipts(job_id, "other") == [second]
+    assert restarted.evidence_read_receipts(job_id, "absent") == []
+    assert restarted.get(job_id)["accepted_rows"] == []
+
+
 @pytest.mark.parametrize("method", ["read", "packet"])
 def test_same_literal_evidence_delivery_promotes_durably_without_other_overwrites(tmp_path, method):
     service = WorkbookResearchJobService(tmp_path / "delivery.sqlite")

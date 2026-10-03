@@ -1211,6 +1211,32 @@ class WorkbookResearchJobService:
                 },
             )
 
+    def evidence_read_receipts(self, job_id: str, packet_id: str) -> list[dict[str, Any]]:
+        """Recover cumulative read receipts, including legacy resume overwrites.
+
+        Historical events retain the original receipts even when an older
+        caller replaced task_context with only its new turn's reads. This is a
+        read-only projection; accepted rows and literal evidence never change.
+        """
+        packets = []
+        for event in self.list_events(job_id, event_type="model_evidence_read"):
+            payload = event.get("payload") or {}
+            if str(payload.get("packet_id") or "") == str(packet_id):
+                packets.extend(payload.get("read_receipts") or ())
+        current = self.get(job_id)
+        packets.extend((current.get("task_context") or {}).get("model_evidence_reads", {}).get(str(packet_id), ()))
+        merged: dict[str, dict[str, Any]] = {}
+        for receipt in packets:
+            key = json.dumps([receipt.get("call"), receipt.get("evidence_bindings")],
+                             ensure_ascii=False, sort_keys=True)
+            previous = merged.get(key) or {}
+            value = dict(receipt)
+            for field in ("model_delivery_status", "model_inventory_delivery_status"):
+                if previous.get(field) == "delivered":
+                    value[field] = "delivered"
+            merged[key] = value
+        return list(merged.values())
+
     def record_evidence_read(
         self, job_id: str, *, packet_id: str,
         evidence: Sequence[Mapping[str, Any]],
