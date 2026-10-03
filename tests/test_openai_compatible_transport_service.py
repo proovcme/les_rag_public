@@ -75,6 +75,13 @@ async def test_cloud_budget_counts_every_wire_attempt_and_stops_before_send(tmp_
             await transport.complete(remote, request)
         assert len(requests) == 1
         assert transport.cloud_budget_snapshot()["accounted_tokens"] == 2900
+        snapshot = transport.cloud_budget_snapshot()
+        assert snapshot["reported_tokens"] == 2900
+        assert snapshot["unsettled_reservation_tokens"] == 0
+        assert snapshot["last_attempt"]["number"] == 2
+        assert snapshot["last_attempt"]["sent"] is False
+        assert snapshot["last_attempt"]["reservation_tokens"] > snapshot["remaining_tokens"]
+        assert "Кабель" not in json.dumps(snapshot, ensure_ascii=False)
     finally:
         await client.aclose()
 
@@ -95,6 +102,9 @@ async def test_cloud_budget_keeps_reservation_without_usage_and_for_retry(tmp_pa
             await transport.complete(remote, request)
         assert len(requests) == 1
         assert transport.cloud_budget_snapshot()["requests_sent"] == 1
+        snapshot = transport.cloud_budget_snapshot()
+        assert snapshot["reported_tokens"] == 0
+        assert snapshot["unsettled_reservation_tokens"] == snapshot["accounted_tokens"] > 0
     finally:
         await client.aclose()
 

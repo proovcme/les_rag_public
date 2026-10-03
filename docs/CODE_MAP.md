@@ -1,5 +1,10 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> Кандидат881: `chat_evidence_application_service.ModelExecutionFailure` и
+> `routers/chat.py` сохраняют safe budget trace при HTTP/SSE-отказе.
+> `_post_llm` выдаёт числовой SSE `cloud_budget`; transport snapshot различает
+> provider-reported расход и резерв. Поиск/инженерные решения не изменены.
+
 > Кандидат880: общий технический бюджет remote-вызовов одного хода находится в
 > `openai_compatible_transport_service.OpenAICompatibleTransport`: резерв перед
 > `_open`, settlement по usage в `complete`, без автоматического fallback при

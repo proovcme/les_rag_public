@@ -5706,13 +5706,17 @@ def model_query_output_diagnostics(
                  and finish_reason_is_length(llm_usage_finish_reason(usage))}
 
 
-class ModelQueryFailure(HTTPException):
-    """Private query diagnostics survive sanitization; HTTP detail stays public."""
+class ModelExecutionFailure(HTTPException):
+    """Trusted private execution diagnostics survive the public error boundary."""
 
     def __init__(self, detail: Any, *, diagnostics: Mapping[str, Any],
                  status_code: int = 503, headers=None):
         super().__init__(status_code, detail=detail, headers=headers)
         self.private_query_trace = dict(diagnostics)
+
+
+class ModelQueryFailure(ModelExecutionFailure):
+    """Query failure with bounded final-output diagnostics."""
 
 
 def model_query_failure(detail: Any, *, trace: Mapping[str, Any], session_id: str,
@@ -7660,6 +7664,8 @@ async def _execute_chat_evidence_application(
                             budget_snapshot = getattr(getattr(bound_runner, "transport", None), "cloud_budget_snapshot", None)
                             if callable(budget_snapshot):
                                 retrieval_trace["cloud_token_budget"] = budget_snapshot()
+                                if token_sink is not None and retrieval_trace["cloud_token_budget"].get("limit_tokens"):
+                                    await token_sink({"event": "cloud_budget", "data": retrieval_trace["cloud_token_budget"]})
                         active_pending_tool_calls += active_model_result.pending_tool_calls
                         if token_sink is not None and allow_stream and active_model_result.response.text:
                             await token_sink(
@@ -12661,11 +12667,14 @@ async def _execute_chat_evidence_application(
                 research_job = research_job_service.pause(
                     research_job["job_id"], phase="cloud_token_budget",
                 )
-            raise HTTPException(429, {
+            raise ModelExecutionFailure({
                 "code": "CLOUD_TURN_TOKEN_BUDGET",
                 "message": "Облачный прогон остановлен лимитом расхода. Следующий запрос к модели не отправлен.",
-                "reason": str(e),
-                "budget": retrieval_trace.get("cloud_token_budget", {}),
+                "job_id": (research_job or {}).get("job_id"),
+            }, status_code=429, diagnostics={
+                "schema": "les.model-budget-failure.v1",
+                "session_id": str(getattr(req, "session_id", "") or ""),
+                "cloud_token_budget": retrieval_trace.get("cloud_token_budget", {}),
                 "job_id": (research_job or {}).get("job_id"),
             }) from e
         except ModelTransportError as e:

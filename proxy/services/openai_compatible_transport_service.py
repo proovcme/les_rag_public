@@ -135,10 +135,15 @@ class OpenAICompatibleTransport:
         self._cloud_accounted = 0
         self._cloud_requests = 0
         self._cloud_usage_requests = 0
+        self._cloud_reported_tokens = 0
+        self._cloud_last_attempt: dict[str, Any] = {}
 
     def cloud_budget_snapshot(self) -> dict[str, Any]:
         return {"limit_tokens": self._cloud_budget_limit, "accounted_tokens": self._cloud_accounted,
                 "requests_sent": self._cloud_requests, "requests_with_usage": self._cloud_usage_requests,
+                "reported_tokens": self._cloud_reported_tokens,
+                "unsettled_reservation_tokens": self._cloud_accounted - self._cloud_reported_tokens,
+                "last_attempt": dict(self._cloud_last_attempt),
                 "remaining_tokens": max(0, self._cloud_budget_limit - self._cloud_accounted),
                 "reservation_method": "utf8_wire_bytes_plus_1024_plus_total_output_cap_plus_10",
                 "scope": "one_chat_turn", "provider_balance": "unknown"}
@@ -154,6 +159,20 @@ class OpenAICompatibleTransport:
         if any(not isinstance(m.get("content", ""), (str, type(None))) for m in body.get("messages", ())):
             raise CloudBudgetStop("CLOUD_TURN_TOKEN_BUDGET: TEXT_INPUT_REQUIRED")
         reserve = len(json.dumps(body, ensure_ascii=False).encode("utf-8")) + 1024 + limit + 10
+        self._cloud_last_attempt = {
+            "number": self._cloud_requests + 1,
+            "reservation_tokens": reserve,
+            "output_cap_tokens": limit,
+            "wire_bytes": reserve - 1024 - limit - 10,
+            "message_count": len(body.get("messages", ())),
+            "tool_count": len(body.get("tools", ())),
+            "sent": False,
+        }
+        self._cloud_last_attempt["message_bytes_by_role"] = {
+            role: sum(len(json.dumps(m, ensure_ascii=False).encode("utf-8"))
+                      for m in body.get("messages", ()) if m.get("role") == role)
+            for role in ("system", "developer", "user", "assistant", "tool")
+        }
         if self._cloud_accounted + reserve > self._cloud_budget_limit:
             raise CloudBudgetStop(
                 f"CLOUD_TURN_TOKEN_BUDGET: limit={self._cloud_budget_limit}, "
@@ -161,6 +180,7 @@ class OpenAICompatibleTransport:
             )
         self._cloud_accounted += reserve
         self._cloud_requests += 1
+        self._cloud_last_attempt["sent"] = True
         return reserve
 
     def _settle_cloud(self, response: httpx.Response, usage: object) -> None:
@@ -175,6 +195,7 @@ class OpenAICompatibleTransport:
             return
         self._cloud_accounted += total - reserved
         self._cloud_usage_requests += 1
+        self._cloud_reported_tokens += total
 
     @staticmethod
     def _require(connection: ResolvedModelConnection, capability: CapabilityName) -> None:

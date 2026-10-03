@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат881 / 0.31.153:** `core/chat-evidence`, doc↔candidate-code ✅.
+> `ModelExecutionFailure` переносит safe budget diagnostics через router в историю;
+> transport различает reported usage и неопределённый резерв, `_post_llm` выдаёт
+> SSE `cloud_budget`. [Контракт](modules/chat-profiles.md). Регрессии91passed;
+> canonical881:3191passed/20existing skipped. Установлен880, smoke10PASS после восстановления Ollama.
+> BAP Flash B0 stopped budget113s, XLSX нет; готовность не подтверждена.
+
 > **Кандидат880 / 0.31.152:** `core/runtime-config`, doc↔candidate-code ✅.
 > `OpenAICompatibleTransport` резервирует общий облачный бюджет одного хода до
 > каждого HTTP, включая retry; `CloudBudgetStop` не допускает fallback.
