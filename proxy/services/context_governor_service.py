@@ -205,6 +205,10 @@ class ContextRequiredSectionOverflow(ValueError):
         )
 
 
+class ContextRequiredWireOverflow(ValueError):
+    """Required whole objects fail the caller's provider-wire admission check."""
+
+
 def conservative_token_estimate(text: str) -> int:
     """Provider-neutral conservative estimate until an exact tokenizer is bound."""
     return max(1, math.ceil(len(str(text or "")) / 2))
@@ -233,7 +237,8 @@ class ContextGovernor:
     def _object_tokens(self, item: ContextObject) -> int:
         return max(0, int(self.estimate_tokens(item.render())))
 
-    def pack(self, candidates: Sequence[ContextCandidate]) -> ContextPacket:
+    def pack(self, candidates: Sequence[ContextCandidate], *,
+             admit_messages: Callable[[list[dict[str, Any]]], bool] | None = None) -> ContextPacket:
         """Pack complete objects in canonical order after fixed reserves."""
         budget = max(
             0,
@@ -289,17 +294,38 @@ class ContextGovernor:
         omissions: list[ContextOmission] = []
         used = required_tokens
 
+        def wire_fits() -> bool:
+            if admit_messages is None:
+                return True
+            probe = ContextPacket(
+                preset_id=self.preset.preset_id, input_budget_tokens=budget,
+                generation_reserve_tokens=self.preset.generation_reserve_tokens,
+                safety_reserve_tokens=self.preset.safety_reserve_tokens, included_tokens=used,
+                sections=tuple(ContextSection(kind=kind, objects=tuple(selected[kind]), token_count=0)
+                               for kind in _PACKING_ORDER if selected.get(kind)), omissions=(),
+            )
+            return admit_messages(probe.as_messages())
+
+        if not wire_fits():
+            raise ContextRequiredWireOverflow("required context exceeds provider wire allowance")
+
         for candidate in ordered:
             if candidate.required:
                 continue
             included: list[ContextObject] = []
             omitted: list[ContextObject] = []
+            wire_omitted = False
             for item in candidate.objects:
                 item_tokens = self._object_tokens(item)
                 separator = 1 if used else 0
                 section_separator = 1 if selected.get(candidate.kind) else 0
                 if used + separator + item_tokens <= budget:
                     selected.setdefault(candidate.kind, []).append(item)
+                    if not wire_fits():
+                        selected[candidate.kind].pop()
+                        omitted.append(item)
+                        wire_omitted = True
+                        continue
                     included.append(item)
                     used += separator + item_tokens
                     section_tokens[candidate.kind] = (
@@ -317,7 +343,7 @@ class ContextGovernor:
                         omitted=len(omitted),
                         object_ids=tuple(item.object_id for item in omitted),
                         cursor=_cursor(candidate.kind, omitted),
-                        reason="budget_exhausted",
+                        reason="wire_budget_exhausted" if wire_omitted else "budget_exhausted",
                     )
                 )
 

@@ -148,7 +148,7 @@ class OpenAICompatibleTransport:
                 "reservation_method": "utf8_wire_bytes_plus_1024_plus_total_output_cap_plus_10",
                 "scope": "one_chat_turn", "provider_balance": "unknown"}
 
-    def _reserve_cloud(self, connection: ResolvedModelConnection, body: Mapping[str, Any]) -> int:
+    def _cloud_reservation(self, connection: ResolvedModelConnection, body: Mapping[str, Any]) -> int:
         if not self._cloud_budget_limit or connection.locality is not ConnectionLocality.REMOTE:
             return 0
         limit = body.get("max_completion_tokens")
@@ -173,6 +173,17 @@ class OpenAICompatibleTransport:
                       for m in body.get("messages", ()) if m.get("role") == role)
             for role in ("system", "developer", "user", "assistant", "tool")
         }
+        return reserve
+
+    def cloud_request_fits(self, connection: ResolvedModelConnection, request: InferenceRequest) -> bool:
+        """Exact wire preflight for ContextGovernor; never sends or reserves funds."""
+        reserve = self._cloud_reservation(connection, self._chat_body(connection, request, stream=False))
+        return not reserve or self._cloud_accounted + reserve <= self._cloud_budget_limit
+
+    def _reserve_cloud(self, connection: ResolvedModelConnection, body: Mapping[str, Any]) -> int:
+        reserve = self._cloud_reservation(connection, body)
+        if not reserve:
+            return 0
         if self._cloud_accounted + reserve > self._cloud_budget_limit:
             raise CloudBudgetStop(
                 f"CLOUD_TURN_TOKEN_BUDGET: limit={self._cloud_budget_limit}, "

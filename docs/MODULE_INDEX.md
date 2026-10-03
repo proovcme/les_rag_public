@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат882 / 0.31.154:** `core/context-governor`, `core/chat-evidence`,
+> doc↔candidate-code ✅. `pack(admit_messages=...)` проверяет точный cloud wire
+> reserve до добавления optional групп; mandatory evidence остаётся целым.
+> Native budget stop сохраняет held query/row cursor. [Алгоритм](ALGO-context-memory.md),
+> [поток](modules/rag-evidence-flow.md). Related146passed; canonical3196passed/
+> 20existing skipped, verify/architecture/docs exit0; live882 pending.
+> Installed881 `95de9b32`: smoke9PASS/1diagnosticsWARN/0FAIL; RRF PASS.
+> Flash B1:66364 reported tokens, остановка третьего body по резерву, XLSX нет.
+
 > **Кандидат881 / 0.31.153:** `core/chat-evidence`, doc↔candidate-code ✅.
 > `ModelExecutionFailure` переносит safe budget diagnostics через router в историю;
 > transport различает reported usage и неопределённый резерв, `_post_llm` выдаёт

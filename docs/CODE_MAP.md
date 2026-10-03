@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> Кандидат882: `ContextGovernor.pack` принимает дополнительный wire-admission;
+> `OpenAICompatibleTransport.cloud_request_fits` проверяет body без отправки;
+> `_cloud_message_admission` подключает его к B0/B1 native replay.
+> `CloudBudgetStop` в sheet native loop сохраняет held packet перед публичной
+> ошибкой. [Контракт](ALGO-context-memory.md). Default local/unlimited неизменен.
+
 > Кандидат881: `chat_evidence_application_service.ModelExecutionFailure` и
 > `routers/chat.py` сохраняют safe budget trace при HTTP/SSE-отказе.
 > `_post_llm` выдаёт числовой SSE `cloud_budget`; transport snapshot различает

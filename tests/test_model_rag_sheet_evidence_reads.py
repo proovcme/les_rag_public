@@ -28,7 +28,7 @@ BOOK = "sankt-peterburg_3kv2026"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("variant, stop_at", [("B0_DIRECT", 1), ("B1_CANDIDATE", 2)])
+@pytest.mark.parametrize("variant, stop_at", [("B0_DIRECT", 1), ("B1_CANDIDATE", 2), ("B1_CANDIDATE", 3)])
 async def test_budget_stop_is_technical_and_preserves_unresolved_job(tmp_path, monkeypatch, variant, stop_at):
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant, budget_stop_at=stop_at)
@@ -41,6 +41,11 @@ async def test_budget_stop_is_technical_and_preserves_unresolved_job(tmp_path, m
         assert job["status"] == "paused" and job["phase"] == "cloud_token_budget"
         assert set(job["remaining"]) == {"S!R2", "S!R3"}
         assert job["accepted_rows"] == []
+        if stop_at == 3:
+            assert job["held_packet"]["model_read_pending"] is True
+            assert set(job["held_packet"]["locators"]) == {"S!R2", "S!R3"}
+            assert job["task_context"]["model_evidence_reads"]
+            assert job["query_cache"]
     else:
         assert job_id is None
 
@@ -49,6 +54,20 @@ def _native(tool, **arguments):
     identity = hashlib.sha256(json.dumps(arguments, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     return {"id": tool + ":" + identity, "type": "function",
             "function": {"name": tool, "arguments": json.dumps(arguments, ensure_ascii=False)}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_remote_wire_budget_defers_discovery_bodies_but_keeps_exact_reads(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+        native_discovery_queries=("model additional discovery",), native_discovery_padding=5000,
+        input_token_limit=300000, wire_budget_bytes=50000)
+    assert run.executions
+    reads = [r for r in run.requests if any(m.get("role") == "tool" for m in r.messages)]
+    assert reads
+    assert all(len(json.dumps(r.messages, ensure_ascii=False).encode("utf-8")) <= 50000 for r in reads)
+    assert any("deferred_capacity" in str(r.messages) for r in reads)
+    assert any("fixture-resource-23" in str(r.messages) or RESOURCE_B in str(r.messages) for r in reads)
 
 
 def _answer(*, refs=("Q1.H1", "Q2.H1")):
@@ -71,7 +90,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      malformed_first_packet=False, malformed_all_first_packet=False,
                      malformed_second_packet=False, duplicate_json_first_packet=False,
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
-                     exact_resource_padding=0, query_declaration=None, budget_stop_at=None):
+                     exact_resource_padding=0, query_declaration=None, budget_stop_at=None,
+                     wire_budget_bytes=None):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -172,6 +192,9 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                                  display_name="Offline sheet model", model_id="fixture-model",
                                  locality=ConnectionLocality.LOOPBACK, base_url="http://127.0.0.1:1919/v1",
                                  secret_ref=None, effective_preset=preset)
+    if wire_budget_bytes is not None:
+        connection.locality = ConnectionLocality.REMOTE
+        monkeypatch.setattr(service, "cloud_allowed", lambda *a, **kw: True)
 
     class Resolver:
         def resolve(self, role, **kwargs):
@@ -280,6 +303,12 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
     requests = []
 
     class Transport:
+        def cloud_budget_snapshot(self):
+            return {"limit_tokens": wire_budget_bytes or 0}
+
+        def cloud_request_fits(self, selected, request):
+            return len(json.dumps(request.messages, ensure_ascii=False).encode("utf-8")) <= wire_budget_bytes
+
         async def complete(self, selected, request):
             assert selected.revision_id == connection.revision_id
             requests.append(request)

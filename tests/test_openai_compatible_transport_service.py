@@ -87,6 +87,35 @@ async def test_cloud_budget_counts_every_wire_attempt_and_stops_before_send(tmp_
 
 
 @pytest.mark.asyncio
+async def test_cloud_preflight_packs_optional_context_then_sends_same_wire(tmp_path, monkeypatch):
+    from proxy.services.context_governor_service import ContextCandidate, ContextGovernor, ContextKind, ContextObject
+    monkeypatch.setenv("LES_CLOUD_TURN_TOKEN_BUDGET", "5000")
+    sent = []
+    def handler(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}],
+                                        "usage": {"prompt_tokens": 400, "completion_tokens": 12}})
+    transport, client = _transport(tmp_path, handler)
+    remote = replace(_resolved(max_output_field="max_completion_tokens"), locality=ConnectionLocality.REMOTE)
+    required = ContextCandidate(ContextKind.REQUEST, (ContextObject("request", "Кабель 'тест' C:\\пример"),), required=True)
+    optional = ContextCandidate(ContextKind.EVIDENCE, tuple(ContextObject(f"card:{i}", "Текст карточки " * 100) for i in range(4)))
+    def request(messages):
+        return InferenceRequest(messages=messages, max_output_tokens=128)
+    try:
+        governor = ContextGovernor(replace(remote.effective_preset, input_token_limit=100000))
+        packet = governor.pack([required, optional],
+            admit_messages=lambda messages: transport.cloud_request_fits(remote, request(messages)))
+        assert packet.omissions and packet.omissions[0].reason == "wire_budget_exhausted"
+        assert transport.cloud_budget_snapshot()["requests_sent"] == 0
+        assert transport.cloud_budget_snapshot()["accounted_tokens"] == 0
+        await transport.complete(remote, request(packet.as_messages()))
+        assert len(sent) == 1 and sent[0]["messages"] == packet.as_messages()
+        assert transport.cloud_budget_snapshot()["reported_tokens"] == 412
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_cloud_budget_keeps_reservation_without_usage_and_for_retry(tmp_path, monkeypatch):
     from proxy.services.openai_compatible_transport_service import CloudBudgetStop
     monkeypatch.setenv("LES_CLOUD_TURN_TOKEN_BUDGET", "2500")

@@ -1,5 +1,19 @@
 # ALGO-context-memory — память чата и паспорт датасета
 
+## Кандидат882: ограничение полного wire-body при облачном бюджете
+
+`ContextGovernor.pack(admit_messages=...)` дополнительно проверяет целые messages
+через чистый preflight транспорта. Он использует тот же OpenAI-compatible body и
+тот же резерв, что реальная отправка, без HTTP и списания резерва. Обязательные
+profile/request, реестр доказательств, exact reads и native exchanges не режутся.
+Optional discovery groups входят целиком или получают omission
+`wire_budget_exhausted`, сохраняя IDs/cursor и доступность через readers.
+Если не помещается обязательный набор, `ContextRequiredWireOverflow` преобразуется
+в технический CloudBudgetStop; бюджет не увеличивается и fallback не запускается.
+Проверка включена для remote-budget sheet-answer/replay и B0/B1 native continuation;
+для local/unlimited путь прежний. Итоговая транспортная проверка остаётся последней
+границей перед каждым HTTP. Это ограничение расхода, не оценка применимости норм.
+
 ## Model-owned evidence-first context (0.30.1 / build 635)
 
 Обычный чат использует фактическую наблюдаемую или явно заданную ёмкость

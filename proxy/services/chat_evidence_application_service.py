@@ -67,6 +67,7 @@ from proxy.services.context_governor_service import (
     ContextObject,
     ContextPacket,
     ContextRequiredSectionOverflow,
+    ContextRequiredWireOverflow,
     NativeToolCall,
     NativeToolExchange,
     NativeToolReply,
@@ -1634,6 +1635,7 @@ def govern_inference_messages(
     tool_exchange: Sequence[Any] = (),
     native_exchanges: Sequence[NativeToolExchange] = (),
     dialogue: Sequence[Any] = (),
+    admit_messages=None,
 ) -> tuple[list[dict[str, Any]], ContextPacket]:
     """Build the sole bounded packet used for one provider inference request."""
     if any(not isinstance(exchange, NativeToolExchange) for exchange in native_exchanges):
@@ -1673,7 +1675,10 @@ def govern_inference_messages(
         if native_tools else 0
     )
     governed_preset = replace(preset, input_token_limit=max(0, preset.input_token_limit - external_tokens))
-    packet = ContextGovernor(governed_preset).pack(candidates)
+    try:
+        packet = ContextGovernor(governed_preset).pack(candidates, admit_messages=admit_messages)
+    except ContextRequiredWireOverflow as error:
+        raise CloudBudgetStop("CLOUD_TURN_TOKEN_BUDGET: REQUIRED_CONTEXT_EXCEEDS_REMAINING_RESERVATION") from error
     if external_tokens:
         packet = replace(packet, provider_payload_tokens=external_tokens)
     return packet.as_messages(), packet
@@ -7614,6 +7619,24 @@ async def _execute_chat_evidence_application(
                         transport=model_connection_transport(client, connection_secret_store),
                     )
 
+                def _cloud_message_admission(preset, native_tools):
+                    transport = getattr(bound_runner, "transport", None)
+                    can_fit = getattr(transport, "cloud_request_fits", None)
+                    connection = (getattr(active_model_result, "connection", None) or resolved_connection)
+                    if (not callable(can_fit) or connection is None
+                            or connection.locality is not ConnectionLocality.REMOTE
+                            or not transport.cloud_budget_snapshot().get("limit_tokens")):
+                        return None
+
+                    def admit(messages):
+                        return can_fit(connection, InferenceRequest(
+                            messages=messages, tools=native_tools,
+                            max_output_tokens=preset.generation_reserve_tokens,
+                            temperature=profile_temperature(profile_snapshot, fallback=_env_float("CHAT_TEMPERATURE", 0.2)),
+                            reasoning_enabled=preset.reasoning_enabled,
+                        ))
+                    return admit
+
                 async def _post_llm(runtime, model, hdrs, body, *, allow_stream: bool = True,
                                     inference_preset: ModelExecutionPreset | None = None):
                     """Один вызов LLM. token_sink задан → стрим (токены клиенту по
@@ -9865,6 +9888,7 @@ async def _execute_chat_evidence_application(
                             try:
                                 initial_context = dict(
                                     preset=answer_execution_preset,
+                                    admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
                                     profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail,
                                     native_tools=sheet_read_tools,
@@ -9885,6 +9909,18 @@ async def _execute_chat_evidence_application(
                                 else:
                                     messages, answer_packet = govern_inference_messages(
                                         **initial_context, required_evidence=answer_evidence)
+                            except CloudBudgetStop:
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.pause(
+                                        research_job["job_id"], phase="cloud_token_budget",
+                                        held_packet=model_rag_evidence_page_state(
+                                            sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
+                                            query_offset=evidence_query_offset,
+                                            query_provenance=pass_query_provenance,
+                                            query_addresses=pass_query_addresses,
+                                            pending_result_packets=pending_result_packets),
+                                    )
+                                raise
                             except ContextRequiredSectionOverflow as context_error:
                                 retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
                                     context_error, purpose="sheet_pass_answer")
@@ -9979,6 +10015,7 @@ async def _execute_chat_evidence_application(
                                     request_payload=question_tail, native_tools=sheet_read_tools,
                                     native_exchanges=native_exchanges,
                                     source_context=pass_evidence,
+                                    admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                     receipts=[*saved_read_receipts, *receipts],
                                 )
@@ -10017,6 +10054,19 @@ async def _execute_chat_evidence_application(
                                 if not read_stop and active_model_result is not None and active_model_result.response.tool_calls:
                                     read_stop = "evidence_read_unknown_tool"
                                     active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
+                            except CloudBudgetStop:
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.pause(
+                                        research_job["job_id"], phase="cloud_token_budget",
+                                        held_packet={**model_rag_evidence_page_state(
+                                            sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
+                                            query_offset=evidence_query_offset,
+                                            query_provenance=pass_query_provenance,
+                                            query_addresses=pass_query_addresses,
+                                            pending_result_packets=pending_result_packets),
+                                            "model_read_pending": True, "read_stop": "cloud_token_budget"},
+                                    )
+                                raise
                             except ContextRequiredSectionOverflow as context_error:
                                 retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
                                     context_error, purpose="sheet_pass_evidence_read")
@@ -11208,6 +11258,7 @@ async def _execute_chat_evidence_application(
                                 native_exchanges=native_exchanges,
                                 source_context=fixed_model_rag_evidence,
                                 chunks=model_evidence_chunks, receipts=receipts,
+                                admit_messages=_cloud_message_admission(answer_execution_preset, direct_read_tools),
                             )
                             retrieval_trace["context_governor"]["calls"].append(
                                 context_packet_trace(read_frame, purpose="direct_evidence_read")
@@ -12663,7 +12714,13 @@ async def _execute_chat_evidence_application(
             logger.error("[CHAT] LLM TIMEOUT: %s", e)
             raise HTTPException(504, "Истёк таймаут назначенной модели — проверь подключение или повтори запрос.")
         except CloudBudgetStop as e:
-            if research_job_service is not None and research_job is not None:
+            budget_snapshot = getattr(getattr(bound_runner, "transport", None), "cloud_budget_snapshot", None)
+            if callable(budget_snapshot):
+                retrieval_trace["cloud_token_budget"] = budget_snapshot()
+                if token_sink is not None:
+                    await token_sink({"event": "cloud_budget", "data": retrieval_trace["cloud_token_budget"]})
+            if (research_job_service is not None and research_job is not None
+                    and not (research_job.get("status") == "paused" and research_job.get("phase") == "cloud_token_budget")):
                 research_job = research_job_service.pause(
                     research_job["job_id"], phase="cloud_token_budget",
                 )

@@ -8,6 +8,7 @@ from proxy.services.context_governor_service import (
     ContextKind,
     ContextObject,
     ContextRequiredSectionOverflow,
+    ContextRequiredWireOverflow,
 )
 from proxy.services.model_execution_preset_service import ModelExecutionPreset
 
@@ -34,6 +35,24 @@ def _candidate(kind: ContextKind, object_id: str, payload, *, required: bool = F
         objects=(ContextObject(object_id=object_id, payload=payload),),
         required=required,
     )
+
+
+def test_wire_budget_keeps_required_and_whole_optional_objects_with_unicode():
+    governor = ContextGovernor(_preset(limit=100000))
+    required = _candidate(ContextKind.EVIDENCE, "inventory", {"refs": ["Q1.H1", "Q2.H1"],
+                          "exact_card": "Объём 100 м²; 'кабель'\\путь"}, required=True)
+    first = _candidate(ContextKind.EVIDENCE, "discovery-one", "Первый поиск " * 100)
+    second = _candidate(ContextKind.EVIDENCE, "discovery-two", "Второй поиск " * 100)
+    limit = len(json.dumps(governor.pack([required, first]).as_messages(), ensure_ascii=False).encode("utf-8"))
+    fits = lambda messages: len(json.dumps(messages, ensure_ascii=False).encode("utf-8")) <= limit
+    packet = governor.pack([required, first, second], admit_messages=fits)
+    assert fits(packet.as_messages())
+    assert [obj.object_id for section in packet.sections for obj in section.objects] == ["inventory", "discovery-one"]
+    assert packet.omissions[0].object_ids == ("discovery-two",)
+    assert packet.omissions[0].reason == "wire_budget_exhausted"
+    assert packet.sections[0].objects[0].payload == required.objects[0].payload
+    with pytest.raises(ContextRequiredWireOverflow):
+        governor.pack([required], admit_messages=lambda _messages: False)
 
 
 def test_governor_reserves_generation_before_evidence():

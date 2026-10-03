@@ -1,5 +1,22 @@
 # RAG evidence flow
 
+## 882: облачный бюджет учитывается при упаковке native continuation
+
+Installed881 BAP Flash B1 сделал2 вызова, provider usage66364, затем следующий
+body396663bytes требовал reservation414081 при remaining233636. Нет final/XLSX;
+job paused,20pending,0accepted. Safe trace сохранился и в SSE, и в history.
+Offline replay114 saved evidence даёт281281bytes optional discovery groups;
+полный профиль/ответ модели не подменяются. Receipts:
+`artifacts/live_881/bap_flash_candidate/{failure_trace,offline_replay_sizes}.json`.
+
+882 передаёт remaining-budget admission в общий ContextGovernor: сохраняет
+обязательные данные, откладывает только целые optional группы с явными pointers.
+Бюджет неизменен, запросы/выбор норм принадлежат модели. При budget stop во время
+native чтения сохраняется held packet с исходными запросами/locators и read_pending;
+точные результаты чтения уже записаны в durable evidence. Outer boundary не
+добавляет повторную паузу/счётчик stall. Приёмка требует установленного live;
+офлайн 146passed не являются доказательством качества норм.
+
 ## 879: native read capacity не является ошибкой формата модели
 
 Если held packet содержит model_read_pending/read_stop, финализация сохраняет

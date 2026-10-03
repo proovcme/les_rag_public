@@ -3,6 +3,12 @@
 Канонический паспорт совместимости. Версия продукта и номер сборки берутся только из
 [`config/version.json`](../config/version.json). Полный Python-граф фиксирует `uv.lock`.
 
+Кандидат `0.31.154`/build`882`/Tauri`5.1.882`: wire-admission optional context и
+native budget checkpoint. Dependency graph прежний; related146passed,
+canonical3196passed/20existing skipped, verify/architecture/docs exit0; live
+pending. Установлен881 `95de9b32`, RRF PASS, basic9PASS/1WARN/0FAIL.
+Flash B1 stopped budget после66364 tokens, final/XLSX нет; ready не подтверждено.
+
 Кандидат `0.31.153`/build`881`/Tauri`5.1.881`: safe budget diagnostics через
 HTTP/SSE/history, без изменения dependency graph. Профильные91passed,
 canonical8813191passed/20existing skipped. Установлен880 `6554b3fe`, smoke10PASS после запуска Ollama;
@@ -85,9 +91,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.153` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `881` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.881` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.154` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `882` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.882` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

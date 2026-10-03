@@ -1,5 +1,32 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.154 / 882 — ограничение контекста до облачной отправки
+
+Установлен881 (`95de9b328307033dd9f7c032059f2694ac555cef`), stamp/rawSHA
+проверены, rollback880 сохранён. NativeRRF PASS1,11s; basic9PASS/1WARN/0FAIL
+113,53s (warning diagnostics overall=warn). `artifacts/live_881/smoke/`.
+
+Flash B1 на полном БАП:93s, два вызова66364 provider-reported tokens, нулевой
+неопределённый резерв. Третий не отправлен: body396663bytes, reservation414081,
+remaining233636. Job `wrj_a4198774359c4932af47fc1ebd6898c4` paused,0accepted,
+20remaining, XLSX нет. Ошибка/расход корректно сохранены через публичный API.
+Offline replay: optional поисковые карточки занимают281281bytes; точные чтения
+норм ещё не запрошены моделью (новые5 search_sources,30кандидатов).
+Receipts `artifacts/live_881/bap_flash_candidate/`. Локальная роль и доступ
+восстановлены. По актуальному канону владельца системные добавочные запросы
+отключены через зарегистрированный `LES_LSR_SYSTEM_CANDIDATE_QUERIES=off`;
+выбор и запросы остаются у модели.
+
+882 добавляет второе ограничение ContextGovernor по точному wire-reservation
+транспорта: mandatory сохраняются, optional группы откладываются целиком с
+навигацией. Лимит не повышается. Budget stop native turn сохраняет held cursor.
+Related146passed. Дополнительный offline stop→resume→XLSX1passed: без повторных
+queries/exact reads, обе строки и evidence bytes сохранены.
+Frozen canonical882:3196passed/20existing skipped/5warnings,219,67s(wrapper221,19s).
+Version/compile/collect/architecture/map/docs/assets/metadata exit0;
+`artifacts/gates_882/`. Установка и живое сравнение882 pending.
+Профессиональная готовность ВОР/ЛСР НЕ подтверждена.
+
 ## Кандидат 0.31.153 / 881 — диагностика остановки бюджета
 
 Установлен880 (`6554b3fe86b54910cecda37aff410c9bf08e195b`), raw hashes/stamp
