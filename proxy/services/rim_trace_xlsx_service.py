@@ -758,6 +758,16 @@ def render_lsr_xlsx(lsr: dict[str, Any], out_path: str | Path, *,
             r = _section_subtotal(
                 ws, put, S, r, idx, sec.get("total", 0), position_total_rows=section_position_totals
             )
+    for binding in lsr.get("row_bindings") or []:
+        if binding.get("status") != "covered":
+            continue
+        source = binding.get("source_row") or {}
+        put(r, 2, binding.get("row"))
+        put(r, 3, f"{source.get('title') or ''}. {binding.get('message') or ''}")
+        put(r, 4, source.get("unit"))
+        put(r, 7, source.get("quantity"))
+        ws.row_dimensions[r].height = 56
+        r += 1
     _, grand_rows = _grand_summary(ws, put, S, r, summary, formula_rows=all_formula_rows)
     _set_header_total_formula(
         ws,

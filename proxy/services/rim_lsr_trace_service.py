@@ -23,9 +23,11 @@ from proxy.services.lsr_source_coverage_service import (
     double_count_conflicts,
     inferred_row_role,
     operation_identity,
+    resolve_work_coverage,
     work_row_key,
 )
 from proxy.services.lsr_norm_quality_gate_service import (
+    applicability_gap_kind,
     canonicalize_norm_status,
     norm_applicability_substantiated,
 )
@@ -636,7 +638,7 @@ def row_projection(binding: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "locator": str(binding.get("row") or ""),
         "work_id": str(binding.get("work_id") or position.get("work_id") or ""),
-        "operation_id": str(position.get("op_key") or ""),
+        "operation_id": str(position.get("op_key") or operation_identity(source_row)),
         # § 4: the number the position carries in the delivered document, how many
         # operations the revision built on this one source row, and which operation a
         # supply line belongs to — the link an operator needs to find the row in the
@@ -650,6 +652,7 @@ def row_projection(binding: Mapping[str, Any]) -> dict[str, Any]:
             or ""
         ),
         "covered_by_work_id": str(binding.get("covered_by_work_id") or ""),
+        "covered_by_operation_id": str(binding.get("covered_by_operation_id") or ""),
         "row_role": str(
             binding.get("row_role") or readiness.get("row_role") or ""
         ),
@@ -683,7 +686,7 @@ def operation_open_questions(
 
     blockers: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
-    closed_statuses = {"bound", "resource_linked", "structure_accounted"}
+    closed_statuses = {"bound", "covered", "resource_linked", "structure_accounted"}
     for item in projection:
         locator = str(item.get("locator") or "") or "?"
         work_id = str(item.get("work_id") or "")
@@ -2355,6 +2358,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
     """
     positions: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
+    coverage_links = resolve_work_coverage(rows or [])
     supplies_by_parent: dict[str, list[Mapping[str, Any]]] = {}
     work_ids_by_parent: dict[str, set[str]] = {}
     for item in rows or []:
@@ -2388,6 +2392,34 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         )
         role = inferred_row_role(row)
         parent = work_row_key(row)
+        if idx - 1 in coverage_links:
+            link = coverage_links[idx - 1]
+            error = str(link.get("error") or "")
+            if not error and not str(row.get("coverage") or "").strip():
+                error = "coverage_basis_missing"
+            if not error and not _visible_row_has_evidence(row):
+                error = "coverage_evidence_missing"
+            if not error and (model_status in {"CONFLICT", "MISSING", "NEEDS_RESEARCH"}
+                              or applicability_gap_kind(row)
+                              or (isinstance(row.get("_evidence_check"), Mapping)
+                                  and row["_evidence_check"].get("card_body_shown") is False)):
+                error = "coverage_basis_unresolved"
+            gap = _unconfirmed_source_change(row, source_qty=source_qty, source_unit=source_unit)
+            if not error and (gap is not None or source_qty is None):
+                error = "coverage_quantity_conflict"
+            binding = {
+                "row": source_row, "code": code, "norm_status": model_status,
+                "status": "coverage_conflict" if error else "coverage_pending",
+                "row_role": role, "source_row": row,
+                "coverage_error": error,
+                "coverage_reason": str(row.get("coverage") or ""),
+                "coverage_target_index": link.get("target_index"),
+                "coverage_direct_target_index": link.get("direct_target_index"),
+                "message": _coverage_message(error),
+            }
+            bindings.append(_with_visible_identity(
+                binding, title=title, source_qty=source_qty, source_unit=source_unit))
+            continue
         if role in {"material", "equipment", "header"} and code:
             # A mounting norm cannot become a supply price just because the
             # model wrote its cipher on an explicit non-work row. Preserve the
@@ -2769,7 +2801,43 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 binding, title=title, source_qty=source_qty, source_unit=source_unit
             )
         )
+    # Resolve after every independently billed operation has been constructed.
+    # A link never manufactures a position or a norm for its target.
+    for binding in bindings:
+        if binding.get("status") != "coverage_pending":
+            continue
+        ancestor = bindings[binding["coverage_direct_target_index"]]
+        while ancestor.get("status") in {"coverage_pending", "covered"}:
+            ancestor = bindings[ancestor["coverage_direct_target_index"]]
+        if ancestor.get("status") == "coverage_conflict":
+            binding.update(status="coverage_conflict", coverage_error="coverage_target_unbound",
+                           message=_coverage_message("coverage_target_unbound"))
+            continue
+        target = bindings[binding["coverage_target_index"]]
+        if target.get("status") != "bound":
+            binding.update(status="coverage_conflict", coverage_error="coverage_target_unbound",
+                           message=_coverage_message("coverage_target_unbound"))
+            continue
+        binding.update(status="covered", covered_by_work_id=str(target["row"]),
+                       covered_by_operation_id=operation_identity(target["source_row"]),
+                       message=f"Учтено в работе {target['row']}; повторно не начисляется. "
+                               + binding["coverage_reason"])
     return {"positions": positions, "row_bindings": bindings}
+
+
+def _coverage_message(error: str) -> str:
+    return {
+        "coverage_target_invalid": "Связь учтённой работы должна быть адресом строки или operation_id.",
+        "coverage_target_missing": "Работа, в которой учтена строка, не найдена.",
+        "coverage_target_ambiguous": "По адресу несколько работ; укажите operation_id нужной операции.",
+        "coverage_role_conflict": "Связь полного учёта допускается только между работами.",
+        "coverage_cycle": "Обнаружена циклическая ссылка между учтёнными работами.",
+        "coverage_basis_missing": "Не приведено обоснование полного учёта работы в coverage.",
+        "coverage_evidence_missing": "Нет разрешаемой ссылки на источник, обосновывающий учёт работы.",
+        "coverage_basis_unresolved": "Модель оставила противоречие или неподтверждённую применимость основания учёта.",
+        "coverage_quantity_conflict": "Объём учтённой работы расходится с исходником без основания.",
+        "coverage_target_unbound": "Связанная работа не включена в расчёт; её пробел требуется закрыть.",
+    }.get(error, "Проверка ссылки на работу, в которой учтена строка.")
 
 
 _SELECTED_CIPHER_RE = re.compile(
@@ -2810,7 +2878,7 @@ def build_lsr_trace_from_visible_rows(
         coefficient_basis=coefficient_basis,
         name=name,
     )
-    closed = {"bound", "resource_linked", "structure_accounted"}
+    closed = {"bound", "covered", "resource_linked", "structure_accounted"}
     binding_flags = [
         f"строка {b.get('row')}: {b.get('message') or b.get('status')}"
         for b in bound["row_bindings"]
@@ -2819,6 +2887,7 @@ def build_lsr_trace_from_visible_rows(
     summary = lsr.setdefault("summary", {})
     summary["input_rows"] = len(rows or [])
     summary["bound_rows"] = len(bound["positions"])
+    summary["covered_rows"] = sum(b.get("status") == "covered" for b in bound["row_bindings"])
     summary["unbound_rows"] = max(0, len(rows or []) - len(bound["positions"]))
     open_bindings = [
         item for item in bound["row_bindings"] if item.get("status") not in closed
@@ -3021,9 +3090,17 @@ def build_lsr_trace_from_visible_rows(
         if role_key in kind_counts:
             kind_counts[role_key] += 1
         cipher = str(binding.get("code") or "")
-        if role_key == "work" and cipher and _is_selected_cipher(cipher):
+        if role_key == "work" and binding.get("status") != "covered" and cipher and _is_selected_cipher(cipher):
             selected_norms += 1
             selected_ciphers.add(cipher)
+    for binding in bound["row_bindings"]:
+        if binding.get("status") == "covered":
+            target = bound["row_bindings"][binding["coverage_target_index"]]
+            # Applicability and price remain as incomplete as the billed work.
+            # This is a reference to its readiness, not another calculated amount.
+            binding["readiness"] = dict(target["readiness"])
+            binding["position_no"] = target.get("position_no")
+            binding["readiness"]["open_reasons"] = list(target["readiness"].get("open_reasons") or [])
     summary["kind_counts"] = kind_counts
     summary["selected_norms"] = selected_norms
     summary["selected_norm_ciphers"] = len(selected_ciphers)

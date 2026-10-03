@@ -113,6 +113,24 @@ TRANSPORT_ROW = {"source_row": "Section!R12", "row_role": "work", "title": "Lite
     "open_gap": "Literal unresolved condition"}
 
 
+@pytest.mark.parametrize("format_name", ["json", "markdown", "text"])
+def test_explicit_work_coverage_survives_all_result_formats_and_draft(format_name):
+    from proxy.services.chat_evidence_application_service import parse_model_rag_result, compact_estimator_draft_rows
+    row = {**TRANSPORT_ROW, "covered_by_work_id": "Section!R11", "norm_code": "-", "norm_status": ""}
+    if format_name == "json":
+        raw = json.dumps({"rows": [row]})
+    elif format_name == "markdown":
+        raw = "| " + " | ".join(row) + " |\n| " + " | ".join("---" for _ in row) + " |\n| " + " | ".join(
+            json.dumps(v) if isinstance(v, list) else str(v) for v in row.values()) + " |"
+    else:
+        raw = "\n".join(f"{key}: {json.dumps(value) if isinstance(value, list) else value}" for key, value in row.items())
+    parsed = parse_model_rag_result(raw)
+    assert parsed is not None
+    result = parsed[1]
+    assert result[0]["covered_by_work_id"] == "Section!R11"
+    assert compact_estimator_draft_rows(result)[0]["covered_by_work_id"] == "Section!R11"
+
+
 @pytest.mark.parametrize("kind", ["vor", "lsr"])
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
 @pytest.mark.parametrize("position", ["before", "after", "outside_fence"])

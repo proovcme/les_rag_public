@@ -925,6 +925,7 @@ def collect_lsr_workbook_gaps(trace: Mapping[str, Any]) -> list[str]:
             continue
         if str(binding.get("status") or "") in {
             "bound",
+            "covered",
             "resource_linked",
             "structure_accounted",
         }:

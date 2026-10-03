@@ -25,7 +25,7 @@ OPTIONAL_FIELDS = (
     "coefficient", "coefficient_applies_to", "extra_ops", "missing_ops", "norm_components",
     "confirmed_price", "price_kind", "price_unit", "price_source",
     "price_currency", "price_vat", "price_period",
-    "resource_bindings", "resource_review",
+    "resource_bindings", "resource_review", "covered_by_work_id",
 )
 
 
@@ -355,6 +355,14 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "и конкретный вопрос в open_gap. norm_code и evidence_refs относятся к одной "
         "карточке; применимость выбираешь ты. material/equipment/resource: "
         "resource_code из карточки с evidence_refs либо пусто. "
+        "Если работа целиком учтена другой работой, сохрани её строку и исходный объём, "
+        "укажи covered_by_work_id: source_row той работы (R# относительно того же листа) "
+        "или её существующий operation_id, обоснование в coverage и источник в evidence_refs. "
+        "Тогда повторного начисления не будет. Один комментарий без этой связи не отменяет начисление. "
+        "Отдельная норма такой строке не требуется: norm_code/norm_status можно оставить пустыми; "
+        "если основание связи ещё спорное, явно укажи конфликт или вопрос. "
+        "Связь допустима только между работами; одинаковый шифр не означает полного учёта. "
+        "При частичном пересечении сам раздели операции и обоснуй их объёмы; полной связи не ставь. "
         "nr_sp_rule_id выбирай из карточки по известным условиям; при неизвестных — "
         "пустой ID и вопрос в open_gap. Ставки по памяти не подставляй. "
         "Коммерческая confirmed_price требует цитаты суммы, единицы и price_source; "

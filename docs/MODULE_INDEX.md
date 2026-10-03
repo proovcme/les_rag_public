@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 890 — явная связь учтённых работ (✅ код/док; live pending)
+
+`model_lsr_result_contract`/`chat_evidence_application_service` переносят
+`covered_by_work_id` без интерпретации пояснений. `lsr_source_coverage_service.resolve_work_coverage`
+проверяет граф явных адресов. `rim_lsr_trace_service` считает только корневую работу,
+сохраняет все строки и наследует готовность/пробелы. `lsr_result_readiness_service`
+и `lsr_workbook_adapter_service` не требуют второго шифра для валидной связи;
+`rim_trace_xlsx_service` показывает её на обоих листах. Тесты: существующие
+`test_rim_lsr_trace_service.py`, `test_model_lsr_result_contract.py`.
+Док: [ALGO-lsr-assembly](ALGO-lsr-assembly.md). Профессиональная приёмка pending.
+
 > **Дополнение889:** `smeta/lsr`, doc↔candidate-code ✅.
 > XLSX сохраняет уже рассчитанные числа вместе с формулами. Независимые
 > `data_only` readers видят деньги без Excel; unknown остаётся blank.

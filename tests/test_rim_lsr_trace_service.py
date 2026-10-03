@@ -15,6 +15,122 @@ from proxy.services.rim_lsr_trace_service import (
 CODE = "ГЭСН12-01-034-02"
 
 
+def test_explicit_covered_work_is_preserved_and_charged_once(monkeypatch, tmp_path):
+    from copy import deepcopy
+    from openpyxl import load_workbook
+    from proxy.services.rim_trace_xlsx_service import render_lsr_xlsx
+    parent = _active_resource_norm(monkeypatch)
+    parent["norm_status"] = "NEEDS_RESEARCH"
+    child = dict(parent, source_row="S!R3", operation_id="child", title="Included operation",
+                 covered_by_work_id="R2", norm_status="EXACT", coverage="The cited combined norm includes this operation")
+    original = deepcopy([child, parent])
+    trace = build_lsr_trace_from_visible_rows(original)
+    base = build_lsr_trace_from_visible_rows([parent])
+    assert trace["summary"]["positions_built"] == 1
+    assert trace["summary"]["covered_rows"] == 1
+    assert trace["summary"]["preliminary_amount"] == base["summary"]["preliminary_amount"]
+    covered, billed = trace["row_bindings"]
+    assert covered["status"] == "covered"
+    assert covered["covered_by_work_id"] == "S!R2"
+    assert covered["covered_by_operation_id"] == "op:op_model"
+    assert covered["source_row"] == child
+    assert original == [child, parent]
+    assert covered["readiness"]["prices_provided"] == billed["readiness"]["prices_provided"]
+    assert covered["readiness"]["applicability_substantiated"] is False
+    assert trace["row_projection"][0]["operation_id"] == "op:child"
+    output = render_lsr_xlsx(trace, tmp_path / "covered.xlsx")
+    wb = load_workbook(output, data_only=True)
+    body = " ".join(str(cell.value or "") for row in wb.worksheets[0] for cell in row)
+    assert "Included operation" in body and "S!R2" in body and "повторно не начисляется" in body
+    check = " ".join(str(cell.value or "") for row in wb["Проверка"] for cell in row)
+    assert "S!R3" in check and "S!R2" in check
+
+
+@pytest.mark.parametrize("changes, reason", [
+    ({"covered_by_work_id": "R99"}, "coverage_target_missing"),
+    ({"covered_by_work_id": "R3"}, "coverage_cycle"),
+    ({"coverage": ""}, "coverage_basis_missing"),
+    ({"evidence_refs": []}, "coverage_evidence_missing"),
+    ({"evidence_bindings": {}}, "coverage_evidence_missing"),
+    ({"row_role": "material"}, "coverage_role_conflict"),
+    ({"norm_status": "CONFLICT"}, "coverage_basis_unresolved"),
+    ({"condition_match": "unknown"}, "coverage_basis_unresolved"),
+    ({"quantity": None}, "coverage_quantity_conflict"),
+    ({"_evidence_check": {"card_body_shown": False}}, "coverage_basis_unresolved"),
+])
+def test_invalid_work_coverage_is_visible_and_never_silently_billed(monkeypatch, changes, reason):
+    parent = _active_resource_norm(monkeypatch)
+    child = dict(parent, source_row="S!R3", operation_id="child", covered_by_work_id="R2",
+                 coverage="Included by the cited norm", **{})
+    child.update(changes)
+    result = build_lsr_trace_from_visible_rows([parent, child])
+    assert result["summary"]["positions_built"] == 1
+    binding = result["row_bindings"][1]
+    assert binding["status"] == "coverage_conflict"
+    assert binding["coverage_error"] == reason
+    assert result["summary"]["result_status"] == "priced_partial"
+    assert any(item["code"] == "S!R3" for item in result["blockers"])
+    assert binding["source_row"] == child
+
+
+def test_identical_codes_and_prose_do_not_infer_work_coverage(monkeypatch):
+    parent = _active_resource_norm(monkeypatch)
+    child = dict(parent, source_row="S!R3", operation_id="child", coverage="Already included, charge once")
+    result = build_lsr_trace_from_visible_rows([parent, child])
+    assert result["summary"]["positions_built"] == 2
+    assert result["summary"]["covered_rows"] == 0
+
+
+def test_coverage_chains_cycles_and_ambiguous_operations(monkeypatch):
+    parent = _active_resource_norm(monkeypatch)
+    child = dict(parent, source_row="S!R3", operation_id="child", covered_by_work_id="R2", coverage="Cited composition")
+    nested = dict(child, source_row="S!R4", operation_id="nested", covered_by_work_id="child")
+    result = positions_from_visible_lsr_rows([nested, child, parent])
+    assert len(result["positions"]) == 1
+    assert [b.get("covered_by_operation_id") for b in result["row_bindings"][:2]] == ["op:op_model"] * 2
+    sibling = dict(parent, operation_id="sibling")
+    result = positions_from_visible_lsr_rows([parent, sibling, child])
+    assert result["row_bindings"][2]["coverage_error"] == "coverage_target_ambiguous"
+    child["covered_by_work_id"] = "op_model"
+    assert positions_from_visible_lsr_rows([parent, sibling, child])["row_bindings"][2]["status"] == "covered"
+    child["covered_by_work_id"] = "nested"
+    result = positions_from_visible_lsr_rows([parent, child, nested])
+    assert [b["coverage_error"] for b in result["row_bindings"][1:]] == ["coverage_cycle"] * 2
+
+
+def test_covered_work_cannot_close_an_unbound_parent(monkeypatch):
+    parent = _active_resource_norm(monkeypatch)
+    child = dict(parent, source_row="S!R3", operation_id="child", covered_by_work_id="R2", coverage="Cited composition")
+    parent.update(norm_code="", norm_status="MISSING")
+    result = build_lsr_trace_from_visible_rows([child, parent])
+    assert result["summary"]["positions_built"] == 0
+    assert result["row_bindings"][0]["coverage_error"] == "coverage_target_unbound"
+
+
+def test_covered_chain_cannot_hide_intermediate_missing_evidence(monkeypatch):
+    parent = _active_resource_norm(monkeypatch)
+    child = dict(parent, source_row="S!R3", operation_id="child", covered_by_work_id="R2", coverage="Cited composition", evidence_refs=[])
+    nested = dict(child, source_row="S!R4", operation_id="nested", covered_by_work_id="child", evidence_refs=["Q1.H1"])
+    result = positions_from_visible_lsr_rows([nested, parent, child])
+    assert result["row_bindings"][0]["status"] == "coverage_conflict"
+    assert result["row_bindings"][2]["coverage_error"] == "coverage_evidence_missing"
+
+
+def test_readiness_asks_about_billed_work_without_asking_covered_row_for_another_norm(monkeypatch):
+    from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
+    from proxy.services.lsr_workbook_adapter_service import collect_lsr_workbook_gaps
+    parent = _active_resource_norm(monkeypatch)
+    child = dict(parent, source_row="S!R3", operation_id="child", covered_by_work_id="R2", coverage="Cited composition", norm_code="")
+    parent["norm_status"] = "NEEDS_RESEARCH"
+    trace = build_lsr_trace_from_visible_rows([parent, child])
+    gaps = collect_lsr_workbook_gaps(trace)
+    assert not any(item.startswith("row:S!R3:") for item in gaps)
+    readiness = build_lsr_result_readiness(packaged=True, rows=[parent, child], missing=gaps,
+        row_projection=trace["row_projection"], pricing_status=trace["summary"]["result_status"])
+    assert not any(gap["locator"] == "S!R3" for gap in readiness["dimensions"]["norms"]["gaps"])
+    assert readiness["dimensions"]["norms"]["complete"] is False
+
+
 def _active_resource_norm(monkeypatch):
     from proxy.services import gesn_service
     norm = {"code": "ГЭСНм08-02-409-09", "name": "Authored work", "unit": "100 м",

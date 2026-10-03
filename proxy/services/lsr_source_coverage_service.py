@@ -130,6 +130,64 @@ def operation_identity(row: Mapping[str, Any]) -> str:
     return f"id:{_locator(row)}:{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}"
 
 
+def resolve_work_coverage(rows: Sequence[Mapping[str, Any]]) -> dict[int, dict[str, Any]]:
+    """Resolve only explicit authored coverage edges, without judging their meaning.
+
+    A locator must identify exactly one operation; operation_id disambiguates it.
+    Iterative traversal also handles long documents and cycles without recursion.
+    Indices are internal references into the unmodified input, never model IDs.
+    """
+    aliases: dict[str, set[int]] = {}
+    for index, row in enumerate(rows):
+        for key in {_locator(row), _text(row.get("operation_id")), operation_identity(row)} - {""}:
+            aliases.setdefault(key, set()).add(index)
+    edges: dict[int, int] = {}
+    result: dict[int, dict[str, Any]] = {}
+    for index, row in enumerate(rows):
+        value = row.get("covered_by_work_id")
+        if value in (None, "", "-", "—"):
+            continue
+        if not isinstance(value, str):
+            result[index] = {"error": "coverage_target_invalid"}
+            continue
+        ref = value.strip()
+        if "!" in _locator(row) and ref.startswith("R") and ref[1:].isdigit():
+            ref = _locator(row).rsplit("!", 1)[0] + "!" + ref
+        candidates = aliases.get(ref, set())
+        error = ""
+        if inferred_row_role(row) != "work":
+            error = "coverage_role_conflict"
+        elif not candidates:
+            error = "coverage_target_missing"
+        elif len(candidates) != 1:
+            error = "coverage_target_ambiguous"
+        elif inferred_row_role(rows[next(iter(candidates))]) != "work":
+            error = "coverage_role_conflict"
+        if error:
+            result[index] = {"error": error}
+        else:
+            edges[index] = next(iter(candidates))
+    for start in edges:
+        if start in result:
+            continue
+        trail: list[int] = []
+        seen: set[int] = set()
+        current = start
+        while current in edges and current not in result and current not in seen:
+            seen.add(current)
+            trail.append(current)
+            current = edges[current]
+        resolved = (
+            {"error": "coverage_cycle"} if current in seen
+            else result.get(current, {"target_index": current})
+        )
+        for index in trail:
+            result[index] = dict(resolved)
+    for index, target in edges.items():
+        result[index]["direct_target_index"] = target
+    return result
+
+
 def double_count_conflicts(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Same locator, different supply roles, same item: an accounting conflict.
 

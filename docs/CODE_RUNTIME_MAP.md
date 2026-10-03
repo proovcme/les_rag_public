@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1085 |
-| Строк Python | 381749 |
+| Строк Python | 382051 |
 | PRODUCT_REACHABLE | 371 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 702 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 12903 | 44 |
+| proxy/services/chat_evidence_application_service.py | 12907 | 45 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7792 | 7 |
 | proxy/routers/chat.py | 4807 | 47 |
@@ -41,7 +41,7 @@
 | sovushka/pages/documents.py | 3976 | 3 |
 | proxy/routers/datasets.py | 3787 | 16 |
 | sovushka/styles.py | 3301 | 3 |
-| proxy/services/rim_lsr_trace_service.py | 3057 | 32 |
+| proxy/services/rim_lsr_trace_service.py | 3134 | 32 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/workbook_research_job_service.py | 2883 | 27 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
@@ -53,7 +53,7 @@
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | sovushka/pages/diag.py | 1605 | 3 |
-| proxy/services/lsr_workbook_adapter_service.py | 1595 | 16 |
+| proxy/services/lsr_workbook_adapter_service.py | 1596 | 16 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |

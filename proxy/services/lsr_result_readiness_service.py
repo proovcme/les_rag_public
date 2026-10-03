@@ -8,6 +8,7 @@ from proxy.services.lsr_source_coverage_service import (
     build_source_coverage,
     canonicalize_row_role,
     inferred_row_role,
+    operation_identity,
 )
 from proxy.services.lsr_norm_quality_gate_service import (
     MODEL_GAP_REASONS,
@@ -190,6 +191,7 @@ def _structured_price_gaps(
 # "close the norms" in a document whose norms dimension says "complete"
 # (task § 10: one revision, one status, one wording).
 _ROW_STATUS_LABEL = {
+    "coverage_conflict": "ссылка на работу, в которой учтена строка, не подтверждена; требуется исправить связь или основание",
     "needs_input": "нужен авторский пересчёт единицы в единицу нормы",
     "missing_quantity": "объём не задан",
     "norm_not_found": "шифр не найден в нормативной базе",
@@ -393,7 +395,15 @@ def build_lsr_result_readiness(
     base_absent_locators = {
         _text(item.get("locator")) for item in unbound if item.get("status") == "norm_not_found"
     }
+    validated_covered = {
+        _text(item.get("operation_id")) for item in row_projection
+        if item.get("status") == "covered" and item.get("covered_by_operation_id")
+    }
     for row in work_rows:
+        if operation_identity(row) in validated_covered:
+            # The linked operation owns the norm question. Its gaps are still
+            # counted below and its readiness is inherited by this covered row.
+            continue
         kind = classify_norm_gap(row)
         if not kind:
             continue
