@@ -3180,7 +3180,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12907,
+      "lines": 12929,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -10006,7 +10006,7 @@
     },
     {
       "inbound": [],
-      "lines": 364,
+      "lines": 410,
       "module": "tests.test_chat_native_research_exchange",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -20463,7 +20463,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 702,
     "tracked_python_files": 1085,
-    "tracked_python_lines": 382051
+    "tracked_python_lines": 382119
   },
   "warnings": []
 }

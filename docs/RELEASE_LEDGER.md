@@ -1,5 +1,29 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.163 / 891 — повторённое чтение не запускается заново
+
+890 установлен, commit1de9760b, hashes/rollback проверены. NativeRRF PASS;
+basic8PASS/1WARN/1FAIL. Собственная history777 показывает12 web_search requests,
+включая точные повторы arguments_sha256; финал после calls_budget — новый Qwen XML
+tool request (finish_reason=stop), а не ответ. Это измеренный дефект завершения,
+не зависание и не доказательство готовности. Квитанции artifacts/live_890/smoke.
+
+891 сохраняет точный snapshot успешного read-only результата только внутри одного
+запроса. Повтор tool+args получает прежнее evidence с новым matching native call ID;
+errors/write и другие аргументы не переиспользуются. Полностью повторённый batch
+закрывает технический цикл и передаёт накопленное evidence в штатный final answer.
+Код не сочиняет ответ, не меняет queries и не маскирует незавершённый output.
+Focused25passed; canonical3272passed/20existing skipped/5warnings,225.77s;
+verify/architecture/map/docs/assets/metadata PASS (artifacts/gates_891).
+Install/live891 pending.
+
+Первый запуск облачного сравнения890 отклонён auto-review до inference. После
+явного согласия владельца выполнены query-фазы B0/B1 синтетического ВОР из двух
+работ; обе answer-фазы остановлены ДО HTTP по лимиту57060: reserve90706/90552.
+Расход4539+5046=9585; остаток104535 по usage, не API balance. Артефактов нет,
+качество модели этими попытками не измерено. Cloud OFF/budget0/FreeToken restored.
+Квитанции artifacts/live_890/flash_coverage_control_authorized и coverage_*.
+
 ## Кандидат 0.31.162 / 890 — явный учёт работы внутри другой позиции
 
 889 установлен: commit `2a040fac`, SHA/rollback проверены. Контроль остановки

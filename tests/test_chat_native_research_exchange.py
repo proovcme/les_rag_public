@@ -17,6 +17,52 @@ from test_chat_evidence_application_service import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status,effect,replayed", [
+    ("ok", "read", True), ("missing", "read", True),
+    ("error", "read", False), ("ok", "write", False),
+])
+async def test_repeated_read_batch_reuses_exact_evidence_and_finishes_without_new_search(
+    monkeypatch, tmp_path, status, effect, replayed,
+):
+    from proxy.services import tool_harness_service
+    from proxy.services.tool_harness_service import ToolHarness
+    from proxy.services.web_research_config_service import WebResearchConfig
+    broker = ToolHarness(web_config=WebResearchConfig("simple", "", "", ""))
+    executions = []
+    original = {**_payload("original", status=status), "spec": {"effect": effect}}
+
+    class Harness:
+        def shortlist(self, *args, **kwargs):
+            return broker.shortlist(*args, **kwargs)
+
+        def call(self, tool, args):
+            executions.append((tool, dict(args)))
+            return original
+
+    async def setup(request, runtime, boundary):
+        transport = runtime.model_connection_transport(None, None)
+        final = InferenceResponse(text="Evidence is insufficient; please specify the project.",
+                                  tool_calls=(), finish_reason="stop", usage={})
+        transport.responses = [_response(["first"]), _response(["repeat"]), final]
+        if not replayed:
+            transport.responses.append(final)
+        monkeypatch.setattr(tool_harness_service, "harness", lambda **kwargs: Harness())
+        result = await service.run_chat_evidence_application(request, runtime, boundary)
+        loop = result["retrieval_trace"]["tool_loop"]
+        assert len(executions) == (1 if replayed else 2)
+        assert loop["stop_reason"] == ("repeated_read_batch" if replayed else "model_stop")
+        assert result["answer"] == final.text
+        protocol = [m for m in transport.requests[-1].messages if m["role"] == "tool"]
+        assert [m["tool_call_id"] for m in protocol] == ["first", "repeat"]
+        assert [json.loads(m["content"]) for m in protocol] == [original, original]
+        if replayed:
+            assert loop["rounds"][-1]["replayed"] == 1
+            assert loop["rounds"][-1]["executed"] == 0
+        assert len(transport.requests) == (3 if replayed else 4)
+    await _run_actual_chat_fixture(monkeypatch, tmp_path, "active_web_research", application_setup=setup)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("shape", ["qwen_xml", "mixed_xml", "json", "native", "fenced_example", "final"])
 async def test_final_research_request_is_final_only_and_unfinished_protocol_is_not_published(monkeypatch, tmp_path, shape):
     from proxy.services.model_output_protocol_service import FINAL_RESEARCH_INSTRUCTION

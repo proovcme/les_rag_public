@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 891 — ordinary chat: read snapshot/repeated batch (✅ код/док; live pending)
+
+`chat_evidence_application_service` повторяет точное ранее прочитанное evidence
+вместо нового исполнения одинакового read-only tool+args внутри запроса.
+Полностью повторённый batch заканчивает research с сохранением native replies.
+Никакого кеширования write/error, смены запросов или code-final ответа.
+Док: modules/rag-evidence-flow.md; тесты: test_chat_native_research_exchange.py.
+
 ## 890 — явная связь учтённых работ (✅ код/док; live pending)
 
 `model_lsr_result_contract`/`chat_evidence_application_service` переносят

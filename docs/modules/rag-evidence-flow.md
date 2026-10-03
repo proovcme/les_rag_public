@@ -1,5 +1,18 @@
 # RAG evidence flow
 
+## 891 — точный повтор обычного read-only инструмента
+
+В ordinary research loop локальный read_snapshots сохраняет ModelResearchToolResult
+после spec.effect=read и status=ok/missing. Ключ — tool + полный JSON args без
+нормализации поискового текста. Snapshot живёт только в данном запросе;
+ошибки и записи не кешируются. Literal native assistant/call IDs и полные replies
+сохраняются; trace.rounds отдельно считает replayed и физически executed.
+Если весь очередной batch уже прочитан, stop_reason=repeated_read_batch передаёт
+контекст в существующий финальный ответ. Это техническая граница повтора, без
+выбора запроса/нормы/цены и без code-generated профессионального ответа.
+Model-driven сметные query/read циклы не меняются. Тест: actual application
+test_chat_native_research_exchange.py, ошибки/записи/новые calls отдельно.
+
 ## 890 — авторское полное покрытие другой работой
 
 Общий result contract передаёт необязательное covered_by_work_id вместе с

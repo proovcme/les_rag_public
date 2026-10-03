@@ -8,6 +8,7 @@ from __future__ import annotations
 from proxy.services.model_output_protocol_service import FINAL_RESEARCH_INSTRUCTION, has_unconsumed_tool_frame
 
 import asyncio
+from copy import deepcopy
 import hashlib
 import json
 import logging
@@ -8309,6 +8310,7 @@ async def _execute_chat_evidence_application(
                         if llm_runtime.api_key:
                             selector_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
                         selected_calls: list[dict[str, Any]] = []
+                        read_snapshots: dict[str, Any] = {}
                         selector_usage: list[dict[str, Any]] = []
                         research_rounds: list[dict[str, Any]] = []
                         research_deadline_seconds = max(
@@ -8471,6 +8473,7 @@ async def _execute_chat_evidence_application(
                                 native_response, calls, research_native_exchanges,
                             )
                             native_payloads: list[dict[str, Any]] = []
+                            replayed_reads = 0
                             research_rounds.append(
                                 {"round": research_round, "proposed": len(proposed_calls), "executed": len(calls)}
                             )
@@ -8552,7 +8555,20 @@ async def _execute_chat_evidence_application(
                                         workbook_progress,
                                     ))
                                 else:
-                                    research_result = await model_research_tools.execute(call)
+                                    read_key = json.dumps([tool_name, call.get("args") or {}],
+                                                          ensure_ascii=False, sort_keys=True)
+                                    if read_key in read_snapshots:
+                                        research_result = deepcopy(read_snapshots[read_key])
+                                        replayed_reads += 1
+                                    else:
+                                        research_result = await model_research_tools.execute(call)
+                                        result_payload = research_result.payload
+                                        result_spec = result_payload.get("spec") or {}
+                                        if (isinstance(result_spec, Mapping) and result_spec.get("effect") == "read"
+                                                and result_payload.get("status") in {"ok", "missing"}):
+                                            # Request-local exact read snapshot. Keep source/body
+                                            # provenance, but never cache errors or write actions.
+                                            read_snapshots[read_key] = deepcopy(research_result)
                                     payload = research_result.payload
                                     if research_result.chunks:
                                         known_chunk_ids = {
@@ -8655,6 +8671,12 @@ async def _execute_chat_evidence_application(
                                     reasoning_content=native_response.reasoning_content,
                                 ))
                             if workbook_chat_meta:
+                                break
+                            if replayed_reads:
+                                research_rounds[-1]["replayed"] = replayed_reads
+                                research_rounds[-1]["executed"] -= replayed_reads
+                            if replayed_reads == len(calls):
+                                stop_reason = "repeated_read_batch"
                                 break
                             if calls_remaining <= 0:
                                 stop_reason = "calls_budget"
