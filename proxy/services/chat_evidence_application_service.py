@@ -124,7 +124,7 @@ from proxy.services.model_evidence_read_contract import (
     model_evidence_read_tool_schemas,
     read_result_receipt,
 )
-from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
+from proxy.services.model_evidence_read_service import evidence_read_call_identity, run_model_evidence_read_turn
 from proxy.services.model_rag_grouped_evidence_service import (
     EvidenceCard,
     EvidenceGroup,
@@ -9996,6 +9996,18 @@ async def _execute_chat_evidence_application(
                             # including reads from earlier chat turns.
                             read_receipts = list(saved_read_receipts)
 
+                            async def _accept_sheet_read_replays(batch_receipts):
+                                nonlocal research_job, active_pending_tool_calls
+                                read_receipts.extend(batch_receipts)
+                                retrieval_trace["tool_loop"].setdefault("evidence_reads", []).extend(batch_receipts)
+                                active_pending_tool_calls = max(0, active_pending_tool_calls - len(batch_receipts))
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.record_evidence_read(
+                                        research_job["job_id"], packet_id=read_packet_id,
+                                        evidence=[durable_evidence_record(c) for c in model_evidence_chunks],
+                                        read_receipts=read_receipts,
+                                    )
+
                             async def _accept_sheet_reads(batch_receipts, batch_results):
                                 nonlocal research_job, active_pending_tool_calls, model_requested_price_basis
                                 read_receipts.extend(batch_receipts)
@@ -10031,7 +10043,7 @@ async def _execute_chat_evidence_application(
                                     source_context=pass_evidence,
                                     admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
-                                    receipts=[*saved_read_receipts, *receipts],
+                                    receipts=receipts,
                                 )
                                 retrieval_trace["context_governor"]["calls"].append(
                                     context_packet_trace(read_frame, purpose="sheet_pass_evidence_read")
@@ -10061,6 +10073,10 @@ async def _execute_chat_evidence_application(
                                     allowed_tools={item["function"]["name"] for item in sheet_read_tools},
                                     max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
                                     on_read_results=_accept_sheet_reads, continue_native_turn=_continue_sheet_reads,
+                                    on_read_replays=_accept_sheet_read_replays,
+                                    initial_receipts=saved_read_receipts,
+                                    seen_calls=[evidence_read_call_identity(item["call"])
+                                                for item in saved_read_receipts if isinstance(item.get("call"), dict)],
                                 )
                                 pass_answer, usage = read_turn.text, read_turn.usage
                                 tokens = int(tokens or 0) + read_turn.extra_completion_tokens
@@ -11256,6 +11272,11 @@ async def _execute_chat_evidence_application(
                         model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                         direct_read_groups = []
 
+                        async def _accept_direct_read_replays(batch_receipts):
+                            nonlocal active_pending_tool_calls
+                            retrieval_trace["tool_loop"].setdefault("evidence_reads", []).extend(batch_receipts)
+                            active_pending_tool_calls = max(0, active_pending_tool_calls - len(batch_receipts))
+
                         async def _accept_direct_reads(batch_receipts, batch_results):
                             nonlocal active_pending_tool_calls, model_requested_price_basis
                             groups, chunks, omitted = bind_model_requested_read_evidence(
@@ -11306,6 +11327,7 @@ async def _execute_chat_evidence_application(
                                 text=answer, usage=usage, parse_calls=_parse_model_tool_calls,
                                 execute=model_research_tools.execute,
                                 continue_native_turn=_continue_direct_reads, on_read_results=_accept_direct_reads,
+                                on_read_replays=_accept_direct_read_replays,
                                 allowed_tools={item["function"]["name"] for item in direct_read_tools},
                                 max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
                             )
@@ -11937,20 +11959,23 @@ async def _execute_chat_evidence_application(
                                 "notice": notice,
                             }
                     else:
-                        read_capacity_stop = (retrieval_trace.get("tool_loop") or {}).get(
-                            "evidence_read_stop") == "evidence_read_capacity"
+                        read_stop_reason = str((retrieval_trace.get("tool_loop") or {}).get(
+                            "evidence_read_stop") or "")
                         notice = (
                             "Чтение источников приостановлено: данные для следующего шага "
                             "не помещаются в окно контекста модели. ЛСР ещё не собрана."
-                            if read_capacity_stop else format_lsr_unstructured_notice(
+                            if read_stop_reason == "evidence_read_capacity" else
+                            "Чтение источников технически приостановлено (" + read_stop_reason
+                            + "). Итоговое решение модели ещё не получено; ЛСР не собрана."
+                            if read_stop_reason else format_lsr_unstructured_notice(
                                 sheet_pass_empty=bool(sheet_pass_done))
                         )
                         if notice not in answer:
                             answer = f"{answer.rstrip()}\n\n{notice}"
                         retrieval_trace["model_result"] = {
                             "schema": "les_model_rag_result_v1",
-                            "status": "technical_pending" if read_capacity_stop else "unstructured",
-                            **({"reason": "evidence_read_capacity"} if read_capacity_stop else {}),
+                            "status": "technical_pending" if read_stop_reason else "unstructured",
+                            **({"reason": read_stop_reason} if read_stop_reason else {}),
                             "packaged": False,
                             "notice": notice,
                         }

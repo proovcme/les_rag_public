@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> Кандидат886: `model_evidence_read_service.run_model_evidence_read_turn`
+> сохраняет один native receipt replay на identity. `_accept_sheet_read_replays`
+> записывает его в durable ledger, `_accept_direct_read_replays` — в trace.
+> При resume driver получает прежние receipts/seen identities. Finalization
+> сохраняет любой evidence_read_stop как технический, не ошибку таблицы.
+
 > Кандидат885: `WorkbookResearchJobService.evidence_read_receipts` использует
 > существующий `list_events_with_lineage` с фильтром packet_id. Восстановление
 > старого журнала охватывает и новый job после сообщения «Продолжи».

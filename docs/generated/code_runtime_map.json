@@ -3177,7 +3177,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12831,
+      "lines": 12856,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5404,7 +5404,7 @@
         "tests/test_model_norm_evidence_ref_reads.py",
         "tests/test_model_norm_pointer_navigation.py"
       ],
-      "lines": 195,
+      "lines": 240,
       "module": "proxy.services.model_evidence_read_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7855,6 +7855,7 @@
         "tests/test_lsr_norm_gap_reasons_830.py",
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_scheduler_starvation_824.py",
+        "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_evidence_read_contract.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_result_packet_service.py",
@@ -12245,14 +12246,15 @@
     },
     {
       "inbound": [],
-      "lines": 291,
+      "lines": 429,
       "module": "tests.test_model_evidence_native_exchange",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/context_governor_service.py",
         "proxy/services/model_evidence_read_service.py",
         "proxy/services/openai_compatible_transport_service.py",
-        "proxy/services/smeta_chat_adapter_service.py"
+        "proxy/services/smeta_chat_adapter_service.py",
+        "proxy/services/workbook_research_job_service.py"
       ],
       "path": "tests/test_model_evidence_native_exchange.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -12481,7 +12483,7 @@
         "tests/test_model_query_reasoning.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 1217,
+      "lines": 1221,
       "module": "tests.test_model_rag_sheet_evidence_reads",
       "outbound": [
         "proxy/routers/chat.py",
@@ -20438,7 +20440,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 702,
     "tracked_python_files": 1084,
-    "tracked_python_lines": 381151
+    "tracked_python_lines": 381363
   },
   "warnings": []
 }

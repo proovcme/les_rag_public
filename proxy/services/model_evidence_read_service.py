@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
@@ -93,6 +95,7 @@ async def run_model_evidence_read_turn(
     allowed_tools: Sequence[str] | set[str],
     max_calls: int = 48,
     on_read_results: Callable | None = None,
+    on_read_replays: Callable | None = None,
     initial_receipts: Sequence[Mapping[str, Any]] = (),
     seen_calls: Sequence[str] = (),
 ) -> ModelEvidenceReadTurnResult:
@@ -103,7 +106,10 @@ async def run_model_evidence_read_turn(
     ``continue_turn`` receives cumulative receipts/results. The native callback
     additionally receives complete typed exchanges for governed serialization.
     Exceptions propagate; the caller owns technical pauses.
-    Previously executed identities can be supplied by a durable ledger.
+    Previously executed identities can be supplied by a durable ledger. A native
+    retry with a fresh provider ID receives the saved receipt once, without a
+    second read or new evidence bindings. Replays consume the same call budget;
+    a further retry of that identity stops. Legacy text calls keep their guard.
     """
     current_text = text
     current_usage = dict(usage or {})
@@ -117,6 +123,10 @@ async def run_model_evidence_read_turn(
     names = set(allowed_tools)
     native_exchanges: list[NativeToolExchange] = []
     native_ids: set[str] = set()
+    cached = {evidence_read_call_identity(item["call"]): item for item in receipts
+              if isinstance(item.get("call"), Mapping) and item.get("status") in {"ok", "missing", "conflict"}}
+    replayed = {evidence_read_call_identity(item["call"]) for item in receipts
+                if isinstance(item.get("call"), Mapping) and item.get("replayed_from_call_id")}
     while current_text:
         calls = parse_calls(current_text, allowed_tools=names, max_calls=max(remaining, 1))
         if not calls:
@@ -138,7 +148,10 @@ async def run_model_evidence_read_turn(
                 stop = "evidence_read_native_exchange_invalid"
                 break
             identities_in_batch = [evidence_read_call_identity(call) for call in calls]
-            if len(set(identities_in_batch)) != len(identities_in_batch) or seen.intersection(identities_in_batch):
+            counts = Counter(identities_in_batch)
+            if any(count > (1 if identity in seen else 2)
+                   or (identity in seen and (identity not in cached or identity in replayed))
+                   for identity, count in counts.items()):
                 stop = "evidence_read_repeat"
                 break
             if len(typed_calls) > remaining:
@@ -146,6 +159,7 @@ async def run_model_evidence_read_turn(
                 break
         batch_receipts: list[dict[str, Any]] = []
         batch_results: list[Any] = []
+        fresh_by_identity: dict[str, dict[str, Any]] = {}
         for call in calls:
             if not isinstance(call, Mapping) or str(call.get("tool") or "") not in names:
                 continue
@@ -162,17 +176,48 @@ async def run_model_evidence_read_turn(
             identities.append(identity)
             remaining -= 1
             batch_results.append(result)
-            batch_receipts.append(evidence_read_receipt(call, result))
+            receipt = evidence_read_receipt(call, result)
+            batch_receipts.append(receipt)
+            fresh_by_identity[identity] = receipt
         receipts.extend(batch_receipts)
         results.extend(batch_results)
         if batch_results and on_read_results is not None:
             reason = await _invoke(on_read_results, batch_receipts, batch_results)
             if isinstance(reason, str) and reason:
                 stop = reason
-        if not batch_results and not stop:
+        if not batch_results and not typed_calls and not stop:
             stop = "evidence_read_repeat"
         if stop:
             break
+        if typed_calls:
+            # Binding happens in on_read_results. Replay only afterwards so a
+            # duplicate never gets a new Q-ref or loses the literal source IDs.
+            cached.update({identity: receipt for identity, receipt in fresh_by_identity.items()
+                           if receipt.get("status") in {"ok", "missing", "conflict"}})
+            protocol_receipts, replay_receipts = [], []
+            for call in calls:
+                identity = evidence_read_call_identity(call)
+                fresh = fresh_by_identity.pop(identity, None)
+                if fresh is not None:
+                    protocol_receipts.append(fresh)
+                    continue
+                previous = cached.get(identity)
+                if previous is None or identity in replayed:
+                    stop = "evidence_read_repeat"
+                    break
+                receipt = deepcopy(previous)
+                receipt["replayed_from_call_id"] = str(previous["call"].get("call_id") or "saved-read")
+                receipt["call"] = {key: call[key] for key in ("tool", "args", "call_id") if key in call}
+                protocol_receipts.append(receipt)
+                replay_receipts.append(receipt)
+                replayed.add(identity)
+                remaining -= 1
+            if stop:
+                break
+            receipts.extend(replay_receipts)
+            if replay_receipts and on_read_replays is not None:
+                await _invoke(on_read_replays, replay_receipts)
+            batch_receipts = protocol_receipts
         try:
             exchange = native_evidence_read_exchange(calls, batch_receipts)
         except ValueError:

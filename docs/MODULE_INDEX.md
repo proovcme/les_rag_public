@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат886 / 0.31.158:** `core/chat-evidence`, doc↔candidate-code ✅.
+> Native read driver возвращает сохранённый receipt при первом точном повторе;
+> бюджет/защита от циклов и immutable refs сохраняются, replay записывается в job.
+> Все read stops остаются technical_pending. [Поток](modules/rag-evidence-flow.md).
+> Installed885 `10c3c827`: RRF PASS, basic9PASS/1WARN; B0 FreeToken64k/128k
+> не дали XLSX (capacity/repeat). Canonical886:3216passed/20existing skipped;
+> verify/architecture/docs exit0. Install886 pending, готовность не заявлена.
+
 > **Кандидат885 / 0.31.157:** `core/chat-evidence`, doc↔code ✅.
 > `WorkbookResearchJobService.evidence_read_receipts` читает события через
 > `list_events_with_lineage`: legacy ledger восстанавливается и после нового

@@ -159,7 +159,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      malformed_second_packet=False, duplicate_json_first_packet=False,
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
                      exact_resource_padding=0, query_declaration=None, budget_stop_at=None,
-                     wire_budget_bytes=None, norm_ref_read=None):
+                     wire_budget_bytes=None, norm_ref_read=None, native_repeats=0):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -307,6 +307,10 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                                                     _native("read_resource_price", code=RESOURCE_B)),
                               finish_reason="tool_calls", usage={}),
         ]
+        for index in range(native_repeats):
+            repeated = {**read_responses[0].tool_calls[0], "id": f"repeated-{index}"}
+            read_responses.insert(index + 1, InferenceResponse(text="", tool_calls=(repeated,),
+                                 finish_reason="tool_calls", usage={}))
         if native_read_batch:
             read_responses = [InferenceResponse(text="", tool_calls=tuple(
                 call for response in read_responses for call in response.tool_calls),

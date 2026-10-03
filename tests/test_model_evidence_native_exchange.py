@@ -284,6 +284,144 @@ async def test_plain_or_empty_final_creates_no_native_history_and_no_new_model_t
     assert result.text == text and result.native_exchanges == () and result.stop_reason == ""
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_repeated_native_read_replays_bound_receipt_once_without_reexecution(mixed):
+    first = _call("first")
+    repeated = _call("repeated")
+    fresh = _call("fresh", norm_key="another-card")
+    executed, frames, persisted_replays = [], [], []
+
+    def execute(call):
+        executed.append(call)
+        return {"status": "ok"}
+
+    def bind(receipts, results):
+        for receipt in receipts:
+            ref = "Q1.H1" if receipt["call"]["args"] == first["args"] else "Q2.H1"
+            receipt.update(evidence_refs=[ref], evidence_bindings={ref: "immutable-" + ref})
+
+    def continuation(receipts, results, exchanges):
+        frames.append(exchanges)
+        return (_encoded(repeated, fresh) if mixed else _encoded(repeated), {}) if len(frames) == 1 else ("final unchanged", {})
+
+    result = await run_model_evidence_read_turn(
+        text=_encoded(first), usage={}, parse_calls=_parse_model_tool_calls, execute=execute,
+        on_read_results=bind, on_read_replays=lambda receipts: persisted_replays.extend(receipts),
+        continue_native_turn=continuation, allowed_tools={"read_norm_card"},
+    )
+    assert result.text == "final unchanged" and result.stop_reason == ""
+    assert executed == ([first, fresh] if mixed else [first])
+    reply = json.loads(frames[-1][-1].replies[0].content)
+    assert reply["call"]["call_id"] == "repeated"
+    assert reply["evidence_bindings"] == {"Q1.H1": "immutable-Q1.H1"}
+    assert reply["replayed_from_call_id"] == "first"
+    assert len(persisted_replays) == 1
+    assert len(result.native_exchanges) == 2
+
+
+@pytest.mark.asyncio
+async def test_native_cache_replay_is_bounded_and_keeps_budget():
+    counts = {"execute": 0, "continue": 0}
+
+    def execute(call):
+        counts["execute"] += 1
+        return {"status": "ok"}
+
+    def continuation(*_args):
+        counts["continue"] += 1
+        return _encoded(_call("call-" + str(counts["continue"]))), {"completion_tokens": 3}
+
+    result = await run_model_evidence_read_turn(
+        text=_encoded(_call("initial")), usage={"completion_tokens": 2},
+        parse_calls=_parse_model_tool_calls, execute=execute, continue_native_turn=continuation,
+        allowed_tools={"read_norm_card"},
+    )
+    assert counts == {"execute": 1, "continue": 2}
+    assert result.stop_reason == "evidence_read_repeat"
+    assert result.extra_completion_tokens == 8
+    assert len(result.receipts) == 2 and len(result.results) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+@pytest.mark.parametrize("repeats", [1, 2])
+async def test_active_replay_reaches_final_or_pauses_with_precise_reason(tmp_path, monkeypatch, variant, repeats):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant, native_repeats=repeats)
+    trace = run.result["retrieval_trace"]
+    assert len(run.exact_reads) == 1
+    receipts = trace["tool_loop"]["evidence_reads"]
+    replay = next(r for r in receipts if r.get("replayed_from_call_id"))
+    assert replay["call"]["call_id"] == "repeated-0"
+    assert replay["evidence_bindings"] == receipts[0]["evidence_bindings"]
+    replies = [json.loads(m["content"]) for r in run.requests for m in r.messages
+               if m.get("role") == "tool" and m.get("tool_call_id") == "repeated-0"]
+    assert replies and replies[0]["evidence_bindings"] == receipts[0]["evidence_bindings"]
+    if repeats == 1:
+        assert len(run.executions) == 1 and not run.responses
+        assert trace["model_result"]["packaged"] is True
+    else:
+        assert not run.executions
+        assert trace["model_result"]["status"] == "technical_pending"
+        assert trace["model_result"]["reason"] == "evidence_read_repeat"
+        assert "не разобран как таблица" not in run.result["answer"]
+        if variant == "B1_CANDIDATE":
+            job = WorkbookResearchJobService().get(trace["workbook_research_job"]["job_id"])
+            assert job["phase"] == "evidence_read_repeat" and job["accepted_rows"] == []
+            saved = [r for rs in job["task_context"]["model_evidence_reads"].values() for r in rs]
+            assert any(r.get("replayed_from_call_id") for r in saved)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_native_calls_in_one_batch_read_once_but_reply_to_each_id():
+    executed = []
+    result = await run_model_evidence_read_turn(
+        text=_encoded(_call("one"), _call("two")), usage={}, parse_calls=_parse_model_tool_calls,
+        execute=lambda call: executed.append(call) or {"status": "missing"},
+        continue_native_turn=lambda *args: ("final", {}), allowed_tools={"read_norm_card"}, max_calls=2,
+    )
+    assert len(executed) == 1 and result.stop_reason == ""
+    assert [r.call_id for r in result.native_exchanges[0].replies] == ["one", "two"]
+    assert all(json.loads(r.content)["status"] == "missing" for r in result.native_exchanges[0].replies)
+
+
+@pytest.mark.asyncio
+async def test_replay_does_not_bypass_call_budget():
+    calls = [_call("one"), _call("two")]
+    result = await run_model_evidence_read_turn(
+        text=_encoded(calls[0]), usage={}, parse_calls=_parse_model_tool_calls,
+        execute=lambda call: {"status": "ok"},
+        continue_native_turn=lambda *args: (_encoded(calls[1]), {}), allowed_tools={"read_norm_card"}, max_calls=1,
+    )
+    assert result.stop_reason == "evidence_read_budget" and len(result.receipts) == 1
+
+
+@pytest.mark.asyncio
+async def test_resume_replays_saved_receipt_and_retains_repeat_guard_across_turns():
+    from proxy.services.model_evidence_read_service import evidence_read_call_identity
+
+    old = _call("old")
+    prior = {"call": old, "status": "ok", "evidence_refs": ["Q9.H1"],
+             "evidence_bindings": {"Q9.H1": "source-sha-bound"}}
+    result = await run_model_evidence_read_turn(
+        text=_encoded(_call("resumed")), usage={}, parse_calls=_parse_model_tool_calls,
+        execute=lambda call: pytest.fail("resume must not re-execute a saved successful read"),
+        continue_native_turn=lambda *args: ("final", {}), allowed_tools={"read_norm_card"},
+        initial_receipts=[prior], seen_calls=[evidence_read_call_identity(old)],
+    )
+    assert result.text == "final" and result.receipts[-1]["replayed_from_call_id"] == "old"
+    assert result.receipts[-1]["evidence_bindings"] == prior["evidence_bindings"]
+    stopped = await run_model_evidence_read_turn(
+        text=_encoded(_call("resumed-again")), usage={}, parse_calls=_parse_model_tool_calls,
+        execute=lambda call: pytest.fail("repeat must stop"),
+        continue_native_turn=lambda *args: pytest.fail("repeat must not start another generation"),
+        allowed_tools={"read_norm_card"}, initial_receipts=result.receipts, seen_calls=result.seen_calls,
+    )
+    assert stopped.stop_reason == "evidence_read_repeat"
+
+
 def test_cross_call_receipt_is_not_accepted_as_native_feedback():
     from proxy.services.model_evidence_read_service import native_evidence_read_exchange
 
