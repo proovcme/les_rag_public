@@ -3,7 +3,7 @@
 > Кандидат886: `model_evidence_read_service.run_model_evidence_read_turn`
 > сохраняет один native receipt replay на identity. `_accept_sheet_read_replays`
 > записывает его в durable ledger, `_accept_direct_read_replays` — в trace.
-> При resume driver получает прежние receipts/seen identities. Finalization
+> Replay ограничен текущим ходом: старый журнал не подменяет новый lookup. Finalization
 > сохраняет любой evidence_read_stop как технический, не ошибку таблицы.
 
 > Кандидат885: `WorkbookResearchJobService.evidence_read_receipts` использует

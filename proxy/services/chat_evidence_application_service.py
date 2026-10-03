@@ -124,7 +124,7 @@ from proxy.services.model_evidence_read_contract import (
     model_evidence_read_tool_schemas,
     read_result_receipt,
 )
-from proxy.services.model_evidence_read_service import evidence_read_call_identity, run_model_evidence_read_turn
+from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
 from proxy.services.model_rag_grouped_evidence_service import (
     EvidenceCard,
     EvidenceGroup,
@@ -10043,7 +10043,7 @@ async def _execute_chat_evidence_application(
                                     source_context=pass_evidence,
                                     admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
-                                    receipts=receipts,
+                                    receipts=[*saved_read_receipts, *receipts],
                                 )
                                 retrieval_trace["context_governor"]["calls"].append(
                                     context_packet_trace(read_frame, purpose="sheet_pass_evidence_read")
@@ -10074,9 +10074,6 @@ async def _execute_chat_evidence_application(
                                     max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
                                     on_read_results=_accept_sheet_reads, continue_native_turn=_continue_sheet_reads,
                                     on_read_replays=_accept_sheet_read_replays,
-                                    initial_receipts=saved_read_receipts,
-                                    seen_calls=[evidence_read_call_identity(item["call"])
-                                                for item in saved_read_receipts if isinstance(item.get("call"), dict)],
                                 )
                                 pass_answer, usage = read_turn.text, read_turn.usage
                                 tokens = int(tokens or 0) + read_turn.extra_completion_tokens

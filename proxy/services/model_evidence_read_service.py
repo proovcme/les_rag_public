@@ -123,10 +123,10 @@ async def run_model_evidence_read_turn(
     names = set(allowed_tools)
     native_exchanges: list[NativeToolExchange] = []
     native_ids: set[str] = set()
-    cached = {evidence_read_call_identity(item["call"]): item for item in receipts
-              if isinstance(item.get("call"), Mapping) and item.get("status") in {"ok", "missing", "conflict"}}
-    replayed = {evidence_read_call_identity(item["call"]) for item in receipts
-                if isinstance(item.get("call"), Mapping) and item.get("replayed_from_call_id")}
+    # A new chat turn can change the price basis or source edition. Only reads
+    # executed in this invocation are eligible; an old journal is not a cache.
+    cached: dict[str, dict[str, Any]] = {}
+    replayed: set[str] = set()
     while current_text:
         calls = parse_calls(current_text, allowed_tools=names, max_calls=max(remaining, 1))
         if not calls:

@@ -19,13 +19,17 @@ freetoken_context, installed_legacy_recovery_v2.json, smoke.
 
 886 возвращает прежний bound receipt при первом точном native-повторе, сохраняет
 новый provider ID и прежние refs; повторный поиск не выполняется. Второй повтор
-и общий max_calls останавливают цикл. Replay сохраняется через продолжение.
+и общий max_calls останавливают цикл. Журнал replay сохраняется через продолжение;
+кэш ограничен текущим ходом, чтобы новый регион/квартал не получил старые цены.
 Техническая остановка больше не маркируется unstructured. Related96passed до
 добавления отдельной regression проверки восстановления replay; frozen canonical
 3216passed/20existing skipped/5warnings,219,61с; verify/architecture/map/docs/
 assets/metadata exit0. Квитанции artifacts/gates_886. Root-version uv.lock
 синхронизирована отдельно с доказанно неизменным dependency graph; код/тесты
-после гейта не менялись. Установка pending. Нормы и цены кодом не подменяются.
+после первого гейта проверены отдельно. Self-review ограничил кэш текущим ходом;
+повторные точные gates в artifacts/gates_886r2:3216passed/20existing skipped,
+verify/architecture/map/docs/assets/metadata exit0. Related97passed. Установка pending.
+Нормы и цены кодом не подменяются.
 
 Alibaba выключена, новых облачных вызовов нет. Расчётный остаток608309
 (последние931765 минус323456 usage), не API balance. Новый предел400000 для

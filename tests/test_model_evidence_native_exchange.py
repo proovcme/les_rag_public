@@ -399,7 +399,7 @@ async def test_replay_does_not_bypass_call_budget():
 
 
 @pytest.mark.asyncio
-async def test_resume_replays_saved_receipt_and_retains_repeat_guard_across_turns():
+async def test_resume_journal_is_not_a_cache_for_a_potentially_changed_price_basis():
     from proxy.services.model_evidence_read_service import evidence_read_call_identity
 
     old = _call("old")
@@ -408,18 +408,11 @@ async def test_resume_replays_saved_receipt_and_retains_repeat_guard_across_turn
     result = await run_model_evidence_read_turn(
         text=_encoded(_call("resumed")), usage={}, parse_calls=_parse_model_tool_calls,
         execute=lambda call: pytest.fail("resume must not re-execute a saved successful read"),
-        continue_native_turn=lambda *args: ("final", {}), allowed_tools={"read_norm_card"},
+        continue_native_turn=lambda *args: pytest.fail("old receipt must not be replayed"), allowed_tools={"read_norm_card"},
         initial_receipts=[prior], seen_calls=[evidence_read_call_identity(old)],
     )
-    assert result.text == "final" and result.receipts[-1]["replayed_from_call_id"] == "old"
-    assert result.receipts[-1]["evidence_bindings"] == prior["evidence_bindings"]
-    stopped = await run_model_evidence_read_turn(
-        text=_encoded(_call("resumed-again")), usage={}, parse_calls=_parse_model_tool_calls,
-        execute=lambda call: pytest.fail("repeat must stop"),
-        continue_native_turn=lambda *args: pytest.fail("repeat must not start another generation"),
-        allowed_tools={"read_norm_card"}, initial_receipts=result.receipts, seen_calls=result.seen_calls,
-    )
-    assert stopped.stop_reason == "evidence_read_repeat"
+    assert result.stop_reason == "evidence_read_repeat" and result.receipts == (prior,)
+    assert result.native_exchanges == ()
 
 
 def test_cross_call_receipt_is_not_accepted_as_native_feedback():

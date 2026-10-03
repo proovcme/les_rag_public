@@ -6,8 +6,8 @@ Original19work BAP, FreeToken B0, physicalKV131072:1007.74s, no XLSX.
 Three successful searches were followed by an identical read request; the driver
 stopped before replying with the already saved result. Finalization also reported
 unstructured instead of a technical stop. Candidate886 replays the bound receipt
-once with the new native ID, charges max_calls, preserves the repeat guard across
-resume, and keeps technical_pending/reason. No normative choice or literal body
+once with the new native ID, charges max_calls, keeps the cache within the current
+turn (price basis may change on resume), and keeps technical_pending/reason. No normative choice or literal body
 changes. Offline B0/B1 callback regressions pass; installed/live acceptance pending.
 Evidence: artifacts/live_885/bap_freetoken_128k/{final,expert_audit}.json.
 
