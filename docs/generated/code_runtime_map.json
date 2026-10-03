@@ -3180,7 +3180,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12929,
+      "lines": 12928,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5466,7 +5466,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 416,
+      "lines": 420,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -12490,7 +12490,7 @@
     },
     {
       "inbound": [],
-      "lines": 675,
+      "lines": 701,
       "module": "tests.test_model_rag_query_declaration",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py"
@@ -20463,7 +20463,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 702,
     "tracked_python_files": 1085,
-    "tracked_python_lines": 382119
+    "tracked_python_lines": 382148
   },
   "warnings": []
 }

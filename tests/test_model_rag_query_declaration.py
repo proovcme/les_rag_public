@@ -22,6 +22,32 @@ def test_direct_query_adapter_does_not_execute_the_cut_final_line():
     assert service.classify_model_rag_query_lines(raw)[0] == ["Монтаж кабеля", "Монтаж шкафа без"]
 
 
+def test_explicit_query_commentary_is_preserved_without_becoming_a_search():
+    import json
+    commentary = "Сначала проверю исходные объёмы.\nМонтаж шкафа управления"
+    raw = json.dumps({"artifact_kind": "lsr", "queries": ["Установка прибора на стене"],
+                      "commentary": commentary}, ensure_ascii=False)
+    declared = service.read_model_query_response(raw)
+    assert [q.text for q in declared["queries"]] == ["Установка прибора на стене"]
+    assert declared["accompanying_answer"] == []
+    assert declared["commentary"] == commentary
+    diagnostic = service.declared_query_output_diagnostics(raw, declared)
+    assert diagnostic["commentary"] == commentary
+    assert diagnostic["accepted_count"] == 1 and diagnostic["rejected_count"] == 0
+    assert diagnostic["output_shape"] == "query_envelope"
+    assert declared["artifact_kind_declaration"]["artifact_kind"] == "lsr"
+
+
+def test_query_commentary_does_not_hide_literal_queries_or_enable_an_empty_lsr():
+    raw = '{"artifact_kind":"lsr","queries":[],"commentary":"Установка прибора"}'
+    declared = service.read_model_query_response(raw)
+    assert declared["queries"] == [] and not declared["intentional_empty"]
+    assert declared["commentary"] == "Установка прибора"
+    # A plain model-authored query remains supported without any envelope.
+    ordinary = service.read_model_query_response("Установка прибора на стене")
+    assert [q.text for q in ordinary["queries"]] == ["Установка прибора на стене"]
+
+
 def test_declaration_prompt_and_reader_agree() -> None:
     """The format the prompt promises is the format the reader implements.
 

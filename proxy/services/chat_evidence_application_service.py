@@ -1838,8 +1838,8 @@ _MODEL_RAG_QUERY_INSTRUCTION = (
     "определяешь ты; фиксированного лимита нет. В запросах сохраняй язык "
     "и профессиональную терминологию исходных строк; не переводи и не "
     "транслитерируй их. Сейчас не выбирай нормы "
-    "и не отвечай по существу — верни только сами поисковые запросы, "
-    "каждый с новой строки. Без обращения к собеседнику, без описания "
+    "и не отвечай по существу — верни только сами поисковые запросы, каждый с новой строки. "
+    "Без обращения к собеседнику, без описания "
     "плана и без ожидания подтверждения. Пользовательские замечания задают "
     "требования к конечному документу: не превращай инструкции о формате, "
     "инструментах, проверках или параметрах цены в поисковые запросы. "
@@ -1867,22 +1867,17 @@ _DECLARED_QUERY_MARKER_EXAMPLES = ("1.", "1)", "-", "*", "•", "—")
 #: and adapter to agree instead of growing a list of Russian phrases: every form
 #: named here is accepted structurally, whatever model produced it.
 _MODEL_RAG_QUERY_FORMAT_CONTRACT = (
-    "Формат ответа: каждый поисковый запрос — отдельной строкой; "
-    "код исполнит твой запрос дословно. Ты выбираешь формулировку поиска "
-    "по задаче и данным исходника, она не обязана повторять название изделия. "
-    "Строка может быть обычным текстом или пунктом "
-    "списка ("
+    'Предпочти JSON {"artifact_kind":"vor или lsr","queries":["твой запрос"]}. '
+    "Каждый элемент queries — одна поисковая строка. Сопровождающий ответ "
+    "помещай в отдельное строковое поле commentary: оно сохраняется без поиска. "
+    "Строка, которая повторяет это самое задание, относится к commentary. "
+    "Допустим обычный список: каждый запрос — отдельной строкой, без вступления и рассуждений; "
+    "код исполнит твой запрос дословно. Формулировку выбираешь ты по технологии работы. "
+    "Поддержаны обычный текст и пункты списка ("
     + ", ".join(_DECLARED_QUERY_MARKER_EXAMPLES)
-    + ") — любой из этих видов читается как один запрос, номер и маркер списка "
-    "отбрасываются, текст запроса остаётся дословным. Сопровождающий ответ "
-    "(вступление, пояснение, заключение) допустим только отдельными строками: он "
-    "не будет выполнен как запрос и сохраняется с причиной отклонения. Строка, "
-    "которая повторяет это самое задание (что именно ты собираешься искать), — "
-    "сопровождающий ответ, а не запрос: запрос называет предмет и работу строки "
-    "исходника. Если "
-    "запрос относится к конкретной строке листа, укажи её адрес в начале строки "
-    "(например «СКС!R12 — Прокладка кабеля»); адрес код читает как указатель, а "
-    "не как часть формулировки."
+    + "): номер/маркер удаляется, запрос не переписывается. "
+    "Исходный адрес строки можешь указать в начале: «СКС!R12 — Прокладка кабеля»; "
+    "он читается как указатель, не как часть формулировки."
 )
 _ROW_PACKET_MIN = 8
 _ROW_PACKET_TARGET = 10
@@ -4147,6 +4142,8 @@ def read_model_query_response(raw: str, **kwargs) -> dict:
     declaration = decode_model_artifact_kind(raw)
     query_text = "\n".join(envelope["queries"]) if envelope is not None else raw
     declared = read_declared_query_list(query_text, **kwargs)
+    if envelope is not None and envelope.get("commentary"):
+        declared["commentary"] = envelope["commentary"]
     declared["artifact_kind_declaration"] = declaration
     declared["intentional_empty"] = bool(envelope is not None and not envelope["queries"]
         and declaration.get("status") == "declared" and declaration.get("artifact_kind") == "vor")
@@ -5779,16 +5776,18 @@ def model_query_failure(detail: Any, *, trace: Mapping[str, Any], session_id: st
 
 
 def declared_query_output_diagnostics(raw: str, declared: Mapping[str, Any]) -> dict[str, Any]:
-    """Parse counts/reasons only; this never alters model-authored queries."""
+    """Preserve explicit commentary and parse counts without altering queries."""
     reasons: dict[str, int] = {}
     for item in declared.get("accompanying_answer") or ():
         reason = str(item.get("reason") or "")
         reasons[reason] = reasons.get(reason, 0) + 1
-    shape = ("empty_final" if not str(raw or "").strip() else
+    shape = ("query_envelope" if decode_model_query_envelope(raw) is not None else
+             "empty_final" if not str(raw or "").strip() else
              "unsupported_structured_output" if not _unwrap_model_rag_query_lines(raw) else "declared_lines")
     return {"accepted_count": len(declared.get("queries") or ()),
             "rejected_count": len(declared.get("accompanying_answer") or ()),
-            "reason_counts": reasons, "answer_cut": bool(declared.get("answer_cut")), "output_shape": shape}
+            "reason_counts": reasons, "answer_cut": bool(declared.get("answer_cut")), "output_shape": shape,
+            **({"commentary": declared["commentary"]} if declared.get("commentary") else {})}
 
 
 def governed_query_generation_budget(preset: ModelExecutionPreset, packet: ContextPacket) -> dict[str, Any]:
@@ -9484,7 +9483,7 @@ async def _execute_chat_evidence_application(
                                         query_failure_final_texts.append(query_text)
                                         query_failure_final_texts = query_failure_final_texts[-8:]
                                         query_diagnostic["declared_parse"] = declared_query_output_diagnostics(
-                                            query_text, read_declared_query_list(query_text,
+                                            query_text, read_model_query_response(query_text,
                                                 finish_reason=llm_usage_finish_reason(query_usage), instruction=query_directive))
                                         logger.info("[MODEL_RAG_QUERY_OUTPUT] %s", query_diagnostic)
                                         if query_diagnostic["output_incomplete"]:

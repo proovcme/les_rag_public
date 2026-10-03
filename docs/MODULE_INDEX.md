@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 892 — query envelope/commentary (✅ код/док; live pending)
+
+`model_lsr_result_contract.decode_model_query_envelope` сохраняет отдельное
+commentary; `read_model_query_response`/`declared_query_output_diagnostics`
+передают его в диагностический след, не в поиск или ошибки документа.
+Обычные списки поддержаны; формулировки запросов остаются модельными.
+Док: modules/rag-evidence-flow.md. Регрессия: test_model_rag_query_declaration.py.
+Installed891: basic9PASS/1WARN; оба synthetic controls доставили частичные XLSX,
+профессиональная готовность не доказана.
+
 ## 891 — ordinary chat: read snapshot/repeated batch (✅ код/док; live pending)
 
 `chat_evidence_application_service` повторяет точное ранее прочитанное evidence
