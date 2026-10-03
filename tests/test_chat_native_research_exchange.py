@@ -17,6 +17,46 @@ from test_chat_evidence_application_service import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["qwen_xml", "mixed_xml", "json", "native", "fenced_example", "final"])
+async def test_final_research_request_is_final_only_and_unfinished_protocol_is_not_published(monkeypatch, tmp_path, shape):
+    from proxy.services.model_output_protocol_service import FINAL_RESEARCH_INSTRUCTION
+    raw_xml = '<tool_call>\n<function=web_search>\n<parameter=q>\nmore\n</parameter>\n</function>\n</tool_call>'
+    text = {"qwen_xml": raw_xml, "mixed_xml": "Need another lookup.\n" + raw_xml,
+            "json": '{"calls":[{"tool":"web_search","args":{"q":"more"}}]}',
+            "native": "", "fenced_example": "Example:\n```xml\n" + raw_xml + "\n```",
+            "final": "A complete answer from the supplied evidence."}[shape]
+    incomplete = shape not in {"fenced_example", "final"}
+
+    async def setup(request, runtime, boundary):
+        transport = runtime.model_connection_transport(None, None)
+        transport.responses[-1] = InferenceResponse(
+            text=text, tool_calls=_response(["unexpected-final-call"]).tool_calls if shape == "native" else (),
+            reasoning_content="PRIVATE_888_REASONING", finish_reason="tool_calls" if shape == "native" else "stop", usage={})
+        events, histories = [], []
+        async def sink(event):
+            events.append(event)
+        def history(**row):
+            histories.append(row)
+            return boundary.save_chat_history(**row)
+        result = await service.run_chat_evidence_application(request, runtime,
+            replace(boundary, token_sink=sink, save_chat_history=history))
+        assert len(transport.requests) == 4 and not transport.responses
+        assert FINAL_RESEARCH_INSTRUCTION in transport.requests[-1].messages[0]["content"]
+        assert transport.requests[-1].tools == ()
+        assert "PRIVATE_888_REASONING" not in json.dumps([result, events, histories], default=str)
+        if incomplete:
+            assert result["crag_status"] == "MODEL_OUTPUT_INCOMPLETE"
+            assert result["retrieval_trace"]["model_generation"]["reason"] == "model_tool_request_in_final_answer"
+            assert "<tool_call>" not in json.dumps([result, events, histories], default=str)
+            assert "native_reasoning_content" not in result["answer"]
+            assert result["model_connection"]["pending_tool_calls"] == (1 if shape == "native" else 0)
+        else:
+            assert result["answer"] == text
+            assert result["crag_status"] != "MODEL_OUTPUT_INCOMPLETE"
+    await _run_actual_chat_fixture(monkeypatch, tmp_path, "active_web_research", application_setup=setup)
+
+
+@pytest.mark.asyncio
 async def test_two_native_web_rounds_preserve_ids_literal_arguments_and_results(monkeypatch, tmp_path):
     """Replay two real application rounds, not a mocked context packer.
 

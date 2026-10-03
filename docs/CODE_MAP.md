@@ -1,5 +1,10 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build888: `model_output_protocol_service.has_unconsumed_tool_frame` используется
+обычным chat final boundary и `tools/basic_function_smoke.py`. Он не исполняет
+XML/JSON команды и не принимает предметных решений; fenced примеры сохраняются.
+Финальная фаза native research явно отделена от доступного чтения источников.
+
 Build887: OpenAICompatibleTransport.complete → InferenceResponse.reasoning_content →
 BoundModelChatRunner → native tool parser → NativeToolExchange.as_messages.
 Сметные B0/B1 и обычный native research сохраняют поле отдельно от visible content;

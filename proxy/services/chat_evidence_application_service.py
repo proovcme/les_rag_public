@@ -5,6 +5,8 @@ unchanged retrieval -> context/evidence -> model -> sources/trace execution bran
 """
 from __future__ import annotations
 
+from proxy.services.model_output_protocol_service import FINAL_RESEARCH_INSTRUCTION, has_unconsumed_tool_frame
+
 import asyncio
 import hashlib
 import json
@@ -7695,7 +7697,9 @@ async def _execute_chat_evidence_application(
                                 if token_sink is not None and retrieval_trace["cloud_token_budget"].get("limit_tokens"):
                                     await token_sink({"event": "cloud_budget", "data": retrieval_trace["cloud_token_budget"]})
                         active_pending_tool_calls += active_model_result.pending_tool_calls
-                        if token_sink is not None and allow_stream and active_model_result.response.text:
+                        if (token_sink is not None and allow_stream and active_model_result.response.text
+                                and not active_model_result.response.tool_calls
+                                and not has_unconsumed_tool_frame(active_model_result.response.text)):
                             await token_sink(
                                 {"event": "token", "data": active_model_result.response.text}
                             )
@@ -11033,7 +11037,8 @@ async def _execute_chat_evidence_application(
                     try:
                         messages, answer_packet = govern_inference_messages(
                             preset=answer_execution_preset,
-                            profile_prefix=sys_msg,
+                            profile_prefix=sys_msg + (FINAL_RESEARCH_INSTRUCTION
+                                if research_native_exchanges and not model_driven_retrieval and not direct_read_tools else ""),
                             request_payload=question_tail,
                             native_tools=direct_read_tools,
                             checkpoint=answer_checkpoint,
@@ -11352,6 +11357,22 @@ async def _execute_chat_evidence_application(
                             answer = "Техническая остановка чтения источников: " + direct_read_stop + ". Решение модели не завершено; ЛСР не упакована."
                         else:
                             active_pending_tool_calls = 0
+                    if (not model_driven_retrieval and not direct_read_tools and active_model_result is not None
+                            and (active_model_result.response.tool_calls
+                                 or (research_native_exchanges and has_unconsumed_tool_frame(answer)))):
+                        tokens = int(usage.get("completion_tokens") or 0)
+                        answer_finish_reason = llm_usage_finish_reason(usage)
+                        active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
+                        retrieval_trace["model_generation"] = {
+                            "status": "technical_pending", "reason": "model_tool_request_in_final_answer",
+                            "finish_reason": answer_finish_reason,
+                            "unconsumed_tool_calls": len(active_model_result.response.tool_calls),
+                            "unparsed_tool_frame": has_unconsumed_tool_frame(answer),
+                        }
+                        answer = ("Ответ не завершён: после окончания поиска модель запросила дополнительные "
+                                  "действия вместо итогового ответа. Найденные источники сохранены в истории запроса.")
+                        crag_status = "MODEL_OUTPUT_INCOMPLETE"
+                        break
                     if not answer:
                         if execution_preset.reasoning_enabled or finish_reason_is_length(llm_usage_finish_reason(usage)):
                             answer_finish_reason = llm_usage_finish_reason(usage)

@@ -2714,7 +2714,9 @@
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
         "proxy/services/workflow_plan_service.py",
-        "proxy/services/xlsx_preview_service.py"
+        "proxy/services/xlsx_preview_service.py",
+        "tests/test_chat_native_research_exchange.py",
+        "tools/basic_function_smoke.py"
       ],
       "lines": 2,
       "module": "proxy.services",
@@ -3177,7 +3179,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12859,
+      "lines": 12880,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -9623,7 +9625,7 @@
     },
     {
       "inbound": [],
-      "lines": 208,
+      "lines": 226,
       "module": "tests.test_basic_function_smoke",
       "outbound": [
         "tools/basic_function_smoke.py"
@@ -9986,9 +9988,10 @@
     },
     {
       "inbound": [],
-      "lines": 324,
+      "lines": 364,
       "module": "tests.test_chat_native_research_exchange",
       "outbound": [
+        "proxy/services/__init__.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/context_governor_service.py",
         "proxy/services/openai_compatible_transport_service.py",
@@ -16157,9 +16160,10 @@
       "inbound": [
         "tests/test_basic_function_smoke.py"
       ],
-      "lines": 325,
+      "lines": 337,
       "module": "tools.basic_function_smoke",
       "outbound": [
+        "proxy/services/__init__.py",
         "tools/__init__.py"
       ],
       "path": "tools/basic_function_smoke.py",
@@ -20440,7 +20444,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 702,
     "tracked_python_files": 1084,
-    "tracked_python_lines": 381463
+    "tracked_python_lines": 381554
   },
   "warnings": []
 }

@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат888 / 0.31.160:** `core/chat-evidence`, doc↔candidate-code ✅.
+> `model_output_protocol_service`: распознаёт незавершённый protocol frame без исполнения.
+> Финальная фаза обычного native research явно закрывает инструменты; невыполненный
+> call получает technical_pending без утечки в SSE/историю. Basic smoke проверяет это.
+> Installed887 `962d965b`, RRF PASS; basic9PASS/1WARN, независимый answer audit FAIL.
+> Canonical888:3242passed/20existing skipped; остальные offline gates exit0.
+> Install/live888 pending. Профессиональная приёмка не пройдена.
+
 > **Кандидат887 / 0.31.159:** `core/chat-evidence`, doc↔candidate-code ✅.
 > Native reasoning_content сохраняется через transport/runner/router/typed exchange;
 > отдельное поле бюджетируется и не публикуется. См. rag-evidence-flow и ALGO-context-memory.

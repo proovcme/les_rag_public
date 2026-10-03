@@ -172,6 +172,14 @@ def _has_version_trace(payload: dict) -> bool:
     return isinstance(versions, dict) and isinstance(versions.get("version_info"), dict)
 
 
+def _incomplete_answer(payload: dict, answer: str) -> bool:
+    from proxy.services.model_output_protocol_service import has_unconsumed_tool_frame
+    generation = (payload.get("retrieval_trace") or {}).get("model_generation") or {}
+    return (payload.get("crag_status") == "MODEL_OUTPUT_INCOMPLETE"
+            or generation.get("status") == "technical_pending"
+            or has_unconsumed_tool_frame(answer))
+
+
 def check_chat_glossary(c, base, *, timeout: float):
     t0 = time.monotonic()
     try:
@@ -191,6 +199,8 @@ def check_chat_glossary(c, base, *, timeout: float):
             return _r("chat_glossary", "P0", "fail", t0, f"http={resp.status_code}: {str(d)[:80]}", ev)
         if not ans:
             return _r("chat_glossary", "P0", "fail", t0, "пустой ответ на глоссарный вопрос", ev)
+        if _incomplete_answer(d, ans):
+            return _r("chat_glossary", "P0", "fail", t0, "модель не завершила ответ", ev)
         if channel in {"glossary", "scope_clarification"} or not has_version:
             return _r(
                 "chat_glossary",
@@ -224,6 +234,8 @@ def check_chat_project_noscope(c, base, *, timeout: float):
             return _r("chat_project_noscope", "P1", "fail", t0, f"http={resp.status_code}", ev)
         if channel == "glossary" or not has_version:
             return _r("chat_project_noscope", "P1", "fail", t0, "project query ушёл в glossary или потерял version_info", ev)
+        if _incomplete_answer(d, ans):
+            return _r("chat_project_noscope", "P1", "fail", t0, "модель не завершила ответ", ev)
         # Ответ модели либо честный MISSING/BLOCKED допустимы; пустота без статуса — нет.
         if not ans and status not in ("MISSING", "BLOCKED", "NO_DATA", "NEEDS_CLARIFICATION"):
             return _r("chat_project_noscope", "P1", "fail", t0, "ни ответа, ни честного MISSING/clarification", ev)

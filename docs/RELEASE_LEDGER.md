@@ -1,5 +1,29 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.160 / 888 — итоговый ответ отделён от незавершённого tool request
+
+Installed887 `962d965b335ec7b8da01b7bcf734681f07a03ada`, точные SHA/stamp проверены,
+rollback886 сохранён. NativeRRF PASS0,92с; basic9PASS/1WARN/0FAIL68,30с, но независимый
+answer audit FAIL: history768 содержит только <tool_call> после calls_budget.
+Квитанции artifacts/live_887/smoke/answer_audit.json и final_state.json.
+Положительный basic не был приёмкой ответа или профессиональной ЛСР.
+
+888 сообщает модели фактическую финальную фазу после native research: инструменты
+больше недоступны, ответ строится по уже доставленному evidence. История, исходный
+вопрос и решения не меняются. Если модель всё же возвращает новый native call или
+необработанный XML/JSON tool frame, обычный чат выдаёт MODEL_OUTPUT_INCOMPLETE,
+не показывает протокол/внутренние поля в SSE и не запускает дополнительные попытки.
+Fenced примеры не считаются вызовом. Готовые предметные ответы проходят неизменно;
+эта фаза не навязывается активному model-driven сметному маршруту с доступными readers.
+Basic smoke теперь отклоняет такой nonempty output и technical_pending.
+
+Related88passed/1existing skipped. Canonical888:3242passed/20existing skipped/
+5warnings,217,47с; verify/architecture/map/docs/assets/metadata exit0.
+Квитанции artifacts/gates_888. Install/live888 pending.
+Alibaba выключена; в исправлениях887–888 новых облачных вызовов нет. Расчётный
+остаток608309, не API balance; запрос400000 ожидает ответа и не активирован.
+Полная профессиональная ВОР/ЛСР приёмка и новый установщик не готовы; nativeEXE5.1.813.
+
 ## Кандидат 0.31.159 / 887 — сохранение native reasoning при чтении инструментов
 
 Установлен886 `efb28f256a781e7ee94144d9bf33a62ffd1d5a5e`; SHA/stamp проверены,

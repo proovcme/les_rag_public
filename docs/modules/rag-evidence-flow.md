@@ -1,5 +1,22 @@
 # RAG evidence flow
 
+## 888: обычный native research завершается ответом, а не текстом команды
+
+В installed887 history768 после calls_budget финальный вызов (без tools) вернул
+Qwen XML web_search, принятый за ответ. Теперь обязательный финальный system prefix
+сообщает фактическую фазу: инструментов нет, ответить по сохранённому evidence или
+назвать недостающее. Применяется только обычному research, не smeta model-driven
+continuation с readers. Вопрос, evidence, calls/replies и профессиональный ответ
+модели не переписываются.
+
+Если финал всё же содержит новый native call либо нефенсированный protocol frame,
+граница выдаёт MODEL_OUTPUT_INCOMPLETE с reason=model_tool_request_in_final_answer.
+Служебный JSON/XML и reasoning не отправляются в SSE/answer/history. Новых вызовов,
+авторетраев или придуманных результатов нет. Корректные ответы и fenced примеры
+сохраняются. Basic smoke считает такой результат FAIL, даже при HTTP200/nonempty.
+Регрессии проходят через реальную application boundary с токенами и историей;
+сама синтетическая проверка не подтверждает качество подбора норм и цен.
+
 ## 887: provider reasoning сохраняется в native protocol
 
 OpenAICompatibleTransport.complete читает только явное строковое reasoning_content.

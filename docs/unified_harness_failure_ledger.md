@@ -1,5 +1,16 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-03 — installed887 raw tool frame accepted as final (candidate888)
+
+History768 returned only Qwen XML web_search after calls_budget; basic smoke falsely
+passed nonempty output. Independent receipt: artifacts/live_887/smoke/answer_audit.json.
+888 explicitly marks ordinary native research final phase (no tools), detects
+unconsumed protocol and reports MODEL_OUTPUT_INCOMPLETE without streaming/persisting
+protocol or reasoning as the answer. No additional model call or fabricated result.
+Basic smoke now fails raw frames/technical_pending. Fenced examples/valid answers
+remain unchanged. Focused88passed/1existing skipped; canonical888:3242passed/
+20existing skipped, other offline gates exit0. Install/live pending.
+
 ## 2026-10-03 — provider reasoning lost before native continuation (candidate887)
 
 Transport discarded reasoning_content; bound runner reconstructed a reduced response;

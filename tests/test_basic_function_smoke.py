@@ -195,6 +195,24 @@ def test_project_noscope_smoke_rejects_glossary_hijack():
     assert result["status"] == "fail"
 
 
+@pytest.mark.parametrize("check", [check_chat_glossary, check_chat_project_noscope])
+@pytest.mark.parametrize("kind", ["qwen_xml", "mixed_xml", "native_json", "technical", "generation"])
+def test_smoke_rejects_nonempty_but_incomplete_model_output(check, kind):
+    xml = '<tool_call>\n<function=web_search>\n<parameter=q>more</parameter>\n</function>\n</tool_call>'
+    payload = {"answer": "Ответ не завершён.", "query_route": {"channel": "rag"}, "version_info": {}}
+    if kind in {"qwen_xml", "mixed_xml"}:
+        payload["answer"] = ("Some prose.\n" if kind == "mixed_xml" else "") + xml
+    elif kind == "native_json":
+        payload["answer"] = '{"calls":[{"tool":"web_search","args":{"q":"more"}}]}'
+    elif kind == "technical":
+        payload["crag_status"] = "MODEL_OUTPUT_INCOMPLETE"
+    else:
+        payload["retrieval_trace"] = {"model_generation": {"status": "technical_pending"}}
+    result = check(_Client(_Response(200, payload)), "http://example.test", timeout=1)
+    assert result["status"] == "fail"
+    assert compute_exit([result], release=True) == 1
+
+
 @pytest.mark.skipif(shutil.which("make") is None, reason="Makefile contract is checked on Unix runners")
 def test_ship_paths_escalate_smoke_p1_to_release():
     root = Path(__file__).resolve().parents[1]
