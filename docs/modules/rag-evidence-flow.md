@@ -1,5 +1,22 @@
 # RAG evidence flow
 
+## 883: начальные ссылки должны быть доступны exact reader
+
+Live881: семь вызовов `read_norm_card(evidence_ref=...)` отклонены, хотя среди
+них были уже показанные полные карточки и указатели. Начальный builder давал
+`body_status`, но не delivery receipt; строгий reader правомерно не принимал
+неподтверждённые ссылки. Нельзя трактовать это как отсутствие запросов модели.
+
+После успешного первого ответа B0/B1 `confirm_model_read_delivery` отмечает
+inventory и отдельно full bodies, затем `register_shown_norm_cards` повторно
+регистрирует ссылки. Начальные groups обязательны в соответствующем кадре,
+включая fallback. При resumed native frame используются фактические множества
+inventory/body refs governor, в том числе текущие начальные chunks. Ошибка
+отправки ничего не подтверждает. Отложенный указатель разрешает чтение, но не
+служит доказательством содержания полного тела. Immutable identity/source
+проверки exact reader не ослаблены. Regression B0/B1 × full/pointer + failed
+answer + partial admission входят в related245passed; live ещё не выполнен.
+
 ## 882: облачный бюджет учитывается при упаковке native continuation
 
 Installed881 BAP Flash B1 сделал2 вызова, provider usage66364, затем следующий

@@ -3049,7 +3049,10 @@ def confirm_model_read_delivery(chunks, receipts=(), *, inventory_refs=None, bod
         ref = str(chunk.meta.get("model_evidence_ref") or "")
         if inventory is None or ref in inventory:
             chunk.meta["model_inventory_delivery_status"] = "delivered"
-        if chunk.meta.get("model_delivery_status") == "prepared" and (bodies is None or ref in bodies):
+        # Initial RAG cards predate the prepared/read lifecycle. Only an explicit
+        # admitted body set proves that such a card was sent in this frame.
+        body_was_sent = bodies is not None and ref in bodies
+        if (chunk.meta.get("model_delivery_status") == "prepared" or body_was_sent) and (bodies is None or ref in bodies):
             chunk.meta["model_delivery_status"] = "delivered"
     for receipt in receipts:
         refs = set(receipt.get("evidence_refs") or ())
@@ -9884,7 +9887,13 @@ async def _execute_chat_evidence_application(
                             ]
                             saved_read_receipts = list(((research_job or {}).get("task_context") or {}).get(
                                 "model_evidence_reads", {}).get(current_read_packet, ()))
-                            resumed_inventory_refs = resumed_body_refs = None
+                            resumed_inventory_refs = {
+                                str(c.meta.get("model_evidence_ref") or "") for c in model_evidence_chunks
+                            }
+                            resumed_body_refs = {
+                                str(c.meta.get("model_evidence_ref") or "") for c in model_evidence_chunks
+                                if c.meta.get("body_status") != "deferred_capacity"
+                            }
                             try:
                                 initial_context = dict(
                                     preset=answer_execution_preset,
@@ -9967,9 +9976,9 @@ async def _execute_chat_evidence_application(
                             t_llm_call = time.time()
                             pass_answer, usage = await _sheet_pass_llm(chat_body)
                             t_llm += time.time() - t_llm_call
-                            confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks],
+                            confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                                         inventory_refs=resumed_inventory_refs, body_refs=resumed_body_refs)
-                            model_research_tools.register_shown_norm_cards([*prior_page_chunks, *saved_read_chunks])
+                            model_research_tools.register_shown_norm_cards([*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks])
                             replayed_ids = {str(c.meta.get("global_evidence_id") or "") for c in model_evidence_chunks}
                             for chunk in [*prior_page_chunks, *saved_read_chunks]:
                                 identity = str(chunk.meta.get("global_evidence_id") or "")
@@ -11165,7 +11174,8 @@ async def _execute_chat_evidence_application(
                                 request_payload=question_tail,
                                 checkpoint=answer_checkpoint,
                                 working_memory=answer_working_memory,
-                                evidence=[
+                                required_evidence=answer_evidence if model_driven_retrieval else (),
+                                evidence=[] if model_driven_retrieval else [
                                     "Материалы из найденных документов:",
                                     *[
                                         item.payload
@@ -11232,6 +11242,13 @@ async def _execute_chat_evidence_application(
                         )
                     t_llm += time.time() - t_llm_call
                     if direct_read_tools:
+                        confirm_model_read_delivery(
+                            model_evidence_chunks,
+                            inventory_refs={str(c.meta.get("model_evidence_ref") or "") for c in model_evidence_chunks},
+                            body_refs={str(c.meta.get("model_evidence_ref") or "") for c in model_evidence_chunks
+                                       if c.meta.get("body_status") != "deferred_capacity"},
+                        )
+                        model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                         direct_read_groups = []
 
                         async def _accept_direct_reads(batch_receipts, batch_results):

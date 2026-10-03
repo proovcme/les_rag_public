@@ -1,5 +1,10 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> Кандидат883: `confirm_model_read_delivery` в chat evidence application
+> отмечает исходные карточки/указатели после успешного первого ответа B0/B1,
+> затем повторно регистрирует ссылки в `ModelResearchToolService`.
+> Resume подтверждает только ссылки, допущенные ContextGovernor.
+
 > Кандидат882: `ContextGovernor.pack` принимает дополнительный wire-admission;
 > `OpenAICompatibleTransport.cloud_request_fits` проверяет body без отправки;
 > `_cloud_message_admission` подключает его к B0/B1 native replay.

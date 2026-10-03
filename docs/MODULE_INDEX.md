@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **Кандидат883 / 0.31.155:** `core/chat-evidence`, doc↔candidate-code ✅.
+> `confirm_model_read_delivery` подтверждает начальные B0/B1 evidence после
+> ответа модели; resume использует фактический governor admission. Полное тело
+> отдельно от указателя. [Поток](modules/rag-evidence-flow.md). Related245passed;
+> canonical3203passed/20existing skipped; verify/architecture/docs exit0.
+> Install/live pending. Installed882: RRF PASS, basic9PASS/1WARN/0FAIL.
+
 > **Кандидат882 / 0.31.154:** `core/context-governor`, `core/chat-evidence`,
 > doc↔candidate-code ✅. `pack(admit_messages=...)` проверяет точный cloud wire
 > reserve до добавления optional групп; mandatory evidence остаётся целым.

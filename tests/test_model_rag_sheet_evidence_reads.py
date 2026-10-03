@@ -70,6 +70,51 @@ async def test_remote_wire_budget_defers_discovery_bodies_but_keeps_exact_reads(
     assert any("fixture-resource-23" in str(r.messages) or RESOURCE_B in str(r.messages) for r in reads)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+@pytest.mark.parametrize("pointer_only", [False, True])
+async def test_initial_displayed_reference_can_be_read_exactly(tmp_path, monkeypatch, variant, pointer_only):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+        norm_ref_read="Q2.H1" if pointer_only else "Q1.H1",
+        query_count=35 if pointer_only else 2,
+        group_char_budget=7000 if pointer_only else None)
+    shown = "\n".join(str(message.get("content", "")) for message in run.requests[1].messages)
+    if pointer_only:
+        assert '["Q2.H1","deferred_capacity"' in shown
+    assert len(run.exact_reads) == 1
+    assert len(run.executions) == 1
+    read = next(x for x in run.result["retrieval_trace"]["tool_loop"]["evidence_reads"]
+                if x["call"]["tool"] == "read_norm_card")
+    assert read["status"] == "ok", read
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_failed_initial_answer_does_not_confirm_evidence_delivery(tmp_path, monkeypatch, variant):
+    confirmations = []
+    original = service.confirm_model_read_delivery
+    def confirm(chunks, *args, **kwargs):
+        confirmations.extend(chunks)
+        return original(chunks, *args, **kwargs)
+    monkeypatch.setattr(service, "confirm_model_read_delivery", confirm)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant, budget_stop_at=2)
+    assert run.result["status"] == 429
+    assert confirmations == []
+    assert run.exact_reads == []
+
+
+def test_delivery_confirmation_marks_only_admitted_initial_bodies():
+    full, pointer, omitted = [SimpleNamespace(meta={"model_evidence_ref": ref})
+                              for ref in ("Q1.H1", "Q2.H1", "Q3.H1")]
+    service.confirm_model_read_delivery([full, pointer, omitted],
+        inventory_refs=["Q1.H1", "Q2.H1"], body_refs=["Q1.H1"])
+    assert full.meta["model_delivery_status"] == "delivered"
+    assert pointer.meta["model_inventory_delivery_status"] == "delivered"
+    assert "model_delivery_status" not in pointer.meta
+    assert "model_inventory_delivery_status" not in omitted.meta
+    assert "model_delivery_status" not in omitted.meta
+
+
 def _answer(*, refs=("Q1.H1", "Q2.H1")):
     first, second = refs
     return (
@@ -91,7 +136,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      malformed_second_packet=False, duplicate_json_first_packet=False,
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
                      exact_resource_padding=0, query_declaration=None, budget_stop_at=None,
-                     wire_budget_bytes=None):
+                     wire_budget_bytes=None, norm_ref_read=None):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -232,7 +277,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                 _native("search_sources", q=query, target="norms") for query in native_discovery_queries),
                 finish_reason="tool_calls", usage={}))
         read_responses = [
-            InferenceResponse(text="", tool_calls=(_native("read_norm_card", norm_key="immutable-norm"),),
+            InferenceResponse(text="", tool_calls=(_native("read_norm_card", **({"evidence_ref": norm_ref_read}
+                              if norm_ref_read else {"norm_key": "immutable-norm"})),),
                               finish_reason="tool_calls", usage={}),
             InferenceResponse(text="", tool_calls=(_native("read_resource_price", code=RESOURCE_A),
                                                     _native("read_resource_price", code=RESOURCE_B)),

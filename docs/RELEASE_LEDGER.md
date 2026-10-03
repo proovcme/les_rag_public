@@ -1,5 +1,24 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.155 / 883 — доставка исходных ссылок норм
+
+Установлен882 (`1b09191cef8aa03700e8aaae4e93456d72385cb2`), stamp/rawSHA
+проверены, rollback881 сохранён. Smoke: nativeRRF PASS1,33s;
+basic9PASS/1WARN/0FAIL89,11s, warning `/api/diag overall=warn`.
+Облачный882 не запускался: разбор сохранённых receipts881 выявил причину
+семи отказов `read_norm_card(evidence_ref=...)`. Исходные карточки/указатели
+были в ответном контексте, но отсутствовало подтверждение доставки в реестре.
+Это дефект harness, а не свидетельство отсутствия запросов модели.
+
+883 подтверждает доставку исходных evidence только после успешного ответа
+провайдера в B0/B1; при resume — только фактически включённые governor ссылки.
+Полное тело и указатель учитываются раздельно. Exact reader сохраняет проверки
+идентичности/источника. При ошибке отправки подтверждение не появляется.
+Related245passed. Frozen canonical883:3203passed/20existing skipped/5warnings,
+222,54s. Version/compile/collect/architecture/map/docs/assets/metadata exit0;
+receipts `artifacts/gates_883/`. Install/live pending. Профессиональная приёмка
+и customer-ready ещё не подтверждены.
+
 ## Кандидат 0.31.154 / 882 — ограничение контекста до облачной отправки
 
 Установлен881 (`95de9b328307033dd9f7c032059f2694ac555cef`), stamp/rawSHA
@@ -11,7 +30,9 @@ Flash B1 на полном БАП:93s, два вызова66364 provider-reporte
 remaining233636. Job `wrj_a4198774359c4932af47fc1ebd6898c4` paused,0accepted,
 20remaining, XLSX нет. Ошибка/расход корректно сохранены через публичный API.
 Offline replay: optional поисковые карточки занимают281281bytes; точные чтения
-норм ещё не запрошены моделью (новые5 search_sources,30кандидатов).
+не попали в evidence. Исправление первоначального вывода: модель сделала7
+запросов read_norm_card, все отклонены реестром; см.883. Также5 search_sources,
+30кандидатов.
 Receipts `artifacts/live_881/bap_flash_candidate/`. Локальная роль и доступ
 восстановлены. По актуальному канону владельца системные добавочные запросы
 отключены через зарегистрированный `LES_LSR_SYSTEM_CANDIDATE_QUERIES=off`;
