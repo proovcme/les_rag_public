@@ -1,5 +1,18 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 897 — literal row transport и readiness (✅ код/док; installed pending)
+
+core/chat-evidence: `model_lsr_result_contract.decode_model_inline_rows` читает
+именованные записи через публичную row boundary; `safe_workbook_history_projection`
+сохраняет covered_by_operation_id. smeta/lsr: `rim_lsr_trace_service`,
+`lsr_workbook_adapter_service` и `lsr_result_readiness_service` отличают
+needs_fsem_resolution от отсутствующего тарифа, сохраняя суммы и incomplete status.
+Точки входа и границы: [rag-evidence-flow](modules/rag-evidence-flow.md).
+Регрессии: `test_model_inline_field_records`, `test_lsr_readiness_transport`.
+Canonical8973345passed/20existing skipped, metadata31; verify/architecture/docs/map
+и active-artifacts PASS; focused235. Installed8969fa11dd1 профессиональную
+приёмку не прошёл; live897 pending, basic8969PASS/1FAIL сохранён отдельно.
+
 ## 896 — граница поискового и итогового типа (✅ код/док; installed pending)
 
 `model_lsr_result_contract.update_model_artifact_kind`: явный тип завершённого

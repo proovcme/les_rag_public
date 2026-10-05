@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping, Optional
 
 from proxy.smeta_core.unit_contract import norm_measure
@@ -272,6 +272,7 @@ PRICE_ACTION_LABELS = {
     "needs_kac": "нужен КАЦ",
     "needs_labor_rate": "нужна ставка ОЗП",
     "needs_machinist_rate": "нужна ставка ЗПМ",
+    "needs_fsem_resolution": "не согласована детализация ОТм по ФСЭМ",
     "needs_fgis_price": "нужна цена эксплуатации машины",
     "card_price_without_basis": "цена из карточки нормы, основания нет",
     "model_price_without_basis": "цена модели без подтверждённого источника",
@@ -1361,6 +1362,13 @@ def build_position_trace(
         per_unit = _f(res.get("per_unit"))
         total_qty = round(per_unit * coeff * work_qty, 6)
         price = _resolve_price_trace(res, pricebook=pricebook, kac_map=kac_lookup)
+        if (price.price is None and price.action == "needs_machinist_rate"
+                and kind == "machinist" and not str(res.get("code") or "").strip()
+                and fsem_trace.get("status") == "unresolved"):
+            # This anonymous aggregate cannot be priced until its source hours
+            # reconcile with FSEM. A tariff alone cannot repair that conflict.
+            # Keep the price, quantity and monetary completeness unchanged.
+            price = replace(price, action="needs_fsem_resolution")
         cost = None if price.price is None else round(total_qty * price.price, 2)
         if price.book_unit:
             flags.append(book_unit_conflict_note(res, price.book_unit))

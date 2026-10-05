@@ -1,5 +1,22 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-05 — literal inline records and lost coverage link (897)
+
+Installed896 candidate codex-live-selected-6ed4e8dcddbd returned two literal
+named records and final artifact_kind=lsr, but no rows/XLSX were decoded.
+The unchanged answer is retained in artifacts/live_896/compact_coverage_candidate.
+Baseline896 produced a partial workbook but safe chat projection dropped
+covered_by_operation_id and readiness asked the covered row for a second norm.
+It also called unresolved FSEM hours a missing wage even with both tariffs present.
+Red9/5 reproduced the independent decoder/projection/diagnostic defects. 897
+reads named inline records without inference, preserves coverage identity and
+names the FSEM prerequisite; duplicate fields stay raw rejected proposals.
+No hour tolerance, tariff, amount or authored norm changes. Focused235passed;
+canonical8973345passed/20existing skipped, metadata31; offline gates PASS.
+Saved live answer re-read unchanged:2 rows,0 inference. Installed acceptance
+pending; basic896 remains9PASS/1FAIL (12 web_search, final unparsed tool frame).
+Customer readiness remains false.
+
 ## 2026-10-05 — a provisional document target blocked a completed result (896)
 
 Installed895 B1 codex-live-selected-5d5e5a9ff7ee completed both source rows but

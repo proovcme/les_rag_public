@@ -39,6 +39,7 @@ _PRICE_SOURCE_LABEL = {
     "needs_kac": "КАЦ или выбранная ценовая книга",
     "needs_labor_rate": "ставка ОЗП",
     "needs_machinist_rate": "ставка ЗПМ",
+    "needs_fsem_resolution": "согласованная детализация ОТм по ФСЭМ",
     "needs_fgis_price": "цена эксплуатации машины ФГИС ЦС",
     "card_price_without_basis": "выбранная ценовая книга, КАЦ или подтверждённая цена",
     # ADR-16 § 7 applied to accruals: a percentage printed in the norm card is
@@ -1261,6 +1262,20 @@ def collect_lsr_price_gaps(
                             else ""
                         )
                         + " Пока ресурс не назван, позиция остаётся без стоимости."
+                    )
+                elif action == "needs_fsem_resolution":
+                    summary = position.get("summary") or {}
+                    fsem_trace = summary.get("fsem_trace") or {}
+                    source_hours = fsem_trace.get("source_machinist_hours")
+                    derived_hours = fsem_trace.get("derived_machinist_hours")
+                    missing_codes = list(fsem_trace.get("missing_machine_codes") or [])
+                    action_text = (
+                        f"Для {name}{code_tail}{position_tail} не согласована детализация ОТм по ФСЭМ."
+                        f" Исходные часы на измеритель нормы: {source_hours};"
+                        f" по составу машин: {derived_hours}."
+                        + (" Нет записи ФСЭМ для машин: " + ", ".join(missing_codes) + "." if missing_codes else "")
+                        + " Сверьте исходные часы, состав машин и источник ФСЭМ;"
+                        " ввод ставки ЗПМ не устраняет это расхождение. Позиция остаётся предварительной."
                     )
                 else:
                     named = f"Задайте цену для {name}{code_tail}{position_tail}"

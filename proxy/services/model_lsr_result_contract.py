@@ -203,6 +203,81 @@ def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None)
     return rows if rows or not proposals else None
 
 
+def decode_model_inline_rows(raw: str, *, fields: set[str], diagnostics: list[dict]) -> list[dict] | None:
+    """Read explicit `source_row: ... | field: ...` records, never infer cells.
+
+    Only complete named records qualify. Pipes inside quoted values, JSON arrays
+    and objects or escaped pipes are literals. Ambiguous records remain raw
+    proposals, including identical repeated labels; adjacent valid rows survive.
+    """
+    rows, seen_record = [], False
+    for raw_line in str(raw or "").splitlines():
+        line = raw_line.strip().lstrip("-+* ")
+        if not re.match(r"(?:source_row|operation_id)\s*:", line) or "|" not in line:
+            continue
+        seen_record = True
+        parts, current, stack, quoted, index, malformed = [], [], [], False, 0, False
+        while index < len(line):
+            char = line[index]
+            if char == "\\" and index + 1 < len(line):
+                current.extend((char, line[index + 1]))
+                index += 2
+                continue
+            if char == '"':
+                # A quote within an ordinary title (e.g. 19" rack) is literal.
+                at_value_start = not "".join(current).partition(":")[2].strip()
+                if quoted or stack or at_value_start:
+                    quoted = not quoted
+            elif not quoted:
+                if char in "[{":
+                    stack.append(char)
+                elif char in "]}":
+                    if not stack or stack.pop() != (
+                        "[" if char == "]" else "{"
+                    ):
+                        malformed = True
+                elif char == "|" and not stack:
+                    parts.append("".join(current).strip())
+                    current = []
+                    index += 1
+                    continue
+            current.append(char)
+            index += 1
+        parts.append("".join(current).strip())
+        row, reason = {}, "malformed_inline_record" if malformed or quoted or stack else ""
+        for part in parts:
+            label, delimiter, value = part.partition(":")
+            key = label.strip()
+            if not delimiter:
+                reason = reason or "unlabelled_inline_value"
+                continue
+            if key not in fields:
+                reason = reason or "unsupported_inline_field"
+                continue
+            if key in row:
+                reason = reason or "duplicate_inline_field"
+                continue
+            value = value.strip()
+            try:
+                row[key] = json.loads(value, object_pairs_hook=_unique_json_object)
+            except (ValueError, TypeError):
+                row[key] = value.replace(r"\|", "|")
+        if not (row.get("source_row") not in (None, "") and "title" in row
+                and ({"unit", "norm_code"}.issubset(row)
+                     or str(row.get("row_role") or "").casefold()
+                     in {"work", "material", "equipment", "resource", "header", "unresolved"})):
+            reason = reason or "incomplete_inline_record"
+        if reason:
+            decision = {"raw_line": raw_line}
+            if row.get("source_row") not in (None, ""):
+                decision["source_row"] = row["source_row"]
+            diagnostics.append({"code": "MODEL_RESULT_INLINE_RECORD_INVALID",
+                                "reason": reason, "decision": decision})
+        else:
+            rows.append(row)
+    return rows if seen_record else None
+
+
 def decode_model_artifact_kind(raw: str) -> dict:
     """Read a document-level literal declaration, without choosing its purpose.
 

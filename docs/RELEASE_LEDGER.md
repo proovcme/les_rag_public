@@ -1,5 +1,30 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат0.31.169 / 897 — literal inline rows и достоверные вопросы готовности
+
+Installed896 9fa11dd1 подтверждён по API/хешам, nativeRRF PASS. B0: скачиваемая
+ЛСР за258.95s, две исходные строки, одна совместная позиция, priced_partial,
+подтверждённая0.00/предварительная33013.65. B1:228.45s, финальный lsr корректно
+заменил поисковое vor, но именованный inline-список не был прочитан и XLSX не создан.
+Финальные ответы и аудиты сохранены в artifacts/live_896. Это не matched proof:
+между контролями effective RAG_CHAT_RERANK_CANDIDATE_K изменился с пустого на16.
+Модель/роль/вложение прежние; конфигурация требует свежего сравнения.
+
+897 распознаёт явные inline-поля через общий публичный row contract без inference.
+Повторные/неоднозначные поля сохраняются raw proposals. Покрытие не теряет
+covered_by_operation_id при safe history/harvest, поэтому не требует второй нормы.
+Unresolved ФСЭМ отдельно просит согласовать часы вместо ложного запроса ставки;
+финансовые правила, допустимое расхождение и суммы не меняются. Red5 и red9
+воспроизвели дефекты; focused235passed. Canonical artifacts/gates_897:
+3345passed/20existing skipped/5warnings, metadata31passed; verify/architecture,
+docs/map и active-artifacts PASS. Retained live896 inline answer прочитан без
+inference:2 строки, исходный ответ неизменён, пустые условия не заполнены.
+Installed live897 pending. Basic896:9PASS/1FAIL (chat_project_noscope,
+12 web_search → calls_budget → unparsed tool frame вместо terminal answer).
+Провал сохранён в artifacts/live_896/basic/model_diagnostic.json и не скрыт.
+Customer-ready false: качество решений модели, ФСЭМ0.02/0.022 и единое членство
+canonical/overlay остаются открыты. Native shell5.1.813, cloud budget0.
+
 ## Кандидат0.31.168 / 896 — итоговый тип документа принадлежит завершённому ответу
 
 Installed895 a9fb241b после restart FreeToken восстановлен до назначенного64k;

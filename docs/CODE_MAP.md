@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build897: `model_lsr_result_contract.decode_model_inline_rows` → публичный decoder
+`parse_model_rag_result` → прежний XLSX executor, без дополнительного inference.
+Safe history сохраняет covered_by_operation_id для вопросов готовности.
+`rim_lsr_trace_service` → `collect_lsr_price_gaps` → readiness передают
+needs_fsem_resolution при несогласованном агрегате ОТм; финансовый результат прежний.
+Док: modules/rag-evidence-flow; tests/test_model_inline_field_records.py,
+tests/test_lsr_readiness_transport.py.
+
 Build896: `model_lsr_result_contract.update_model_artifact_kind` разделяет
 поисковое предложение и буквальный тип итогового документа; actual chat передаёт
 query/result/restore. Завершённый ответ не блокируется предварительным другим

@@ -72,6 +72,7 @@ _PRICE_SOURCE_LABEL = {
     "needs_kac": "КАЦ или выбранная ценовая книга",
     "needs_labor_rate": "ставка ОЗП",
     "needs_machinist_rate": "ставка ЗПМ",
+    "needs_fsem_resolution": "согласованная детализация ОТм по ФСЭМ",
     "needs_fgis_price": "цена эксплуатации машины ФГИС ЦС",
     "needs_price": "подтверждённая цена",
     "card_price_without_basis": "цена из карточки нормы, подтвердите базу, КАЦ или свою цену",
@@ -677,10 +678,17 @@ def build_lsr_result_readiness(
                 + (listing or " Локально нет ни одной ценовой книги.")
             )
     elif structured_prices:
-        prices_action = (
-            "Задайте подтверждённые цены: "
-            f"{_preview([str(item.get('resource') or '') for item in structured_prices])}."
-        )
+        fsem_gaps = [item for item in structured_prices if item.get("price_action") == "needs_fsem_resolution"]
+        if fsem_gaps:
+            prices_action = (
+                "Сверьте детализацию ОТм по ФСЭМ; ввод цены не устраняет расхождение часов."
+                + (" Закройте остальные вопросы цен по ресурсам ниже." if len(fsem_gaps) != len(structured_prices) else "")
+            )
+        else:
+            prices_action = (
+                "Задайте подтверждённые цены: "
+                f"{_preview([str(item.get('resource') or '') for item in structured_prices])}."
+            )
     elif unbound_priced:
         # ``norm_not_found`` rows are asked about once, under «Нормы» (§ 3 / § 10):
         # telling the operator to set a price on a cipher the base does not hold

@@ -1257,6 +1257,7 @@ _HISTORY_ROW_FIELDS = (
     # links between operations built on one source row — small scalars, kept so a
     # later turn can point at the same line of the same file.
     "position_no", "locator_operations", "parent_locator", "covered_by_work_id",
+    "covered_by_operation_id",
     "source_accounted", "operation_defined", "norm_selected",
     "applicability_substantiated", "structure_calculated",
     "known_amount_present", "position_calculated", "volume_verified",
@@ -4208,7 +4209,7 @@ def parse_model_rag_result(
     required_fields = {"title", "unit", "norm_code"}
     transport_diagnostics: list[dict[str, Any]] = []
     from proxy.services.model_lsr_result_contract import (
-        decode_model_result_rows, decode_model_resource_field,
+        decode_model_result_rows, decode_model_resource_field, decode_model_inline_rows,
     )
     json_rows = decode_model_result_rows(raw, diagnostics=transport_diagnostics)
     if diagnostics is not None:
@@ -4338,6 +4339,12 @@ def parse_model_rag_result(
         normalized = " ".join(value.replace("**", "").strip().split()).casefold()
         return header_fields.get(normalized, "")
 
+    if json_rows is None and not transport_diagnostics:
+        inline_diagnostics: list[dict[str, Any]] = []
+        json_rows = decode_model_inline_rows(raw, fields=set(header_fields), diagnostics=inline_diagnostics)
+        transport_diagnostics.extend(inline_diagnostics)
+        if diagnostics is not None:
+            diagnostics.extend(inline_diagnostics)
     if json_rows is not None:
         # Same public field boundary as the visible table/text readers. A model
         # cannot author application trust flags or operator confirmations.

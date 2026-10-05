@@ -3183,7 +3183,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12973,
+      "lines": 12980,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4944,7 +4944,7 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_stall_bound_25.py"
       ],
-      "lines": 1117,
+      "lines": 1125,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4996,7 +4996,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 1596,
+      "lines": 1611,
       "module": "proxy.services.lsr_workbook_adapter_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5469,10 +5469,11 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
         "proxy/services/model_evidence_read_contract.py",
+        "tests/test_model_artifact_kind_authority.py",
         "tests/test_model_lsr_result_contract.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 457,
+      "lines": 532,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -6683,7 +6684,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 3143,
+      "lines": 3151,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7902,6 +7903,7 @@
         "tests/test_lsr_norm_gap_reasons_830.py",
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_scheduler_starvation_824.py",
+        "tests/test_model_artifact_kind_authority.py",
         "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_evidence_read_contract.py",
         "tests/test_model_query_reasoning.py",
@@ -12133,6 +12135,19 @@
     },
     {
       "inbound": [],
+      "lines": 104,
+      "module": "tests.test_model_artifact_kind_authority",
+      "outbound": [
+        "proxy/services/model_lsr_result_contract.py",
+        "proxy/services/workbook_research_job_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
+      ],
+      "path": "tests/test_model_artifact_kind_authority.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 423,
       "module": "tests.test_model_capability_service",
       "outbound": [
@@ -12530,6 +12545,7 @@
     },
     {
       "inbound": [
+        "tests/test_model_artifact_kind_authority.py",
         "tests/test_model_output_diagnostics_tracking.py",
         "tests/test_model_query_reasoning.py",
         "tests/test_workbook_artifact_target.py"
@@ -20518,9 +20534,9 @@
     "product_reachable": 372,
     "registered_api_routes": 340,
     "runtime_support": 11,
-    "test_or_tool_only": 704,
-    "tracked_python_files": 1088,
-    "tracked_python_lines": 382612
+    "test_or_tool_only": 705,
+    "tracked_python_files": 1089,
+    "tracked_python_lines": 382829
   },
   "warnings": []
 }
