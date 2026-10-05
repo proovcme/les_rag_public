@@ -15,6 +15,23 @@ def test_relative_work_link_is_scoped_to_its_source_sheet():
     assert work_row_key({**row, "work_row": "10-01-001-01"}) == "10-01-001-01"
 
 
+def test_coverage_resolves_a_work_even_when_its_locator_also_has_resource_decisions():
+    from proxy.services.lsr_source_coverage_service import resolve_work_coverage
+    rows = [{"source_row": "S!R2", "row_role": "work"},
+            {"source_row": "S!R3", "row_role": "work", "covered_by_work_id": "S!R2"},
+            {"source_row": "S!R2", "row_role": "resource", "work_row": "S!R2"}]
+    resolved = resolve_work_coverage(rows)
+    assert resolved[1] == {"target_index": 0, "direct_target_index": 0}
+
+
+def test_coverage_does_not_choose_between_two_actual_works_at_one_locator():
+    from proxy.services.lsr_source_coverage_service import resolve_work_coverage
+    rows = [{"source_row": "S!R2", "row_role": "work", "operation_id": "first"},
+            {"source_row": "S!R2", "row_role": "work", "operation_id": "second"},
+            {"source_row": "S!R3", "row_role": "work", "covered_by_work_id": "S!R2"}]
+    assert resolve_work_coverage(rows)[2]["error"] == "coverage_target_ambiguous"
+
+
 def test_coverage_requires_every_locator_and_work_row_link() -> None:
     coverage = build_source_coverage(
         catalog_locators=["A!R2", "A!R3", "A!R4"],

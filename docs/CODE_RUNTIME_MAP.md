@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1091 |
-| Строк Python | 383262 |
+| Строк Python | 383397 |
 | PRODUCT_REACHABLE | 372 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 707 |
@@ -41,7 +41,7 @@
 | sovushka/pages/documents.py | 3976 | 3 |
 | proxy/routers/datasets.py | 3787 | 16 |
 | sovushka/styles.py | 3301 | 3 |
-| proxy/services/rim_lsr_trace_service.py | 3151 | 34 |
+| proxy/services/rim_lsr_trace_service.py | 3180 | 34 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/workbook_research_job_service.py | 2883 | 29 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |

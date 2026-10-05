@@ -36,6 +36,25 @@ def test_absent_contract_does_not_change_existing_default_or_require_review():
                                             physical_quantity=None, physical_unit="") == {}
 
 
+@pytest.mark.parametrize("second_valid", [False, True])
+def test_linked_action_rows_keep_their_own_evidence_and_proposals(second_valid):
+    owners = [{"source_row": "S!R2", "resource_bindings": [_action("reuse")],
+               "_resource_binding_evidence_checks": [{"target_code_in_refs": True}]},
+              {"source_row": "S!R3", "resource_bindings": [_action("reuse", target_resource_code="A-10", basis_ref="S!R3")],
+               "_resource_binding_evidence_checks": [{"target_code_in_refs": second_valid}]}]
+    before = copy.deepcopy(owners)
+    result = resource_binding_position_fields({"source_row": "S!R2"}, BASE, work_id="W", work_qty=10,
+        physical_quantity=1000, physical_unit="m", linked_resource_rows=owners)
+    first = next(resource for resource in result["resources"] if resource["code"] == "A-1")
+    second = next(resource for resource in result["resources"] if resource["code"] == "A-10")
+    assert first["price"] == 0
+    assert (second.get("price") == 0) is second_valid
+    assert [entry["source_row"] for entry in result["resource_binding_audit"]] == ["S!R2", "S!R3"]
+    assert [entry["status"] for entry in result["resource_binding_audit"]] == ["applied", "applied" if second_valid else "conflict"]
+    assert owners == before
+    assert result["resource_binding_rows"][-1]["resource_bindings"] == before[-1]["resource_bindings"]
+
+
 def test_direct_reference_names_without_evidence_checks_cannot_certify_an_action():
     result = _apply([_action()], _resource_binding_evidence_checks=None)
     assert result["resource_binding_audit"][0]["status"] == "applied"

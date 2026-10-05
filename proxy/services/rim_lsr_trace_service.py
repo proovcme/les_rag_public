@@ -2378,6 +2378,21 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
     coverage_links = resolve_work_coverage(rows or [])
     supplies_by_parent: dict[str, list[Mapping[str, Any]]] = {}
     work_ids_by_parent: dict[str, set[str]] = {}
+    work_indices_by_alias: dict[str, set[int]] = {}
+    linked_resources_by_work: dict[int, list[Mapping[str, Any]]] = {}
+    resource_link_errors: dict[int, str] = {}
+    for index, item in enumerate(rows or []):
+        if inferred_row_role(item) == "work":
+            for key in {str(item.get("source_row") or ""), str(item.get("operation_id") or ""),
+                        operation_identity(item)} - {""}:
+                work_indices_by_alias.setdefault(key, set()).add(index)
+    for index, item in enumerate(rows or []):
+        if inferred_row_role(item) == "resource" and ("resource_bindings" in item or "resource_review" in item):
+            targets = work_indices_by_alias.get(work_row_key(item), set())
+            if len(targets) == 1:
+                linked_resources_by_work.setdefault(next(iter(targets)), []).append(item)
+            else:
+                resource_link_errors[index] = "Конфликт связи действия над ресурсом: работа не найдена или адрес неоднозначен."
     for item in rows or []:
         role = inferred_row_role(item)
         parent = work_row_key(item)
@@ -2476,6 +2491,9 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             }
             if code:
                 binding["code"] = code
+            if idx - 1 in resource_link_errors:
+                binding.update(status="resource_link_conflict", message=resource_link_errors[idx - 1],
+                               resource_bindings=row.get("resource_bindings"))
             bindings.append(
                 _with_visible_identity(
                     binding, title=title, source_qty=source_qty, source_unit=source_unit
@@ -2747,7 +2765,11 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         position.update(_model_coefficient_fields(row))
         linked_supply_rows = [supply for key in {str(source_row), parent} - {""}
                               for supply in supplies_by_parent.get(key, [])]
-        if "resource_bindings" in row or "resource_review" in row or linked_supply_rows:
+        linked_resource_rows = linked_resources_by_work.get(idx - 1, [])
+        rejected_resource_rows = [owner for owner in linked_resource_rows
+                                  if _code_from_visible_row(owner) and _code_from_visible_row(owner) != code]
+        linked_resource_rows = [owner for owner in linked_resource_rows if owner not in rejected_resource_rows]
+        if "resource_bindings" in row or "resource_review" in row or linked_supply_rows or linked_resource_rows:
             from proxy.services.model_resource_binding_service import resource_binding_position_fields
             from proxy.smeta_core.resource_normalizer import normalize_norm_resources
 
@@ -2757,9 +2779,16 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 work_id=operation_identity(row), work_qty=norm_qty,
                 physical_quantity=source_qty, physical_unit=source_unit,
                 linked_supply_rows=linked_supply_rows,
+                linked_resource_rows=linked_resource_rows,
                 supply_parent_ambiguous=any(len(work_ids_by_parent.get(work_row_key(supply), set())) != 1
                                             for supply in linked_supply_rows),
             ))
+        if rejected_resource_rows:
+            position.setdefault("resource_binding_conflicts", []).extend({
+                "code": "resource_binding_conflict", "work_id": operation_identity(row),
+                "reason": "linked resource norm disagrees with its work", "source_row": owner.get("source_row"),
+                "proposal": dict(owner),
+            } for owner in rejected_resource_rows)
         if (
             position.get("coefficient_application") == "applied"
             and (

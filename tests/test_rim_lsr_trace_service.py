@@ -144,6 +144,53 @@ def _active_resource_norm(monkeypatch):
             "nr_sp_rule_id": "nrsp-49.3", "evidence_refs": ["Q1.H1"]}
 
 
+@pytest.mark.parametrize("resource_first", [False, True])
+def test_explicit_actions_on_linked_resource_rows_reach_the_chosen_work(monkeypatch, resource_first):
+    from copy import deepcopy
+    parent = _active_resource_norm(monkeypatch)
+    child = dict(parent, source_row="S!R3", operation_id="child", norm_code="",
+                 covered_by_work_id="S!R2", coverage="The cited composition includes reinstallation")
+    resource = dict(parent, row_role="resource", operation_id="resource-action", work_row="S!R2",
+                    resource_bindings=[{"action": "reuse", "target_resource_code": "A-1",
+                                        "reason": "Authored reuse", "source_refs": ["S!R2"]}])
+    rows = [resource, child, parent] if resource_first else [parent, child, resource]
+    before = deepcopy(rows)
+    trace = build_lsr_trace_from_visible_rows(rows)
+    work = next(binding for binding in trace["row_bindings"] if binding["status"] == "bound")
+    reused = next(item for item in work["resource_decisions"] if item["code"] == "A-1")
+    assert reused["price"] == 0 and reused["cost"] == 0
+    assert reused["per_unit"] == 2 and reused["qty"] == 20
+    assert sum(binding["status"] == "covered" for binding in trace["row_bindings"]) == 1
+    assert len(trace["sections"][0]["positions"]) == 1
+    assert work["resource_binding_audit"][0]["source_row"] == "S!R2"
+    assert rows == before
+
+
+@pytest.mark.parametrize("bad_link", ["ambiguous", "missing", "different_norm"])
+def test_linked_resource_action_does_not_choose_a_parent_or_reinterpret_its_norm(monkeypatch, bad_link):
+    from copy import deepcopy
+    parent = _active_resource_norm(monkeypatch)
+    resource = dict(parent, row_role="resource", operation_id="resource-action", work_row="S!R2",
+                    resource_bindings=[{"action": "reuse", "target_resource_code": "A-1",
+                                        "reason": "Authored reuse", "source_refs": ["S!R2"]}])
+    rows = [parent, resource]
+    if bad_link == "ambiguous":
+        rows.append(dict(parent, operation_id="another-work"))
+    elif bad_link == "missing":
+        resource["work_row"] = "S!R999"
+    else:
+        resource["norm_code"] = "ГЭСНм08-02-409-01"
+    before = deepcopy(rows)
+    trace = build_lsr_trace_from_visible_rows(rows)
+    works = [binding for binding in trace["row_bindings"] if binding["status"] == "bound"]
+    assert all(next(item for item in work["resource_decisions"] if item["code"] == "A-1")["price"] == 777 for work in works)
+    if bad_link == "different_norm":
+        assert works[0]["resource_binding_conflicts"][0]["reason"] == "linked resource norm disagrees with its work"
+    else:
+        assert any(binding["status"] == "resource_link_conflict" for binding in trace["row_bindings"])
+    assert trace["summary"]["result_status"] == "priced_partial" and rows == before
+
+
 def test_active_model_resource_reuse_preserves_consumption_and_zero_outranks_book(monkeypatch):
     row = _active_resource_norm(monkeypatch)
     row["resource_bindings"] = [{"action": "reuse", "target_resource_code": "A-1",

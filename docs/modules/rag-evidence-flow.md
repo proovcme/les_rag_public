@@ -1,5 +1,38 @@
 # RAG evidence flow
 
+## 900: связь resource action с родительской работой
+
+resolve_work_coverage разрешает явный covered_by_work_id среди работ:
+resource/material/header на том же locator не являются альтернативной работой.
+Две реальные работы по одному адресу по-прежнему требуют operation_id.
+positions_from_visible_lsr_rows переносит явно записанные resource_bindings
+с resource строк на единственную указанную work строку, без поиска/выбора нормы.
+Порядок действий сохраняется; у каждого действия остаются его owner source_row,
+локальный индекс, исходное предложение и собственные evidence checks.
+Многократные resource строки допустимы; чужие checks не подтверждают соседнее действие.
+Неверная/неоднозначная родительская связь и другой явно названный шифр видны как конфликт;
+ресурс не изменяется. Linked reviews сохраняются как неприменённые предложения,
+а не подменяют review работы. Модельные строки не сливаются и не переписываются.
+Сумма может измениться вследствие применения уже выбранного моделью reuse/exclude;
+тарифы, арифметика и FSEM reconciliation policy прежние. Новых inference нет.
+
+Installed899/0.31.171, commit5681a6cd, exact runtime hashes подтверждены,
+native RRF PASS1.66s. Три repack сохранённых898 решений скачали XLSX за8.23/0.12/0.53s,
+decisions SHA неизменён, книгаСПбQ32026 наследована, provider counters неизменны,
+inference0. Readiness не просит вторую норму у covered child; конфликты ресурсов видны.
+Все три результата partial, professional acceptance не пройдена.
+Matched live899 на действующем пользовательском estimator профиле, identity83e94984:
+B0 23.22s/2rows/1XLSX, нормы не найдены, money0; B1 38.22s/3rows/1XLSX,
+правильный шифр63-03-008-02 выбран, preliminary33013.65/confirmed0.00.
+B1 модель явно записала reuse отдельной resource строкой с work_row, но калькулятор
+не перенёс действие на работу; resource на том же source_row сделал coverage ambiguous.
+Это потеря предметного решения после model boundary, не доказательство ошибки выбора.
+Исходные ответы, SHA, XLSX и audits сохранены в artifacts/live_899/default_*.
+Обычный чат basic8979PASS/1FAIL остаётся открытым; большой/default/installer gate не пройден.
+Cloud off/budget0, native shell5.1.813.
+
+Canonical/install/live900 pending; customer-ready false.
+
 Build899 также проверяет неполное покрытие при /api/chat/repack-lsr,
 включая jobless и старое complete задание, без вызова модели и изменения строк.
 Регрессия: test_workbook_repack_target, точный исходный каталог.

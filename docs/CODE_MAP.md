@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build900: resolve_work_coverage отличает работу от resource на том же locator.
+positions_from_visible_lsr_rows → resource_binding_position_fields(linked_resource_rows)
+передаёт выбранные действия с точной work ссылкой и их исходными evidence checks.
+Parent ambiguity, другой шифр и неподтверждённые действия сохраняют ресурсы и конфликт.
+Тесты: test_lsr_source_coverage_service, test_rim_lsr_trace_service,
+test_model_resource_binding_service; док: modules/rag-evidence-flow.
+
 Build899: /api/chat/repack-lsr сверяет saved decisions с полным source catalog
 без inference и передаёт неполноту через workbook_document_issues.
 operation_identity исключает ровно4 server-owned catalog annotations.

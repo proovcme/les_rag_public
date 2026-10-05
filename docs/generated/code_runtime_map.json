@@ -4971,7 +4971,7 @@
         "tests/test_lsr_source_coverage_service.py",
         "tests/test_rim_lsr_trace_service.py"
       ],
-      "lines": 451,
+      "lines": 453,
       "module": "proxy.services.lsr_source_coverage_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5598,7 +5598,7 @@
         "tests/test_model_resource_binding_service.py",
         "tests/test_model_resource_reference.py"
       ],
-      "lines": 322,
+      "lines": 343,
       "module": "proxy.services.model_resource_binding_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6692,7 +6692,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 3151,
+      "lines": 3180,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -11930,7 +11930,7 @@
     },
     {
       "inbound": [],
-      "lines": 108,
+      "lines": 125,
       "module": "tests.test_lsr_source_coverage_service",
       "outbound": [
         "proxy/services/lsr_source_coverage_service.py"
@@ -12666,7 +12666,7 @@
     },
     {
       "inbound": [],
-      "lines": 311,
+      "lines": 330,
       "module": "tests.test_model_resource_binding_service",
       "outbound": [
         "proxy/services/model_resource_binding_service.py"
@@ -14077,7 +14077,7 @@
         "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_rim_trace_api.py"
       ],
-      "lines": 2030,
+      "lines": 2077,
       "module": "tests.test_rim_lsr_trace_service",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -20579,7 +20579,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 707,
     "tracked_python_files": 1091,
-    "tracked_python_lines": 383262
+    "tracked_python_lines": 383397
   },
   "warnings": []
 }

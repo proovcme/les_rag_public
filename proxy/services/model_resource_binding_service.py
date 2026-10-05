@@ -53,6 +53,8 @@ def resource_binding_conflict_note(conflict: Mapping[str, Any]) -> str:
         "keep_all_confirmed cannot carry resource actions": "Подтверждение неизменного состава несовместимо с действиями над ресурсами.",
         "resource basis does not identify the original source or resolved evidence": "Основание не соответствует исходной строке или разрешённому источнику.",
         "reuse price source is not its original source or resolved evidence": "Источник нулевой цены не соответствует основанию повторного использования.",
+        "linked resource norm disagrees with its work": "Шифр нормы в строке действия над ресурсом отличается от шифра родительской работы.",
+        "resource review must identify the work decision it confirms": "Подтверждение состава ресурсов требуется отнести к решению родительской работы.",
     }
     return messages.get(reason, "Проверьте поля явного действия над ресурсом и его основание.")
 
@@ -154,34 +156,46 @@ def resource_binding_position_fields(
     row: Mapping[str, Any], norm_resources: Sequence[Mapping[str, Any]], *, work_id: str,
     work_qty: float, physical_quantity: float | None, physical_unit: str,
     linked_supply_rows: Sequence[Mapping[str, Any]] = (), supply_parent_ambiguous: bool = False,
+    linked_resource_rows: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Return opt-in resource projection, raw authored proposals and visible conflicts."""
-    if "resource_bindings" not in row and "resource_review" not in row and not linked_supply_rows:
+    if "resource_bindings" not in row and "resource_review" not in row and not linked_supply_rows and not linked_resource_rows:
         return {}
     resources = copy.deepcopy([dict(resource) for resource in norm_resources])
     conflicts: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
     fields: dict[str, Any] = {"resource_binding_audit": audit, "resource_binding_conflicts": conflicts}
-    if "resource_bindings" in row:
-        authored = row["resource_bindings"]
-        fields["resource_bindings"] = copy.deepcopy(authored)
+    if "resource_bindings" in row or any("resource_bindings" in owner for owner in linked_resource_rows):
+        owned_proposals = []
+        for owner in (row, *linked_resource_rows):
+            if "resource_bindings" not in owner:
+                continue
+            authored = owner["resource_bindings"]
+            proposals = authored if isinstance(authored, list) else [authored]
+            owned_proposals.extend((owner, local_index, authored, item) for local_index, item in enumerate(proposals))
+        fields["resource_bindings"] = copy.deepcopy(row["resource_bindings"]) if not linked_resource_rows else [
+            copy.deepcopy(item) for _owner, _local_index, _authored, item in owned_proposals]
+        if linked_resource_rows:
+            fields["resource_binding_rows"] = [{key: copy.deepcopy(owner[key])
+                for key in ("source_row", "operation_id", "resource_bindings", "resource_review") if key in owner}
+                for owner in (row, *linked_resource_rows)]
         fields["resources"] = resources
-        proposals = authored if isinstance(authored, list) else [authored]
-        checks = row.get("_resource_binding_evidence_checks")
-        by_index = {}
-        if isinstance(checks, list):
-            for index, check in enumerate(checks):
-                if isinstance(check, Mapping):
-                    check_index = check.get("index", index)
-                    if isinstance(check_index, int) and not isinstance(check_index, bool) and check_index >= 0:
-                        by_index[check_index] = check
-        for index, item in enumerate(proposals):
-            entry = {"index": index, "proposal": copy.deepcopy(item), "status": "conflict"}
+        for index, (owner, local_index, authored, item) in enumerate(owned_proposals):
+            checks = owner.get("_resource_binding_evidence_checks")
+            by_index = {}
+            if isinstance(checks, list):
+                for check_index, check in enumerate(checks):
+                    if isinstance(check, Mapping):
+                        check_index = check.get("index", check_index)
+                        if isinstance(check_index, int) and not isinstance(check_index, bool) and check_index >= 0:
+                            by_index[check_index] = check
+            entry = {"index": index, "proposal": copy.deepcopy(item), "status": "conflict",
+                     "source_row": owner.get("source_row"), "source_index": local_index}
             audit.append(entry)
             try:
                 if not isinstance(authored, list) or not isinstance(item, Mapping):
                     raise ValueError("resource_bindings must be an array of objects")
-                check = by_index.get(index)
+                check = by_index.get(local_index)
                 effective = dict(item)
                 pointer = effective.pop("target_resource_ref", None)
                 pointed_target = None
@@ -198,16 +212,16 @@ def resource_binding_position_fields(
                 binding = _binding(effective, work_id)
                 _check_evidence(binding, check)
                 known_refs = {str(ref).casefold() for ref in (check.get("evidence_bindings", {}) if check else {})}
-                row_bindings = row.get("evidence_bindings")
+                row_bindings = owner.get("evidence_bindings")
                 if isinstance(row_bindings, Mapping):
                     known_refs.update(str(ref).casefold() for ref, identity in row_bindings.items() if identity)
                 if binding.basis_ref:
                     linked_basis = any(binding.basis_ref == str(supply.get("source_row") or "") for supply in linked_supply_rows)
-                    if (_key(binding.basis_ref) != _key(row.get("source_row"))
+                    if (_key(binding.basis_ref) != _key(owner.get("source_row"))
                             and binding.basis_ref.casefold() not in known_refs and not linked_basis):
                         raise ValueError("resource basis does not identify the original source or resolved evidence")
                 if binding.action == "reuse" and binding.price_source_ref and check is not None:
-                    if (binding.price_source_ref not in {binding.basis_ref, str(row.get("source_row") or "")}
+                    if (binding.price_source_ref not in {binding.basis_ref, str(owner.get("source_row") or "")}
                             and binding.price_source_ref.casefold() not in known_refs
                             and check.get("source_in_refs") is not True):
                         raise ValueError("reuse price source is not its original source or resolved evidence")
@@ -295,6 +309,13 @@ def resource_binding_position_fields(
         except (TypeError, ValueError) as error:
             conflicts.append({"code": "resource_review_conflict", "work_id": work_id, "reason": str(error),
                               "proposal": copy.deepcopy(authored_review)})
+    linked_reviews = [{"source_row": owner.get("source_row"), "proposal": copy.deepcopy(owner["resource_review"])}
+                      for owner in linked_resource_rows if "resource_review" in owner]
+    if linked_reviews:
+        fields["linked_resource_reviews"] = linked_reviews
+        conflicts.extend({"code": "resource_review_conflict", "work_id": work_id,
+                          "reason": "resource review must identify the work decision it confirms", **review}
+                         for review in linked_reviews)
     materials = [copy.deepcopy(dict(resource)) for resource in norm_resources if resource.get("kind") == "material"]
     if linked_supply_rows and materials:
         unresolved = []

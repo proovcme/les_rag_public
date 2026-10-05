@@ -1,5 +1,30 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 900 — linked resource actions (✅ код/док; live pending)
+
+resolve_work_coverage разрешает явный covered_by_work_id среди работ:
+resource/material/header на том же locator не являются альтернативной работой.
+Две реальные работы по одному адресу по-прежнему требуют operation_id.
+positions_from_visible_lsr_rows переносит явно записанные resource_bindings
+с resource строк на единственную указанную work строку, без поиска/выбора нормы.
+Порядок действий сохраняется; у каждого действия остаются его owner source_row,
+локальный индекс, исходное предложение и собственные evidence checks.
+Многократные resource строки допустимы; чужие checks не подтверждают соседнее действие.
+Неверная/неоднозначная родительская связь и другой явно названный шифр видны как конфликт;
+ресурс не изменяется. Linked reviews сохраняются как неприменённые предложения,
+а не подменяют review работы. Модельные строки не сливаются и не переписываются.
+Сумма может измениться вследствие применения уже выбранного моделью reuse/exclude;
+тарифы, арифметика и FSEM reconciliation policy прежние. Новых inference нет.
+
+Точки входа: lsr_source_coverage_service.resolve_work_coverage,
+rim_lsr_trace_service.positions_from_visible_lsr_rows,
+model_resource_binding_service.resource_binding_position_fields(linked_resource_rows).
+Док: [rag-evidence-flow](modules/rag-evidence-flow.md).
+Тесты: test_lsr_source_coverage_service, test_rim_lsr_trace_service,
+test_model_resource_binding_service; focused160passed.
+
+Canonical/install/live900 pending; customer-ready false.
+
 Build899 также проверяет неполное покрытие при /api/chat/repack-lsr,
 включая jobless и старое complete задание, без вызова модели и изменения строк.
 Регрессия: test_workbook_repack_target, точный исходный каталог.

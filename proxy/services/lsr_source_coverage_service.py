@@ -158,19 +158,21 @@ def resolve_work_coverage(rows: Sequence[Mapping[str, Any]]) -> dict[int, dict[s
         if "!" in _locator(row) and ref.startswith("R") and ref[1:].isdigit():
             ref = _locator(row).rsplit("!", 1)[0] + "!" + ref
         candidates = aliases.get(ref, set())
+        work_candidates = {candidate for candidate in candidates
+                           if inferred_row_role(rows[candidate]) == "work"}
         error = ""
         if inferred_row_role(row) != "work":
             error = "coverage_role_conflict"
         elif not candidates:
             error = "coverage_target_missing"
-        elif len(candidates) != 1:
-            error = "coverage_target_ambiguous"
-        elif inferred_row_role(rows[next(iter(candidates))]) != "work":
+        elif not work_candidates:
             error = "coverage_role_conflict"
+        elif len(work_candidates) != 1:
+            error = "coverage_target_ambiguous"
         if error:
             result[index] = {"error": error}
         else:
-            edges[index] = next(iter(candidates))
+            edges[index] = next(iter(work_candidates))
     for start in edges:
         if start in result:
             continue
