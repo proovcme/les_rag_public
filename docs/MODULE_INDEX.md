@@ -1,5 +1,18 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 901 — reuse price-gap projection (✅ код/док; live pending)
+
+collect_lsr_price_gaps does not ask for a market price when the calculator
+has already returned action=reuse, source=reuse and a numeric zero price.
+Missing price or missing reuse provenance still yields the existing gap.
+This is a projection correction after model/calculation boundaries; authored rows,
+zero-price basis, arithmetic, partial FSEM status and all genuine gaps are preserved.
+Regression: test_lsr_readiness_transport, parametrized known zero/missing price/missing owner.
+Red1/14PASS; focused80PASS. Canonical/install/live901 pending.
+
+Entry: lsr_workbook_adapter_service.collect_lsr_price_gaps.
+Док: [rag-evidence-flow](modules/rag-evidence-flow.md).
+
 ## 900 — linked resource actions (✅ код/док; live pending)
 
 resolve_work_coverage разрешает явный covered_by_work_id среди работ:

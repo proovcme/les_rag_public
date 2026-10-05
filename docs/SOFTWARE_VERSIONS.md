@@ -1,5 +1,20 @@
 # Версии программного контура ЛЕС
 
+Кандидат0.31.173/build901, dependencies/providers unchanged.
+Installed900/0.31.172, commit ea5ae27e; guarded patch16.97s, runtime hashes PASS.
+Canonical3390PASS/20existing skips/5warnings, metadata31PASS, focused160PASS.
+Retained default-profile B1 replay8.28s, inference0, accepted_rows SHA unchanged,
+SPbQ32026 pinned, downloadable XLSX12195bytes/SHA67095dec.
+Row projection bound/covered/resource_linked, one position, no false coverage ambiguity.
+Authored reuse applied to exact material09.2.02.02-0011: qty157.5m, price0, amount0.
+Preliminary33013.65→13976.62, confirmed0; source/FSEM hours0.02/0.022 remain unresolved.
+The replay helper initially asserted the nonexistent status covered_by_work;
+audit_repack_900 checks the actual covered contract and XLSX cells, core regression PASS.
+Separate finding: price_gaps labelled applied reuse as a missing quotation.
+No inference policy, model queries, evidence, tariffs or FSEM arithmetic changed.
+Cloud disabled/budget0; default model quality, ordinary basic chat1FAIL,
+large document and fresh installer acceptance remain open; customer-ready false.
+
 Кандидат0.31.172/build900: доставка выбранных действий resource строк.
 Dependency graph и модели прежние; новая installed приёмка pending.
 Installed899/0.31.171, commit5681a6cd, exact runtime hashes подтверждены,
@@ -211,9 +226,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.172` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `900` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.900` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.173` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `901` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.901` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

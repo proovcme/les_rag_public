@@ -167,3 +167,15 @@ def test_reconciled_fsem_still_prices_driver_codes(monkeypatch):
     assert trace["summary"]["fsem_trace"]["status"] == "reconciled"
     assert trace["summary"]["zpm"] == 0.03
     assert all(row["meta"]["price_action"] != "needs_fsem_resolution" for row in trace["rows"] if row["type"] == "resource_machinist")
+
+
+@pytest.mark.parametrize("price,source,expect_gap", [(0.0, "reuse", False), (None, "reuse", True), (0.0, "", True)])
+def test_applied_reuse_zero_price_is_not_reported_as_a_missing_price(price, source, expect_gap):
+    resource = {"type": "resource_material", "name": "Existing reusable element",
+                "columns": {2: "ANY-MATERIAL", 4: "m", 7: 15, 10: price},
+                "meta": {"price_action": "reuse", "price_source": source}}
+    trace = {"sections": [{"positions": [{"code": "ANY-NORM", "rows": [resource], "summary": {}}]}]}
+    before = deepcopy(trace)
+    gaps = collect_lsr_price_gaps(trace)
+    assert bool(gaps) is expect_gap
+    assert trace == before

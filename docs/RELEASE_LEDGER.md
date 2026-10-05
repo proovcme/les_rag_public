@@ -1,5 +1,31 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат0.31.173 / 901 — нулевая цена повторного использования
+
+Installed900/0.31.172, commit ea5ae27e; guarded patch16.97s, runtime hashes PASS.
+Canonical3390PASS/20existing skips/5warnings, metadata31PASS, focused160PASS.
+Retained default-profile B1 replay8.28s, inference0, accepted_rows SHA unchanged,
+SPbQ32026 pinned, downloadable XLSX12195bytes/SHA67095dec.
+Row projection bound/covered/resource_linked, one position, no false coverage ambiguity.
+Authored reuse applied to exact material09.2.02.02-0011: qty157.5m, price0, amount0.
+Preliminary33013.65→13976.62, confirmed0; source/FSEM hours0.02/0.022 remain unresolved.
+The replay helper initially asserted the nonexistent status covered_by_work;
+audit_repack_900 checks the actual covered contract and XLSX cells, core regression PASS.
+Separate finding: price_gaps labelled applied reuse as a missing quotation.
+No inference policy, model queries, evidence, tariffs or FSEM arithmetic changed.
+Cloud disabled/budget0; default model quality, ordinary basic chat1FAIL,
+large document and fresh installer acceptance remain open; customer-ready false.
+
+collect_lsr_price_gaps does not ask for a market price when the calculator
+has already returned action=reuse, source=reuse and a numeric zero price.
+Missing price or missing reuse provenance still yields the existing gap.
+This is a projection correction after model/calculation boundaries; authored rows,
+zero-price basis, arithmetic, partial FSEM status and all genuine gaps are preserved.
+Regression: test_lsr_readiness_transport, parametrized known zero/missing price/missing owner.
+Red1/14PASS; focused80PASS. Canonical901 verify/test3393PASS/20existing skips/5warnings
+за230.98s; architecture, documentation/map, active artifacts PASS, metadata31PASS.
+Изолированный snapshot и чужие worktree hashes подтверждены. Install/live901 pending.
+
 ## Кандидат0.31.172 / 900 — явные действия связанных ресурсов
 
 Installed899/0.31.171, commit5681a6cd, exact runtime hashes подтверждены,

@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build901: lsr_workbook_adapter_service.collect_lsr_price_gaps preserves a calculated
+zero-price reuse treatment without presenting it as missing price. No model decision changed.
+Test: test_lsr_readiness_transport; doc: modules/rag-evidence-flow.
+
 Build900: resolve_work_coverage отличает работу от resource на том же locator.
 positions_from_visible_lsr_rows → resource_binding_position_fields(linked_resource_rows)
 передаёт выбранные действия с точной work ссылкой и их исходными evidence checks.

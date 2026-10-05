@@ -1,5 +1,29 @@
 # RAG evidence flow
 
+## 901: applied reuse zero is a known price
+
+collect_lsr_price_gaps does not ask for a market price when the calculator
+has already returned action=reuse, source=reuse and a numeric zero price.
+Missing price or missing reuse provenance still yields the existing gap.
+This is a projection correction after model/calculation boundaries; authored rows,
+zero-price basis, arithmetic, partial FSEM status and all genuine gaps are preserved.
+Regression: test_lsr_readiness_transport, parametrized known zero/missing price/missing owner.
+Red1/14PASS; focused80PASS. Canonical/install/live901 pending.
+
+Installed900/0.31.172, commit ea5ae27e; guarded patch16.97s, runtime hashes PASS.
+Canonical3390PASS/20existing skips/5warnings, metadata31PASS, focused160PASS.
+Retained default-profile B1 replay8.28s, inference0, accepted_rows SHA unchanged,
+SPbQ32026 pinned, downloadable XLSX12195bytes/SHA67095dec.
+Row projection bound/covered/resource_linked, one position, no false coverage ambiguity.
+Authored reuse applied to exact material09.2.02.02-0011: qty157.5m, price0, amount0.
+Preliminary33013.65→13976.62, confirmed0; source/FSEM hours0.02/0.022 remain unresolved.
+The replay helper initially asserted the nonexistent status covered_by_work;
+audit_repack_900 checks the actual covered contract and XLSX cells, core regression PASS.
+Separate finding: price_gaps labelled applied reuse as a missing quotation.
+No inference policy, model queries, evidence, tariffs or FSEM arithmetic changed.
+Cloud disabled/budget0; default model quality, ordinary basic chat1FAIL,
+large document and fresh installer acceptance remain open; customer-ready false.
+
 ## 900: связь resource action с родительской работой
 
 resolve_work_coverage разрешает явный covered_by_work_id среди работ:

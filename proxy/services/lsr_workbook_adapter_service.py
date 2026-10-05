@@ -1207,6 +1207,13 @@ def collect_lsr_price_gaps(
                 unit = str(columns.get(4, columns.get("4")) or "")
                 required = _PRICE_SOURCE_LABEL.get(action, "подтверждённая цена")
                 card_amount = columns.get(10, columns.get("10"))
+                if (action == "reuse" and meta.get("price_source") == "reuse"
+                        and isinstance(card_amount, (int, float))
+                        and not isinstance(card_amount, bool) and card_amount == 0):
+                    # The calculator has already applied the authored reuse
+                    # treatment with its original provenance. Zero is a known
+                    # amount here, not a missing market-price quotation.
+                    continue
                 identity = name if name != code else (code or name)
                 code_tail = f" ({code})" if code and code != name else ""
                 position_tail = f" в позиции {position_label}" if position_label else ""
