@@ -1,5 +1,21 @@
 # Версии программного контура ЛЕС
 
+Кандидат0.31.175/build903, dependencies/providers unchanged.
+Installed902/0.31.174, commitc7647784, patch17.77s/runtime hashes PASS.
+Canonical3394PASS/20existing skips/5warnings, metadata31PASS, focused81PASS.
+Live BAP901 on unchanged default user profile/model connection r8, identityd843191a:
+B0 failed39.11s with MODEL_RAG_QUERY_LIST_EMPTY/no artifact. Public session history817
+preserved actual model output: 19 valid queries in JSON after a prose preface, then
+18 valid queries in a fenced JSON after commentary; decoder rejected both.
+This is a transport false-empty, not evidence that the model or catalogue lack queries.
+B1 completed348.56s/19model rows/1downloaded41417byte XLSX, SHA9aa40024.
+All input delivered (no truncation); one PDF_TEXT row unanswered. 13positions built,
+calculated0, confirmed0/preliminary251771.08. Statuses8NEEDS_RESEARCH/9ANALOGUE_CANDIDATE/
+2MISSING, zero EXACT; 4NRSP gaps,6resource groups,1KAC,2unit conflicts.
+This is measured progress in delivery, NOT professional acceptance. Customer-ready false.
+Cloud disabled/budget0; source/FSEM hours mismatch, ordinary basic chat1FAIL,
+large input and fresh installer acceptance remain open.
+
 Кандидат0.31.174/build902, dependencies/providers unchanged.
 Installed901/0.31.173, commit bc8965ca; guarded patch17.16s, exact runtime hashes PASS.
 Canonical3393PASS/20existing skips/5warnings, metadata31PASS, focused80PASS.
@@ -241,9 +257,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.174` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `902` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.902` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.175` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `903` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.903` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

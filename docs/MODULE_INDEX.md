@@ -1,5 +1,23 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 903 — literal query-envelope transport (✅ код/док; live pending)
+
+_model_json_documents reads standalone line-level JSON or explicit JSON fences
+using JSONDecoder boundaries, preserving outside commentary. decode_model_query_envelope
+accepts exactly one valid optional envelope with that commentary; queries are never
+rewritten, synthesized, selected by domain or clipped to a fixed count. Ordinary plain
+query lists retain their existing reader. Duplicate fields, invalid/nested envelopes,
+multiple documents and inline prose examples do not become executable envelopes.
+decode_model_artifact_kind reads the same fragments; multiple declarations remain conflicts.
+No prompts/model requests, native RAG, budgets, tool loops, roles or professional decisions changed.
+This wires already authored literal queries into the existing frozen model→RAG path.
+Regression: test_model_rag_query_declaration (1/7/19/30 queries, fences, preamble/tail,
+quoted braces, ambiguity and invalid shapes). Red10/35PASS; related148PASS.
+Canonical/install/live903 pending; no release or readiness assertion.
+
+Entry: model_lsr_result_contract.decode_model_query_envelope/decode_model_artifact_kind.
+Док: [rag-evidence-flow](modules/rag-evidence-flow.md).
+
 ## 902 — actual calculator row ownership (✅ код/док; live pending)
 
 collect_lsr_price_gaps checks the actual row.source ownership contract:

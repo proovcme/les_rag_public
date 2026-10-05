@@ -288,40 +288,61 @@ def decode_model_inline_rows(raw: str, *, fields: set[str], diagnostics: list[di
     return rows if seen_record else None
 
 
+def _model_json_documents(raw: str) -> tuple[list[str], list[str]]:
+    """Read standalone JSON documents and preserve the surrounding commentary.
+
+    JSONDecoder finds document boundaries through strings and nested objects.
+    Only line-level documents or explicit JSON fences qualify; an inline
+    example in prose is not a declaration or an executable query envelope.
+    Invalid structured tails remain candidates so callers cannot pick a
+    later valid object and silently discard the invalid proposal.
+    """
+    text = str(raw or "").strip()
+    candidates: list[str] = []
+    commentary: list[str] = []
+    decoder = json.JSONDecoder()
+
+    def read_segment(segment: str) -> None:
+        cursor = 0
+        for match in re.finditer(r"(?m)^[ \t]*[{\[]", segment):
+            index = match.end() - 1
+            if index < cursor:
+                continue
+            commentary.append(segment[cursor:index])
+            try:
+                _value, end = decoder.raw_decode(segment, index)
+            except (ValueError, TypeError):
+                candidates.append(segment[index:])
+                return
+            if end < len(segment) and not segment[end].isspace():
+                candidates.append(segment[index:])
+                return
+            candidates.append(segment[index:end])
+            cursor = end
+        commentary.append(segment[cursor:])
+
+    start = 0
+    for fence in re.finditer(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text):
+        read_segment(text[start:fence.start()])
+        candidates.append(fence.group(1))
+        start = fence.end()
+    read_segment(text[start:])
+    return candidates, commentary
+
+
 def decode_model_artifact_kind(raw: str) -> dict:
     """Read a document-level literal declaration, without choosing its purpose.
 
     Target ambiguity is independent of row admission: no repeated declaration
     is selected, even when repeated values are identical.
     """
-    text = str(raw or "").strip()
     decoder = json.JSONDecoder(object_pairs_hook=_AuthoredJSONPairs)
-    candidates, segments, declarations, errors = [], [], [], []
-    start = 0
-    for fence in re.finditer(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text):
-        segments.append(text[start:fence.start()])
-        candidates.append(fence.group(1))
-        start = fence.end()
-    segments.append(text[start:])
+    candidates, segments = _model_json_documents(raw)
+    declarations, errors = [], []
     for segment in segments:
         # This label is a transport field, not an interpretation of prose.
         labels = list(re.finditer(r"(?m)^[ \t]*artifact_kind[ \t]*:[ \t]*(.*?)[ \t]*$", segment))
         declarations.extend(match.group(1).strip() for match in labels)
-        segment = re.sub(r"(?m)^[ \t]*artifact_kind[ \t]*:[^\r\n]*", "", segment).strip()
-        index = 0
-        while index < len(segment) and segment[index] in "{[":
-            try:
-                _value, end = decoder.raw_decode(segment, index)
-            except (ValueError, TypeError):
-                if '"artifact_kind"' in segment[index:]:
-                    errors.append("ARTIFACT_KIND_INCOMPLETE_JSON")
-                break
-            if end < len(segment) and not segment[end].isspace():
-                break
-            candidates.append(segment[index:end])
-            index = end
-            while index < len(segment) and segment[index].isspace():
-                index += 1
     for candidate in candidates:
         try:
             value = decoder.decode(candidate)
@@ -396,12 +417,11 @@ def update_model_artifact_kind(previous: Mapping | None, current: Mapping, *, ph
 
 def decode_model_query_envelope(raw: str) -> dict | None:
     """An optional literal query list; ordinary query text keeps its old reader."""
-    text = str(raw or "").strip()
-    fence = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text)
-    if fence:
-        text = fence.group(1)
+    candidates, outer_commentary = _model_json_documents(raw)
+    if len(candidates) != 1:
+        return None
     try:
-        value = json.loads(text, object_pairs_hook=_unique_json_object)
+        value = json.loads(candidates[0], object_pairs_hook=_unique_json_object)
     except (ValueError, TypeError):
         return None
     if not isinstance(value, dict) or value.get("artifact_kind") not in ("vor", "lsr"):
@@ -411,9 +431,12 @@ def decode_model_query_envelope(raw: str) -> dict | None:
         return None
     result = {"queries": queries}
     commentary = value.get("commentary")
+    comments = [item.strip() for item in outer_commentary if item.strip()]
     if commentary is not None:
-        result["commentary"] = (commentary if isinstance(commentary, str)
-                                else json.dumps(commentary, ensure_ascii=False))
+        comments.append(commentary if isinstance(commentary, str)
+                        else json.dumps(commentary, ensure_ascii=False))
+    if comments:
+        result["commentary"] = "\n\n".join(comments)
     return result
 
 

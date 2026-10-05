@@ -1,5 +1,35 @@
 # RAG evidence flow
 
+## 903: preserve queries with external commentary
+
+_model_json_documents reads standalone line-level JSON or explicit JSON fences
+using JSONDecoder boundaries, preserving outside commentary. decode_model_query_envelope
+accepts exactly one valid optional envelope with that commentary; queries are never
+rewritten, synthesized, selected by domain or clipped to a fixed count. Ordinary plain
+query lists retain their existing reader. Duplicate fields, invalid/nested envelopes,
+multiple documents and inline prose examples do not become executable envelopes.
+decode_model_artifact_kind reads the same fragments; multiple declarations remain conflicts.
+No prompts/model requests, native RAG, budgets, tool loops, roles or professional decisions changed.
+This wires already authored literal queries into the existing frozen model→RAG path.
+Regression: test_model_rag_query_declaration (1/7/19/30 queries, fences, preamble/tail,
+quoted braces, ambiguity and invalid shapes). Red10/35PASS; related148PASS.
+Canonical/install/live903 pending; no release or readiness assertion.
+
+Installed902/0.31.174, commitc7647784, patch17.77s/runtime hashes PASS.
+Canonical3394PASS/20existing skips/5warnings, metadata31PASS, focused81PASS.
+Live BAP901 on unchanged default user profile/model connection r8, identityd843191a:
+B0 failed39.11s with MODEL_RAG_QUERY_LIST_EMPTY/no artifact. Public session history817
+preserved actual model output: 19 valid queries in JSON after a prose preface, then
+18 valid queries in a fenced JSON after commentary; decoder rejected both.
+This is a transport false-empty, not evidence that the model or catalogue lack queries.
+B1 completed348.56s/19model rows/1downloaded41417byte XLSX, SHA9aa40024.
+All input delivered (no truncation); one PDF_TEXT row unanswered. 13positions built,
+calculated0, confirmed0/preliminary251771.08. Statuses8NEEDS_RESEARCH/9ANALOGUE_CANDIDATE/
+2MISSING, zero EXACT; 4NRSP gaps,6resource groups,1KAC,2unit conflicts.
+This is measured progress in delivery, NOT professional acceptance. Customer-ready false.
+Cloud disabled/budget0; source/FSEM hours mismatch, ordinary basic chat1FAIL,
+large input and fresh installer acceptance remain open.
+
 ## 902: verify actual calculator row ownership
 
 collect_lsr_price_gaps checks the actual row.source ownership contract:

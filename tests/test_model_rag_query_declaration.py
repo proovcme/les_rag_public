@@ -8,6 +8,9 @@ last line addressed instead of being executed as if the list were complete.
 """
 from __future__ import annotations
 
+import json
+import pytest
+
 from proxy.services import chat_evidence_application_service as service
 
 
@@ -46,6 +49,48 @@ def test_query_commentary_does_not_hide_literal_queries_or_enable_an_empty_lsr()
     # A plain model-authored query remains supported without any envelope.
     ordinary = service.read_model_query_response("Установка прибора на стене")
     assert [q.text for q in ordinary["queries"]] == ["Установка прибора на стене"]
+
+
+@pytest.mark.parametrize("fenced", [False, True])
+@pytest.mark.parametrize("count", [1, 7, 19, 30])
+def test_query_envelope_with_outer_commentary_preserves_every_literal_query(fenced, count):
+    queries = [f'Установка изделия {index}: размер {{2,5}}; марка "A-{index}"' for index in range(count)]
+    body = json.dumps({"artifact_kind": "lsr", "queries": queries, "commentary": "Inner note"}, ensure_ascii=False)
+    wrapper = f"```json\n{body}\n```" if fenced else body
+    raw = "Пояснение к поиску:\n\n" + wrapper + "\n\nКонец пояснения."
+    declared = service.read_model_query_response(raw)
+    assert [q.text for q in declared["queries"]] == queries
+    assert declared["artifact_kind_declaration"]["status"] == "declared"
+    assert declared["artifact_kind_declaration"]["artifact_kind"] == "lsr"
+    assert all(text in declared["commentary"] for text in ("Пояснение к поиску:", "Конец пояснения.", "Inner note"))
+    assert service.declared_query_output_diagnostics(raw, declared)["output_shape"] == "query_envelope"
+
+
+@pytest.mark.parametrize("second_kind", ["lsr", "vor"])
+def test_two_query_envelopes_are_ambiguous_even_when_their_targets_match(second_kind):
+    first = json.dumps({"artifact_kind": "lsr", "queries": ["Монтаж первого изделия"]}, ensure_ascii=False)
+    second = json.dumps({"artifact_kind": second_kind, "queries": ["Монтаж второго изделия"]}, ensure_ascii=False)
+    raw = "Пояснение:\n" + first + "\n" + second
+    assert service.decode_model_query_envelope(raw) is None
+    declared = service.read_model_query_response(raw)
+    assert not declared["queries"]
+    assert declared["artifact_kind_declaration"]["status"] == "conflict"
+
+
+@pytest.mark.parametrize("body", [
+    '{"artifact_kind":"lsr","queries":["A"],"queries":["B"]}',
+    '{"artifact_kind":"lsr","queries":["A",12]}',
+    '{"artifact_kind":"lsr","queries":["A\\nB"]}',
+    '{"artifact_kind":"lsr","queries":["A"]',
+    '{"payload":{"artifact_kind":"lsr","queries":["A"]}}',
+])
+def test_commentary_does_not_make_invalid_or_nested_query_envelopes_executable(body):
+    assert service.decode_model_query_envelope("Пояснение:\n" + body) is None
+
+
+def test_inline_json_mentioned_in_prose_is_not_a_query_envelope():
+    raw = 'Пример формата {"artifact_kind":"lsr","queries":["Монтаж"]} приведён в описании.'
+    assert service.decode_model_query_envelope(raw) is None
 
 
 def test_declaration_prompt_and_reader_agree() -> None:

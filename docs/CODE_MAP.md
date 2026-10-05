@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build903: model_lsr_result_contract._model_json_documents → decode_model_query_envelope
+reads model-authored queries with external commentary; decode_model_artifact_kind shares boundaries.
+No inference/RAG/query content changed. Test: test_model_rag_query_declaration. Doc: modules/rag-evidence-flow.
+
 Build902: collect_lsr_price_gaps consumes actual row.source; calculated reuse zero
 does not ask for a price. Regression uses build_position_trace output, not an invented meta field.
 Doc: modules/rag-evidence-flow.
