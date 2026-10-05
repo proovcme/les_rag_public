@@ -56,6 +56,21 @@ def _provider(book: str):
                                    getattr(loaded, "source_name", ""), getattr(loaded, "source_byte_size", -1))
 
 
+def _current_quote(record: Mapping[str, Any]) -> tuple[float | None, str]:
+    """A base price or any other number in the body is not a current quote."""
+    if record.get("price_conflict"):
+        return None, "conflict"
+    if _known_price(record.get("price_current")) and float(record["price_current"]) >= 0:
+        return round(float(record["price_current"]), 2), "published_current_price"
+    if (record.get("price_current") in (None, "")
+            and _known_price(record.get("price_base")) and float(record["price_base"]) >= 0
+            and _known_price(record.get("index")) and float(record["index"]) > 0):
+        value = float(record["price_base"]) * float(record["index"])
+        if math.isfinite(value):
+            return round(value, 2), "indexed_base_price"
+    return None, "unresolved"
+
+
 def read_pricebook_evidence(
     tool: str,
     args: Mapping[str, Any],
@@ -157,6 +172,9 @@ def read_pricebook_evidence(
         rows = list(book.browse(value, limit=limit))
     else:
         row = book.lookup(value)
+        if isinstance(row, Mapping) and row.get("price_conflict"):
+            payload["trace"]["price_conflict"] = dict(row["price_conflict"])
+            return fail("exact resource has conflicting records in the chosen pricebook", conflict=True)
         rows = [row] if isinstance(row, Mapping) else []
     hits = []
     for row in rows:
@@ -164,6 +182,9 @@ def read_pricebook_evidence(
             continue
         record = dict(row)
         source_ref = f"fgis_pricebook:{book_name}@sha256:{source.source_sha256}#resource={record['code']}"
+        current, resolution = _current_quote(record)
+        quote = ({"confirmed_price": current, "price_unit": record.get("unit"),
+                  "price_source": source_ref} if current is not None else None)
         evidence = {
             "schema": "les.pricebook-resource-evidence.v1",
             "pricebook": book_name,
@@ -174,6 +195,8 @@ def read_pricebook_evidence(
             "source_name": source.source_name,
             "source_byte_size": source.source_byte_size,
             "resource": record,
+            "price_evidence": quote,
+            "price_resolution_method": resolution,
             "semantic_applicability": "model_decision_required",
         }
         content = json.dumps(evidence, ensure_ascii=False, sort_keys=True, default=str)
@@ -191,8 +214,9 @@ def read_pricebook_evidence(
             "title": record.get("name"),
             "measure_unit": record.get("unit"),
             "resource_evidence_complete": bool(record.get("code") and record.get("unit")),
-            "price_available": any(_known_price(record.get(key)) for key in ("price_current", "price_current_eff"))
-            or (_known_price(record.get("price_base")) and _known_price(record.get("index"))),
+            "price_available": current is not None,
+            "price_evidence": quote,
+            "price_resolution_method": resolution,
             "semantic_applicability": "model_decision_required",
             "minimum_evidence_body_chars": len(content),
             "global_evidence_id": "pricebook_" + hashlib.sha256(content.encode("utf-8")).hexdigest(),

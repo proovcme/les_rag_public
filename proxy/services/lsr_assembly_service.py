@@ -147,6 +147,8 @@ def _resource_price(
     code = str(res.get("code") or "").strip()
     if code and pricebook is not None:
         rec = pricebook.lookup(code)
+        if rec is not None and rec.get("price_conflict"):
+            return None, "ambiguous_price_record"
         if rec is not None and not book_price_unit_conflict(rec.get("unit"), res.get("unit")):
             # A book row prices the шифр per the unit it states.  The РИМ trace
             # applies the same rule (`rim_lsr_trace_service`), and both engines
@@ -357,6 +359,8 @@ def compute_position(
         price, src = _resource_price(res, pricebook, kac_map)
         if price is None:
             req = _price_requirement(res, pricebook)
+            if src == "ambiguous_price_record":
+                req = {**req, "action": src, "message": "Конфликт записей выбранной книги цен: " + str(res.get("code") or "")}
             if rejected_book_unit:
                 # The book was consulted and refused: asking for a КАЦ price would
                 # send the operator to look for a price the book already has, while

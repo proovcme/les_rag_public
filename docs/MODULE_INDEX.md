@@ -1,5 +1,22 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 895 — адрес выбранного ресурса и конфликтующие записи цен (✅ код/док; live pending)
+
+`model_resource_reference_service` задаёт `resource_slot` полного exact-read.
+`bind_row_evidence_ids` связывает выбранный моделью `Qx.Hy#resource=N` с immutable
+карточкой; `model_resource_binding_service` переносит её точный ресурс только при
+совпадении нормы, показанного тела и расхода калькулятора. Исходный выбор сохраняется.
+`PriceBook.lookup` возвращает явный конфликт при разных записях одного шифра или
+несовпадении региона/периода; оба калькулятора и exact-reader не выбирают первую цену.
+`model_pricebook_evidence_service` даёт typed текущую цену с unit/source вместо
+подтверждения любого числа тела, включая базовую цену, как текущего.
+Доки: [rag-evidence-flow](modules/rag-evidence-flow.md), [ALGO-fgis-price](ALGO-fgis-price.md).
+Тесты: `test_model_resource_reference.py`, `test_pricebook_record_conflict.py`.
+GitHub main712 не сливался с веткой894; fgis-mcp0.3.1 изучен, MCP-зависимости не установлены.
+Сверка публичного API и реальной книги: `artifacts/live_895/source_audit.json`.
+Final offline895:3312passed/20existing skipped, metadata31; остальные gates PASS.
+Installed control pending; профессиональная готовность не объявляется.
+
 894 также устраняет скрытую нулевую температуру query: применяется GUI-профиль
 либо зарегистрированный CHAT_TEMPERATURE, значение видно в model_query_outputs.
 Тесты actual InferenceRequest покрывают B0/B1, repair и явный0; field contract

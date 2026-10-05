@@ -293,10 +293,37 @@ class PriceBook:
         self.quarter = quarter
         self._rows = rows
         self._by_code: dict[str, dict[str, Any]] = {}
+        signatures: dict[str, tuple] = {}
+        duplicate_records: dict[str, list[dict[str, Any]]] = {}
+        conflicts: set[str] = set()
+        basis_conflicts: set[str] = set()
         for rec in rows:
             key = normalize_code(rec.get("code"))
-            if key and key not in self._by_code:
+            if not key:
+                continue
+            signature = tuple(rec.get(field) for field in (
+                "name", "unit", "price_release", "price_base", "price_current", "index",
+                "price_current_eff", "group_no", "group_name", "region", "quarter",
+            ))
+            if key in signatures and signature != signatures[key]:
+                conflicts.add(key)
+            if key in self._by_code:
+                duplicate_records.setdefault(key, [self._by_code[key]]).append(rec)
+            for field, expected in (("region", region), ("quarter", quarter)):
+                observed = rec.get(field)
+                if expected and observed not in (None, "") and str(observed).strip().casefold() != str(expected).strip().casefold():
+                    basis_conflicts.add(key)
+                    conflicts.add(key)
+            if key not in self._by_code:
                 self._by_code[key] = rec
+                signatures[key] = signature
+        for key in conflicts:
+            records = duplicate_records.get(key, [self._by_code[key]])
+            self._by_code[key] = {"code": key, "price_conflict": {
+                "code": "PRICE_RECORD_BASIS_CONFLICT" if key in basis_conflicts else "AMBIGUOUS_PRICE_RECORD",
+                "evidence_count": len(records), "records": records,
+                "region": region, "quarter": quarter,
+            }}
 
     @classmethod
     def from_parquet(cls, parquet_path: str | Path) -> "PriceBook":
@@ -312,7 +339,7 @@ class PriceBook:
         return len(self._by_code)
 
     def lookup(self, code: str) -> Optional[dict[str, Any]]:
-        """Точная цена по коду (с учётом снятия префикса базы). None если нет."""
+        """Точная запись или явный price_conflict без цены; None только если нет."""
         return self._by_code.get(normalize_code(code))
 
     def price(self, code: str, *, method: str = "index") -> Optional[float]:
@@ -370,6 +397,9 @@ class PriceBook:
             # Sort keys are evidence only: exact code, resource-code family, full
             # phrase, complete token coverage, token count. No applicability lives here.
             payload = dict(rec)
+            indexed = self._by_code.get(code, {})
+            if indexed.get("price_conflict"):
+                payload["price_conflict"] = indexed["price_conflict"]
             payload["match"] = {
                 "schema": "fgis_price_lexical_match_v1",
                 "query": str(query or ""),

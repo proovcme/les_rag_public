@@ -382,7 +382,10 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "нормы/пояснения — пересмотр прежней операции, дополнительная работа — новая. "
         "Не объявляй неприменимые необязательные колонки. Дополнительно: "
         "resource_bindings: JSON-массив action=add/replace/exclude/reuse, "
-        "target_resource_code/name, reason, source_refs/basis_ref. "
+        "target_resource_code/name либо target_resource_ref=Qx.Hy#resource=N "
+        "(N — resource_slot в полном read_norm_card), reason, source_refs/basis_ref. "
+        "Адрес выбирает ровно показанный ресурс; его код/название повторять не нужно. "
+        "basis_ref для сохранения/исключения указывает исходную строку или показанное основание. "
         "add/replace: resource_name/code, unit, quantity/quantity_basis. "
         + ", ".join(field for field in OPTIONAL_FIELDS if field != "resource_bindings") + "."
     )

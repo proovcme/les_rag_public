@@ -3180,7 +3180,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12951,
+      "lines": 12973,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4168,7 +4168,7 @@
         "tools/les_mcp_server.py",
         "tools/smeta_release_baseline.py"
       ],
-      "lines": 676,
+      "lines": 706,
       "module": "proxy.services.fgis_price_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -4864,7 +4864,7 @@
         "tests/test_rim_trace_xlsx.py",
         "tools/les_mcp_server.py"
       ],
-      "lines": 623,
+      "lines": 627,
       "module": "proxy.services.lsr_assembly_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -5466,7 +5466,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 420,
+      "lines": 423,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -5514,7 +5514,7 @@
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_research_evidence_actions.py"
       ],
-      "lines": 209,
+      "lines": 233,
       "module": "proxy.services.model_pricebook_evidence_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5559,7 +5559,7 @@
         "tests/test_model_research_evidence_actions.py",
         "tests/test_model_research_tool_service.py"
       ],
-      "lines": 720,
+      "lines": 724,
       "module": "proxy.services.model_research_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5579,7 +5579,7 @@
         "proxy/services/rim_lsr_trace_service.py",
         "tests/test_model_resource_binding_service.py"
       ],
-      "lines": 304,
+      "lines": 322,
       "module": "proxy.services.model_resource_binding_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6656,7 +6656,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 3134,
+      "lines": 3143,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -20465,7 +20465,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 702,
     "tracked_python_files": 1085,
-    "tracked_python_lines": 382217
+    "tracked_python_lines": 382331
   },
   "warnings": []
 }

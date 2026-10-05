@@ -3071,6 +3071,8 @@ def bind_row_evidence_ids(
     rows: Sequence[Mapping[str, Any]],
     evidence_chunks: Sequence[Any],
 ) -> list[dict[str, Any]]:
+    from proxy.services.model_resource_reference_service import parse_resource_reference, shown_resource_record
+
     alias_to_global: dict[str, str] = {}
     alias_to_card: dict[str, str] = {}
     alias_to_query: dict[str, str] = {}
@@ -3079,6 +3081,7 @@ def bind_row_evidence_ids(
     global_to_resource_codes: dict[str, set[str]] = {}
     global_to_bodies: dict[str, str] = {}
     global_to_body_shown: dict[str, bool] = {}
+    global_to_resource_cards: dict[str, Mapping[str, Any]] = {}
     # Whole delivered RAG bodies prove their conditions, not complete typed
     # resource consumption; exact native reads expose that separate metadata.
     delivered_norm_identities: set[str] = set()
@@ -3117,6 +3120,8 @@ def bind_row_evidence_ids(
             global_to_query[global_id] = str(meta.get("model_query_text") or "")
             body = str((getattr(chunk, "content", "") if body_shown else meta.get("model_inventory_view")) or "")
             global_to_bodies[global_id] = body
+            if body_shown:
+                global_to_resource_cards[global_id] = meta
             resource_codes = {str(meta.get("resource_code") or "").strip()}
             for resource in [*(meta.get("resources") or []), *(meta.get("resource_preview") or [])]:
                 if isinstance(resource, Mapping):
@@ -3204,6 +3209,9 @@ def bind_row_evidence_ids(
                     action_checks.append({"index": index, "invalid_action_object": True})
                     continue
                 refs = extract_model_evidence_refs(action.get("source_refs"))
+                pointer = parse_resource_reference(action.get("target_resource_ref"))
+                if pointer and pointer[0] not in refs:
+                    refs.append(pointer[0])
                 prior = old_bindings.get(str(index))
                 prior = prior if isinstance(prior, Mapping) else {}
                 resolved = {}
@@ -3221,6 +3229,20 @@ def bind_row_evidence_ids(
                           if identity in global_to_bodies]
                 check = {"index": index, "evidence_bindings": resolved,
                          "unresolved_refs": [ref for ref in refs if ref not in resolved]}
+                if "target_resource_ref" in action:
+                    target = None
+                    if pointer:
+                        identity = resolved.get(pointer[0], "")
+                        if (identity and global_to_body_shown.get(identity) is True
+                                and ciphers_identical(str(payload.get("norm_code") or ""),
+                                                      global_to_card.get(identity, ""))):
+                            target = shown_resource_record(global_to_resource_cards.get(identity, {}),
+                                                           global_to_bodies.get(identity, ""), pointer[1])
+                    check["target_resource_reference_resolved"] = target is not None
+                    if target is not None:
+                        check["target_resource"] = target
+                        check["target_code_in_refs"] = True
+                        check["target_name_in_refs"] = True
                 for field, diagnostic in (("target_resource_code", "target_code_in_refs"),
                                           ("resource_code", "resource_code_in_refs"),
                                           ("target_resource_name", "target_name_in_refs")):

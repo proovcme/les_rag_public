@@ -277,6 +277,7 @@ PRICE_ACTION_LABELS = {
     "model_price_without_basis": "цена модели без подтверждённого источника",
     "kac_without_source_unit": "цена КАЦ без источника и подтверждённой единицы",
     "book_price_unit_unknown": "единица цены книги не подтверждена",
+    "ambiguous_price_record": "конфликт записей выбранной книги цен",
     "unresolved_resource_group": "групповой ресурс, нужен конкретный ресурс книги",
     BOOK_UNIT_CONFLICT_ACTION: "цена книги отклонена: единицы не совпадают",
 }
@@ -527,6 +528,7 @@ class PriceTrace:
     #: ``unresolved_resource_group`` (task 2026-09-29 § 3).  It is a listing, never
     #: a choice: the first price of a group is not the group's price.
     group: Optional[Mapping[str, Any]] = None
+    record_conflict: Optional[Mapping[str, Any]] = None
 
 
 #: A norm resource that names a price-book group rather than one member of it.
@@ -542,6 +544,7 @@ RESOURCE_GROUP_ACTION = "unresolved_resource_group"
 #: is neither, it is the double-counting question the operator has to settle.  One
 #: place splits them, so the check sheet, the readiness count and the sum agree.
 PRICE_REASON_PREFIXES = (
+    "ambiguous_price_record:",
     "price_missing:", "card_price_without_basis:", "model_price_without_basis:", "kac_without_source_unit:",
     "position_price_without_basis:", "book_price_unit_unknown:",
     "position_price_kind_unknown:", "position_price_unit_conflict:",
@@ -936,6 +939,9 @@ def _resolve_price_trace(
     book_unit_conflict = ""
     if code and pricebook is not None:
         rec = pricebook.lookup(code)
+        if rec is not None and rec.get("price_conflict"):
+            return PriceTrace(price=None, source="ambiguous_price_record", basis="chosen_pricebook",
+                              action="ambiguous_price_record", record_conflict=rec["price_conflict"])
         if rec is not None:
             # The шифр is in the chosen book; its price may still be for another
             # unit, and reading the number anyway would hand the position a
@@ -1365,6 +1371,8 @@ def build_position_trace(
                 action_label = price_action_label(price.action, price.source)
                 flags.append(f"{action_label}: {res.get('name','?')} ({res.get('code','—')})")
             completeness_reasons.append(f"price_missing:{res.get('code') or res.get('name') or '?'}")
+            if price.record_conflict:
+                completeness_reasons.append(f"ambiguous_price_record:{res.get('code') or res.get('name') or '?'}")
         elif price.action == "card_price_without_basis":
             # Money exists, but nobody owns the number: it stays in the document,
             # is reported as a price gap, breaks the position's completeness and
@@ -1417,6 +1425,7 @@ def build_position_trace(
                 "price_basis": price.basis or "",
                 "price_source": price.source or "",
                 "price_book_unit": price.book_unit or "",
+                **({"price_record_conflict": dict(price.record_conflict)} if price.record_conflict else {}),
                 "resource_group": str((price.group or {}).get("group") or ""),
                 "code_derivation": str(res.get("code_derivation") or ""),
                 **({"resource_binding": dict(res["resource_binding"])} if isinstance(res.get("resource_binding"), Mapping) else {}),

@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build895: `model_resource_reference_service` — адрес полного ресурса карточки;
+`model_research_tool_service` показывает source slots; `bind_row_evidence_ids`
+фиксирует их immutable provenance; `model_resource_binding_service` разрешает
+указанный моделью адрес без подбора ресурса. `fgis_price_service.PriceBook` сохраняет
+конфликт ценовых записей, оба калькулятора и `model_pricebook_evidence_service`
+сообщают его вместо выбора первой строки. Алгоритмы: rag-evidence-flow/ALGO-fgis-price.
+
 Build889 export: `rim_trace_xlsx_service._set_formula` запоминает готовые
 числа трассы; `_save_calculated_workbook` записывает OOXML formula caches
 основного листа без исполнения формул. Оба render entrypoints используют его.

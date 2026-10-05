@@ -18,7 +18,7 @@ from proxy.smeta_core.unit_contract import norm_measure
 RESOURCE_BINDING_FIELDS = frozenset({
     "action", "resource_name", "resource_code", "unit", "quantity", "quantity_basis",
     "target_resource_code", "target_resource_name", "explicit_price", "price_source_ref",
-    "reason", "basis_ref", "source_refs", "kind",
+    "reason", "basis_ref", "source_refs", "kind", "target_resource_ref",
 })
 RESOURCE_REVIEW_FIELDS = frozenset({
     "status", "reason", "labor_status", "labor_reason", "machine_status", "machine_reason",
@@ -35,6 +35,7 @@ def resource_binding_conflict_note(conflict: Mapping[str, Any]) -> str:
     reason = str(conflict.get("reason") or "")
     messages = {
         "resource target is missing or ambiguous": "Целевой ресурс отсутствует или указан неоднозначно.",
+        "resource address is unresolved or disagrees with its target": "Адрес ресурса не разрешён или противоречит указанному ресурсу.",
         "resource action has unresolved evidence references": "Ссылки действия над ресурсом не разрешены.",
         "resource action target, selection or price is not substantiated by shown evidence": "Целевой ресурс, выбор или цена не подтверждены показанными источниками.",
         "quantity must be positive and finite": "Количество должно быть положительным конечным числом.",
@@ -180,8 +181,21 @@ def resource_binding_position_fields(
             try:
                 if not isinstance(authored, list) or not isinstance(item, Mapping):
                     raise ValueError("resource_bindings must be an array of objects")
-                binding = _binding(item, work_id)
                 check = by_index.get(index)
+                effective = dict(item)
+                pointer = effective.pop("target_resource_ref", None)
+                pointed_target = None
+                if "target_resource_ref" in item:
+                    if (not isinstance(pointer, str) or check is None
+                            or check.get("target_resource_reference_resolved") is not True
+                            or not isinstance(check.get("target_resource"), Mapping)):
+                        raise ValueError("resource address is unresolved or disagrees with its target")
+                    pointed_target = check["target_resource"]
+                    for field, key in (("target_resource_code", "code"), ("target_resource_name", "name")):
+                        if effective.get(field) and _key(effective[field]) != _key(pointed_target.get(key)):
+                            raise ValueError("resource address is unresolved or disagrees with its target")
+                        effective[field] = str(pointed_target.get(key) or "")
+                binding = _binding(effective, work_id)
                 _check_evidence(binding, check)
                 known_refs = {str(ref).casefold() for ref in (check.get("evidence_bindings", {}) if check else {})}
                 row_bindings = row.get("evidence_bindings")
@@ -199,7 +213,9 @@ def resource_binding_position_fields(
                         raise ValueError("reuse price source is not its original source or resolved evidence")
                 matches = [i for i, target in enumerate(resources)
                            if (not binding.target_resource_code or _key(target.get("code")) == _key(binding.target_resource_code))
-                           and (not binding.target_resource_name or _key(target.get("name")) == _key(binding.target_resource_name))]
+                           and (not binding.target_resource_name or _key(target.get("name")) == _key(binding.target_resource_name))
+                           and (pointed_target is None or all(target.get(key) == pointed_target.get(key)
+                                for key in ("kind", "code", "name", "unit", "per_unit")))]
                 target = None
                 if binding.action in {"replace", "exclude", "reuse"}:
                     if len(matches) != 1:
@@ -212,6 +228,8 @@ def resource_binding_position_fields(
                               "quantity_basis": binding.quantity_basis,
                               "target_resource_code": binding.target_resource_code,
                               "target_resource_name": binding.target_resource_name}
+                if pointer is not None:
+                    provenance["target_resource_ref"] = pointer
                 if check is not None:
                     provenance["evidence_bindings"] = copy.deepcopy(check.get("evidence_bindings", {}))
                 replacement = None

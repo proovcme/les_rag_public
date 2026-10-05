@@ -1,5 +1,24 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-05 — target serialization and first-row price selection (candidate895)
+
+An additional red2 reproduced accepting a base-column amount, or a conflicting
+price row shown by search, as a quoted current price. The current quote now carries
+explicit typed amount/unit/source; original components remain visible separately.
+Published current wins over index and published zero is valid. Focused133 passed;
+the final canonical rerun is artifacts/gates_895_r2.
+
+Installed894 compact controls: one model action used a generic resource name;
+another used the exact code but omitted action provenance. 895 offers a literal
+Q/H#resource slot from a fully delivered immutable exact card. The model still
+authors action and basis; invalid, deferred, mismatching or cross-packet pointers
+remain conflicts. Red3 proves the missing reference transport; focused154 passed.
+Separately, synthetic conflicting prices were silently resolved by input order
+(red7). PriceBook now retains all conflicting records without a price; both
+calculators and exact reader report the conflict. The real SPbQ32026 book has0
+such conflicts, so this does not explain earlier missing amounts. Source proof
+and controls are in artifacts/live_895; full gates/live pending, not accepted.
+
 ## 2026-10-03 — formula-only XLSX unreadable without recalculation (candidate889)
 
 Live888 repack has226 formulas with empty cached values. Offline arithmetic matches
