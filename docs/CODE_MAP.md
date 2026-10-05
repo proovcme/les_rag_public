@@ -1,5 +1,15 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build899: /api/chat/repack-lsr сверяет saved decisions с полным source catalog
+без inference и передаёт неполноту через workbook_document_issues.
+operation_identity исключает ровно4 server-owned catalog annotations.
+Sheet delivery и terminal output coverage считаются отдельно;
+workbook_document_issues переносит пропущенные source rows в incomplete artifact.
+collect_lsr_price_gaps → build_lsr_result_readiness сообщает неприменённые
+действия над ресурсами без выбора ресурса или нового вызова модели.
+Док: modules/rag-evidence-flow; tests/test_lsr_readiness_transport.py,
+tests/test_model_rag_sheet_evidence_reads.py.
+
 Build898: `decode_model_inline_rows` читает punctuated named records на общей
 границе B0/B1. List presentation снимается лексически; comma/semicolon являются
 разделителями только перед подписью, nested JSON duplicates сохраняются raw.

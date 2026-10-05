@@ -848,6 +848,7 @@ def workbook_document_issues(
     *,
     errors: Sequence[str] = (),
     transport_diagnostics: Sequence[Mapping[str, Any]] = (),
+    unaccounted_result_locators: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Server-owned document gaps, separate from every model-authored decision."""
     job = research_job if isinstance(research_job, Mapping) else {}
@@ -859,6 +860,10 @@ def workbook_document_issues(
                                   else "Промежуточная ревизия: исследование ещё не завершено."),
                        "job_status": str(job.get("status") or ""),
                        "remaining_locators": remaining})
+    if unaccounted_result_locators:
+        issues.append({"code": "MODEL_RESULT_SOURCE_ROWS_UNACCOUNTED",
+                       "reason": "Не все исходные строки получили решение модели.",
+                       "remaining_locators": list(unaccounted_result_locators)})
     for error in errors:
         issues.append({"code": str(error), "reason": str(error)})
     for proposal in (job.get("unapplied_proposals") or ()) if str(job.get("status") or "") != "complete" else ():
@@ -7609,6 +7614,7 @@ async def _execute_chat_evidence_application(
     if (profile_snapshot or {}).get("effective_skill_modules"):
         retrieval_trace["effective_skill_modules"] = list(profile_snapshot["effective_skill_modules"])
     source_incomplete_locators: list[str] = []
+    model_delivered_source_locators: set[str] = set()
     answer_finish_reason = ""
     model_driven_retrieval = profile_uses_model_driven_retrieval(profile_snapshot)
     sheet_pass_active = sheet_pass_should_run(
@@ -9017,6 +9023,11 @@ async def _execute_chat_evidence_application(
                         for item in ((research_job or {}).get("accepted_rows") or ())
                         if isinstance(item, Mapping)
                     ]
+                    # Durable model decisions establish delivery on earlier turns;
+                    # they are not evidence that a new answer contains those rows.
+                    model_delivered_source_locators.update(
+                        cited_source_row_keys(accumulated_rows, source_catalog)
+                    )
                     sheet_pass_evidence_chunks: list[_ModelRagEvidenceChunk] = [
                         evidence_chunk_from_record(item)
                         for item in ((research_job or {}).get("evidence") or ())
@@ -10063,6 +10074,9 @@ async def _execute_chat_evidence_application(
                             t_llm_call = time.time()
                             pass_answer, usage = await _sheet_pass_llm(chat_body)
                             t_llm += time.time() - t_llm_call
+                            model_delivered_source_locators.update(
+                                set(packet) - set(source_incomplete_locators)
+                            )
                             confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                                         saved_read_receipts,
                                                         inventory_refs=resumed_inventory_refs, body_refs=resumed_body_refs)
@@ -10856,11 +10870,10 @@ async def _execute_chat_evidence_application(
                     }
                     omitted_evidence_refs = pass_omitted
                     crag_status = "MODEL_OUTPUT"
-                    cited_all = cited_source_row_keys(accumulated_rows, source_catalog)
                     source_incomplete_locators = [
                         locator
                         for locator in source_catalog.work_locators()
-                        if locator not in cited_all
+                        if locator not in model_delivered_source_locators
                     ]
                     retrieval_trace["tool_loop"]["sheet_count"] = sheet_count
                     retrieval_trace["tool_loop"]["accumulated_rows"] = len(
@@ -11993,6 +12006,10 @@ async def _execute_chat_evidence_application(
                             sheet_coverage = parse_attachment_sheet_coverage(
                                 attachment_context
                             )
+                        result_accounted_locators = (
+                            cited_source_row_keys(model_result_rows, source_catalog)
+                            if source_catalog is not None else set()
+                        )
                         retrieval_trace["attachment_integrity"] = {
                             "truncated": bool(source_incomplete_locators)
                             if source_catalog is not None
@@ -12004,6 +12021,10 @@ async def _execute_chat_evidence_application(
                             ),
                             "omitted_source_count": len(source_incomplete_locators),
                             "omitted_source_locators": list(source_incomplete_locators[:40]),
+                            "unaccounted_result_locators": [
+                                locator for locator in source_catalog.work_locators()
+                                if locator not in result_accounted_locators
+                            ] if source_catalog is not None else [],
                             "finish_reason": answer_finish_reason,
                             "sheet_pass": sheet_pass_done,
                         }
@@ -12151,9 +12172,14 @@ async def _execute_chat_evidence_application(
                                 or str(error).startswith(("source_quantity_unconfirmed:", "source_quantity_mismatch:"))
                                 for error in model_result_blocking_errors)
                     )
+                    packaged_source_locators = cited_source_row_keys(model_result_rows, source_catalog)
                     document_issues = workbook_document_issues(
                         research_job, errors=model_result_blocking_errors,
                         transport_diagnostics=transport_diagnostics,
+                        unaccounted_result_locators=[
+                            locator for locator in source_catalog.work_locators()
+                            if locator not in packaged_source_locators
+                        ] if source_catalog is not None else [],
                     )
                     if can_package_saved_draft:
                         model_result_rows = saved_draft_rows

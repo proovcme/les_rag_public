@@ -1682,7 +1682,7 @@
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_repack_target.py"
       ],
-      "lines": 4807,
+      "lines": 4816,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -3185,7 +3185,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 12980,
+      "lines": 13006,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4947,7 +4947,7 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_stall_bound_25.py"
       ],
-      "lines": 1125,
+      "lines": 1134,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4967,10 +4967,11 @@
         "proxy/services/rim_lsr_trace_service.py",
         "proxy/services/workbook_research_job_service.py",
         "tests/test_finalization_defects_782.py",
+        "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_source_coverage_service.py",
         "tests/test_rim_lsr_trace_service.py"
       ],
-      "lines": 447,
+      "lines": 451,
       "module": "proxy.services.lsr_source_coverage_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5000,13 +5001,14 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 1611,
+      "lines": 1630,
       "module": "proxy.services.lsr_workbook_adapter_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/services/__init__.py",
         "proxy/services/attachment_source_catalog_service.py",
         "proxy/services/fgis_price_service.py",
+        "proxy/services/model_resource_binding_service.py",
         "proxy/services/rim_lsr_trace_service.py",
         "proxy/services/rim_trace_xlsx_service.py"
       ],
@@ -5591,6 +5593,7 @@
     },
     {
       "inbound": [
+        "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/rim_lsr_trace_service.py",
         "tests/test_model_resource_binding_service.py",
         "tests/test_model_resource_reference.py"
@@ -11869,11 +11872,12 @@
     },
     {
       "inbound": [],
-      "lines": 113,
+      "lines": 169,
       "module": "tests.test_lsr_readiness_transport",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/fsem_machinist_service.py",
+        "proxy/services/lsr_source_coverage_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/rim_lsr_trace_service.py",
         "tests/lsr_citation_support.py",
@@ -12588,7 +12592,7 @@
         "tests/test_model_query_reasoning.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 1265,
+      "lines": 1287,
       "module": "tests.test_model_rag_sheet_evidence_reads",
       "outbound": [
         "proxy/routers/chat.py",
@@ -15865,7 +15869,7 @@
     },
     {
       "inbound": [],
-      "lines": 369,
+      "lines": 397,
       "module": "tests.test_workbook_repack_target",
       "outbound": [
         "backend/runtime_paths.py",
@@ -20575,7 +20579,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 707,
     "tracked_python_files": 1091,
-    "tracked_python_lines": 383089
+    "tracked_python_lines": 383262
   },
   "warnings": []
 }

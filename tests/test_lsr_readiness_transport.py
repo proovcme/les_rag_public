@@ -52,6 +52,62 @@ def test_history_preserves_coverage_identity_without_unbounded_body():
     assert all("raw_card" not in row for row in projection)
 
 
+@pytest.mark.parametrize("authored_ids", [True, False])
+def test_catalog_annotations_keep_coverage_identity_from_the_model_boundary(monkeypatch, authored_ids):
+    from proxy.services.lsr_source_coverage_service import operation_identity
+
+    parent = cited(_active_resource_norm(monkeypatch))
+    child = dict(parent, source_row="S!R3", operation_id="child", norm_code="",
+                 covered_by_work_id="R2", coverage="Included by the cited composition")
+    parent["norm_status"] = "NEEDS_RESEARCH"
+    if not authored_ids:
+        parent.pop("operation_id")
+        child.pop("operation_id")
+    rows = [parent, child]
+    before = deepcopy(rows)
+    annotated = deepcopy(rows)
+    for row in annotated:
+        row.update(_catalog_source_values=[row["title"], row["unit"], str(row["quantity"])],
+                   _catalog_source_numbers=[float(row["quantity"])], _catalog_source_quantity_known=True,
+                   _catalog_source_unit=row["unit"])
+    trace = rim.build_lsr_trace_from_visible_rows(annotated)
+    assert trace["row_projection"][1]["status"] == "covered"
+    assert [operation_identity(row) for row in rows] == [operation_identity(row) for row in annotated]
+    readiness = chat.build_lsr_result_readiness(packaged=True, rows=rows,
+        pricing_status="priced_partial", row_projection=trace["row_projection"])
+    assert {gap["locator"] for gap in readiness["dimensions"]["norms"]["gaps"]} == {"S!R2"}
+    assert readiness["estimate_complete"] is False and rows == before
+
+
+def test_catalog_annotations_do_not_erase_distinct_authored_decisions():
+    from proxy.services.lsr_source_coverage_service import operation_identity
+
+    row = {"source_row": "S!R2", "row_role": "work", "title": "Literal", "unit": "m", "quantity": 12, "norm_code": "A"}
+    for delta in ({"quantity": 13}, {"norm_code": "B"}, {"covered_by_work_id": "S!R3"}, {"evidence_refs": ["Q2.H1"]}):
+        assert operation_identity(row) != operation_identity({**row, **delta})
+
+
+@pytest.mark.parametrize("with_fsem_gap", [False, True])
+def test_rejected_resource_action_is_an_actionable_gap_without_requesting_a_price(with_fsem_gap):
+    conflict = {"code": "resource_binding_conflict", "reason": "resource target is missing or ambiguous"}
+    position = {"code": "Authored norm", "name": "Reused material", "source_row": "S!R2",
+                "rows": [], "summary": {"resource_binding_conflicts": [conflict]}}
+    trace = {"sections": [{"positions": [position, {**position, "source_row": "S!R3"}]}]}
+    before = deepcopy(trace)
+    gaps = collect_lsr_price_gaps(trace)
+    assert len(gaps) == 2
+    assert all(gap["price_action"] == "resource_binding_conflict" for gap in gaps)
+    assert all("Целевой ресурс отсутствует" in gap["action"] for gap in gaps)
+    assert all("Задайте цену" not in gap["action"] for gap in gaps)
+    if with_fsem_gap:
+        gaps.append({"resource": "ОТм", "price_action": "needs_fsem_resolution", "action": "Сверьте часы ФСЭМ"})
+    ready = chat.build_lsr_result_readiness(packaged=True, pricing_status="priced_partial", price_gaps=gaps)
+    action = ready["dimensions"]["prices"]["action"]
+    assert "действия над ресурсами" in action and "Задайте" not in action
+    assert len(ready["dimensions"]["prices"]["gaps"]) == len(gaps)
+    assert ready["estimate_complete"] is False and trace == before
+
+
 class _TariffBook:
     region = "Test region"
     quarter = "Test period"

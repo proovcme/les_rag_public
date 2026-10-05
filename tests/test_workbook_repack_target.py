@@ -137,6 +137,34 @@ async def test_jobless_legacy_repack_keeps_lsr_default(monkeypatch):
     assert calls[0][0]["args"]["decisions"] == [ROW]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("jobless", [False, True])
+@pytest.mark.parametrize("missing_result", [False, True])
+async def test_repack_rechecks_source_coverage_without_model_or_row_changes(monkeypatch, jobless, missing_result):
+    job, calls, _ = _boundary(monkeypatch, context={"artifact_intent": "lsr"})
+    module = attachment_source_catalog_service
+    catalog = module.AttachmentSourceCatalog(original_name="literal.xlsx", sheets=(("S", 2),), rows=tuple(
+        module.CatalogRow(locator=f"S!R{i}", sheet="S", excel_row=i, values=("Literal", "12"),
+                          line=f"S!R{i}: Literal 12", numbers=(12.0,), row_classification="work")
+        for i in (2, 3)))
+    monkeypatch.setattr(module, "load_catalog_from_attachment_id", lambda *args: catalog)
+    if not missing_result:
+        job["accepted_rows"].append({**ROW, "source_row": "S!R3"})
+    before = copy.deepcopy(job)
+    request = chat.LsrRepackRequest(session_id="own-session", job_id="" if jobless else job["job_id"],
+        attachment_id="read_123456abcdef", decisions=copy.deepcopy(job["accepted_rows"]) if jobless else [])
+    result = await chat.repack_lsr_without_model(request, _user={})
+    assert result["model_called"] is False and len(calls) == 1 and job == before
+    call, context = calls[0]
+    assert call["args"]["decisions"] == before["accepted_rows"]
+    issues = context["document_issues"]
+    assert bool(call["args"].get("draft")) is missing_result
+    assert bool(issues) is missing_result
+    if missing_result:
+        assert any(issue["code"] == "MODEL_RESULT_SOURCE_ROWS_UNACCOUNTED"
+                   and issue["remaining_locators"] == ["S!R3"] for issue in issues)
+
+
 async def _actual_unpacked_job(tmp_path, monkeypatch):
     from proxy.services.lsr_workbook_adapter_service import requested_price_basis
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService

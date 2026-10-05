@@ -679,7 +679,16 @@ def build_lsr_result_readiness(
             )
     elif structured_prices:
         fsem_gaps = [item for item in structured_prices if item.get("price_action") == "needs_fsem_resolution"]
-        if fsem_gaps:
+        resource_action_gaps = [item for item in structured_prices if item.get("price_action") == "resource_binding_conflict"]
+        if resource_action_gaps:
+            prices_action = (
+                "Уточните неприменённые действия над ресурсами и их основания в чате."
+                + (" Сверьте детализацию ОТм по ФСЭМ." if fsem_gaps else "")
+                + " Ввод цены не устраняет эти конфликты."
+                + (" Закройте остальные вопросы цен по ресурсам ниже."
+                   if len(resource_action_gaps) + len(fsem_gaps) != len(structured_prices) else "")
+            )
+        elif fsem_gaps:
             prices_action = (
                 "Сверьте детализацию ОТм по ФСЭМ; ввод цены не устраняет расхождение часов."
                 + (" Закройте остальные вопросы цен по ресурсам ниже." if len(fsem_gaps) != len(structured_prices) else "")

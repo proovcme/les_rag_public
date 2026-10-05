@@ -1,5 +1,44 @@
 # RAG evidence flow
 
+Build899 также проверяет неполное покрытие при /api/chat/repack-lsr,
+включая jobless и старое complete задание, без вызова модели и изменения строк.
+Регрессия: test_workbook_repack_target, точный исходный каталог.
+
+## 899: доставка исходника, полнота результата и identity
+
+Каталожные _catalog_source_* annotations не входят в fallback operation
+identity: профессиональные поля решения по-прежнему входят в SHA. В готовности
+сохраняется та же связь covered, что в расчётной проекции.
+Sheet pass отдельно считает доставленные packet locators и исходные строки,
+не получившие решения в terminal result (unaccounted_result_locators).
+Пропущенное решение не объявляется усечением вложения. При неполном покрытии
+MODEL_RESULT_SOURCE_ROWS_UNACCOUNTED доходит до document_issues и priced_partial
+также в прямом B0, без нового модельного цикла и без удаления рассчитанных строк.
+collect_lsr_price_gaps переносит уже существующие resource_binding_conflicts
+в понятные действия карточки готовности. Ввод цены не объявляется исправлением
+ресурсного конфликта. Нормы, ресурсы, ставки, часы, допуски и запросы не меняются.
+
+Источник дефектов — installed898 matched controls и feedback.
+Установлена898/0.31.170, commit397fcf60, 11 runtime hashes совпадают;
+native RRF PASS. Matched query-off B0/B1 имеют identity79898d0e и скачали
+по одному XLSX за189.41/230.05s. B0 учёл2/2 исходных строк, B1 только1/2;
+оба priced_partial, confirmed0.00. Обычное замечание в том же чате за130.12s
+вернуло2/2 строк; книга sankt-peterburg_3kv2026 наследована из задания.
+Resource adjustment остаётся конфликтом; ФСЭМ0.02/0.022 не согласован.
+Это экспериментальный immutable профиль, не глобальный пользовательский default.
+Большой varied input, default flow и installer приёмку не прошли.
+Basic8979PASS/1FAIL остаётся незакрытым; basic898 не повторялся.
+Облако выключено, токенов облака0; nativeEXE5.1.813.
+
+Регрессии: test_lsr_readiness_transport и test_model_rag_sheet_evidence_reads.
+Focused70passed + repack33passed; canonical/install/live899 pending.
+
+Canonical899 final snapshot artifacts/gates_899_r2:3381passed/20existing skipped/5warnings,
+metadata31passed; verify, architecture, docs/map и active artifacts PASS.
+Чужие UI-правки исключены и SHA сохранены. Первый snapshot superseded до
+финального изменения repack; готовность определяется только final r2.
+Install/live899 pending; professional acceptance не пройдена.
+
 ## 898: общий разбор явно подписанных записей
 
 `decode_model_inline_rows` читает подписи полей в строках с `|`, запятой или

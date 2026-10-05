@@ -1,5 +1,20 @@
 # Версии программного контура ЛЕС
 
+Кандидат0.31.171/build899: покрытие/operation identity/действия готовности.
+Dependency graph, модели и финансовые правила прежние.
+Установлена898/0.31.170, commit397fcf60, 11 runtime hashes совпадают;
+native RRF PASS. Matched query-off B0/B1 имеют identity79898d0e и скачали
+по одному XLSX за189.41/230.05s. B0 учёл2/2 исходных строк, B1 только1/2;
+оба priced_partial, confirmed0.00. Обычное замечание в том же чате за130.12s
+вернуло2/2 строк; книга sankt-peterburg_3kv2026 наследована из задания.
+Resource adjustment остаётся конфликтом; ФСЭМ0.02/0.022 не согласован.
+Это экспериментальный immutable профиль, не глобальный пользовательский default.
+Большой varied input, default flow и installer приёмку не прошли.
+Basic8979PASS/1FAIL остаётся незакрытым; basic898 не повторялся.
+Облако выключено, токенов облака0; nativeEXE5.1.813.
+
+Focused70passed + repack33passed; canonical/install/live899 pending. Customer-ready false.
+
 Кандидат0.31.170/build898: буквальный разбор punctuated named records, включая
 bullet/numbered lists; dependency graph, модели и финансовые правила прежние.
 Installed897 f3c348e4: nativeRRF PASS, basic9PASS/1FAIL, matched B1 query output
@@ -177,9 +192,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.170` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `898` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.898` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.171` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `899` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.899` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,
@@ -187,6 +202,12 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 и остаётся лишь одним из пользовательских способов запуска Qdrant. Статус фактической установки и публикации фиксируется только в
 `docs/RELEASE_LEDGER.md`. Новая несовместимая возможность получает следующий minor SemVer;
 готовый стабильный продукт — `1.0.0`.
+
+Canonical899 final snapshot artifacts/gates_899_r2:3381passed/20existing skipped/5warnings,
+metadata31passed; verify, architecture, docs/map и active artifacts PASS.
+Чужие UI-правки исключены и SHA сохранены. Первый snapshot superseded до
+финального изменения repack; готовность определяется только final r2.
+Install/live899 pending; professional acceptance не пройдена.
 
 ## Рабочий контур Windows
 

@@ -105,7 +105,11 @@ def work_row_key(row: Mapping[str, Any]) -> str:
 
 
 _VOLATILE_IDENTITY_FIELDS = frozenset(
-    {"operation_id", "revision", "revision_origin", "content_sha256"}
+    {"operation_id", "revision", "revision_origin", "content_sha256",
+     # These server-owned annotations describe source cells, not an authored
+     # operation. The workbook adapter adds them after the model boundary.
+     "_catalog_source_values", "_catalog_source_numbers",
+     "_catalog_source_quantity_known", "_catalog_source_unit"}
 )
 
 

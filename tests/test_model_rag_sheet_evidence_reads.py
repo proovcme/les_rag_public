@@ -57,6 +57,26 @@ def _native(tool, **arguments):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_unanswered_row_is_not_reported_as_an_unsent_attachment(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35,
+                           group_char_budget=7000, partial_final=True, variant=variant)
+    integrity = run.result["retrieval_trace"]["attachment_integrity"]
+    assert integrity["omitted_source_locators"] == [] and integrity["truncated"] is False
+    assert integrity["unaccounted_result_locators"] == ["S!R3"]
+    assert run.executions[0][1]["status"] == "partial"
+    assert run.executions[0][1]["pricing_status"] == "priced_partial"
+    assert run.executions[0][1]["confirmed_amount"] == 0
+    assert run.executions[0][1]["preliminary_amount"] == 1200
+    issues = run.executions[0][1]["document_issues"]
+    assert any(issue["code"] == "MODEL_RESULT_SOURCE_ROWS_UNACCOUNTED"
+               and issue["remaining_locators"] == ["S!R3"] for issue in issues)
+    assert "модели не переданы все строки" not in run.result["answer"]
+    assert "исходник усечён" not in run.result["answer"]
+    assert len(run.requests) == 4, "an omitted decision must not force extra inference"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stop_at", [5, 6, 7])
 async def test_budget_stop_after_terminal_packet_delivers_partial_workbook_without_more_inference(tmp_path, monkeypatch, stop_at):
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
@@ -872,7 +892,8 @@ async def test_terminal_sheet_result_packages_before_35_candidate_groups_are_dra
     assert job["remaining"] == (["S!R3"] if partial_final else [])
     assert run.executions[0][1]["status"] == ("partial" if partial_final else "complete")
     assert run.executions[0][1]["checkpoint"]["status"] == "complete"  # Mechanical packaging succeeded.
-    assert trace["attachment_integrity"]["omitted_source_locators"] == (["S!R3"] if partial_final else [])
+    assert trace["attachment_integrity"]["omitted_source_locators"] == []
+    assert trace["attachment_integrity"]["unaccounted_result_locators"] == (["S!R3"] if partial_final else [])
     assert job["held_packet"]["queries"]
     # Native Q handles reserve their own high-water mark. They must not move
     # the original query-tail cursor or rename its already offered aliases.
@@ -912,7 +933,8 @@ async def test_terminal_packets_continue_only_unseen_rows_and_keep_independent_e
     assert job["status"] == ("paused" if partial_final else "complete")
     assert run.executions[0][1]["status"] == ("partial" if partial_final else "complete")
     assert run.executions[0][1]["checkpoint"]["status"] == "complete"
-    assert run.result["retrieval_trace"]["attachment_integrity"]["omitted_source_locators"] == (["S!R3"] if partial_final else [])
+    assert run.result["retrieval_trace"]["attachment_integrity"]["omitted_source_locators"] == []
+    assert run.result["retrieval_trace"]["attachment_integrity"]["unaccounted_result_locators"] == (["S!R3"] if partial_final else [])
     assert job["status_dimensions"]["completeness"] == ("partial" if partial_final else "full")
     reopened = WorkbookResearchJobService(store.db_path).get(job["job_id"])
     assert reopened["held_packet"] == job["held_packet"] and reopened["evidence"] == job["evidence"]

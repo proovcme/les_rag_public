@@ -1174,6 +1174,25 @@ def collect_lsr_price_gaps(
             position_code = str(position.get("code") or "")
             position_name = str(position.get("name") or "")
             position_label = position_code or position_name
+            from proxy.services.model_resource_binding_service import resource_binding_conflict_note
+
+            for index, conflict in enumerate((position.get("summary") or {}).get("resource_binding_conflicts") or ()):
+                if not isinstance(conflict, Mapping):
+                    continue
+                owner = str(position.get("work_id") or position.get("source_row")
+                            or position.get("position_no") or position_label)
+                gaps.append({
+                    "resource": f"Действие над ресурсом ({owner}, {position_label}, {index + 1})",
+                    "code": str(conflict.get("code") or "resource_binding_conflict"),
+                    "price_action": "resource_binding_conflict",
+                    "required_source": "уточнённое действие над ресурсом и его основание",
+                    "position_code": position_code, "position_name": position_name,
+                    "checked_basis": checked_basis,
+                    "action": f"Для позиции {position_label} ({owner}) уточните действие над ресурсом: "
+                              + resource_binding_conflict_note(conflict)
+                              + " Конфликт не разрешён; состав ресурсов не исправляется автоматически, сумма предварительная."
+                                " Уточните целевой ресурс и основание в чате; ввод цены не устраняет конфликт.",
+                })
             for row in position.get("rows") or []:
                 if not isinstance(row, Mapping):
                     continue

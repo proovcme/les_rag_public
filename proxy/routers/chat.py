@@ -388,7 +388,16 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         else None
     )
     inherited_basis = task_document_price_basis(job, inherited_basis)
-    document_issues = workbook_document_issues(job) if repack_tool == "build_lsr_workbook" else []
+    document_issues = []
+    if repack_tool == "build_lsr_workbook":
+        from proxy.services.attachment_source_catalog_service import load_catalog_from_attachment_id
+        from proxy.services.chat_evidence_application_service import cited_source_row_keys
+
+        source_catalog = await asyncio.to_thread(load_catalog_from_attachment_id, attachment_id)
+        accounted = cited_source_row_keys(decisions, source_catalog)
+        document_issues = workbook_document_issues(job, unaccounted_result_locators=[
+            locator for locator in source_catalog.work_locators() if locator not in accounted
+        ] if source_catalog is not None else [])
     repack_args = workbook_packaging_args(
         packaging_tool=repack_tool,
         attachment_id=attachment_id,

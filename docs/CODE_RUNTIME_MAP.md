@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1091 |
-| Строк Python | 383089 |
+| Строк Python | 383262 |
 | PRODUCT_REACHABLE | 372 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 707 |
@@ -32,10 +32,10 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 12980 | 48 |
+| proxy/services/chat_evidence_application_service.py | 13006 | 48 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7792 | 7 |
-| proxy/routers/chat.py | 4807 | 47 |
+| proxy/routers/chat.py | 4816 | 47 |
 | backend/qdrant_adapter.py | 4580 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |
@@ -52,7 +52,7 @@
 | proxy/smeta_core/norm_browser.py | 1799 | 16 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
-| proxy/services/lsr_workbook_adapter_service.py | 1611 | 17 |
+| proxy/services/lsr_workbook_adapter_service.py | 1630 | 17 |
 | sovushka/pages/diag.py | 1605 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |

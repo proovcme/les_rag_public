@@ -1,5 +1,36 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+Build899 также проверяет неполное покрытие при /api/chat/repack-lsr,
+включая jobless и старое complete задание, без вызова модели и изменения строк.
+Регрессия: test_workbook_repack_target, точный исходный каталог.
+
+## 899 — coverage/identity/readiness (✅ код/док; live pending)
+
+Каталожные _catalog_source_* annotations не входят в fallback operation
+identity: профессиональные поля решения по-прежнему входят в SHA. В готовности
+сохраняется та же связь covered, что в расчётной проекции.
+Sheet pass отдельно считает доставленные packet locators и исходные строки,
+не получившие решения в terminal result (unaccounted_result_locators).
+Пропущенное решение не объявляется усечением вложения. При неполном покрытии
+MODEL_RESULT_SOURCE_ROWS_UNACCOUNTED доходит до document_issues и priced_partial
+также в прямом B0, без нового модельного цикла и без удаления рассчитанных строк.
+collect_lsr_price_gaps переносит уже существующие resource_binding_conflicts
+в понятные действия карточки готовности. Ввод цены не объявляется исправлением
+ресурсного конфликта. Нормы, ресурсы, ставки, часы, допуски и запросы не меняются.
+
+Точки входа: lsr_source_coverage_service.operation_identity,
+chat_evidence_application_service.workbook_document_issues и sheet delivery,
+lsr_workbook_adapter_service.collect_lsr_price_gaps, lsr_result_readiness_service.
+Док: [rag-evidence-flow](modules/rag-evidence-flow.md).
+Тесты: test_lsr_readiness_transport, test_model_rag_sheet_evidence_reads.
+Focused70passed + repack33passed; canonical/install pending, customer-ready false.
+
+Canonical899 final snapshot artifacts/gates_899_r2:3381passed/20existing skipped/5warnings,
+metadata31passed; verify, architecture, docs/map и active artifacts PASS.
+Чужие UI-правки исключены и SHA сохранены. Первый snapshot superseded до
+финального изменения repack; готовность определяется только final r2.
+Install/live899 pending; professional acceptance не пройдена.
+
 ## 898 — punctuated named records (✅ код/док; live pending)
 
 `model_lsr_result_contract.decode_model_inline_rows` читает явные поля с
