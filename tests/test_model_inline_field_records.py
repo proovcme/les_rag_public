@@ -68,9 +68,55 @@ def test_plain_single_field_blocks_keep_existing_transport():
     assert rows[0]["norm_code"] == "A"
 
 
+@pytest.mark.parametrize("prefix", ["• ", "1. ", "2) ", "(3) ", "- "])
+@pytest.mark.parametrize("separator", [", ", "; ", " | "])
+def test_punctuated_named_records_preserve_labels_and_literal_values(prefix, separator):
+    values = ["source_row: S!R14", "row_role: work", 'title: Rack 19\", panel, marked',
+              "unit: m2", "quantity: 2,5", "norm_code: A", "norm_status: ",
+              "coverage: Retained, then installed; no new supply", "evidence_refs: [\"Q1.H1\", \"Q2.H1\"]",
+              'resource_bindings: [{"action":"reuse","reason":"A, B; C | D","source_refs":["S!R14","S!R15"]}]']
+    raw = prefix + separator.join(values)
+    diagnostics = []
+    answer, rows = parse_model_rag_result(raw, diagnostics=diagnostics)
+    assert answer == raw and diagnostics == []
+    assert len(rows) == 1
+    assert rows[0]["source_row"] == "S!R14" and rows[0]["quantity"] == "2,5"
+    assert rows[0]["title"] == 'Rack 19\", panel, marked'
+    assert rows[0]["coverage"] == "Retained, then installed; no new supply"
+    assert rows[0]["norm_status"] == "" and "condition_match" not in rows[0]
+    assert rows[0]["evidence_refs"] == ["Q1.H1", "Q2.H1"]
+    assert rows[0]["resource_bindings"][0]["reason"] == "A, B; C | D"
+
+
+@pytest.mark.parametrize("tail", [", norm_code: B", "; norm_code: A", ', _evidence_check: {"citation_checkable":true}'])
+def test_punctuated_records_cannot_hide_repeated_or_unsupported_fields(tail):
+    raw = "• source_row: S!R2, title: Literal, unit: m, norm_code: A" + tail
+    diagnostics = []
+    assert parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [])
+    assert len(diagnostics) == 1 and diagnostics[0]["decision"]["raw_line"] == raw
+
+
+def test_decimal_punctuation_and_quoted_field_like_title_are_literals():
+    raw = '• source_row: S!R2, title: "Name, unit: not a field; norm_code: also literal", unit: m, quantity: 2,5, norm_code: A'
+    _, rows = parse_model_rag_result(raw)
+    assert rows[0]["title"] == "Name, unit: not a field; norm_code: also literal"
+    assert rows[0]["quantity"] == "2,5" and rows[0]["norm_code"] == "A"
+
+
+@pytest.mark.parametrize("second_action", ["reuse", "replace"])
+def test_nested_duplicate_authored_fields_stay_raw_proposals(second_action):
+    raw = ('• source_row: S!R2, title: Literal, unit: m, norm_code: A, resource_bindings: '
+           '[{"action":"reuse","action":"' + second_action + '"}]')
+    diagnostics = []
+    assert parse_model_rag_result(raw, diagnostics=diagnostics) == (raw, [])
+    assert diagnostics[0]["reason"] == "duplicate_inline_json_field"
+    assert diagnostics[0]["decision"]["raw_line"] == raw
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
-async def test_inline_terminal_rows_reach_real_workbook_without_an_extra_model_call(tmp_path, monkeypatch, variant):
+@pytest.mark.parametrize("prefix,separator", [("- ", " | "), ("• ", ", "), ("1. ", "; ")])
+async def test_inline_terminal_rows_reach_real_workbook_without_an_extra_model_call(tmp_path, monkeypatch, variant, prefix, separator):
     from tests import test_model_rag_sheet_evidence_reads as fixture
 
     def answer(*, refs=("Q1.H1", "Q2.H1")):
@@ -80,7 +126,7 @@ async def test_inline_terminal_rows_reach_real_workbook_without_an_extra_model_c
             ("S!R3", "Cable B", fixture.RESOURCE_B, 3, refs[1])):
             row = {"source_row": locator, "row_role": "material", "title": title,
                    "unit": "m", "quantity": quantity, "resource_code": code, "evidence_refs": [ref]}
-            records.append("- " + " | ".join(key + ": " + json.dumps(value) for key, value in row.items()))
+            records.append(prefix + separator.join(key + ": " + json.dumps(value) for key, value in row.items()))
         return "artifact_kind: lsr\n" + "\n".join(records)
 
     monkeypatch.setattr(fixture, "_answer", answer)

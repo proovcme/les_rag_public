@@ -1,5 +1,29 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат0.31.170 / 898 — punctuated named rows
+
+Installed897 f3c348e4 подтверждён API/15 runtime hashes; nativeRRF PASS.
+Matched compact SHA e7476a4b: B0 365.77s скачал partial XLSX с двумя исходными
+строками, confirmed0.00/preliminary33013.65; B1 138.30s истратил query8192
+до выдачи запросов, job paused/model_query_output_incomplete, remaining2.
+Обычный smoke8979PASS/1FAIL, chat_project_noscope снова MODEL_OUTPUT_INCOMPLETE.
+Исходные измерения сохранены, это не customer acceptance.
+
+Отдельный профиль отличается только query_reasoning_enabled=false, глобальные
+профили/роль/окно не менялись. B0 134.48s вернул буквальные comma-records и цены,
+но parser897 не прочитал строки и XLSX отсутствовал. 898 читает явно подписанные
+pipe/comma/semicolon records с маркерами/нумерацией; quoted/JSON/decimal punctuation
+сохраняется. Duplicate nested JSON не превращается в last-wins decision.
+Red22 + nested red2 подтвердили transport defect; focused99passed. Retained
+live answer прочитан без inference:5 строк, raw answer SHA неизменён.
+Query-off B1 на той же897/identity40201979 за148.02s скачал partial XLSX,
+norms full, confirmed0.00/preliminary24984.74: FSEM и НР/СП не закрыты;
+повторно используемые панели не исключены моделью из ресурса. Это не приёмка.
+Canonical898:3370passed/20existing skipped/5warnings, metadata31passed;
+verify/architecture/docs/map и active artifacts PASS. Финансовые правила, FSEM
+reconciliation, evidence, запросы и число inference не менялись. Install/live898
+pending. Native shell5.1.813, cloud budget0; customer-ready false.
+
 ## Кандидат0.31.169 / 897 — literal inline rows и достоверные вопросы готовности
 
 Installed896 9fa11dd1 подтверждён по API/хешам, nativeRRF PASS. B0: скачиваемая

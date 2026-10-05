@@ -1,5 +1,20 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 898 — punctuated named records (✅ код/док; live pending)
+
+`model_lsr_result_contract.decode_model_inline_rows` читает явные поля с
+pipe/comma/semicolon и маркерами списка; JSON, кавычки и десятичная пунктуация
+сохраняются. Duplicate labels и nested JSON duplicates остаются raw proposals.
+Док: [rag-evidence-flow](modules/rag-evidence-flow.md).
+Тест: `test_model_inline_field_records`, обе workbook execution boundaries.
+Нет новых inference, решений о нормах, финансовых правил или зависимостей.
+Installed897 f3c348e4: nativeRRF PASS; basic9PASS/1FAIL. Его matched B1 остановлен
+на query output8192/final0; B0 другой immutable query-off profile вернул строки,
+но comma-records не были прочитаны. Его B1 за148.02s дал partial XLSX, norms full,
+но FSEM, НР/СП и reuse не закрыты. Focused99passed, literal replay5rows/0inference.
+Canonical8983370passed/20existing skipped, metadata31; остальные offline gates PASS.
+Customer-ready false; install/live898 pending.
+
 ## 897 — literal row transport и readiness (✅ код/док; installed pending)
 
 core/chat-evidence: `model_lsr_result_contract.decode_model_inline_rows` читает

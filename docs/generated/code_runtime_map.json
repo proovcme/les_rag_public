@@ -3149,9 +3149,11 @@
         "tests/test_lsr_norm_gap_reasons_830.py",
         "tests/test_lsr_packet_integrity.py",
         "tests/test_lsr_price_basis_continuation.py",
+        "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_scheduler_starvation_824.py",
         "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_evidence_read_contract.py",
+        "tests/test_model_inline_field_records.py",
         "tests/test_model_lsr_result_contract.py",
         "tests/test_model_norm_evidence_ref_reads.py",
         "tests/test_model_norm_pointer_navigation.py",
@@ -4318,7 +4320,8 @@
       "inbound": [
         "proxy/services/lsr_assembly_service.py",
         "proxy/services/rim_lsr_trace_service.py",
-        "tests/test_fsem_machinist_service.py"
+        "tests/test_fsem_machinist_service.py",
+        "tests/test_lsr_readiness_transport.py"
       ],
       "lines": 175,
       "module": "proxy.services.fsem_machinist_service",
@@ -4988,6 +4991,7 @@
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_price_basis_explicit.py",
         "tests/test_lsr_price_ownership.py",
+        "tests/test_lsr_readiness_transport.py",
         "tests/test_model_research_evidence_actions.py",
         "tests/test_model_result_resource_code.py",
         "tests/test_rim_lsr_trace_service.py",
@@ -5473,7 +5477,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 532,
+      "lines": 542,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -6667,6 +6671,7 @@
         "tests/test_lsr_labor_tariff_830.py",
         "tests/test_lsr_norm_applicability.py",
         "tests/test_lsr_price_ownership.py",
+        "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_rim_trace_api.py",
         "tests/test_model_price_provenance_service.py",
         "tests/test_model_result_resource_code.py",
@@ -9310,6 +9315,7 @@
       "inbound": [
         "tests/test_finalization_defects_782.py",
         "tests/test_lsr_disguised_gaps.py",
+        "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_result_readiness_service.py",
         "tests/test_money_states_23.py",
         "tests/test_stall_bound_25.py"
@@ -9954,7 +9960,9 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
+      "inbound": [
+        "tests/test_lsr_readiness_transport.py"
+      ],
       "lines": 5545,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
@@ -11861,6 +11869,23 @@
     },
     {
       "inbound": [],
+      "lines": 113,
+      "module": "tests.test_lsr_readiness_transport",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/fsem_machinist_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
+        "tests/lsr_citation_support.py",
+        "tests/test_chat_evidence_application_service.py",
+        "tests/test_rim_lsr_trace_service.py"
+      ],
+      "path": "tests/test_lsr_readiness_transport.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 546,
       "module": "tests.test_lsr_result_readiness_service",
       "outbound": [
@@ -12367,6 +12392,18 @@
     },
     {
       "inbound": [],
+      "lines": 137,
+      "module": "tests.test_model_inline_field_records",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
+      ],
+      "path": "tests/test_model_inline_field_records.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 203,
       "module": "tests.test_model_lsr_result_contract",
       "outbound": [
@@ -12546,6 +12583,7 @@
     {
       "inbound": [
         "tests/test_model_artifact_kind_authority.py",
+        "tests/test_model_inline_field_records.py",
         "tests/test_model_output_diagnostics_tracking.py",
         "tests/test_model_query_reasoning.py",
         "tests/test_workbook_artifact_target.py"
@@ -14032,6 +14070,7 @@
       "inbound": [
         "tests/lsr_gold_pricebook.py",
         "tests/test_fsem_machinist_service.py",
+        "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_rim_trace_api.py"
       ],
       "lines": 2030,
@@ -20534,9 +20573,9 @@
     "product_reachable": 372,
     "registered_api_routes": 340,
     "runtime_support": 11,
-    "test_or_tool_only": 705,
-    "tracked_python_files": 1089,
-    "tracked_python_lines": 382829
+    "test_or_tool_only": 707,
+    "tracked_python_files": 1091,
+    "tracked_python_lines": 383089
   },
   "warnings": []
 }

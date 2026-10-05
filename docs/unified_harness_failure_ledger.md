@@ -1,5 +1,20 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-05 — punctuated named records were not delivered (898)
+
+Installed897 query-off B0 codex-live-selected-901228f2c12c completed in134.48s
+with model-authored comma-separated bullet records and prices, but decoder
+read zero rows and no XLSX. Answer retained in artifacts/live_897/query_off_baseline.
+Red22 (format permutations and real workbook boundaries) and nested red2
+reproduce transport/duplicate-field failures. 898 reads only explicit named
+fields; prose/decimal/JSON punctuation stays literal. Invalid and repeated
+labels retain raw proposals, including nested JSON. No inferred norms,
+resources, match flags or extra model calls. Focused99passed; retained B0 now
+decodes5 rows with unchanged answer and0 inference. Canonical8983370passed/
+20existing skipped, metadata31; offline gates PASS. Install/live898 pending.
+Separate matched query-thinking B1 stopped at8192 output/final0 (138.3s).
+Basic8979PASS/1FAIL retained. Customer-ready false; no financial policy relaxed.
+
 ## 2026-10-05 — literal inline records and lost coverage link (897)
 
 Installed896 candidate codex-live-selected-6ed4e8dcddbd returned two literal

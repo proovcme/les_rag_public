@@ -204,16 +204,20 @@ def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None)
 
 
 def decode_model_inline_rows(raw: str, *, fields: set[str], diagnostics: list[dict]) -> list[dict] | None:
-    """Read explicit `source_row: ... | field: ...` records, never infer cells.
+    """Read punctuated explicit named records, never infer cells.
 
-    Only complete named records qualify. Pipes inside quoted values, JSON arrays
-    and objects or escaped pipes are literals. Ambiguous records remain raw
-    proposals, including identical repeated labels; adjacent valid rows survive.
+    A pipe separates fields; commas/semicolons do so only before a named label.
+    List bullets/numbers are presentation. Quoted values, JSON arrays/objects,
+    decimal commas and ordinary prose punctuation remain literal. Ambiguous
+    records remain raw proposals, including repeated labels; valid rows survive.
     """
     rows, seen_record = [], False
     for raw_line in str(raw or "").splitlines():
-        line = raw_line.strip().lstrip("-+* ")
-        if not re.match(r"(?:source_row|operation_id)\s*:", line) or "|" not in line:
+        line = raw_line.strip().lstrip("-+*• ")
+        line = re.sub(r"^(?:\d+[.)]|\(\d+\))\s+", "", line)
+        if not re.match(r"(?:source_row|operation_id)\s*:", line) or not (
+            "|" in line or re.search(r"[,;]\s*[A-Za-z_]\w*\s*:", line)
+        ):
             continue
         seen_record = True
         parts, current, stack, quoted, index, malformed = [], [], [], False, 0, False
@@ -236,7 +240,9 @@ def decode_model_inline_rows(raw: str, *, fields: set[str], diagnostics: list[di
                         "[" if char == "]" else "{"
                     ):
                         malformed = True
-                elif char == "|" and not stack:
+                elif not stack and (char == "|" or (
+                    char in ",;" and re.match(r"\s*[A-Za-z_]\w*\s*:", line[index + 1:])
+                )):
                     parts.append("".join(current).strip())
                     current = []
                     index += 1
@@ -259,7 +265,11 @@ def decode_model_inline_rows(raw: str, *, fields: set[str], diagnostics: list[di
                 continue
             value = value.strip()
             try:
-                row[key] = json.loads(value, object_pairs_hook=_unique_json_object)
+                parsed_value = json.loads(value, object_pairs_hook=_AuthoredJSONPairs)
+                if _json_duplicate_fields(parsed_value):
+                    reason = reason or "duplicate_inline_json_field"
+                else:
+                    row[key] = _json_unique_value(parsed_value)
             except (ValueError, TypeError):
                 row[key] = value.replace(r"\|", "|")
         if not (row.get("source_row") not in (None, "") and "title" in row

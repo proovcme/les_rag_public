@@ -1,5 +1,10 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build898: `decode_model_inline_rows` читает punctuated named records на общей
+границе B0/B1. List presentation снимается лексически; comma/semicolon являются
+разделителями только перед подписью, nested JSON duplicates сохраняются raw.
+Нормы, значения, отсутствие полей и исходный final text не переписываются.
+
 Build897: `model_lsr_result_contract.decode_model_inline_rows` → публичный decoder
 `parse_model_rag_result` → прежний XLSX executor, без дополнительного inference.
 Safe history сохраняет covered_by_operation_id для вопросов готовности.
