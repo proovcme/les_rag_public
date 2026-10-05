@@ -1138,6 +1138,7 @@
         "proxy/services/model_rag_grouped_evidence_service.py",
         "proxy/services/model_research_tool_service.py",
         "proxy/services/model_resource_binding_service.py",
+        "proxy/services/model_resource_reference_service.py",
         "proxy/services/model_result_packet_service.py",
         "proxy/services/model_secret_service.py",
         "proxy/services/native_open_service.py",
@@ -2605,6 +2606,7 @@
         "proxy/services/model_rag_grouped_evidence_service.py",
         "proxy/services/model_research_tool_service.py",
         "proxy/services/model_resource_binding_service.py",
+        "proxy/services/model_resource_reference_service.py",
         "proxy/services/model_result_packet_service.py",
         "proxy/services/model_secret_service.py",
         "proxy/services/native_open_service.py",
@@ -3160,6 +3162,7 @@
         "tests/test_model_rag_query_declaration.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_research_evidence_actions.py",
+        "tests/test_model_resource_reference.py",
         "tests/test_model_result_resource_actions.py",
         "tests/test_model_result_resource_code.py",
         "tests/test_model_result_table_transport.py",
@@ -3220,6 +3223,7 @@
         "proxy/services/model_price_provenance_service.py",
         "proxy/services/model_rag_grouped_evidence_service.py",
         "proxy/services/model_research_tool_service.py",
+        "proxy/services/model_resource_reference_service.py",
         "proxy/services/model_result_packet_service.py",
         "proxy/services/notebook_service.py",
         "proxy/services/notebook_study_service.py",
@@ -4160,6 +4164,7 @@
         "tests/test_lsr_price_basis_explicit.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_research_evidence_actions.py",
+        "tests/test_pricebook_record_conflict.py",
         "tests/test_smeta_chat_service.py",
         "tests/test_smeta_release_baseline.py",
         "tests/test_sovushka_chat.py",
@@ -4860,6 +4865,7 @@
         "tests/test_lsr_labor_tariff_830.py",
         "tests/test_lsr_price_ownership.py",
         "tests/test_lsr_rim_trace_api.py",
+        "tests/test_pricebook_record_conflict.py",
         "tests/test_rim_session_xlsx.py",
         "tests/test_rim_trace_xlsx.py",
         "tools/les_mcp_server.py"
@@ -5466,7 +5472,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 423,
+      "lines": 457,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -5495,7 +5501,8 @@
     {
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
-        "tests/test_model_price_provenance_service.py"
+        "tests/test_model_price_provenance_service.py",
+        "tests/test_pricebook_record_conflict.py"
       ],
       "lines": 194,
       "module": "proxy.services.model_price_provenance_service",
@@ -5512,7 +5519,8 @@
         "proxy/services/model_research_tool_service.py",
         "tests/test_fgis_pricebook_snapshot.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
-        "tests/test_model_research_evidence_actions.py"
+        "tests/test_model_research_evidence_actions.py",
+        "tests/test_pricebook_record_conflict.py"
       ],
       "lines": 233,
       "module": "proxy.services.model_pricebook_evidence_service",
@@ -5557,7 +5565,8 @@
         "tests/test_model_norm_pointer_navigation.py",
         "tests/test_model_rag_pointer_alias_replay.py",
         "tests/test_model_research_evidence_actions.py",
-        "tests/test_model_research_tool_service.py"
+        "tests/test_model_research_tool_service.py",
+        "tests/test_model_resource_reference.py"
       ],
       "lines": 724,
       "module": "proxy.services.model_research_tool_service",
@@ -5567,6 +5576,7 @@
         "proxy/services/attachment_source_catalog_service.py",
         "proxy/services/model_pricebook_evidence_service.py",
         "proxy/services/model_rag_grouped_evidence_service.py",
+        "proxy/services/model_resource_reference_service.py",
         "proxy/services/nr_sp_service.py",
         "proxy/smeta_core/norm_browser.py"
       ],
@@ -5577,7 +5587,8 @@
     {
       "inbound": [
         "proxy/services/rim_lsr_trace_service.py",
-        "tests/test_model_resource_binding_service.py"
+        "tests/test_model_resource_binding_service.py",
+        "tests/test_model_resource_reference.py"
       ],
       "lines": 322,
       "module": "proxy.services.model_resource_binding_service",
@@ -5588,6 +5599,21 @@
         "proxy/smeta_core/unit_contract.py"
       ],
       "path": "proxy/services/model_resource_binding_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/model_research_tool_service.py"
+      ],
+      "lines": 35,
+      "module": "proxy.services.model_resource_reference_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/model_resource_reference_service.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -6644,6 +6670,7 @@
         "tests/test_model_price_provenance_service.py",
         "tests/test_model_result_resource_code.py",
         "tests/test_money_states_23.py",
+        "tests/test_pricebook_record_conflict.py",
         "tests/test_resource_binding_provenance.py",
         "tests/test_revision_projection_830.py",
         "tests/test_rim_golden_gesnm38.py",
@@ -12592,6 +12619,19 @@
     },
     {
       "inbound": [],
+      "lines": 109,
+      "module": "tests.test_model_resource_reference",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/model_research_tool_service.py",
+        "proxy/services/model_resource_binding_service.py"
+      ],
+      "path": "tests/test_model_resource_reference.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 186,
       "module": "tests.test_model_result_packet_service",
       "outbound": [
@@ -13057,6 +13097,21 @@
       "module": "tests.test_pricebook_hermeticity_830",
       "outbound": [],
       "path": "tests/test_pricebook_hermeticity_830.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 103,
+      "module": "tests.test_pricebook_record_conflict",
+      "outbound": [
+        "proxy/services/fgis_price_service.py",
+        "proxy/services/lsr_assembly_service.py",
+        "proxy/services/model_price_provenance_service.py",
+        "proxy/services/model_pricebook_evidence_service.py",
+        "proxy/services/rim_lsr_trace_service.py"
+      ],
+      "path": "tests/test_pricebook_record_conflict.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -20460,12 +20515,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 371,
+    "product_reachable": 372,
     "registered_api_routes": 340,
     "runtime_support": 11,
-    "test_or_tool_only": 702,
-    "tracked_python_files": 1085,
-    "tracked_python_lines": 382331
+    "test_or_tool_only": 704,
+    "tracked_python_files": 1088,
+    "tracked_python_lines": 382612
   },
   "warnings": []
 }

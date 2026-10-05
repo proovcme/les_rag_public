@@ -1,5 +1,25 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат0.31.168 / 896 — итоговый тип документа принадлежит завершённому ответу
+
+Installed895 a9fb241b после restart FreeToken восстановлен до назначенного64k;
+Ollama/bge-m3 запущен, обе immutable роли прежние, cloud budget0.
+Изначальные недоступность и blocked RRF сохранены; повтор nativeRRF PASS.
+Matched B0/B1 имеют одинаковый comparative SHA abece13973a2cd8ba38ca73f3129cbe02d1e926bf2383cfcb8d4e394ec10122e.
+B0 141.23s: XLSX с неверными source_row и неопределённым действием reuse.
+B1 246.73s:2 терминальные строки, подходящий шифр,0 XLSX; query объявил vor,
+final объявил lsr, приложение объединило их как ARTIFACT_KIND_AMBIGUOUS.
+
+896 отличает authority=query от result, сохраняет предварительный выбор в аудите
+и применяет буквальный тип завершённого ответа без дополнительных модельных ходов.
+Duplicate внутри final, конфликт завершённых пакетов и legacy targets защищены.
+Red2 воспроизвели оба пути; focused200passed. Canonical896 artifacts/gates_896:
+3326passed/20existing skipped/5warnings; metadata31passed; verify/architecture/docs/map
+и active artifacts PASS. Чужие UI-файлы исключены и их SHA сохранены. Install/live896 pending.
+Расхождение ФСЭМ0.02/0.022 подтверждено официальным raw ФГИС, тарифы есть;
+оно не исправлялось изменением допусков. Полнота каталога/overlay также не решена
+подмешиванием staging. NativeEXE5.1.813; customer-ready false.
+
 ## Кандидат0.31.167 / 895 — выбранный адрес ресурса и неоднозначность цены
 
 Дополнительно red2 подтвердил ложное принятие базовой/неоднозначной цены из тела

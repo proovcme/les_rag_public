@@ -1,5 +1,19 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 896 — граница поискового и итогового типа (✅ код/док; installed pending)
+
+`model_lsr_result_contract.update_model_artifact_kind`: явный тип завершённого
+ответа заменяет известное поисковое предложение. `chat_evidence_application_service`
+передаёт phase=query/result/restore; durable record/event сохраняют authority и
+query_declaration. Конфликт разных окончательных пакетов и legacy ambiguity
+не отменён. Нормы, строки и ресурсы не меняются; новых inference нет.
+Док: [rag-evidence-flow](modules/rag-evidence-flow.md).
+Тест: `test_model_artifact_kind_authority.py`; focused200passed. Canonical896:
+3326passed/20existing skipped/5warnings; metadata31passed; verify/architecture/docs/map PASS.
+Installed895 a9fb241b: RRF PASS после восстановления FreeToken64k и Ollama.
+B0 141s/XLSX с ошибкой локаторов; B1 247s/0 XLSX: query=vor, final=lsr.
+Professional/customer-ready false. GitHub/fgis-mcp audit сохранён в artifacts/live_895.
+
 ## 895 — адрес выбранного ресурса и конфликтующие записи цен (✅ код/док; live pending)
 
 `model_resource_reference_service` задаёт `resource_slot` полного exact-read.

@@ -1,5 +1,21 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-05 — a provisional document target blocked a completed result (896)
+
+Installed895 B1 codex-live-selected-5d5e5a9ff7ee completed both source rows but
+did not package an XLSX: query proposal said vor, terminal answer said lsr.
+The actual trace is artifacts/live_895/compact_coverage_retry_candidate/target_audit.json;
+matched B0 identity is equal. Red2 reproduced missing execution in both routes.
+Known query proposals now have distinct authority from final model results;
+the literal final target can supersede only a proposal, preserved in audit.
+Final duplicates, inconsistent final packets and unclassified legacy records
+remain blocked. No authored norm/resource/row is rewritten, no inference added.
+Focused200passed; final canonical896:3326passed/20existing skipped, metadata31;
+verify/architecture/docs/map/active artifacts PASS. Installed896 acceptance pending.
+Read-only FSEM audit separately proved source0.02 versus derived0.022 despite
+available tariffs. Official raw values are saved under artifacts/live_895/official_hours.
+No permissive rounding rule or changed resource quantity was introduced.
+
 ## 2026-10-05 — target serialization and first-row price selection (candidate895)
 
 An additional red2 reproduced accepting a base-column amount, or a conflicting

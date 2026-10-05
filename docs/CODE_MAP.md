@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build896: `model_lsr_result_contract.update_model_artifact_kind` разделяет
+поисковое предложение и буквальный тип итогового документа; actual chat передаёт
+query/result/restore. Завершённый ответ не блокируется предварительным другим
+типом; конфликты окончательных пакетов и историческая неоднозначность сохраняются.
+Док: modules/rag-evidence-flow; test_model_artifact_kind_authority.
+
 Build895: `model_resource_reference_service` — адрес полного ресурса карточки;
 `model_research_tool_service` показывает source slots; `bind_row_evidence_ids`
 фиксирует их immutable provenance; `model_resource_binding_service` разрешает

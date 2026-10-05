@@ -275,6 +275,40 @@ def merge_model_artifact_kind(previous: Mapping | None, current: Mapping) -> dic
                                          "ARTIFACT_KIND_AMBIGUOUS"]))}
 
 
+def update_model_artifact_kind(previous: Mapping | None, current: Mapping, *, phase: str) -> dict:
+    """Keep query proposals separate from the completed model document.
+
+    A final declaration may supersede only a known query proposal. Conflicting
+    final packets and unclassified historical declarations remain fail-closed.
+    """
+    previous = dict(previous or {})
+    current = dict(current)
+    if phase == "restore":
+        if current.get("authority") in {"query", "result"}:
+            return update_model_artifact_kind(previous, current, phase=current["authority"])
+        restored = merge_model_artifact_kind(previous, current)
+        if current.get("status") != "missing":
+            restored["authority"] = "legacy"
+        return restored
+    if phase not in {"query", "result"}:
+        raise ValueError("unknown document target phase")
+    if current.get("status") == "missing":
+        return previous or current
+    if phase == "query":
+        if previous and previous.get("status") != "missing" and previous.get("authority") != "query":
+            proposal = merge_model_artifact_kind(previous.get("query_declaration"), current)
+            return {**previous, "query_declaration": proposal}
+        proposal = merge_model_artifact_kind(previous, current)
+        return {**proposal, "authority": "query"}
+    if previous.get("authority") == "query":
+        proposal = {key: value for key, value in previous.items() if key != "authority"}
+        return {**current, "authority": "result", "query_declaration": proposal}
+    result = merge_model_artifact_kind(previous, current)
+    if previous.get("query_declaration"):
+        result["query_declaration"] = dict(previous["query_declaration"])
+    return {**result, "authority": "result"}
+
+
 def decode_model_query_envelope(raw: str) -> dict | None:
     """An optional literal query list; ordinary query text keeps its old reader."""
     text = str(raw or "").strip()

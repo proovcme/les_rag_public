@@ -2,7 +2,12 @@
 
 Канонический машинный источник — [`config/version.json`](../config/version.json).
 
-Текущий контракт — candidate 0.31.144/build 872; установлен 0.31.143/build 871
+Текущий контракт — candidate0.31.168/build896; установлен895 a9fb241b.
+Фактическая установка подтверждается `/api/version`; native shell5.1.813.
+896 разделяет поисковое предложение и окончательный тип документа. Готовность
+заказчику не подтверждена; exact installer и профессиональная приёмка pending.
+
+Историческая запись872 — candidate 0.31.144/build 872; установлен 0.31.143/build 871
 (`e8657ba38eed88dac8de327b5e4dd9b2999869f4`), API/GUI и 19 runtime hashes сверены.
 872 включает двухстрочный encoding fixture Windows prepare, literal navigation
 показанных полных шифров при missing exact read и lossless replay pointer aliases.
@@ -21,9 +26,9 @@ same-identity B0/B1 без XLSX, required46993/47433 при budget46246; гот�
 
 | Поле | Пример | Для чего |
 |---|---:|---|
-| `product_version` | `0.31.167` | Единственная версия, которую видит пользователь; обычный SemVer `X.Y.Z` |
-| `build_number` | `895` | Монотонный номер Windows-сборки; не является четвёртой частью версии |
-| `desktop_version` | `5.1.895` | Внутренняя версия Tauri/NSIS для обновления ранее выпущенных `5.1.x` пакетов |
+| `product_version` | `0.31.168` | Единственная версия, которую видит пользователь; обычный SemVer `X.Y.Z` |
+| `build_number` | `896` | Монотонный номер Windows-сборки; не является четвёртой частью версии |
+| `desktop_version` | `5.1.896` | Внутренняя версия Tauri/NSIS для обновления ранее выпущенных `5.1.x` пакетов |
 | `harness_schema_version` | `0.24` | Версия внутреннего строительного контракта, а не продукта |
 
 `proxy/services/version_service.py` читает этот файл и сохраняет старые поля API только для

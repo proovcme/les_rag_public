@@ -120,7 +120,7 @@ from proxy.services.workbook_research_job_service import WorkbookResearchJobServ
 from proxy.services.model_result_packet_service import admit_model_result_packet
 from proxy.services.model_lsr_result_contract import (
     model_lsr_result_field_instruction, decode_model_artifact_kind,
-    decode_model_query_envelope, merge_model_artifact_kind,
+    decode_model_query_envelope, update_model_artifact_kind,
 )
 from proxy.services.model_evidence_read_contract import (
     MODEL_EVIDENCE_READ_INSTRUCTION,
@@ -8061,8 +8061,8 @@ async def _execute_chat_evidence_application(
                         if model_queries or declared.get("intentional_empty"):
                             # A rejected query response is repaired as one transport
                             # attempt. It cannot veto the later accepted response.
-                            artifact_kind_declaration = merge_model_artifact_kind(
-                                artifact_kind_declaration, declared["artifact_kind_declaration"])
+                            artifact_kind_declaration = update_model_artifact_kind(
+                                artifact_kind_declaration, declared["artifact_kind_declaration"], phase="query")
                             break
                     if not model_queries and not declared.get("intentional_empty"):
                         raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
@@ -8526,8 +8526,8 @@ async def _execute_chat_evidence_application(
                                     and workbook_tool_executor is not None
                                 ):
                                     native_kind = "vor" if tool_name == "build_vor_workbook" else "lsr"
-                                    artifact_kind_declaration = merge_model_artifact_kind(artifact_kind_declaration,
-                                        {"status": "declared", "artifact_kind": native_kind, "declarations": [native_kind], "errors": []})
+                                    artifact_kind_declaration = update_model_artifact_kind(artifact_kind_declaration,
+                                        {"status": "declared", "artifact_kind": native_kind, "declarations": [native_kind], "errors": []}, phase="result")
                                     async def workbook_progress(event: dict[str, Any]) -> None:
                                         if token_sink is not None:
                                             await token_sink({"event": "tool_progress", "data": event})
@@ -8977,10 +8977,10 @@ async def _execute_chat_evidence_application(
                     if (research_job is not None and research_job_service is not None
                             and research_job_service.is_plain_continuation(
                                 research_identity, {"original_question": str(req.question or "")})):
-                        artifact_kind_declaration = merge_model_artifact_kind(
+                        artifact_kind_declaration = update_model_artifact_kind(
                             artifact_kind_declaration,
                             (research_job.get("task_context") or {}).get("artifact_kind_declaration") or
-                            {"status": "missing", "artifact_kind": "", "declarations": [], "errors": []})
+                            {"status": "missing", "artifact_kind": "", "declarations": [], "errors": []}, phase="restore")
                     review_notice = ""
                     review_prior_rows: list[dict[str, Any]] = []
                     review_instruction = ""
@@ -9554,8 +9554,8 @@ async def _execute_chat_evidence_application(
                                             # Only an admitted query attempt contributes
                                             # document state; failed attempts remain above
                                             # in diagnostics, including after a repair.
-                                            artifact_kind_declaration = merge_model_artifact_kind(
-                                                artifact_kind_declaration, declared_now["artifact_kind_declaration"])
+                                            artifact_kind_declaration = update_model_artifact_kind(
+                                                artifact_kind_declaration, declared_now["artifact_kind_declaration"], phase="query")
                                             if research_job_service is not None and research_job is not None:
                                                 research_job = research_job_service.record_artifact_kind(
                                                     research_job["job_id"], declaration=artifact_kind_declaration)
@@ -10220,8 +10220,8 @@ async def _execute_chat_evidence_application(
                                 or model_rag_answer_is_truncated(pass_answer)
                             )
                             pass_transport_diagnostics: list[dict[str, Any]] = []
-                            artifact_kind_declaration = merge_model_artifact_kind(
-                                artifact_kind_declaration, decode_model_artifact_kind(pass_answer))
+                            artifact_kind_declaration = update_model_artifact_kind(
+                                artifact_kind_declaration, decode_model_artifact_kind(pass_answer), phase="result")
                             if research_job_service is not None and research_job is not None:
                                 research_job = research_job_service.record_artifact_kind(
                                     research_job["job_id"], declaration=artifact_kind_declaration)
@@ -11507,8 +11507,8 @@ async def _execute_chat_evidence_application(
                             (answer, sheet_pass_rows) if sheet_pass_rows else None
                         )
                     else:
-                        artifact_kind_declaration = merge_model_artifact_kind(
-                            artifact_kind_declaration, decode_model_artifact_kind(answer))
+                        artifact_kind_declaration = update_model_artifact_kind(
+                            artifact_kind_declaration, decode_model_artifact_kind(answer), phase="result")
                         parsed_model_result = parse_model_rag_result(
                             answer, diagnostics=retrieval_trace.setdefault("model_result_transport_diagnostics", []),
                         )
