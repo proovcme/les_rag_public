@@ -1,5 +1,20 @@
 # Версии программного контура ЛЕС
 
+Кандидат0.31.174/build902, dependencies/providers unchanged.
+Installed901/0.31.173, commit bc8965ca; guarded patch17.16s, exact runtime hashes PASS.
+Canonical3393PASS/20existing skips/5warnings, metadata31PASS, focused80PASS.
+Explicit new repack of default-profile B1 took8.59s, inference0, decisions SHA unchanged,
+SPbQ32026 inherited, one position, coverage/reuse preserved, preliminary13976.62/confirmed0.
+Live901 did NOT pass the price-gap regression: row source is row.source, not meta.price_source.
+The narrow synthetic fixture incorrectly mirrored the latter shape. This finding is preserved
+in artifacts/live_901/default_repack; no passing live acceptance is claimed for901.
+Build902 reads the actual calculator row.source and tests build_position_trace output,
+including serialized column keys and the known zero cost. Red2 reproduced the failure;
+focused81PASS. Missing price/provenance negative cases remain open, not suppressed.
+No authored decisions, source refs, tariffs, quantities, arithmetic or inference boundary changed.
+Source/FSEM hours0.02/0.022 remain unresolved; default model quality, basic-chat1FAIL,
+large input and fresh installer acceptance remain open. Cloud disabled/budget0.
+
 Кандидат0.31.173/build901, dependencies/providers unchanged.
 Installed900/0.31.172, commit ea5ae27e; guarded patch16.97s, runtime hashes PASS.
 Canonical3390PASS/20existing skips/5warnings, metadata31PASS, focused160PASS.
@@ -226,9 +241,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.173` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `901` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.901` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.174` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `902` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.902` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

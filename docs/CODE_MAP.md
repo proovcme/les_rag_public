@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build902: collect_lsr_price_gaps consumes actual row.source; calculated reuse zero
+does not ask for a price. Regression uses build_position_trace output, not an invented meta field.
+Doc: modules/rag-evidence-flow.
+
 Build901: lsr_workbook_adapter_service.collect_lsr_price_gaps preserves a calculated
 zero-price reuse treatment without presenting it as missing price. No model decision changed.
 Test: test_lsr_readiness_transport; doc: modules/rag-evidence-flow.

@@ -173,9 +173,24 @@ def test_reconciled_fsem_still_prices_driver_codes(monkeypatch):
 def test_applied_reuse_zero_price_is_not_reported_as_a_missing_price(price, source, expect_gap):
     resource = {"type": "resource_material", "name": "Existing reusable element",
                 "columns": {2: "ANY-MATERIAL", 4: "m", 7: 15, 10: price},
-                "meta": {"price_action": "reuse", "price_source": source}}
+                "source": source, "meta": {"price_action": "reuse"}}
     trace = {"sections": [{"positions": [{"code": "ANY-NORM", "rows": [resource], "summary": {}}]}]}
     before = deepcopy(trace)
     gaps = collect_lsr_price_gaps(trace)
     assert bool(gaps) is expect_gap
     assert trace == before
+
+
+def test_calculated_reuse_does_not_generate_a_market_price_question():
+    position = {"code": "ANY-NORM", "name": "Reuse existing element", "qty": 0.15,
+                "nr_pct": 0, "sp_pct": 0, "resources": [
+                    {"kind": "material", "code": "ANY-MATERIAL", "name": "Existing reusable element",
+                     "unit": "m", "per_unit": 10, "price": 0.0, "price_source_ref": "S!R2",
+                     "resource_binding": {"action": "reuse"}}]}
+    before = deepcopy(position)
+    trace = rim.build_position_trace(position)
+    row = next(row for row in trace["rows"] if row["type"] == "resource_material")
+    assert row["source"] == "reuse" and row["columns"]["10"] == 0 and row["columns"]["12"] == 0
+    gaps = collect_lsr_price_gaps({"sections": [{"positions": [trace]}]})
+    assert not any(gap["code"] == "ANY-MATERIAL" for gap in gaps)
+    assert position == before

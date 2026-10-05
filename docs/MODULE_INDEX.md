@@ -1,5 +1,17 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 902 — actual calculator row ownership (✅ код/док; live pending)
+
+collect_lsr_price_gaps checks the actual row.source ownership contract:
+action=reuse + source=reuse + numeric zero column10 is an applied, known amount.
+No price question is emitted for that amount; price/provenance missing is still a gap.
+Entry: lsr_workbook_adapter_service.collect_lsr_price_gaps.
+Regression: test_lsr_readiness_transport.test_calculated_reuse_does_not_generate_a_market_price_question
+and parametrized zero/missing price/missing source cases. Canonical/install/live902 pending;
+customer-ready false.
+
+Док: [rag-evidence-flow](modules/rag-evidence-flow.md).
+
 ## 901 — reuse price-gap projection (✅ код/док; live pending)
 
 collect_lsr_price_gaps does not ask for a market price when the calculator

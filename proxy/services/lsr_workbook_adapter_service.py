@@ -1207,7 +1207,7 @@ def collect_lsr_price_gaps(
                 unit = str(columns.get(4, columns.get("4")) or "")
                 required = _PRICE_SOURCE_LABEL.get(action, "подтверждённая цена")
                 card_amount = columns.get(10, columns.get("10"))
-                if (action == "reuse" and meta.get("price_source") == "reuse"
+                if (action == "reuse" and row.get("source") == "reuse"
                         and isinstance(card_amount, (int, float))
                         and not isinstance(card_amount, bool) and card_amount == 0):
                     # The calculator has already applied the authored reuse
