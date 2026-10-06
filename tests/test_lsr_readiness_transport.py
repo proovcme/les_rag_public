@@ -125,9 +125,33 @@ def _fsem_position():
         {"kind": "machinist", "code": "", "name": "ОТм", "unit": "маш.-ч", "per_unit": 0.02}]}
 
 
-@pytest.mark.parametrize("missing_mapping", [False, True])
-def test_fsem_unresolved_asks_for_hour_reconciliation_before_a_tariff(monkeypatch, missing_mapping):
-    monkeypatch.setattr(fsem, "lookup", lambda code, _path: None if missing_mapping and code == "M-B" else
+def test_derived_fsem_money_keeps_one_actionable_aggregate_source_gap(monkeypatch):
+    monkeypatch.setattr(fsem, "lookup", lambda code, _path:
+        {"crew_hours": 1, "driver_code": "4-100-030" if code == "M-A" else "4-100-040",
+         "driver_grade": 3 if code == "M-A" else 4, "source_page": 83 if code == "M-A" else 168})
+    position = _fsem_position()
+    before = deepcopy(position)
+    trace = rim.build_position_trace(position, pricebook=_TariffBook())
+    assert trace["summary"]["zpm"] == 0.03
+    assert trace["summary"]["amount_status"] == "partial"
+    gaps = collect_lsr_price_gaps({"sections": [{"positions": [trace]}]}, pricebook=_TariffBook())
+    source_gaps = [gap for gap in gaps if gap["price_action"] == "needs_fsem_resolution"]
+    assert len(source_gaps) == 1
+    gap = source_gaps[0]
+    assert gap["source_machinist_hours"] == 0.02 and gap["derived_machinist_hours"] == 0.022
+    assert "0.02" in gap["action"] and "0.022" in gap["action"]
+    assert "предварительн" in gap["action"] and "источник" in gap["action"]
+    assert "Задайте цену" not in gap["action"]
+    assert not any(row["meta"]["price_action"] == "needs_fsem_resolution"
+                   for row in trace["rows"] if row["type"] == "resource_machinist")
+    ready = chat.build_lsr_result_readiness(packaged=True, pricing_status="priced_partial", price_gaps=gaps)
+    assert ready["estimate_complete"] is False
+    assert "ФСЭМ" in ready["dimensions"]["prices"]["action"]
+    assert position == before
+
+
+def test_incomplete_fsem_asks_for_hour_reconciliation_before_a_tariff(monkeypatch):
+    monkeypatch.setattr(fsem, "lookup", lambda code, _path: None if code == "M-B" else
         {"crew_hours": 1, "driver_code": "4-100-030" if code == "M-A" else "4-100-040", "driver_grade": 3})
     position = _fsem_position()
     before = deepcopy(position)

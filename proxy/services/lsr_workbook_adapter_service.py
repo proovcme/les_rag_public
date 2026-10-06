@@ -1177,6 +1177,33 @@ def collect_lsr_price_gaps(
             position_code = str(position.get("code") or "")
             position_name = str(position.get("name") or "")
             position_label = position_code or position_name
+            fsem_trace = (position.get("summary") or {}).get("fsem_trace") or {}
+            if fsem_trace.get("status") == "derived_with_aggregate_discrepancy":
+                # The tariffs already price the per-machine components. This
+                # is one source-reconciliation gap, not another missing price
+                # or a second charge for the published control aggregate.
+                source_hours = fsem_trace.get("source_machinist_hours")
+                derived_hours = fsem_trace.get("derived_machinist_hours")
+                owner = str(position.get("work_id") or position.get("source_row")
+                            or position.get("position_no") or position_label)
+                gaps.append({
+                    "resource": f"ОТм: сверка нормативного агрегата ({owner})",
+                    "code": "", "price_action": "needs_fsem_resolution",
+                    "required_source": "согласованные нормативные источники затрат труда машинистов",
+                    "position_code": position_code, "position_name": position_name,
+                    "source_machinist_hours": source_hours,
+                    "derived_machinist_hours": derived_hours,
+                    "checked_basis": checked_basis,
+                    "dependent_calculations": [f"подтверждённый итог позиции {position_label or 'без шифра'}"],
+                    "action": (
+                        f"Для позиции {position_label} ({owner}) ОТм рассчитана по расходу каждой машины"
+                        " и экипажу ФСЭМ."
+                        f" Опубликованный агрегат: {source_hours}; по составу машин: {derived_hours}."
+                        " Сверьте нормативные источники и их редакции;"
+                        " сумма остаётся предварительной."
+                        " Ввод ставки ЗПМ не устраняет расхождение, расходы автоматически не подгоняются."
+                    ),
+                })
             from proxy.services.model_resource_binding_service import resource_binding_conflict_note
 
             for index, conflict in enumerate((position.get("summary") or {}).get("resource_binding_conflicts") or ()):

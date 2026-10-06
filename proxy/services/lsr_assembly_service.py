@@ -361,6 +361,21 @@ def compute_position(
     if fsem_trace.get("status") == "unresolved":
         details = list(fsem_trace.get("reasons") or fsem_trace.get("missing_machine_codes") or [])
         flags.append("ФСЭМ не смог детализировать ОТм: " + "; ".join(str(item) for item in details))
+    elif fsem_trace.get("status") == "derived_with_aggregate_discrepancy":
+        note = (
+            "Затраты труда машинистов рассчитаны по расходу каждой машины и экипажу ФСЭМ;"
+            f" опубликованный агрегат {fsem_trace['source_machinist_hours']:g}"
+            f" не совпадает с расчётными часами {fsem_trace['derived_machinist_hours']:g}."
+            " Сверьте нормативные источники и их редакции; сумма остаётся предварительной."
+        )
+        flags.append(note)
+        price_requirements.append({
+            "action": "needs_fsem_resolution", "resource_kind": "machinist",
+            "resource_code": "", "resource_name": "Затраты труда машинистов: сверка агрегата",
+            "source_machinist_hours": fsem_trace["source_machinist_hours"],
+            "derived_machinist_hours": fsem_trace["derived_machinist_hours"],
+            "message": note,
+        })
 
     for res in resources:
         kind = str(res.get("kind") or "")

@@ -1,5 +1,21 @@
 # Алгоритм: движок сборки ЛСР (позиция → ресурсы → цены → НР/СП → Всего)
 
+##906: machine-derived operator labour with source reconciliation
+
+FSEM machine crew hours and source tariff codes compute machinist labour as
+machine quantity x crew hours x hourly tariff, using raw Decimal quantities without
+blanket rounding/scaling or a fitted tolerance. Anonymous unpriced labour aggregates
+are retained in audit and never double charged. Existing explicit machinists/prices
+are preserved; unknown/invalid mapping stays unresolved. If derived hours differ
+from the norm aggregate, priced components are preliminary and the position keeps
+fsem_aggregate_discrepancy / needs_fsem_resolution. The source/edition discrepancy
+is not repaired by entering a price and never yields false confirmed readiness.
+Regression fixture0.02+0.002machine hours yields0.022derived crew hours, while the
+source aggregate0.02 remains an explicit reconciliation blocker. 172 focused PASS.
+Primary basis:421/pr amended55/pr, paragraph80 formula1.2;916/pr paragraphs78-79.
+577/pr Appendix15 is not a blanket licence to round imported resource quantities.
+No normative data, authored choices, provider, dependencies or runtime factors changed.
+
 ## 890 — полное включение работы в другую работу
 
 `covered_by_work_id` — необязательное решение модели: точный source_row другой

@@ -1,5 +1,60 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+Exact frozen906 offline gate PASS:3653tests/20existing opt-in skips/5warnings,
+279.69s; metadata31PASS. Version/compile/collect/architecture/map/docs/active-artifact
+checks PASS; foreign TEST_INVENTORY raw bytes preserved. Installed906/live ordinary
+continuation remains pending, so measured905 failure is not yet claimed closed.
+The unactivated reasoning profile BAP B0 (same source/r8/task/dataset) took368.69s:
+query4194tokens; answer exhausted16384output tokens without a final public table,
+no downloadable XLSX. Profile/source/connection identity unchanged. Enabling thinking
+alone is not a proven quality fix. Its same-profile B1 measurement is still running.
+
+##2026-10-06 - ordinary tool-off boundary and rounded FSEM aggregate
+
+Installed905/0.31.177/c13375ab has exact runtime hashes and native RRF PASS.
+Final frozen905 canonical gate:3620PASS/20existing opt-in skips/5warnings;
+metadata31PASS and all compile/collect/version/architecture/map/docs/artifact gates.
+BAP same original profile/r8/task/source/dataset: B0 240.16s,19accepted rows,
+one24262byte XLSX, confirmed0/preliminary82690.88; B1 370.28s,19accepted rows,
+one27821byte XLSX, confirmed0/preliminary66674.14. Both remain partial; B1 has
+4EXACT/4analogue/8needs-research/3missing, no native exact-card reads, and one raw
+PDF_TEXT page block unfinished at8192output tokens. This is not full norm acceptance.
+Ordinary installed905 control44.74s (history826) ended MODEL_OUTPUT_INCOMPLETE:
+two web_search requests appeared as text with two READ calls still available,
+but the final answer had tools disabled. Build906 addresses that measured boundary.
+Reasoning-profile B0/B1 comparison, diverse artifacts/VOR, large VOR, complete resource
+pricing and exact Windows installer/UI acceptance remain pending. Customer-ready false.
+Image-only DOCX, RTF and ZIP members have no accepted end-to-end input proof; PDF
+text extraction alone does not prove drawing/geometry completeness. No public release.
+
+Ordinary final answers retain the original allowed READ schemas while the same
+research budget and deadline permit them. Only provider-native calls are executed;
+XML/text frames remain diagnostic output. The existing executor/cache/scope and bound
+connection revision are reused. Entire batches pass schema/effect/ID/budget preflight
+before execution. Each READ checks the original deadline; expired calls receive
+matching blocked replies without execution/cache/source citations. Complete native
+exchanges retain original IDs, arguments and source payloads. No budget reset, query
+selector, model-authored query rewrite or second smeta workflow is introduced.
+One tools-off final render closes an exhausted/expired/already-continued exchange;
+unfinished final output does not trigger another READ loop. Context overflow and
+revision change remain explicit; cancellation propagates. SSE publishes only the
+completed public final answer. 15 new actual-flow regressions; 454 focused PASS;
+independent review15PASS. Exact canonical906 PASS; installed live controls pending.
+
+FSEM machine crew hours and source tariff codes compute machinist labour as
+machine quantity x crew hours x hourly tariff, using raw Decimal quantities without
+blanket rounding/scaling or a fitted tolerance. Anonymous unpriced labour aggregates
+are retained in audit and never double charged. Existing explicit machinists/prices
+are preserved; unknown/invalid mapping stays unresolved. If derived hours differ
+from the norm aggregate, priced components are preliminary and the position keeps
+fsem_aggregate_discrepancy / needs_fsem_resolution. The source/edition discrepancy
+is not repaired by entering a price and never yields false confirmed readiness.
+Regression fixture0.02+0.002machine hours yields0.022derived crew hours, while the
+source aggregate0.02 remains an explicit reconciliation blocker. 172 focused PASS.
+Primary basis:421/pr amended55/pr, paragraph80 formula1.2;916/pr paragraphs78-79.
+577/pr Appendix15 is not a blanket licence to round imported resource quantities.
+No normative data, authored choices, provider, dependencies or runtime factors changed.
+
 ## 2026-10-06 — malformed result field and lost terminal tool frame
 
 Installed904/0.31.176/e916c68f, guarded patch18.44s, exact runtime hashes PASS.

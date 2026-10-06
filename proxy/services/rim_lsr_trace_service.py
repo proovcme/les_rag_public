@@ -1260,6 +1260,14 @@ def build_position_trace(
         details = list(fsem_trace.get("reasons") or fsem_trace.get("missing_machine_codes") or [])
         flags.append("ФСЭМ не смог детализировать ОТм: " + "; ".join(str(item) for item in details))
         completeness_reasons.append("fsem_unresolved")
+    elif fsem_trace.get("status") == "derived_with_aggregate_discrepancy":
+        flags.append(
+            "ОТм рассчитана отдельно по каждой машине и экипажу ФСЭМ;"
+            f" опубликованный агрегат {fsem_trace['source_machinist_hours']:g}"
+            f" не совпадает с расчётными часами {fsem_trace['derived_machinist_hours']:g}."
+            " Нормативные источники требуют сверки; сумма остаётся предварительной."
+        )
+        completeness_reasons.append("fsem_aggregate_discrepancy")
     norm_source_integrity: dict[str, Any] = {}
     if norm and str(norm.get("_source_kind") or "") == "structured_sqlite":
         from proxy.smeta_core.integrity import normative_base_integrity
@@ -1516,6 +1524,9 @@ def build_position_trace(
                 **({"price_record_conflict": dict(price.record_conflict)} if price.record_conflict else {}),
                 "resource_group": str((price.group or {}).get("group") or ""),
                 "code_derivation": str(res.get("code_derivation") or ""),
+                **{key: res[key] for key in (
+                    "machinist_basis", "fsem_machine_code", "fsem_crew_hours", "fsem_driver_grade", "fsem_source_page",
+                ) if key in res},
                 **({"resource_binding": dict(res["resource_binding"])} if isinstance(res.get("resource_binding"), Mapping) else {}),
             }
         )
@@ -1551,6 +1562,9 @@ def build_position_trace(
                     **({"price_unit_conversion": dict(price.unit_conversion)} if price.unit_conversion else {}),
                     "price_source_ref": res.get("price_source_ref") or "",
                     "resource_binding": res.get("resource_binding") or {},
+                    **{key: res[key] for key in (
+                        "machinist_basis", "fsem_machine_code", "fsem_crew_hours", "fsem_driver_grade", "fsem_source_page",
+                    ) if key in res},
                     # § 3: a group reference arrives at the operator with the concrete
                     # resources of the book attached, because the answer to it is a
                     # choice of one of them and not a number.

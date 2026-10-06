@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
+from math import isfinite
 import sqlite3
 from pathlib import Path
 from backend.runtime_paths import mutable_path
@@ -33,6 +35,17 @@ def _f(value: Any) -> float:
         return float(str(value or 0).replace(",", "."))
     except ValueError:
         return 0.0
+
+
+def _finite_number(value: Any) -> float | None:
+    """Missing/invalid typed source fields must not become a zero crew or grade."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
 
 
 @lru_cache(maxsize=4096)
@@ -92,7 +105,14 @@ def enrich_machinists(
     quantity_field: str,
     db_path: str | Path = DEFAULT_DB,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Replace anonymous aggregate only after full FSEM coverage and hour reconciliation."""
+    """Calculate operators by each machine; reconcile the published aggregate separately.
+
+    421/пр, paragraph 80, formula (1.2), prices each machine's operator hours.
+    916/пр, paragraphs 78–79, defines its crew hours per machine-hour. A complete
+    typed linkage permits that arithmetic without fitting its components to an
+    aggregate. A disagreement remains an unresolved source control, never proof
+    that the source was rounded correctly or that editions are compatible.
+    """
     target = str(Path(db_path))
     machines = [item for item in resources if str(item.get("kind") or "") == "machine"]
     aggregate = [
@@ -118,7 +138,21 @@ def enrich_machinists(
             "machine_count": len(machines),
             "aggregate_count": len(aggregate),
         }
+    if any(
+        str(item.get("kind") or "") == "machinist" and str(item.get("code") or "").strip()
+        for item in resources
+    ):
+        # An authored detail and an anonymous aggregate can overlap. Preserve
+        # both and ask for source reconciliation instead of charging another
+        # derived copy of the operator already present.
+        return [dict(item) for item in resources], {
+            "schema": "fsem_enrichment_v1", "status": "unresolved",
+            "reasons": ["explicit_machinist_with_aggregate"],
+            "source_aggregates": [dict(item) for item in aggregate],
+        }
     detailed: list[dict[str, Any]] = []
+    components: list[dict[str, Any]] = []
+    derived_values: list[Decimal] = []
     missing: list[str] = []
     for machine in machines:
         code = str(machine.get("code") or "").strip()
@@ -126,30 +160,67 @@ def enrich_machinists(
         if row is None:
             missing.append(code or "<machine_without_code>")
             continue
-        crew = _f(row.get("crew_hours"))
+        crew = _finite_number(row.get("crew_hours"))
         driver_code = str(row.get("driver_code") or "")
-        if crew <= 0 and not driver_code:
-            continue
-        if crew <= 0 or not driver_code:
+        grade = _finite_number(row.get("driver_grade"))
+        quantity = _finite_number(machine.get(quantity_field))
+        if crew is None or quantity is None or quantity < 0:
             missing.append(code)
             continue
+        if crew == 0 and not driver_code:
+            components.append({
+                "machine_resource": dict(machine), "fsem_machine": dict(row), "operator_hours": 0.0,
+            })
+            continue
+        if crew <= 0 or not driver_code or grade is None or grade <= 0:
+            missing.append(code)
+            continue
+        operator_hours_decimal = (
+            Decimal(str(machine[quantity_field]).replace(",", "."))
+            * Decimal(str(row["crew_hours"]).replace(",", "."))
+        )
+        operator_hours = float(operator_hours_decimal)
+        if not isfinite(operator_hours):
+            missing.append(code)
+            continue
+        derived_values.append(operator_hours_decimal)
+        components.append({
+            "machine_resource": dict(machine),
+            "fsem_machine": dict(row),
+            "operator_hours": operator_hours,
+        })
         detailed.append({
             "kind": "machinist",
-            "name": f"Машинисты, средний разряд {_f(row.get('driver_grade')):g}",
+            "name": f"Машинисты, средний разряд {grade:g}",
             "unit": "чел.-ч",
-            quantity_field: round(_f(machine.get(quantity_field)) * crew, 6),
+            quantity_field: operator_hours,
             "code": driver_code,
             "machinist_basis": f"ФСЭМ-2022 {code}, экипаж {crew:g}",
+            "fsem_machine_code": code,
+            "fsem_crew_hours": crew,
+            "fsem_driver_grade": grade,
             "fsem_source_page": row.get("source_page"),
         })
-    source_total = round(sum(_f(item.get(quantity_field)) for item in aggregate), 6)
-    derived_total = round(sum(_f(item.get(quantity_field)) for item in detailed), 6)
-    tolerance = max(0.0001, abs(source_total) * 0.001)
-    if missing or abs(source_total - derived_total) > tolerance:
+    source_values = [_finite_number(item.get(quantity_field)) for item in aggregate]
+    if any(value is None or value < 0 for value in source_values):
+        return [dict(item) for item in resources], {
+            "schema": "fsem_enrichment_v1", "status": "unresolved",
+            "reasons": ["invalid_machinist_aggregate_quantity"],
+            "source_aggregates": [dict(item) for item in aggregate],
+        }
+    # Compare published numeric values, not inferred decimal scale or a fitted
+    # two-decimal total. Decimal also avoids inventing a float-precision gap.
+    source_decimal = sum(
+        (Decimal(str(item[quantity_field]).replace(",", ".")) for item in aggregate), Decimal(0),
+    )
+    derived_decimal = sum(derived_values, Decimal(0))
+    source_total = float(source_decimal)
+    derived_total = float(derived_decimal)
+    disagreement = source_decimal != derived_decimal
+    if missing:
         reasons: list[str] = []
-        if missing:
-            reasons.append("missing machine mapping: " + ", ".join(missing))
-        if abs(source_total - derived_total) > tolerance:
+        reasons.append("missing or invalid machine mapping: " + ", ".join(missing))
+        if disagreement:
             reasons.append(
                 f"machinist hours mismatch: source={source_total:g}, derived={derived_total:g}"
             )
@@ -160,6 +231,19 @@ def enrich_machinists(
             "source_machinist_hours": source_total,
             "derived_machinist_hours": derived_total,
             "reasons": reasons,
+            "source_aggregates": [dict(item) for item in aggregate],
+            "machine_operator_components": components,
+        }
+    if disagreement and any(item.get("price") not in (None, "") for item in aggregate):
+        # The new arithmetic path cannot replace an already authored monetary
+        # statement. Preserve the original price and source conflict together.
+        return [dict(item) for item in resources], {
+            "schema": "fsem_enrichment_v1", "status": "unresolved",
+            "source_machinist_hours": source_total,
+            "derived_machinist_hours": derived_total,
+            "reasons": ["explicit_priced_aggregate_discrepancy"],
+            "source_aggregates": [dict(item) for item in aggregate],
+            "machine_operator_components": components,
         }
     replaced = [
         dict(item) for item in resources
@@ -168,8 +252,18 @@ def enrich_machinists(
     replaced.extend(detailed)
     return replaced, {
         "schema": "fsem_enrichment_v1",
-        "status": "reconciled",
+        "status": "derived_with_aggregate_discrepancy" if disagreement else "reconciled",
         "machine_count": len(machines),
         "detailed_machinist_rows": len(detailed),
         "hours": source_total,
+        "source_machinist_hours": source_total,
+        "derived_machinist_hours": derived_total,
+        "calculation_basis": "421/пр п.80 формула (1.2); 916/пр пп.78–79: расход машины × экипаж",
+        "aggregate_reconciliation": {
+            "status": "discrepancy" if disagreement else "exact",
+            "source_aggregates": [dict(item) for item in aggregate],
+            "difference_hours": float(derived_decimal - source_decimal),
+            "comparison": "published_values_without_fitting",
+        },
+        "machine_operator_components": components,
     }

@@ -991,6 +991,42 @@ def native_research_exchange(
     )
 
 
+def native_ordinary_read_batch(
+    response: InferenceResponse,
+    contracts: Mapping[str, Mapping[str, Any]],
+    previous_exchanges: Sequence[NativeToolExchange],
+    *, calls_remaining: int,
+) -> list[dict[str, Any]]:
+    """Validate a whole late provider-native READ batch before executing any call."""
+    from proxy.services.structured_extract import validate as validate_json_schema
+
+    if len(response.tool_calls) > calls_remaining:
+        raise ValueError("calls_budget")
+    calls = []
+    for raw in response.tool_calls:
+        function = raw.get("function") or {}
+        if not isinstance(function, Mapping):
+            raise ValueError("native_read_schema_invalid")
+        name = function.get("name")
+        contract = contracts.get(name) if isinstance(name, str) else None
+        if contract is None or contract.get("effect") != "read" or contract.get("approval_required"):
+            raise ValueError("native_read_unknown_tool")
+        arguments = function.get("arguments")
+        try:
+            args = json.loads(arguments) if isinstance(arguments, str) else dict(arguments)
+        except (TypeError, ValueError):
+            raise ValueError("native_read_schema_invalid") from None
+        schema = contract.get("input_schema") or contract.get("args_schema")
+        if not isinstance(args, dict) or not isinstance(schema, Mapping) or validate_json_schema(args, dict(schema)):
+            raise ValueError("native_read_schema_invalid")
+        calls.append({"call_id": raw.get("id"), "tool": name, "args": args})
+    try:
+        native_research_call_batch(response, calls, previous_exchanges)
+    except ValueError:
+        raise ValueError("native_read_exchange_invalid") from None
+    return calls
+
+
 def tool_selector_request_payload(
     *,
     question: str,
@@ -8176,6 +8212,9 @@ async def _execute_chat_evidence_application(
                 tool_results_for_model: list[dict[str, Any]] = []
                 research_native_exchanges: list[NativeToolExchange] = []
                 research_legacy_results: list[dict[str, Any]] = []
+                ordinary_read_contracts: dict[str, Mapping[str, Any]] = {}
+                ordinary_research_ready = False
+                ordinary_connection_revision = ""
                 workbook_chat_meta: dict[str, Any] = {}
                 tool_context = ""
                 model_rag_query_hits: list[tuple[str, Sequence[Any]]] = []
@@ -8645,6 +8684,49 @@ async def _execute_chat_evidence_application(
                         unexecuted_native_call_count = 0
                         stop_reason = "deadline"
                         research_legacy_results = list(tool_results_for_model)
+                        async def execute_research_read(call):
+                            nonlocal context, answer_source_map, final_evidence_packet, model_evidence_chunks
+                            nonlocal selector_evidence, selector_source_map
+                            tool_name = str(call.get("tool") or "")
+                            read_key = json.dumps([tool_name, call.get("args") or {}], ensure_ascii=False, sort_keys=True)
+                            replayed = read_key in read_snapshots
+                            if replayed:
+                                result = deepcopy(read_snapshots[read_key])
+                            else:
+                                result = await model_research_tools.execute(call)
+                                result_spec = result.payload.get("spec") or {}
+                                if (isinstance(result_spec, Mapping) and result_spec.get("effect") == "read"
+                                        and result.payload.get("status") in {"ok", "missing"}):
+                                    read_snapshots[read_key] = deepcopy(result)
+                            if result.chunks:
+                                known_chunk_ids = {
+                                    str((getattr(item, "meta", {}) or {}).get("chunk_id") or "")
+                                    or hashlib.sha256((str(getattr(item, "doc_name", "") or "") + "\x00"
+                                                       + str(getattr(item, "content", "") or "")).encode("utf-8")).hexdigest()
+                                    for item in chunks
+                                }
+                                for found_chunk in result.chunks:
+                                    found_id = str((getattr(found_chunk, "meta", {}) or {}).get("chunk_id") or "") or hashlib.sha256(
+                                        (str(getattr(found_chunk, "doc_name", "") or "") + "\x00"
+                                         + str(getattr(found_chunk, "content", "") or "")).encode("utf-8")).hexdigest()
+                                    if found_id not in known_chunk_ids:
+                                        chunks.append(found_chunk)
+                                        known_chunk_ids.add(found_id)
+                                research_windows = expand_context_windows(
+                                    chunks, collection=getattr(rag_backend, "collection_name", ""), logger=logger,
+                                    max_chunks=context_max_chunks, max_chars_per_chunk=context_window_chars, radius=context_radius,
+                                )
+                                model_evidence_chunks = list(research_windows.chunks)
+                                (_research_evidence_packet, context, answer_source_map, final_evidence_packet) = _build_model_evidence(model_evidence_chunks)
+                                retrieval_trace["evidence_packet"] = _research_evidence_packet.trace_summary(
+                                    max_chars=context_chars_limit, include_metadata=True,
+                                )
+                                selector_evidence = selector_evidence_payload(
+                                    attachment_context=attachment_context, rendered_context=context, source_catalog=source_catalog,
+                                )
+                                selector_source_map = answer_source_map
+                            return result, replayed
+
                         while time.monotonic() < research_deadline and calls_remaining > 0:
                             research_round += 1
                             prior_results = [
@@ -8877,73 +8959,9 @@ async def _execute_chat_evidence_application(
                                         workbook_progress,
                                     ))
                                 else:
-                                    read_key = json.dumps([tool_name, call.get("args") or {}],
-                                                          ensure_ascii=False, sort_keys=True)
-                                    if read_key in read_snapshots:
-                                        research_result = deepcopy(read_snapshots[read_key])
-                                        replayed_reads += 1
-                                    else:
-                                        research_result = await model_research_tools.execute(call)
-                                        result_payload = research_result.payload
-                                        result_spec = result_payload.get("spec") or {}
-                                        if (isinstance(result_spec, Mapping) and result_spec.get("effect") == "read"
-                                                and result_payload.get("status") in {"ok", "missing"}):
-                                            # Request-local exact read snapshot. Keep source/body
-                                            # provenance, but never cache errors or write actions.
-                                            read_snapshots[read_key] = deepcopy(research_result)
+                                    research_result, read_replayed = await execute_research_read(call)
+                                    replayed_reads += int(read_replayed)
                                     payload = research_result.payload
-                                    if research_result.chunks:
-                                        known_chunk_ids = {
-                                            str((getattr(item, "meta", {}) or {}).get("chunk_id") or "")
-                                            or hashlib.sha256(
-                                                (
-                                                    str(getattr(item, "doc_name", "") or "")
-                                                    + "\x00"
-                                                    + str(getattr(item, "content", "") or "")
-                                                ).encode("utf-8")
-                                            ).hexdigest()
-                                            for item in chunks
-                                        }
-                                        for found_chunk in research_result.chunks:
-                                            found_id = str(
-                                                (getattr(found_chunk, "meta", {}) or {}).get("chunk_id") or ""
-                                            ) or hashlib.sha256(
-                                                (
-                                                    str(getattr(found_chunk, "doc_name", "") or "")
-                                                    + "\x00"
-                                                    + str(getattr(found_chunk, "content", "") or "")
-                                                ).encode("utf-8")
-                                            ).hexdigest()
-                                            if found_id not in known_chunk_ids:
-                                                chunks.append(found_chunk)
-                                                known_chunk_ids.add(found_id)
-                                        research_windows = expand_context_windows(
-                                            chunks,
-                                            collection=getattr(rag_backend, "collection_name", ""),
-                                            logger=logger,
-                                            max_chunks=context_max_chunks,
-                                            max_chars_per_chunk=context_window_chars,
-                                            radius=context_radius,
-                                        )
-                                        model_evidence_chunks = list(research_windows.chunks)
-                                        (
-                                            _research_evidence_packet,
-                                            context,
-                                            answer_source_map,
-                                            final_evidence_packet,
-                                        ) = _build_model_evidence(model_evidence_chunks)
-                                        retrieval_trace["evidence_packet"] = (
-                                            _research_evidence_packet.trace_summary(
-                                                max_chars=context_chars_limit,
-                                                include_metadata=True,
-                                            )
-                                        )
-                                        selector_evidence = selector_evidence_payload(
-                                            attachment_context=attachment_context,
-                                            rendered_context=context,
-                                            source_catalog=source_catalog,
-                                        )
-                                        selector_source_map = answer_source_map
                                 selected_calls.append(call)
                                 calls_remaining -= 1
                                 safe_payload = safe_workbook_history_projection(payload)
@@ -9052,6 +9070,16 @@ async def _execute_chat_evidence_application(
                             "native_tool_schemas": bool(native_tools),
                             "web_research": web_research_trace,
                         }
+                        if canonical_execution_mode is CanonicalRouteMode.ACTIVE and not model_driven_retrieval:
+                            ordinary_read_contracts = {
+                                str(tool["name"]): tool for tool in shortlist.get("tools", [])
+                                if isinstance(tool, Mapping) and tool.get("name") in allowed_tools
+                                and tool.get("effect") == "read" and not tool.get("approval_required")
+                            }
+                            ordinary_research_ready = stop_reason == "model_stop" and bool(ordinary_read_contracts)
+                            ordinary_connection_revision = str(
+                                getattr(getattr(active_model_result, "connection", None), "revision_id", "") or ""
+                            )
                     except ContextRequiredSectionOverflow as context_error:
                         retrieval_trace["context_governor"]["error"] = {
                             "code": context_error.code,
@@ -11255,6 +11283,11 @@ async def _execute_chat_evidence_application(
                         and str(getattr(req, "comparative_acceptance_variant", "") or "") == "B0_DIRECT"
                         else []
                     )
+                    ordinary_answer_tools = tuple(
+                        tool for tool in (native_tools if ordinary_research_ready else ())
+                        if tool.get("function", {}).get("name") in ordinary_read_contracts
+                    ) if ordinary_research_ready and calls_remaining > 0 and time.monotonic() < research_deadline else ()
+                    answer_native_tools = direct_read_tools or ordinary_answer_tools
                     if direct_read_tools:
                         from proxy.services.lsr_workbook_adapter_service import explicit_estimate_pricebook
                         direct_price_basis = explicit_estimate_pricebook(
@@ -11431,9 +11464,9 @@ async def _execute_chat_evidence_application(
                         messages, answer_packet = govern_inference_messages(
                             preset=answer_execution_preset,
                             profile_prefix=sys_msg + (FINAL_RESEARCH_INSTRUCTION
-                                if research_native_exchanges and not model_driven_retrieval and not direct_read_tools else ""),
+                                if research_native_exchanges and not model_driven_retrieval and not answer_native_tools else ""),
                             request_payload=question_tail,
-                            native_tools=direct_read_tools,
+                            native_tools=answer_native_tools,
                             checkpoint=answer_checkpoint,
                             working_memory=answer_working_memory,
                             evidence=() if model_driven_retrieval else answer_evidence,
@@ -11531,8 +11564,8 @@ async def _execute_chat_evidence_application(
                         ),
                         "max_tokens": generation_budget,
                     }
-                    if direct_read_tools:
-                        chat_body["tools"] = direct_read_tools
+                    if answer_native_tools:
+                        chat_body["tools"] = answer_native_tools
                     # При стриминге ретрай (строгий промпт) шлёт уже новый текст —
                     # просим клиент очистить накопленное от прошлой попытки.
                     if token_sink is not None and attempt > 1:
@@ -11546,6 +11579,8 @@ async def _execute_chat_evidence_application(
                                 headers,
                                 chat_body,
                                 allow_stream=not model_driven_retrieval,
+                                **({"expected_connection_revision_id": ordinary_connection_revision}
+                                   if ordinary_answer_tools else {}),
                             )
                             if active_model_result is not None:
                                 llm_model = active_model_result.connection.model_id
@@ -11666,6 +11701,108 @@ async def _execute_chat_evidence_application(
                     append_actual_model_call(retrieval_trace, purpose="answer",
                         finish_reason=llm_usage_finish_reason(usage),
                         completion_tokens=int(usage.get("completion_tokens") or 0))
+                    while (ordinary_research_ready and not direct_read_tools and active_model_result is not None
+                           and active_model_result.response.tool_calls):
+                        response = active_model_result.response
+                        try:
+                            literal_calls = native_ordinary_read_batch(
+                                response, ordinary_read_contracts, research_native_exchanges,
+                                calls_remaining=calls_remaining,
+                            )
+                            calls = [_augment_model_tool_args(
+                                call, question=req.question, dataset_ids=[str(item) for item in _dataset_ids],
+                                target_file_ref=target_file_ref,
+                            ) for call in literal_calls]
+                            typed_calls = native_research_call_batch(response, calls, research_native_exchanges)
+                        except ValueError as error:
+                            retrieval_trace["tool_loop"]["ordinary_read_stop"] = str(error)
+                            break
+                        payloads, replayed_reads, blocked_reads = [], 0, 0
+                        calls_remaining -= len(calls)
+                        for call in calls:
+                            if time.monotonic() >= research_deadline:
+                                blocked_reads += 1
+                                blocked_payload = {
+                                    "tool": call["tool"], "status": "blocked",
+                                    "result": {"code": "ORDINARY_RESEARCH_DEADLINE", "executed": False,
+                                               "expired_read_window": True},
+                                    "sources": [], "missing": [], "warnings": ["Original source-reading deadline expired."],
+                                }
+                                payloads.append(blocked_payload)
+                                tool_results_for_model.append(blocked_payload)
+                                continue
+                            research_result, read_replayed = await execute_research_read(call)
+                            replayed_reads += int(read_replayed)
+                            payload = research_result.payload
+                            safe_payload = safe_workbook_history_projection(payload)
+                            visible_payload = safe_payload if safe_payload else payload
+                            payloads.append(visible_payload)
+                            tool_results_for_model.append(visible_payload)
+                            selected_calls.append(call)
+                        research_native_exchanges.append(native_research_exchange(
+                            typed_calls, payloads, assistant_content=response.text, reasoning_content=response.reasoning_content,
+                        ))
+                        research_round += 1
+                        research_rounds.append({"round": research_round, "phase": "answer", "proposed": len(calls),
+                                                "admitted": len(calls), "executed": len(calls) - replayed_reads - blocked_reads,
+                                                **({"replayed": replayed_reads} if replayed_reads else {}),
+                                                **({"blocked": blocked_reads} if blocked_reads else {})})
+                        loop_trace = retrieval_trace["tool_loop"]
+                        read_counts = loop_trace.setdefault("ordinary_read_counts", {
+                            "admitted": 0, "executed": 0, "replayed": 0, "blocked": 0,
+                        })
+                        read_counts["admitted"] += len(calls)
+                        read_counts["executed"] += len(calls) - replayed_reads - blocked_reads
+                        read_counts["replayed"] += replayed_reads
+                        read_counts["blocked"] += blocked_reads
+                        loop_trace["calls_remaining"] = calls_remaining
+                        loop_trace["selected_calls"] = [safe_selected_call_trace(call) for call in selected_calls]
+                        answer_source_map = _merge_web_source_map(answer_source_map, tool_results_for_model)
+                        selector_source_map = answer_source_map
+                        continue_reads = (calls_remaining > 0 and time.monotonic() < research_deadline
+                                          and replayed_reads != len(calls))
+                        remaining_tools = ordinary_answer_tools if continue_reads else ()
+                        if blocked_reads:
+                            loop_trace["ordinary_read_stop"] = "deadline"
+                        elif replayed_reads == len(calls):
+                            loop_trace["ordinary_read_stop"] = "repeated_read_batch"
+                        answer_evidence = ["Материалы из найденных документов:", *[
+                            item.payload for item in _text_context_objects("answer-evidence", context)
+                        ]]
+                        try:
+                            read_messages, read_packet = govern_inference_messages(
+                                preset=answer_execution_preset,
+                                profile_prefix=sys_msg + ("" if remaining_tools else FINAL_RESEARCH_INSTRUCTION),
+                                request_payload=question_tail, native_tools=remaining_tools,
+                                checkpoint=answer_checkpoint, working_memory=answer_working_memory,
+                                evidence=answer_evidence, source_map=answer_source_map,
+                                tool_exchange=answer_tool_exchange, native_exchanges=research_native_exchanges,
+                                dialogue=[session_block] if session_block else [],
+                            )
+                        except ContextRequiredSectionOverflow as error:
+                            retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
+                                error, purpose="ordinary_evidence_read")
+                            raise HTTPException(422, detail={"code": error.code, "message":
+                                "Полный обмен чтения источников не помещается в контекст назначенной модели. "
+                                "Следующий запрос к модели не отправлен."}) from error
+                        retrieval_trace["context_governor"]["calls"].append(
+                            context_packet_trace(read_packet, purpose="ordinary_evidence_read")
+                        )
+                        read_body = {**chat_body, "messages": read_messages}
+                        read_body.pop("tools", None)
+                        if remaining_tools:
+                            read_body["tools"] = remaining_tools
+                        started = time.time()
+                        answer, usage = await _post_llm(
+                            llm_runtime, llm_model, headers, read_body, allow_stream=True,
+                            expected_connection_revision_id=ordinary_connection_revision,
+                        )
+                        t_llm += time.time() - started
+                        append_actual_model_call(retrieval_trace, purpose="ordinary_evidence_read",
+                            finish_reason=llm_usage_finish_reason(usage),
+                            completion_tokens=int(usage.get("completion_tokens") or 0))
+                        if not remaining_tools:
+                            break
                     if direct_read_tools:
                         confirm_model_read_delivery(
                             model_evidence_chunks,

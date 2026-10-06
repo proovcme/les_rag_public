@@ -1674,6 +1674,7 @@
         "tests/test_smeta_professional_review.py",
         "tests/test_source_excerpts.py",
         "tests/test_sovushka_chat.py",
+        "tests/test_temporal_model_evidence_binding.py",
         "tests/test_unified_adapters_v09.py",
         "tests/test_unified_async_v10.py",
         "tests/test_unified_live_v07.py",
@@ -3112,6 +3113,7 @@
         "tests/test_datasets_router.py",
         "tests/test_fgis_pricebook_snapshot.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_temporal_model_evidence_binding.py",
         "tests/test_vor_input_transport.py",
         "tests/test_workbook_tool_service.py"
       ],
@@ -3149,6 +3151,7 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_native_research_exchange.py",
         "tests/test_chat_profile_runtime.py",
+        "tests/test_chat_terminal_output_diagnostics.py",
         "tests/test_context_wire_token_admission.py",
         "tests/test_fgis_pricebook_snapshot.py",
         "tests/test_finalization_defects_782.py",
@@ -3189,6 +3192,7 @@
         "tests/test_sovushka_chat.py",
         "tests/test_stall_bound_25.py",
         "tests/test_stall_completion_23.py",
+        "tests/test_temporal_model_evidence_binding.py",
         "tests/test_workbook_artifact_target.py",
         "tests/test_workbook_chat_refinement.py",
         "tests/test_workbook_partial_draft.py",
@@ -3197,7 +3201,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 13313,
+      "lines": 13450,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3250,6 +3254,7 @@
         "proxy/services/saferag_service.py",
         "proxy/services/smeta_chat_adapter_service.py",
         "proxy/services/source_locator_service.py",
+        "proxy/services/structured_extract.py",
         "proxy/services/table_query_service.py",
         "proxy/services/tool_harness_service.py",
         "proxy/services/typed_memory_projection_service.py",
@@ -3265,7 +3270,8 @@
       "inbound": [
         "proxy/routers/chat.py",
         "proxy/services/chat_evidence_application_service.py",
-        "tests/test_chat_evidence_manifest_service.py"
+        "tests/test_chat_evidence_manifest_service.py",
+        "tests/test_chat_terminal_output_diagnostics.py"
       ],
       "lines": 140,
       "module": "proxy.services.chat_evidence_manifest_service",
@@ -4337,7 +4343,7 @@
         "tests/test_fsem_machinist_service.py",
         "tests/test_lsr_readiness_transport.py"
       ],
-      "lines": 175,
+      "lines": 269,
       "module": "proxy.services.fsem_machinist_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -4875,6 +4881,7 @@
       "inbound": [
         "proxy/routers/lsr.py",
         "proxy/services/construction_harness_service.py",
+        "tests/test_fsem_machinist_service.py",
         "tests/test_gesn_seed_is_test_only_830.py",
         "tests/test_gesn_service.py",
         "tests/test_lsr_assembly_service.py",
@@ -4888,7 +4895,7 @@
         "tests/test_rim_trace_xlsx.py",
         "tools/les_mcp_server.py"
       ],
-      "lines": 650,
+      "lines": 665,
       "module": "proxy.services.lsr_assembly_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -4991,6 +4998,7 @@
         "tests/test_lsr_workbook_catalog_adapter.py",
         "tests/test_resource_price_unit_conversion.py",
         "tests/test_rim_lsr_trace_service.py",
+        "tests/test_temporal_model_evidence_binding.py",
         "tests/test_workbook_repack_target.py"
       ],
       "lines": 478,
@@ -5025,7 +5033,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 1645,
+      "lines": 1672,
       "module": "proxy.services.lsr_workbook_adapter_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5186,6 +5194,7 @@
         "proxy/routers/tasks.py",
         "proxy/services/project_service.py",
         "proxy/services/typed_memory_projection_service.py",
+        "tests/test_chat_terminal_output_diagnostics.py",
         "tests/test_memory_service.py",
         "tests/test_typed_memory_projection_service.py"
       ],
@@ -5506,6 +5515,7 @@
         "proxy/services/model_evidence_read_contract.py",
         "tests/test_model_artifact_kind_authority.py",
         "tests/test_model_lsr_result_contract.py",
+        "tests/test_model_result_field_instruction.py",
         "tests/test_workbook_artifact_target.py"
       ],
       "lines": 568,
@@ -5882,6 +5892,7 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_mail_query.py",
         "tests/test_chat_native_research_exchange.py",
+        "tests/test_chat_terminal_output_diagnostics.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_connection_chat_integration.py",
         "tests/test_model_connection_chat_options.py",
@@ -6740,9 +6751,10 @@
         "tests/test_smeta_core.py",
         "tests/test_smeta_release_baseline.py",
         "tests/test_stall_bound_25.py",
+        "tests/test_temporal_model_evidence_binding.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 3272,
+      "lines": 3286,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7453,6 +7465,7 @@
     },
     {
       "inbound": [
+        "proxy/services/chat_evidence_application_service.py",
         "proxy/services/dataset_memory_service.py",
         "proxy/services/extract_service.py",
         "proxy/services/rim_agent_action_service.py",
@@ -7972,6 +7985,7 @@
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_sovushka_chat.py",
         "tests/test_stall_bound_25.py",
+        "tests/test_temporal_model_evidence_binding.py",
         "tests/test_workbook_artifact_target.py",
         "tests/test_workbook_chat_refinement.py",
         "tests/test_workbook_partial_draft.py",
@@ -10191,6 +10205,20 @@
     },
     {
       "inbound": [],
+      "lines": 163,
+      "module": "tests.test_chat_terminal_output_diagnostics",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/chat_evidence_manifest_service.py",
+        "proxy/services/memory_service.py",
+        "proxy/services/openai_compatible_transport_service.py"
+      ],
+      "path": "tests/test_chat_terminal_output_diagnostics.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 542,
       "module": "tests.test_checklist_param_rules",
       "outbound": [
@@ -11173,10 +11201,11 @@
     },
     {
       "inbound": [],
-      "lines": 55,
+      "lines": 272,
       "module": "tests.test_fsem_machinist_service",
       "outbound": [
         "proxy/services/fsem_machinist_service.py",
+        "proxy/services/lsr_assembly_service.py",
         "proxy/services/rim_lsr_trace_service.py",
         "tests/test_rim_lsr_trace_service.py"
       ],
@@ -11938,7 +11967,7 @@
     },
     {
       "inbound": [],
-      "lines": 196,
+      "lines": 220,
       "module": "tests.test_lsr_readiness_transport",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -12781,6 +12810,17 @@
         "proxy/services/model_resource_binding_service.py"
       ],
       "path": "tests/test_model_resource_reference.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 23,
+      "module": "tests.test_model_result_field_instruction",
+      "outbound": [
+        "proxy/services/model_lsr_result_contract.py"
+      ],
+      "path": "tests/test_model_result_field_instruction.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -15387,6 +15427,22 @@
         "tools/smeta_release_baseline.py"
       ],
       "path": "tests/test_tauri_desktop.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 461,
+      "module": "tests.test_temporal_model_evidence_binding",
+      "outbound": [
+        "proxy/routers/chat.py",
+        "proxy/services/chat_attachment_service.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/lsr_source_coverage_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
+        "proxy/services/workbook_research_job_service.py"
+      ],
+      "path": "tests/test_temporal_model_evidence_binding.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -20728,9 +20784,9 @@
     "product_reachable": 373,
     "registered_api_routes": 340,
     "runtime_support": 11,
-    "test_or_tool_only": 714,
-    "tracked_python_files": 1099,
-    "tracked_python_lines": 386158
+    "test_or_tool_only": 717,
+    "tracked_python_files": 1102,
+    "tracked_python_lines": 387333
   },
   "warnings": []
 }

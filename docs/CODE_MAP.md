@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build906: ordinary answer -> retained READ schemas -> original executor/cache/
+deadline/budget -> complete native exchange -> bounded tools-off final answer.
+FSEM typed crew mapping -> unrounded Decimal labour; aggregate discrepancy ->
+preliminary priced components + needs_fsem_resolution, never confirmed readiness.
+Tests: test_chat_ordinary_native_continuation, test_fsem_machinist_service,
+test_lsr_readiness_transport.
+
 Build905: model_lsr_result_field_instruction → literal source/real fields;
 terminal final-tool guard → public-content SHA and budget audit, never dialogue memory.
 Trusted frame first-bind → frozen global evidence map → prior/final replay;

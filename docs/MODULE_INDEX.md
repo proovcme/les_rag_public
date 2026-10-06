@@ -1,5 +1,48 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+Exact frozen906 offline gate PASS:3653tests/20existing opt-in skips/5warnings,
+279.69s; metadata31PASS. Version/compile/collect/architecture/map/docs/active-artifact
+checks PASS; foreign TEST_INVENTORY raw bytes preserved. Installed906/live ordinary
+continuation remains pending, so measured905 failure is not yet claimed closed.
+The unactivated reasoning profile BAP B0 (same source/r8/task/dataset) took368.69s:
+query4194tokens; answer exhausted16384output tokens without a final public table,
+no downloadable XLSX. Profile/source/connection identity unchanged. Enabling thinking
+alone is not a proven quality fix. Its same-profile B1 measurement is still running.
+
+##906 - ordinary READ continuation / FSEM labour
+
+Ordinary final answers retain the original allowed READ schemas while the same
+research budget and deadline permit them. Only provider-native calls are executed;
+XML/text frames remain diagnostic output. The existing executor/cache/scope and bound
+connection revision are reused. Entire batches pass schema/effect/ID/budget preflight
+before execution. Each READ checks the original deadline; expired calls receive
+matching blocked replies without execution/cache/source citations. Complete native
+exchanges retain original IDs, arguments and source payloads. No budget reset, query
+selector, model-authored query rewrite or second smeta workflow is introduced.
+One tools-off final render closes an exhausted/expired/already-continued exchange;
+unfinished final output does not trigger another READ loop. Context overflow and
+revision change remain explicit; cancellation propagates. SSE publishes only the
+completed public final answer. 15 new actual-flow regressions; 454 focused PASS;
+independent review15PASS. Exact canonical906 PASS; installed live controls pending.
+
+FSEM machine crew hours and source tariff codes compute machinist labour as
+machine quantity x crew hours x hourly tariff, using raw Decimal quantities without
+blanket rounding/scaling or a fitted tolerance. Anonymous unpriced labour aggregates
+are retained in audit and never double charged. Existing explicit machinists/prices
+are preserved; unknown/invalid mapping stays unresolved. If derived hours differ
+from the norm aggregate, priced components are preliminary and the position keeps
+fsem_aggregate_discrepancy / needs_fsem_resolution. The source/edition discrepancy
+is not repaired by entering a price and never yields false confirmed readiness.
+Regression fixture0.02+0.002machine hours yields0.022derived crew hours, while the
+source aggregate0.02 remains an explicit reconciliation blocker. 172 focused PASS.
+Primary basis:421/pr amended55/pr, paragraph80 formula1.2;916/pr paragraphs78-79.
+577/pr Appendix15 is not a blanket licence to round imported resource quantities.
+No normative data, authored choices, provider, dependencies or runtime factors changed.
+
+Entries: chat_evidence_application_service shared READ continuation;
+fsem_machinist_service; rim_lsr_trace_service; lsr_workbook_adapter_service;
+lsr_assembly_service. Docs: modules/rag-evidence-flow.md, ALGO-lsr-assembly.md.
+
 ## 905 — result field instruction / terminal output diagnostics
 
 The model-result field instruction now names real row_role/resource_code fields

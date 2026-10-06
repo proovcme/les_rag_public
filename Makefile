@@ -52,6 +52,7 @@ UNIT_TESTS += tests/test_lsr_workbook_catalog_adapter.py
 UNIT_TESTS += tests/test_context_wire_token_admission.py tests/test_model_wire_token_count.py tests/test_model_token_usage_trace.py
 UNIT_TESTS += tests/test_workbook_result_carrier_scope.py
 UNIT_TESTS += tests/test_chat_terminal_output_diagnostics.py tests/test_model_result_field_instruction.py
+UNIT_TESTS += tests/test_chat_ordinary_native_continuation.py
 UNIT_TESTS += tests/test_temporal_model_evidence_binding.py
 UNIT_TESTS += tests/test_model_artifact_kind_authority.py
 UNIT_TESTS += tests/test_model_inline_field_records.py tests/test_lsr_readiness_transport.py

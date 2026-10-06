@@ -1,5 +1,31 @@
 # Версии программного контура ЛЕС
 
+Exact frozen906 offline gate PASS:3653tests/20existing opt-in skips/5warnings,
+279.69s; metadata31PASS. Version/compile/collect/architecture/map/docs/active-artifact
+checks PASS; foreign TEST_INVENTORY raw bytes preserved. Installed906/live ordinary
+continuation remains pending, so measured905 failure is not yet claimed closed.
+The unactivated reasoning profile BAP B0 (same source/r8/task/dataset) took368.69s:
+query4194tokens; answer exhausted16384output tokens without a final public table,
+no downloadable XLSX. Profile/source/connection identity unchanged. Enabling thinking
+alone is not a proven quality fix. Its same-profile B1 measurement is still running.
+
+Candidate0.31.178/build906; models/providers/dependencies unchanged.
+Installed905/0.31.177/c13375ab has exact runtime hashes and native RRF PASS.
+Final frozen905 canonical gate:3620PASS/20existing opt-in skips/5warnings;
+metadata31PASS and all compile/collect/version/architecture/map/docs/artifact gates.
+BAP same original profile/r8/task/source/dataset: B0 240.16s,19accepted rows,
+one24262byte XLSX, confirmed0/preliminary82690.88; B1 370.28s,19accepted rows,
+one27821byte XLSX, confirmed0/preliminary66674.14. Both remain partial; B1 has
+4EXACT/4analogue/8needs-research/3missing, no native exact-card reads, and one raw
+PDF_TEXT page block unfinished at8192output tokens. This is not full norm acceptance.
+Ordinary installed905 control44.74s (history826) ended MODEL_OUTPUT_INCOMPLETE:
+two web_search requests appeared as text with two READ calls still available,
+but the final answer had tools disabled. Build906 addresses that measured boundary.
+Reasoning-profile B0/B1 comparison, diverse artifacts/VOR, large VOR, complete resource
+pricing and exact Windows installer/UI acceptance remain pending. Customer-ready false.
+Image-only DOCX, RTF and ZIP members have no accepted end-to-end input proof; PDF
+text extraction alone does not prove drawing/geometry completeness. No public release.
+
 Candidate0.31.177/build905; dependencies/providers/models unchanged.
 First frozen905 canonical gate PASS:3587 tests/20existing opt-in skips/5warnings;
 all structural/doc/version/map/active-artifact gates PASS, metadata31PASS.
@@ -315,9 +341,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.177` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `905` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.905` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.178` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `906` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.906` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,
