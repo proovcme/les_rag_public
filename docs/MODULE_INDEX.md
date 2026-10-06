@@ -1,5 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат 0.31.185 / 913 — явный контекст в пределах наблюдаемой ёмкости
+
+Явный положительный запрос контекста подключения ограничивается наблюдаемой ёмкостью backend, затем ограничениями workflow. Фабричный предел 32768 без явного запроса сохранён; неизвестная ёмкость, tools, batching, reasoning и output guards не меняются. Настройка и effective value остаются публичными. Модель, профиль, запросы, порядок RRF и предметные решения не изменяются.
+
+Точка: model_execution_preset_service.resolve_execution_preset. Док: [контекст](ALGO-context-memory.md). Статус: код/док согласованы; offline/live pending. Frozen913 offline canonical gates PASS: 4076 passed, 20 skipped, 5 warnings in 259.17s (0:04:19); mail: 66 passed, 4 warnings in 6.36s; metadata: 31 passed in 4.38s. Customer-ready=false.
+
 ## Candidate 0.31.184 / 912 - optional export declaration in model queries
 
 Query JSON accepts queries without an artifact_kind for source questions; explicit model vor/lsr declarations and strict invalid-metadata checks remain. Bound profile/skill and literal searches are preserved. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s. Customer-ready false.

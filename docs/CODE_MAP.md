@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат 0.31.185 / 913 — явный контекст в пределах наблюдаемой ёмкости
+
+proxy/services/model_execution_preset_service.py: resolve_execution_preset — explicit operator context bounded by observed capacity; restrictive defaults and narrowing restrictions preserved. Frozen913 offline canonical gates PASS: 4076 passed, 20 skipped, 5 warnings in 259.17s (0:04:19); mail: 66 passed, 4 warnings in 6.36s; metadata: 31 passed in 4.38s. Installed quality pending.
+
 ## Candidate 0.31.184 / 912 - optional export declaration in model queries
 
 Query JSON accepts queries without an artifact_kind for source questions; explicit model vor/lsr declarations and strict invalid-metadata checks remain. Bound profile/skill and literal searches are preserved. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s. Customer-ready false.

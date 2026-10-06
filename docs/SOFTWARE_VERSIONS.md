@@ -1,5 +1,9 @@
 # Версии программного контура ЛЕС
 
+## Кандидат 0.31.185 / 913 — явный контекст в пределах наблюдаемой ёмкости
+
+Installed reference912/dd42132e. Candidate913 needs fresh installed context and professional controls. No new dependency, model or profile change. Frozen913 offline canonical gates PASS: 4076 passed, 20 skipped, 5 warnings in 259.17s (0:04:19); mail: 66 passed, 4 warnings in 6.36s; metadata: 31 passed in 4.38s. Customer-ready=false.
+
 ## Candidate 0.31.184 / 912 - optional export declaration in model queries
 
 Installed reference911/ccfa7bfa; candidate912 requires fresh installed proof. No new dependencies or model-setting changes. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s.
@@ -400,9 +404,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.184` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `912` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.912` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.185` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `913` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.913` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

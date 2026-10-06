@@ -99,6 +99,79 @@ def test_9b_uses_proven_window_instead_of_architecture_maximum():
     assert resolved.generation_reserve_tokens == 4096
 
 
+@pytest.mark.parametrize("model_id", ["gemma4:12b", "qwen3.5:9b", "other-local-model"])
+@pytest.mark.parametrize("field", ["input_tokens", "input_token_limit"])
+def test_explicit_operator_context_uses_observed_capacity_without_expanding_factory_tools(model_id, field):
+    capacity = _capacity(model_id=model_id, tokens=262144)
+    baseline = resolve_execution_preset(capacity)
+    requested = resolve_execution_preset(capacity, operator={field: 65536})
+
+    assert baseline.input_token_limit == 32768
+    assert requested.input_token_limit == 65536
+    assert requested.preset_id == baseline.preset_id == "qwen-9b-restrictive"
+    for attribute in ("max_tools", "normal_tool_count", "max_batch_items", "parallel_read_limit",
+                      "safety_reserve_tokens", "generation_reserve_tokens", "reasoning_enabled"):
+        assert getattr(requested, attribute) == getattr(baseline, attribute)
+    diagnostics = requested.diagnostics(requested_input_tokens=65536)
+    assert diagnostics["context_input_tokens"] == {
+        "requested": 65536, "effective": 65536,
+        "source": "workflow_invariants > observed_backend_capacity > factory_preset > operator_clone",
+        "restart_required": False,
+    }
+    assert diagnostics["observed_context_tokens"]["effective"] == 262144
+
+
+@pytest.mark.parametrize("observed,requested,expected", [
+    (65536, 131072, 65536), (49152, 65536, 49152), (8192, 65536, 8192),
+    (262144, 16384, 16384), (262144, 32768, 32768),
+])
+def test_explicit_operator_context_remains_bounded_by_observed_window(observed, requested, expected):
+    resolved = resolve_execution_preset(
+        _capacity(model_id="gemma4:12b", tokens=observed), operator={"input_tokens": requested},
+    )
+    assert resolved.input_token_limit == expected
+    assert resolved.input_token_limit <= observed
+    assert resolved.max_tools == 5 and resolved.max_batch_items == 5 and resolved.parallel_read_limit == 1
+
+
+@pytest.mark.parametrize("context_override", [None, 0, -1, "invalid"])
+def test_missing_or_nonpositive_operator_context_keeps_proven_restrictive_default(context_override):
+    resolved = resolve_execution_preset(
+        _capacity(model_id="gemma4:12b", tokens=262144), operator={"input_tokens": context_override},
+    )
+    assert resolved.input_token_limit == 32768
+
+
+def test_explicit_operator_context_still_accepts_profile_narrowing_and_output_guards():
+    resolved = resolve_execution_preset(
+        _capacity(model_id="gemma4:12b", tokens=262144),
+        operator={"input_tokens": 65536, "max_tools": 20, "max_batch_items": 20,
+                  "parallel_read_limit": 20, "reasoning_enabled": True,
+                  "query_output_tokens": 24000, "answer_output_tokens": 24000},
+        restrictions={"input_token_limit": 12000, "max_tools": 2},
+    )
+    answer = model_rag_answer_execution_preset(resolved, model_rag=True)
+    assert resolved.input_token_limit == answer.input_token_limit == 12000
+    assert resolved.max_tools == resolved.normal_tool_count == 2
+    assert resolved.max_batch_items == 5 and resolved.parallel_read_limit == 1
+    assert resolved.reasoning_enabled is False
+    assert resolved.generation_reserve_tokens == answer.generation_reserve_tokens == 12000 - 512 - 1024
+    assert resolved.source_chain[-1] == "workflow_profile_restrictions"
+
+
+@pytest.mark.parametrize("observed,tokens", [(False, 262144), (True, None), (True, 0), (True, -1)])
+def test_explicit_context_does_not_fabricate_unknown_capacity_or_output_support(observed, tokens):
+    resolved = resolve_execution_preset(
+        _capacity(model_id="gemma4:12b", tokens=tokens, observed=observed),
+        operator={"input_tokens": 65536, "query_output_tokens": 24000},
+    )
+    assert resolved.input_token_limit == 65536  # Existing explicit-request behavior is unchanged.
+    assert resolved.output_capacity_observed is False and resolved.observed_context_tokens is None
+    assert resolved.generation_reserve_tokens == 1200
+    assert "observed_backend_capacity" not in resolved.source_chain
+    assert resolved.diagnostics()["observed_context_tokens"]["source"] == "unavailable"
+
+
 def test_35b_with_small_observed_kv_stays_on_restrictive_limits():
     resolved = resolve_execution_preset(
         _capacity(model_id="Qwen3.5-35B-A3B", tokens=8192)

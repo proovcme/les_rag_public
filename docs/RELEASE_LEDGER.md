@@ -1,5 +1,15 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.185 / 913 — явный контекст в пределах наблюдаемой ёмкости
+
+Установленная912/dd42132e прошла4056 canonical tests (20 исторических skips), mail66, metadata31, RRF1/1 и basic10/10. Карточка прочитана с7/7 правильными расходами, но native READ не доказан. Свежий БАП B0 завершён за76.5с: 19 решений,0 норм,0 денег. Все21 модельных запроса исполнены, однако answer видит16/126 identities,6 previews,0 полных карточек; reserve для native growth0. B1 завершён за169.19с с файлом, но профессиональную приёмку не прошёл. Сохранены отрицательные receipts в artifacts/live_912. Явное requested65536 при observed262144 ранее давало effective32768.
+
+Явный положительный запрос контекста подключения ограничивается наблюдаемой ёмкостью backend, затем ограничениями workflow. Фабричный предел 32768 без явного запроса сохранён; неизвестная ёмкость, tools, batching, reasoning и output guards не меняются. Настройка и effective value остаются публичными. Модель, профиль, запросы, порядок RRF и предметные решения не изменяются.
+
+Frozen913 offline canonical gates PASS: 4076 passed, 20 skipped, 5 warnings in 259.17s (0:04:19); mail: 66 passed, 4 warnings in 6.36s; metadata: 31 passed in 4.38s.
+
+Больший контекст не доказывает достаточную GPU память или правильность сметы. После offline gates требуются установленный контроль effective/wire/GPU, свежий B0/B1 и профессиональная проверка выданных файлов. Customer-ready=false; 300+ строк, разные документы и точный Windows installer ещё не приняты.
+
 ## Candidate 0.31.184 / 912 - optional export declaration in model queries
 
 Installed911/ccfa7bfa passed4031 canonical tests (20 historical skips),

@@ -1,5 +1,13 @@
 # ALGO-context-memory — память чата и паспорт датасета
 
+## Кандидат 0.31.185 / 913 — явный контекст в пределах наблюдаемой ёмкости
+
+Явный положительный запрос контекста подключения ограничивается наблюдаемой ёмкостью backend, затем ограничениями workflow. Фабричный предел 32768 без явного запроса сохранён; неизвестная ёмкость, tools, batching, reasoning и output guards не меняются. Настройка и effective value остаются публичными. Модель, профиль, запросы, порядок RRF и предметные решения не изменяются.
+
+requested_context_tokens отображается через operator input_tokens/input_token_limit в resolve_execution_preset. Positive observed capacity остаётся жёстким пределом явного запроса; profile restrictions продолжают только сужать. Метаданные модели не являются измерением GPU памяти.
+
+Frozen913 offline canonical gates PASS: 4076 passed, 20 skipped, 5 warnings in 259.17s (0:04:19); mail: 66 passed, 4 warnings in 6.36s; metadata: 31 passed in 4.38s.
+
 ## 887: бюджетирование provider reasoning
 
 NativeToolExchange содержит optional reasoning_content как точную строку протокола.

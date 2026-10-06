@@ -236,7 +236,9 @@ def resolve_execution_preset(
         observed_context = int(capacity.context_tokens or 0)
         usable_context = (
             observed_context
-            if extended_35b_available
+            # An explicit operator window is bounded by the observed capacity;
+            # it does not promote the factory's tool/batch/parallel contract.
+            if requested_context is not None or extended_35b_available
             else min(observed_context, _PROVEN_RESTRICTIVE_CONTEXT_TOKENS)
         )
         resolved = replace(
