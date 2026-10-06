@@ -2057,14 +2057,16 @@ def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configur
 TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE = "tabular_attachment_estimator_path_v1"
 _TABULAR_ESTIMATOR_TOOLS = ("search_sources", "read_source", "build_vor_workbook", "build_lsr_workbook")
 _TABULAR_LSR_OPERATION_INSTRUCTION = (
-    "Пустые ценовые колонки не мешают сборке. Код рассчитывает выбранные нормы "
+    "Для ЛСР пустые ценовые колонки не мешают сборке. Код рассчитывает выбранные нормы "
     "и ресурсы в явно заданной книге цен. quantity сохраняет исходный объём; "
     "calc_quantity не подменяет его, conversion_source обосновывает перевод единиц. "
+    "Для ВОР нормы и цены не являются условием создания работ и объёмов. "
     "Спецификация изделий может обосновывать монтажные работы на тех же source_row: "
     "определи операции по задаче и источникам, учитывая состав нормы и двойной учёт. "
     "Не назначай монтаж каждому изделию автоматически. work_row поставки — source_row "
     "реально возвращённой работы row_role=work, не шифр. Если работу определить "
-    "нельзя, верни unresolved с open_gap. Для NEEDS_RESEARCH/MISSING укажи gap_reason: "
+    "нельзя, верни unresolved с open_gap. При подборе нормы для ЛСР или добровольно для ВОР "
+    "для NEEDS_RESEARCH/MISSING укажи gap_reason: "
     "insufficient_source_data либо no_suitable_candidate и объясни причину. "
     "Отсутствие цены не делает норму MISSING."
 )
@@ -4569,7 +4571,10 @@ def parse_model_rag_result(
 ) -> tuple[str, list[dict[str, Any]]] | None:
     """Decode only an unambiguous table; preserve the authored answer and cell values."""
 
-    required_fields = {"title", "unit", "norm_code"}
+    declaration = decode_model_artifact_kind(raw)
+    declared_vor = declaration["status"] == "declared" and declaration["artifact_kind"] == "vor"
+    required_fields = {"title", "unit"} if declared_vor else {"title", "unit", "norm_code"}
+    vor_core_fields = {"source_row", "row_role", "work_row", "title", "unit", "quantity", "open_gap"}
     transport_diagnostics: list[dict[str, Any]] = []
     from proxy.services.model_lsr_result_contract import (
         decode_model_result_rows, decode_model_resource_field, decode_model_inline_rows,
@@ -5026,6 +5031,8 @@ def parse_model_rag_result(
             row: dict[str, Any] = {}
             for name, value in raw_row.items():
                 if not value:
+                    if declared_vor and name in vor_core_fields:
+                        row[name] = value
                     continue
                 if name == "source_row":
                     parsed_source_row = source_row_identity(value)
@@ -5253,7 +5260,11 @@ def parse_model_rag_result(
         if current_block is None:
             continue
         clean = value.strip().lstrip("*_` ").strip()
-        if not key or not clean:
+        if not key:
+            continue
+        if not clean:
+            if declared_vor and key in vor_core_fields:
+                current_block[key] = clean
             continue
         if key == "source_row":
             parsed_source_row = source_row_identity(clean)
@@ -11325,6 +11336,20 @@ async def _execute_chat_evidence_application(
                             release_sheet_pass(live_job_id)
                     if (not any_sheet_queries and not accumulated_rows and not research_cancelled
                             and not terminal_packet_locators and not pending_result_packets):
+                        if owns_sheet_pass and research_job_service is not None and research_job is not None:
+                            query_outputs = retrieval_trace.get("model_query_outputs") or []
+                            failed_query_output = query_outputs[-1] if query_outputs else {}
+                            failed_sheet_query = str(failed_query_output.get("purpose") or "").startswith("model_rag_sheet_")
+                            previous_held = dict(research_job.get("held_packet") or {})
+                            research_job = research_job_service.pause(
+                                research_job["job_id"], phase="model_query_format_pending",
+                                held_packet={
+                                    "sheet": sheet_name if failed_sheet_query else str(previous_held.get("sheet") or research_job.get("sheet") or ""),
+                                    "locators": list(packet) if failed_sheet_query else list(previous_held.get("locators") or research_job.get("packet_locators") or []),
+                                    "model_query_output_missing": True,
+                                    "query_output": failed_query_output,
+                                },
+                            )
                         raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
                             session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
                             secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)

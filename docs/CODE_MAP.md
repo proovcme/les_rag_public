@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат 0.31.186 / 914 — контракт ВОР, транспорт запросов и возобновляемая ошибка
+
+proxy/services/model_lsr_result_contract.py: conditional VOR fields and exact commentary/query transport. proxy/services/chat_evidence_application_service.py: conditional operation instruction and owner-only durable pause before terminal query error. Model owns artifact kind and professional decisions; accepted rows and literal queries are preserved. Семипольные строки явно объявленной моделью ВОР принимаются также из Markdown и block text без norm_code. Сохраняются уже объявленные пустые поля этой ВОР; отсутствующие поля не добавляются. Для ЛСР, необъявленного, конфликтного или недопустимого типа прежнее требование norm_code не меняется. Это устраняет подтверждённое расхождение JSON и текстовых представлений, не назначая операции или нормы.
+
+Frozen914 offline canonical gates PASS: 4153 passed, 20 skipped, 5 warnings in 265.14s (0:04:25); mail: 66 passed, 4 warnings in 6.47s; metadata: 31 passed in 4.38s. Installed quality pending.
+
 ## Кандидат 0.31.185 / 913 — явный контекст в пределах наблюдаемой ёмкости
 
 proxy/services/model_execution_preset_service.py: resolve_execution_preset — explicit operator context bounded by observed capacity; restrictive defaults and narrowing restrictions preserved. Frozen913 offline canonical gates PASS: 4076 passed, 20 skipped, 5 warnings in 259.17s (0:04:19); mail: 66 passed, 4 warnings in 6.36s; metadata: 31 passed in 4.38s. Installed quality pending.

@@ -418,12 +418,34 @@ def update_model_artifact_kind(previous: Mapping | None, current: Mapping, *, ph
 def decode_model_query_envelope(raw: str) -> dict | None:
     """An optional literal query list; ordinary query text keeps its old reader."""
     candidates, outer_commentary = _model_json_documents(raw)
-    if len(candidates) != 1:
+    if len(candidates) not in (1, 2):
         return None
     try:
-        value = json.loads(candidates[0], object_pairs_hook=_unique_json_object)
+        documents = [json.loads(candidate, object_pairs_hook=_unique_json_object)
+                     for candidate in candidates]
     except (ValueError, TypeError):
         return None
+    value = documents[0]
+    if len(documents) == 2:
+        # A separate commentary-only document carries no search or business
+        # decision. Admit exactly one query envelope; never select between
+        # multiple query objects, merge document fields or discard an invalid
+        # neighbouring authored object.
+        notes = [index for index, document in enumerate(documents)
+                 if isinstance(document, dict) and set(document) == {"commentary"}
+                 and isinstance(document["commentary"], str)]
+        if len(notes) != 1:
+            return None
+        value = documents[1 - notes[0]]
+        if (not isinstance(value, dict) or "queries" not in value
+                or not set(value).issubset({"queries", "artifact_kind", "commentary"})):
+            return None
+        declaration = decode_model_artifact_kind(raw)
+        expected_status = "declared" if "artifact_kind" in value else "missing"
+        if (declaration["status"] != expected_status
+                or (expected_status == "declared"
+                    and declaration["artifact_kind"] != value["artifact_kind"])):
+            return None
     if not isinstance(value, dict):
         return None
     if "artifact_kind" in value and value["artifact_kind"] not in ("vor", "lsr"):
@@ -436,11 +458,12 @@ def decode_model_query_envelope(raw: str) -> dict | None:
     if not isinstance(queries, list) or any(not isinstance(q, str) or not q.strip() or "\n" in q or "\r" in q for q in queries):
         return None
     result = {"queries": queries}
-    commentary = value.get("commentary")
     comments = [item.strip() for item in outer_commentary if item.strip()]
-    if commentary is not None:
-        comments.append(commentary if isinstance(commentary, str)
-                        else json.dumps(commentary, ensure_ascii=False))
+    for document in documents:
+        commentary = document.get("commentary")
+        if commentary is not None:
+            comments.append(commentary if isinstance(commentary, str)
+                            else json.dumps(commentary, ensure_ascii=False))
     if comments:
         result["commentary"] = "\n\n".join(comments)
     return result
@@ -500,7 +523,14 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "(в корне JSON либо отдельной строкой); это тип результата, не тип исходника. "
         "В Markdown сохраняй объявленные "
         "ячейки, включая пустые, и экранируй | внутри значения. "
-        "Поля строки: " + ", ".join(BASE_FIELDS) + ". "
+        "Поля ВОР: source_row, row_role, work_row, title, unit, quantity, open_gap. "
+        "Для ВОР нормы, цены и поля norm_code/norm_status не обязательны. "
+        "Не ставь MISSING и не меняй известную работу на unresolved лишь из-за отсутствия нормы или цены. "
+        "Исходные основания ВОР укажи через source_row; evidence_refs добавляй, когда ссылаешься на показанное основание. "
+        "Поля ЛСР: " + ", ".join(BASE_FIELDS) + ". Для ЛСР все перечисленные поля обязательны. "
+        "Правила нормы, её ресурсов и цен далее относятся к ЛСР либо к добровольно заявленным в ВОР нормам/ценам; "
+        "они не требуют подбирать норму или цену для создания ВОР. Правила исходных объёмов, "
+        "их обоснованных переводов, связей операций и ревизий действуют для обоих документов. "
         "source_row дословно копируй из показанного адреса соответствующей исходной строки "
         "в манифесте/каталоге исходника. Не составляй новый адрес, не меняй его ключи или разделители "
         "и не подставляй вместо адреса строки ID исходного файла. "

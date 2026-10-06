@@ -1,10 +1,16 @@
 # ADR-15 — Модель → RAG → результат модели → расчёт и XLSX
 
-Candidate911: model-declared VOR preserves admitted work with visible source/citation issues; query metadata stays outside searches. LSR/identity/tail guards unchanged. Professional and installed acceptance pending; customer-ready false.
-Frozen911 offline canonical gates PASS: 4031 passed, 20 skipped, 5 warnings in 258.34s (0:04:18); mail: 66 passed, 4 warnings in 6.39s; metadata: 31 passed in 4.48s.
-VOR source/citation checks are visible audit, not authority to erase admitted operations or infer quantities. Existing model decisions remain literal.
+## Кандидат 0.31.186 / 914 — контракт ВОР, транспорт запросов и возобновляемая ошибка
 
-Earlier entries retain their stated build/date scope.
+Тип документа объявляет модель. ВОР требует операции, единицы, объёмы и исходные основания; норма и цена не являются условием создания ВОР. Поля и проверка выбранных норм ЛСР сохранены. Транспорт допускает ровно один JSON-конверт модельных запросов рядом с отдельным объектом commentary: запросы, их порядок и повторы сохраняются дословно. Два конверта запросов, предметные sideobjects, дубли ключей, повреждённый JSON и конфликт artifact_kind отклоняются. При исчерпании технического исправления формата запросов владелец прохода приостанавливает своё durable-задание перед прежней SSE-ошибкой; идентификатор, исходник, принятые решения, кэш, контекст задания и остаток не заменяются. Присоединённый проход и чужие задания не меняются. Код не назначает операции, нормы, аналоги или профессиональные статусы. Финальный декодер ЛСР, расчёт, профиль, skill, retrieval, контекст и выходной лимит не изменены.
+
+Точки изменения: model_lsr_result_field_instruction; decode_model_query_envelope; shared operation instruction; ветвь терминального отказа query-фазы в chat_evidence_application_service. BASE_FIELDS и SELECTED_NORM_FIELDS сохранены. Допуск commentary — lossless transport adapter, не восстановление повреждённой предметной таблицы. Техническая пауза не создаёт MISSING и не запускает новый предметный цикл.
+
+Семипольные строки явно объявленной моделью ВОР принимаются также из Markdown и block text без norm_code. Сохраняются уже объявленные пустые поля этой ВОР; отсутствующие поля не добавляются. Для ЛСР, необъявленного, конфликтного или недопустимого типа прежнее требование norm_code не меняется. Это устраняет подтверждённое расхождение JSON и текстовых представлений, не назначая операции или нормы.
+
+Frozen914 offline canonical gates PASS: 4153 passed, 20 skipped, 5 warnings in 265.14s (0:04:25); mail: 66 passed, 4 warnings in 6.47s; metadata: 31 passed in 4.38s.
+
+Эти исправления закрывают воспроизведённые дефекты harness, но не доказывают правильность монтажных операций, норм или завершение длинного ответа. Требуются свежие установленные B0/B1 на целевой модели и независимая проверка фактически скачанных документов. Customer-ready=false: разные ВОР/ЛСР, 300+ строк, image/drawing/multi-document intake и точный Windows installer ещё не приняты.
 
 ## Candidate 0.31.182 / 910 — preserve available evidence during hydration
 

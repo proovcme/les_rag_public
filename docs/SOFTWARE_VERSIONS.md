@@ -1,5 +1,11 @@
 # Версии программного контура ЛЕС
 
+## Кандидат 0.31.186 / 914 — контракт ВОР, транспорт запросов и возобновляемая ошибка
+
+Installed reference 913/c3391515. Candidate 914 changes VOR instructions, strict query metadata transport and owned-job technical pause; no new dependency, model or global profile. Семипольные строки явно объявленной моделью ВОР принимаются также из Markdown и block text без norm_code. Сохраняются уже объявленные пустые поля этой ВОР; отсутствующие поля не добавляются. Для ЛСР, необъявленного, конфликтного или недопустимого типа прежнее требование norm_code не меняется. Это устраняет подтверждённое расхождение JSON и текстовых представлений, не назначая операции или нормы.
+
+Frozen914 offline canonical gates PASS: 4153 passed, 20 skipped, 5 warnings in 265.14s (0:04:25); mail: 66 passed, 4 warnings in 6.47s; metadata: 31 passed in 4.38s. Fresh installed professional controls pending; customer-ready=false.
+
 ## Кандидат 0.31.185 / 913 — явный контекст в пределах наблюдаемой ёмкости
 
 Installed reference912/dd42132e. Candidate913 needs fresh installed context and professional controls. No new dependency, model or profile change. Frozen913 offline canonical gates PASS: 4076 passed, 20 skipped, 5 warnings in 259.17s (0:04:19); mail: 66 passed, 4 warnings in 6.36s; metadata: 31 passed in 4.38s. Customer-ready=false.
@@ -404,9 +410,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.185` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `913` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.913` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.186` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `914` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.914` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,
