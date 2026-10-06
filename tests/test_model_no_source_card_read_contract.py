@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import replace
 
 import pytest
@@ -186,3 +187,108 @@ async def test_no_source_unfinished_native_read_has_technical_diagnostic_without
     trace = run["result"]["retrieval_trace"]
     assert trace["tool_loop"]["evidence_read_stop"] == "evidence_read_unknown_tool"
     assert "model_result" not in trace
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "", "B1_CANDIDATE"])
+async def test_actual_queries_only_json_native_read_has_no_document_carrier(monkeypatch, tmp_path, variant):
+    query = json.dumps({"queries": ["literal model card search"],
+                        "commentary": "Only read the exact card; no workbook requested."})
+    answer = "Literal whole-card reading answer Ω"
+    run = await _run_no_source(monkeypatch, tmp_path, final_text=answer, native_read=True,
+                               query_text=query, variant=variant)
+    assert run["result"]["answer"] == answer
+    assert len(run["requests"]) == 3 and len(run["exact_reads"]) == 1
+    assert not run["executions"]
+    query_messages = str(run["requests"][0].messages)
+    assert "можешь объявить artifact_kind только когда пользователь заказал" in query_messages
+    assert "для чтения источников или ответа на вопрос" in query_messages
+    for request in run["requests"][1:]:
+        messages = str(request.messages)
+        assert "Текущий ответ — чтение и объяснение источников" in messages
+        assert "LITERAL READ PROFILE Ω" in messages and "LITERAL READ SKILL Ω" in messages
+        assert service._WORKBOOK_RESULT_CARRIER_INSTRUCTION not in messages
+        assert "source_row |" not in messages
+    trace = run["result"]["retrieval_trace"]
+    assert trace["artifact_target"]["status"] == "missing"
+    assert "model_result" not in trace and "result_readiness" not in trace
+    assert len(trace["actual_model_calls"]["calls"]) == 3
+    assert any(message.get("tool_call_id") == "literal-native-card-read"
+               for message in run["requests"][-1].messages)
+
+
+@pytest.mark.parametrize("fenced", [False, True])
+def test_queries_only_envelope_keeps_literal_fields_without_inventing_document_kind(fenced):
+    queries = ["literal query Ω", "artifact_kind: lsr", "Name | value"]
+    raw = json.dumps({"queries": queries, "commentary": "Explanation; artifact_kind: vor"}, ensure_ascii=False)
+    if fenced:
+        raw = "Outer commentary.\n```json\n" + raw + "\n```\nOuter tail."
+    envelope = service.decode_model_query_envelope(raw)
+    assert envelope is not None and envelope["queries"] == queries
+    parsed = service.read_model_query_response(raw, finish_reason="stop")
+    assert [item.text for item in parsed["queries"]] == queries
+    assert parsed["artifact_kind_declaration"]["status"] == "missing"
+    assert not parsed["intentional_empty"] and not parsed["accompanying_answer"]
+    assert "Explanation; artifact_kind: vor" in parsed["commentary"]
+
+
+@pytest.mark.parametrize("kind,status", [(None, "invalid"), ("", "invalid"),
+    (17, "invalid"), ([], "invalid"), ("unknown", "invalid")])
+def test_optional_kind_does_not_accept_explicit_invalid_declarations(kind, status):
+    raw = json.dumps({"artifact_kind": kind, "queries": ["literal query Ω"]}, ensure_ascii=False)
+    assert service.decode_model_query_envelope(raw) is None
+    parsed = service.read_model_query_response(raw, finish_reason="stop")
+    assert parsed["artifact_kind_declaration"]["status"] == status
+    assert parsed["queries"] == [] and parsed["unread_tail"] == ""
+    assert parsed["accompanying_answer"] == [{"line": raw, "reason": "artifact_metadata_in_query_declaration"}]
+
+
+@pytest.mark.parametrize("raw", [
+    'artifact_kind: unknown\n{"queries":["literal query"]}',
+    'artifact_kind: lsr\nartifact_kind: vor\n{"queries":["literal query"]}',
+    '{"artifact_kind":"lsr","artifact_kind":"vor","queries":["literal query"]}',
+])
+def test_queries_only_extension_does_not_bypass_mixed_or_conflicting_metadata(raw):
+    assert service.decode_model_query_envelope(raw) is None
+    parsed = service.read_model_query_response(raw, finish_reason="length")
+    assert parsed["artifact_kind_declaration"]["status"] in {"invalid", "conflict"}
+    assert parsed["queries"] == [] and parsed["unread_tail"] == ""
+    assert parsed["accompanying_answer"] == [{"line": raw, "reason": "artifact_metadata_in_query_declaration"}]
+    assert service.declared_query_attempt_plan(
+        declared=parsed, already_declared=[], phase="initial", attempts_remaining=2
+    ) == ("repair", service._MODEL_RAG_QUERY_REPAIR_INSTRUCTION)
+
+
+@pytest.mark.parametrize("queries", [None, "literal query", [None], [7], [""], ["a\nb"], [{"query":"literal"}]])
+def test_queries_only_json_keeps_invalid_query_shapes_unsupported(queries):
+    raw = json.dumps({"queries": queries})
+    assert service.decode_model_query_envelope(raw) is None
+    parsed = service.read_model_query_response(raw, finish_reason="stop")
+    assert parsed["queries"] == [] and not parsed["intentional_empty"]
+
+
+@pytest.mark.parametrize("kind,intentional", [(None, False), ("lsr", False), ("vor", True)])
+def test_empty_queries_are_not_a_new_source_read_or_lsr_no_search_path(kind, intentional):
+    payload = {"queries": []}
+    if kind is not None:
+        payload["artifact_kind"] = kind
+    parsed = service.read_model_query_response(json.dumps(payload), finish_reason="stop")
+    assert parsed["queries"] == [] and parsed["intentional_empty"] is intentional
+    if not intentional:
+        assert service.declared_query_attempt_plan(
+            declared=parsed, already_declared=[], phase="initial", attempts_remaining=2
+        )[0] == "repair"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_source_read_phase_is_explicit_without_rewriting_literal_professional_profile(strict):
+    profile = {"mode":"estimator", "prompt_text":"LITERAL PROFILE Ω\nAlways format export rows.",
+               "skill_text":"LITERAL SKILL Ω\nPreserve professional checks."}
+    before = copy.deepcopy(profile)
+    prompt = service.profile_system_prompt(profile, strict=strict, purpose="source_read")
+    assert prompt.startswith(profile["prompt_text"]) and profile["skill_text"] in prompt
+    assert "Текущий ответ — чтение и объяснение источников" in prompt
+    assert "только когда заказан такой документ" in prompt
+    assert "Чтение подтверждается ответом инструмента" in prompt
+    assert service._WORKBOOK_RESULT_CARRIER_INSTRUCTION not in prompt
+    assert profile == before

@@ -1,5 +1,34 @@
 # RAG evidence flow
 
+## Candidate 0.31.184 / 912 - optional export declaration in model queries
+
+Installed911/ccfa7bfa passed4031 canonical tests (20 historical skips),
+mail66, metadata31, native RRF1/1 and repeated basic10/10 with the original90s
+client bound. The earlier basic8/10 failure is retained. A real Ollama server
+restart restored measured GPU residency; no model, profile or context settings
+changed. These observations do not establish professional document acceptance.
+
+The fresh question-only Gemma control still did not READ the full card. Its
+query stage declared lsr despite commentary that this was reading only. The
+application query format suggested artifact_kind=vor|lsr and the envelope
+decoder required one of these values; the declaration re-enabled the workbook
+carrier. This control is confounded, not proof of decoder failure or model
+incapability. Evidence: artifacts/live_911/acceptance/gemma_native_read_fresh_911.
+
+Candidate912 makes artifact_kind optional in a query JSON envelope. A request
+for sources or an ordinary answer can return queries without claiming an export;
+an explicit model vor/lsr declaration remains authoritative and unchanged.
+Malformed/invalid declarations retain fail-closed diagnostics and the existing
+bounded format repair. Literal queries and professional decisions are unchanged.
+The source_read phase retains the exact bound profile/skill and clarifies that
+workbook output requirements belong to an actual export task. No intent regex,
+forced tool choice, profile activation or new model loop is introduced.
+
+Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s.
+Fresh installed native READ and same-model B0/B1 document controls remain pending.
+Customer-ready, exact installer,300+row professional quality, drawing/OCR and
+multi-document project acceptance are not claimed.
+
 ## Candidate 0.31.183 / 911 — preserve authored VOR work and separate query metadata
 
 Installed910/6a150da8 passed its canonical offline gates (3922 passed,20

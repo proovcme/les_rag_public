@@ -424,7 +424,13 @@ def decode_model_query_envelope(raw: str) -> dict | None:
         value = json.loads(candidates[0], object_pairs_hook=_unique_json_object)
     except (ValueError, TypeError):
         return None
-    if not isinstance(value, dict) or value.get("artifact_kind") not in ("vor", "lsr"):
+    if not isinstance(value, dict):
+        return None
+    if "artifact_kind" in value and value["artifact_kind"] not in ("vor", "lsr"):
+        return None
+    if "artifact_kind" not in value and decode_model_artifact_kind(raw)["status"] != "missing":
+        # A queries-only JSON object cannot legitimise separate invalid or
+        # conflicting document metadata around it.
         return None
     queries = value.get("queries")
     if not isinstance(queries, list) or any(not isinstance(q, str) or not q.strip() or "\n" in q or "\r" in q for q in queries):

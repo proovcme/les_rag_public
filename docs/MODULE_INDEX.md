@@ -1,5 +1,10 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Candidate 0.31.184 / 912 - optional export declaration in model queries
+
+Query JSON accepts queries without an artifact_kind for source questions; explicit model vor/lsr declarations and strict invalid-metadata checks remain. Bound profile/skill and literal searches are preserved. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s. Customer-ready false.
+Entries: model_lsr_result_contract.decode_model_query_envelope; chat_evidence_application_service.profile_system_prompt(source_read) and query format contract. Status: code/doc aligned, offline/live pending. Docs: [RAG flow](modules/rag-evidence-flow.md), [tool exchange](ALGO-tool-harness.md), [profiles](modules/chat-profiles.md).
+
 Candidate911: model-declared VOR preserves admitted work with visible source/citation issues; query metadata stays outside searches. LSR/identity/tail guards unchanged. Professional and installed acceptance pending; customer-ready false.
 Frozen911 offline canonical gates PASS: 4031 passed, 20 skipped, 5 warnings in 258.34s (0:04:18); mail: 66 passed, 4 warnings in 6.39s; metadata: 31 passed in 4.48s.
 Entries: chat_evidence_application_service.read_model_query_response, sheet_pass_keep_rows, blocking_model_rag_result_errors, model_workbook_carrier_required, profile_system_prompt(source_read); openai_compatible_transport_service._native_chat_messages and native tool-call decoding. Module docs: [RAG flow](modules/rag-evidence-flow.md), [tool exchange](ALGO-tool-harness.md), [profiles](modules/chat-profiles.md). Status: code/offline verified; installed/professional live pending.

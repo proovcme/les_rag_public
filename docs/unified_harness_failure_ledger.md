@@ -1,5 +1,10 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## Candidate 0.31.184 / 912 - optional export declaration in model queries
+
+Query JSON accepts queries without an artifact_kind for source questions; explicit model vor/lsr declarations and strict invalid-metadata checks remain. Bound profile/skill and literal searches are preserved. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s. Customer-ready false.
+Actual911 no-source READ received a model query lsr declaration, re-enabled the carrier and returned8 rows with fabricated resource quantities. The query-format constraint is corrected generally; the original negative is retained as confounded. Fresh native READ is required.
+
 Candidate911: model-declared VOR preserves admitted work with visible source/citation issues; query metadata stays outside searches. LSR/identity/tail guards unchanged. Professional and installed acceptance pending; customer-ready false.
 Frozen911 offline canonical gates PASS: 4031 passed, 20 skipped, 5 warnings in 258.34s (0:04:18); mail: 66 passed, 4 warnings in 6.39s; metadata: 31 passed in 4.48s.
 Actual failures: frame3 declaration executed as a query; SKS derived installation quantities excluded. Local regressions do not establish professional applicability or verified derivation.

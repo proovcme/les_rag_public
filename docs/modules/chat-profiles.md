@@ -1,5 +1,10 @@
 # Chat profiles
 
+## Candidate 0.31.184 / 912 - optional export declaration in model queries
+
+Query JSON accepts queries without an artifact_kind for source questions; explicit model vor/lsr declarations and strict invalid-metadata checks remain. Bound profile/skill and literal searches are preserved. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s. Customer-ready false.
+The source_read phase addition distinguishes answering/reading from export requirements while retaining the immutable user profile and skill literally. Model-authored explicit workbook declarations are never overwritten by an application intent guess.
+
 ## Candidate911: source-read purpose
 
 The bound immutable profile and skill remain literal. Application workbook/volume

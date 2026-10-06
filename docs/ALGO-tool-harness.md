@@ -1,5 +1,10 @@
 # ALGO-tool-harness — controlled tools for LES
 
+## Candidate 0.31.184 / 912 - optional export declaration in model queries
+
+Query JSON accepts queries without an artifact_kind for source questions; explicit model vor/lsr declarations and strict invalid-metadata checks remain. Bound profile/skill and literal searches are preserved. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s. Customer-ready false.
+A missing artifact_kind is not a missing-query envelope. Technical source reading does not require an invented export. Full-card READ still requires an actual native call and matching acknowledgement; canonical schema hashes are not raw HTTP capture.
+
 ## Candidate911: native Ollama exchange and source-only answers
 
 `OpenAICompatibleTransport` accepts documented native Ollama function calls with
