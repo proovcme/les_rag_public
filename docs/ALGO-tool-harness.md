@@ -1,5 +1,27 @@
 # ALGO-tool-harness — controlled tools for LES
 
+## Candidate911: native Ollama exchange and source-only answers
+
+`OpenAICompatibleTransport` accepts documented native Ollama function calls with
+object arguments and optional IDs. Missing IDs receive explicit application-owned
+exchange identities; supplied IDs are preserved. Native replies use `tool_name`,
+and native `thinking` remains separate from visible content. Malformed or
+conflicting exchanges fail visibly. This projection changes transport, never the
+model's selected function, literal arguments or professional decision.
+
+The canonical call trace records offered tool names/count/schema hash and decoded
+call identity origins without arguments or prompt content. These fields describe
+the canonical request/decoded response; they are not captured provider HTTP bytes.
+
+A model-driven estimator request without a bound attachment/catalog or an explicit
+model VOR/LSR declaration uses source-read purpose and keeps the literal profile,
+skill and question. It receives native source tools without a compulsory workbook
+carrier; its ordinary answer is not sent to the workbook parser. Explicit model
+declarations and attached-source workbooks retain their existing strict contract.
+Installed native and professional acceptance remain pending.
+
+Earlier entries retain their stated build/date scope.
+
 ## Candidate875: exact saved repack replay and independent artifact transport
 
 Native-capacity pause persists literal queries/provenance/addresses/offset with

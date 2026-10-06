@@ -1,5 +1,11 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+Candidate911: model-declared VOR preserves admitted work with visible source/citation issues; query metadata stays outside searches. LSR/identity/tail guards unchanged. Professional and installed acceptance pending; customer-ready false.
+Frozen911 offline canonical gates PASS: 4031 passed, 20 skipped, 5 warnings in 258.34s (0:04:18); mail: 66 passed, 4 warnings in 6.39s; metadata: 31 passed in 4.48s.
+Actual failures: frame3 declaration executed as a query; SKS derived installation quantities excluded. Local regressions do not establish professional applicability or verified derivation.
+
+Earlier entries retain their stated build/date scope.
+
 ## Candidate 0.31.182 / 910 — preserve available evidence during hydration
 
 Build909 exact commit dff2c65a has canonical3889 passed/20 historical skips,

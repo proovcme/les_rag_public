@@ -10,6 +10,7 @@ import os
 from types import MappingProxyType
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 import httpx
 
@@ -115,6 +116,88 @@ def _usage(value: object) -> Mapping[str, int]:
 
 def _message_text(message: Mapping[str, Any]) -> str:
     return final_assistant_text(message)
+
+
+def _native_tool_arguments(value: object, *, canonical_text: bool) -> dict[str, Any]:
+    """Native Ollama takes objects; canonical exchanges retain their JSON text."""
+    if canonical_text and isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError) as exc:
+            raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID") from exc
+    if not isinstance(value, Mapping):
+        raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
+    arguments = dict(value)
+    try:
+        serialized = json.dumps(arguments, ensure_ascii=False, allow_nan=False)
+        if json.loads(serialized) != arguments:
+            raise ValueError("arguments are not a literal JSON object")
+    except (ValueError, TypeError) as exc:
+        raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID") from exc
+    return arguments
+
+
+def _native_tool_function(call: object, *, canonical_text: bool) -> dict[str, Any]:
+    if not isinstance(call, Mapping) or call.get("type", "function") != "function":
+        raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
+    function = call.get("function")
+    if not isinstance(function, Mapping):
+        raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
+    name = function.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
+    result = dict(function)
+    result["arguments"] = _native_tool_arguments(function.get("arguments"), canonical_text=canonical_text)
+    return result
+
+
+def _native_chat_messages(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Project canonical protocol fields onto the documented native schema.
+
+    IDs stay in the internal exchange and the native schema's optional ID fields.
+    A reply's name becomes tool_name, and assistant reasoning becomes thinking.
+    This only translates protocol data; it cannot introduce a tool invocation.
+    """
+    projected = []
+    names_by_id: dict[str, str] = {}
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content", "")
+        if not isinstance(role, str) or not isinstance(content, (str, type(None))):
+            raise ModelTransportError("NATIVE_MESSAGE_INVALID")
+        item: dict[str, Any] = {"role": role, "content": content if content is not None else ""}
+        if "images" in message:
+            item["images"] = message["images"]
+        thinking = message.get("reasoning_content")
+        if thinking is None:
+            thinking = message.get("thinking")
+        if thinking is not None:
+            if not isinstance(thinking, str) or (message.get("thinking") is not None and message["thinking"] != thinking):
+                raise ModelTransportError("UPSTREAM_REASONING_CONTENT_INVALID")
+            item["thinking"] = thinking
+        if "tool_calls" in message:
+            raw_calls = message["tool_calls"]
+            if not isinstance(raw_calls, Sequence) or isinstance(raw_calls, (str, bytes)):
+                raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
+            calls = []
+            for raw in raw_calls:
+                function = _native_tool_function(raw, canonical_text=True)
+                call_id = raw.get("id")
+                if not isinstance(call_id, str) or not call_id.strip() or call_id in names_by_id:
+                    raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
+                names_by_id[call_id] = function["name"]
+                calls.append({"id": call_id, "function": function})
+            item["tool_calls"] = calls
+        if role == "tool":
+            call_id = message.get("tool_call_id")
+            name = message.get("name", message.get("tool_name"))
+            if (not isinstance(call_id, str) or call_id not in names_by_id
+                    or not isinstance(name, str) or name != names_by_id[call_id]
+                    or ("tool_name" in message and message["tool_name"] != name)):
+                raise ModelTransportError("NATIVE_TOOL_REPLY_INVALID")
+            item.update(tool_call_id=call_id, tool_name=name)
+        projected.append(item)
+    return projected
 
 
 class OpenAICompatibleTransport:
@@ -310,7 +393,7 @@ class OpenAICompatibleTransport:
             options["temperature"] = request.temperature
         body: dict[str, Any] = {
             "model": connection.model_id,
-            "messages": [dict(item) for item in request.messages],
+            "messages": _native_chat_messages(request.messages),
             "think": request.reasoning_enabled,
             # Native chat sends one NDJSON event per generated fragment.
             # Consuming it keeps a long local generation alive while complete()
@@ -354,8 +437,14 @@ class OpenAICompatibleTransport:
             event_wire_limit = max(1024, self.response_body_limit * 8)
             saw_event = False
             text_parts: list[str] = []
+            thinking_parts: list[str] = []
+            saw_thinking = False
             final_filter = FinalTextFilter()
             tool_calls: list[Mapping[str, Any]] = []
+            # The native protocol makes IDs optional. Assign an application-owned
+            # response identity once, then preserve it through every replay.
+            response_identity = uuid4().hex
+            call_ids: set[str] = set()
             prompt_tokens = 0
             completion_tokens = 0
             finish_reason = ""
@@ -385,24 +474,41 @@ class OpenAICompatibleTransport:
                     visible = final_filter.feed(content)
                     if visible:
                         text_parts.append(visible)
-                tool_calls_raw = message.get("tool_calls") or ()
-                if not isinstance(tool_calls_raw, Sequence) or isinstance(tool_calls_raw, str):
+                thinking = message.get("thinking")
+                if thinking is not None:
+                    if not isinstance(thinking, str):
+                        raise ModelTransportError("UPSTREAM_REASONING_CONTENT_INVALID")
+                    saw_thinking = True
+                    thinking_parts.append(thinking)
+                    semantic_size += len(thinking.encode("utf-8"))
+                tool_calls_raw = message.get("tool_calls")
+                if tool_calls_raw is None:
+                    tool_calls_raw = ()
+                if not isinstance(tool_calls_raw, Sequence) or isinstance(tool_calls_raw, (str, bytes)):
                     raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
                 semantic_size += len(
                     json.dumps(tool_calls_raw, ensure_ascii=False).encode("utf-8")
                 ) if tool_calls_raw else 0
                 if semantic_size > self.response_body_limit:
                     raise ModelTransportError("UPSTREAM_RESPONSE_TOO_LARGE")
-                tool_calls.extend(
-                    MappingProxyType(dict(item))
-                    for item in tool_calls_raw
-                    if isinstance(item, Mapping)
-                )
+                for raw_call in tool_calls_raw:
+                    function = _native_tool_function(raw_call, canonical_text=False)
+                    call_id = raw_call.get("id")
+                    if call_id is None:
+                        call_id = f"les-native-{response_identity}-{len(tool_calls)}"
+                        origin = "application/native_protocol_without_ids"
+                    else:
+                        origin = "provider"
+                    if not isinstance(call_id, str) or not call_id.strip() or call_id in call_ids:
+                        raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
+                    call_ids.add(call_id)
+                    tool_calls.append(MappingProxyType({**raw_call, "id": call_id, "type": "function",
+                        "function": function, "call_id_origin": origin}))
                 finish_reason = str(payload.get("done_reason") or finish_reason)
             if not saw_event:
                 raise ModelTransportError("UPSTREAM_RESPONSE_INVALID")
             return InferenceResponse(
-                text="".join(text_parts),
+                text="".join(text_parts) + final_filter.finish(),
                 tool_calls=tuple(tool_calls),
                 finish_reason=finish_reason,
                 usage=MappingProxyType(
@@ -413,6 +519,7 @@ class OpenAICompatibleTransport:
                     }
                 ),
                 model_id=model_id,
+                reasoning_content="".join(thinking_parts) if saw_thinking else None,
             )
         finally:
             await response.aclose()

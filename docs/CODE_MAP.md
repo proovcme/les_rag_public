@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Candidate911: model-declared VOR preserves admitted work with visible source/citation issues; query metadata stays outside searches. LSR/identity/tail guards unchanged. Professional and installed acceptance pending; customer-ready false.
+Frozen911 offline canonical gates PASS: 4031 passed, 20 skipped, 5 warnings in 258.34s (0:04:18); mail: 66 passed, 4 warnings in 6.39s; metadata: 31 passed in 4.48s.
+Source mismatches remain separate application observations; model-authored cells are not rewritten.
+
+Earlier entries retain their stated build/date scope.
+
 Build910: retained cards -> both whole evidence plans at the same budget -> exact legacy inventory/body-ref preservation guard. No search or decision rewrite.
 
 Earlier entries retain their stated build/date scope.

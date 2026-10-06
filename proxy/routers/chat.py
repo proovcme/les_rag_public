@@ -399,6 +399,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     )
     inherited_basis = task_document_price_basis(job, inherited_basis)
     document_issues = []
+    vor_audit_errors = []
     source_catalog = None
     if repack_tool in {"build_lsr_workbook", "build_vor_workbook"}:
         from proxy.services.attachment_source_catalog_service import load_catalog_from_attachment_id
@@ -410,10 +411,25 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         if repack_tool == "build_vor_workbook":
             from proxy.services.chat_evidence_application_service import (
                 model_rag_pending_result_packets, model_rag_pending_result_projection,
+                evidence_chunk_from_record, validate_model_rag_result_structure,
+                vor_model_result_audit_errors,
             )
             _pending_locators, persisted_diagnostics = model_rag_pending_result_projection(
                 model_rag_pending_result_packets(job.get("held_packet") or {}))
-        document_issues = workbook_document_issues(job, transport_diagnostics=persisted_diagnostics,
+            # Repack audits the saved frame and bindings, never a later alias
+            # lookup. Historical absent maps remain unresolved in this transient
+            # validation projection; authored rows and permanent IDs stay intact.
+            audit_rows = [dict(row, evidence_bindings=row.get("evidence_bindings")
+                               if isinstance(row.get("evidence_bindings"), dict) else {})
+                          for row in decisions]
+            captured_evidence = [evidence_chunk_from_record(record) for record in job.get("evidence") or []
+                                 if isinstance(record, dict)]
+            vor_audit_errors = vor_model_result_audit_errors(decisions, validate_model_rag_result_structure(
+                audit_rows, captured_evidence, expected_source_rows=len(source_catalog.work_locators())
+                if source_catalog else 0, source_catalog=source_catalog,
+            ))
+        document_issues = workbook_document_issues(job, errors=vor_audit_errors,
+                                                  transport_diagnostics=persisted_diagnostics,
                                                   unaccounted_result_locators=[
             locator for locator in source_catalog.work_locators() if locator not in accounted
         ] if source_catalog is not None else [])
@@ -586,7 +602,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             rows=decisions, has_file=bool(artifact.get("download_url")),
             remaining_locators=remaining,
             catalog_work_count=len(source_catalog.work_locators()) if source_catalog else 0,
-            model_errors=list(payload.get("vor_source_errors") or []),
+            model_errors=[*vor_audit_errors, *list(payload.get("vor_source_errors") or [])],
             draft=bool(repack_args.get("draft")),
         )
         harvested["artifact"] = artifact

@@ -1,5 +1,74 @@
 # RAG evidence flow
 
+## Candidate 0.31.183 / 911 — preserve authored VOR work and separate query metadata
+
+Installed910/6a150da8 passed its canonical offline gates (3922 passed,20
+historical skips; mail66; metadata31), native RRF and basic9PASS/1WARN/0FAIL.
+These receipts do not establish professional estimate or installer acceptance.
+Fresh BAP B0/B1 both delivered partial LSR with confirmed amount0. Frame3 did
+not solve norm applicability and took902.94s in B1; its GUI factor is restored0.
+The single current FT native-card diagnostic did not perform READ; canonical
+request digests are not captured provider HTTP bodies and cannot prove a parser
+defect. No forced tool_choice or new semantic inference loop has been added.
+
+Fresh SKS-to-VOR910 delivered an explicitly unfinished88-row workbook in862.61s.
+Independent review found12 real source positions unaccounted and22 item locators
+with supply but no retained installation/parent. It also found authored cable
+work36600m and2000m rejected by source-quantity checks: proposing work and
+preserving it are distinct boundaries. The audit does not accept the selected
+norms or infer a verified quantity from prose. Evidence:
+artifacts/live_910/acceptance/sks_vor_candidate_independent_judge_910.json and
+sks_vor_quantity_rejection_evidence_910.json.
+
+Candidate911 retains known-source, structurally admitted work for a model-declared
+VOR when source quantities differ or optional norm citations are invalid. It keeps
+the authored quantity/unit/coverage and exposes application checks in document
+issues and VOR source audit/readiness; discrepancies do not become confirmed
+quantities. Norms are not prerequisites for VOR. LSR admission, identity,
+duplicates, unknown source locators and truncated-tail protection remain.
+
+The existing query-response decoder now separates a recognized artifact-kind
+declaration outside an explicit query envelope from literal search lines. It
+retains the whole invalid raw response and uses the existing bounded format
+repair. Explicit literal queries, including artifact-like strings inside a valid
+query envelope, are unchanged; general prose is not semantically blacklisted.
+The actual910 frame3 query artifact_kind: lsr is recorded in
+artifacts/live_910/acceptance/query_metadata_transport_local_freeze.json.
+
+The documented native Ollama protocol permits calls without IDs and object-form
+arguments. Candidate911 assigns explicit application-owned exchange IDs when
+absent, preserves supplied IDs, projects canonical replies to tool_name, converts
+only JSON argument representation and preserves native thinking. Invalid or
+conflicting exchanges fail visibly. This contract repair is not the measured
+cause of the negative Gemma control: it made no native call. Canonical receipts
+now identify offered schema names/count/hash and decoded call ID origins without
+retaining arguments, prompts or HTTP bytes.
+
+The Gemma question-only control found the exact norm but returned12 empty-source
+workbook rows and no READ. Its no-attachment/no-catalog request had received an
+unconditional LSR carrier. Candidate911 does not require workbook fields or
+attempt workbook packaging when no source is bound and the model has not declared
+a VOR/LSR. The original profile/skill and question remain; declared workbooks and
+attached-source workflows retain their contract. No question keywords choose a
+professional operation or artifact. The old negative control cannot establish
+model inability; a fresh installed control is required.
+
+Candidate911 clean Windows packaging now allowlists the exact RTF reader
+`tools/windows_rtf_extract.ps1` and classic Outlook setup dependencies
+`clients/outlook_mail_poller/setup_task.ps1` / `LesMailPoller.cs`. Broad tools/client
+trees remain excluded. Clean staging tests prove included bytes and the real file
+iterator; they do not establish exact installer, Outlook COM or document-quality
+acceptance. Installed EXE remains the separately measured5.1.813 until a new
+installer is actually built and tested.
+
+Frozen911 offline canonical gates PASS: 4031 passed, 20 skipped, 5 warnings in 258.34s (0:04:18); mail: 66 passed, 4 warnings in 6.39s; metadata: 31 passed in 4.48s.
+Installed exact live B0/B1 and professional varied-document acceptance remain pending. A separate local Gemma32K/8K diagnostic uses visible connection
+revision and reversible role binding, not a same-settings FT comparison. No
+customer-ready claim, public release, exact installer acceptance,300+row quality,
+or multi-document drawing/OCR acceptance is established by this candidate.
+
+Earlier entries retain their stated build/date scope.
+
 ## Candidate 0.31.182 / 910 — preserve available evidence during hydration
 
 Build909 exact commit dff2c65a has canonical3889 passed/20 historical skips,

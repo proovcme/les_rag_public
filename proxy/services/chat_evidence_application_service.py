@@ -2556,6 +2556,10 @@ def append_actual_model_call(
             "provider_usage": provider_usage,
             "canonical_request_sha256": canonical_sha,
             "canonical_request_source": "canonical_inference_request" if canonical_sha else None,
+            **({"canonical_native_tools": dict(execution["canonical_native_tools"])}
+               if isinstance(execution.get("canonical_native_tools"), Mapping) else {}),
+            **({"native_tool_call_identities": list(execution["native_tool_call_identities"])}
+               if isinstance(execution.get("native_tool_call_identities"), list) else {}),
             **({"reasoning": dict(trace["last_model_call_execution"]["reasoning"])}
                if trace and isinstance(trace.get("last_model_call_execution"), Mapping)
                and isinstance(trace["last_model_call_execution"].get("reasoning"), Mapping) else {}),
@@ -2762,8 +2766,9 @@ def sheet_pass_keep_rows(
     catalog: AttachmentSourceCatalog,
     errors: Sequence[str],
     drop_locator: str = "",
+    artifact_kind: str = "",
 ) -> list[dict[str, Any]]:
-    """Keep this sheet's rows that passed per-pass Qx.Hy/quantity checks.
+    """Keep owned decisions; VOR source disagreements remain audited proposals.
 
     ``drop_locator`` is the unread-tail locator of a cut-off answer: it is not
     saved as a decision, so it stays in the sheet's outstanding pool and the next
@@ -2793,7 +2798,9 @@ def sheet_pass_keep_rows(
             continue
         on_sheet.append(payload)
     work_count = sum(1 for row in on_sheet if model_rag_row_kind(row) == "work")
-    blocking = blocking_model_rag_result_errors(errors, work_row_count=work_count)
+    blocking = blocking_model_rag_result_errors(
+        errors, work_row_count=work_count, artifact_kind=artifact_kind,
+    )
     kept: list[dict[str, Any]] = []
     for row in on_sheet:
         identity_blocked = any(
@@ -4497,14 +4504,20 @@ def read_model_query_response(raw: str, **kwargs) -> dict:
     envelope = decode_model_query_envelope(raw)
     declaration = decode_model_artifact_kind(raw)
     query_text = "\n".join(envelope["queries"]) if envelope is not None else raw
-    if envelope is None and _query_response_has_markdown_table(raw):
-        # This response used a result-table format, excluded by the literal
-        # query contract. Keep it whole; the existing one format repair applies.
-        # Never extract professional queries from its prose or cut table tail.
+    invalid_transport_reason = ""
+    if envelope is None:
+        if _query_response_has_markdown_table(raw):
+            invalid_transport_reason = "result_table_in_query_declaration"
+        elif declaration.get("status") != "missing":
+            # The canonical decoder recognised document metadata, not a search.
+            invalid_transport_reason = "artifact_metadata_in_query_declaration"
+    if invalid_transport_reason:
+        # Keep an unsupported response whole for the existing one format repair.
+        # Never select query lines from mixed metadata or chase its cut tail.
         declared = {
             "schema": "les.declared-query-list.v1",
             "queries": [],
-            "accompanying_answer": [{"line": raw, "reason": "result_table_in_query_declaration"}],
+            "accompanying_answer": [{"line": raw, "reason": invalid_transport_reason}],
             "unread_tail": "",
             "answer_cut": bool(finish_reason_is_length(kwargs.get("finish_reason", ""))),
             "finish_reason": str(kwargs.get("finish_reason") or ""),
@@ -6438,10 +6451,8 @@ def build_vor_result_readiness(
     model_errors: Sequence[str], draft: bool = False,
 ) -> dict[str, Any]:
     """Expose authored gaps; delivering a VOR does not establish its completeness."""
-    structural = [str(error) for error in model_errors if str(error).startswith(
-        ("source_", "invalid_source_row", "duplicate_source_row"),
-    )]
-    questions = list(structural)
+    audit_errors = vor_model_result_audit_errors(rows, model_errors)
+    questions = list(audit_errors)
     for row in rows:
         gap = str(row.get("open_gap") or "").strip()
         unresolved = str(row.get("row_role") or "").strip().casefold() == "unresolved"
@@ -6450,7 +6461,7 @@ def build_vor_result_readiness(
         title = str(row.get("title") or row.get("source_row") or "Позиция").strip()
         questions.append(f"{title}: {gap}" if gap else f"{title}: требуется уточнение")
     questions = list(dict.fromkeys(questions))
-    technical = bool(has_file) and not draft and not remaining_locators and not structural
+    technical = bool(has_file) and not draft and not remaining_locators and not audit_errors
     return {
         "schema": "les.vor-result-readiness.v1", "artifact_kind": "vor_workbook",
         "technical_complete": technical, "vor_complete": technical and not questions,
@@ -6662,13 +6673,14 @@ def blocking_model_rag_result_errors(
     errors: Sequence[str],
     *,
     work_row_count: int = 0,
+    artifact_kind: str = "",
 ) -> list[str]:
     """Keep evidence-code disagreement visible without withholding the model draft.
 
     Governor omissions and a cut-off last table line do not drop already parsed
     work rows. A missing or unknown Qx.Hy on one work row stays visible and
     unpriced; it does not withhold the workbook when other work rows exist.
-    Quantity mismatch still blocks the file.
+    Quantity mismatch still blocks an LSR file; VOR keeps an audited draft.
     """
 
     advisory_prefixes = (
@@ -6678,6 +6690,10 @@ def blocking_model_rag_result_errors(
         "source_unit_mismatch:",
         "source_incomplete:",
     )
+    if artifact_kind == "vor":
+        # A source disagreement is an audited VOR proposal, not permission to
+        # delete an authored operation or to accept its derived quantity.
+        advisory_prefixes = (*advisory_prefixes, "source_quantity_mismatch:")
     if int(work_row_count or 0) > 0:
         advisory_prefixes = (
             *advisory_prefixes,
@@ -6691,6 +6707,28 @@ def blocking_model_rag_result_errors(
         if not str(error).startswith(advisory_prefixes)
         and str(error) not in advisory_exact
     ]
+
+
+def vor_model_result_audit_errors(
+    rows: Sequence[Mapping[str, Any]], errors: Sequence[str],
+) -> list[str]:
+    """Separate VOR source checks and optional normative claims from row decisions."""
+    selected_locators = {
+        str(row.get("source_row") or "").strip()
+        for row in rows
+        if model_rag_row_kind(row) == "work"
+        and not _explicit_absence_value(row.get("norm_code"))
+        and str(row.get("norm_code") or "").strip()
+    }
+    visible: list[str] = []
+    for error in errors:
+        text = str(error)
+        if text.startswith(("source_", "invalid_source_row", "duplicate_source_row",
+                            "unknown_evidence_ref:", "norm_code_not_in_referenced_evidence:")):
+            visible.append(text)
+        elif text.startswith("missing_evidence_ref:") and text.split(":", 1)[1] in selected_locators:
+            visible.append(text)
+    return list(dict.fromkeys(visible))
 
 
 def model_rag_search_tool_schema() -> list[dict[str, Any]]:
@@ -6866,9 +6904,23 @@ def model_runtime_facts(
     return facts
 
 
+def model_workbook_carrier_required(
+    *, attachment_id: Any = "", source_catalog: Any = None,
+    model_declaration: Mapping[str, Any] | None = None,
+) -> bool:
+    """Scope the export carrier to a bound source or an explicit model document."""
+    declaration = model_declaration if isinstance(model_declaration, Mapping) else {}
+    return bool(
+        str(attachment_id or "").strip()
+        or source_catalog is not None
+        or (declaration.get("status") == "declared"
+            and declaration.get("artifact_kind") in {"vor", "lsr"})
+    )
+
+
 def profile_system_prompt(
     profile_snapshot: dict[str, Any] | None, *, strict: bool,
-    purpose: Literal["answer", "query", "workbook_result"] = "answer",
+    purpose: Literal["answer", "query", "workbook_result", "source_read"] = "answer",
 ) -> str:
     """Keep the bound profile literal; add application contracts for this phase only.
 
@@ -6903,7 +6955,7 @@ def profile_system_prompt(
         str(snapshot.get("mode") or "").strip().casefold() == "estimator"
         or profile_uses_tabular_estimator_path(snapshot)
     ):
-        if purpose != "query":
+        if purpose not in {"query", "source_read"}:
             parts.append(_TABULAR_LSR_OPERATION_INSTRUCTION if purpose == "workbook_result"
                          else _TABULAR_LSR_VOLUME_INSTRUCTION)
             if purpose == "workbook_result":
@@ -8266,6 +8318,27 @@ async def _execute_chat_evidence_application(
                                 separators=(",", ":"), allow_nan=False,
                             ).encode("utf-8")).hexdigest()
                             execution["canonical_request_source"] = "canonical_inference_request"
+                            # Non-content diagnostics distinguish offered tools
+                            # and decoded calls from a claim to have used them.
+                            # This is canonical metadata, not captured HTTP bytes.
+                            schemas = list(inference_request.tools)
+                            execution["canonical_native_tools"] = {
+                                "source": "canonical_inference_request",
+                                "provider_http_capture": False,
+                                "count": len(schemas),
+                                "names": [str((item.get("function") or {}).get("name") or "")
+                                          for item in schemas],
+                                "schema_sha256": hashlib.sha256(json.dumps(
+                                    schemas, ensure_ascii=False, sort_keys=True,
+                                    separators=(",", ":"), allow_nan=False,
+                                ).encode("utf-8")).hexdigest(),
+                            }
+                        execution["native_tool_call_identities"] = [
+                            {"call_id": raw.get("id"),
+                             "tool": str((raw.get("function") or {}).get("name") or ""),
+                             "call_id_origin": str(raw.get("call_id_origin") or "provider")}
+                            for raw in active_model_result.response.tool_calls
+                        ]
                         active_pending_tool_calls += active_model_result.pending_tool_calls
                         if (token_sink is not None and allow_stream and active_model_result.response.text
                                 and not active_model_result.response.tool_calls
@@ -10855,6 +10928,8 @@ async def _execute_chat_evidence_application(
                                 catalog=source_catalog,
                                 errors=pass_errors,
                                 drop_locator=tail_locator,
+                                artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
+                                               if artifact_kind_declaration.get("status") == "declared" else ""),
                             )
                             if tail_locator:
                                 # Addressed handling of the unread tail (blocker § 2):
@@ -11513,7 +11588,12 @@ async def _execute_chat_evidence_application(
                                 },
                             })
                         # ADR-12 §2: каркас формы под интент добавляем к нормальному промпту.
-                        answer_profile = (profile_system_prompt(profile_snapshot, strict=False, purpose="workbook_result")
+                        workbook_carrier_required = model_workbook_carrier_required(
+                            attachment_id=getattr(req, "attachment_id", None),
+                            source_catalog=source_catalog, model_declaration=artifact_kind_declaration,
+                        )
+                        answer_profile = (profile_system_prompt(profile_snapshot, strict=False,
+                                          purpose="workbook_result" if workbook_carrier_required else "source_read")
                                           if model_driven_retrieval else sys_normal)
                         sys_msg = answer_profile + (f" {answer_form.instruction}" if answer_form.instruction else "")
                         # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
@@ -11535,7 +11615,8 @@ async def _execute_chat_evidence_application(
                     direct_read_tools = (
                         model_evidence_read_tool_schemas()
                         if model_driven_retrieval
-                        and str(getattr(req, "comparative_acceptance_variant", "") or "") == "B0_DIRECT"
+                        and (str(getattr(req, "comparative_acceptance_variant", "") or "") == "B0_DIRECT"
+                             or not workbook_carrier_required)
                         else []
                     )
                     ordinary_answer_tools = tuple(
@@ -11553,13 +11634,14 @@ async def _execute_chat_evidence_application(
                         sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
                         sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(direct_price_basis, ensure_ascii=False)
                     if model_driven_retrieval:
-                        question_tail = lsr_result_table_instruction(
-                            sheet_clause=question_tail + "\n",
-                            remaining_clause=(
-                                " Ответ должен вместить все строки: без вводного обзора "
-                                "и итоговых рекомендаций, кратко по каждой строке исходника."
-                            ),
-                        )
+                        if workbook_carrier_required:
+                            question_tail = lsr_result_table_instruction(
+                                sheet_clause=question_tail + "\n",
+                                remaining_clause=(
+                                    " Ответ должен вместить все строки: без вводного обзора "
+                                    "и итоговых рекомендаций, кратко по каждой строке исходника."
+                                ),
+                            )
                         fixed_model_rag_evidence = selector_evidence_payload(
                             attachment_context=attachment_context,
                             rendered_context="",
@@ -12146,7 +12228,9 @@ async def _execute_chat_evidence_application(
                         answer_source_map = _model_rag_source_map(model_evidence_chunks)
                         selector_source_map = answer_source_map
                         if direct_read_stop:
-                            answer = "Техническая остановка чтения источников: " + direct_read_stop + ". Решение модели не завершено; ЛСР не упакована."
+                            answer = ("Техническая остановка чтения источников: " + direct_read_stop
+                                      + (". Решение модели не завершено; ЛСР не упакована."
+                                         if workbook_carrier_required else ". Решение модели не завершено."))
                         else:
                             active_pending_tool_calls = 0
                     if (not model_driven_retrieval and not direct_read_tools and active_model_result is not None
@@ -12201,14 +12285,19 @@ async def _execute_chat_evidence_application(
                     logger.info("[CHAT] model answer accepted unchanged; citation check is trace-only")
                     break
 
-                if model_driven_retrieval:
+                if model_driven_retrieval and not sheet_pass_done:
+                    artifact_kind_declaration = update_model_artifact_kind(
+                        artifact_kind_declaration, decode_model_artifact_kind(answer), phase="result")
+                    retrieval_trace["artifact_target"] = dict(artifact_kind_declaration)
+                if model_driven_retrieval and model_workbook_carrier_required(
+                    attachment_id=getattr(req, "attachment_id", None),
+                    source_catalog=source_catalog, model_declaration=artifact_kind_declaration,
+                ):
                     if sheet_pass_done:
                         parsed_model_result = (
                             (answer, sheet_pass_rows) if sheet_pass_rows else None
                         )
                     else:
-                        artifact_kind_declaration = update_model_artifact_kind(
-                            artifact_kind_declaration, decode_model_artifact_kind(answer), phase="result")
                         parsed_model_result = parse_model_rag_result(
                             answer, diagnostics=retrieval_trace.setdefault("model_result_transport_diagnostics", []),
                         )
@@ -12737,6 +12826,8 @@ async def _execute_chat_evidence_application(
                         model_result_blocking_errors = blocking_model_rag_result_errors(
                             model_result_errors,
                             work_row_count=work_row_count,
+                            artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
+                                           if artifact_kind_declaration.get("status") == "declared" else ""),
                         )
                         if durable_packaging_rows:
                             # Terminal durable state wins over the ephemeral
@@ -12868,7 +12959,11 @@ async def _execute_chat_evidence_application(
                     packaged_source_locators = cited_source_row_keys(
                         saved_draft_rows if can_package_saved_draft else model_result_rows, source_catalog)
                     document_issues = workbook_document_issues(
-                        research_job, errors=model_result_blocking_errors,
+                        research_job, errors=(
+                            list(dict.fromkeys([*model_result_blocking_errors,
+                                *vor_model_result_audit_errors(model_result_rows, model_result_errors)]))
+                            if packaging_tools == ["build_vor_workbook"] else model_result_blocking_errors
+                        ),
                         transport_diagnostics=transport_diagnostics,
                         unaccounted_result_locators=[
                             locator for locator in source_catalog.work_locators()

@@ -197,7 +197,8 @@ def test_review_response_contract_is_full_while_normal_page_remains_delta():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cut", [False, True])
-async def test_actual_reopened_review_offers_all_operations_without_auto_restoring_omitted_rows(tmp_path, monkeypatch, cut):
+@pytest.mark.parametrize("repair_query_transport", [False, True])
+async def test_actual_reopened_review_offers_all_operations_without_auto_restoring_omitted_rows(tmp_path, monkeypatch, cut, repair_query_transport):
     from test_model_rag_sheet_evidence_reads import _run_sheet
     from proxy.services.openai_compatible_transport_service import InferenceResponse
 
@@ -245,12 +246,22 @@ async def test_actual_reopened_review_offers_all_operations_without_auto_restori
         text = '{"artifact_kind":"lsr","rows":[' if cut else json.dumps({"artifact_kind": "lsr", "rows": authored})
         return InferenceResponse(text=text, tool_calls=(), finish_reason="length" if cut else "stop", usage={})
 
-    run.responses[:] = [InferenceResponse(text="artifact_kind: lsr\nS!R2 literal query\nS!R3 literal query",
-        tool_calls=(), finish_reason="stop", usage={}), review_response]
+    literal_queries = ["S!R2 literal query", "S!R3 literal query"]
+    query_response = InferenceResponse(
+        text=json.dumps({"artifact_kind": "lsr", "queries": literal_queries}),
+        tool_calls=(), finish_reason="stop", usage={},
+    )
+    # A mixed metadata/plain-query response needs the existing format repair.
+    # Neither that repair nor valid transport may erase the reopened operations.
+    initial_responses = ([InferenceResponse(
+        text="artifact_kind: lsr\n" + "\n".join(literal_queries),
+        tool_calls=(), finish_reason="stop", usage={},
+    )] if repair_query_transport else [])
+    run.responses[:] = [*initial_responses, query_response, review_response]
     calls_before = len(run.requests)
     result = await run.resume_same_request()
     current = store.get(job_id)
-    assert frame_rows and len(run.requests) == calls_before + 2 and not run.responses
+    assert frame_rows and len(run.requests) == calls_before + 2 + int(repair_query_transport) and not run.responses
     if cut:
         assert current["accepted_rows"] == []
         assert set(current["remaining"]) == {row["source_row"] for row in published}

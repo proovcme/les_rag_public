@@ -1,5 +1,17 @@
 # Алгоритм: Е.Ж.И.К. — локальный read-only сборщик почты
 
+## Candidate911: exact clean Windows dependencies
+
+Candidate911 clean Windows packaging now allowlists the exact RTF reader
+`tools/windows_rtf_extract.ps1` and classic Outlook setup dependencies
+`clients/outlook_mail_poller/setup_task.ps1` / `LesMailPoller.cs`. Broad tools/client
+trees remain excluded. Clean staging tests prove included bytes and the real file
+iterator; they do not establish exact installer, Outlook COM or document-quality
+acceptance. Installed EXE remains the separately measured5.1.813 until a new
+installer is actually built and tested.
+
+Earlier entries retain their stated build/date scope.
+
 ## Граница продукта
 
 Е.Ж.И.К. не является почтовым клиентом и не меняет исходный ящик. Он сохраняет локальный

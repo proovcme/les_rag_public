@@ -1,5 +1,18 @@
 # Chat profiles
 
+## Candidate911: source-read purpose
+
+The bound immutable profile and skill remain literal. Application workbook/volume
+carrier additions are omitted only for a model-driven answer without a bound
+attachment/catalog and without a valid model-authored VOR/LSR declaration. The
+`source_read` purpose does not infer an artifact from the question. Final model
+declarations are recorded before deciding whether to parse/package a workbook.
+Attached-source and explicitly declared workbook contracts remain strict.
+Focused actual-producer tests include native READ and ordinary answer delivery;
+installed live acceptance is pending.
+
+Earlier entries retain their stated build/date scope.
+
 ## Бюджет облачного хода (кандидат 882)
 
 `LES_CLOUD_TURN_TOKEN_BUDGET` виден в общем реестре Совушки как числовая,

@@ -12,6 +12,8 @@
   "include_files": [
     "LICENSE",
     "README.md",
+    "clients/outlook_mail_poller/setup_task.ps1",
+    "clients/outlook_mail_poller/LesMailPoller.cs",
     "env.example",
     "lemonade_host.py",
     "mlx_host.py",
@@ -49,6 +51,7 @@
     "tools/smeta_release_baseline.py",
     "tools/vps_patch_apply.py",
     "tools/windows_env_doctor.py",
+    "tools/windows_rtf_extract.ps1",
     "tools/windows_runtime.py",
     "tools/windows_update_engine.py",
     "uv.lock"

@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+Candidate911: model-declared VOR preserves admitted work with visible source/citation issues; query metadata stays outside searches. LSR/identity/tail guards unchanged. Professional and installed acceptance pending; customer-ready false.
+Frozen911 offline canonical gates PASS: 4031 passed, 20 skipped, 5 warnings in 258.34s (0:04:18); mail: 66 passed, 4 warnings in 6.39s; metadata: 31 passed in 4.48s.
+Entries: chat_evidence_application_service.read_model_query_response, sheet_pass_keep_rows, blocking_model_rag_result_errors, model_workbook_carrier_required, profile_system_prompt(source_read); openai_compatible_transport_service._native_chat_messages and native tool-call decoding. Module docs: [RAG flow](modules/rag-evidence-flow.md), [tool exchange](ALGO-tool-harness.md), [profiles](modules/chat-profiles.md). Status: code/offline verified; installed/professional live pending.
+Windows packaging: config/windows_runtime_manifest.json exact dependencies; tools/build_tauri_app.iter_files/stage_runtime. Docs: [VOR intake](ALGO-spec-to-bor.md), [mail intake](ALGO-mail-intake.md). Clean staging proof is separate from installer/live acceptance.
+
+
+Earlier entries retain their stated build/date scope.
+
 ## Candidate 0.31.182 / 910 — preserve available evidence during hydration
 
 Build909 exact commit dff2c65a has canonical3889 passed/20 historical skips,
