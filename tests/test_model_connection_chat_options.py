@@ -144,7 +144,7 @@ async def test_legacy_snapshot_output_field_and_local_native_wire_are_preserved(
         await transport.complete(_resolved(_revision(local=True, extension="freetoken")), request)
     assert bodies[0]["max_completion_tokens"] == 64 and bodies[0]["temperature"] == 0.7
     assert "reasoning" not in bodies[0] and "reasoning_effort" not in bodies[0]
-    assert bodies[1]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert bodies[1]["chat_template_kwargs"] == {"enable_thinking": False, "thinking_mode": "disabled"}
     assert "reasoning" not in bodies[1]
 
 

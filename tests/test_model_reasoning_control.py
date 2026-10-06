@@ -33,7 +33,7 @@ async def test_freetoken_body_preserves_explicit_bool_and_final_only_content(tmp
             temperature=0.1, reasoning_enabled=enabled))
     finally:
         await client.aclose()
-    assert bodies[0]["chat_template_kwargs"] == {"enable_thinking": enabled}
+    assert bodies[0]["chat_template_kwargs"] == {"enable_thinking": enabled, "thinking_mode": "enabled" if enabled else "disabled"}
     assert bodies[0]["temperature"] == 0.1 and bodies[0]["max_tokens"] == 800
     assert bodies[0]["messages"] == [{"role": "user", "content": "literal task"}]
     assert "top_p" not in bodies[0] and "top_k" not in bodies[0]

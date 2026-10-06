@@ -473,7 +473,20 @@ class AttachmentSourceCatalog:
             return exact
         folded = label.casefold()
         matches = [row for row in self.rows if row.locator.casefold() == folded]
-        return matches[0] if len(matches) == 1 else None
+        if matches:
+            return matches[0] if len(matches) == 1 else None
+        # The manifest exposes the source file identity alongside sheet locators.
+        # A model may use that exact identity as a prefix. It identifies a row
+        # only when the row number is unique across the original source; it is
+        # never permission to strip an arbitrary prefix or choose a sheet.
+        file_id, separator, coordinate = label.partition("!")
+        if (separator and self.source_file_id and file_id == self.source_file_id
+                and re.fullmatch(r"R[1-9][0-9]*", coordinate)):
+            # Compare actual catalog row numbers instead of converting an
+            # untrusted, potentially arbitrarily long numeral to an integer.
+            matches = [row for row in self.rows if str(row.excel_row) == coordinate[1:]]
+            return matches[0] if len(matches) == 1 else None
+        return None
 
     def work_locators(self) -> list[str]:
         return [row.locator for row in self.rows if row.is_work_row()]
@@ -1184,6 +1197,14 @@ def coverage_errors(
         for row in rows
         if isinstance(row.get("source_row"), int)
         and not isinstance(row.get("source_row"), bool)
+    )
+    # Compare catalog identities without rewriting the authored source_row.
+    # All accepted aliases use the same exact, ambiguity-preserving lookup as
+    # source quantity/unit validation.
+    cited.update(
+        found.locator
+        for row in rows
+        if (found := catalog.lookup(row.get("source_row"))) is not None
     )
     work = catalog.work_locators()
     uncovered = [locator for locator in work if locator not in cited]

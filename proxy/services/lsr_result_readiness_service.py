@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog
 
 from proxy.services.lsr_source_coverage_service import (
     build_source_coverage,
+    catalog_source_locator,
     canonicalize_row_role,
     inferred_row_role,
     operation_identity,
@@ -328,6 +332,7 @@ def build_lsr_result_readiness(
     remaining_locators: Sequence[str] = (),
     catalog_work_count: int = 0,
     catalog_locators: Sequence[str] = (),
+    source_catalog: AttachmentSourceCatalog | None = None,
     price_gaps: Sequence[Mapping[str, Any]] = (),
     norm_conflicts: Sequence[Mapping[str, Any]] = (),
     price_basis: Mapping[str, Any] | None = None,
@@ -355,15 +360,17 @@ def build_lsr_result_readiness(
     # once it is terminal, the advice below has to send the operator to the
     # declared gaps in the file instead of to a gesture that cannot continue.
     research_finished = _text(job_status).casefold() in FINISHED_RESEARCH_JOB_STATUSES
-    remaining = [_text(item) for item in remaining_locators if _text(item)]
-    cited = {_locator(row) for row in work_rows}
-    wanted = [_text(item) for item in catalog_locators if _text(item)]
+    remaining = [catalog_source_locator(item, source_catalog) for item in remaining_locators if _text(item)]
+    cited = {catalog_source_locator(row.get("source_row"), source_catalog) for row in work_rows}
+    wanted = [catalog_source_locator(item, source_catalog) for item in catalog_locators if _text(item)]
     if not wanted:
-        wanted = list(dict.fromkeys([_locator(row) for row in work_rows] + remaining))
+        wanted = list(dict.fromkeys([catalog_source_locator(row.get("source_row"), source_catalog)
+                                    for row in work_rows] + remaining))
     coverage = build_source_coverage(
         catalog_locators=wanted,
         rows=work_rows,
         remaining_locators=remaining,
+        source_catalog=source_catalog,
     )
     incomplete = set(coverage["incomplete_locators"])
     remaining = list(dict.fromkeys(

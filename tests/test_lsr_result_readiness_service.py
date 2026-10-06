@@ -1,4 +1,5 @@
 from tests.lsr_citation_support import cited_all
+import pytest
 
 from proxy.services.lsr_result_readiness_service import (
     build_lsr_result_readiness,
@@ -12,6 +13,42 @@ def test_mounting_norm_on_material_does_not_inflate_selected_work_norms():
     counts = build_lsr_result_readiness(packaged=True, rows=rows)["counts"]
     assert counts["norms_selected"] == 1
     assert counts["norms_unique_ciphers"] == 1
+
+
+@pytest.mark.parametrize("work_count", [2, 19, 30])
+def test_readiness_verified_file_aliases_do_not_reopen_works_but_keep_unresolved_prose(work_count):
+    import json
+    from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog, CatalogRow
+    from proxy.services.lsr_source_coverage_service import operation_identity
+
+    catalog_rows = tuple(CatalogRow(
+        locator=f"PDF!R{number}", sheet="PDF", excel_row=number,
+        values=("Literal item",), line=f"PDF!R{number}: Literal item", numbers=(),
+        row_classification="ambiguous",
+    ) for number in range(2, work_count + 2)) + (CatalogRow(
+        locator="PDF_TEXT!R1", sheet="PDF_TEXT", excel_row=1,
+        values=("Literal unclassified prose",), line="PDF_TEXT!R1: Literal unclassified prose", numbers=(),
+        row_classification="ambiguous", classification_reason="pdf_text_requires_model_role",
+    ),)
+    catalog = AttachmentSourceCatalog(original_name="source.pdf", sheets=(("PDF", work_count), ("PDF_TEXT", 1)),
+                                      rows=catalog_rows, source_file_id="src_readiness_identity")
+    rows = cited_all([{
+        "source_row": f"{catalog.source_file_id}!R{number}", "row_role": "work",
+        "norm_code": "ГЭСН12-01-034-02", "norm_status": "EXACT",
+    } for number in range(2, work_count + 2)])
+    rows.append({"source_row": "PDF!R2", "row_role": "material", "work_row": f"{catalog.source_file_id}!R2"})
+    before = json.dumps(rows, ensure_ascii=False, sort_keys=True)
+    identities = [operation_identity(row) for row in rows]
+    readiness = build_lsr_result_readiness(packaged=True, rows=rows, source_catalog=catalog,
+        catalog_locators=catalog.work_locators(), remaining_locators=catalog.work_locators(), paused=True)
+    assert readiness["coverage"]["accounted"] == work_count
+    assert readiness["coverage"]["gap_count"] == 1
+    assert readiness["remaining_locators"] == ["PDF_TEXT!R1"]
+    assert readiness["counts"]["works"] == work_count
+    assert readiness["counts"]["materials"] == 1
+    assert readiness["estimate_complete"] is False
+    assert json.dumps(rows, ensure_ascii=False, sort_keys=True) == before
+    assert [operation_identity(row) for row in rows] == identities
 
 
 def test_readiness_splits_file_norms_and_prices() -> None:

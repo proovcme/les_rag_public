@@ -1,5 +1,22 @@
 # Версии программного контура ЛЕС
 
+Candidate0.31.176/build904; dependencies/providers/models unchanged.
+Provider count deadline15s; bound revision guard and purpose-scoped carrier clarified;
+context/generation reserves and saved profiles unchanged. Installed/live904 pending.
+Installed903/0.31.175/b06d47bd, exact owned runtime hashes PASS; rollback902 retained.
+Ollama was stopped: initial native RRF failed and BAP B0 used degraded_sparse_only.
+After starting the existing embedding service, the unchanged native-RRF probe PASS/5hits.
+BAP B0 delivered one41499byte XLSX in172.31s (SHA58af71cc):25authored rows,
+19work+6material,17positions/1calculated, preliminary146244.46/confirmed0.
+All19 PDF rows used the manifest's actual source_file_id!Rn: rejected aliases caused
+false source coverage gaps. The catalogue lookup fix resolves them without rewriting rows.
+Six materials lack explicit work_row; PDF_TEXT!R1 lacks a model decision. Genuine gaps remain.
+B1 paused118.86s before rows/file: required context estimate52599 >46171, after
+seven actual price searches. Discovery bodies Q1.H1-H6 had been dropped from replay.
+Preserving them increases the estimate, so preserve-only is not a capacity proof.
+903 is not customer-ready. Fresh healthy installed B0/B1, diverse inputs, large VOR,
+professional norm/resource completeness, FSEM0.02/0.022 and fresh installer remain open.
+
 Кандидат0.31.175/build903, dependencies/providers unchanged.
 Installed902/0.31.174, commitc7647784, patch17.77s/runtime hashes PASS.
 Canonical3394PASS/20existing skips/5warnings, metadata31PASS, focused81PASS.
@@ -257,9 +274,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.175` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `903` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.903` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.176` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `904` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.904` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

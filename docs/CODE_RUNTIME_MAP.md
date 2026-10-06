@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1091 |
-| Строк Python | 383499 |
+| Строк Python | 384430 |
 | PRODUCT_REACHABLE | 372 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 707 |
@@ -32,16 +32,16 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 13006 | 48 |
+| proxy/services/chat_evidence_application_service.py | 13195 | 48 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7792 | 7 |
-| proxy/routers/chat.py | 4816 | 47 |
+| proxy/routers/chat.py | 4820 | 47 |
 | backend/qdrant_adapter.py | 4580 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |
 | proxy/routers/datasets.py | 3787 | 16 |
 | sovushka/styles.py | 3301 | 3 |
-| proxy/services/rim_lsr_trace_service.py | 3180 | 34 |
+| proxy/services/rim_lsr_trace_service.py | 3272 | 34 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/workbook_research_job_service.py | 2883 | 29 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
@@ -51,8 +51,8 @@
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
 | proxy/smeta_core/norm_browser.py | 1799 | 16 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
+| proxy/services/lsr_workbook_adapter_service.py | 1645 | 17 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
-| proxy/services/lsr_workbook_adapter_service.py | 1637 | 17 |
 | sovushka/pages/diag.py | 1605 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
@@ -61,7 +61,7 @@
 | proxy/services/tool_harness_service.py | 1408 | 13 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
-| proxy/services/attachment_source_catalog_service.py | 1209 | 19 |
+| proxy/services/attachment_source_catalog_service.py | 1230 | 23 |
 
 ## Сметный монолит: фактические потребители
 

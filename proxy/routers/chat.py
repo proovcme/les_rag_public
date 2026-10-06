@@ -389,6 +389,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     )
     inherited_basis = task_document_price_basis(job, inherited_basis)
     document_issues = []
+    source_catalog = None
     if repack_tool == "build_lsr_workbook":
         from proxy.services.attachment_source_catalog_service import load_catalog_from_attachment_id
         from proxy.services.chat_evidence_application_service import cited_source_row_keys
@@ -520,6 +521,9 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     if isinstance(artifact, dict) and repack_tool == "build_lsr_workbook":
         artifact["draft_rows"] = compact_estimator_draft_rows(decisions)
         readiness = build_lsr_result_readiness(
+            source_catalog=source_catalog,
+            catalog_work_count=len(source_catalog.work_locators()) if source_catalog is not None else 0,
+            catalog_locators=source_catalog.work_locators() if source_catalog is not None else (),
             packaged=bool(artifact.get("download_url")),
             packaging_failed=str(payload.get("status") or "") == "failed",
             packaging_code=str(payload.get("code") or ""),

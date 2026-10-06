@@ -200,7 +200,7 @@ async def test_driver_native_feedback_reaches_second_actual_http_request_without
     assert messages[2]["tool_calls"][0]["function"]["arguments"] == initial["native_arguments"]
     assert messages[3]["tool_call_id"] == "c1"
     assert body in messages[1]["content"] and body not in messages[3]["content"]
-    assert posted[1]["chat_template_kwargs"] == {"enable_thinking": True}
+    assert posted[1]["chat_template_kwargs"] == {"enable_thinking": True, "thinking_mode": "enabled"}
 
 
 @pytest.mark.asyncio

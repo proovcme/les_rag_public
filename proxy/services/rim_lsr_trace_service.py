@@ -20,6 +20,7 @@ from proxy.services.lsr_source_coverage_service import (
     apply_confirmed_data,
     canonicalize_row_role,
     canonicalize_supply_kind,
+    catalog_source_locator,
     double_count_conflicts,
     inferred_row_role,
     operation_identity,
@@ -32,6 +33,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
     norm_applicability_substantiated,
 )
 from proxy.services.attachment_source_catalog_service import (
+    AttachmentSourceCatalog,
     normalize_unit,
     quantities_close,
 )
@@ -251,6 +253,76 @@ def book_price_unit_conflict(book_unit: Any, resource_unit: Any) -> str:
     if _norm_unit_factor(left) == _norm_unit_factor(right):
         return ""
     return left
+
+
+def convert_book_price_unit(
+    record: Mapping[str, Any], resource_unit: Any, *, resource_code: str = "", pricebook=None,
+) -> tuple[Mapping[str, Any], Optional[dict[str, Any]]]:
+    """Convert only explicit single SI units, with the selected book as owner.
+
+    Quantities and the dimensionless index never change. The strict unit guard
+    remains strict for callers that do not actually apply this price conversion.
+    """
+    aliases = {
+        "кг": "кг", "kg": "кг", "килограмм": "кг", "килограмма": "кг", "килограммов": "кг",
+        "т": "т", "t": "т", "тонна": "т", "тонны": "т", "тонн": "т",
+        "м": "м", "m": "м", "метр": "м", "метра": "м", "метров": "м",
+        "км": "км", "km": "км", "километр": "км", "километра": "км", "километров": "км",
+    }
+
+    def single_unit(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if not text or _norm_unit_factor(text)[0] != 1:
+            return ""
+        match = re.fullmatch(r"(?:1(?:[.,]0+)?\s*)?([a-zа-яё]+)\.?", text)
+        return aliases.get(match.group(1), "") if match else ""
+
+    book_unit = str(record.get("unit") or "").strip()
+    target_unit = str(resource_unit or "").strip()
+    source, target = single_unit(book_unit), single_unit(target_unit)
+    # Price per resource unit needs the number of book units in that unit.
+    factor = _unit_conversion_factor(target, source) if source and target else None
+    if factor in (None, 1) or record.get("price_conflict"):
+        return record, None
+    prices = {key: _num(record.get(key)) for key in ("price_current", "price_base", "price_current_eff")}
+    index = _num(record.get("index"))
+    selected = prices["price_current"]
+    if selected is None and prices["price_base"] is not None and index is not None:
+        selected = prices["price_base"] * index
+    if selected is None:
+        selected = prices["price_current_eff"]
+    if selected is None or not math.isfinite(selected):
+        return record, None
+    converted = dict(record)
+    for key, price in prices.items():
+        if price is not None:
+            scaled = price * factor
+            if not math.isfinite(scaled):
+                return record, None
+            converted[key] = scaled
+    converted["unit"] = target_unit
+    resource_price = _num(converted.get("price_current"))
+    if resource_price is None and prices["price_base"] is not None and index is not None:
+        resource_price = converted["price_base"] * index
+    if resource_price is None:
+        resource_price = _num(converted.get("price_current_eff"))
+    if resource_price is None or not math.isfinite(resource_price):
+        return record, None
+    book_name = str(getattr(pricebook, "source_name", "") or "")
+    book_sha = str(getattr(pricebook, "source_sha256", "") or "")
+    source_ref = str(record.get("source_ref") or "")
+    if not source_ref and (book_name or book_sha):
+        source_ref = f"pricebook:{book_name}#sha256={book_sha}&code={resource_code}"
+    return converted, {
+        "book_unit": book_unit, "resource_unit": target_unit,
+        "conversion_factor": factor,
+        "formula": f"price_resource_unit = price_book_unit × {factor:g}; {book_unit} → {target_unit}",
+        "price_owner": "chosen_pricebook", "resource_code": resource_code,
+        "book_current_price": selected, "resource_current_price": resource_price,
+        "source_ref": source_ref, "book_source_name": book_name, "book_source_sha256": book_sha,
+        "region": str(getattr(pricebook, "region", "") or record.get("region") or ""),
+        "quarter": str(getattr(pricebook, "quarter", "") or record.get("quarter") or ""),
+    }
 
 
 def book_unit_conflict_note(res: dict[str, Any], book_unit: str) -> str:
@@ -530,6 +602,7 @@ class PriceTrace:
     #: a choice: the first price of a group is not the group's price.
     group: Optional[Mapping[str, Any]] = None
     record_conflict: Optional[Mapping[str, Any]] = None
+    unit_conversion: Optional[Mapping[str, Any]] = None
 
 
 #: A norm resource that names a price-book group rather than one member of it.
@@ -947,6 +1020,9 @@ def _resolve_price_trace(
             # The шифр is in the chosen book; its price may still be for another
             # unit, and reading the number anyway would hand the position a
             # confirmed amount that no arithmetic supports (§ 11 № 8).
+            rec, unit_conversion = convert_book_price_unit(
+                rec, res.get("unit"), resource_code=code, pricebook=pricebook,
+            )
             book_unit_conflict = book_price_unit_conflict(rec.get("unit"), res.get("unit"))
         if rec is not None and not book_unit_conflict:
             unit_action = (
@@ -964,6 +1040,7 @@ def _resolve_price_trace(
                     column_10=price,
                     basis="split_form_col_8",
                     action=unit_action,
+                    unit_conversion=unit_conversion,
                 )
             base = _num(rec.get("price_base"))
             index = _num(rec.get("index"))
@@ -977,6 +1054,7 @@ def _resolve_price_trace(
                     column_10=price,
                     basis="split_form_col_5_x_col_9",
                     action=unit_action,
+                    unit_conversion=unit_conversion,
                 )
             eff = _num(rec.get("price_current_eff"))
             if eff is not None:
@@ -987,6 +1065,7 @@ def _resolve_price_trace(
                     column_10=price,
                     basis="split_form_effective_price",
                     action=unit_action,
+                    unit_conversion=unit_conversion,
                 )
 
     if str(res.get("kind")) == "material" and kac_map:
@@ -1433,6 +1512,7 @@ def build_position_trace(
                 "price_basis": price.basis or "",
                 "price_source": price.source or "",
                 "price_book_unit": price.book_unit or "",
+                **({"price_unit_conversion": dict(price.unit_conversion)} if price.unit_conversion else {}),
                 **({"price_record_conflict": dict(price.record_conflict)} if price.record_conflict else {}),
                 "resource_group": str((price.group or {}).get("group") or ""),
                 "code_derivation": str(res.get("code_derivation") or ""),
@@ -1468,6 +1548,7 @@ def build_position_trace(
                     "kind": kind,
                     "price_action": price.action,
                     "price_book_unit": price.book_unit,
+                    **({"price_unit_conversion": dict(price.unit_conversion)} if price.unit_conversion else {}),
                     "price_source_ref": res.get("price_source_ref") or "",
                     "resource_binding": res.get("resource_binding") or {},
                     # § 3: a group reference arrives at the operator with the concrete
@@ -2364,7 +2445,9 @@ def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str,
     }
 
 
-def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def positions_from_visible_lsr_rows(
+    rows: list[dict[str, Any]], *, source_catalog: AttachmentSourceCatalog | None = None,
+) -> dict[str, Any]:
     """Bind already visible/selected LSR rows to trace positions.
 
     This function does not search or select norms and does not require an
@@ -2375,20 +2458,26 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
     """
     positions: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
-    coverage_links = resolve_work_coverage(rows or [])
+    coverage_links = resolve_work_coverage(rows or [], source_catalog=source_catalog)
     supplies_by_parent: dict[str, list[Mapping[str, Any]]] = {}
     work_ids_by_parent: dict[str, set[str]] = {}
     work_indices_by_alias: dict[str, set[int]] = {}
     linked_resources_by_work: dict[int, list[Mapping[str, Any]]] = {}
     resource_link_errors: dict[int, str] = {}
+
+    def parent_key(value: Any) -> str:
+        return catalog_source_locator(value, source_catalog)
+
     for index, item in enumerate(rows or []):
         if inferred_row_role(item) == "work":
-            for key in {str(item.get("source_row") or ""), str(item.get("operation_id") or ""),
+            for key in {str(item.get("source_row") or ""), parent_key(item.get("source_row")),
+                        str(item.get("operation_id") or ""),
                         operation_identity(item)} - {""}:
                 work_indices_by_alias.setdefault(key, set()).add(index)
     for index, item in enumerate(rows or []):
         if inferred_row_role(item) == "resource" and ("resource_bindings" in item or "resource_review" in item):
-            targets = work_indices_by_alias.get(work_row_key(item), set())
+            parent = work_row_key(item)
+            targets = work_indices_by_alias.get(parent, set()) | work_indices_by_alias.get(parent_key(parent), set())
             if len(targets) == 1:
                 linked_resources_by_work.setdefault(next(iter(targets)), []).append(item)
             else:
@@ -2397,11 +2486,12 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         role = inferred_row_role(item)
         parent = work_row_key(item)
         if role == "work":
-            for key in {str(item.get("source_row") or ""), parent} - {""}:
+            for key in {parent_key(item.get("source_row")), parent_key(parent),
+                        str(item.get("operation_id") or ""), operation_identity(item)} - {""}:
                 work_ids_by_parent.setdefault(key, set()).add(operation_identity(item))
         elif role in {"material", "equipment"} and parent:
             if (canonicalize_supply_kind(item.get("supply_kind")) or "supply") in {"supply", "both"}:
-                supplies_by_parent.setdefault(parent, []).append(item)
+                supplies_by_parent.setdefault(parent_key(parent), []).append(item)
     for idx, row in enumerate(rows or [], 1):
         model_source_row = row.get("source_row")
         source_row = (
@@ -2763,7 +2853,8 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             # Missing/ambiguous rules remain open, never a title-based default.
             position["nr_sp_rule_id"] = row["nr_sp_rule_id"]
         position.update(_model_coefficient_fields(row))
-        linked_supply_rows = [supply for key in {str(source_row), parent} - {""}
+        linked_supply_rows = [supply for key in {parent_key(source_row), parent_key(parent),
+                                               str(row.get("operation_id") or ""), operation_identity(row)} - {""}
                               for supply in supplies_by_parent.get(key, [])]
         linked_resource_rows = linked_resources_by_work.get(idx - 1, [])
         rejected_resource_rows = [owner for owner in linked_resource_rows
@@ -2780,7 +2871,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
                 physical_quantity=source_qty, physical_unit=source_unit,
                 linked_supply_rows=linked_supply_rows,
                 linked_resource_rows=linked_resource_rows,
-                supply_parent_ambiguous=any(len(work_ids_by_parent.get(work_row_key(supply), set())) != 1
+                supply_parent_ambiguous=any(len(work_ids_by_parent.get(parent_key(work_row_key(supply)), set())) != 1
                                             for supply in linked_supply_rows),
             ))
         if rejected_resource_rows:
@@ -2904,6 +2995,7 @@ def _is_selected_cipher(value: Any) -> bool:
 def build_lsr_trace_from_visible_rows(
     rows: list[dict[str, Any]],
     *,
+    source_catalog: AttachmentSourceCatalog | None = None,
     pricebook=None,
     kac_map: dict[str, float] | None = None,
     k_ozp: float = 1.0,
@@ -2914,7 +3006,7 @@ def build_lsr_trace_from_visible_rows(
 ) -> dict[str, Any]:
     """Visible/BOR/LSR rows with selected norm codes -> priced_partial/final RIM trace."""
     visible = apply_confirmed_data(rows, confirmed_data)
-    bound = positions_from_visible_lsr_rows(visible)
+    bound = positions_from_visible_lsr_rows(visible, source_catalog=source_catalog)
     lsr = build_lsr_trace(
         bound["positions"],
         pricebook=pricebook,

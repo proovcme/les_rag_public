@@ -173,6 +173,8 @@ class ContextPacket:
     sections: tuple[ContextSection, ...]
     omissions: tuple[ContextOmission, ...]
     provider_payload_tokens: int = 0
+    token_count_source: str = "conservative_chars_per_two"
+    token_count_binding: dict[str, Any] = field(default_factory=dict)
 
     def as_messages(self) -> list[dict[str, Any]]:
         system = "\n\n".join(
@@ -202,10 +204,12 @@ class ContextPacket:
 class ContextRequiredSectionOverflow(ValueError):
     code = "CONTEXT_REQUIRED_SECTION_OVERFLOW"
 
-    def __init__(self, *, object_ids: tuple[str, ...], budget: int, required_tokens: int):
+    def __init__(self, *, object_ids: tuple[str, ...], budget: int, required_tokens: int,
+                 token_count_source: str = "conservative_chars_per_two"):
         self.object_ids = object_ids
         self.budget = budget
         self.required_tokens = required_tokens
+        self.token_count_source = token_count_source
         super().__init__(
             f"required context needs {required_tokens} tokens but budget is {budget}"
         )
@@ -244,7 +248,9 @@ class ContextGovernor:
         return max(0, int(self.estimate_tokens(item.render())))
 
     def pack(self, candidates: Sequence[ContextCandidate], *,
-             admit_messages: Callable[[list[dict[str, Any]]], bool] | None = None) -> ContextPacket:
+             admit_messages: Callable[[list[dict[str, Any]]], bool] | None = None,
+             count_messages_tokens: Callable[[list[dict[str, Any]]], int] | None = None,
+             token_count_source: str = "conservative_chars_per_two") -> ContextPacket:
         """Pack complete objects in canonical order after fixed reserves."""
         budget = max(
             0,
@@ -286,7 +292,7 @@ class ContextGovernor:
                 )
                 required_tokens += separator + item_tokens
                 required_object_count += 1
-        if required_tokens > budget:
+        if count_messages_tokens is None and required_tokens > budget:
             raise ContextRequiredSectionOverflow(
                 object_ids=tuple(required_ids),
                 budget=budget,
@@ -300,8 +306,11 @@ class ContextGovernor:
         omissions: list[ContextOmission] = []
         used = required_tokens
 
+        actual_wire_tokens = None
+
         def wire_fits() -> bool:
-            if admit_messages is None:
+            nonlocal actual_wire_tokens
+            if admit_messages is None and count_messages_tokens is None:
                 return True
             probe = ContextPacket(
                 preset_id=self.preset.preset_id, input_budget_tokens=budget,
@@ -310,9 +319,22 @@ class ContextGovernor:
                 sections=tuple(ContextSection(kind=kind, objects=tuple(selected[kind]), token_count=0)
                                for kind in _PACKING_ORDER if selected.get(kind)), omissions=(),
             )
-            return admit_messages(probe.as_messages())
+            messages = probe.as_messages()
+            if count_messages_tokens is not None:
+                actual_wire_tokens = count_messages_tokens(messages)
+                if type(actual_wire_tokens) is not int or actual_wire_tokens < 0:
+                    raise ValueError("wire token count must be a nonnegative integer")
+                if actual_wire_tokens > budget:
+                    return False
+            return admit_messages is None or admit_messages(messages)
 
         if not wire_fits():
+            if actual_wire_tokens is not None and actual_wire_tokens > budget:
+                raise ContextRequiredSectionOverflow(
+                    object_ids=tuple(required_ids), budget=budget,
+                    required_tokens=actual_wire_tokens,
+                    token_count_source=token_count_source,
+                )
             raise ContextRequiredWireOverflow("required context exceeds provider wire allowance")
 
         for candidate in ordered:
@@ -325,7 +347,7 @@ class ContextGovernor:
                 item_tokens = self._object_tokens(item)
                 separator = 1 if used else 0
                 section_separator = 1 if selected.get(candidate.kind) else 0
-                if used + separator + item_tokens <= budget:
+                if count_messages_tokens is not None or used + separator + item_tokens <= budget:
                     selected.setdefault(candidate.kind, []).append(item)
                     if not wire_fits():
                         selected[candidate.kind].pop()
@@ -362,12 +384,17 @@ class ContextGovernor:
             for kind in _PACKING_ORDER
             if selected.get(kind)
         )
+        # A rejected optional probe must not become the count of the admitted
+        # frame. Recount through the caller's memoized whole-wire binding.
+        if count_messages_tokens is not None:
+            wire_fits()
         return ContextPacket(
             preset_id=self.preset.preset_id,
             input_budget_tokens=budget,
             generation_reserve_tokens=self.preset.generation_reserve_tokens,
             safety_reserve_tokens=self.preset.safety_reserve_tokens,
-            included_tokens=used,
+            included_tokens=actual_wire_tokens if actual_wire_tokens is not None else used,
             sections=sections,
             omissions=tuple(omissions),
+            token_count_source=token_count_source,
         )

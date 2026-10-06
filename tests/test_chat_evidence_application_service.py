@@ -5543,3 +5543,28 @@ def test_adr16_a_locator_the_catalog_lacks_is_named_in_the_trace() -> None:
     )
 
     assert sheet_trace["deferred"]["not_in_source_catalog"] == ["СКС!R99"]
+
+
+def test_structural_source_completion_accepts_verified_file_id_alias_without_mutating_decisions():
+    from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog, CatalogRow
+    from proxy.services.chat_evidence_application_service import structurally_complete_source_keys
+    from proxy.services.lsr_source_coverage_service import operation_identity
+
+    catalog = AttachmentSourceCatalog(original_name="source.pdf", sheets=(("PDF", 2), ("PDF_TEXT", 1)),
+        source_file_id="src_structure_identity", rows=(
+            CatalogRow(locator="PDF!R2", sheet="PDF", excel_row=2, values=("Work",),
+                       line="PDF!R2: Work", numbers=(), row_classification="ambiguous"),
+            CatalogRow(locator="PDF!R3", sheet="PDF", excel_row=3, values=("Material",),
+                       line="PDF!R3: Material", numbers=(), row_classification="ambiguous"),
+            CatalogRow(locator="PDF_TEXT!R1", sheet="PDF_TEXT", excel_row=1, values=("Literal prose",),
+                       line="PDF_TEXT!R1: Literal prose", numbers=(), row_classification="ambiguous"),
+        ))
+    rows = [{"source_row": "src_structure_identity!R2", "row_role": "work", "evidence_refs": "Q3.H2"},
+            {"source_row": "PDF!R3", "row_role": "material", "work_row": "src_structure_identity!R2"}]
+    before = json.dumps(rows, sort_keys=True)
+    identities = [operation_identity(row) for row in rows]
+    complete = structurally_complete_source_keys(rows, catalog)
+    assert {"PDF!R2", "PDF!R3"}.issubset(complete)
+    assert "PDF_TEXT!R1" not in complete
+    assert json.dumps(rows, sort_keys=True) == before
+    assert [operation_identity(row) for row in rows] == identities

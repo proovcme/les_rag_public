@@ -1,5 +1,43 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 904 — trusted source aliases / SI price units / body frontier / bound token counts
+
+Trusted source_catalog resolves only actual issued file-ID row aliases that
+uniquely exist in the original catalogue. Raw source_row/evidence/operation_identity
+are preserved; foreign/ambiguous/malformed aliases remain rejected. Both chat callers,
+public repack, readiness and RIM receive the actual catalogue, loaded once by the adapter.
+The selected book's price converts only explicit single SI units t/kg and km/m,
+before rounding, including base/current/effective prices but never index or quantity.
+Conversion provenance retains original price/unit, factor/formula, resource/book SHA,
+region/period. Other dimensions, bulk units, price conflicts and nonfinite results stay blocked.
+Confirmed discovery bodies remain required in every later read frame, whether cited
+or not; unread inventory remains unread. Deferred retained-body delivery is recognised
+downstream without modifying historic flags or upgrading a preview to a complete card.
+Whole-wire admission can use a strict counter of the actual bound model including
+tools; generation and safety reserves stay unchanged, schemas are not subtracted twice.
+Unsupported/unverified counters retain the conservative fail-closed admission path.
+Every recorded canonical response now preserves nullable provider usage and
+canonical_request_sha256 (actual model identity included; not HTTP-byte SHA).
+The local count binds loaded model identity across every probe, with a total15s deadline.
+Measured native frames pin the same connection revision for generation; a changed primary
+or fallback is a visible technical failure, not generation using another tokenizer.
+Assembly checks strict book unit compatibility again after literal SI conversion.
+workbook_result now clarifies that structured export rows precede operator commentary
+in every supported format; saved profile bytes and explicit user format stay unchanged.
+Both B0/B1 receive the same purpose-scoped clarification. Its live efficacy is not proven.
+No norm, resource, query, professional verdict, coefficient or attachment text is selected
+or corrected by this transport/calculation patch.
+Canonical904-r3:3575PASS/20existing opt-in skips/5warnings; metadata31PASS.
+Compile/collect, architecture, version, documentation, code map and active-artifact
+gates PASS in the exact isolated final snapshot; foreign file hashes unchanged.
+Prior RED gates remain retained. Guarded installation and live904 quality pending.
+
+
+Entries: AttachmentSourceCatalog.lookup; lsr_source_coverage_service.catalog_source_locator;
+rim_lsr_trace_service.convert_book_price_unit; model_rag_grouped_evidence_service.prepare_model_read_replay;
+chat_evidence_application_service.govern_model_read_messages_bound; OpenAICompatibleTransport.count_input_tokens.
+Doc: [rag-evidence-flow](modules/rag-evidence-flow.md).
+
 ## 903 — literal query-envelope transport (✅ код/док; live pending)
 
 _model_json_documents reads standalone line-level JSON or explicit JSON fences

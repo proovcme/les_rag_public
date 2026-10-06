@@ -10,7 +10,10 @@ import asyncio
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog
 
 from proxy.services import fgis_price_service
 from proxy.services.rim_lsr_trace_service import (
@@ -1361,11 +1364,12 @@ def collect_lsr_price_gaps(
 
 def _attach_catalog_facts(
     decisions: list[dict[str, Any]], attachment_id: str
-) -> None:
+) -> AttachmentSourceCatalog | None:
     """Stamp raw source cells/numbers so the calculator can reject silent changes.
 
     Source data is kept separately from the authored row; nothing is rewritten.
-    A missing attachment or catalog keeps the legacy calculation path.
+    Return the original loaded catalog for verified source associations in the
+    calculator. A missing attachment or catalog keeps the legacy calculation path.
     """
 
     if not attachment_id or not decisions:
@@ -1399,6 +1403,7 @@ def _attach_catalog_facts(
         catalog_unit = header_bound_unit(cat_row)
         if catalog_unit is not None:
             item["_catalog_source_unit"] = catalog_unit
+    return catalog
 
 
 async def build_lsr_workbook_from_decisions(
@@ -1409,7 +1414,9 @@ async def build_lsr_workbook_from_decisions(
 ) -> Mapping[str, Any]:
     """Calculate and render the model's explicit LSR row decisions."""
     decisions = [dict(item) for item in (args.get("decisions") or [])]
-    _attach_catalog_facts(decisions, str(args.get("attachment_id") or "").strip())
+    source_catalog = _attach_catalog_facts(
+        decisions, str(args.get("attachment_id") or "").strip(),
+    )
     requested_pricebook = str(
         args.get("pricebook") or args.get("pricebook_id") or ""
     ).strip()
@@ -1526,6 +1533,7 @@ async def build_lsr_workbook_from_decisions(
         pricebook=pricebook,
         name=identity["title"],
         confirmed_data=overlays,
+        source_catalog=source_catalog,
     )
     document_issues = [dict(issue) for issue in args.get("_document_issues") or ()
                        if isinstance(issue, Mapping)]

@@ -123,3 +123,93 @@ def test_coverage_keeps_all_incomplete_locators_beyond_display_limit():
     assert coverage["gap_count"] == 101
     assert len(coverage["gaps"]) == 80
     assert set(coverage["incomplete_locators"]) == set(locators)
+
+
+def _identity_catalog():
+    from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog, CatalogRow
+    rows = tuple(CatalogRow(
+        locator=f"PDF!R{number}", sheet="PDF", excel_row=number,
+        values=("Literal item",), line=f"PDF!R{number}: Literal item", numbers=(),
+        row_classification="ambiguous",
+    ) for number in (2, 3, 4))
+    return AttachmentSourceCatalog(original_name="source.pdf", sheets=(("PDF", 3),),
+                                   rows=rows, source_file_id="src_catalog_identity")
+
+
+def test_coverage_uses_only_catalog_verified_aliases_and_preserves_model_identity():
+    import json
+    from proxy.services.lsr_source_coverage_service import operation_identity
+
+    catalog = _identity_catalog()
+    rows = [
+        {"source_row": f"{catalog.source_file_id}!R2", "row_role": "work", "evidence_refs": "Q2.H1"},
+        {"source_row": "PDF!R3", "row_role": "material", "work_row": f"{catalog.source_file_id}!R2"},
+        {"source_row": f"{catalog.source_file_id}!R4", "row_role": "resource", "work_row": "R2"},
+    ]
+    before = json.dumps(rows, sort_keys=True)
+    identities = [operation_identity(row) for row in rows]
+    coverage = build_source_coverage(catalog_locators=catalog.work_locators(), rows=rows,
+                                     source_catalog=catalog)
+    assert coverage["complete"] is True
+    assert coverage["accounted"] == 3
+    assert [row["locator"] for row in coverage["roles"]] == catalog.work_locators()
+    assert coverage["roles"][1]["work_row"] == "PDF!R2"
+    assert coverage["roles"][2]["work_row"] == "PDF!R2"
+    assert coverage["supply_parents"] == ["PDF!R2"]
+    assert json.dumps(rows, sort_keys=True) == before
+    assert [operation_identity(row) for row in rows] == identities
+
+
+def test_foreign_source_alias_and_forged_catalog_field_do_not_close_coverage_or_parent():
+    catalog = _identity_catalog()
+    rows = [
+        {"source_row": "src_foreign!R2", "row_role": "work", "_catalog_source_locator": "PDF!R2"},
+        {"source_row": "PDF!R3", "row_role": "material", "work_row": "src_foreign!R4",
+         "_catalog_source_locator": "PDF!R4"},
+    ]
+    coverage = build_source_coverage(catalog_locators=catalog.work_locators(), rows=rows,
+                                     source_catalog=catalog)
+    assert coverage["accounted"] == 1
+    assert coverage["complete"] is False
+    assert {item["kind"] for item in coverage["gaps"]} == {"unexplained", "lost_work_link"}
+    assert set(coverage["incomplete_locators"]) == set(catalog.work_locators())
+
+
+def test_explicit_covered_work_can_reference_catalog_alias_without_changing_fallback_identity():
+    import json
+    from proxy.services.lsr_source_coverage_service import operation_identity, resolve_work_coverage
+
+    catalog = _identity_catalog()
+    rows = [
+        {"source_row": "PDF!R2", "row_role": "work", "evidence_refs": "Q1.H1"},
+        {"source_row": f"{catalog.source_file_id}!R3", "row_role": "work",
+         "covered_by_work_id": f"{catalog.source_file_id}!R2", "evidence_refs": "Q1.H1"},
+    ]
+    before = json.dumps(rows, sort_keys=True)
+    identities = [operation_identity(row) for row in rows]
+    assert resolve_work_coverage(rows, source_catalog=catalog)[1] == {
+        "target_index": 0, "direct_target_index": 0,
+    }
+    # A fallback operation identity remains an original-row identity, never a
+    # digest of a canonicalised copy.
+    rows[1]["covered_by_work_id"] = identities[0]
+    assert resolve_work_coverage(rows, source_catalog=catalog)[1]["target_index"] == 0
+    rows[1]["covered_by_work_id"] = f"{catalog.source_file_id}!R2"
+    assert json.dumps(rows, sort_keys=True) == before
+    assert [operation_identity(row) for row in rows] == identities
+
+
+def test_alias_covered_work_does_not_choose_between_multiple_original_operations():
+    from proxy.services.lsr_source_coverage_service import resolve_work_coverage
+
+    catalog = _identity_catalog()
+    rows = [
+        {"source_row": "PDF!R2", "row_role": "work", "operation_id": "first"},
+        {"source_row": f"{catalog.source_file_id}!R2", "row_role": "work", "operation_id": "second"},
+        {"source_row": "PDF!R3", "row_role": "work", "covered_by_work_id": "PDF!R2"},
+    ]
+    assert resolve_work_coverage(rows, source_catalog=catalog)[2]["error"] == "coverage_target_ambiguous"
+    rows[2]["covered_by_work_id"] = "second"
+    assert resolve_work_coverage(rows, source_catalog=catalog)[2]["target_index"] == 1
+    rows[2]["covered_by_work_id"] = "src_foreign!R2"
+    assert resolve_work_coverage(rows, source_catalog=catalog)[2]["error"] == "coverage_target_missing"

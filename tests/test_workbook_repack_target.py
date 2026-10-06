@@ -165,6 +165,41 @@ async def test_repack_rechecks_source_coverage_without_model_or_row_changes(monk
                    and issue["remaining_locators"] == ["S!R3"] for issue in issues)
 
 
+@pytest.mark.asyncio
+async def test_repack_readiness_uses_verified_source_alias_and_keeps_unclassified_prose(monkeypatch):
+    from proxy.services.lsr_source_coverage_service import operation_identity
+
+    job, calls, _ = _boundary(monkeypatch, context={"artifact_intent": "lsr"})
+    module = attachment_source_catalog_service
+    catalog = module.AttachmentSourceCatalog(original_name="literal.pdf", source_file_id="src_repack_identity",
+        sheets=(("PDF", 1), ("PDF_TEXT", 1)), rows=(
+            module.CatalogRow(locator="PDF!R2", sheet="PDF", excel_row=2, values=("Literal item",),
+                line="PDF!R2: Literal item", numbers=(), row_classification="ambiguous"),
+            module.CatalogRow(locator="PDF_TEXT!R1", sheet="PDF_TEXT", excel_row=1, values=("Literal prose",),
+                line="PDF_TEXT!R1: Literal prose", numbers=(), row_classification="ambiguous"),
+        ))
+    monkeypatch.setattr(module, "load_catalog_from_attachment_id", lambda *args: catalog)
+    job["accepted_rows"] = [
+        {"source_row": "src_repack_identity!R2", "row_role": "work", "evidence_refs": "Q2.H3"},
+        {"source_row": "PDF!R2", "row_role": "material", "work_row": "src_repack_identity!R2"},
+    ]
+    before = copy.deepcopy(job)
+    identities = [operation_identity(row) for row in job["accepted_rows"]]
+    result = await chat.repack_lsr_without_model(chat.LsrRepackRequest(
+        session_id="own-session", job_id=job["job_id"]), _user={})
+    assert result["model_called"] is False and len(calls) == 1
+    assert job == before
+    assert calls[0][0]["args"]["decisions"] == before["accepted_rows"]
+    assert [operation_identity(row) for row in job["accepted_rows"]] == identities
+    assert any(issue["code"] == "MODEL_RESULT_SOURCE_ROWS_UNACCOUNTED"
+               and issue["remaining_locators"] == ["PDF_TEXT!R1"]
+               for issue in calls[0][1]["document_issues"])
+    readiness = result["harvested"]["artifact"]["result_readiness"]
+    assert readiness["coverage"]["accounted"] == 1
+    assert readiness["coverage"]["gap_count"] == 1
+    assert readiness["remaining_locators"] == ["PDF_TEXT!R1"]
+
+
 async def _actual_unpacked_job(tmp_path, monkeypatch):
     from proxy.services.lsr_workbook_adapter_service import requested_price_basis
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService

@@ -1618,6 +1618,86 @@ def govern_model_read_messages(*, source_context, chunks, receipts=(), **context
     return messages, packet, replay.inventory_refs, body_refs
 
 
+class _WireCountNeeded(Exception):
+    """Internal suspension of pure packing, never a model/provider retry."""
+
+    def __init__(self, key, messages):
+        self.key, self.messages = key, messages
+
+
+async def govern_model_read_messages_bound(*, count_messages=None, **context):
+    """Admit whole frames using the bound provider's tokenizer when available.
+
+    Pure packing resumes from cached counts. Each distinct candidate wire is
+    counted once; no evidence, model call or stored delivery flag is changed.
+    Unsupported counters keep the conservative fail-closed path.
+    """
+    if count_messages is None:
+        return govern_model_read_messages(**context)
+    counts = {}
+    count_owner = None
+    source = "bound_provider_wire"
+
+    def wire_key(messages):
+        return hashlib.sha256(json.dumps(messages, ensure_ascii=False, sort_keys=True,
+                                         separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    def cached_count(messages):
+        key = wire_key(messages)
+        if key not in counts:
+            raise _WireCountNeeded(key, messages)
+        return counts[key].tokens
+
+    while True:
+        try:
+            result = govern_model_read_messages(
+                **context, count_messages_tokens=cached_count, token_count_source=source,
+            )
+        except _WireCountNeeded as pending:
+            count = await count_messages(pending.messages)
+            if count is None:
+                result = govern_model_read_messages(**context)
+                messages, packet, inventory, bodies = result
+                return messages, replace(packet, token_count_binding={
+                    "status": "fallback", "reason": "bound_counter_unavailable",
+                    "source": "conservative_chars_per_two"}), inventory, bodies
+            if type(count.tokens) is not int or count.tokens < 0:
+                raise ValueError("provider token count must be a nonnegative integer")
+            owner = (count.model_id, count.connection_revision_id,
+                     getattr(count, "model_identity_sha256", None))
+            if count_owner is not None and owner != count_owner:
+                counts.clear()
+                try:
+                    result = govern_model_read_messages(**context)
+                except ContextRequiredSectionOverflow as error:
+                    error.token_count_source = "conservative_chars_per_two:bound_counter_identity_changed"
+                    raise
+                messages, packet, inventory, bodies = result
+                return messages, replace(packet, token_count_binding={
+                    "status": "fallback", "reason": "bound_counter_identity_changed",
+                    "source": "conservative_chars_per_two"}), inventory, bodies
+            count_owner = owner
+            counts[pending.key] = count
+            source = count.source
+            continue
+        messages, packet, inventory, bodies = result
+        count = counts[wire_key(messages)]
+        return messages, replace(packet, token_count_binding={
+            "status": "counted", "source": count.source, "model_id": count.model_id,
+            "connection_revision_id": count.connection_revision_id,
+            "model_identity_sha256": getattr(count, "model_identity_sha256", None),
+            "wire_sha256": count.wire_sha256, "input_tokens": count.tokens,
+            "distinct_count_requests": len(counts),
+        }), inventory, bodies
+
+
+def measured_connection_revision(packet: ContextPacket) -> str:
+    """Pin only measured admission; conservative packets keep ordinary routing."""
+    binding = packet.token_count_binding
+    revision = binding.get("connection_revision_id")
+    return revision if binding.get("status") == "counted" and isinstance(revision, str) else ""
+
+
 def model_read_capacity_trace(error: ContextRequiredSectionOverflow, *, purpose: str) -> dict[str, Any]:
     """Expose actual capacity numbers and producer-owned section counts, never bodies."""
     counts: dict[str, int] = {}
@@ -1626,6 +1706,7 @@ def model_read_capacity_trace(error: ContextRequiredSectionOverflow, *, purpose:
         section = prefix if prefix in {"profile", "request", "source-required", "native-exchange"} else "other"
         counts[section] = counts.get(section, 0) + 1
     return {"code": error.code, "purpose": purpose, "budget": error.budget,
+            "token_count_source": error.token_count_source,
             "available_tokens": error.budget, "required_tokens": error.required_tokens,
             "overflow_tokens": max(0, error.required_tokens - error.budget),
             "required_objects": len(error.object_ids), "required_section_object_counts": counts}
@@ -1647,6 +1728,8 @@ def govern_inference_messages(
     native_exchanges: Sequence[NativeToolExchange] = (),
     dialogue: Sequence[Any] = (),
     admit_messages=None,
+    count_messages_tokens=None,
+    token_count_source="conservative_chars_per_two",
 ) -> tuple[list[dict[str, Any]], ContextPacket]:
     """Build the sole bounded packet used for one provider inference request."""
     if any(not isinstance(exchange, NativeToolExchange) for exchange in native_exchanges):
@@ -1683,11 +1766,14 @@ def govern_inference_messages(
     ]
     external_tokens = (
         conservative_token_estimate(json.dumps(list(native_tools), ensure_ascii=False, sort_keys=True)) + 2
-        if native_tools else 0
+        if native_tools and count_messages_tokens is None else 0
     )
     governed_preset = replace(preset, input_token_limit=max(0, preset.input_token_limit - external_tokens))
     try:
-        packet = ContextGovernor(governed_preset).pack(candidates, admit_messages=admit_messages)
+        packet = ContextGovernor(governed_preset).pack(
+            candidates, admit_messages=admit_messages, count_messages_tokens=count_messages_tokens,
+            token_count_source=token_count_source,
+        )
     except ContextRequiredWireOverflow as error:
         raise CloudBudgetStop("CLOUD_TURN_TOKEN_BUDGET: REQUIRED_CONTEXT_EXCEEDS_REMAINING_RESERVATION") from error
     if external_tokens:
@@ -1704,6 +1790,7 @@ def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, An
             "kind": section.kind.value,
             "items": len(section.objects),
             "tokens": section.token_count,
+            "token_count_source": "conservative_chars_per_two",
             "object_ids": list(section.object_ids),
         }
         if section.kind in visible_kinds:
@@ -1727,6 +1814,8 @@ def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, An
         "generation_reserve_tokens": packet.generation_reserve_tokens,
         "safety_reserve_tokens": packet.safety_reserve_tokens,
         "included_tokens": packet.included_tokens,
+        "token_count_source": packet.token_count_source,
+        "token_count_binding": dict(packet.token_count_binding),
         "sections": [section_trace(section) for section in packet.sections],
         "omissions": [
             {
@@ -1834,6 +1923,16 @@ _TABULAR_LSR_OPERATION_INSTRUCTION = (
     "Отсутствие цены не делает норму MISSING."
 )
 _TABULAR_LSR_VOLUME_INSTRUCTION = model_lsr_result_field_instruction() + _TABULAR_LSR_OPERATION_INSTRUCTION
+_WORKBOOK_RESULT_CARRIER_INSTRUCTION = (
+    "Контракт экспорта ВОР/ЛСР: итоговые строки — техническое содержимое файла, "
+    "а не операторский комментарий. Ограничения профиля на JSON и служебные термины "
+    "относятся к комментарию для оператора; обязательные поля строк передай дословно "
+    "по заданной схеме, чтобы приложение могло собрать документ. "
+    "Во всех допустимых форматах (JSON, Markdown, текст) сначала верни структурированные "
+    "строки результата, затем, если нужен, краткий комментарий для оператора. "
+    "Если пользователь явно задал формат, сохрани его; это уточнение не требует JSON. "
+    "Обоснования решений и конкретные пробелы пиши в coverage/open_gap соответствующих строк."
+)
 _MODEL_RAG_QUERY_INSTRUCTION = (
     "Прочитай приложенный материал целиком. Определи требуемый итоговый документ. "
     "Если упомянуты ВОР и ЛСР/смета, отличай результат от исходника и дальнейшего назначения. "
@@ -2269,11 +2368,28 @@ def append_actual_model_call(
     completion_tokens: int = 0,
 ) -> None:
     bucket = ensure_actual_model_calls(trace)
+    execution = trace.get("last_model_call_execution") if isinstance(trace, Mapping) else None
+    execution = execution if isinstance(execution, Mapping) else {}
+    usage = execution.get("provider_usage")
+    usage = usage if isinstance(usage, Mapping) else {}
+    provider_usage = {
+        key: value if type(value := usage.get(key)) is int and value >= 0 else None
+        for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens")
+    }
+    canonical_sha = execution.get("canonical_request_sha256")
+    canonical_sha = (
+        canonical_sha if isinstance(canonical_sha, str)
+        and re.fullmatch(r"[0-9a-f]{64}", canonical_sha)
+        and execution.get("canonical_request_source") == "canonical_inference_request" else None
+    )
     bucket["calls"].append(
         {
             "purpose": str(purpose or ""),
             "finish_reason": str(finish_reason or ""),
             "completion_tokens": int(completion_tokens or 0),
+            "provider_usage": provider_usage,
+            "canonical_request_sha256": canonical_sha,
+            "canonical_request_source": "canonical_inference_request" if canonical_sha else None,
             **({"reasoning": dict(trace["last_model_call_execution"]["reasoning"])}
                if trace and isinstance(trace.get("last_model_call_execution"), Mapping)
                and isinstance(trace["last_model_call_execution"].get("reasoning"), Mapping) else {}),
@@ -2569,7 +2685,8 @@ def structurally_complete_source_keys(rows, catalog):
     from proxy.services.lsr_source_coverage_service import build_source_coverage
 
     keys = cited_source_row_keys(rows, catalog)
-    coverage = build_source_coverage(catalog_locators=catalog.work_locators(), rows=rows)
+    coverage = build_source_coverage(catalog_locators=catalog.work_locators(), rows=rows,
+                                     source_catalog=catalog)
     invalid = set(coverage["incomplete_locators"])
     return keys - invalid
 
@@ -3109,8 +3226,17 @@ def bind_row_evidence_ids(
             else:
                 alias_to_global[alias] = global_id
         if global_id:
-            body_shown = (meta.get("model_delivery_status") in (None, "", "delivered")
-                          and meta.get("body_status") != "deferred_capacity")
+            body_shown = (
+                meta.get("model_delivery_status") in (None, "", "delivered")
+                and (
+                    meta.get("body_status") != "deferred_capacity"
+                    or (
+                        meta.get("model_delivery_status") == "delivered"
+                        and meta.get("model_raw_body_retained") is True
+                        and bool(getattr(chunk, "content", ""))
+                    )
+                )
+            )
             norm_identity = (normative_card_identity(meta)
                              if meta.get("norm_code") or meta.get("norm_key") else global_id)
             if body_shown:
@@ -6461,6 +6587,8 @@ def profile_system_prompt(
         if purpose != "query":
             parts.append(_TABULAR_LSR_OPERATION_INSTRUCTION if purpose == "workbook_result"
                          else _TABULAR_LSR_VOLUME_INSTRUCTION)
+            if purpose == "workbook_result":
+                parts.append(_WORKBOOK_RESULT_CARRIER_INSTRUCTION)
     return "\n\n".join(parts)
 
 
@@ -7694,8 +7822,29 @@ async def _execute_chat_evidence_application(
                         ))
                     return admit
 
+                def _bound_input_token_counter(preset, native_tools):
+                    transport = getattr(bound_runner, "transport", None)
+                    counter = getattr(transport, "count_input_tokens", None)
+                    connection = (getattr(active_model_result, "connection", None) or resolved_connection)
+                    if not callable(counter) or connection is None:
+                        return None
+
+                    async def count(messages):
+                        result = await counter(connection, InferenceRequest(
+                            messages=messages, tools=native_tools,
+                            max_output_tokens=preset.generation_reserve_tokens,
+                            temperature=profile_temperature(profile_snapshot, fallback=_env_float("CHAT_TEMPERATURE", 0.2)),
+                            reasoning_enabled=preset.reasoning_enabled,
+                        ))
+                        snapshot = getattr(transport, "token_count_snapshot", None)
+                        if callable(snapshot):
+                            retrieval_trace["context_governor"]["token_counter"] = snapshot()
+                        return result
+                    return count
+
                 async def _post_llm(runtime, model, hdrs, body, *, allow_stream: bool = True,
-                                    inference_preset: ModelExecutionPreset | None = None):
+                                    inference_preset: ModelExecutionPreset | None = None,
+                                    expected_connection_revision_id: str = ""):
                     """Один вызов LLM. token_sink задан → стрим (токены клиенту по
                     мере генерации), иначе — обычный POST (поведение неизменно).
                     Возвращает (answer_text, usage_dict)."""
@@ -7739,6 +7888,8 @@ async def _execute_chat_evidence_application(
                                     sensitivities,
                                     consent=_env_bool("LES_CLOUD_CONSENT", False),
                                 ),
+                                **({"expected_connection_revision_id": expected_connection_revision_id}
+                                   if expected_connection_revision_id else {}),
                             )
                         finally:
                             budget_snapshot = getattr(getattr(bound_runner, "transport", None), "cloud_budget_snapshot", None)
@@ -7746,6 +7897,32 @@ async def _execute_chat_evidence_application(
                                 retrieval_trace["cloud_token_budget"] = budget_snapshot()
                                 if token_sink is not None and retrieval_trace["cloud_token_budget"].get("limit_tokens"):
                                     await token_sink({"event": "cloud_budget", "data": retrieval_trace["cloud_token_budget"]})
+                        provider_usage = active_model_result.response.usage
+                        provider_usage = provider_usage if isinstance(provider_usage, Mapping) else {}
+                        execution = retrieval_trace["last_model_call_execution"]
+                        execution["provider_usage"] = {
+                            key: value if type(value := provider_usage.get(key)) is int and value >= 0 else None
+                            for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens")
+                        }
+                        selected_model = str(getattr(active_model_result.connection, "model_id", "") or "").strip()
+                        execution["canonical_request_sha256"] = None
+                        execution["canonical_request_source"] = None
+                        if selected_model:
+                            # Identity of the canonical request, not serialized
+                            # provider HTTP bytes. Only its digest is retained.
+                            canonical_frame = {
+                                "schema": "canonical_inference_request.v1", "model_id": selected_model,
+                                "messages": list(inference_request.messages),
+                                "max_output_tokens": inference_request.max_output_tokens,
+                                "temperature": inference_request.temperature, "tools": list(inference_request.tools),
+                                "response_format": inference_request.response_format,
+                                "reasoning_enabled": inference_request.reasoning_enabled,
+                            }
+                            execution["canonical_request_sha256"] = hashlib.sha256(json.dumps(
+                                canonical_frame, ensure_ascii=False, sort_keys=True,
+                                separators=(",", ":"), allow_nan=False,
+                            ).encode("utf-8")).hexdigest()
+                            execution["canonical_request_source"] = "canonical_inference_request"
                         active_pending_tool_calls += active_model_result.pending_tool_calls
                         if (token_sink is not None and allow_stream and active_model_result.response.text
                                 and not active_model_result.response.tool_calls
@@ -8882,7 +9059,8 @@ async def _execute_chat_evidence_application(
                     sheet_initial_source_map = list(selector_source_map)
 
                     async def _sheet_pass_llm(chat_body, *, purpose: str = "sheet_pass_answer",
-                                              inference_preset: ModelExecutionPreset | None = None):
+                                              inference_preset: ModelExecutionPreset | None = None,
+                                              expected_connection_revision_id: str = ""):
                         nonlocal llm_model
                         if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
                             text, usage = await _post_llm(
@@ -8896,6 +9074,7 @@ async def _execute_chat_evidence_application(
                                 chat_body,
                                 allow_stream=False,
                                 inference_preset=inference_preset,
+                                expected_connection_revision_id=expected_connection_revision_id,
                             )
                             if active_model_result is not None:
                                 llm_model = active_model_result.connection.model_id
@@ -10009,7 +10188,8 @@ async def _execute_chat_evidence_application(
                                     dialogue=[session_block] if session_block else [],
                                 )
                                 if saved_read_chunks:
-                                    messages, answer_packet, resumed_inventory_refs, resumed_body_refs = govern_model_read_messages(
+                                    messages, answer_packet, resumed_inventory_refs, resumed_body_refs = await govern_model_read_messages_bound(
+                                        count_messages=_bound_input_token_counter(answer_execution_preset, sheet_read_tools),
                                         **initial_context, source_context=pass_evidence,
                                         chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                         receipts=saved_read_receipts)
@@ -10072,7 +10252,8 @@ async def _execute_chat_evidence_application(
                                 "tools": sheet_read_tools,
                             }
                             t_llm_call = time.time()
-                            pass_answer, usage = await _sheet_pass_llm(chat_body)
+                            pass_answer, usage = await _sheet_pass_llm(chat_body,
+                                expected_connection_revision_id=measured_connection_revision(answer_packet))
                             t_llm += time.time() - t_llm_call
                             model_delivered_source_locators.update(
                                 set(packet) - set(source_incomplete_locators)
@@ -10135,7 +10316,8 @@ async def _execute_chat_evidence_application(
 
                             async def _continue_sheet_reads(receipts, _results, native_exchanges):
                                 nonlocal t_llm, research_job
-                                messages, read_frame, inventory_refs, body_refs = govern_model_read_messages(
+                                messages, read_frame, inventory_refs, body_refs = await govern_model_read_messages_bound(
+                                    count_messages=_bound_input_token_counter(answer_execution_preset, sheet_read_tools),
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail, native_tools=sheet_read_tools,
                                     native_exchanges=native_exchanges,
@@ -10150,7 +10332,8 @@ async def _execute_chat_evidence_application(
                                 await _emit_row_progress("чтение карточек и цен", sheet=sheet_name, index=sheet_index)
                                 started = time.time()
                                 result = await _sheet_pass_llm(
-                                    {**chat_body, "messages": messages}, purpose="sheet_pass_evidence_read"
+                                    {**chat_body, "messages": messages}, purpose="sheet_pass_evidence_read",
+                                    expected_connection_revision_id=measured_connection_revision(read_frame),
                                 )
                                 t_llm += time.time() - started
                                 confirm_model_read_delivery(model_evidence_chunks, receipts,
@@ -11383,6 +11566,9 @@ async def _execute_chat_evidence_application(
                             allow_stream=not model_driven_retrieval,
                         )
                     t_llm += time.time() - t_llm_call
+                    append_actual_model_call(retrieval_trace, purpose="answer",
+                        finish_reason=llm_usage_finish_reason(usage),
+                        completion_tokens=int(usage.get("completion_tokens") or 0))
                     if direct_read_tools:
                         confirm_model_read_delivery(
                             model_evidence_chunks,
@@ -11416,7 +11602,8 @@ async def _execute_chat_evidence_application(
 
                         async def _continue_direct_reads(receipts, _results, native_exchanges):
                             nonlocal t_llm, llm_model
-                            read_messages, read_frame, inventory_refs, body_refs = govern_model_read_messages(
+                            read_messages, read_frame, inventory_refs, body_refs = await govern_model_read_messages_bound(
+                                count_messages=_bound_input_token_counter(answer_execution_preset, direct_read_tools),
                                 preset=answer_execution_preset, profile_prefix=sys_msg,
                                 request_payload=question_tail, native_tools=direct_read_tools,
                                 native_exchanges=native_exchanges,
@@ -11431,6 +11618,7 @@ async def _execute_chat_evidence_application(
                             read_text, read_usage = await _post_llm(
                                 llm_runtime, llm_model, headers,
                                 {**chat_body, "messages": read_messages}, allow_stream=False,
+                                expected_connection_revision_id=measured_connection_revision(read_frame),
                             )
                             t_llm += time.time() - started
                             confirm_model_read_delivery(model_evidence_chunks, receipts,
@@ -12472,6 +12660,7 @@ async def _execute_chat_evidence_application(
                                 if source_catalog is not None
                                 else []
                             ),
+                            source_catalog=source_catalog,
                             price_gaps=list(
                                 (workbook_chat_meta or {}).get("price_gaps") or []
                             ),

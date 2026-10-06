@@ -135,7 +135,7 @@ def test_short_duplicate_pointers_do_not_grow_the_wire_to_explain_sharing():
         chunk["content"] for chunk in chunks)
 
 
-def test_cited_full_body_stays_required_while_other_alias_fields_share_without_raw_mutation():
+def test_all_delivered_aliases_keep_their_body_required_without_raw_mutation():
     body = "LITERAL ALL CONDITIONS AND RESOURCES; " + "quantity=0.125, source=literal; " * 30
     chunks = [_chunk(ref, model_raw_body_retained=True, body_status="full", model_delivery_status="delivered")
               for ref in ("Q1.H1", "Q2.H1", "Q3.H1", "Q4.H1")]
@@ -146,13 +146,16 @@ def test_cited_full_body_stays_required_while_other_alias_fields_share_without_r
     replay = prepare_model_read_replay(chunks, required_refs=["immutable:Q1.H1"])
 
     assert replay.inventory_refs == [chunk["meta"]["model_evidence_ref"] for chunk in chunks]
-    assert replay.exact_body_refs == ["Q1.H1"]
+    assert replay.exact_body_refs == [chunk["meta"]["model_evidence_ref"] for chunk in chunks]
     row, = replay.required[1]["previously_shown_evidence_registry"]
     assert row["content"] == body
     assert row["global_evidence_id"] == "immutable:Q1.H1"
-    records = _records(replay.required)
-    assert records[1:] == [[ref, {"same_pointer_fields_as": "Q2.H1"}] for ref in ("Q3.H1", "Q4.H1")]
-    assert [record[0] for record in _restore(records)] == ["Q2.H1", "Q3.H1", "Q4.H1"]
+    aliases = [{"evidence_ref": row["evidence_ref"], "global_evidence_id": row["global_evidence_id"]},
+               *row.get("aliases", [])]
+    assert aliases == [{"evidence_ref": chunk["meta"]["model_evidence_ref"],
+                        "global_evidence_id": chunk["meta"]["global_evidence_id"]} for chunk in chunks]
+    assert all(row["content"].encode("utf-8") == chunk["content"].encode("utf-8") for chunk in chunks)
+    assert replay.optional == replay.optional_body_refs == []
     assert chunks == original
 
 

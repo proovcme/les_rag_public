@@ -36,6 +36,7 @@ from proxy.services.rim_lsr_trace_service import (
     RESOURCE_GROUP_ACTION,
     book_price_unit_conflict,
     book_unit_conflict_note,
+    convert_book_price_unit,
     price_action_label,
     price_is_attributed,
     resource_group_note,
@@ -118,6 +119,7 @@ def _rejected_book_unit(res: dict[str, Any], pricebook) -> str:
     rec = pricebook.lookup(code)
     if rec is None:
         return ""
+    rec, _ = convert_book_price_unit(rec, res.get("unit"), resource_code=code, pricebook=pricebook)
     return book_price_unit_conflict(rec.get("unit"), res.get("unit"))
 
 
@@ -149,6 +151,14 @@ def _resource_price(
         rec = pricebook.lookup(code)
         if rec is not None and rec.get("price_conflict"):
             return None, "ambiguous_price_record"
+        if rec is not None:
+            rec, conversion = convert_book_price_unit(
+                rec, res.get("unit"), resource_code=code, pricebook=pricebook,
+            )
+            if conversion:
+                # Same raw-price priority and rounding as the RIM trace. The
+                # factor is applied to price exactly once, never to quantity.
+                return round(conversion["resource_current_price"], 2), "fgis"
         if rec is not None and not book_price_unit_conflict(rec.get("unit"), res.get("unit")):
             # A book row prices the шифр per the unit it states.  The РИМ trace
             # applies the same rule (`rim_lsr_trace_service`), and both engines
@@ -357,6 +367,18 @@ def compute_position(
         qty = _f(res.get("qty"))
         rejected_book_unit = _rejected_book_unit(res, pricebook)
         price, src = _resource_price(res, pricebook, kac_map)
+        conversion = None
+        if src == "fgis" and pricebook is not None:
+            code = str(res.get("code") or "").strip()
+            record = pricebook.lookup(code) if code else None
+            if record is not None:
+                converted_record, conversion = convert_book_price_unit(
+                    record, res.get("unit"), resource_code=code, pricebook=pricebook,
+                )
+                unit_conflict = book_price_unit_conflict(converted_record.get("unit"), res.get("unit"))
+                if unit_conflict:
+                    rejected_book_unit = unit_conflict
+                    price, src, conversion = None, "missing", None
         if price is None:
             req = _price_requirement(res, pricebook)
             if src == "ambiguous_price_record":
@@ -401,6 +423,7 @@ def compute_position(
             **res,
             "price_used": price,
             "price_source": src,
+            **({"price_unit_conversion": conversion} if conversion else {}),
             # the card's label travels with the money it priced, not only with a
             # row that got no money at all (§ 4: the file names the kind of hole)
             "price_action": (

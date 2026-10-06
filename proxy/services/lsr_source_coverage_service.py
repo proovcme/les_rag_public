@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog
 
 SCHEMA = "les.lsr-source-coverage.v1"
 ROLES = ("work", "material", "equipment", "resource", "unresolved", "header")
@@ -64,6 +67,21 @@ def _text(value: Any) -> str:
 
 def _locator(row: Mapping[str, Any]) -> str:
     return _text(row.get("source_row"))
+
+
+def catalog_source_locator(
+    value: Any, source_catalog: AttachmentSourceCatalog | None = None,
+) -> str:
+    """Resolve a technical source identity through the original file catalog.
+
+    The authored row and its operation identity remain untouched. Model-supplied
+    ``_catalog_*`` annotations are not authority for an alias association.
+    """
+    if source_catalog is not None:
+        found = source_catalog.lookup(value)
+        if found is not None:
+            return found.locator
+    return _text(value)
 
 
 def canonicalize_row_role(value: Any) -> str:
@@ -134,7 +152,10 @@ def operation_identity(row: Mapping[str, Any]) -> str:
     return f"id:{_locator(row)}:{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}"
 
 
-def resolve_work_coverage(rows: Sequence[Mapping[str, Any]]) -> dict[int, dict[str, Any]]:
+def resolve_work_coverage(
+    rows: Sequence[Mapping[str, Any]], *,
+    source_catalog: AttachmentSourceCatalog | None = None,
+) -> dict[int, dict[str, Any]]:
     """Resolve only explicit authored coverage edges, without judging their meaning.
 
     A locator must identify exactly one operation; operation_id disambiguates it.
@@ -143,7 +164,8 @@ def resolve_work_coverage(rows: Sequence[Mapping[str, Any]]) -> dict[int, dict[s
     """
     aliases: dict[str, set[int]] = {}
     for index, row in enumerate(rows):
-        for key in {_locator(row), _text(row.get("operation_id")), operation_identity(row)} - {""}:
+        for key in {_locator(row), catalog_source_locator(row.get("source_row"), source_catalog),
+                    _text(row.get("operation_id")), operation_identity(row)} - {""}:
             aliases.setdefault(key, set()).add(index)
     edges: dict[int, int] = {}
     result: dict[int, dict[str, Any]] = {}
@@ -157,7 +179,8 @@ def resolve_work_coverage(rows: Sequence[Mapping[str, Any]]) -> dict[int, dict[s
         ref = value.strip()
         if "!" in _locator(row) and ref.startswith("R") and ref[1:].isdigit():
             ref = _locator(row).rsplit("!", 1)[0] + "!" + ref
-        candidates = aliases.get(ref, set())
+        candidates = set(aliases.get(ref, set()))
+        candidates.update(aliases.get(catalog_source_locator(ref, source_catalog), set()))
         work_candidates = {candidate for candidate in candidates
                            if inferred_row_role(rows[candidate]) == "work"}
         error = ""
@@ -308,16 +331,17 @@ def build_source_coverage(
     catalog_locators: Sequence[str],
     rows: Sequence[Mapping[str, Any]],
     remaining_locators: Sequence[str] = (),
+    source_catalog: AttachmentSourceCatalog | None = None,
 ) -> dict[str, Any]:
     """Every source locator must appear as work, material, resource, or an open question."""
 
-    wanted = [_text(item) for item in catalog_locators if _text(item)]
-    remaining = [_text(item) for item in remaining_locators if _text(item)]
+    wanted = [catalog_source_locator(item, source_catalog) for item in catalog_locators if _text(item)]
+    remaining = [catalog_source_locator(item, source_catalog) for item in remaining_locators if _text(item)]
     by_locator: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         if not isinstance(row, Mapping):
             continue
-        locator = _locator(row)
+        locator = catalog_source_locator(row.get("source_row"), source_catalog)
         if not locator:
             continue
         role = inferred_row_role(row)
@@ -325,7 +349,7 @@ def build_source_coverage(
             {
                 "locator": locator,
                 "role": role,
-                "work_row": work_row_key(row),
+                "work_row": catalog_source_locator(work_row_key(row), source_catalog),
                 "supply_kind": canonicalize_supply_kind(row.get("supply_kind")),
                 "open_gap": _text(row.get("open_gap") or row.get("open_question")),
                 "role_specified": bool(canonicalize_row_role(row.get("row_role"))),
@@ -449,5 +473,6 @@ def build_source_coverage(
         "roles": [
             _primary_record(by_locator[item]) for item in wanted if item in by_locator
         ],
-        "supply_parents": sorted(locators_with_separate_supply(rows)),
+        "supply_parents": sorted({catalog_source_locator(item, source_catalog)
+                                  for item in locators_with_separate_supply(rows)}),
     }

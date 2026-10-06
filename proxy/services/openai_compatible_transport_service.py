@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
+import asyncio
 from dataclasses import dataclass, field
 import json
 import os
@@ -27,9 +28,15 @@ from proxy.services.model_connection_security_service import (
     validate_connected_peer,
 )
 from proxy.services.model_secret_service import EnvironmentSecretStore, ModelSecretError
+from proxy.services.model_wire_token_count_service import (
+    InputTokenCount, UnsupportedTokenCountWire, model_token_count_payload,
+    normalize_model_count_wire, supports_model_token_count, wire_sha256,
+    TOKEN_COUNT_SOURCE, TOKEN_COUNT_PROVIDER_OWNER,
+)
 
 
 CHAT_RESPONSE_BODY_LIMIT = 512 * 1024
+TOKEN_COUNT_TIMEOUT_SECONDS = 15.0
 
 
 class ModelTransportError(RuntimeError):
@@ -139,6 +146,11 @@ class OpenAICompatibleTransport:
         self._cloud_usage_requests = 0
         self._cloud_reported_tokens = 0
         self._cloud_last_attempt: dict[str, Any] = {}
+        self._token_count_last_attempt: dict[str, Any] = {}
+
+    def token_count_snapshot(self) -> dict[str, Any]:
+        """Count provenance or a visible estimator fallback, never prompt bodies."""
+        return dict(self._token_count_last_attempt)
 
     def cloud_budget_snapshot(self) -> dict[str, Any]:
         return {"limit_tokens": self._cloud_budget_limit, "accounted_tokens": self._cloud_accounted,
@@ -269,9 +281,10 @@ class OpenAICompatibleTransport:
         if stream:
             body["stream"] = True
         if provider_is_local(connection.extension_type):
-            return apply_transport_options(
+            local_body = apply_transport_options(
                 body, connection.extension_type, reasoning_enabled=request.reasoning_enabled
             )
+            return normalize_model_count_wire(local_body, connection.extension_type)
         return body
 
     @staticmethod
@@ -430,14 +443,16 @@ class OpenAICompatibleTransport:
         *,
         url: str,
         body: Mapping[str, Any],
+        method: str = "POST",
+        timeout: float | None = None,
     ) -> httpx.Response:
         reservation = self._reserve_cloud(connection, body) if url.endswith("/chat/completions") else 0
         request = self.client.build_request(
-            "POST",
+            method,
             url,
             headers=self._headers(connection),
-            json=dict(body),
-            timeout=self.timeout,
+            **({"json": dict(body)} if method == "POST" else {}),
+            timeout=self.timeout if timeout is None else min(self.timeout, timeout),
         )
         try:
             response = await self.client.send(request, stream=True, follow_redirects=False)
@@ -453,6 +468,105 @@ class OpenAICompatibleTransport:
             await response.aclose()
             raise ModelTransportError(str(exc)) from exc
         return response
+
+    async def _token_count_model_identity(self, connection: ResolvedModelConnection) -> str:
+        """The count route uses the loaded state, not an arbitrary request model."""
+        response = await self._open(
+            connection, url=join_openai_path(connection.endpoint, "/models"), body={}, method="GET",
+            timeout=TOKEN_COUNT_TIMEOUT_SECONDS,
+        )
+        try:
+            raw = await self._read_bounded(response)
+            if response.status_code != 200:
+                raise ModelTransportError("TOKEN_COUNT_MODEL_METADATA_UNAVAILABLE")
+            try:
+                payload = json.loads(raw)
+                if not isinstance(payload, Mapping) or not isinstance(payload.get("data"), list) or len(payload["data"]) != 1:
+                    raise ModelTransportError("TOKEN_COUNT_MODEL_METADATA_INVALID")
+                models = payload["data"]
+                model = models[0]
+                if not isinstance(model, Mapping):
+                    raise ModelTransportError("TOKEN_COUNT_MODEL_METADATA_INVALID")
+                if (model.get("id") != connection.model_id
+                        or model.get("owned_by") != TOKEN_COUNT_PROVIDER_OWNER
+                        or not isinstance(model.get("root"), str) or not model["root"]):
+                    raise ModelTransportError("TOKEN_COUNT_MODEL_IDENTITY_MISMATCH")
+                return wire_sha256({key: model.get(key) for key in ("id", "root", "created", "owned_by")})
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raise ModelTransportError("TOKEN_COUNT_MODEL_METADATA_INVALID") from exc
+        finally:
+            await response.aclose()
+
+    async def count_input_tokens(
+        self, connection: ResolvedModelConnection, request: InferenceRequest,
+    ) -> InputTokenCount | None:
+        """Count the exact supported local wire without generation or model fallback.
+
+        A missing/failed/unsupported counter leaves the conservative governor
+        intact. It cannot authorize a larger context or change model evidence.
+        """
+        self._token_count_last_attempt = {
+            "status": "fallback", "source": "conservative_estimator",
+            "model_id": connection.model_id, "connection_revision_id": connection.revision_id,
+            "request_timeout_seconds": min(self.timeout, TOKEN_COUNT_TIMEOUT_SECONDS),
+            "operation_deadline_seconds": min(self.timeout, TOKEN_COUNT_TIMEOUT_SECONDS),
+        }
+        if not supports_model_token_count(connection.extension_type, connection.locality, connection.endpoint.locality):
+            self._token_count_last_attempt["reason"] = "local_token_counter_required"
+            return None
+        if connection.capability_snapshot.transport_options.get("chat_protocol") == "native_chat_v1":
+            self._token_count_last_attempt["reason"] = "openai_chat_protocol_required"
+            return None
+        try:
+            body = self._chat_body(connection, request, stream=False)
+            payload = model_token_count_payload(body)
+            count, identity_before = await asyncio.wait_for(
+                self._count_bound_input_payload(connection, payload),
+                timeout=min(self.timeout, TOKEN_COUNT_TIMEOUT_SECONDS),
+            )
+            result = InputTokenCount(count, TOKEN_COUNT_SOURCE, connection.model_id,
+                                     connection.revision_id, wire_sha256(body), identity_before)
+            self._token_count_last_attempt = {"status": "counted", **vars(result),
+                                              "request_timeout_seconds": min(self.timeout, TOKEN_COUNT_TIMEOUT_SECONDS),
+                                              "operation_deadline_seconds": min(self.timeout, TOKEN_COUNT_TIMEOUT_SECONDS)}
+            return result
+        except UnsupportedTokenCountWire as exc:
+            self._token_count_last_attempt["reason"] = str(exc)
+        except ModelTransportError as exc:
+            # Only stable diagnostic codes leave transport, never upstream bodies.
+            code = str(exc).partition(":")[0]
+            self._token_count_last_attempt["reason"] = (code if code.isascii() and code.isupper()
+                                                       and code.replace("_", "").isalnum() and len(code) < 100
+                                                       else "token_count_transport_error")
+        except (TypeError, ValueError):
+            self._token_count_last_attempt["reason"] = "invalid_count_wire"
+        except TimeoutError:
+            self._token_count_last_attempt["reason"] = "TOKEN_COUNT_DEADLINE"
+        return None
+
+    async def _count_bound_input_payload(
+        self, connection: ResolvedModelConnection, payload: Mapping[str, Any],
+    ) -> tuple[int, str]:
+        identity_before = await self._token_count_model_identity(connection)
+        response = await self._open(
+            connection, url=join_openai_path(connection.endpoint, "/messages/count_tokens"), body=payload,
+            timeout=TOKEN_COUNT_TIMEOUT_SECONDS,
+        )
+        try:
+            raw = await self._read_bounded(response)
+            if response.status_code != 200:
+                raise ModelTransportError("TOKEN_COUNT_ENDPOINT_UNAVAILABLE")
+            try:
+                count = json.loads(raw).get("input_tokens")
+            except (AttributeError, ValueError) as exc:
+                raise ModelTransportError("TOKEN_COUNT_RESPONSE_INVALID") from exc
+            if type(count) is not int or count <= 0:
+                raise ModelTransportError("TOKEN_COUNT_RESPONSE_INVALID")
+        finally:
+            await response.aclose()
+        if await self._token_count_model_identity(connection) != identity_before:
+            raise ModelTransportError("TOKEN_COUNT_MODEL_CHANGED")
+        return count, identity_before
 
     async def _read_bounded(self, response: httpx.Response) -> bytes:
         chunks: list[bytes] = []

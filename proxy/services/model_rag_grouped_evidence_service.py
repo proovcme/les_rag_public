@@ -462,7 +462,11 @@ def prepare_model_read_replay(chunks: Sequence[Any], *, required_refs: Sequence[
         content = str(raw.get("content") or "")
         has_body = bool(content) and (meta.get("body_status") != "deferred_capacity"
                                      or meta.get("model_raw_body_retained") is True)
-        if is_exact:
+        # A confirmed body is part of the model's evidence frontier, even when
+        # it came from discovery and has not yet been cited. Inventory-only
+        # delivery is a separate fact and cannot promote a retained unread body.
+        was_body_delivered = meta.get("model_delivery_status") == "delivered" and has_body
+        if is_exact or was_body_delivered:
             # Legacy deferred chunks can contain only an identity pointer. A
             # retained raw body may be replayed through this view clone, while
             # the stored chunk and its historical delivery flags stay intact.

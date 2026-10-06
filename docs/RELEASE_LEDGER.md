@@ -1,5 +1,59 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат0.31.176 / 904 — источник, единицы цены и сохранение evidence
+
+Installed903/0.31.175/b06d47bd, exact owned runtime hashes PASS; rollback902 retained.
+Ollama was stopped: initial native RRF failed and BAP B0 used degraded_sparse_only.
+After starting the existing embedding service, the unchanged native-RRF probe PASS/5hits.
+BAP B0 delivered one41499byte XLSX in172.31s (SHA58af71cc):25authored rows,
+19work+6material,17positions/1calculated, preliminary146244.46/confirmed0.
+All19 PDF rows used the manifest's actual source_file_id!Rn: rejected aliases caused
+false source coverage gaps. The catalogue lookup fix resolves them without rewriting rows.
+Six materials lack explicit work_row; PDF_TEXT!R1 lacks a model decision. Genuine gaps remain.
+B1 paused118.86s before rows/file: required context estimate52599 >46171, after
+seven actual price searches. Discovery bodies Q1.H1-H6 had been dropped from replay.
+Preserving them increases the estimate, so preserve-only is not a capacity proof.
+Healthy B0 on the same installed903/provider/profile completed393.22s without a file:
+finish_reason=length at16384 completion tokens; model wrote explanations without a parseable
+row table. Native RRF was healthy; no read-capacity exception occurred. This is a separate
+open output-contract failure, not proof that counter admission alone produces usable LSR.
+The first isolated904 test gate is retained RED:3539PASS/20SKIP/4FAIL; four exact
+legacy thinking-kwargs expectations updated, related191PASS. Second gate TEST3543PASS/20SKIP; ARCH retained RED for engine branch and unit guard.
+Both guards corrected without relaxing architecture rules; final904-r3 gates PASS (3575 tests;20opt-in skips).
+903 is not customer-ready. Fresh healthy installed B0/B1, diverse inputs, large VOR,
+professional norm/resource completeness, FSEM0.02/0.022 and fresh installer remain open.
+
+Trusted source_catalog resolves only actual issued file-ID row aliases that
+uniquely exist in the original catalogue. Raw source_row/evidence/operation_identity
+are preserved; foreign/ambiguous/malformed aliases remain rejected. Both chat callers,
+public repack, readiness and RIM receive the actual catalogue, loaded once by the adapter.
+The selected book's price converts only explicit single SI units t/kg and km/m,
+before rounding, including base/current/effective prices but never index or quantity.
+Conversion provenance retains original price/unit, factor/formula, resource/book SHA,
+region/period. Other dimensions, bulk units, price conflicts and nonfinite results stay blocked.
+Confirmed discovery bodies remain required in every later read frame, whether cited
+or not; unread inventory remains unread. Deferred retained-body delivery is recognised
+downstream without modifying historic flags or upgrading a preview to a complete card.
+Whole-wire admission can use a strict counter of the actual bound model including
+tools; generation and safety reserves stay unchanged, schemas are not subtracted twice.
+Unsupported/unverified counters retain the conservative fail-closed admission path.
+Every recorded canonical response now preserves nullable provider usage and
+canonical_request_sha256 (actual model identity included; not HTTP-byte SHA).
+The local count binds loaded model identity across every probe, with a total15s deadline.
+Measured native frames pin the same connection revision for generation; a changed primary
+or fallback is a visible technical failure, not generation using another tokenizer.
+Assembly checks strict book unit compatibility again after literal SI conversion.
+workbook_result now clarifies that structured export rows precede operator commentary
+in every supported format; saved profile bytes and explicit user format stay unchanged.
+Both B0/B1 receive the same purpose-scoped clarification. Its live efficacy is not proven.
+No norm, resource, query, professional verdict, coefficient or attachment text is selected
+or corrected by this transport/calculation patch.
+Canonical904-r3:3575PASS/20existing opt-in skips/5warnings; metadata31PASS.
+Compile/collect, architecture, version, documentation, code map and active-artifact
+gates PASS in the exact isolated final snapshot; foreign file hashes unchanged.
+Prior RED gates remain retained. Guarded installation and live904 quality pending.
+
+
 ## Кандидат0.31.175 / 903 — literal queries survive accompanying prose
 
 Installed902/0.31.174, commitc7647784, patch17.77s/runtime hashes PASS.

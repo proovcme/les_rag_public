@@ -153,8 +153,11 @@ class BoundModelChatRunner:
         request: InferenceRequest,
         legacy_complete: LegacyComplete,
         remote_allowed: bool = True,
+        expected_connection_revision_id: str = "",
     ) -> ModelChatResult:
         canonical_mode = CanonicalRouteMode(mode)
+        if expected_connection_revision_id and canonical_mode is not CanonicalRouteMode.ACTIVE:
+            raise ModelTransportError("TOKEN_COUNT_CONNECTION_CHANGED")
         if canonical_mode is CanonicalRouteMode.LEGACY:
             return self._bounded_result(
                 await self._legacy(legacy_complete, request),
@@ -173,8 +176,12 @@ class BoundModelChatRunner:
             )
 
         primary = self.resolver.resolve(ConnectionRole.ANSWER)
+        if expected_connection_revision_id and primary.revision_id != expected_connection_revision_id:
+            raise ModelTransportError("TOKEN_COUNT_CONNECTION_CHANGED")
         if primary.locality is ConnectionLocality.REMOTE and not remote_allowed:
             fallback = self.resolver.resolve_fallback(primary.revision_id)
+            if expected_connection_revision_id and fallback.revision_id != expected_connection_revision_id:
+                raise ModelTransportError("TOKEN_COUNT_CONNECTION_CHANGED")
             response = await self.transport.complete(fallback, request)
             return self._bounded_result(
                 response,
@@ -195,6 +202,8 @@ class BoundModelChatRunner:
                 fallback = self.resolver.resolve_fallback(primary.revision_id)
             except ModelConnectionResolutionError:
                 raise primary_error
+            if expected_connection_revision_id and fallback.revision_id != expected_connection_revision_id:
+                raise ModelTransportError("TOKEN_COUNT_CONNECTION_CHANGED")
             response = await self.transport.complete(fallback, request)
             return self._bounded_result(
                 response,

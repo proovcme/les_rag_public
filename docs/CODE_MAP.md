@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build904: trusted attachment catalogue → coverage/readiness/repack/RIM;
+convert_book_price_unit → both calculators; confirmed delivery frontier → required replay;
+canonical_route_service measured revision guard; workbook_result carrier clarification;
+bound count_input_tokens → whole-wire ContextGovernor; canonical provider usage → actual_model_calls.
+Tests: source catalogue/coverage/readiness/repack, resource_price_unit_conversion,
+lsr_workbook_catalog_adapter, model_evidence_delivery_frontier, context_wire_token_admission,
+model_wire_token_count, model_token_usage_trace, workbook_result_carrier_scope. Doc: modules/rag-evidence-flow.
+
 Build903: model_lsr_result_contract._model_json_documents → decode_model_query_envelope
 reads model-authored queries with external commentary; decode_model_artifact_kind shares boundaries.
 No inference/RAG/query content changed. Test: test_model_rag_query_declaration. Doc: modules/rag-evidence-flow.

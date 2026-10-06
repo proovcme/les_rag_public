@@ -417,3 +417,99 @@ def test_csv_empty_cells_keep_quantity_under_its_header(tmp_path):
         assert "source_quantity_mismatch:CSV!R2" in service.compare_model_row_to_catalog(
             {"source_row": "CSV!R2", "quantity": 0.35, "unit": "шт."}, catalog
         )
+
+
+def test_own_source_id_row_alias_binds_exact_cells_and_coverage_without_rewriting_model(tmp_path):
+    """The manifest-issued file identity can address an unambiguous source row."""
+    catalog = service.load_tabular_source_catalog(_write_sheet(tmp_path, [
+        ["Наименование", "Ед. изм.", "Кол-во"], ["Изделие", "м", 7],
+    ]))
+    alias = f"{catalog.source_file_id}!R2"
+    decision = {"source_row": alias, "quantity": 7, "unit": "м", "row_role": "work"}
+    original = dict(decision)
+
+    assert catalog.source_file_id in catalog.manifest_text()
+    assert catalog.lookup(alias) is catalog.lookup("Лист1!R2")
+    assert catalog.lookup(2) is catalog.lookup("Лист1!R2")
+    assert catalog.lookup("лист1!r2") is catalog.lookup("Лист1!R2")
+    assert service.compare_model_row_to_catalog(decision, catalog) == []
+    assert service.coverage_errors([decision], catalog) == []
+    assert decision == original
+    assert service.compare_model_row_to_catalog({**decision, "quantity": 8}, catalog) == [
+        f"source_quantity_mismatch:{alias}",
+    ]
+
+
+@pytest.mark.parametrize("reference", [
+    "R0", "R-2", "R02", "R2.0", "R2!R3", "R٢", "r2", "2", "R2/A2", "R999",
+])
+def test_own_source_id_alias_rejects_invalid_nested_or_absent_rows(tmp_path, reference):
+    catalog = service.load_tabular_source_catalog(_write_sheet(tmp_path, [
+        ["Наименование", "Ед. изм.", "Кол-во"], ["Изделие", "м", 7],
+    ]))
+    assert catalog.lookup(f"{catalog.source_file_id}!{reference}") is None
+
+
+def test_source_id_alias_never_accepts_foreign_or_missing_file_identity(tmp_path):
+    from dataclasses import replace
+
+    catalog = service.load_tabular_source_catalog(_write_sheet(tmp_path, [
+        ["Наименование", "Ед. изм.", "Кол-во"], ["Изделие", "м", 7],
+    ]))
+    foreign = "src_foreign!R2"
+    decision = {"source_row": foreign, "quantity": 7, "unit": "м"}
+    assert catalog.lookup(foreign) is None
+    assert service.compare_model_row_to_catalog(decision, catalog) == [
+        f"source_row_not_in_catalog:{foreign}",
+    ]
+    assert service.coverage_errors([decision], catalog) == ["source_coverage_incomplete:0/1"]
+    assert replace(catalog, source_file_id="").lookup(f"{catalog.source_file_id}!R2") is None
+
+
+def test_own_source_id_alias_rejects_oversized_row_number_without_raising(tmp_path):
+    catalog = service.load_tabular_source_catalog(_write_sheet(tmp_path, [["Изделие", "м", 7]]))
+    alias = f"{catalog.source_file_id}!R" + "9" * 5000
+    assert catalog.lookup(alias) is None
+
+
+def test_own_source_id_alias_keeps_ambiguous_row_numbers_across_excel_sheets(tmp_path):
+    from openpyxl import Workbook
+
+    source = tmp_path / "Смешанная спецификация.xlsx"
+    book = Workbook()
+    first = book.active
+    first.title = "A"
+    first.append(["Наименование", "Ед. изм.", "Кол-во"])
+    first.append(["Материал A", "м", 7])
+    second = book.create_sheet("B")
+    second.append(["Наименование", "Ед. изм.", "Кол-во"])
+    second.append(["Оборудование B", "шт", 9])
+    book.save(source)
+    catalog = service.load_tabular_source_catalog(source)
+
+    assert catalog.lookup(f"{catalog.source_file_id}!R2") is None
+    assert catalog.lookup(2) is None
+    assert catalog.lookup(True) is None
+    assert catalog.lookup("A!R2").values[0] == "Материал A"
+    assert catalog.lookup("B!R2").values[0] == "Оборудование B"
+    assert service.coverage_errors([
+        {"source_row": f"{catalog.source_file_id}!R2"},
+    ], catalog) == ["source_coverage_incomplete:0/2"]
+
+
+def test_own_source_id_alias_keeps_pdf_text_role_and_row_collision(monkeypatch, tmp_path):
+    source = tmp_path / "Mixed source identity.pdf"
+    source.write_bytes(b"%PDF-source-identity")
+    markdown = "Literal unquantified condition.\n| Наименование | Ед. изм. | Кол-во |\n|---|---|---|\n| Изделие | м | 7 |\n"
+    monkeypatch.setattr("backend.converter.convert_to_markdown", lambda _path, **_kwargs: markdown)
+    catalog = service.load_tabular_source_catalog(source)
+
+    assert catalog.lookup(f"{catalog.source_file_id}!R1") is None
+    assert catalog.lookup(f"{catalog.source_file_id}!R2") is catalog.lookup("PDF!R2")
+    text = catalog.lookup("PDF_TEXT!R1")
+    assert text.row_classification == "ambiguous"
+    assert text.classification_reason == "pdf_text_requires_model_role"
+    assert "PDF_TEXT!R1" in catalog.work_locators()
+    assert service.coverage_errors([
+        {"source_row": f"{catalog.source_file_id}!R2"},
+    ], catalog) == ["source_coverage_incomplete:1/2"]

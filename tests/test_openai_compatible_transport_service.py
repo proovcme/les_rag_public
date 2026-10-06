@@ -646,7 +646,7 @@ async def test_local_extension_complete_disables_thinking(tmp_path):
     finally:
         await client.aclose()
 
-    assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": False, "thinking_mode": "disabled"}
 
 
 @pytest.mark.asyncio
