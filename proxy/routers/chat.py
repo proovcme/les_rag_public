@@ -40,6 +40,8 @@ from proxy.services.chat_evidence_application_service import (
     workbook_repack_replay_arguments,
     workbook_packaging_lineage,
     workbook_packaging_args,
+    saved_model_decisions_for_packaging,
+    HistoricalModelEvidenceIdentityError,
     workbook_packaging_tool,
     workbook_document_issues,
     build_vor_result_readiness,
@@ -325,6 +327,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     remaining: list[str] = []
     overlays: dict[str, dict[str, Any]] = {}
     job: dict[str, Any] = {}
+    saved_model_decisions = False
     if job_id:
         try:
             job = WorkbookResearchJobService().get(job_id)
@@ -336,6 +339,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
                 for item in (job.get("accepted_rows") or [])
                 if isinstance(item, dict)
             ]
+            saved_model_decisions = True
         identity = job.get("identity") if isinstance(job.get("identity"), dict) else {}
         attachment_id = attachment_id or str(identity.get("attachment_id") or "").strip()
         remaining = [
@@ -382,6 +386,12 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         repack_tool = targets[0]
     if repack_tool not in {"build_lsr_workbook", "build_vor_workbook"}:
         raise HTTPException(400, "unsupported saved workbook tool")
+    if repack_tool == "build_lsr_workbook" and saved_model_decisions:
+        try:
+            decisions = saved_model_decisions_for_packaging(decisions)
+        except HistoricalModelEvidenceIdentityError as error:
+            raise HTTPException(409, {"code": error.code, "packaging_status": "pending",
+                                      "model_called": False, "message": error.notice}) from error
     inherited_basis = document_price_basis_arguments(
         (document_block or {}).get("price_basis")
         if isinstance(document_block, dict)

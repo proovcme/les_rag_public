@@ -1,5 +1,46 @@
 # Версии программного контура ЛЕС
 
+Candidate0.31.177/build905; dependencies/providers/models unchanged.
+First frozen905 canonical gate PASS:3587 tests/20existing opt-in skips/5warnings;
+all structural/doc/version/map/active-artifact gates PASS, metadata31PASS.
+Independent replay found a temporal binding defect: an unissued early Q2.H1 could
+be populated from a later packet's different card. The delivered B1 draft remained
+unpriced, but prior structural facts and a subsequent validator could promote the alias.
+Trusted first-bind now fixes application evidence maps using that model frame;
+replay and final validation never fill empty/partial saved maps from future aliases.
+Historic model-job packaging projects absent maps to visibly unresolved bindings,
+preserving durable rows/SHA and operation IDs. A technical packaging cache miss is
+allowed; no professional choice or saved job is rewritten. Direct operator rows unchanged.
+Model-authored debug fields remain outside the decoder whitelist. No identity migration,
+new marker, late-evidence lookup, model loop, norm choice or price substitution is added.
+The second frozen905-r2 gate found one existing nested resource-map replay regression
+(3614PASS/1FAIL/20existing opt-in skips). One-line correction recognizes a saved
+nested application map as replay even without the top-level map;110 focused tests PASS.
+Interrupted SSE first-follow also omitted file registration on terminal/paused state
+and left sending active. Existing history/file registration and terminal plans now
+restore downloads and settle send/stop controls without reload or a model call.
+The third exact frozen905-r3 canonical gate PASS:3620 tests/20existing opt-in
+skips/5warnings; metadata31PASS. Compile/collect/version/architecture/map/docs/
+active-artifact checks PASS; untouched TEST_INVENTORY raw hash unchanged.
+UI focused183PASS. Installed live comparisons remain pending. No customer-ready claim.
+
+Installed904/0.31.176/e916c68f, guarded patch18.44s, exact runtime hashes PASS.
+Native RRF post-ship smoke PASS; basic smoke retained RED:8PASS/1WARN/1P1FAIL,
+MODEL_OUTPUT_INCOMPLETE on the ordinary unscoped boiler-room question (history823).
+Ordinary provider ended stop/49tokens with a textual tool frame; its original content
+was discarded by the existing guard, so the requested tool cannot yet be proven.
+BAP B0 (same original question, attachment, profile and r8):143.30s, no file;
+structural_error. Two rows copied the instruction's pseudo-label as invalid JSON;
+other rows invented source_file_id#Rn locators that were never issued.
+BAP B1:344.03s, one12662byte draft (SHAa3dc83f9),12/20input rows accepted,
+11work/1material,1position/0calculated, confirmed0/preliminary0. Ten EXACT claims
+include unissued Q2.H1-H10 citations. The initial query repeated the user task;
+later Q2 pointers belong to a different PDF_TEXT pass and cannot ground earlier choices.
+Neither control invoked native exact-card reads or the live wire token counter.
+Measurement completion is not professional acceptance. Customer-ready remains false.
+Large/diverse VOR, artifact-to-VOR, complete norm/resource pricing, FSEM precision
+and the exact new Windows installer remain unaccepted. No public release.
+
 Candidate0.31.176/build904; dependencies/providers/models unchanged.
 Provider count deadline15s; bound revision guard and purpose-scoped carrier clarified;
 context/generation reserves and saved profiles unchanged. Installed/live904 pending.
@@ -274,9 +315,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.176` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `904` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.904` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.177` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `905` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.905` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

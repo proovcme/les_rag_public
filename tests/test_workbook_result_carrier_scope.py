@@ -42,6 +42,8 @@ def test_workbook_carrier_clarifies_saved_prose_rules_without_rewriting_profile(
     assert _CARRIER_MARKER in prompt
     assert "относятся к комментарию для оператора" in prompt
     assert "обязательные поля строк" in prompt
+    assert "Правило порядка строк относится только к терминальному результату после необходимых чтений" in prompt
+    assert "не требует завершать ход вместо вызова доступного инструмента чтения" in prompt
     assert "Во всех допустимых форматах (JSON, Markdown, текст) сначала верни" in prompt
     assert "Если пользователь явно задал формат, сохрани его" in prompt
     assert "это уточнение не требует JSON" in prompt

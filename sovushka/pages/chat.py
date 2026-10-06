@@ -6366,16 +6366,29 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             job_running = workbook_assembly_is_running(pending)
             job_paused = workbook_assembly_is_paused(pending)
             if workbook_job_is_terminal(pending) or workbook_job_is_terminal(job or {}):
-                # Nothing to follow: the research is over.  Render its result
-                # line, not "Сборка продолжается", and leave the bubble alone.
-                _paint_in_progress_bubble(pending)
+                settled_job = job or pending
+                plan = terminal_job_repair_plan(settled_job)
+                if plan["mode"] != "resume":
+                    persist_chat_pending(None)
+                _sending["v"] = False
+                stop_dialog_btn.set_visibility(False)
+                # History rendering binds its saved downloads; restore an
+                # existing terminal revision afterwards, without repacking.
+                _render_chat_history(format_terminal_assembly_notice(settled_job))
+                if plan["mode"] == "document":
+                    await _apply_terminal_job_plan(settled_job, plan)
+                _scroll_chat_to_tail(force=True)
+                return
+            if job_paused:
+                _sending["v"] = False
+                stop_dialog_btn.set_visibility(False)
+                _render_chat_history(format_workbook_session_sys_notice(pending))
+                _scroll_chat_to_tail(force=True)
                 return
             if pending and _follow_placeholder.get("label") is None:
                 _render_chat_history(format_workbook_session_sys_notice(pending))
             elif pending:
                 _paint_in_progress_bubble(pending)
-            if job_paused:
-                return
             if not in_progress and not job_running and not pending:
                 return
             payload = await follow_detached_chat_history(

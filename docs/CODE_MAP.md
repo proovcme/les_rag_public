@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build905: model_lsr_result_field_instruction → literal source/real fields;
+terminal final-tool guard → public-content SHA and budget audit, never dialogue memory.
+Trusted frame first-bind → frozen global evidence map → prior/final replay;
+model-job repack projects historic missing maps without changing durable decisions.
+Tests: test_model_result_field_instruction, test_chat_terminal_output_diagnostics,
+test_temporal_model_evidence_binding.
+Doc: modules/rag-evidence-flow.
+
 Build904: trusted attachment catalogue → coverage/readiness/repack/RIM;
 convert_book_price_unit → both calculators; confirmed delivery frontier → required replay;
 canonical_route_service measured revision guard; workbook_result carrier clarification;

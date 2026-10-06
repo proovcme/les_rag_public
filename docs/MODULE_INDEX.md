@@ -1,5 +1,53 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 905 — result field instruction / terminal output diagnostics
+
+The model-result field instruction now names real row_role/resource_code fields
+and requires copying the displayed source coordinate literally. No JSON-only format,
+decoder repair, source rewrite or professional decision is introduced.
+The query instruction no longer promises automatic per-row searches that are disabled.
+Model-authored query execution and candidate choice stay unchanged. The carrier's
+rows-first rule is clarified as terminal-result ordering after requested reads,
+not a requirement to terminate before using available tools. This clarification
+is not a proven causal explanation of the model's failure to read norm cards.
+On the existing terminal-tool guard, diagnostics preserve full public provider text,
+its UTF-8 SHA/byte count, finish reason, native call names/argument hashes and known
+research shortlist/remaining budget. Human notice, status and tool execution remain
+unchanged. Reasoning/native argument values are excluded; raw audit output is neither
+streamed as an answer nor fed into dialogue memory or executed as another tool call.
+Focused producer71PASS and actual-chat/diagnostic adjacent265PASS; canonical905 pending.
+Installed/live905 pending. There is no claim that these fixes establish norm quality.
+First frozen905 canonical gate PASS:3587 tests/20existing opt-in skips/5warnings;
+all structural/doc/version/map/active-artifact gates PASS, metadata31PASS.
+Independent replay found a temporal binding defect: an unissued early Q2.H1 could
+be populated from a later packet's different card. The delivered B1 draft remained
+unpriced, but prior structural facts and a subsequent validator could promote the alias.
+Trusted first-bind now fixes application evidence maps using that model frame;
+replay and final validation never fill empty/partial saved maps from future aliases.
+Historic model-job packaging projects absent maps to visibly unresolved bindings,
+preserving durable rows/SHA and operation IDs. A technical packaging cache miss is
+allowed; no professional choice or saved job is rewritten. Direct operator rows unchanged.
+Model-authored debug fields remain outside the decoder whitelist. No identity migration,
+new marker, late-evidence lookup, model loop, norm choice or price substitution is added.
+The second frozen905-r2 gate found one existing nested resource-map replay regression
+(3614PASS/1FAIL/20existing opt-in skips). One-line correction recognizes a saved
+nested application map as replay even without the top-level map;110 focused tests PASS.
+Interrupted SSE first-follow also omitted file registration on terminal/paused state
+and left sending active. Existing history/file registration and terminal plans now
+restore downloads and settle send/stop controls without reload or a model call.
+The third exact frozen905-r3 canonical gate PASS:3620 tests/20existing opt-in
+skips/5warnings; metadata31PASS. Compile/collect/version/architecture/map/docs/
+active-artifact checks PASS; untouched TEST_INVENTORY raw hash unchanged.
+UI focused183PASS. Installed live comparisons remain pending. No customer-ready claim.
+
+
+UI entry: sovushka.pages.chat._follow_pending_history_if_needed → existing
+render_chat_history / apply_terminal_job_plan; doc: [sovushka-uikit](modules/sovushka-uikit.md).
+Entries: model_lsr_result_contract.model_lsr_result_field_instruction;
+chat_evidence_application_service._terminal_output_diagnostics;
+bind_row_evidence_ids binding_phase first/replay; public model-job repack binding projection.
+Doc: [rag-evidence-flow](modules/rag-evidence-flow.md).
+
 ## 904 — trusted source aliases / SI price units / body frontier / bound token counts
 
 Trusted source_catalog resolves only actual issued file-ID row aliases that

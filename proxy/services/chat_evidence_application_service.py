@@ -843,6 +843,51 @@ def terminal_research_packaging_rows(
     ]
 
 
+class HistoricalModelEvidenceIdentityError(ValueError):
+    code = "HISTORICAL_MODEL_EVIDENCE_IDENTITY_UNAVAILABLE"
+    notice = (
+        "Повторная упаковка ЛСР приостановлена: в старом задании нет постоянного "
+        "идентификатора строки и сохранённой привязки нормативных или ценовых источников. "
+        "Сохранённые решения и ранее созданный файл остаются доступны."
+    )
+
+
+def saved_model_decisions_for_packaging(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project known durable model LSR rows, never manual/operator decisions.
+
+    Absent historical maps cannot inherit today's packet-local aliases. Keep
+    existing maps and permanent identities intact; no evidence is looked up
+    and the durable decisions are never rewritten. An unversioned row cannot
+    acquire metadata without changing its fallback identity, so fail visibly.
+    """
+    projected = []
+    for row in rows:
+        payload = dict(row)
+        refs = extract_model_evidence_refs(payload.get("evidence_refs"))
+        has_evidence_claim = bool(str(payload.get("norm_code") or "").strip()) or (
+            payload.get("confirmed_price") not in (None, "")
+        )
+        if "evidence_bindings" not in payload and refs and has_evidence_claim:
+            if not str(payload.get("operation_id") or "").strip():
+                raise HistoricalModelEvidenceIdentityError(
+                    HistoricalModelEvidenceIdentityError.code
+                )
+            payload["evidence_bindings"] = {}
+            # Normalize refs only for the diagnostic; the model's raw carrier
+            # (including an old string-form reference) remains unchanged.
+            observed = {**payload, "evidence_refs": refs}
+            check = row_evidence_provenance_check(observed, {}, {}, {})
+            if check is not None:
+                payload["_evidence_check"] = check
+            price_check = price_evidence_check(observed, [], {})
+            if price_check is not None:
+                payload["_price_evidence_check"] = price_check
+        projected.append(payload)
+    return projected
+
+
 def workbook_document_issues(
     research_job: Mapping[str, Any] | None,
     *,
@@ -1176,6 +1221,45 @@ def safe_selected_call_trace(call: dict[str, Any]) -> dict[str, str]:
     if call.get("call_id"):
         trace["call_id"] = str(call["call_id"])
     return trace
+
+
+def _terminal_output_diagnostics(response: Any, tool_loop: Any) -> dict[str, Any]:
+    """Retain public provider content, never the internal native/reasoning wrapper."""
+    output = response.text
+    output_bytes = output.encode("utf-8")
+    native_calls = []
+    for call in response.tool_calls:
+        function = call.get("function")
+        function = function if isinstance(function, Mapping) else {}
+        arguments = function.get("arguments")
+        argument_bytes = (
+            arguments.encode("utf-8") if isinstance(arguments, str)
+            else json.dumps(arguments, ensure_ascii=False, sort_keys=True,
+                            separators=(",", ":")).encode("utf-8")
+            if isinstance(arguments, Mapping) else None
+        )
+        native_calls.append({
+            "call_id": str(call.get("id") or ""),
+            "tool": str(function.get("name") or ""),
+            "arguments_sha256": hashlib.sha256(argument_bytes).hexdigest() if argument_bytes is not None else None,
+        })
+    loop = tool_loop if isinstance(tool_loop, Mapping) else {}
+    shortlist = loop.get("shortlist")
+    shortlist = shortlist if isinstance(shortlist, Mapping) else {}
+    allowed_tools = sorted({
+        str(tool["name"]) for tool in shortlist.get("tools", [])
+        if isinstance(tool, Mapping) and isinstance(tool.get("name"), str) and tool["name"]
+    })
+    remaining = loop.get("calls_remaining")
+    return {
+        "terminal_output": output,
+        "terminal_output_sha256": hashlib.sha256(output_bytes).hexdigest(),
+        "terminal_output_bytes": len(output_bytes),
+        "terminal_output_source": "provider_response_text",
+        "terminal_native_calls": native_calls,
+        "research_allowed_tools": allowed_tools,
+        "research_calls_remaining": remaining if type(remaining) is int and remaining >= 0 else None,
+    }
 
 
 def _safe_workbook_filename(value: Any) -> str:
@@ -1928,6 +2012,8 @@ _WORKBOOK_RESULT_CARRIER_INSTRUCTION = (
     "а не операторский комментарий. Ограничения профиля на JSON и служебные термины "
     "относятся к комментарию для оператора; обязательные поля строк передай дословно "
     "по заданной схеме, чтобы приложение могло собрать документ. "
+    "Правило порядка строк относится только к терминальному результату после необходимых чтений; "
+    "оно не требует завершать ход вместо вызова доступного инструмента чтения. "
     "Во всех допустимых форматах (JSON, Markdown, текст) сначала верни структурированные "
     "строки результата, затем, если нужен, краткий комментарий для оператора. "
     "Если пользователь явно задал формат, сохрани его; это уточнение не требует JSON. "
@@ -2160,12 +2246,8 @@ def sheet_pass_query_instruction(
         "но не заменяет данные остальных пакетов. Не придумывай их содержание "
         "и не составляй заново запросы по всему листу. Число операций и запросов "
         "для представленных строк определяешь ты."
-        + "\nКроме твоих запросов система гарантированно добавляет два запроса на "
-        "каждую строку листа: дословный текст строки и тот же текст с явно указанными "
-        "в исходнике атрибутами (раздел листа, подписанный столбец, написанный шифр). "
-        "Такие запросы помечены "
-        "в доказательственной части как «дословный исходный текст строки» или «системный "
-        "подбор по атрибутам этой строки». Это только кандидаты: выбирать норму, оценивать "
+        + "\nКод исполнит возвращённые тобой поисковые запросы дословно. "
+        "Все выданные карточки — только кандидаты: выбирать норму, оценивать "
         "её применимость и отклонять всех предложенных кандидатов решаешь ты. Отсутствие "
         "кандидата не означает отсутствие нормы в базе, а наличие кандидата не означает, "
         "что она применима."
@@ -3193,7 +3275,16 @@ def confirm_model_read_delivery(chunks, receipts=(), *, inventory_refs=None, bod
 def bind_row_evidence_ids(
     rows: Sequence[Mapping[str, Any]],
     evidence_chunks: Sequence[Any],
+    *, binding_phase: str | None = None,
 ) -> list[dict[str, Any]]:
+    """First-bind a new model frame or replay its immutable saved citation map.
+
+    Production callers select the phase from trusted workflow state. The
+    compatibility default recognizes maps already produced by this helper;
+    the model-result decoder never admits those application-owned fields.
+    """
+    if binding_phase not in (None, "first", "replay"):
+        raise ValueError("binding_phase must be first or replay")
     from proxy.services.model_resource_reference_service import parse_resource_reference, shown_resource_record
 
     alias_to_global: dict[str, str] = {}
@@ -3268,13 +3359,17 @@ def bind_row_evidence_ids(
     bound: list[dict[str, Any]] = []
     for row in rows:
         payload = dict(row)
-        current = payload.get("evidence_bindings")
+        first_bind = binding_phase == "first" or (
+            binding_phase is None and "evidence_bindings" not in payload
+            and "_resource_binding_evidence_bindings" not in payload
+        )
+        current = None if first_bind else payload.get("evidence_bindings")
         merged = {
             str(alias).strip().upper(): str(global_id).strip()
             for alias, global_id in (current.items() if isinstance(current, Mapping) else ())
             if str(alias).strip() and str(global_id).strip()
         }
-        for ref in payload.get("evidence_refs") or ():
+        for ref in (payload.get("evidence_refs") or ()) if first_bind else ():
             alias = str(ref).strip().upper()
             global_id = alias_to_global.get(alias, "") if alias not in ambiguous_aliases else ""
             if alias and global_id and alias not in merged:
@@ -3283,8 +3378,10 @@ def bind_row_evidence_ids(
         # Q/H handles are packet-local. An already bound row must be checked
         # against its durable card, not the first same-named handle of another
         # packet when all sheets are collected for final packaging.
-        cards = dict(alias_to_card)
-        queries = dict(alias_to_query)
+        # A previously unissued handle stays unissued even if a later frame
+        # allocates the same Q/H text. Only pinned global identities can replay.
+        cards = dict(alias_to_card) if first_bind else {}
+        queries = dict(alias_to_query) if first_bind else {}
         checkable_bindings = dict(merged)
         for alias in ambiguous_aliases:
             cards.pop(alias, None)
@@ -3333,7 +3430,7 @@ def bind_row_evidence_ids(
             payload["_price_evidence_check"] = price_check
         actions = payload.get("resource_bindings")
         if isinstance(actions, list):
-            old_bindings = payload.get("_resource_binding_evidence_bindings")
+            old_bindings = None if first_bind else payload.get("_resource_binding_evidence_bindings")
             old_bindings = old_bindings if isinstance(old_bindings, Mapping) else {}
             action_checks, action_bindings = [], {}
             for index, action in enumerate(actions):
@@ -3351,11 +3448,13 @@ def bind_row_evidence_ids(
                     # Saved actions refer to their immutable card, never to a
                     # different packet's coincident Q/H alias.
                     identity = str(prior.get(ref) or "")
-                    if not identity and ref not in ambiguous_aliases:
+                    if first_bind and not identity and ref not in ambiguous_aliases:
                         identity = alias_to_global.get(ref, "")
                     if identity in global_to_bodies:
                         resolved[ref] = identity
-                action_bindings[str(index)] = resolved
+                # Missing current body affects checkability, not the durable
+                # identity previously pinned for this resource action.
+                action_bindings[str(index)] = resolved if first_bind else dict(prior)
                 cited_ids = set(checkable_bindings.values()) | set(resolved.values())
                 bodies = [global_to_bodies[identity] for identity in cited_ids
                           if identity in global_to_bodies]
@@ -5631,7 +5730,7 @@ def model_rag_prior_page_context(
     observation_rows = [{key: value for key, value in row.items()
                          if key not in {"_evidence_check", "_resource_evidence_check", "_price_evidence_check"}}
                         for row in rows]
-    for row in bind_row_evidence_ids(observation_rows, evidence_chunks):
+    for row in bind_row_evidence_ids(observation_rows, evidence_chunks, binding_phase="replay"):
         fact = {"source_row": row.get("source_row"),
                 "operation_id": row.get("operation_id")}
         check = row.get("_evidence_check")
@@ -6344,16 +6443,13 @@ def validate_model_rag_result_structure(
             if isinstance(raw_bindings, Mapping)
             else {}
         )
-        if bindings:
+        if "evidence_bindings" in row:
             unknown_refs: list[str] = []
             referenced_meta: list[dict[str, Any]] = []
             for ref in refs:
                 global_id = bindings.get(ref, "")
                 if global_id and global_id in evidence_by_global_id:
                     referenced_meta.append(evidence_by_global_id[global_id])
-                    continue
-                if not global_id and ref in evidence_by_ref:
-                    referenced_meta.append(evidence_by_ref[ref])
                     continue
                 unknown_refs.append(ref)
         else:
@@ -10442,7 +10538,8 @@ async def _execute_chat_evidence_application(
                             if parsed_pass is not None:
                                 _visible, pass_rows = parsed_pass
                             pass_rows = bind_row_evidence_ids(
-                                pass_rows, [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks]
+                                pass_rows, [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                binding_phase="first",
                             )
                             pass_errors = validate_model_rag_result_structure(
                                 pass_rows,
@@ -11669,6 +11766,7 @@ async def _execute_chat_evidence_application(
                             "finish_reason": answer_finish_reason,
                             "unconsumed_tool_calls": len(active_model_result.response.tool_calls),
                             "unparsed_tool_frame": has_unconsumed_tool_frame(answer),
+                            **_terminal_output_diagnostics(active_model_result.response, retrieval_trace.get("tool_loop")),
                         }
                         answer = ("Ответ не завершён: после окончания поиска модель запросила дополнительные "
                                   "действия вместо итогового ответа. Найденные источники сохранены в истории запроса.")
@@ -12047,9 +12145,9 @@ async def _execute_chat_evidence_application(
                                 )
                                 parsed = parse_model_rag_result(text or "")
                                 new_rows = parsed[1] if parsed else list(rows_to_check)
-                                new_rows = bind_row_evidence_ids(new_rows, chunks)
                                 new_rows = bind_row_evidence_ids(
-                                    new_rows, model_evidence_chunks
+                                    new_rows, [*chunks, *model_evidence_chunks],
+                                    binding_phase="first" if parsed is not None else "replay",
                                 )
                                 return LsrResearchRoundResult(
                                     rows=new_rows,
@@ -12144,7 +12242,7 @@ async def _execute_chat_evidence_application(
                                         ),
                                     )
                                     model_result_rows = bind_row_evidence_ids(
-                                        gate.rows, model_evidence_chunks
+                                        gate.rows, model_evidence_chunks, binding_phase="replay",
                                     )
                                     model_result_rows, coef_events = await run_coefficient_review(
                                         model_result_rows,
@@ -12217,7 +12315,8 @@ async def _execute_chat_evidence_application(
                             "sheet_pass": sheet_pass_done,
                         }
                         model_result_rows = bind_row_evidence_ids(
-                            model_result_rows, model_evidence_chunks
+                            model_result_rows, model_evidence_chunks,
+                            binding_phase="replay" if sheet_pass_done else "first",
                         )
                         model_result_errors = validate_model_rag_result_structure(
                             model_result_rows,
@@ -12378,6 +12477,25 @@ async def _execute_chat_evidence_application(
                             if old_notice:
                                 answer = answer.replace(old_notice, draft_notice, 1)
                             result_meta["notice"] = draft_notice
+                    if packaging_tools == ["build_lsr_workbook"] and (
+                        durable_packaging_rows or can_package_saved_draft
+                    ):
+                        try:
+                            model_result_rows = saved_model_decisions_for_packaging(
+                                durable_packaging_rows or saved_draft_rows
+                            )
+                            if durable_packaging_rows:
+                                durable_packaging_rows = model_result_rows
+                        except HistoricalModelEvidenceIdentityError as error:
+                            can_package_saved_draft = False
+                            model_result_blocking_errors.append(error.code)
+                            notice = f"{error.notice} Код: {error.code}."
+                            answer = f"{answer.rstrip()}\n\n{notice}"
+                            result_meta.update({"status": "structural_error", "packaged": False,
+                                                "errors": list(model_result_blocking_errors), "notice": notice})
+                            if token_sink is not None:
+                                await token_sink({"event": "reset", "data": ""})
+                                await token_sink({"event": "token", "data": answer})
                     if (
                         (parsed_model_result is not None or bool(durable_packaging_rows) or can_package_saved_draft)
                         and (

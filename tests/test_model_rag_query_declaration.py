@@ -128,6 +128,27 @@ def test_model_can_search_for_an_operation_instead_of_copying_a_product_label():
     assert declared["queries"][0].text == query
 
 
+@pytest.mark.parametrize("research_round", [0, 1])
+def test_sheet_query_prompt_does_not_promise_disabled_system_searches(monkeypatch, research_round):
+    """A model must not rely on extra row searches that this turn will never run."""
+    from proxy.services.lsr_candidate_query_service import candidate_queries_enabled_for_turn
+
+    monkeypatch.setenv("LES_LSR_SYSTEM_CANDIDATE_QUERIES", "off")
+    profile = {"mode": "estimator"}
+    assert candidate_queries_enabled_for_turn(profile) is False
+    instruction = service.sheet_pass_query_instruction(
+        profile, sheet="Arbitrary section", sheet_index=1, sheet_count=2,
+        research_round=research_round,
+    )
+    assert "система гарантированно добавляет" not in instruction
+    assert "два запроса на каждую строку" not in instruction
+    assert "код исполнит твой запрос дословно" in instruction
+    assert "её применимость и отклонять всех предложенных кандидатов решаешь ты" in instruction
+    literal_query = "Arbitrary section!R18 — Монтаж изделия по показанным условиям"
+    declared = service.read_declared_query_list(literal_query, instruction=instruction)
+    assert [item.text for item in declared["queries"]] == [literal_query]
+
+
 def test_ordinary_numbered_and_bulleted_output_all_read_as_queries() -> None:
     """Support the provider's plain text answer without a phrase list."""
 

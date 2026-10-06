@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import inspect
 from datetime import datetime, timedelta, timezone
@@ -2551,6 +2552,96 @@ def test_follow_task_bails_out_before_waiting_on_a_finished_job() -> None:
     follow = follow[: follow.index("payload = await follow_detached_chat_history")]
 
     assert "workbook_job_is_terminal" in follow
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_status", ["complete", "paused"])
+async def test_first_follow_registers_saved_download_without_reload(monkeypatch, job_status):
+    """Run the real nested history/file handlers after a detached SSE settles."""
+    from sovushka import state as state_module
+
+    urls = ["/api/artifacts/rev-old/download", "/api/artifacts/rev-new/download"]
+    history = [{"role": "ai", "text": f"Saved revision {index}", "meta": {"artifact": {
+        "artifact_kind": "lsr_workbook", "filename": f"LSR_{index}.xlsx",
+        "download_url": url,
+    }}} for index, url in enumerate(urls)]
+    job = {"job_id": "own-job", "status": job_status, "identity": {"session_id": "own-session"},
+           "document": {"state": "ready" if job_status == "complete" else "draft_only",
+                        "final_revision_id": "rev-new" if job_status == "complete" else "",
+                        "draft_revision_id": "rev-new"}}
+    local_state = {"session_id": "own-session", "chat_history": [],
+                   "chat_pending": {"job_id": "own-job", "job_status": "running"}}
+    files = {urls[0]: {"name": "LSR_0.xlsx", "kind": "xlsx"}}
+    bubbles = ["existing progress bubble"]
+    metadata_reads = []
+    stop_visibility = []
+
+    class ChatColumn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def clear(self):
+            bubbles.clear()
+
+    def persist(pending):
+        local_state["chat_pending"] = pending
+
+    async def fetch_history():
+        return history
+
+    async def fetch_job(**_):
+        return job
+
+    async def read_metadata(url):
+        metadata_reads.append(url)
+        assert url == "/api/artifacts/rev-new"
+        return {"revision_id": "rev-new", "filename": "LSR_1.xlsx"}
+
+    def forbidden(*_, **__):
+        pytest.fail("Settled follow must not dispatch, repack, or keep polling")
+
+    monkeypatch.setattr(state_module, "persist_chat_pending", persist)
+    namespace = dict(vars(chat_page))
+    namespace.update({
+        "state": local_state, "_file_artifacts": files, "chat_column": ChatColumn(),
+        "_history_follow_lock": {"busy": False}, "_sending": {"v": True},
+        "_follow_placeholder": {"bubble": object(), "label": object(), "eta": object()},
+        "_lsr_card_state": {}, "_last_estimator_resume": {},
+        "_smeta_approval_payloads": {}, "_smeta_approval_cards": set(),
+        "_fetch_session_history_messages": fetch_history, "_selected_session_workbook_research": fetch_job,
+        "api_get": read_metadata, "_clear_file_artifacts": files.clear,
+        "_render_chat_bubble": lambda text, *_: bubbles.append(text),
+        "_paint_in_progress_bubble": lambda *_: bubbles.append("settled status"),
+        "_rebuild_files_artifacts_panel": lambda: None, "_notify": lambda *_, **__: None,
+        "_scroll_chat_to_tail": lambda **_: None,
+        "stop_dialog_btn": SimpleNamespace(set_visibility=stop_visibility.append),
+        "follow_detached_chat_history": forbidden, "_repack_lsr_from_ui": forbidden,
+    })
+    # Isolate UI/IO dependencies, preserving the actual control flow and the
+    # history -> artifact -> workbook-file registration chain under test.
+    names = {"_follow_pending_history_if_needed", "_render_chat_history", "_render_msg",
+             "_register_artifact_downloads", "_register_file_artifact", "_apply_terminal_job_plan"}
+    tree = ast.parse(inspect.getsource(chat_page.build_chat))
+    nodes = [node for node in ast.walk(tree)
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
+    assert {node.name for node in nodes} == names
+    exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
+                 "existing_chat_follow_handlers", "exec"), namespace)
+    await namespace["_follow_pending_history_if_needed"]()
+
+    assert set(files) == set(urls)
+    assert files[urls[1]] == {"name": "LSR_1.xlsx", "kind": "xlsx"}
+    assert chat_page.order_chat_file_artifacts(files)[0][0] == urls[1]
+    assert "existing progress bubble" not in bubbles
+    assert bubbles.count("settled status") <= 1
+    assert metadata_reads == (["/api/artifacts/rev-new"] if job_status == "complete" else [])
+    assert local_state["chat_pending"] is None if job_status == "complete" else local_state["chat_pending"]["job_status"] == "paused"
+    assert namespace["_sending"]["v"] is False
+    assert stop_visibility == [False]
+    assert namespace["_history_follow_lock"]["busy"] is False
 
 
 def test_readiness_card_points_a_finished_job_at_its_file() -> None:

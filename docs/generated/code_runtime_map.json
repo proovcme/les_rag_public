@@ -1141,6 +1141,7 @@
         "proxy/services/model_resource_reference_service.py",
         "proxy/services/model_result_packet_service.py",
         "proxy/services/model_secret_service.py",
+        "proxy/services/model_wire_token_count_service.py",
         "proxy/services/native_open_service.py",
         "proxy/services/normcontrol_review_map_service.py",
         "proxy/services/normcontrol_service.py",
@@ -1682,7 +1683,7 @@
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_repack_target.py"
       ],
-      "lines": 4820,
+      "lines": 4830,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -2609,6 +2610,7 @@
         "proxy/services/model_resource_reference_service.py",
         "proxy/services/model_result_packet_service.py",
         "proxy/services/model_secret_service.py",
+        "proxy/services/model_wire_token_count_service.py",
         "proxy/services/native_open_service.py",
         "proxy/services/normcontrol_review_map_service.py",
         "proxy/services/normcontrol_service.py",
@@ -2906,10 +2908,12 @@
         "tests/test_lsr_candidate_query_service.py",
         "tests/test_lsr_result_readiness_service.py",
         "tests/test_lsr_source_coverage_service.py",
+        "tests/test_lsr_workbook_catalog_adapter.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_research_tool_service.py",
         "tests/test_model_result_resource_code.py",
         "tests/test_pdf_layout.py",
+        "tests/test_resource_price_unit_conversion.py",
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_vor_input_transport.py",
         "tests/test_workbook_repack_target.py",
@@ -3145,6 +3149,7 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_native_research_exchange.py",
         "tests/test_chat_profile_runtime.py",
+        "tests/test_context_wire_token_admission.py",
         "tests/test_fgis_pricebook_snapshot.py",
         "tests/test_finalization_defects_782.py",
         "tests/test_live_workbook_acceptance_contract.py",
@@ -3155,6 +3160,7 @@
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_scheduler_starvation_824.py",
+        "tests/test_model_evidence_delivery_frontier.py",
         "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_evidence_read_contract.py",
         "tests/test_model_inline_field_records.py",
@@ -3172,6 +3178,7 @@
         "tests/test_model_result_resource_actions.py",
         "tests/test_model_result_resource_code.py",
         "tests/test_model_result_table_transport.py",
+        "tests/test_model_token_usage_trace.py",
         "tests/test_notebook_study_chat_policy.py",
         "tests/test_packaging_recovery_service.py",
         "tests/test_pool_completion_alignment_24.py",
@@ -3186,10 +3193,11 @@
         "tests/test_workbook_chat_refinement.py",
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_repack_target.py",
+        "tests/test_workbook_result_carrier_scope.py",
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 13195,
+      "lines": 13313,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3572,6 +3580,7 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_native_research_exchange.py",
         "tests/test_context_governor_service.py",
+        "tests/test_context_wire_token_admission.py",
         "tests/test_model_connection_chat_options.py",
         "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_evidence_read_contract.py",
@@ -3580,7 +3589,8 @@
         "tests/test_model_rag_pointer_alias_replay.py",
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_sovushka_chat.py",
-        "tests/test_typed_memory_projection_service.py"
+        "tests/test_typed_memory_projection_service.py",
+        "tests/test_workbook_result_carrier_scope.py"
       ],
       "lines": 400,
       "module": "proxy.services.context_governor_service",
@@ -4873,6 +4883,7 @@
         "tests/test_lsr_price_ownership.py",
         "tests/test_lsr_rim_trace_api.py",
         "tests/test_pricebook_record_conflict.py",
+        "tests/test_resource_price_unit_conversion.py",
         "tests/test_rim_session_xlsx.py",
         "tests/test_rim_trace_xlsx.py",
         "tools/les_mcp_server.py"
@@ -4899,7 +4910,8 @@
     {
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
-        "tests/test_lsr_candidate_query_service.py"
+        "tests/test_lsr_candidate_query_service.py",
+        "tests/test_model_rag_query_declaration.py"
       ],
       "lines": 646,
       "module": "proxy.services.lsr_candidate_query_service",
@@ -4976,6 +4988,8 @@
         "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_result_readiness_service.py",
         "tests/test_lsr_source_coverage_service.py",
+        "tests/test_lsr_workbook_catalog_adapter.py",
+        "tests/test_resource_price_unit_conversion.py",
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_workbook_repack_target.py"
       ],
@@ -5002,6 +5016,7 @@
         "tests/test_lsr_price_basis_explicit.py",
         "tests/test_lsr_price_ownership.py",
         "tests/test_lsr_readiness_transport.py",
+        "tests/test_lsr_workbook_catalog_adapter.py",
         "tests/test_model_research_evidence_actions.py",
         "tests/test_model_result_resource_code.py",
         "tests/test_rim_lsr_trace_service.py",
@@ -5275,6 +5290,7 @@
         "proxy/services/model_connection_registry_service.py",
         "proxy/services/model_connection_resolver_service.py",
         "proxy/services/model_connection_security_service.py",
+        "proxy/services/model_wire_token_count_service.py",
         "proxy/services/openai_compatible_transport_service.py",
         "sovushka/pages/model_connections.py",
         "tests/test_canonical_route_service.py",
@@ -5293,6 +5309,7 @@
         "tests/test_model_engine_extension_service.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_reasoning_control.py",
+        "tests/test_model_wire_token_count.py",
         "tests/test_openai_compatible_transport_service.py",
         "tools/model_connection_live_acceptance.py"
       ],
@@ -5454,6 +5471,7 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_mail_query.py",
         "tests/test_context_governor_service.py",
+        "tests/test_context_wire_token_admission.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_connection_chat_options.py",
         "tests/test_model_evidence_read_contract.py",
@@ -5468,6 +5486,7 @@
         "tests/test_model_reasoning_control.py",
         "tests/test_model_research_evidence_actions.py",
         "tests/test_openai_compatible_transport_service.py",
+        "tests/test_workbook_result_carrier_scope.py",
         "tests/test_workbook_task_context.py"
       ],
       "lines": 465,
@@ -5489,7 +5508,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 565,
+      "lines": 568,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -5554,6 +5573,7 @@
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/model_research_tool_service.py",
+        "tests/test_model_evidence_delivery_frontier.py",
         "tests/test_model_norm_evidence_ref_reads.py",
         "tests/test_model_rag_grouped_evidence_service.py",
         "tests/test_model_rag_norm_body_markers.py",
@@ -5676,6 +5696,22 @@
         "proxy/services/__init__.py"
       ],
       "path": "proxy/services/model_secret_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/services/openai_compatible_transport_service.py",
+        "tests/test_model_wire_token_count.py"
+      ],
+      "lines": 190,
+      "module": "proxy.services.model_wire_token_count_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py",
+        "proxy/services/model_connection_contracts.py"
+      ],
+      "path": "proxy/services/model_wire_token_count_service.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -5857,6 +5893,7 @@
         "tests/test_model_query_reasoning.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_reasoning_control.py",
+        "tests/test_model_wire_token_count.py",
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_workbook_chat_refinement.py",
         "tools/model_connection_live_acceptance.py"
@@ -5870,7 +5907,8 @@
         "proxy/services/model_connection_contracts.py",
         "proxy/services/model_connection_resolver_service.py",
         "proxy/services/model_connection_security_service.py",
-        "proxy/services/model_secret_service.py"
+        "proxy/services/model_secret_service.py",
+        "proxy/services/model_wire_token_count_service.py"
       ],
       "path": "proxy/services/openai_compatible_transport_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -6692,6 +6730,7 @@
         "tests/test_money_states_23.py",
         "tests/test_pricebook_record_conflict.py",
         "tests/test_resource_binding_provenance.py",
+        "tests/test_resource_price_unit_conversion.py",
         "tests/test_revision_projection_830.py",
         "tests/test_rim_golden_gesnm38.py",
         "tests/test_rim_lsr_trace_service.py",
@@ -8871,7 +8910,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 7792,
+      "lines": 7805,
       "module": "sovushka.pages.chat",
       "outbound": [
         "backend/rag_config.py",
@@ -10061,7 +10100,7 @@
     },
     {
       "inbound": [],
-      "lines": 410,
+      "lines": 414,
       "module": "tests.test_chat_native_research_exchange",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -10411,6 +10450,19 @@
         "proxy/smeta_core/base_registry.py"
       ],
       "path": "tests/test_context_memory_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 232,
+      "module": "tests.test_context_wire_token_admission",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/context_governor_service.py",
+        "proxy/services/model_execution_preset_service.py"
+      ],
+      "path": "tests/test_context_wire_token_admission.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -11958,6 +12010,19 @@
     },
     {
       "inbound": [],
+      "lines": 90,
+      "module": "tests.test_lsr_workbook_catalog_adapter",
+      "outbound": [
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/lsr_source_coverage_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py"
+      ],
+      "path": "tests/test_lsr_workbook_catalog_adapter.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 281,
       "module": "tests.test_mac_update",
       "outbound": [
@@ -12356,6 +12421,18 @@
     },
     {
       "inbound": [],
+      "lines": 139,
+      "module": "tests.test_model_evidence_delivery_frontier",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/model_rag_grouped_evidence_service.py"
+      ],
+      "path": "tests/test_model_evidence_delivery_frontier.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 454,
       "module": "tests.test_model_evidence_native_exchange",
       "outbound": [
@@ -12592,10 +12669,11 @@
     },
     {
       "inbound": [],
-      "lines": 746,
+      "lines": 767,
       "module": "tests.test_model_rag_query_declaration",
       "outbound": [
-        "proxy/services/chat_evidence_application_service.py"
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/lsr_candidate_query_service.py"
       ],
       "path": "tests/test_model_rag_query_declaration.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -12607,6 +12685,7 @@
         "tests/test_model_inline_field_records.py",
         "tests/test_model_output_diagnostics_tracking.py",
         "tests/test_model_query_reasoning.py",
+        "tests/test_model_token_usage_trace.py",
         "tests/test_workbook_artifact_target.py"
       ],
       "lines": 1287,
@@ -12766,6 +12845,31 @@
         "proxy/services/model_secret_service.py"
       ],
       "path": "tests/test_model_secret_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 110,
+      "module": "tests.test_model_token_usage_trace",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
+      ],
+      "path": "tests/test_model_token_usage_trace.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 270,
+      "module": "tests.test_model_wire_token_count",
+      "outbound": [
+        "proxy/services/model_connection_contracts.py",
+        "proxy/services/model_wire_token_count_service.py",
+        "proxy/services/openai_compatible_transport_service.py"
+      ],
+      "path": "tests/test_model_wire_token_count.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -13973,6 +14077,21 @@
     },
     {
       "inbound": [],
+      "lines": 341,
+      "module": "tests.test_resource_price_unit_conversion",
+      "outbound": [
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/lsr_assembly_service.py",
+        "proxy/services/lsr_source_coverage_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
+        "tests/test_rim_lsr_trace_service.py"
+      ],
+      "path": "tests/test_resource_price_unit_conversion.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 59,
       "module": "tests.test_retrieval_candidate_service",
       "outbound": [
@@ -14092,7 +14211,8 @@
         "tests/lsr_gold_pricebook.py",
         "tests/test_fsem_machinist_service.py",
         "tests/test_lsr_readiness_transport.py",
-        "tests/test_lsr_rim_trace_api.py"
+        "tests/test_lsr_rim_trace_api.py",
+        "tests/test_resource_price_unit_conversion.py"
       ],
       "lines": 2077,
       "module": "tests.test_rim_lsr_trace_service",
@@ -14937,7 +15057,7 @@
     },
     {
       "inbound": [],
-      "lines": 2899,
+      "lines": 2990,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/config.py",
@@ -15912,6 +16032,19 @@
         "proxy/services/workbook_research_job_service.py"
       ],
       "path": "tests/test_workbook_research_job_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 96,
+      "module": "tests.test_workbook_result_carrier_scope",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/context_governor_service.py",
+        "proxy/services/model_execution_preset_service.py"
+      ],
+      "path": "tests/test_workbook_result_carrier_scope.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -20592,12 +20725,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 372,
+    "product_reachable": 373,
     "registered_api_routes": 340,
     "runtime_support": 11,
-    "test_or_tool_only": 707,
-    "tracked_python_files": 1091,
-    "tracked_python_lines": 384430
+    "test_or_tool_only": 714,
+    "tracked_python_files": 1099,
+    "tracked_python_lines": 386158
   },
   "warnings": []
 }

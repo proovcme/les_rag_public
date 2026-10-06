@@ -1,5 +1,63 @@
 # RAG evidence flow
 
+## 905: literal result fields and retained terminal diagnostics
+
+The model-result field instruction now names real row_role/resource_code fields
+and requires copying the displayed source coordinate literally. No JSON-only format,
+decoder repair, source rewrite or professional decision is introduced.
+The query instruction no longer promises automatic per-row searches that are disabled.
+Model-authored query execution and candidate choice stay unchanged. The carrier's
+rows-first rule is clarified as terminal-result ordering after requested reads,
+not a requirement to terminate before using available tools. This clarification
+is not a proven causal explanation of the model's failure to read norm cards.
+On the existing terminal-tool guard, diagnostics preserve full public provider text,
+its UTF-8 SHA/byte count, finish reason, native call names/argument hashes and known
+research shortlist/remaining budget. Human notice, status and tool execution remain
+unchanged. Reasoning/native argument values are excluded; raw audit output is neither
+streamed as an answer nor fed into dialogue memory or executed as another tool call.
+Focused producer71PASS and actual-chat/diagnostic adjacent265PASS; canonical905 pending.
+Installed/live905 pending. There is no claim that these fixes establish norm quality.
+First frozen905 canonical gate PASS:3587 tests/20existing opt-in skips/5warnings;
+all structural/doc/version/map/active-artifact gates PASS, metadata31PASS.
+Independent replay found a temporal binding defect: an unissued early Q2.H1 could
+be populated from a later packet's different card. The delivered B1 draft remained
+unpriced, but prior structural facts and a subsequent validator could promote the alias.
+Trusted first-bind now fixes application evidence maps using that model frame;
+replay and final validation never fill empty/partial saved maps from future aliases.
+Historic model-job packaging projects absent maps to visibly unresolved bindings,
+preserving durable rows/SHA and operation IDs. A technical packaging cache miss is
+allowed; no professional choice or saved job is rewritten. Direct operator rows unchanged.
+Model-authored debug fields remain outside the decoder whitelist. No identity migration,
+new marker, late-evidence lookup, model loop, norm choice or price substitution is added.
+The second frozen905-r2 gate found one existing nested resource-map replay regression
+(3614PASS/1FAIL/20existing opt-in skips). One-line correction recognizes a saved
+nested application map as replay even without the top-level map;110 focused tests PASS.
+Interrupted SSE first-follow also omitted file registration on terminal/paused state
+and left sending active. Existing history/file registration and terminal plans now
+restore downloads and settle send/stop controls without reload or a model call.
+The third exact frozen905-r3 canonical gate PASS:3620 tests/20existing opt-in
+skips/5warnings; metadata31PASS. Compile/collect/version/architecture/map/docs/
+active-artifact checks PASS; untouched TEST_INVENTORY raw hash unchanged.
+UI focused183PASS. Installed live comparisons remain pending. No customer-ready claim.
+
+
+Installed904/0.31.176/e916c68f, guarded patch18.44s, exact runtime hashes PASS.
+Native RRF post-ship smoke PASS; basic smoke retained RED:8PASS/1WARN/1P1FAIL,
+MODEL_OUTPUT_INCOMPLETE on the ordinary unscoped boiler-room question (history823).
+Ordinary provider ended stop/49tokens with a textual tool frame; its original content
+was discarded by the existing guard, so the requested tool cannot yet be proven.
+BAP B0 (same original question, attachment, profile and r8):143.30s, no file;
+structural_error. Two rows copied the instruction's pseudo-label as invalid JSON;
+other rows invented source_file_id#Rn locators that were never issued.
+BAP B1:344.03s, one12662byte draft (SHAa3dc83f9),12/20input rows accepted,
+11work/1material,1position/0calculated, confirmed0/preliminary0. Ten EXACT claims
+include unissued Q2.H1-H10 citations. The initial query repeated the user task;
+later Q2 pointers belong to a different PDF_TEXT pass and cannot ground earlier choices.
+Neither control invoked native exact-card reads or the live wire token counter.
+Measurement completion is not professional acceptance. Customer-ready remains false.
+Large/diverse VOR, artifact-to-VOR, complete norm/resource pricing, FSEM precision
+and the exact new Windows installer remain unaccepted. No public release.
+
 ## 904: source identities, price conversion and evidence/token transport
 
 Trusted source_catalog resolves only actual issued file-ID row aliases that

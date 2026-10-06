@@ -93,7 +93,11 @@ async def test_final_research_request_is_final_only_and_unfinished_protocol_is_n
         if incomplete:
             assert result["crag_status"] == "MODEL_OUTPUT_INCOMPLETE"
             assert result["retrieval_trace"]["model_generation"]["reason"] == "model_tool_request_in_final_answer"
-            assert "<tool_call>" not in json.dumps([result, events, histories], default=str)
+            # Raw public content is retained only in the controlled diagnostic
+            # trace; it must still never become the visible answer/token stream.
+            assert "<tool_call>" not in result["answer"]
+            assert "<tool_call>" not in json.dumps(
+                [event for event in events if event.get("event") == "token"], default=str)
             assert "native_reasoning_content" not in result["answer"]
             assert result["model_connection"]["pending_tool_calls"] == (1 if shape == "native" else 0)
         else:
