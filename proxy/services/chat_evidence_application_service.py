@@ -2330,7 +2330,7 @@ def sheet_pass_query_instruction(
         "но не заменяет данные остальных пакетов. Не придумывай их содержание "
         "и не составляй заново запросы по всему листу. Число операций и запросов "
         "для представленных строк определяешь ты."
-        + "\nКод исполнит возвращённые тобой поисковые запросы дословно. "
+        + "\nЕсли ты решил, что внешний поиск нужен: Код исполнит возвращённые тобой поисковые запросы дословно. "
         "Все выданные карточки — только кандидаты: выбирать норму, оценивать "
         "её применимость и отклонять всех предложенных кандидатов решаешь ты. Отсутствие "
         "кандидата не означает отсутствие нормы в базе, а наличие кандидата не означает, "
@@ -5766,6 +5766,10 @@ def _model_rag_exact_card_key(hit: Any) -> str:
             "pricebook_sha256", "price_evidence",
         )},
     }
+    if meta.get("normative_base_sha256"):
+        identity["provenance"]["normative_base_sha256"] = meta["normative_base_sha256"]
+    if meta.get("retained_normative_base_sha256"):
+        identity["provenance"]["retained_normative_base_sha256"] = meta["retained_normative_base_sha256"]
     return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
 
 
@@ -5981,9 +5985,16 @@ def _model_rag_full_groups(
             meta = dict(getattr(hit, "meta", {}) or {})
             meta.setdefault("doc_id", str(getattr(hit, "doc_id", "") or ""))
             meta.setdefault("doc_name", str(getattr(hit, "doc_name", "") or ""))
+            preview_content, preview_meta = None, None
+            if meta.get("hydration_status") == "ok" and meta.get("hydration_preview_sha256"):
+                from proxy.services.model_research_tool_service import _norm_card_content, norm_preview_metadata
+                candidate = _norm_card_content(meta)
+                if hashlib.sha256(candidate.encode("utf-8")).hexdigest() == meta["hydration_preview_sha256"]:
+                    preview_content, preview_meta = candidate, norm_preview_metadata(meta)
             cards.append(EvidenceCard(ref, _model_rag_source_header(qi, hi, hit),
                                       _model_rag_exact_card_key(hit),
-                                      str(getattr(hit, "content", "") or ""), meta))
+                                      str(getattr(hit, "content", "") or ""), meta,
+                                      preview_content, preview_meta))
             hits[ref] = (qi, hi, query, provenance, addresses, hit)
         groups.append(EvidenceGroup(_model_rag_query_header(qi, query, provenance, addresses), cards))
     return groups, hits
@@ -6012,7 +6023,7 @@ def build_model_rag_evidence_groups(
         qi, hi, query, provenance, addresses, hit = hits[alias]
         body_shown = alias in full
         content = page.body_by_ref[alias] if body_shown else page.pointer_by_ref[alias]
-        meta = dict(getattr(hit, "meta", {}) or {})
+        meta = dict(page.meta_by_ref.get(alias, getattr(hit, "meta", {}) or {}))
         meta.setdefault("doc_id", str(getattr(hit, "doc_id", "") or ""))
         meta.setdefault("doc_name", str(getattr(hit, "doc_name", "") or ""))
         if alias in page.shared_refs:
@@ -6397,7 +6408,7 @@ def format_lsr_unstructured_notice(*, sheet_pass_empty: bool = False) -> str:
 def build_vor_result_readiness(
     *, rows: Sequence[Mapping[str, Any]], has_file: bool,
     remaining_locators: Sequence[str], catalog_work_count: int,
-    model_errors: Sequence[str],
+    model_errors: Sequence[str], draft: bool = False,
 ) -> dict[str, Any]:
     """Expose authored gaps; delivering a VOR does not establish its completeness."""
     structural = [str(error) for error in model_errors if str(error).startswith(
@@ -6412,7 +6423,7 @@ def build_vor_result_readiness(
         title = str(row.get("title") or row.get("source_row") or "Позиция").strip()
         questions.append(f"{title}: {gap}" if gap else f"{title}: требуется уточнение")
     questions = list(dict.fromkeys(questions))
-    technical = bool(has_file) and not remaining_locators and not structural
+    technical = bool(has_file) and not draft and not remaining_locators and not structural
     return {
         "schema": "les.vor-result-readiness.v1", "artifact_kind": "vor_workbook",
         "technical_complete": technical, "vor_complete": technical and not questions,
@@ -6435,7 +6446,9 @@ def format_lsr_packaged_notice(
     """Visible packaging outcome next to the workbook link."""
 
     if artifact_kind == "vor_workbook":
-        notice = f"ВОР сформирован. Файл: {filename}." if filename else "ВОР сформирован."
+        partial = isinstance(readiness, Mapping) and not readiness.get("technical_complete", True)
+        label = "Промежуточный ВОР сформирован; работа не завершена." if partial else "ВОР сформирован."
+        notice = f"{label} Файл: {filename}." if filename else label
         questions = list((readiness or {}).get("open_questions") or [])
         if questions:
             notice += f" Открытые вопросы по исходнику: {len(questions)}. Проверьте замечания в ответе."
@@ -12787,6 +12800,11 @@ async def _execute_chat_evidence_application(
                         if answer:
                             await token_sink({"event": "token", "data": answer})
                     attachment_id = str(getattr(req, "attachment_id", None) or "").strip()
+                    saved_target = ((research_job or {}).get("task_context") or {}).get("artifact_kind_declaration") or {}
+                    if (artifact_kind_declaration.get("status") == "missing"
+                            and saved_target.get("authority") in {"query", "result"}):
+                        artifact_kind_declaration = update_model_artifact_kind(
+                            artifact_kind_declaration, saved_target, phase="restore")
                     packaging_tools = workbook_packaging_tool(
                         profile_tools, str(getattr(req, "question", "") or ""),
                         task_context=(research_job or {}).get("task_context"),
@@ -12807,13 +12825,21 @@ async def _execute_chat_evidence_application(
                     saved_draft_rows = [dict(row) for row in (research_job or {}).get("accepted_rows") or ()
                                         if isinstance(row, Mapping)]
                     can_package_saved_draft = bool(
-                        saved_draft_rows and packaging_tools == ["build_lsr_workbook"]
+                        saved_draft_rows
                         and str((research_job or {}).get("status") or "") == "paused"
-                        and all(str(error) == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH"
-                                or str(error).startswith(("source_quantity_unconfirmed:", "source_quantity_mismatch:"))
-                                for error in model_result_blocking_errors)
+                        and (
+                            packaging_tools == ["build_vor_workbook"]
+                            and artifact_kind_declaration.get("status") == "declared"
+                            and artifact_kind_declaration.get("artifact_kind") == "vor"
+                            and artifact_kind_declaration.get("authority") in {"query", "result"}
+                            or packaging_tools == ["build_lsr_workbook"]
+                            and all(str(error) == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH"
+                                    or str(error).startswith(("source_quantity_unconfirmed:", "source_quantity_mismatch:"))
+                                    for error in model_result_blocking_errors)
+                        )
                     )
-                    packaged_source_locators = cited_source_row_keys(model_result_rows, source_catalog)
+                    packaged_source_locators = cited_source_row_keys(
+                        saved_draft_rows if can_package_saved_draft else model_result_rows, source_catalog)
                     document_issues = workbook_document_issues(
                         research_job, errors=model_result_blocking_errors,
                         transport_diagnostics=transport_diagnostics,
@@ -12827,7 +12853,11 @@ async def _execute_chat_evidence_application(
                         packaging_is_draft = True
                         if model_result_blocking_errors and isinstance(result_meta, dict):
                             old_notice = str(result_meta.get("notice") or "")
-                            draft_notice = "Сохранённые корректные строки включены в промежуточную ЛСР; технические ошибки и неприменённые строки остаются открытыми."
+                            draft_notice = (
+                                "Сохранённые строки решения модели включены в промежуточный ВОР; технические ошибки и неприменённые строки остаются открытыми."
+                                if packaging_tools == ["build_vor_workbook"] else
+                                "Сохранённые корректные строки включены в промежуточную ЛСР; технические ошибки и неприменённые строки остаются открытыми."
+                            )
                             if old_notice:
                                 answer = answer.replace(old_notice, draft_notice, 1)
                             result_meta["notice"] = draft_notice
@@ -12953,7 +12983,7 @@ async def _execute_chat_evidence_application(
                                 ),
                             }
                             execution_context = {
-                                "document_issues": document_issues if packaging_tool == "build_lsr_workbook" else [],
+                                "document_issues": document_issues,
                                 "session_id": str(req.session_id or ""),
                                 "question": str(req.question or ""),
                                 "dataset_ids": [str(item) for item in _dataset_ids],
@@ -13177,6 +13207,7 @@ async def _execute_chat_evidence_application(
                                 remaining_locators=remaining_locators,
                                 catalog_work_count=len(source_catalog.work_locators()) if source_catalog else 0,
                                 model_errors=[*model_result_errors, *((safe_payload or {}).get("vor_source_errors") or [])],
+                                draft=packaging_is_draft,
                             )
                         retrieval_trace["result_readiness"] = lsr_readiness
                         if isinstance(workbook_chat_meta, dict):

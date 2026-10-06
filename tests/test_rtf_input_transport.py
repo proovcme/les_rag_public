@@ -182,6 +182,18 @@ def test_upload_policy_and_existing_pickers_register_rtf_without_expanding_overr
     assert config.rag_upload_suffixes() == {".pdf", ".xlsx"}
 
 
+def test_fresh_runtime_template_accepts_supported_rtf_and_macro_workbooks(monkeypatch):
+    template = (Path(__file__).resolve().parents[1] / "env.example").read_text(encoding="utf-8")
+    values = [line.partition("=")[2] for line in template.splitlines()
+              if line.startswith("RAG_UPLOAD_SUFFIXES=")]
+    assert len(values) == 1
+    monkeypatch.setenv("RAG_UPLOAD_SUFFIXES", values[0])
+    assert {".pdf", ".xlsx", ".xlsm", ".rtf"}.issubset(config.rag_upload_suffixes())
+    # The Windows template also admits the existing optional CAD/BIM intake.
+    assert set(config.DEFAULT_RAG_UPLOAD_SUFFIXES).issubset(config.rag_upload_suffixes())
+    assert {".dwg", ".rvt", ".ifc", ".ifczip"}.issubset(config.rag_upload_suffixes())
+
+
 @pytest.mark.asyncio
 async def test_rtf_upload_exposes_application_warnings_separately_from_exact_native_source(tmp_path, monkeypatch):
     from proxy.routers import datasets

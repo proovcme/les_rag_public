@@ -1,5 +1,15 @@
 # Алгоритм: Спецификация (форма 9, ГОСТ 21.110) → ВОР
 
+##909 — partial model-authored VOR
+
+A late technical failure may deliver only previously saved model-authored rows when the model
+unambiguously declared VOR. Draft/technical error/remaining source information are document-level
+facts; code does not correct decisions or infer missing operations, quantities, norms or parents.
+No-search VOR remains model-declared and skips retrieval. Complete VOR behavior is unchanged.
+Installed diverse-document and professional acceptance are pending; customer-ready false.
+
+Earlier entries record evidence at their stated build/date.
+
 ##908 — literal RTF intake
 
 Strict lexical admission precedes hidden bounded native rendering; no model or OCR is called by the reader.

@@ -418,6 +418,7 @@ def read_norm_card_exact(
     norm_key: str = "",
     norm_code: str = "",
     base_path: str | Path | None = None,
+    expected_base_sha256: str = "",
 ) -> dict[str, Any]:
     """Read one literal identity and all its resources; never search for a substitute.
 
@@ -450,63 +451,189 @@ def read_norm_card_exact(
     if not path.exists():
         result["missing"] = ["normative base unavailable"]
         return result
+    if expected_base_sha256:
+        try:
+            if _actual_base_sha256(path) != expected_base_sha256:
+                result.update(status="conflict", missing=["normative base differs from shown generation"])
+                return result
+        except OSError:
+            result["missing"] = ["normative base identity is unreadable"]
+            return result
     conn = _connect_base_readonly(path)
-    conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
-            "SELECT * FROM norms WHERE norm_key = ?", (selected_key,)
-        ).fetchone()
-        if row is None:
-            result["missing"] = ["exact norm card not found"]
-            return result
-        if _norm_key(str(row["display_code"] or "")) != selected_key:
-            result["status"] = "conflict"
-            result["missing"] = ["stored display code contradicts the requested norm identity"]
-            return result
-        card = _card(conn, row)
-        resource_rows = conn.execute(
-            """
-            SELECT * FROM resources WHERE parent_norm_id = ?
-            ORDER BY CASE kind WHEN 'machine' THEN 0 WHEN 'material' THEN 1 ELSE 2 END,
-                     resource_code, resource_name, rowid
-            """,
-            (row["norm_id"],),
-        ).fetchall()
-        resources: list[dict[str, Any]] = []
-        consumption_known = True
-        for resource in resource_rows:
-            columns = set(resource.keys())
-            per_unit = resource["per_unit"] if "per_unit" in columns else None
-            consumption_known = consumption_known and per_unit is not None
-            item = {
-                "kind": str(resource["kind"] or ""),
-                "code": str(resource["resource_code"] or ""),
-                "name": str(resource["resource_name"] or ""),
-                "unit": str(resource["resource_unit"] or ""),
-                "per_unit": per_unit,
-            }
-            if "source_doc" in columns and "source_guid" in columns:
-                item["source_ref"] = (
-                    f"{resource['source_doc']}#guid={resource['source_guid']}"
-                )
-            if "price" in columns:
-                item["price"] = resource["price"]
-            resources.append(item)
-        count_matches = len(resources) == int(row["resource_count"])
-        if not count_matches:
-            result["warnings"].append("stored resource_count differs from full resource rows")
-        if not consumption_known:
-            result["warnings"].append("resource consumption is missing from source rows")
-        card.update(
-            resources=resources,
-            resources_returned=len(resources),
-            resources_complete=count_matches and consumption_known,
-            resource_consumption_known=consumption_known,
-        )
-        result.update(status="ok", card=card)
-        return result
+        conn.execute("BEGIN")
+        result = _read_norm_card_connection(conn, selected_key)
     finally:
         conn.close()
+    if expected_base_sha256:
+        try:
+            if _actual_base_sha256(path) != expected_base_sha256:
+                return {**result, "status": "conflict", "card": None,
+                        "missing": ["normative base changed during exact card read"]}
+        except OSError:
+            return {**result, "status": "conflict", "card": None,
+                    "missing": ["normative base identity became unreadable"]}
+        if result.get("card") is not None:
+            result["card"].update(normative_base_sha256=expected_base_sha256,
+                                  source_hash_basis="normative_sqlite_base_bytes")
+    return result
+
+
+def _read_norm_card_connection(conn: sqlite3.Connection, selected_key: str) -> dict[str, Any]:
+    """Read literal rows from the caller's one read-only snapshot."""
+    result: dict[str, Any] = {"schema": "smeta_exact_norm_card.v1", "status": "missing",
+                              "card": None, "missing": [], "warnings": []}
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM norms WHERE norm_key = ?", (selected_key,)
+    ).fetchone()
+    if row is None:
+        result["missing"] = ["exact norm card not found"]
+        return result
+    if _norm_key(str(row["display_code"] or "")) != selected_key:
+        result["status"] = "conflict"
+        result["missing"] = ["stored display code contradicts the requested norm identity"]
+        return result
+    card = _card(conn, row)
+    resource_rows = conn.execute(
+        """
+        SELECT * FROM resources WHERE parent_norm_id = ?
+        ORDER BY CASE kind WHEN 'machine' THEN 0 WHEN 'material' THEN 1 ELSE 2 END,
+                 resource_code, resource_name, rowid
+        """,
+        (row["norm_id"],),
+    ).fetchall()
+    resources: list[dict[str, Any]] = []
+    consumption_known = True
+    for resource in resource_rows:
+        columns = set(resource.keys())
+        per_unit = resource["per_unit"] if "per_unit" in columns else None
+        consumption_known = consumption_known and per_unit is not None
+        item = {
+            "kind": str(resource["kind"] or ""),
+            "code": str(resource["resource_code"] or ""),
+            "name": str(resource["resource_name"] or ""),
+            "unit": str(resource["resource_unit"] or ""),
+            "per_unit": per_unit,
+        }
+        if "source_doc" in columns and "source_guid" in columns:
+            item["source_ref"] = (
+                f"{resource['source_doc']}#guid={resource['source_guid']}"
+            )
+        if "price" in columns:
+            item["price"] = resource["price"]
+        resources.append(item)
+    count_matches = len(resources) == int(row["resource_count"])
+    if not count_matches:
+        result["warnings"].append("stored resource_count differs from full resource rows")
+    if not consumption_known:
+        result["warnings"].append("resource consumption is missing from source rows")
+    card.update(
+        resources=resources,
+        resources_returned=len(resources),
+        resources_complete=count_matches and consumption_known,
+        resource_consumption_known=consumption_known,
+    )
+    result.update(status="ok", card=card)
+    return result
+
+
+def _actual_base_sha256(path: Path) -> str:
+    """Uncached byte identity for the exact hydration snapshot, not an XML hash."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _retained_rag_generation(path: Path) -> str:
+    try:
+        manifest = json.loads(_rag_manifest_path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(manifest, dict) or manifest.get("status") != "passed":
+        return ""
+    return str(manifest.get("base_sha256") or "")
+
+
+def hydrate_retained_norm_cards(
+    cards: list[dict[str, Any]], *, base_path: str | Path,
+    expected_base_sha256: str,
+) -> dict[str, Any]:
+    """Expand only retained identities from a verified, unchanged base generation.
+
+    No search, rerank, selection or professional decision occurs here. A failed
+    expansion retains its original preview and alias in the original order.
+    """
+    path = Path(base_path)
+    originals = [dict(card) for card in cards]
+    output = [dict(card) for card in cards]
+    warnings: list[str] = []
+
+    def failed(status: str, reason: str) -> dict[str, Any]:
+        return {"status": "partial", "cards": [
+            {**card, "hydration_status": status, "hydration_warnings": [reason],
+             **({"retained_normative_base_sha256": expected} if re.fullmatch(r"[0-9a-f]{64}", expected) else {})}
+            for card in originals
+        ], "warnings": [reason]}
+
+    if not cards:
+        return {"status": "ok", "cards": [], "warnings": []}
+    expected = str(expected_base_sha256 or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        return failed("source_unverified", "RAG normative base generation SHA is unavailable")
+    try:
+        before = _actual_base_sha256(path)
+    except OSError:
+        return failed("source_unverified", "normative base byte identity is unreadable")
+    if before != expected:
+        return failed("source_unverified", "normative base differs from retained RAG generation")
+    try:
+        conn = _connect_base_readonly(path)
+        try:
+            conn.execute("BEGIN")
+            for index, original in enumerate(originals):
+                key = str(original.get("norm_key") or "")
+                code = str(original.get("norm_code") or "")
+                if not key or not _FULL_CODE_RE.fullmatch(code) or _norm_key(code) != key:
+                    result = {"status": "conflict", "card": None,
+                              "missing": ["retained key/code identity is incomplete or contradictory"]}
+                else:
+                    result = _read_norm_card_connection(conn, key)
+                exact = result.get("card")
+                differences = []
+                if exact is not None:
+                    differences = [name for name in (
+                        "norm_key", "norm_code", "norm_id", "source_ref", "edition", "base_type",
+                        "title", "measure_unit", "work_steps", "resource_count", "resource_kinds",
+                        "resource_preview",
+                    ) if name in original and original[name] != exact.get(name)]
+                if exact is None or differences:
+                    reasons = (result.get("missing") or ["retained card differs from snapshot: " + ", ".join(differences)])
+                    output[index].update(hydration_status="conflict" if differences else result["status"],
+                                         hydration_warnings=list(reasons), retained_normative_base_sha256=expected)
+                    warnings.extend(reasons)
+                    continue
+                output[index].update(
+                    resources=exact["resources"], resources_returned=exact["resources_returned"],
+                    resources_complete=exact["resources_complete"],
+                    resource_consumption_known=exact["resource_consumption_known"],
+                    normative_base_sha256=before, source_hash_basis="normative_sqlite_base_bytes",
+                    hydration_origin="application_typed_exact", hydration_status="ok",
+                    hydration_warnings=list(result.get("warnings") or []),
+                )
+                warnings.extend(result.get("warnings") or [])
+        finally:
+            conn.close()
+        after = _actual_base_sha256(path)
+    except (OSError, sqlite3.Error) as error:
+        return failed("source_unverified", f"exact normative snapshot is unavailable: {type(error).__name__}")
+    if after != before:
+        return failed("source_changed", "normative base changed during exact retained-card hydration")
+    return {"status": "partial" if warnings else "ok", "cards": output,
+            "warnings": list(dict.fromkeys(warnings)), "normative_base_sha256": before,
+            "source_hash_basis": "normative_sqlite_base_bytes"}
 
 
 def _cards_by_norm_keys(norm_keys: list[str], *, base_path: Path) -> list[dict[str, Any]]:
@@ -1626,11 +1753,13 @@ def browse_norms_many(
     table_codes: list[str] | tuple[str, ...] | None = None,
     rerank: bool | None = None,
     expand_queries: bool = False,
+    hydrate_resources: bool = False,
 ) -> dict[str, dict[str, Any]]:
     tool_started = perf_counter()
     bounded_limit = max(1, min(int(limit), 50))
     pool_limit = min(50, max(bounded_limit, bounded_limit * 4, 24))
     path = Path(base_path) if base_path is not None else _base_path()
+    generation = _retained_rag_generation(path) if hydrate_resources else ""
     integrity = normative_base_integrity(base_path=path)
     clean_queries = list(dict.fromkeys(str(query).strip() for query in queries if str(query).strip()))
     clean_base_types = tuple(dict.fromkeys(str(value).strip() for value in (base_types or ()) if str(value).strip()))
@@ -1796,4 +1925,26 @@ def browse_norms_many(
         trace = result.get("retrieval_trace") or {}
         trace["rerank_ms"] = round(rerank_ms, 2)
         trace["tool_total_ms"] = batch_total_ms
+    if hydrate_resources and out:
+        retained = [card for result in out.values() for card in result["cards"]]
+        hydration = hydrate_retained_norm_cards(
+            retained, base_path=path, expected_base_sha256=generation,
+        )
+        if generation != _retained_rag_generation(path):
+            reason = "RAG normative generation changed during retained-card hydration"
+            hydration = {"status": "partial", "cards": [
+                {**card, "hydration_status": "source_changed", "hydration_warnings": [reason],
+                 **({"retained_normative_base_sha256": generation} if re.fullmatch(r"[0-9a-f]{64}", generation) else {})}
+                for card in retained
+            ], "warnings": [reason]}
+        offset = 0
+        for result in out.values():
+            count = len(result["cards"])
+            result["cards"] = hydration["cards"][offset:offset + count]
+            offset += count
+            result["retrieval_trace"]["retained_card_hydration"] = {
+                key: hydration[key] for key in (
+                    "status", "warnings", "normative_base_sha256", "source_hash_basis",
+                ) if key in hydration
+            }
     return out

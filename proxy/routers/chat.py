@@ -400,13 +400,21 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     inherited_basis = task_document_price_basis(job, inherited_basis)
     document_issues = []
     source_catalog = None
-    if repack_tool == "build_lsr_workbook":
+    if repack_tool in {"build_lsr_workbook", "build_vor_workbook"}:
         from proxy.services.attachment_source_catalog_service import load_catalog_from_attachment_id
         from proxy.services.chat_evidence_application_service import cited_source_row_keys
 
         source_catalog = await asyncio.to_thread(load_catalog_from_attachment_id, attachment_id)
         accounted = cited_source_row_keys(decisions, source_catalog)
-        document_issues = workbook_document_issues(job, unaccounted_result_locators=[
+        persisted_diagnostics = []
+        if repack_tool == "build_vor_workbook":
+            from proxy.services.chat_evidence_application_service import (
+                model_rag_pending_result_packets, model_rag_pending_result_projection,
+            )
+            _pending_locators, persisted_diagnostics = model_rag_pending_result_projection(
+                model_rag_pending_result_packets(job.get("held_packet") or {}))
+        document_issues = workbook_document_issues(job, transport_diagnostics=persisted_diagnostics,
+                                                  unaccounted_result_locators=[
             locator for locator in source_catalog.work_locators() if locator not in accounted
         ] if source_catalog is not None else [])
     repack_args = workbook_packaging_args(
@@ -574,14 +582,12 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
         artifact["result_readiness"] = readiness
         harvested["artifact"] = artifact
     elif isinstance(artifact, dict) and repack_tool == "build_vor_workbook":
-        from proxy.services.attachment_source_catalog_service import load_catalog_from_attachment_id
-
-        catalog = await asyncio.to_thread(load_catalog_from_attachment_id, attachment_id)
         artifact["result_readiness"] = build_vor_result_readiness(
             rows=decisions, has_file=bool(artifact.get("download_url")),
             remaining_locators=remaining,
-            catalog_work_count=len(catalog.work_locators()) if catalog else 0,
+            catalog_work_count=len(source_catalog.work_locators()) if source_catalog else 0,
             model_errors=list(payload.get("vor_source_errors") or []),
+            draft=bool(repack_args.get("draft")),
         )
         harvested["artifact"] = artifact
     return {

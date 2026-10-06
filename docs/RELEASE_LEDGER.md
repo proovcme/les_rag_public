@@ -1,5 +1,55 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Candidate 0.31.181 / 909 — exact evidence and partial VOR delivery
+
+Retained norm cards are mechanically hydrated after final ranking, from one read-only
+normative-base snapshot. Query text, IDs, order, selected norms and decisions remain
+model-owned. Actual normative SQLite bytes have their own SHA/basis; failed hydration
+preserves the previous preview and expected generation separately. Full-card delivery
+uses the existing budget. If the first full query group cannot fit, the complete old
+preview page is retained with explicit incomplete flags and guarded native READ.
+Full resources, zero consumption and more than sixteen resources survive exact reads.
+The result instruction requires reading an available selected incomplete card before
+declaring its composition unknown, and distinguishes individual norm codes and Qx.Hy
+evidence references from table headings and document source IDs.
+
+VOR query instructions no longer unconditionally demand norm search. Existing model
+declaration {artifact_kind:vor,queries:[]} remains valid; code neither selects operations
+nor suppresses model-authored queries. A failed late VOR turn can package previously
+saved model rows only with an unambiguous model-declared VOR intent and explicit draft,
+technical-error and remaining-source notices. Completed decisions are not rewritten;
+failed/unprocessed rows remain visible in document-level diagnostics. No new inference
+is made by partial packaging. Normal completed VOR behavior remains covered separately.
+
+Exact wire token-count identity ignores the observed ephemeral /models created field;
+model ID, root, provider, connection revision, wire hash and before/after guards remain.
+Fresh env.example enables already-supported RTF/XLSM without altering existing custom
+upload overrides. No dependencies, model roles, context limits or source-frame defaults
+change. Source frame remains 0; cloud disabled. Installed live proof remains mandatory.
+
+Installed 908 reference is exact commit14e35980: basic smoke9PASS/1WARN/0FAIL in99.34s
+and native RRF PASS. BAP B0/B1 took125.84/180.67s with confirmed money0 in both;
+neither produced a professionally substantiated estimate. B1 preliminary179640.65 is
+not acceptance:63.88% belongs to an inapplicable walking/stop-bracket repair norm.
+Independent judge:artifacts/live_908/acceptance/bap_independent_judge_908.json.
+SKS-to-VOR control stopped after919.34s with no file:25/75 source locators accounted,
+34 durable decisions; fourth query and repair both hit8192 output tokens. Quantities
+were preserved, but wrong operations, parent links and norm references remain model
+quality failures. Query input contained its actual12-row packet plus source headers;
+whole-source oversize is not the measured cause. Independent judge:
+artifacts/live_908/acceptance/sks_vor_independent_judge_908.json.
+
+Both approved real RTFs upload through installed908 with unchanged source/text hashes;
+their extraction limitations remain explicit. This proves transport, not engineering
+completeness. OCR/drawing interpretation, ZIP/multi-document project intake, diverse
+complete VOR/LSR and exact-installer acceptance remain unproven. Exact frozen909 offline canonical gate PASS: 3889 passed, 20 skipped, 5 warnings in 256.10s (0:04:16).
+Mail gate: 66 passed, 4 warnings in 6.42s; metadata: 31 passed in 4.42s.
+All verify/architecture/map/docs/active-artifact checks passed.
+Installed B0/B1 and professional results remain pending. Customer-ready false; no public
+release or guarantee for arbitrary missing/ambiguous source information is claimed.
+
+Earlier entries record evidence at their stated build/date.
+
 ## Candidate 0.31.180 / 908 — quantity instructions, result transport and RTF
 
 The active result instruction distinguishes physical units from the norm's scale:

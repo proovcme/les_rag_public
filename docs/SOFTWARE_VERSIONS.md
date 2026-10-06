@@ -1,5 +1,10 @@
 # Версии программного контура ЛЕС
 
+Candidate0.31.181/build909; installed pre-change reference908/14e35980.
+Original FT r8/profile/dependencies unchanged. Frozen909 offline gate PASS; installed/professional gates pending; customer-ready false.
+
+Earlier entries record evidence at their stated build/date.
+
 Candidate0.31.180/build908; installed pre-change reference907/8fd316a2.
 Dependencies, original FT r8 and active estimator profile unchanged. Frozen offline gate3835PASS; install/professional gates pending.
 
@@ -382,9 +387,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.180` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `908` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.908` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.181` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `909` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.909` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

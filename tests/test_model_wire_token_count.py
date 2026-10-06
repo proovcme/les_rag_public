@@ -192,6 +192,60 @@ async def test_loaded_model_mismatch_or_change_never_admits_count(tmp_path, chan
 
 
 @pytest.mark.asyncio
+async def test_freetoken_response_timestamp_does_not_claim_loaded_model_changed(tmp_path):
+    models_read, requests = 0, []
+
+    def handler(request):
+        nonlocal models_read
+        requests.append(request)
+        if request.method == "GET":
+            models_read += 1
+            metadata = _model()
+            metadata["data"][0]["created"] = 1791288290 + models_read
+            return httpx.Response(200, json=metadata)
+        return httpx.Response(200, json={"input_tokens": 34123})
+
+    transport, client = _transport(tmp_path, handler)
+    try:
+        result = await transport.count_input_tokens(_resolved(extension_type="freetoken"), _request())
+        assert result is not None and result.tokens == 34123
+        assert transport.token_count_snapshot()["status"] == "counted"
+        assert [request.url.path for request in requests] == [
+            "/v1/models", "/v1/messages/count_tokens", "/v1/models"]
+        assert json.loads(requests[1].content) == freetoken_count_payload(
+            transport._chat_body(_resolved(extension_type="freetoken"), _request(), stream=False))
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [("id", "other"), ("root", "another/model"),
+                                        ("owned_by", "another-provider")])
+async def test_stable_identity_change_still_rejects_count_despite_response_timestamp(tmp_path, field, value):
+    models_read = 0
+
+    def handler(request):
+        nonlocal models_read
+        if request.method == "GET":
+            models_read += 1
+            metadata = _model()
+            metadata["data"][0]["created"] = models_read
+            if models_read == 2:
+                metadata["data"][0][field] = value
+            return httpx.Response(200, json=metadata)
+        return httpx.Response(200, json={"input_tokens": 34123})
+
+    transport, client = _transport(tmp_path, handler)
+    try:
+        assert await transport.count_input_tokens(_resolved(extension_type="freetoken"), _request()) is None
+        assert transport.token_count_snapshot()["status"] == "fallback"
+        assert "TOKEN_COUNT_MODEL" in transport.token_count_snapshot()["reason"]
+        assert models_read == 2
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["peer", "redirect", "too_large"])
 async def test_count_reuses_transport_security_and_body_limit(tmp_path, failure):
     def handler(request):

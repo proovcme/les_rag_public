@@ -9,6 +9,7 @@ storage/datasets/{dataset_id}/_parquet/**.parquet. Группировка, св�
 from __future__ import annotations
 
 import logging
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -184,7 +185,8 @@ def bor_to_xlsx(lines: list[BorLine], output_path: Path, title: str = "Ведо�
 
 
 def source_rows_to_vor_xlsx(
-    rows: list[dict], output_path: Path, *, title: str = "Ведомость объёмов работ"
+    rows: list[dict], output_path: Path, *, title: str = "Ведомость объёмов работ",
+    document_issues: list[dict] | None = None, draft: bool = False,
 ) -> int:
     """Render source rows without grouping, changing quantities or losing provenance."""
     from openpyxl import Workbook
@@ -198,6 +200,8 @@ def source_rows_to_vor_xlsx(
     sheet.append([])
     if any(row.get("requires_decision") or row.get("open_gap") or row.get("source_audit") for row in rows):
         sheet["A2"] = "ЧЕРНОВИК — есть вопросы к исходным объёмам или решениям; см. примечания строк"
+    if draft or document_issues:
+        sheet["A2"] = "ВОР НЕ ЗАВЕРШЁН — промежуточная ревизия; см. лист «Проверка»"
     authored_columns = any(row.get("row_role") or row.get("work_row") or row.get("open_gap") or row.get("source_audit") for row in rows)
     headers = ["№", "Раздел", "Наименование", "Код/Шифр", "Ед. изм.", "Кол-во",
                "Источник", "Предполагаемая работа", "Статус решения"]
@@ -241,6 +245,21 @@ def source_rows_to_vor_xlsx(
     for column, width in {"A": 6, "B": 18, "C": 60, "D": 16, "E": 10, "F": 12, "G": 42,
                           "H": 46, "I": 18, **({"J": 14, "K": 20, "L": 64} if authored_columns else {})}.items():
         sheet.column_dimensions[column].width = width
+    if draft or document_issues:
+        check = workbook.create_sheet("Проверка")
+        check.append([sheet["A2"].value])
+        check["A1"].font = Font(bold=True, size=13)
+        check.append([])
+        check.append(["Код", "Причина", "Незакрытые исходные строки", "Диагностика"])
+        for issue in document_issues or []:
+            check.append([str(issue.get("code") or ""), str(issue.get("reason") or ""),
+                          ", ".join(str(item) for item in issue.get("remaining_locators") or []),
+                          json.dumps(issue, ensure_ascii=False)])
+        for column, width in {"A": 42, "B": 72, "C": 55, "D": 80}.items():
+            check.column_dimensions[column].width = width
+        for row in check.iter_rows(min_row=3):
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
     workbook.close()

@@ -415,11 +415,16 @@ async def _default_vor_adapter(
         if row["requires_decision"]:
             requires_decision_count += 1
     progress("source_rows", 0, len(rows))
+    document_issues = [dict(issue) for issue in args.get("_document_issues") or () if isinstance(issue, Mapping)]
+    draft_document = bool(args.get("_draft"))
+    if draft_document and not document_issues:
+        document_issues = [{"code": "WORKBOOK_DRAFT", "reason": "Промежуточная ревизия; работа не завершена."}]
     await asyncio.to_thread(
         source_rows_to_vor_xlsx,
         rows,
         output_path,
         title=str(args.get("question") or "Ведомость объёмов работ"),
+        **({"document_issues": document_issues, "draft": draft_document} if document_issues or draft_document else {}),
     )
     missing: list[str] = []
     for index, row in enumerate(rows, 1):
@@ -439,6 +444,7 @@ async def _default_vor_adapter(
         "missing": missing,
         "vor_source_errors": list(dict.fromkeys(source_errors)),
         "blockers": [],
+        **({"document_issues": document_issues} if document_issues else {}),
     }
 
 
@@ -591,8 +597,10 @@ async def _build_workbook(
             key: value for key, value in normalized.items() if key != "draft"
         }
         adapter_args = {**adapter_payload, "_source_name": str(attachment_meta["original_name"])}
-        if ctx.document_issues and artifact_kind == "lsr_workbook":
+        if ctx.document_issues:
             adapter_args["_document_issues"] = [dict(issue) for issue in ctx.document_issues]
+        if artifact_kind == "vor_workbook" and normalized.get("draft"):
+            adapter_args["_draft"] = True
         generated = await _call_adapter(adapter, source_path, adapter_args, output_path, progress)
         generated_path = Path(str(generated.get("file_path") or output_path))
         display_name = workbook_download_filename(

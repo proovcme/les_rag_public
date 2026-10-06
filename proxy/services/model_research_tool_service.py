@@ -7,6 +7,7 @@ import inspect
 import unicodedata
 import json
 import re
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
@@ -40,7 +41,8 @@ def retrieve_smeta_norm_cards(query: str, *, limit: int = 6) -> dict[str, Any]:
     # Model-owned searches must not trigger legacy domain vocabulary from a
     # product name or a source locator. The exact declared query is the input
     # to the same typed/native-RRF reader, not a template chosen by code.
-    return browse_norms_many([query], limit=limit, rerank=True, expand_queries=False)[str(query)]
+    return browse_norms_many([query], limit=limit, rerank=True, expand_queries=False,
+                            hydrate_resources=True)[str(query)]
 
 
 def _norm_card_content(card: Mapping[str, Any]) -> str:
@@ -90,6 +92,41 @@ def _full_norm_card_content(card: Mapping[str, Any]) -> str:
     parts.append(f"resources_complete={card.get('resources_complete')!r}; "
                  f"resources_returned={card.get('resources_returned', len(card.get('resources') or []))}")
     return "\n".join(parts)
+
+
+def norm_preview_metadata(meta: Mapping[str, Any]) -> dict[str, Any]:
+    """The original whole preview carries no admitted resource consumption."""
+    result = {key: value for key, value in meta.items() if key not in (
+        "resources", "resources_returned", "resources_complete", "resource_consumption_known",
+        "exact_card_read", "normative_card_complete", "normative_resources_status",
+    )}
+    result.update(exact_card_read=False, normative_card_complete=False,
+                  hydration_body_status="preview", full_card_deferred_reason="capacity",
+                  minimum_evidence_body_chars=len(_norm_card_content({**result, "resource_preview": []})))
+    return result
+
+
+def _norm_search_chunk(card: Mapping[str, Any], *, score: float, matched_before_cap: int) -> _SmetaNormChunk:
+    preview = _norm_card_content(card)
+    expanded = card.get("hydration_status") == "ok" and isinstance(card.get("resources"), list)
+    content = _full_norm_card_content(card) if expanded else preview
+    meta = {key: card[key] for key in (
+        "norm_key", "edition", "base_type", "title", "work_steps", "resource_count",
+        "resource_kinds", "resource_preview", "nr_sp_candidates", "resources",
+        "resources_returned", "resources_complete", "resource_consumption_known",
+        "normative_base_sha256", "retained_normative_base_sha256", "source_sha256", "source_hash_basis", "hydration_origin",
+        "hydration_status", "hydration_warnings",
+    ) if key in card}
+    meta.update(norm_code=str(card.get("norm_code") or ""),
+                measure_unit=str(card.get("measure_unit") or ""),
+                source_ref=str(card.get("source_ref") or ""),
+                minimum_evidence_body_chars=len(content) if expanded else len(_norm_card_content({**card, "resource_preview": []})))
+    meta[MATCHED_BEFORE_CAP_META_KEY] = int(matched_before_cap)
+    if expanded:
+        from proxy.services.model_resource_reference_service import resource_slot_records
+        meta.update(resources=resource_slot_records(card), exact_card_read=True,
+                    hydration_preview_sha256=hashlib.sha256(preview.encode("utf-8")).hexdigest())
+    return _SmetaNormChunk(content=content, doc_name="smeta_norm_cards.v1", score=score, meta=meta)
 
 
 def _chunk_payload(chunk: Any) -> dict[str, Any]:
@@ -221,7 +258,8 @@ class ModelResearchToolService:
             return None
         record = {**pointer, "evidence_ref": ref, "title": title}
         record.update({name: meta.get(name, raw.get(name)) for name in (
-            "global_evidence_id", "normative_card_identity", "source_sha256", "edition", "base_type")
+            "global_evidence_id", "normative_card_identity", "source_sha256", "edition", "base_type",
+            "normative_base_sha256", "retained_normative_base_sha256")
             if meta.get(name, raw.get(name)) is not None})
         return record
 
@@ -240,6 +278,10 @@ class ModelResearchToolService:
             source = str(meta.get("source_ref") or raw.get("source_ref") or "").strip()
             if code and (key or source):
                 pointer = {"norm_code": code, "norm_key": key, "source_ref": source}
+                if meta.get("normative_base_sha256"):
+                    pointer["normative_base_sha256"] = meta["normative_base_sha256"]
+                if meta.get("retained_normative_base_sha256"):
+                    pointer["retained_normative_base_sha256"] = meta["retained_normative_base_sha256"]
                 if pointer not in self._shown_norm_cards:
                     self._shown_norm_cards.append(pointer)
                 navigation = self._shown_navigation_pointer(raw, meta, pointer)
@@ -324,7 +366,11 @@ class ModelResearchToolService:
         if reader is None:
             from proxy.smeta_core.norm_browser import read_norm_card_exact
             reader = read_norm_card_exact
-        result = await asyncio.to_thread(reader, norm_key=pointer["norm_key"], norm_code=pointer["norm_code"])
+        read_args = {"norm_key": pointer["norm_key"], "norm_code": pointer["norm_code"]}
+        expected_generation = pointer.get("normative_base_sha256") or pointer.get("retained_normative_base_sha256")
+        if expected_generation and self._norm_card_reader is None:
+            read_args["expected_base_sha256"] = expected_generation
+        result = await asyncio.to_thread(reader, **read_args)
         card = result.get("card")
         if result.get("status") != "ok" or not isinstance(card, Mapping):
             payload = dict(result)
@@ -334,8 +380,10 @@ class ModelResearchToolService:
             pointer["norm_key"] and str(card.get("norm_key") or "") != pointer["norm_key"]
         ):
             return self._missing("read_norm_card", "reader returned a different norm pointer", status="conflict")
-        if verify_source and any(card.get(name) != pointer[name] for name in (
-            "norm_key", "norm_code", "source_ref", "source_sha256", "edition", "base_type",
+        if expected_generation and card.get("normative_base_sha256") != expected_generation:
+            return self._missing("read_norm_card", "reader returned a different normative base generation", status="conflict")
+        if (verify_source or pointer.get("normative_base_sha256")) and any(card.get(name) != pointer[name] for name in (
+            "norm_key", "norm_code", "source_ref", "source_sha256", "edition", "base_type", "normative_base_sha256",
         ) if name in pointer):
             return self._missing("read_norm_card", "reader returned a different immutable norm pointer", status="conflict")
         card = {**card, "nr_sp_candidates": nr_sp_service.model_candidates(code=pointer["norm_code"])}
@@ -343,7 +391,8 @@ class ModelResearchToolService:
         card_meta = {
             **{name: card[name] for name in ("norm_key", "norm_code", "source_ref", "source_sha256", "edition", "base_type",
                  "work_steps", "measure_unit", "resource_count", "resources_returned", "resources_complete",
-                 "resource_consumption_known", "resources", "nr_sp_candidates") if name in card},
+                 "resource_consumption_known", "resources", "nr_sp_candidates", "normative_base_sha256",
+                 "source_hash_basis") if name in card},
             "exact_card_read": True, "minimum_evidence_body_chars": len(content),
             "body_status": "full", "card_body_shown": True,
         }
@@ -589,26 +638,8 @@ class ModelResearchToolService:
                 for card in cards_verified[: self._model_evidence_k]
             ]
             chunks = tuple(
-                _SmetaNormChunk(
-                    content=_norm_card_content(card),
-                    doc_name="smeta_norm_cards.v1",
-                    score=float(max(len(cards) - index, 1)),
-                    meta={
-                        **{
-                            key: card[key]
-                            for key in (
-                                "norm_key", "edition", "base_type", "work_steps", "resource_count",
-                                "resource_kinds", "resource_preview", "nr_sp_candidates",
-                            )
-                            if key in card
-                        },
-                        "norm_code": str(card.get("norm_code") or ""),
-                        "measure_unit": str(card.get("measure_unit") or ""),
-                        "source_ref": str(card.get("source_ref") or ""),
-                        "minimum_evidence_body_chars": len(_norm_card_content({**card, "resource_preview": []})),
-                        MATCHED_BEFORE_CAP_META_KEY: int(matched_before_cap),
-                    },
-                )
+                _norm_search_chunk(card, score=float(max(len(cards) - index, 1)),
+                                   matched_before_cap=matched_before_cap)
                 for index, card in enumerate(cards)
             )
             hits = [_chunk_payload(chunk) for chunk in chunks]
@@ -621,7 +652,9 @@ class ModelResearchToolService:
                 effective_status = "ok"
             else:
                 effective_status = "degraded_sparse_only"
-            result_warnings: list[str] = []
+            result_warnings: list[str] = list(dict.fromkeys(
+                str(warning) for card in cards for warning in card.get("hydration_warnings") or []
+            ))
             if dropped_unverified:
                 result_warnings.append(
                     f"{dropped_unverified} card(s) dropped for missing normative provenance"

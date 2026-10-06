@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build909: retained RRF cards -> exact read-only snapshot hydration -> capacity-truthful model evidence.
+Partial authored VOR -> preserved draft/diagnostic workbook after late technical failure, no model retry.
+Stable model identity guards exact wire counts; existing source-frame/default/budgets stay unchanged.
+
+Earlier entries record evidence at their stated build/date.
+
 Build908: native RTF admission -> literal upload/catalog/readers -> authored VOR -> source-gap partial readiness.
 Native text offsets are explicit; legacy source-frame hashes are preserved. Ordinary final receives READ closure facts.
 Shared active LSR result fields explain scale/consumption; generic header transport preserves model choices.

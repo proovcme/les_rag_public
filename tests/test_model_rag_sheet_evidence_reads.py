@@ -106,15 +106,54 @@ async def test_budget_stop_after_terminal_packet_delivers_partial_workbook_witho
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
-async def test_remote_wire_budget_defers_discovery_bodies_but_keeps_exact_reads(tmp_path, monkeypatch, variant):
+@pytest.mark.parametrize("variant, wire_budget", [
+    ("B0_DIRECT", 50000), ("B1_CANDIDATE", 50000), ("B1_CANDIDATE", 54000),
+])
+async def test_remote_wire_budget_defers_discovery_bodies_but_keeps_exact_reads(tmp_path, monkeypatch, variant, wire_budget):
+    if variant == "B1_CANDIDATE" and wire_budget == 50000:
+        from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+
+        # The current required instructions plus the exact native exchange
+        # exceed the old synthetic 50k boundary. Preserve that boundary as a
+        # fail-closed case rather than discard mandatory text or tool replies.
+        with pytest.raises(service.ModelExecutionFailure) as stopped:
+            await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+                native_discovery_queries=("model additional discovery",), native_discovery_padding=5000,
+                input_token_limit=300000, wire_budget_bytes=wire_budget)
+        assert stopped.value.status_code == 429
+        assert stopped.value.detail["code"] == "CLOUD_TURN_TOKEN_BUDGET"
+        job = WorkbookResearchJobService().get(stopped.value.detail["job_id"])
+        assert job["status"] == "paused" and job["phase"] == "cloud_token_budget"
+        assert set(job["remaining"]) == {"S!R2", "S!R3"}
+        assert job["accepted_rows"] == []
+        assert job["held_packet"]["model_read_pending"] is True
+        receipts = [receipt for group in job["task_context"]["model_evidence_reads"].values()
+                    for receipt in group]
+        assert [receipt["call"]["tool"] for receipt in receipts] == [
+            "search_sources", "read_norm_card", "read_resource_price", "read_resource_price",
+        ]
+        assert all(receipt["status"] == "ok" and receipt["call"]["call_id"] for receipt in receipts)
+        exact_call = receipts[1]["call"]
+        assert exact_call["args"] == {"norm_key": "immutable-norm"}
+        assert exact_call["call_id"] == _native("read_norm_card", norm_key="immutable-norm")["id"]
+        assert [receipt["call"]["args"] for receipt in receipts[2:]] == [
+            {"code": RESOURCE_A}, {"code": RESOURCE_B},
+        ]
+        from proxy.services.model_evidence_read_service import native_evidence_read_exchange
+        exchange = native_evidence_read_exchange([receipt["call"] for receipt in receipts], receipts)
+        assert len(exchange.calls) == len(exchange.replies) == 4
+        assert [call.call_id for call in exchange.calls] == [reply.call_id for reply in exchange.replies]
+        assert [json.loads(reply.content) for reply in exchange.replies] == receipts
+        saved = json.dumps(job["evidence"], ensure_ascii=False)
+        assert "fixture-resource-21" in saved and "21.25" in saved
+        return
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
         native_discovery_queries=("model additional discovery",), native_discovery_padding=5000,
-        input_token_limit=300000, wire_budget_bytes=50000)
+        input_token_limit=300000, wire_budget_bytes=wire_budget)
     assert run.executions
     reads = [r for r in run.requests if any(m.get("role") == "tool" for m in r.messages)]
     assert reads
-    assert all(len(json.dumps(r.messages, ensure_ascii=False).encode("utf-8")) <= 50000 for r in reads)
+    assert all(len(json.dumps(r.messages, ensure_ascii=False).encode("utf-8")) <= wire_budget for r in reads)
     assert any("deferred_capacity" in str(r.messages) for r in reads)
     assert any("fixture-resource-23" in str(r.messages) or RESOURCE_B in str(r.messages) for r in reads)
 

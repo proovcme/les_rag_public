@@ -491,7 +491,12 @@ class OpenAICompatibleTransport:
                         or model.get("owned_by") != TOKEN_COUNT_PROVIDER_OWNER
                         or not isinstance(model.get("root"), str) or not model["root"]):
                     raise ModelTransportError("TOKEN_COUNT_MODEL_IDENTITY_MISMATCH")
-                return wire_sha256({key: model.get(key) for key in ("id", "root", "created", "owned_by")})
+                # The count provider's `created` is a response timestamp, not a load
+                # generation: it changes on successive GETs without a model
+                # change. Bind both counter observations to the validated model,
+                # loaded root and provider; do not let that timestamp discard
+                # a valid exact count. Root/id/provider changes still fail closed.
+                return wire_sha256({key: model.get(key) for key in ("id", "root", "owned_by")})
             except (KeyError, IndexError, TypeError, ValueError) as exc:
                 raise ModelTransportError("TOKEN_COUNT_MODEL_METADATA_INVALID") from exc
         finally:

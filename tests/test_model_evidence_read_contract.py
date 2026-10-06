@@ -20,7 +20,9 @@ def test_preview_count_does_not_claim_consumption_or_prove_missing_norm():
     instruction = MODEL_EVIDENCE_READ_INSTRUCTION
     assert "Обзор ресурсов, даже N из N" in instruction
     assert "не подтверждает их расходы" in instruction
-    assert "либо явно оставь этот конкретный пробел" in instruction
+    assert "выполни доступное read_norm_card до итоговых строк" in instruction
+    assert "Терминальный пробел допустим только после чтения без нужных данных" in instruction
+    assert "либо фактической недоступности инструмента/остановки" in instruction
     assert "Отсутствие цены не означает отсутствие нормы" in instruction
     assert "непрочитанный указатель не доказывает отсутствие подходящей нормы" in instruction
 

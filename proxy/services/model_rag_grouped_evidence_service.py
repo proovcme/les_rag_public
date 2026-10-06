@@ -6,7 +6,7 @@ for deferral. Shared text is byte-exact and always travels with its pointers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 from typing import Any, Mapping, Sequence
@@ -30,6 +30,8 @@ def normative_card_identity(meta: Mapping[str, Any]) -> str:
         "norm_key", "source_ref", "source_sha256", "edition", "base_type",
     )}
     fields["norm_code"] = code
+    if meta.get("normative_base_sha256"):
+        fields["normative_base_sha256"] = meta["normative_base_sha256"]
     payload = json.dumps(fields, ensure_ascii=False, sort_keys=True,
                          separators=(",", ":"), default=str)
     return "norm_card_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -105,6 +107,8 @@ class EvidenceCard:
     identity: str
     content: str
     meta: Mapping[str, Any]
+    preview_content: str | None = None
+    preview_meta: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +129,8 @@ class EvidencePage:
     unshown_refs: list[str]
     pointer_by_ref: dict[str, str]
     rendered_chars: int
+    meta_by_ref: dict[str, Mapping[str, Any]] = field(default_factory=dict)
+    complete_card_deferred_refs: list[str] = field(default_factory=list)
 
 
 def _source_id(source: str) -> str:
@@ -167,6 +173,7 @@ def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int)
     deferred: list[str] = []
     inventory: list[str] = []
     unshown: list[str] = []
+    metadata: dict[str, Mapping[str, Any]] = {}
     for index, group in enumerate(groups):
         parts = [group.header]
         if not group.cards and index < full_count:
@@ -180,6 +187,7 @@ def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int)
             pointer = inventory_pointer(card, full=full)
             pointers[card.ref] = pointer
             inventory.append(card.ref)
+            metadata[card.ref] = card.meta
             parts.append(pointer)
             source = str(card.meta.get("source_ref") or card.meta.get("doc_id") or "")
             if source:
@@ -228,7 +236,7 @@ def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int)
         rendered[0] = "\n\n".join([*shared, rendered[0]])
     chars = len("\n\n".join(rendered))
     return EvidencePage(full_count, rendered, body_refs, shared_refs, bodies, deferred,
-                        inventory, unshown, pointers, chars)
+                        inventory, unshown, pointers, chars, metadata)
 
 
 def plan_full_group_page(groups: Sequence[EvidenceGroup], max_chars: int) -> EvidencePage:
@@ -237,6 +245,26 @@ def plan_full_group_page(groups: Sequence[EvidenceGroup], max_chars: int) -> Evi
 The same plan is used by direct and paged routes. Unshown identities have an
 explicit cursor/count; no truncated card can masquerade as a delivered body.
 """
+    page = _plan_single_body_page(groups, max_chars)
+    if page.included_count or not any(card.preview_content is not None for group in groups for card in group.cards):
+        return page
+    # Full typed resources may not displace a whole preview that already fit.
+    # Choose one entire old preview page, never mix or clip card bodies.
+    previews = [EvidenceGroup(group.header, [
+        EvidenceCard(card.ref, card.header, card.identity,
+                     card.preview_content if card.preview_content is not None else card.content,
+                     card.preview_meta if card.preview_meta is not None else card.meta)
+        for card in group.cards
+    ]) for group in groups]
+    fallback = _plan_single_body_page(previews, max_chars)
+    if not fallback.included_count:
+        return page
+    return replace(fallback, complete_card_deferred_refs=[
+        card.ref for group in groups for card in group.cards if card.preview_content is not None
+    ])
+
+
+def _plan_single_body_page(groups: Sequence[EvidenceGroup], max_chars: int) -> EvidencePage:
     limit = max(0, int(max_chars))
     visible: set[str] = set()
     for group in groups:
