@@ -1,5 +1,48 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Candidate 0.31.182 / 910 — preserve available evidence during hydration
+
+Build909 exact commit dff2c65a has canonical3889 passed/20 historical skips,
+mail66 passed and metadata31 passed. Installed native RRF passed. Initial basic
+smoke had one RAM-health failure at98%; the unchanged repeat after natural model
+TTL expiry passed9/1WARN/0FAIL in60.99s. The same embedding revision received its
+standard expired-capability refresh; answer bindings were not changed.
+
+The failed908 SKS-to-VOR job now publicly repacks its34 saved model decisions,
+without inference or changing durable decisions, held packet or50 remaining
+addresses. The delivered workbook explicitly says VOR NOT FINISHED. This proves
+recovery, not professional completeness. Fresh909 BAP comparison produced files
+in143.67/175.27s, but confirmed money is0 in both. Baseline17 claimed EXACT rows
+are not professional acceptance; candidate19 MISSING decisions do not close the
+engineering task. Independent file review remains authoritative.
+
+An actual same-query/budget replay proved a909 transport regression: hydrated
+whole cards left7 inventory refs and7 admissible native READ refs, versus51 in
+the original whole-preview page. Forty-four refs had become unavailable. Build910
+compares both whole-page plans at the same budget and permits hydration only when
+every legacy inventory and body ref survives. Otherwise it sends the entire
+original preview page with explicit incomplete facts and guarded exact READs.
+Literal queries, RRF order, aliases, resources, decisions, model/profile, source
+frame0 and context limits remain unchanged. No semantic choice is made by code.
+
+Fresh909 also demonstrated a query-transport error: a markdown result table and
+its prose were accepted as35 search lines. Build910 treats a structurally formed
+markdown table outside an explicit query envelope as an invalid query response,
+preserves its literal raw text and reason, and uses the existing bounded format
+repair. It does not invent queries or interpret table cells as searches. Explicit
+JSON queries with commentary tables and supported literal list formats remain.
+
+Receipt: artifacts/live_909/hydration_capacity_comparison.json. Frozen910 offline canonical gate PASS: 3922 passed, 20 skipped, 5 warnings in 258.14s (0:04:18).
+Mail: 66 passed, 4 warnings in 6.64s; metadata: 31 passed in 4.45s.
+All verify/architecture/map/docs/active-artifact checks passed. Installed same-model
+B0/B1, professional varied-document tests and exact Windows installer acceptance
+remain pending. Customer-ready false. Drawing/OCR,
+ZIP/multiple-document engineering completeness and300+row acceptance are unproven.
+
+910 entries: model_rag_grouped_evidence_service.plan_full_group_page; chat_evidence_application_service.read_model_query_response. Status: code/offline verified; installed/professional live unverified.
+
+Earlier entries retain their stated build/date scope.
+
 ## Candidate 0.31.181 / 909 — exact evidence and partial VOR delivery
 
 Retained norm cards are mechanically hydrated after final ranking, from one read-only

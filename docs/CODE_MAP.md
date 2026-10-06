@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build910: retained cards -> both whole evidence plans at the same budget -> exact legacy inventory/body-ref preservation guard. No search or decision rewrite.
+
+Earlier entries retain their stated build/date scope.
+
 Build909: retained RRF cards -> exact read-only snapshot hydration -> capacity-truthful model evidence.
 Partial authored VOR -> preserved draft/diagnostic workbook after late technical failure, no model retry.
 Stable model identity guards exact wire counts; existing source-frame/default/budgets stay unchanged.

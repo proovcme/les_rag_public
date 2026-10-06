@@ -4478,12 +4478,39 @@ def parse_model_rag_queries(raw: str) -> list[str]:
     return accepted
 
 
+def _query_response_has_markdown_table(raw: str) -> bool:
+    """Recognise a table's header/delimiter shape, without judging its words."""
+    lines = str(raw or "").splitlines()
+    for header, delimiter in zip(lines, lines[1:]):
+        if "|" not in header or "|" not in delimiter:
+            continue
+        header_cells = re.split(r"(?<!\\)\|", header.strip().removeprefix("|").removesuffix("|"))
+        delimiter_cells = re.split(r"(?<!\\)\|", delimiter.strip().removeprefix("|").removesuffix("|"))
+        if (len(header_cells) == len(delimiter_cells)
+                and all(re.fullmatch(r"\s*:?-{3,}:?\s*", cell) for cell in delimiter_cells)):
+            return True
+    return False
+
+
 def read_model_query_response(raw: str, **kwargs) -> dict:
     """Adapt an explicit query envelope to the unchanged literal query reader."""
     envelope = decode_model_query_envelope(raw)
     declaration = decode_model_artifact_kind(raw)
     query_text = "\n".join(envelope["queries"]) if envelope is not None else raw
-    declared = read_declared_query_list(query_text, **kwargs)
+    if envelope is None and _query_response_has_markdown_table(raw):
+        # This response used a result-table format, excluded by the literal
+        # query contract. Keep it whole; the existing one format repair applies.
+        # Never extract professional queries from its prose or cut table tail.
+        declared = {
+            "schema": "les.declared-query-list.v1",
+            "queries": [],
+            "accompanying_answer": [{"line": raw, "reason": "result_table_in_query_declaration"}],
+            "unread_tail": "",
+            "answer_cut": bool(finish_reason_is_length(kwargs.get("finish_reason", ""))),
+            "finish_reason": str(kwargs.get("finish_reason") or ""),
+        }
+    else:
+        declared = read_declared_query_list(query_text, **kwargs)
     if envelope is not None and envelope.get("commentary"):
         declared["commentary"] = envelope["commentary"]
     declared["artifact_kind_declaration"] = declaration

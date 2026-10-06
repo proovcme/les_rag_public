@@ -246,9 +246,10 @@ The same plan is used by direct and paged routes. Unshown identities have an
 explicit cursor/count; no truncated card can masquerade as a delivered body.
 """
     page = _plan_single_body_page(groups, max_chars)
-    if page.included_count or not any(card.preview_content is not None for group in groups for card in group.cards):
+    if not any(card.preview_content is not None for group in groups for card in group.cards):
         return page
-    # Full typed resources may not displace a whole preview that already fit.
+    # Typed expansion may not hide any previously visible alias or whole body,
+    # even when its first complete query group fits at the same capacity.
     # Choose one entire old preview page, never mix or clip card bodies.
     previews = [EvidenceGroup(group.header, [
         EvidenceCard(card.ref, card.header, card.identity,
@@ -257,7 +258,8 @@ explicit cursor/count; no truncated card can masquerade as a delivered body.
         for card in group.cards
     ]) for group in groups]
     fallback = _plan_single_body_page(previews, max_chars)
-    if not fallback.included_count:
+    if (set(fallback.inventory_refs).issubset(page.inventory_refs)
+            and set(fallback.body_refs).issubset(page.body_refs)):
         return page
     return replace(fallback, complete_card_deferred_refs=[
         card.ref for group in groups for card in group.cards if card.preview_content is not None
