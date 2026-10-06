@@ -3951,7 +3951,7 @@ def build_documents(
                     auto_upload=True,
                     max_files=1,
                     on_upload=_upload_service_file,
-                ).props("flat accept=.xlsx,.xlsm,.xls,.csv,.pdf,.docx,.md,.txt,.json,.yaml").classes(
+                ).props("flat accept=.xlsx,.xlsm,.xls,.csv,.pdf,.docx,.rtf,.md,.txt,.json,.yaml").classes(
                     "w-full sov-service-file-upload"
                 )
                 service_upload.set_visibility(False)

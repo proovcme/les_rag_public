@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build908: native RTF admission -> literal upload/catalog/readers -> authored VOR -> source-gap partial readiness.
+Native text offsets are explicit; legacy source-frame hashes are preserved. Ordinary final receives READ closure facts.
+Shared active LSR result fields explain scale/consumption; generic header transport preserves model choices.
+
+Earlier entries record evidence at their stated build/date.
+
 Build907: model-authored query phase contract -> shared RAG -> unchanged
 answer/native reader path. Opt-in literal source frame -> original full catalog/reader
 + distinct immutable audit and model render -> durable frame identity. Initial READ

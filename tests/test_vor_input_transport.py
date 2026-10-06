@@ -307,8 +307,11 @@ async def test_authored_header_from_empty_source_keeps_row_and_exposes_source_ga
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("suffix", [".rtf", ".zip"])
-async def test_rtf_zip_are_explicitly_unsupported_even_with_decisions(tmp_path, suffix):
+@pytest.mark.parametrize("suffix,status,code", [
+    (".rtf", "failed", "WORKBOOK_GENERATION_FAILED"),
+    (".zip", "rejected", "UNSUPPORTED_ATTACHMENT_TYPE"),
+])
+async def test_malformed_rtf_and_unsupported_zip_fail_closed_even_with_decisions(tmp_path, suffix, status, code):
     source = tmp_path / f"Источник{suffix}"
     source.write_bytes(b"unsupported fixture")
     meta = preserve_read_attachment(source, attachment_id="read_123456abcdef", original_name=source.name,
@@ -319,5 +322,8 @@ async def test_rtf_zip_are_explicitly_unsupported_even_with_decisions(tmp_path, 
         _context(tmp_path),
     )
 
-    assert result["status"] == "rejected"
-    assert result["code"] == "UNSUPPORTED_ATTACHMENT_TYPE"
+    assert result["status"] == status
+    assert result["code"] == code
+    if suffix == ".rtf":
+        assert result["error_type"] == "RtfParserError"
+        assert result["message"] == "RTF_INVALID_HEADER"

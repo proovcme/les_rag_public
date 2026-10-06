@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from backend.runtime_paths import mutable_path
+from proxy.config import DEFAULT_RAG_UPLOAD_SUFFIXES
 from typing import Any, Mapping
 
 from proxy.services.llm_transport_profile_service import (
@@ -177,6 +178,8 @@ _FACTOR_PRESENTATION = {
     },
 }
 _EXPLICIT_FACTOR_DEFAULTS = {
+    # The config accessor joins a tuple; AST discovery cannot infer that value.
+    "RAG_UPLOAD_SUFFIXES": ",".join(DEFAULT_RAG_UPLOAD_SUFFIXES),
     "LES_CHAT_SOURCE_FRAME_ROWS": "0",
     "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS": "",
     # Web factors are read through an injected Mapping; numeric admission

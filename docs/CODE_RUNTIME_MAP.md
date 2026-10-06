@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1103 |
-| Строк Python | 387797 |
-| PRODUCT_REACHABLE | 373 |
+| Python-файлов под git | 1114 |
+| Строк Python | 390902 |
+| PRODUCT_REACHABLE | 375 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 718 |
+| TEST_OR_TOOL_ONLY | 727 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 340 |
 | Ошибок разбора | 0 |
@@ -32,21 +32,21 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 13593 | 55 |
+| proxy/services/chat_evidence_application_service.py | 13667 | 61 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7805 | 7 |
-| proxy/routers/chat.py | 4830 | 48 |
+| proxy/routers/chat.py | 4830 | 49 |
 | backend/qdrant_adapter.py | 4580 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |
-| proxy/routers/datasets.py | 3787 | 16 |
+| proxy/routers/datasets.py | 3811 | 17 |
 | sovushka/styles.py | 3301 | 3 |
 | proxy/services/rim_lsr_trace_service.py | 3286 | 36 |
 | sovushka/pages/samovar.py | 2966 | 3 |
-| proxy/services/workbook_research_job_service.py | 2909 | 30 |
+| proxy/services/workbook_research_job_service.py | 2909 | 32 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
-| proxy/services/lsr_norm_quality_gate_service.py | 2233 | 10 |
+| proxy/services/lsr_norm_quality_gate_service.py | 2233 | 11 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
 | proxy/smeta_core/norm_browser.py | 1799 | 16 |
@@ -58,10 +58,10 @@
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
-| proxy/services/tool_harness_service.py | 1408 | 14 |
+| proxy/services/tool_harness_service.py | 1408 | 15 |
+| proxy/services/attachment_source_catalog_service.py | 1290 | 28 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
-| proxy/services/attachment_source_catalog_service.py | 1230 | 25 |
 
 ## Сметный монолит: фактические потребители
 

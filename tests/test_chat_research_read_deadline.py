@@ -14,7 +14,7 @@ from proxy.services import chat_evidence_application_service as service
 from proxy.services.openai_compatible_transport_service import InferenceResponse
 from proxy.services.tool_harness_service import ToolHarness
 from proxy.services.web_research_config_service import WebResearchConfig
-from tests.test_chat_ordinary_native_continuation import _call, _payload
+from tests.test_chat_ordinary_native_continuation import _call, _ordinary, _payload
 from test_chat_evidence_application_service import (
     test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_model_count as _run_actual_chat,
 )
@@ -279,3 +279,100 @@ async def test_actual_call_ledger_includes_every_initial_selector_and_native_con
     replies = [message for message in final_messages if message.get("role") == "tool"]
     assert [message["tool_call_id"] for message in replies] == [call["id"] for call in native_calls]
     assert captures["result"]["answer"] == "Final answer from the original and additional sources."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["repeated_read_batch", "calls_budget", "deadline"])
+async def test_initial_tools_off_final_exposes_actual_read_closure_without_another_inference(
+    monkeypatch, tmp_path, stop_reason,
+):
+    from proxy.services import tool_harness_service
+
+    clock = SimpleNamespace(now=100.0)
+    captures, executions = {}, []
+    broker = ToolHarness(web_config=WebResearchConfig("extended", "http://127.0.0.1:8888", "", ""))
+    original = _call("first-read", arguments='{ "q" : "literal original query" }')
+    repeat = _call("same-read-new-id", arguments='{  "q": "literal original query"  }')
+    responses = [InferenceResponse(text="", tool_calls=(original,), finish_reason="tool_calls", usage={})]
+    if stop_reason == "repeated_read_batch":
+        responses.append(InferenceResponse(text="", tool_calls=(repeat,), finish_reason="tool_calls", usage={}))
+    responses.append(InferenceResponse(text="Final answer with the remaining unknowns.", tool_calls=(),
+                                       finish_reason="stop", usage={}))
+
+    class Harness:
+        def shortlist(self, *args, **kwargs):
+            return broker.shortlist(*args, **kwargs)
+
+        def call(self, tool, args):
+            executions.append((tool, deepcopy(args)))
+            return _payload(tool, args)
+
+    async def setup(request, runtime, boundary):
+        monkeypatch.setattr(service, "time", SimpleNamespace(monotonic=lambda: clock.now, time=time.time))
+        original_env_int = runtime.env_int
+        call_budget = 1 if stop_reason == "calls_budget" else 3
+        runtime = replace(runtime, env_int=lambda key, default=0: call_budget
+                          if key == "LES_CHAT_TOOL_MAX_CALLS" else original_env_int(key, default))
+        monkeypatch.setattr(tool_harness_service, "harness", lambda **kwargs: Harness())
+        transport = runtime.model_connection_transport(None, None)
+        transport.responses = responses
+        original_complete = transport.complete
+
+        async def complete(connection, inference_request):
+            result = await original_complete(connection, inference_request)
+            if stop_reason == "deadline" and len(transport.requests) == 1:
+                clock.now = 1000.0
+            return result
+
+        monkeypatch.setattr(transport, "complete", complete)
+        captures["transport"] = transport
+        captures["profile_prompt"] = request.profile_snapshot["prompt_text"]
+        captures["result"] = await service.run_chat_evidence_application(request, runtime, boundary)
+
+    await _run_actual_chat(monkeypatch, tmp_path, "active_web_research", application_setup=setup)
+    transport = captures["transport"]
+    final = transport.requests[-1]
+    assert not final.tools
+    prefix = next(message["content"] for message in final.messages if message["role"] == "system")
+    assert captures["profile_prompt"] in prefix
+    assert '"read_closed": true' in prefix, "the tools-off final must disclose the actual read boundary"
+    assert f'"stop_reason": "{stop_reason}"' in prefix
+    assert "Новые READ-вызовы на этом этапе запрещены" in prefix
+    assert len(transport.requests) == (3 if stop_reason == "repeated_read_batch" else 2)
+    assert len(set(transport.revisions)) == 1
+    assert len(executions) == (0 if stop_reason == "deadline" else 1)
+    loop = captures["result"]["retrieval_trace"]["tool_loop"]
+    assert loop["stop_reason"] == stop_reason
+    assert [call["purpose"] for call in captures["result"]["retrieval_trace"]["actual_model_calls"]["calls"]] == (
+        ["tool_decision"] * (len(transport.requests) - 1) + ["answer"])
+    expected_calls = [original, repeat] if stop_reason == "repeated_read_batch" else [original]
+    literal_calls = [call for message in final.messages for call in message.get("tool_calls", ())]
+    assert literal_calls == expected_calls
+    replies = [message for message in final.messages if message.get("role") == "tool"]
+    assert [reply["tool_call_id"] for reply in replies] == [call["id"] for call in expected_calls]
+    assert captures["result"]["answer"] == "Final answer with the remaining unknowns."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["repeated_read_batch", "calls_budget", "deadline"])
+async def test_late_tools_off_final_exposes_closure_only_after_reading_is_closed(monkeypatch, tmp_path, stop_reason):
+    if stop_reason == "repeated_read_batch":
+        calls = [_call("late-repeat", arguments='{ "q": "original query" }')]
+    else:
+        calls = [_call("late-one")]
+        if stop_reason == "calls_budget":
+            calls.append(_call("late-two", arguments='{ "q": "second late query" }'))
+    run = await _ordinary(monkeypatch, tmp_path, late_calls=calls, max_calls=3,
+                          expire_after_answer=stop_reason == "deadline")
+    assert len(run.transport.requests) == 4
+    open_read_request, final_request = run.transport.requests[2:]
+    assert open_read_request.tools and not final_request.tools
+    open_prefix = next(message["content"] for message in open_read_request.messages if message["role"] == "system")
+    final_prefix = next(message["content"] for message in final_request.messages if message["role"] == "system")
+    assert '"read_closed": true' not in open_prefix, "an available native READ must not receive a false closure"
+    assert '"read_closed": true' in final_prefix
+    assert f'"stop_reason": "{stop_reason}"' in final_prefix
+    assert "Новые READ-вызовы на этом этапе запрещены" in final_prefix
+    assert len(set(run.transport.revisions)) == 1
+    assert len(run.executions) == (3 if stop_reason == "calls_budget" else 1)
+    assert run.result["answer"] == "Verified answer from the original and additional sources."

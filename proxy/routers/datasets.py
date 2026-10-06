@@ -3486,6 +3486,8 @@ async def _prepare_read_attachment(
     from uuid import uuid4
 
     attach_id = attachment_id or f"read_{uuid4().hex[:12]}"
+    suffix = Path(original_name).suffix.lower()
+    extraction_facts: dict[str, Any] = {}
     if Path(original_name).suffix.lower() == ".docx":
         from proxy.services.chat_attachment_service import docx_is_image_only
 
@@ -3509,7 +3511,29 @@ async def _prepare_read_attachment(
         from backend.converter import convert_to_markdown
 
         try:
-            text = await asyncio.to_thread(convert_to_markdown, temp_path)
+            if suffix == ".rtf":
+                from backend.rtf_parser import extract_rtf
+
+                native = await asyncio.to_thread(extract_rtf, temp_path)
+                extraction_facts = {
+                    "source_extraction_origin": "application/native_rtf_reader",
+                    "source_extraction_complete": native.extraction_complete,
+                    "source_extraction_warnings": list(native.warnings),
+                    "source_sha256": native.source_file_sha256,
+                    "source_text_sha256": native.text_sha256,
+                    "source_text_chars": len(native.text),
+                }
+                # Application metadata is visibly separate from authored source.
+                # Typed catalog offsets remain in the unchanged native text,
+                # never in this preview prefix or in original RTF byte space.
+                prefix = (
+                    "[Предупреждения извлечения приложения; это не текст исходного RTF]\n"
+                    + "\n".join(f"[WARN] {warning}" for warning in native.warnings)
+                    + "\n[Текст источника]\n"
+                )
+                text = prefix + native.text
+            else:
+                text = await asyncio.to_thread(convert_to_markdown, temp_path)
         except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
             logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
             raise HTTPException(
@@ -3517,11 +3541,10 @@ async def _prepare_read_attachment(
                 f"Не удалось прочитать файл «{original_name}»: {error}. "
                 "Попробуй режим индексации/OCR или другой формат файла.",
             ) from error
-        text = (text or "").strip()
+        text = (text or "") if suffix == ".rtf" else (text or "").strip()
         truncated = len(text) > _READ_ATTACH_MAX_CHARS
 
-    text = (text or "").strip()
-    suffix = Path(original_name).suffix.lower()
+    text = (text or "") if suffix == ".rtf" else (text or "").strip()
     if not text:
         # PDF/XLSX VOR still needs the original bytes for document LSR intake even
         # when chat-facing text extraction is empty.
@@ -3551,6 +3574,7 @@ async def _prepare_read_attachment(
         "chars": len(text),
         "text": text[:_READ_ATTACH_MAX_CHARS],
         "truncated": truncated,
+        **extraction_facts,
     }
 
 

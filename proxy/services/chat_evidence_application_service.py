@@ -957,6 +957,18 @@ def research_deadline_blocked_payload(tool_name: str) -> dict[str, Any]:
     }
 
 
+def ordinary_research_final_instruction(stop_reason: str) -> str:
+    """Expose the technical READ closure without changing model-owned evidence."""
+    state = {"schema": "les.research-final-state.v1", "origin": "application",
+             "read_closed": True, "stop_reason": str(stop_reason or "unknown")}
+    return (FINAL_RESEARCH_INSTRUCTION
+            + "\nФактическое состояние чтения от приложения: "
+            + json.dumps(state, ensure_ascii=False, sort_keys=True)
+            + "\nНовые READ-вызовы на этом этапе запрещены, включая повторные. "
+              "Запросы инструментам в тексте не будут исполнены. "
+              "Сформулируй итоговый ответ по сохранённым источникам и явно назови оставшиеся пробелы.")
+
+
 def native_research_call_batch(
     response: InferenceResponse | None,
     executed_calls: Sequence[Mapping[str, Any]],
@@ -2096,8 +2108,13 @@ _MODEL_RAG_QUERY_INSTRUCTION = (
     "Без обращения к собеседнику, без описания "
     "плана и без ожидания подтверждения. Пользовательские замечания задают "
     "требования к конечному документу: не превращай инструкции о формате, "
-    "инструментах, проверках или параметрах цены в поисковые запросы. "
-    "Не копируй задачу; запрос называет нужную работу или ресурс исходника."
+        "инструментах, проверках или параметрах цены в поисковые запросы. "
+    "Не копируй задачу; запрос называет нужную работу или ресурс исходника. "
+    "Регион и период цен относятся к закреплённой книге цен, а не к параметрам нормы; "
+    "реальную редакцию ФСНБ и условия работы сохраняй. "
+    "Цены нормативных ресурсов проверяй после чтения точной карточки штатными инструментами чтения цен, "
+    "search_pricebook_resources и read_resource_price; коммерческие предложения ищи в ответном этапе "
+    "через search_sources с target=documents и read_source."
 )
 _MODEL_RAG_QUERY_REPAIR_INSTRUCTION = (
     "Предыдущий ответ не содержал поисковых строк. Верни только результат "
@@ -4638,6 +4655,60 @@ def parse_model_rag_result(
 
     def field_name(value: str) -> str:
         normalized = " ".join(value.replace("**", "").strip().split()).casefold()
+        # Annotations decorate a declared field; they never supply a missing
+        # field or change a cell value. Exact legacy labels keep their meaning.
+        if normalized in header_fields:
+            return header_fields[normalized]
+        for _ in range(len(normalized)):
+            wrapper = next((marker for marker in ("__", "`", "*", "_")
+                            if normalized.startswith(marker) and normalized.endswith(marker)
+                            and len(normalized) > 2 * len(marker)), "")
+            if not wrapper:
+                break
+            normalized = normalized[len(wrapper):-len(wrapper)].strip()
+        if normalized in header_fields:
+            return header_fields[normalized]
+
+        # Only top-level slashes separate labels. A slash inside a balanced
+        # annotation is literal text. Composite labels must name the same field.
+        depth = 0
+        start = 0
+        parts: list[str] = []
+        for offset, character in enumerate(normalized):
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth < 0:
+                    return ""
+            elif character == "/" and depth == 0:
+                parts.append(normalized[start:offset].strip())
+                start = offset + 1
+        if depth:
+            return ""
+        if parts:
+            parts.append(normalized[start:].strip())
+            names = [field_name(part) for part in parts]
+            names = ["coverage" if name == "coverage_fallback" else name for name in names]
+            return names[0] if names and all(name == names[0] and name for name in names) else ""
+
+        # Remove complete trailing annotations only. Unknown prefixes and
+        # intervening prose remain unknown rather than being guessed from text.
+        while normalized.endswith(")"):
+            depth = 0
+            opening = -1
+            for offset in range(len(normalized) - 1, -1, -1):
+                character = normalized[offset]
+                if character == ")":
+                    depth += 1
+                elif character == "(":
+                    depth -= 1
+                    if depth == 0:
+                        opening = offset
+                        break
+            if opening < 0:
+                return ""
+            normalized = normalized[:opening].rstrip()
         return header_fields.get(normalized, "")
 
     if json_rows is None and not transport_diagnostics:
@@ -11609,7 +11680,8 @@ async def _execute_chat_evidence_application(
                     try:
                         messages, answer_packet = govern_inference_messages(
                             preset=answer_execution_preset,
-                            profile_prefix=sys_msg + (FINAL_RESEARCH_INSTRUCTION
+                            profile_prefix=sys_msg + (ordinary_research_final_instruction(
+                                str((retrieval_trace.get("tool_loop") or {}).get("stop_reason") or "unknown"))
                                 if research_native_exchanges and not model_driven_retrieval and not answer_native_tools else ""),
                             request_payload=question_tail,
                             native_tools=answer_native_tools,
@@ -11914,7 +11986,9 @@ async def _execute_chat_evidence_application(
                         try:
                             read_messages, read_packet = govern_inference_messages(
                                 preset=answer_execution_preset,
-                                profile_prefix=sys_msg + ("" if remaining_tools else FINAL_RESEARCH_INSTRUCTION),
+                                profile_prefix=sys_msg + ("" if remaining_tools else ordinary_research_final_instruction(
+                                    str(loop_trace.get("ordinary_read_stop") or
+                                        ("calls_budget" if calls_remaining <= 0 else "deadline")))),
                                 request_payload=question_tail, native_tools=remaining_tools,
                                 checkpoint=answer_checkpoint, working_memory=answer_working_memory,
                                 evidence=answer_evidence, source_map=answer_source_map,

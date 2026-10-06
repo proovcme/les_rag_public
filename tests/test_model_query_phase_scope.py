@@ -16,6 +16,8 @@ from proxy.services.prompt_registry_service import build_factory_mode_system_pro
 _PHASE_MARKER = "Технический этап составления поисковых запросов"
 _FINAL_CITATION_RULE = "Правила ссылок [Источник N] относятся к последующему ответу оператору"
 _ANSWER_CITATION_RULE = "Ссылки оформляй номерами из заголовков [Источник N]"
+_PRICE_SCOPE_RULE = "Регион и период цен относятся к закреплённой книге цен, а не к параметрам нормы"
+_PRICE_READ_RULE = "Цены нормативных ресурсов проверяй после чтения точной карточки"
 
 
 def _snapshot(mode: str = "estimator", *, factory: bool = False) -> dict:
@@ -128,6 +130,30 @@ def test_sheet_query_uses_the_same_contract_before_any_candidate_retrieval():
     assert "Код исполнит возвращённые тобой поисковые запросы дословно" in sheet
 
 
+@pytest.mark.parametrize("factory", [False, True])
+@pytest.mark.parametrize("sheet", [False, True])
+def test_query_pricing_scope_is_common_to_primary_repair_and_continuation_without_profile_rewrite(factory, sheet):
+    snapshot = _snapshot(factory=factory)
+    before = copy.deepcopy(snapshot)
+    query = (service.sheet_pass_query_instruction(snapshot, sheet="Лист Ω", sheet_index=1, sheet_count=2)
+             if sheet else service.model_rag_query_instruction(snapshot))
+    prefix = service.profile_system_prompt(snapshot, strict=False, purpose="query")
+    literal = 'Нормативный ресурс Ω, редакция ФСНБ из исходника; условия работы'
+    for tail in ("", service._MODEL_RAG_QUERY_REPAIR_INSTRUCTION,
+                 service.declared_query_continuation_instruction([literal], "Хвост Ω")):
+        delivered = prefix + "\n\n" + query + "\n\n" + tail
+        assert _PRICE_SCOPE_RULE in delivered
+        assert "реальную редакцию ФСНБ и условия работы сохраняй" in delivered
+        assert _PRICE_READ_RULE in delivered
+        assert "штатными инструментами чтения цен" in delivered
+        assert "коммерческие предложения" in delivered and "target=documents" in delivered
+        assert "в ответном этапе" in delivered and "read_source" in delivered
+        assert "запрос называет нужную работу или ресурс исходника" in delivered
+        assert snapshot["prompt_text"] in delivered and snapshot["skill_text"] in delivered
+    assert literal in tail
+    assert snapshot == before
+
+
 @pytest.mark.asyncio
 async def test_actual_baseline_and_candidate_use_identical_query_scope_and_repair(tmp_path, monkeypatch):
     from tests.test_model_rag_sheet_evidence_reads import _run_sheet
@@ -141,6 +167,7 @@ async def test_actual_baseline_and_candidate_use_identical_query_scope_and_repai
             run = await _run_sheet(variant_dir, variant_patch, reads=True, variant=variant,
                                    query_repair=True, temperature=0.65, query_reasoning_enabled=False)
         assert not run.responses and len(run.requests) == 5 and len(run.executions) == 1
+        assert [query for query in run.queries if query in run.declared_queries] == run.declared_queries
         query_requests = run.requests[:2]
         scopes[variant] = []
         for request in query_requests:
@@ -154,6 +181,9 @@ async def test_actual_baseline_and_candidate_use_identical_query_scope_and_repai
             assert request.reasoning_enabled is False
             assert system.count(_PHASE_MARKER) == 1
             assert common_contract in system
+            assert _PRICE_SCOPE_RULE in system
+            assert _PRICE_READ_RULE in system
+            assert "реальную редакцию ФСНБ и условия работы сохраняй" in system
             # The candidate legitimately names its current sheet/packet. The
             # technical phase, format and repair contract must remain common.
             phase_start = system.index(_PHASE_MARKER)

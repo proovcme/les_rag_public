@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
 from proxy.services import nr_sp_service
-from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog
+from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog, catalog_source_order_basis
 from proxy.services.model_rag_grouped_evidence_service import (
     EvidenceCard, card_delivery_facts, inventory_pointer, normative_card_identity,
 )
@@ -385,7 +385,7 @@ class ModelResearchToolService:
                  "body_complete": True, "source_extraction_complete": catalog.extraction_complete}
         if row.source_start is not None and row.source_end is not None:
             facts.update(source_start=row.source_start, source_end=row.source_end,
-                         source_order_basis="converter_markdown_char_offsets")
+                         source_order_basis=catalog_source_order_basis((row,)))
         chunk = _SmetaNormChunk(content=content, doc_name=catalog.original_name, score=1.0, meta={
             **facts, "doc_id": catalog.source_file_id, "source_read": True, "attachment_source_read": True,
             "content_complete": True, "body_status": "full", "minimum_evidence_body_chars": len(content),

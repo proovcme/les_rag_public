@@ -1,5 +1,21 @@
 # ADR-15 — Модель → RAG → результат модели → расчёт и XLSX
 
+##908 — result and query contracts
+
+The active result instruction distinguishes physical units from the norm's scale:
+source quantity/unit stay unchanged; code applies the norm scale once. Resource
+consumption needs the complete card or a formula with provenance. Query instructions
+separate the pricebook's region/period from norm search, retaining actual FSNB edition
+and conditions. No query rewriting, norm choice, inferred quantities or verdict change.
+Ordinary tools-off final calls now expose their actual READ closure reason without
+new inference or execution of printed XML. Generic decorated result headers are
+parsed mechanically; absent source/evidence fields remain explicit structural gaps.
+
+
+Installed professional proof is pending. Existing model choices and past artifact bytes are preserved.
+
+Earlier entries record evidence at their stated build/date.
+
 ## Build907: experimental literal source frames
 
 The complete-input route remains the default (`LES_CHAT_SOURCE_FRAME_ROWS=0`).

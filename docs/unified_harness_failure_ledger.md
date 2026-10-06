@@ -1,5 +1,49 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## Candidate 0.31.180 / 908 — quantity instructions, result transport and RTF
+
+The active result instruction distinguishes physical units from the norm's scale:
+source quantity/unit stay unchanged; code applies the norm scale once. Resource
+consumption needs the complete card or a formula with provenance. Query instructions
+separate the pricebook's region/period from norm search, retaining actual FSNB edition
+and conditions. No query rewriting, norm choice, inferred quantities or verdict change.
+Ordinary tools-off final calls now expose their actual READ closure reason without
+new inference or execution of printed XML. Generic decorated result headers are
+parsed mechanically; absent source/evidence fields remain explicit structural gaps.
+
+RTF uses strict structural admission and a bounded hidden OS text reader. Converter,
+upload, catalog, authored VOR packaging and existing UI pickers share this intake.
+Verified table cells are literal; ambiguous tabs stay one-cell text rows. Native-text
+offsets have their own basis, never original RTF-byte offsets. All extraction warnings
+and source hashes survive to readers, frames, workbook and readiness; VOR source gaps
+are partial in both the first result and durable replay. Empty optional offset metadata
+does not change existing 907 frame bytes/hashes. No dependencies or model roles change.
+
+Installed 907 measurements remain the pre-change reference. First-six BAP B0 took
+49.23s, returned 8 decisions (6 works + 2 materials), confirmed money zero. Whole B1
+took 421.28s and returned 20 decisions, zero EXACT; 19 source work locators were
+accounted, PDF_TEXT remained open. Its preliminary 1,132,660.15 is not an accepted
+estimate: 89.82% comes from an inapplicable glass fireproofing analogue for film cover.
+Full-input B0 took 164.5s, 19 decisions/one EXACT, confirmed zero. A separate isolated
+temperature-zero B0 took 63.97s, returned a real but structurally deficient Markdown
+table and no file. Neither thinking, temperature-zero nor six-row input has proved
+professional readiness. Source-frame factor 0 and the original active profile are
+restored; no cloud calls. Basic 907 smoke is RED: history835 returned printed XML
+after repeated_read_batch despite available context, not a timeout or missing evidence.
+
+Local RTF probes preserve both approved originals: LVS has 831 ambiguous literal
+text rows; KFIS has 2,433 verified table rows/25,148 cells. Both retain merge/tab/line
+limitations and source_extraction_complete=false. These are intake measurements,
+not accepted engineering VOR/LSR. OCR/drawing interpretation, ZIP project intake,
+full pricing and diverse/big-document professional acceptance remain unproven.
+Exact frozen 908 offline gate PASS: 3835 passed, 20 existing skips, 5 warnings in 253.98s.
+Separate mail gate: 66 passed, 4 warnings in 6.52s; metadata:31 passed.
+Both original approved RTFs passed atomic native-buffer/SHA checks, one read each;
+extraction limitations remain explicit. Installed live controls are pending. Customer-ready false;
+no public release or exact-installer acceptance is claimed.
+
+Earlier entries record evidence at their stated build/date.
+
 Exact frozen907 R2 offline gate PASS: 3751 passed, 20 skipped, 5 warnings in 241.75s.
 Metadata31PASS; exact separate mail gate: 66 passed, 4 warnings in 6.37s.
 Version/compile/collect/architecture/map/docs/active-artifact gates PASS;

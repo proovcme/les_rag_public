@@ -187,9 +187,11 @@ class CatalogRow:
     # field, not re-parsed out of the ``"<value> [<label>]"`` text.
     column_headers: tuple[tuple[int, str], ...] = ()
     # Zero-based, end-exclusive character offsets in the literal converter
-    # Markdown, not PDF byte offsets or inferred professional associations.
+    # text (legacy Markdown or explicitly identified native text), not original
+    # file byte offsets or inferred professional associations.
     source_start: int | None = None
     source_end: int | None = None
+    source_order_basis: str = ""
 
     def is_work_row(self) -> bool:
         # Ambiguous rows remain in the completeness denominator.  The catalog
@@ -631,7 +633,7 @@ def catalog_sheet_packet_facts(
             } if omitted_pdf_references else None),
         )
     if visible and all(row.source_start is not None for row in visible):
-        facts["source_order_basis"] = "converter_markdown_char_offsets"
+        facts["source_order_basis"] = catalog_source_order_basis(visible)
         facts["source_order"] = [
             {"source_row": row.locator, "source_start": row.source_start, "source_end": row.source_end}
             for row in sorted(visible, key=lambda row: row.source_start)
@@ -785,6 +787,61 @@ def _pdf_text_blocks(markdown: str) -> list[str]:
     return [text for text, _start, _end in _pdf_text_block_spans(markdown)]
 
 
+def catalog_source_order_basis(rows: Sequence[CatalogRow]) -> str:
+    """Identify literal-text offset provenance, keeping the legacy default."""
+    bases = {row.source_order_basis or "converter_markdown_char_offsets"
+             for row in rows if row.source_start is not None}
+    if len(bases) > 1:
+        raise ValueError("SOURCE_TEXT_OFFSET_BASES_CONFLICT")
+    return next(iter(bases), "application_catalog_order")
+
+
+def _rtf_source_sheets(
+    path: Path, source_sha256: str,
+) -> tuple[list[tuple[str, str, bool, list[CatalogRow]]], tuple[str, ...], bool]:
+    """Expose native literal cells only where boundaries were independently checked."""
+    from backend.rtf_parser import RtfParserError, extract_rtf
+
+    result = extract_rtf(path)
+    if result.source_file_sha256 != source_sha256:
+        raise RtfParserError("RTF_SOURCE_CHANGED")
+    verified = result.table_boundaries_verified
+    sheet = "RTF_T1" if verified else "RTF_TEXT"
+    sheet_id = _stable_id(source_sha256, sheet, prefix="sheet")
+    physical = [(row.number, row.cells, row.source_text_start, row.source_text_end)
+                for row in result.rows] if verified else []
+    if not verified:
+        start = 0
+        for number, literal in enumerate(result.text.splitlines(keepends=True), 1):
+            physical.append((number, (literal,), start, start + len(literal)))
+            start += len(literal)
+    rows: list[CatalogRow] = []
+    section_context = ""
+    for number, values, start, end in physical:
+        numbers = _numbers_in_values(values) if verified else ()
+        if verified:
+            row_class, reason, confidence, ambiguities = _classify_row(values, numbers, excel_row=number)
+        else:
+            row_class, reason, confidence, ambiguities = (
+                "ambiguous", "rtf_text_requires_model_role", 0.0, ("row_role_unconfirmed",),
+            )
+        if row_class == "section":
+            section_context = " | ".join(values)
+        locator = f"{sheet}!R{number}"
+        rows.append(CatalogRow(
+            locator=locator, sheet=sheet, excel_row=number, values=values,
+            line=f"{locator}: " + " | ".join(values), numbers=numbers,
+            row_id=_stable_id(source_sha256, sheet_id, number, prefix="row"), sheet_id=sheet_id,
+            cells=tuple(CatalogCell(coordinate=f"{_column_letter(column)}{number}", column=column,
+                                   raw_value=value, display_value=value, data_type="s", number_format="General")
+                        for column, value in enumerate(values, 1)),
+            row_classification=row_class, classification_reason=reason, classification_confidence=confidence,
+            ambiguities=ambiguities, section_context=section_context, source_start=start, source_end=end,
+            source_order_basis="rtf_native_text_char_offsets",
+        ))
+    return [(sheet, sheet_id, False, rows)], result.warnings, result.extraction_complete
+
+
 def _pdf_text_rows(markdown: str, source_sha256: str) -> tuple[list[CatalogRow], tuple[str, ...]]:
     sheet = "PDF_TEXT"
     sheet_id = _stable_id(source_sha256, sheet, prefix="sheet")
@@ -821,6 +878,7 @@ def load_tabular_source_catalog(
     source_file_id = _stable_id(source_sha256, prefix="src")
     sheets: list[tuple[str, str, bool, list[CatalogRow]]] = []
     extraction_warnings: tuple[str, ...] = ()
+    extraction_complete: bool | None = None
 
     if suffix in {".xlsx", ".xlsm"}:
         try:
@@ -978,6 +1036,8 @@ def load_tabular_source_catalog(
                 )
             )
         sheets.append((sheet, sheet_id, False, rows))
+    elif suffix == ".rtf":
+        sheets, extraction_warnings, extraction_complete = _rtf_source_sheets(file_path, source_sha256)
     elif suffix == ".docx":
         try:
             sheets, extraction_warnings = _docx_source_sheets(file_path, source_sha256)
@@ -1062,7 +1122,7 @@ def load_tabular_source_catalog(
         rows=tuple(catalog_rows),
         source_file_sha256=source_sha256,
         source_file_id=source_file_id,
-        extraction_complete=not extraction_warnings,
+        extraction_complete=(not extraction_warnings if extraction_complete is None else extraction_complete),
         extraction_warnings=extraction_warnings,
     )
 

@@ -54,6 +54,7 @@ UNIT_TESTS += tests/test_workbook_result_carrier_scope.py
 UNIT_TESTS += tests/test_chat_terminal_output_diagnostics.py tests/test_model_result_field_instruction.py
 UNIT_TESTS += tests/test_chat_ordinary_native_continuation.py
 UNIT_TESTS += tests/test_chat_model_source_frame.py tests/test_chat_research_read_deadline.py tests/test_model_query_phase_scope.py tests/test_model_source_frame_service.py tests/test_workbook_source_frame_identity.py
+UNIT_TESTS += tests/test_rtf_parser.py tests/test_rtf_input_transport.py tests/test_lsr_measure_scale_instruction.py tests/test_model_result_decorated_headers.py
 UNIT_TESTS += tests/test_temporal_model_evidence_binding.py
 UNIT_TESTS += tests/test_model_artifact_kind_authority.py
 UNIT_TESTS += tests/test_model_inline_field_records.py tests/test_lsr_readiness_transport.py

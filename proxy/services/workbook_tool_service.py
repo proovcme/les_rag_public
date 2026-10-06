@@ -324,7 +324,7 @@ def _result_from_revision(
         artifact["draft"] = True
     return {
         "schema": "les.workbook_tool_result.v1",
-        "status": "partial" if snapshot.get("document_issues") else "complete",
+        "status": "partial" if snapshot.get("document_issues") or snapshot.get("vor_source_errors") else "complete",
         "artifact": artifact,
         "source": {
             "attachment_id": attachment_meta["attachment_id"],
@@ -527,7 +527,7 @@ async def _build_workbook(
     if artifact_kind == "vor_workbook":
         supported = {".xlsx", ".xlsm"}
         if draft_rows:
-            supported.update({".pdf", ".docx", ".csv"})
+            supported.update({".pdf", ".docx", ".csv", ".rtf"})
     else:
         supported = {".pdf", ".xlsx", ".xlsm"}
     if source_path.suffix.lower() not in supported:

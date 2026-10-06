@@ -31,7 +31,7 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 ISOLATED_CONVERT_SUFFIXES = {".pdf", ".p7m", ".xlsx", ".xlsm", ".xls"}
 
 SUPPORTED = {
-    ".pdf", ".docx", ".doc",
+    ".pdf", ".docx", ".doc", ".rtf",
     ".eml", ".emlx", ".msg",
     ".xlsx", ".xlsm", ".xls", ".csv",
     ".pptx",
@@ -68,6 +68,14 @@ def convert_to_markdown(
         return None
 
     logger.info(f"[CONVERT] {file_path.name} ({suffix}, {file_path.stat().st_size // 1024} KB)")
+    if suffix == ".rtf":
+        # Strict lexical admission and bounded native rendering. A malformed,
+        # unsupported or empty RTF is an actionable error, never a guessed DOC
+        # fallback or an empty successful conversion.
+        from .rtf_parser import extract_rtf
+
+        result = extract_rtf(file_path).text
+        return _limit_file_chars(file_path, result) if apply_char_limit else result
     try:
         if suffix == ".pdf":
             result = _parse_pdf(file_path, route=route)

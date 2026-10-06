@@ -1,5 +1,15 @@
 # Алгоритм: Спецификация (форма 9, ГОСТ 21.110) → ВОР
 
+##908 — literal RTF intake
+
+Strict lexical admission precedes hidden bounded native rendering; no model or OCR is called by the reader.
+Verified boundaries expose literal cells; unverified tabs remain ambiguous native text, with no inferred quantity.
+rtf_native_text_char_offsets label offsets in the exact native text. Warnings/source completeness remain explicit
+in upload/catalog/readers/frame/VOR output and raw/replayed delivery status. Authored decisions remain model-owned.
+OS reader unavailability/malformed input/source changes are visible failures; native success is not whole-source proof.
+
+Earlier entries record evidence at their stated build/date.
+
 ## Текущий чатовый workbook-путь (candidate 859, установлен 858)
 
 Если модель уже вернула `decisions`, XLSX/XLSM, PDF, DOCX и CSV упаковываются из них.

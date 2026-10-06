@@ -20,7 +20,7 @@ from typing import Any, Mapping, Sequence
 
 from proxy.services.attachment_source_catalog_service import (
     AttachmentSourceCatalog, CatalogCell, CatalogRow,
-    _has_text_header, _header_labels_from_row,
+    _has_text_header, _header_labels_from_row, catalog_source_order_basis,
 )
 
 
@@ -31,6 +31,14 @@ _MANIFEST_COLUMNS = ("source_row", "row_id", "source_start", "source_end", "cont
 
 class ModelSourceFrameError(ValueError):
     """The supplied catalog/scope cannot be represented faithfully."""
+
+
+def _source_metadata_fields(value: CatalogRow | CatalogCell):
+    # This one optional extension must not change the immutable 907 frames of
+    # existing sources. Every other empty/default field remains literal data.
+    return tuple(field for field in fields(value) if not (
+        isinstance(value, CatalogRow) and field.name == "source_order_basis" and value.source_order_basis == ""
+    ))
 
 
 def _literal(value: Any) -> Any:
@@ -54,7 +62,7 @@ def _literal(value: Any) -> Any:
     if isinstance(value, bytes):
         return {"source_value_type": "bytes", "base64": base64.b64encode(value).decode("ascii")}
     if isinstance(value, (CatalogRow, CatalogCell)):
-        return {field.name: _literal(getattr(value, field.name)) for field in fields(value)}
+        return {field.name: _literal(getattr(value, field.name)) for field in _source_metadata_fields(value)}
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise ModelSourceFrameError("SOURCE_METADATA_NONSTRING_MAPPING_KEY")
@@ -75,7 +83,7 @@ def _sha(value: Any) -> str:
 def _literal_types(value: Any) -> Any:
     """Keep typed values distinct from source dictionaries resembling a tag."""
     if isinstance(value, (CatalogRow, CatalogCell)):
-        return {field.name: _literal_types(getattr(value, field.name)) for field in fields(value)}
+        return {field.name: _literal_types(getattr(value, field.name)) for field in _source_metadata_fields(value)}
     if isinstance(value, Mapping):
         return {"mapping": {key: _literal_types(item) for key, item in value.items()}}
     if isinstance(value, (list, tuple)):
@@ -266,7 +274,7 @@ def build_model_source_frame(
         requested_set.add(locator)
     offset_order = bool(catalog.rows) and all(row.source_start is not None for row in catalog.rows)
     rows = tuple(sorted(catalog.rows, key=lambda row: row.source_start)) if offset_order else catalog.rows
-    order_basis = "converter_markdown_char_offsets" if offset_order else "application_catalog_order"
+    order_basis = catalog_source_order_basis(rows) if offset_order else "application_catalog_order"
     requested = tuple(row.locator for row in rows if row.locator in requested_set)
     references_set = _reference_locators(rows, requested_set)
     references = tuple(row.locator for row in rows if row.locator in references_set)

@@ -610,7 +610,11 @@ async def test_vor_can_package_exact_model_rows_from_a_pdf_without_renumbering(t
         ctx,
     )
 
-    assert result["status"] == "complete"
+    # The malformed fixture preserves model rows but only yields an extraction
+    # warning, so row 42 cannot be verified against the source catalog;
+    # delivery cannot claim complete source verification.
+    assert result["status"] == "partial"
+    assert result["vor_source_errors"] == ["source_extraction_incomplete", "source_row_not_in_catalog:42"]
     assert result["source"]["rows"] == 1
     artifact_path = ctx.artifacts.resolve_path(result["artifact"]["revision_id"])
     workbook = openpyxl.load_workbook(artifact_path, data_only=True, read_only=True)

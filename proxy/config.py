@@ -50,6 +50,7 @@ DEFAULT_RAG_UPLOAD_SUFFIXES = (
     ".pdf",
     ".docx",
     ".doc",
+    ".rtf",
     ".eml",
     ".emlx",
     ".msg",
