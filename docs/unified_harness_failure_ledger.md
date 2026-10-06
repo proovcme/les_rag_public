@@ -1,5 +1,68 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+Exact frozen907 R2 offline gate PASS: 3751 passed, 20 skipped, 5 warnings in 241.75s.
+Metadata31PASS; exact separate mail gate: 66 passed, 4 warnings in 6.37s.
+Version/compile/collect/architecture/map/docs/active-artifact gates PASS;
+foreign TEST_INVENTORY bytes preserved. Initial907 RED is retained:3old assertions
+required the prior unconditional query-only phrase. They were replaced by4stronger
+actual-request checks for both supported carriers and exact technical-stage scope;
+query/evidence/history/model-call/inference assertions remain. Independent review
+and267normal focused tests PASS. No tests were skipped to close these failures.
+Installed907 source-frame/whole-document live comparison, professional applicability,
+complete resource pricing and exact Windows installer/UI acceptance are still pending.
+Customer readiness is not inferred from this offline gate. New nativeRTF parser is
+unwired and excluded from907; two actualRTFs retain explicit merge/tab/line limitations.
+
+##2026-10-06 - query persona leakage / source pressure / initial READ deadline
+
+The query phase now has a consistent technical contract: the unchanged bound
+profile/skill applies to the final operator answer; this call emits only model-authored
+retrieval queries, as one optional queries envelope or literal lines. Primary, repair
+and continuation prompts agree. No query rewriting/filtering, mandatory JSON plan,
+norm selector, new retrieval route or native query-phase reader is introduced.
+Initial selector calls are also recorded in the existing actual-model-call ledger;
+the previous final/continuation-only count understated the number of provider calls.
+Initial ordinary READ admission also rechecks the original deadline after model
+selection and before each cached/executed READ; matching blocked replies preserve IDs
+and do not acquire citations. WRITE packaging is unchanged. Late906 READ continuation
+retains its original budget/deadline/executor and provider-native-only boundary.
+
+An opt-in GUI-registered source frame (LES_CHAT_SOURCE_FRAME_ROWS=0 by default)
+offers1..12 literal source rows with exact headers/sections and a complete address
+inventory. Original source bytes and full reader access remain; B0/B1 share the first
+frame. Detailed immutable audit and literal model rendering are distinct and hashed.
+Whole-job coverage uses the complete original catalog. No unshown row is called read
+or decided. Mode0 retains previous job identity; frame scope is durable, and a plain
+continuation across changed frame contracts fails visibly409 before model calls.
+An explicit fresh question can start a separate job. SKILL and ADR15 describe this
+experimental transport contract, including the absent query-phase native reader.
+Frame size/row count and helper tests do not prove speed or professional coverage.
+Actual approved ВОР.xlsx measured439catalog rows/394candidates: complete legacy
+selector164566UTF8bytes versus6-row model-frame selector22502bytes. Original source
+SHA is unchanged; this is a source-wire measurement, not an inference speed test.
+
+Installed906/0.31.178/94e988b5 exact owned runtime hashes and native RRF PASS.
+Frozen906 offline:3653PASS/20existing opt-in skips/5warnings; metadata31PASS.
+The one default basic smoke remains RED: project chat HTTPReadTimeout at90015ms;
+its failed receipt is retained, and no90s threshold is weakened. A separate ordinary
+turn completed59.31s with a genuine provider-native late READ and final stop;
+this proves completion of that boundary, not that the failed smoke was repaired.
+The initial READ deadline regression is independently reproduced in two actual-flow
+tests; it is not asserted to explain the90s client timeout.
+
+Original905 BAP B0/B1 each returned19rows and a downloadable partial XLSX, with
+confirmed0 and preliminary82690.88/66674.14. B0 submitted119accepted literal queries,
+including public prose/tables from a conflicting query prompt. Separate unactivated
+thinking-profile B0/B1 took368.69/415.95s and exhausted16384answer tokens without XLSX.
+Thinking alone and a larger model were not proven fixes.907 tests the measured query
+phase conflict and literal source presentation on the unchanged original local model.
+Native exact norm reads, professional norm applicability, complete pricing, big VOR,
+diverse artifacts and exact Windows installer/UI acceptance remain required.
+Image-only DOCX, RTF/ZIP and drawing extraction have no accepted end-to-end proof.
+Windows OCR on a604x809image failed both original and one4x attempt (0/5manual checks);
+no noisy OCR text is promoted to source evidence. No cloud/model/dependency change.
+Customer-ready false;907 installed live comparison pending. No public release.
+
 Exact frozen906 offline gate PASS:3653tests/20existing opt-in skips/5warnings,
 279.69s; metadata31PASS. Version/compile/collect/architecture/map/docs/active-artifact
 checks PASS; foreign TEST_INVENTORY raw bytes preserved. Installed906/live ordinary

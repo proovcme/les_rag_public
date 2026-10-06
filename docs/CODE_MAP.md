@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+Build907: model-authored query phase contract -> shared RAG -> unchanged
+answer/native reader path. Opt-in literal source frame -> original full catalog/reader
++ distinct immutable audit and model render -> durable frame identity. Initial READ
+admission checks the original deadline before cache/executor. Default frame0 is legacy.
+Tests: test_model_query_phase_scope, test_model_source_frame_service,
+test_chat_model_source_frame, test_workbook_source_frame_identity,
+test_chat_research_read_deadline.
+
 Build906: ordinary answer -> retained READ schemas -> original executor/cache/
 deadline/budget -> complete native exchange -> bounded tools-off final answer.
 FSEM typed crew mapping -> unrounded Decimal labour; aggregate discrepancy ->

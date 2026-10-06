@@ -513,6 +513,12 @@ class WorkbookResearchIdentity:
     profile_revision_id: str
     model_identity: str
     question_sha256: str
+    source_frame_contract_sha256: str = ""
+
+    def payload(self) -> dict[str, Any]:
+        # Zero/full mode must retain the exact pre-frame durable identity.
+        return {key: value for key, value in self.__dict__.items()
+                if key != "source_frame_contract_sha256" or value}
 
     def digest(self) -> str:
         payload = {
@@ -524,6 +530,8 @@ class WorkbookResearchIdentity:
             "model_identity": self.model_identity,
             "question_sha256": self.question_sha256,
         }
+        if self.source_frame_contract_sha256:
+            payload["source_frame_contract_sha256"] = self.source_frame_contract_sha256
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -546,8 +554,8 @@ def _same_research_scope(row: sqlite3.Row, identity: WorkbookResearchIdentity) -
     stored = _json_object(row, "identity_json")
     return all(
         stored.get(key) == (list(value) if key == "dataset_ids" else value)
-        for key, value in identity.__dict__.items() if key != "question_sha256"
-    )
+        for key, value in identity.payload().items() if key != "question_sha256"
+    ) and str(stored.get("source_frame_contract_sha256") or "") == identity.source_frame_contract_sha256
 
 
 class WorkbookResearchJobService:
@@ -644,9 +652,12 @@ class WorkbookResearchJobService:
         profile_revision_id: str,
         model_identity: str,
         question: str,
+        source_frame_contract_sha256: str = "",
     ) -> WorkbookResearchIdentity:
         if not session_id or not attachment_id or len(source_sha256) != 64:
             raise WorkbookResearchJobError("durable workbook identity is incomplete")
+        if source_frame_contract_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_frame_contract_sha256):
+            raise WorkbookResearchJobError("SOURCE_FRAME_CONTRACT_INVALID")
         return WorkbookResearchIdentity(
             session_id=str(session_id),
             attachment_id=str(attachment_id),
@@ -655,6 +666,7 @@ class WorkbookResearchJobService:
             profile_revision_id=str(profile_revision_id or "factory"),
             model_identity=str(model_identity or "unknown"),
             question_sha256=hashlib.sha256(str(question).encode("utf-8")).hexdigest(),
+            source_frame_contract_sha256=source_frame_contract_sha256,
         )
 
     def begin_or_resume(
@@ -662,7 +674,7 @@ class WorkbookResearchJobService:
         source_locators: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         digest = identity.digest()
-        identity_json = json.dumps(identity.__dict__, ensure_ascii=False, sort_keys=True)
+        identity_json = json.dumps(identity.payload(), ensure_ascii=False, sort_keys=True)
         prior_elapsed = 0.0
         retargeted = False
         with self._connect() as conn:
@@ -678,6 +690,16 @@ class WorkbookResearchJobService:
                     row = self._latest_compatible_continuation(conn, row, identity)
                     retargeted = str(row["job_id"]) != matched_id
             if row is None:
+                if _is_plain_continuation(identity, task_context):
+                    prior_scopes = conn.execute(
+                        "SELECT COALESCE(json_extract(identity_json,'$.source_frame_contract_sha256'),'')"
+                        " FROM workbook_research_jobs"
+                        " WHERE json_extract(identity_json,'$.attachment_id')=?"
+                        " AND json_extract(identity_json,'$.source_sha256')=?",
+                        (identity.attachment_id, identity.source_sha256),
+                    ).fetchall()
+                    if prior_scopes and not any(scope[0] == identity.source_frame_contract_sha256 for scope in prior_scopes):
+                        raise WorkbookResearchJobError("SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED")
                 job_id = f"wrj_{uuid4().hex}"
                 conn.execute(
                     """INSERT INTO workbook_research_jobs
@@ -738,6 +760,9 @@ class WorkbookResearchJobService:
                 context["price_basis"] = _merge_task_price_basis(
                     context.get("price_basis") or {}, task_context.get("price_basis") or {}
                 )
+                if identity.source_frame_contract_sha256 and "source_frame" in task_context:
+                    # Caller supplied technical frame scope, never model row metadata.
+                    context["source_frame"] = dict(task_context.get("source_frame") or {})
                 conn.execute(
                     "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
                     (json.dumps(context, ensure_ascii=False), job_id),
@@ -870,9 +895,10 @@ class WorkbookResearchJobService:
             "SELECT * FROM workbook_research_jobs"
             " WHERE json_extract(identity_json,'$.attachment_id')=?"
             "   AND json_extract(identity_json,'$.source_sha256')=?"
+            "   AND COALESCE(json_extract(identity_json,'$.source_frame_contract_sha256'),'')=?"
             "   AND job_id<>?"
             " ORDER BY rowid DESC LIMIT 1",
-            (identity.attachment_id, identity.source_sha256, str(job_id)),
+            (identity.attachment_id, identity.source_sha256, identity.source_frame_contract_sha256, str(job_id)),
         ).fetchone()
         if parent is None:
             return {}

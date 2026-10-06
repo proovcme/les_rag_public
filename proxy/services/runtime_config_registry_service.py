@@ -32,6 +32,17 @@ _EFFECTIVE_FACTOR_LABELS = {
     "answer_output_tokens": "Лимит итогового ответа",
 }
 _FACTOR_PRESENTATION = {
+    "LES_CHAT_SOURCE_FRAME_ROWS": {
+        "secret": False,
+        "label": "Строк исходника в пакете модели",
+        "help_text": (
+            "0 — прежнее полное тело исходника. 1–12 — экспериментальный пакет точных строк "
+            "с полным манифестом и чтением остальных строк на стадии ответа. Это область исходника, "
+            "а не лимит токенов ответа. Изменение начинает отдельное задание, не смешивая контрольные точки. "
+            "Действует со следующего запроса, перезапуск не нужен."
+        ),
+        "category": "models",
+    },
     "LES_CLOUD_TURN_TOKEN_BUDGET": {
         "secret": False,
         "label": "Бюджет облачных токенов на одно сообщение чата",
@@ -166,6 +177,7 @@ _FACTOR_PRESENTATION = {
     },
 }
 _EXPLICIT_FACTOR_DEFAULTS = {
+    "LES_CHAT_SOURCE_FRAME_ROWS": "0",
     "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS": "",
     # Web factors are read through an injected Mapping; numeric admission
     # factors use the shared _env_float helper. AST discovery cannot infer
@@ -454,6 +466,10 @@ def update_factors(
         if key == "LES_WEB_SEARCH_MODE" and value not in {"simple", "extended"}:
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         if key == "LES_CLOUD_TURN_TOKEN_BUDGET" and (not value.isascii() or not value.isdecimal()):
+            raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
+        if key == "LES_CHAT_SOURCE_FRAME_ROWS" and (
+            not value.isascii() or not value.isdecimal() or not 0 <= int(value) <= 12
+        ):
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         normalized[key] = value
     backup = _backup_env(env_path())

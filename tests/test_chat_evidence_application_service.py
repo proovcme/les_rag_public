@@ -3980,8 +3980,12 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         first_messages = str(active_transport.requests[0].messages)
         assert "Строка 1: монтаж шкафа управления — 2 шт." in first_messages
         assert "можешь объявить artifact_kind" in first_messages
-        assert "каждый с новой строки" in first_messages  # plain-text queries remain accepted
-        assert "верни только сами поисковые запросы" in first_messages
+        # Both supported query carriers remain explicit; the technical stage
+        # must not inherit the final-answer persona/table instructions.
+        assert "JSON-конверт" in first_messages
+        assert "При выборе дословных строк запросов" in first_messages
+        assert "каждый запрос — отдельной строкой" in first_messages
+        assert service._MODEL_RAG_QUERY_PHASE_INSTRUCTION in first_messages
         assert "фиксированного лимита нет" in first_messages
         assert "по всем фактическим строкам" in first_messages
         assert "сохраняй язык и профессиональную терминологию исходных строк" in first_messages

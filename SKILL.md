@@ -29,7 +29,7 @@ runtime data, logs, model caches or private corpora.
 - Do not add query hardcodes, dataset-specific boosts or professional answers implemented in code.
 - Typed readers and calculators return exact evidence; they do not choose an engineering or
   estimating decision for the model.
-- The active estimator path is **one model-owned path**: original question + complete attachment +
+- The default active estimator path is **one model-owned path**: original question + complete attachment +
   explicitly selected dataset → the same model returns ordinary plain-text retrieval queries → code
   executes them literally through shared RAG and groups six cards per query as `Qx.Hy` → the same
   model simultaneously receives the original input and every evidence group and returns an ordinary
@@ -40,7 +40,7 @@ runtime data, logs, model caches or private corpora.
   `docs/ADR-15-model-rag-result.md`.
 - **Never put an orchestration gate between the model and RAG.** Do not require a planning/status JSON
   handshake before retrieval; do not replace the attachment with a summary; do not drop the original
-  question or attachment from the final model call; do not let code choose queries, norms, analogues,
+  question or source access from the final model call; do not let code choose queries, norms, analogues,
   coverage or professional status; and do not require R1/R2 review, mapping lock, confirmation loops or
   a fixed row/turn count in the active path. Normal model text must never become a reason to deny RAG.
 - Before the model's terminal result, code may only resolve the explicit dataset scope, expose and
@@ -49,10 +49,25 @@ runtime data, logs, model caches or private corpora.
   prices from the selected/default pricebook, calculate and package XLSX. It must preserve model choices
   and expose conflicts instead of silently rewriting or deleting them.
 - **Mandatory self-check before every chat/RAG/estimate change:** (1) does the final model call contain
-  the original question/attachment and the returned RAG evidence at the same time; (2) does any code
+  the original question/source representation and the returned RAG evidence at the same time; (2) does any code
   decide professional content or prevent model access to evidence; (3) does live acceptance produce the
   user-visible answer and attached artifact with a non-fixed row count. Isolated green tests are not a
   substitute for this check.
+- Build907 adds an **experimental, opt-in source frame**, controlled by the GUI-registered
+  `LES_CHAT_SOURCE_FRAME_ROWS`: `0` retains the complete-input path and existing job identity;
+  `1..12` offers that many literal candidate rows with their source context. The original file,
+  whole catalog and every source locator remain available through the same `read_source` reader
+  in the answer phase. The query phase has no native reader and must not claim otherwise.
+  The frame lists shown and not-shown addresses explicitly; it is not a semantic summary.
+  B0 and B1 receive the same initial frame, original question, model, dataset and reader access.
+  Complete retrieved evidence and native exchanges are preserved. Whole-job coverage still uses
+  all original candidates. Changing frame scope on a plain continuation is an explicit409 error;
+  it must never create a fresh job with a lost original question or price basis.
+  Literal source rendering is separate from the immutable detailed audit; raw/display values,
+  formulas, cached values, notes and source context are preserved without professional selection.
+  A comparison of the first frame is a transport experiment, not whole-document acceptance.
+  Default activation, speed claims and customer readiness require installed live evidence;
+  helper tests and a smaller row count alone do not prove them.
 - **A live-proven model → RAG → result path is frozen.** After the owner accepts a real model answer,
   do not refactor, optimize, replace its transport, add another tool loop or run an alternative
   orchestration experiment inside the same task. Wire the exact proven inputs, calls and outputs into

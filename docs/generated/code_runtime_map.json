@@ -3150,6 +3150,7 @@
         "tests/lsr_citation_support.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_native_research_exchange.py",
+        "tests/test_chat_ordinary_native_continuation.py",
         "tests/test_chat_profile_runtime.py",
         "tests/test_chat_terminal_output_diagnostics.py",
         "tests/test_context_wire_token_admission.py",
@@ -3201,7 +3202,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 13450,
+      "lines": 13593,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5892,6 +5893,7 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_mail_query.py",
         "tests/test_chat_native_research_exchange.py",
+        "tests/test_chat_ordinary_native_continuation.py",
         "tests/test_chat_terminal_output_diagnostics.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_connection_chat_integration.py",
@@ -6931,7 +6933,7 @@
         "tests/test_model_reasoning_control.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 476,
+      "lines": 492,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -7658,6 +7660,7 @@
         "proxy/services/tool_registry_service.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_native_research_exchange.py",
+        "tests/test_chat_ordinary_native_continuation.py",
         "tests/test_chat_profile_runtime.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_project_document_registry_service.py",
@@ -7929,6 +7932,7 @@
         "proxy/services/web_search_service.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_native_research_exchange.py",
+        "tests/test_chat_ordinary_native_continuation.py",
         "tests/test_web_page_reader_service.py",
         "tests/test_web_research_config_service.py",
         "tests/test_web_search_service.py"
@@ -7994,7 +7998,7 @@
         "tests/test_workbook_research_job_service.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 2883,
+      "lines": 2909,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -10032,7 +10036,7 @@
       "inbound": [
         "tests/test_lsr_readiness_transport.py"
       ],
-      "lines": 5570,
+      "lines": 5574,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10125,6 +10129,20 @@
         "proxy/services/web_research_config_service.py"
       ],
       "path": "tests/test_chat_native_research_exchange.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 275,
+      "module": "tests.test_chat_ordinary_native_continuation",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/tool_harness_service.py",
+        "proxy/services/web_research_config_service.py"
+      ],
+      "path": "tests/test_chat_ordinary_native_continuation.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -20784,9 +20802,9 @@
     "product_reachable": 373,
     "registered_api_routes": 340,
     "runtime_support": 11,
-    "test_or_tool_only": 717,
-    "tracked_python_files": 1102,
-    "tracked_python_lines": 387333
+    "test_or_tool_only": 718,
+    "tracked_python_files": 1103,
+    "tracked_python_lines": 387797
   },
   "warnings": []
 }

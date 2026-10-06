@@ -1,5 +1,41 @@
 # Версии программного контура ЛЕС
 
+Exact frozen907 R2 offline gate PASS: 3751 passed, 20 skipped, 5 warnings in 241.75s.
+Metadata31PASS; exact separate mail gate: 66 passed, 4 warnings in 6.37s.
+Version/compile/collect/architecture/map/docs/active-artifact gates PASS;
+foreign TEST_INVENTORY bytes preserved. Initial907 RED is retained:3old assertions
+required the prior unconditional query-only phrase. They were replaced by4stronger
+actual-request checks for both supported carriers and exact technical-stage scope;
+query/evidence/history/model-call/inference assertions remain. Independent review
+and267normal focused tests PASS. No tests were skipped to close these failures.
+Installed907 source-frame/whole-document live comparison, professional applicability,
+complete resource pricing and exact Windows installer/UI acceptance are still pending.
+Customer readiness is not inferred from this offline gate. New nativeRTF parser is
+unwired and excluded from907; two actualRTFs retain explicit merge/tab/line limitations.
+
+Candidate0.31.179/build907; original local model/r8/profile/dependencies unchanged.
+Installed906/0.31.178/94e988b5 exact owned runtime hashes and native RRF PASS.
+Frozen906 offline:3653PASS/20existing opt-in skips/5warnings; metadata31PASS.
+The one default basic smoke remains RED: project chat HTTPReadTimeout at90015ms;
+its failed receipt is retained, and no90s threshold is weakened. A separate ordinary
+turn completed59.31s with a genuine provider-native late READ and final stop;
+this proves completion of that boundary, not that the failed smoke was repaired.
+The initial READ deadline regression is independently reproduced in two actual-flow
+tests; it is not asserted to explain the90s client timeout.
+
+Original905 BAP B0/B1 each returned19rows and a downloadable partial XLSX, with
+confirmed0 and preliminary82690.88/66674.14. B0 submitted119accepted literal queries,
+including public prose/tables from a conflicting query prompt. Separate unactivated
+thinking-profile B0/B1 took368.69/415.95s and exhausted16384answer tokens without XLSX.
+Thinking alone and a larger model were not proven fixes.907 tests the measured query
+phase conflict and literal source presentation on the unchanged original local model.
+Native exact norm reads, professional norm applicability, complete pricing, big VOR,
+diverse artifacts and exact Windows installer/UI acceptance remain required.
+Image-only DOCX, RTF/ZIP and drawing extraction have no accepted end-to-end proof.
+Windows OCR on a604x809image failed both original and one4x attempt (0/5manual checks);
+no noisy OCR text is promoted to source evidence. No cloud/model/dependency change.
+Customer-ready false;907 installed live comparison pending. No public release.
+
 Exact frozen906 offline gate PASS:3653tests/20existing opt-in skips/5warnings,
 279.69s; metadata31PASS. Version/compile/collect/architecture/map/docs/active-artifact
 checks PASS; foreign TEST_INVENTORY raw bytes preserved. Installed906/live ordinary
@@ -341,9 +377,9 @@ policy восстановлена в public bindingr6; GPU/KV/server/model не 
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.31.178` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `906` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.906` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.31.179` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `907` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.907` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 `0.29.2` — release candidate с идемпотентным offline bootstrap, внешним Qdrant по HTTP,

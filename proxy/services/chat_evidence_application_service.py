@@ -55,6 +55,10 @@ from proxy.services.attachment_source_catalog_service import (
     sheet_coverage_from_missing,
 )
 from proxy.services.canonical_promotion_service import resolve_promoted_route
+from proxy.services.model_source_frame_service import (
+    SOURCE_FRAME_SCHEMA, ModelSourceFrame, ModelSourceFrameError, build_model_source_frame,
+    render_model_source_frame,
+)
 from proxy.services.candidate_acceptance_service import execution_mode_for_candidate_acceptance
 from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
 from proxy.services.openai_compatible_transport_service import (
@@ -116,7 +120,7 @@ from proxy.services.model_answer_table_service import (
     table_cells,
     table_line,
 )
-from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+from proxy.services.workbook_research_job_service import WorkbookResearchJobError, WorkbookResearchJobService
 from proxy.services.model_result_packet_service import admit_model_result_packet
 from proxy.services.model_lsr_result_contract import (
     model_lsr_result_field_instruction, decode_model_artifact_kind,
@@ -941,6 +945,16 @@ def model_answer_timeout_seconds() -> float:
     except (TypeError, ValueError):
         return 300.0
 
+
+
+def research_deadline_blocked_payload(tool_name: str) -> dict[str, Any]:
+    """Protocol reply for a READ that was admitted but never executed/replayed."""
+    return {
+        "tool": tool_name, "status": "blocked",
+        "result": {"code": "ORDINARY_RESEARCH_DEADLINE", "executed": False,
+                   "expired_read_window": True},
+        "sources": [], "missing": [], "warnings": ["Original source-reading deadline expired."],
+    }
 
 
 def native_research_call_batch(
@@ -2055,6 +2069,18 @@ _WORKBOOK_RESULT_CARRIER_INSTRUCTION = (
     "Если пользователь явно задал формат, сохрани его; это уточнение не требует JSON. "
     "Обоснования решений и конкретные пробелы пиши в coverage/open_gap соответствующих строк."
 )
+_MODEL_RAG_QUERY_PHASE_INSTRUCTION = (
+    "Технический этап составления поисковых запросов, до ответа оператору. "
+    "Сохранённые профиль и skill задают профессиональные правила работы; их "
+    "правила вступления, итоговой таблицы и оформления готового документа "
+    "относятся к последующему ответу оператору, а не к этому этапу. "
+    "В этом вызове приложение просит технический список запросов; "
+    "ограничения профиля на JSON относятся к ответу оператору и не запрещают "
+    "JSON-конверт этого списка. Не выпускай сейчас ВОР/ЛСР, не объявляй документ "
+    "готовым и не выбирай нормы до получения источников. "
+    "Правила ссылок [Источник N] относятся к последующему ответу оператору; "
+    "не добавляй такие ссылки в поисковые строки."
+)
 _MODEL_RAG_QUERY_INSTRUCTION = (
     "Прочитай приложенный материал целиком. Определи требуемый итоговый документ. "
     "Если упомянуты ВОР и ЛСР/смета, отличай результат от исходника и дальнейшего назначения. "
@@ -2065,8 +2091,8 @@ _MODEL_RAG_QUERY_INSTRUCTION = (
     "необходимые для подбора evidence по всем фактическим строкам исходного материала. Число запросов "
     "определяешь ты; фиксированного лимита нет. В запросах сохраняй язык "
     "и профессиональную терминологию исходных строк; не переводи и не "
-    "транслитерируй их. Сейчас не выбирай нормы "
-    "и не отвечай по существу — верни только сами поисковые запросы, каждый с новой строки. "
+    "транслитерируй их. Сейчас не выбирай нормы и не отвечай оператору по существу. "
+    "Верни результат технического этапа поиска в одном из описанных ниже оформлений. "
     "Без обращения к собеседнику, без описания "
     "плана и без ожидания подтверждения. Пользовательские замечания задают "
     "требования к конечному документу: не превращай инструкции о формате, "
@@ -2074,10 +2100,11 @@ _MODEL_RAG_QUERY_INSTRUCTION = (
     "Не копируй задачу; запрос называет нужную работу или ресурс исходника."
 )
 _MODEL_RAG_QUERY_REPAIR_INSTRUCTION = (
-    "Предыдущий ответ не содержал поисковых строк. Верни только поисковые "
-    "запросы к датасетам в формате, описанном выше: каждый с новой строки, "
-    "обычным текстом или пунктом списка. Без обращения, плана и "
-    "подтверждения. Нормы пока не выбирай."
+    "Предыдущий ответ не содержал поисковых строк. Верни только результат "
+    "технического этапа поиска в одном из двух описанных выше оформлений: "
+    "JSON-конверт с queries либо дословные строки запросов. Не смешивай эти оформления. "
+    "Без обращения, плана и подтверждения; не отвечай оператору по существу. "
+    "Нормы пока не выбирай."
 )
 _MODEL_RAG_QUERY_VOLUME_HINT = (
     "Пустые ценовые колонки исходника не ищи. Запросы — по работам и "
@@ -2095,11 +2122,15 @@ _DECLARED_QUERY_MARKER_EXAMPLES = ("1.", "1)", "-", "*", "•", "—")
 #: and adapter to agree instead of growing a list of Russian phrases: every form
 #: named here is accepted structurally, whatever model produced it.
 _MODEL_RAG_QUERY_FORMAT_CONTRACT = (
-    'Предпочти JSON {"artifact_kind":"vor или lsr","queries":["твой запрос"]}. '
-    "Каждый элемент queries — одна поисковая строка. Сопровождающий ответ "
-    "помещай в отдельное строковое поле commentary: оно сохраняется без поиска. "
+    "Выбери одно оформление ответа технического этапа: JSON-конверт либо "
+    "дословные строки запросов. Не смешивай эти оформления. "
+    "Предпочти JSON с полями artifact_kind (значение vor или lsr) и queries. "
+    "В JSON-конверте каждый элемент queries — одна поисковая строка. "
+    "Сопровождающий ответ об этом этапе помещай только в отдельное строковое "
+    "поле commentary: оно сохраняется без поиска и не является готовым документом. "
     "Строка, которая повторяет это самое задание, относится к commentary. "
-    "Допустим обычный список: каждый запрос — отдельной строкой, без вступления и рассуждений; "
+    "При выборе дословных строк запросов каждый запрос — отдельной строкой, "
+    "без вступления, комментария, плана, таблицы результата и итогового ответа; "
     "код исполнит твой запрос дословно. Формулировку выбираешь ты по технологии работы. "
     "Поддержаны обычный текст и пункты списка ("
     + ", ".join(_DECLARED_QUERY_MARKER_EXAMPLES)
@@ -3061,6 +3092,7 @@ def adaptive_row_packet(
     generation_reserve_tokens: int,
     already_offered: Sequence[str] = (),
     offer_counts: Mapping[str, int] | None = None,
+    source_frame_rows: int = 0,
 ) -> list[str]:
     """Bound one model result by row count and the available output budget.
 
@@ -3086,7 +3118,8 @@ def adaptive_row_packet(
     # rows including roles, links and provenance. Low-capacity backends must
     # be allowed packets smaller than eight rows.
     budget_rows = max(1, (reserve - 400) // 250)
-    size = min(_ROW_PACKET_MAX, budget_rows, len(locators))
+    size = (min(source_frame_rows, len(locators)) if source_frame_rows
+            else min(_ROW_PACKET_MAX, budget_rows, len(locators)))
     offered = {str(item).strip() for item in already_offered if str(item).strip()}
     durable_counts = {
         str(key).strip(): max(0, int(value or 0))
@@ -4083,8 +4116,10 @@ def declared_query_continuation_instruction(
         f"Оборванная строка: «{unread_tail or '—'}». "
         f"Уже получены запросы: {already}. "
         "Допиши оборванную строку и верни только оставшиеся поисковые запросы "
-        "к датасетам, каждый с новой строки. Не повторяй уже полученные запросы, "
-        "не перефразируй их и не выбирай нормы."
+        "к датасетам в одном из описанных оформлений: JSON-конверт с queries "
+        "либо дословные строки запросов. Не смешивай эти оформления. "
+        "Не повторяй уже полученные запросы, не перефразируй их, не выбирай нормы "
+        "и не отвечай оператору по существу."
     )
 
 
@@ -6595,6 +6630,37 @@ def _bounded_source_blocks(text: str, *, max_chars: int = 700) -> list[str]:
     return blocks
 
 
+def configured_source_frame_rows(env_int: Callable[..., int]) -> int:
+    """Do not silently convert malformed opt-in scope into legacy full mode."""
+    raw = os.getenv("LES_CHAT_SOURCE_FRAME_ROWS")
+    if raw is not None and (not raw.isascii() or not raw.isdecimal() or not 0 <= int(raw) <= 12):
+        raise HTTPException(422, "SOURCE_FRAME_ROWS_INVALID: expected integer 0..12")
+    value = env_int("LES_CHAT_SOURCE_FRAME_ROWS", 0)
+    if type(value) is not int or not 0 <= value <= 12:
+        raise HTTPException(422, "SOURCE_FRAME_ROWS_INVALID: expected integer 0..12")
+    return value
+
+
+def record_source_frame_delivery(
+    trace: dict[str, Any], frame: ModelSourceFrame | None, *, purpose: str,
+) -> None:
+    if frame is None:
+        return
+    model_render = render_model_source_frame(frame)
+    trace.setdefault("model_source_frames", []).append({
+        "schema": SOURCE_FRAME_SCHEMA, "purpose": purpose,
+        "catalog_sha256": frame.catalog_sha256,
+        "source_frame_sha256": frame.source_frame_sha256,
+        "model_render_sha256": model_render.model_render_sha256,
+        "model_render_bytes": model_render.render_bytes,
+        "requested_scope_sha256": frame.requested_scope_sha256,
+        "offered_locators": list(frame.requested_locators),
+        "shown_locators": list(frame.shown_locators),
+        "available_not_shown_locators": list(frame.available_not_shown_locators),
+        "model_delivery_status": "delivered",
+    })
+
+
 def selector_evidence_payload(
     *,
     attachment_context: str,
@@ -6602,11 +6668,19 @@ def selector_evidence_payload(
     source_catalog: AttachmentSourceCatalog | None = None,
     sheet: str = "",
     remaining_work: Sequence[str] | None = None,
+    source_frame: ModelSourceFrame | None = None,
 ) -> list[Any]:
     """Return model evidence as independently packable, ordered source blocks."""
 
     payload: list[Any] = []
-    if source_catalog is not None and source_catalog.rows:
+    if source_frame is not None:
+        payload.append(render_model_source_frame(source_frame).to_payload())
+        payload.append({"source_frame_stage_contract": {
+            "query": "Только requested_source_rows и показанный reference_source_rows; полный манифест адресов сохранён. "
+                     "Этот вызов составления запросов не имеет native READ tools; read_source доступен на последующей стадии ответа.",
+            "answer": "read_source читает любой точный source_row полного манифеста из того же закреплённого исходника.",
+        }})
+    elif source_catalog is not None and source_catalog.rows:
         payload.append(source_catalog.manifest_text())
         wanted_sheet = str(sheet or "").strip()
         if wanted_sheet:
@@ -6701,7 +6775,9 @@ def profile_system_prompt(
     parts.append("Факты выполнения от приложения:\n" + json.dumps(model_runtime_facts(snapshot), ensure_ascii=False))
     if skill:
         parts.append("Активный skill профиля (правила работы, не evidence):\n" + skill)
-    if strict:
+    if purpose == "query":
+        parts.append(_MODEL_RAG_QUERY_PHASE_INSTRUCTION)
+    elif strict:
         parts.append(
             "Повторная попытка: сохрани полезный ответ, но привяжи числа, требования и "
             "проектные факты к [Источник N]. Не найденное обозначь как ограничение."
@@ -7877,6 +7953,29 @@ async def _execute_chat_evidence_application(
     model_delivered_source_locators: set[str] = set()
     answer_finish_reason = ""
     model_driven_retrieval = profile_uses_model_driven_retrieval(profile_snapshot)
+    source_frame_rows = configured_source_frame_rows(_env_int)
+    initial_source_frame: ModelSourceFrame | None = None
+    source_frame_contract: dict[str, Any] = {}
+    source_frame_contract_sha256 = ""
+    if source_frame_rows and model_driven_retrieval and source_catalog is not None and source_catalog.rows:
+        # Freeze the shared technical source scope before comparative branches.
+        frame_sheet_names = catalog_work_sheet_names(source_catalog)
+        first_scope = (catalog_sheet_work_locators(source_catalog, frame_sheet_names[0])
+                       if frame_sheet_names else [row.locator for row in source_catalog.rows])
+        try:
+            initial_source_frame = build_model_source_frame(source_catalog, first_scope[:source_frame_rows])
+        except ModelSourceFrameError as frame_error:
+            raise HTTPException(422, f"SOURCE_FRAME_UNAVAILABLE: {frame_error}") from frame_error
+        source_frame_contract = {
+            "schema": SOURCE_FRAME_SCHEMA, "mode": "source_rows", "rows_per_frame": source_frame_rows,
+            "catalog_sha256": initial_source_frame.catalog_sha256,
+        }
+        source_frame_contract_sha256 = hashlib.sha256(json.dumps(
+            source_frame_contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        retrieval_trace["source_frame"] = {**source_frame_contract,
+            "contract_sha256": source_frame_contract_sha256,
+            "whole_document_source_rows": list(source_catalog.work_locators())}
     sheet_pass_active = sheet_pass_should_run(
         source_catalog,
         tabular_estimator_bound=tabular_estimator_bound,
@@ -7907,6 +8006,7 @@ async def _execute_chat_evidence_application(
             model_authored_initial_query=model_driven_retrieval,
         ),
         source_catalog=source_catalog,
+        source_frame=initial_source_frame,
         sheet=sheet_pass_first,
         remaining_work=(
             catalog_sheet_work_locators(source_catalog, sheet_pass_first)
@@ -8329,7 +8429,8 @@ async def _execute_chat_evidence_application(
                             working_memory=workspace_note_objects(
                                 memory_candidates, registered=workspace_memory_registered,
                             ),
-                            evidence=selector_evidence,
+                            evidence=() if initial_source_frame is not None else selector_evidence,
+                            required_evidence=selector_evidence if initial_source_frame is not None else (),
                             source_map=selector_source_map,
                             tool_exchange=(),
                         )
@@ -8360,6 +8461,8 @@ async def _execute_chat_evidence_application(
                             inference_preset=query_execution_preset,
                         )
                         t_llm += time.time() - t_query_model
+                        record_source_frame_delivery(retrieval_trace, initial_source_frame,
+                            purpose="model_rag_queries" if query_attempt == 1 else "model_rag_query_repair")
                         append_actual_model_call(
                             retrieval_trace, purpose="model_rag_queries" if query_attempt == 1 else "model_rag_query_repair",
                             finish_reason=llm_usage_finish_reason(query_usage),
@@ -8664,6 +8767,10 @@ async def _execute_chat_evidence_application(
                             for tool in shortlist.get("tools", [])
                             if isinstance(tool, dict) and tool.get("name")
                         }
+                        research_read_names = {
+                            str(tool["name"]) for tool in shortlist.get("tools", [])
+                            if isinstance(tool, dict) and tool.get("name") and tool.get("effect") == "read"
+                        }
                         native_tools = native_model_tool_schemas(
                             shortlist.get("tools") or []
                         )
@@ -8819,6 +8926,10 @@ async def _execute_chat_evidence_application(
                                 selector_body,
                                 allow_stream=False,
                             )
+                            append_actual_model_call(
+                                retrieval_trace, purpose="tool_decision",
+                                finish_reason=llm_usage_finish_reason(round_usage),
+                                completion_tokens=int(round_usage.get("completion_tokens") or 0))
                             t_llm += time.time() - t_tool_selector
                             selector_usage.append(round_usage)
                             tool_loop_stage = "selector_parse"
@@ -8878,8 +8989,10 @@ async def _execute_chat_evidence_application(
                             )
                             native_payloads: list[dict[str, Any]] = []
                             replayed_reads = 0
+                            blocked_reads = 0
                             research_rounds.append(
-                                {"round": research_round, "proposed": len(proposed_calls), "executed": len(calls)}
+                                {"round": research_round, "proposed": len(proposed_calls),
+                                 "admitted": len(calls), "executed": len(calls)}
                             )
                             if not calls:
                                 stop_reason = "model_stop"
@@ -8887,8 +9000,12 @@ async def _execute_chat_evidence_application(
                             for call in calls:
                                 tool_loop_stage = "tool_execution"
                                 tool_name = str(call.get("tool") or "")
+                                read_blocked = tool_name in research_read_names and time.monotonic() >= research_deadline
                                 model_packaging_job: dict[str, Any] = {}
-                                if (
+                                if read_blocked:
+                                    blocked_reads += 1
+                                    payload = research_deadline_blocked_payload(tool_name)
+                                elif (
                                     tool_name in {"build_lsr_workbook", "build_vor_workbook"}
                                     and canonical_execution_mode is CanonicalRouteMode.ACTIVE
                                     and workbook_tool_executor is not None
@@ -8962,7 +9079,8 @@ async def _execute_chat_evidence_application(
                                     research_result, read_replayed = await execute_research_read(call)
                                     replayed_reads += int(read_replayed)
                                     payload = research_result.payload
-                                selected_calls.append(call)
+                                if not read_blocked:
+                                    selected_calls.append(call)
                                 calls_remaining -= 1
                                 safe_payload = safe_workbook_history_projection(payload)
                                 visible_payload = safe_payload if safe_payload else payload
@@ -9010,11 +9128,17 @@ async def _execute_chat_evidence_application(
                                     assistant_content=native_response.text,
                                     reasoning_content=native_response.reasoning_content,
                                 ))
-                            if workbook_chat_meta:
-                                break
                             if replayed_reads:
                                 research_rounds[-1]["replayed"] = replayed_reads
                                 research_rounds[-1]["executed"] -= replayed_reads
+                            if blocked_reads:
+                                research_rounds[-1]["blocked"] = blocked_reads
+                                research_rounds[-1]["executed"] -= blocked_reads
+                            if workbook_chat_meta:
+                                break
+                            if blocked_reads:
+                                stop_reason = "deadline"
+                                break
                             if replayed_reads == len(calls):
                                 stop_reason = "repeated_read_batch"
                                 break
@@ -9267,6 +9391,8 @@ async def _execute_chat_evidence_application(
                                     or llm_model
                                 ),
                                 question=str(req.question or ""),
+                                **({"source_frame_contract_sha256": source_frame_contract_sha256}
+                                   if source_frame_contract_sha256 else {}),
                             )
                             from proxy.services.lsr_workbook_adapter_service import requested_price_basis
                             research_job = research_job_service.begin_or_resume(
@@ -9276,9 +9402,17 @@ async def _execute_chat_evidence_application(
                                     "original_question": str(req.question or ""),
                                     "artifact_intent": workbook_artifact_intent(str(req.question or "")),
                                     "price_basis": requested_price_basis(str(req.question or "")),
+                                    **({"source_frame": source_frame_contract} if source_frame_contract else {}),
                                 },
                             )
                         except Exception as job_error:  # noqa: BLE001 - durability degrades visibly
+                            if isinstance(job_error, WorkbookResearchJobError) and str(job_error) == "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED":
+                                raise HTTPException(409, detail={
+                                    "code": "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED",
+                                    "message": "Область исходника или размер пакета изменились. Верните прежнюю настройку "
+                                               "для продолжения либо отправьте полное новое задание с регионом и периодом цен. "
+                                               "Сохранённые решения и файлы прежнего задания доступны без изменений.",
+                                }) from job_error
                             logger.exception(
                                 "[WORKBOOK_RESEARCH] durable checkpoint unavailable: %s",
                                 type(job_error).__name__,
@@ -9665,12 +9799,15 @@ async def _execute_chat_evidence_application(
                                 settled_before = settled_source_keys(
                                     accumulated_rows, source_catalog
                                 )
+                                pass_source_frame = (build_model_source_frame(source_catalog, packet)
+                                                     if initial_source_frame is not None else None)
                                 pass_evidence = selector_evidence_payload(
                                     attachment_context=attachment_context,
                                     rendered_context="",
                                     source_catalog=source_catalog,
                                     sheet=sheet_name,
                                     remaining_work=packet,
+                                    source_frame=pass_source_frame,
                                 )
                                 prior_page_rows = [row for row in accumulated_rows if str(row.get("source_row") or "") in packet]
                                 prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
@@ -9705,6 +9842,7 @@ async def _execute_chat_evidence_application(
                                     ),
                                     already_offered=tuple(sorted(offered_locators)),
                                     offer_counts=offer_counts,
+                                    **({"source_frame_rows": source_frame_rows} if initial_source_frame is not None else {}),
                                 )
                                 if not packet:
                                     break
@@ -9723,12 +9861,15 @@ async def _execute_chat_evidence_application(
                                     sheet=sheet_name,
                                     index=sheet_index,
                                 )
+                                pass_source_frame = (build_model_source_frame(source_catalog, packet)
+                                                     if initial_source_frame is not None else None)
                                 pass_evidence = selector_evidence_payload(
                                     attachment_context=attachment_context,
                                     rendered_context="",
                                     source_catalog=source_catalog,
                                     sheet=sheet_name,
                                     remaining_work=packet,
+                                    source_frame=pass_source_frame,
                                 )
                                 prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
                                 prior_page_rows = [row for row in accumulated_rows if str(row.get("source_row") or "") in packet]
@@ -9834,6 +9975,7 @@ async def _execute_chat_evidence_application(
                                             inference_preset=query_execution_preset,
                                         )
                                         t_llm += time.time() - t_query_model
+                                        record_source_frame_delivery(retrieval_trace, pass_source_frame, purpose=query_purpose)
                                         query_diagnostic = model_query_output_diagnostics(
                                             query_text, query_usage, purpose=query_purpose, budget=query_budget,
                                         )
@@ -10106,7 +10248,7 @@ async def _execute_chat_evidence_application(
                             ]
                             # Every continuation retains the complete original
                             # attachment, independently of the current row packet.
-                            if attachment_context and not any(
+                            if initial_source_frame is None and attachment_context and not any(
                                 isinstance(item, Mapping) and "original_attachment_context" in item
                                 for item in pass_evidence
                             ):
@@ -10379,6 +10521,7 @@ async def _execute_chat_evidence_application(
                             pass_answer, usage = await _sheet_pass_llm(chat_body,
                                 expected_connection_revision_id=measured_connection_revision(answer_packet))
                             t_llm += time.time() - t_llm_call
+                            record_source_frame_delivery(retrieval_trace, pass_source_frame, purpose="sheet_answer")
                             model_delivered_source_locators.update(
                                 set(packet) - set(source_incomplete_locators)
                             )
@@ -10460,6 +10603,7 @@ async def _execute_chat_evidence_application(
                                     expected_connection_revision_id=measured_connection_revision(read_frame),
                                 )
                                 t_llm += time.time() - started
+                                record_source_frame_delivery(retrieval_trace, pass_source_frame, purpose="sheet_pass_evidence_read")
                                 confirm_model_read_delivery(model_evidence_chunks, receipts,
                                                             inventory_refs=inventory_refs, body_refs=body_refs)
                                 model_research_tools.register_shown_norm_cards(model_evidence_chunks)
@@ -11309,6 +11453,7 @@ async def _execute_chat_evidence_application(
                             attachment_context=attachment_context,
                             rendered_context="",
                             source_catalog=source_catalog,
+                            source_frame=initial_source_frame,
                         )
                         _, fixed_packet = govern_inference_messages(
                             preset=answer_execution_preset,
@@ -11317,7 +11462,8 @@ async def _execute_chat_evidence_application(
                             native_tools=direct_read_tools,
                             checkpoint=(),
                             working_memory=(),
-                            evidence=fixed_model_rag_evidence,
+                            evidence=() if initial_source_frame is not None else fixed_model_rag_evidence,
+                            required_evidence=fixed_model_rag_evidence if initial_source_frame is not None else (),
                             source_map=(),
                             tool_exchange=(),
                             dialogue=(),
@@ -11698,6 +11844,7 @@ async def _execute_chat_evidence_application(
                             allow_stream=not model_driven_retrieval,
                         )
                     t_llm += time.time() - t_llm_call
+                    record_source_frame_delivery(retrieval_trace, initial_source_frame, purpose="answer")
                     append_actual_model_call(retrieval_trace, purpose="answer",
                         finish_reason=llm_usage_finish_reason(usage),
                         completion_tokens=int(usage.get("completion_tokens") or 0))
@@ -11722,12 +11869,7 @@ async def _execute_chat_evidence_application(
                         for call in calls:
                             if time.monotonic() >= research_deadline:
                                 blocked_reads += 1
-                                blocked_payload = {
-                                    "tool": call["tool"], "status": "blocked",
-                                    "result": {"code": "ORDINARY_RESEARCH_DEADLINE", "executed": False,
-                                               "expired_read_window": True},
-                                    "sources": [], "missing": [], "warnings": ["Original source-reading deadline expired."],
-                                }
+                                blocked_payload = research_deadline_blocked_payload(call["tool"])
                                 payloads.append(blocked_payload)
                                 tool_results_for_model.append(blocked_payload)
                                 continue
@@ -11855,6 +11997,7 @@ async def _execute_chat_evidence_application(
                                 expected_connection_revision_id=measured_connection_revision(read_frame),
                             )
                             t_llm += time.time() - started
+                            record_source_frame_delivery(retrieval_trace, initial_source_frame, purpose="direct_evidence_read")
                             confirm_model_read_delivery(model_evidence_chunks, receipts,
                                                         inventory_refs=inventory_refs, body_refs=body_refs)
                             model_research_tools.register_shown_norm_cards(model_evidence_chunks)

@@ -1,5 +1,29 @@
 # ADR-15 — Модель → RAG → результат модели → расчёт и XLSX
 
+## Build907: experimental literal source frames
+
+The complete-input route remains the default (`LES_CHAT_SOURCE_FRAME_ROWS=0`).
+The optional `1..12` mode changes only technical source presentation: the original
+file and whole catalog are retained, all exact locators are disclosed, the current
+literal rows keep their headers/sections/values/formulas/notes, and the same
+`read_source` reader can read every not-shown row during the answer phase.
+The model authors all searches, engineering roles, norm choices and decisions.
+No code summary, candidate norm selector or compulsory professional review is added.
+The query phase has no native reader; its source contract says so explicitly.
+
+Both B0 and B1 share the same first frame, question, model, scope and reader access.
+Whole-job denominator and source bytes remain unchanged. Detailed immutable source
+audit and hashes are stored separately from the lossless literal model rendering.
+Frame mode, catalog identity and requested scope participate in new frame-job
+identity; the default mode preserves prior identity. A plain continuation across
+incompatible source-frame scopes fails visibly before model calls and preserves
+the existing job/question/price basis. An explicit fresh question can start a new job.
+
+This mode is an opt-in transport experiment until installed live comparison passes.
+First-frame success does not close whole-document, professional norm, large-input,
+diverse-format, complete-price or exact-installer acceptance. Full RAG payloads and
+native tool exchanges are never clipped to make the experiment fit.
+
 Статус: **принято** (2026-09-01).
 
 Candidate **859**, установленный baseline **858**: изменения ниже ещё требуют
@@ -110,7 +134,7 @@ JSON-планами, специальными status/decision-вызовами, 
 Активный путь один:
 
 ```text
-исходный вопрос + полное вложение + явно выбранный датасет
+исходный вопрос + полное вложение (по умолчанию) + явно выбранный датасет
   → та же модель формулирует любое необходимое число RAG-запросов
   → код буквально исполняет запросы через настроенный dedicated сметный RAG
   → код группирует profile-owned число карточек на запрос как Qx.Hy и сохраняет все группы
@@ -137,7 +161,7 @@ JSON-планами, специальными status/decision-вызовами, 
 До терминального результата модели код не имеет права:
 
 - выбирать или переписывать запросы, нормы, аналоги, coverage и статус решения;
-- заменять исходный файл сводкой или терять его перед финальным вызовом;
+- заменять исходный файл сводкой или терять доступ к нему перед финальным вызовом;
 - требовать специальный JSON-план как допуск к RAG;
 - требовать JSON/schema или model tool-call для итогового ответа;
 - навязывать R1/R2-review, mapping lock, подтверждение привязки или фиксированное
