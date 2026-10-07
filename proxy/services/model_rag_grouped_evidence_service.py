@@ -13,6 +13,10 @@ from typing import Any, Mapping, Sequence
 
 
 _NRSP_HEADER = "НР/СП: варианты каталога для сборника; выбор модели по условиям объекта, не готовая ставка:"
+_RESOURCE_SOURCE_POINTER_MEANING = (
+    "В ресурсах source_ref={\"shared_source_pointer\":ID} означает точное значение "
+    "literal_source_catalog[ID]; остальные поля буквальны."
+)
 
 
 def normative_card_identity(meta: Mapping[str, Any]) -> str:
@@ -137,6 +141,63 @@ def _source_id(source: str) -> str:
     return "source_" + hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
 
 
+def _share_resource_source_refs(content: str, meta: Mapping[str, Any], sources: dict[str, str]) -> str:
+    """Factor only exact ordered producer JSON lines; keep raw cards untouched."""
+    resources = meta.get("resources")
+    if meta.get("exact_card_read") is not True or not isinstance(resources, (list, tuple)) or not resources:
+        return content
+    # The producer joins with LF; splitlines would also split literal U+2028
+    # inside an ensure_ascii=False JSON string and corrupt that resource.
+    lines = content.split("\n")
+    positions: dict[str, list[int]] = {}
+    for index, line in enumerate(lines):
+        positions.setdefault(line, []).append(index)
+    replacements: dict[int, str] = {}
+    added: dict[str, str] = {}
+    previous = -1
+    saved = 0
+    for slot, resource in enumerate(resources, 1):
+        if (not isinstance(resource, Mapping) or type(resource.get("resource_slot")) is not int
+                or resource["resource_slot"] != slot):
+            return content
+        try:
+            literal = json.dumps(dict(resource), ensure_ascii=False, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            return content
+        matches = positions.get(literal, [])
+        if len(matches) != 1 or matches[0] <= previous:
+            return content
+        previous = matches[0]
+        source = resource.get("source_ref")
+        if not isinstance(source, str) or not source:
+            continue
+        key = _source_id(source)
+        if ((key in sources and sources[key] != source)
+                or (key in added and added[key] != source)):
+            return content
+        projected = {**dict(resource), "source_ref": {"shared_source_pointer": key}}
+        replacement = json.dumps(projected, ensure_ascii=False, sort_keys=True, default=str)
+        # Short literals remain literal. An existing projected line makes a
+        # reverse substitution ambiguous, so retain the complete original view.
+        if replacement in positions:
+            return content
+        if len(replacement) >= len(literal):
+            continue
+        replacements[previous] = replacement
+        saved += len(literal) - len(replacement)
+        if key not in sources:
+            added[key] = source
+    overhead = len(json.dumps({"resource_source_pointer_meaning": _RESOURCE_SOURCE_POINTER_MEANING},
+                              ensure_ascii=False))
+    overhead += sum(len(json.dumps({key: value}, ensure_ascii=False)) + 2 for key, value in added.items())
+    if not replacements or saved <= overhead:
+        return content
+    for index, replacement in replacements.items():
+        lines[index] = replacement
+    sources.update(added)
+    return "\n".join(lines)
+
+
 def _literal_title(card: EvidenceCard) -> str:
     title = card.meta.get("title")
     if title is not None:
@@ -175,6 +236,15 @@ def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int,
     inventory: list[str] = []
     unshown: list[str] = []
     metadata: dict[str, Mapping[str, Any]] = {}
+    resource_sources_shared = False
+    # Reserve every shown top-level identity before nested resource pointers.
+    # Unshown source identities must not leak through this reservation.
+    for group in groups:
+        for card in group.cards:
+            if card.ref in visible:
+                source = str(card.meta.get("source_ref") or card.meta.get("doc_id") or "")
+                if source:
+                    sources.setdefault(_source_id(source), source)
     for index, group in enumerate(groups):
         parts = [group.header]
         if not group.cards and (index < full_count or include_empty_queries):
@@ -216,7 +286,9 @@ def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int,
             body = lossless_nrsp_body(card.content, card.meta)
             if body.catalog_id:
                 catalogs.setdefault(body.catalog_id, body.catalog_text)
-            parts.append(f"{card.header}:\n{body.content}")
+            view = _share_resource_source_refs(body.content, card.meta, sources)
+            resource_sources_shared = resource_sources_shared or view != body.content
+            parts.append(f"{card.header}:\n{view}")
         if len(parts) > 1:
             rendered.append("\n\n".join(parts))
     if rendered:
@@ -229,9 +301,11 @@ def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int,
                                   "unshown_cursor": unshown[0] if unshown else None},
                                  ensure_ascii=False, separators=(",", ":")))
         if sources:
-            shared.append("Буквальные источники индекса:\n" + "\n".join(
+            shared.append("Буквальные источники индекса (literal_source_catalog, пары [ID,значение]):\n" + "\n".join(
                 json.dumps([key, value], ensure_ascii=False, separators=(",", ":"))
                 for key, value in sources.items()))
+        if resource_sources_shared:
+            shared.append(_RESOURCE_SOURCE_POINTER_MEANING)
         if catalogs:
             shared.extend(f"Общий буквальный каталог [{key}]:\n{value}" for key, value in catalogs.items())
         rendered[0] = "\n\n".join([*shared, rendered[0]])
@@ -398,30 +472,40 @@ def _plan_single_body_page(groups: Sequence[EvidenceGroup], max_chars: int) -> E
     return page
 
 
-def share_registry_catalogs(records: Sequence[Mapping[str, Any]], metadata: Mapping[str, Mapping[str, Any]]) -> list[Any]:
+def share_registry_catalogs(records: Sequence[Mapping[str, Any]], metadata: Mapping[str, Mapping[str, Any]],
+                            *, source_catalog: Mapping[str, str] | None = None) -> list[Any]:
     """Replay literal shown views with their exact shared catalogs in read turns."""
     catalogs: dict[str, str] = {}
-    sources: dict[str, str] = {}
+    sources: dict[str, str] = dict(source_catalog or {})
     rows = []
+    resource_sources_shared = False
+    for record in records:
+        source = str(record.get("source_ref") or "")
+        if source:
+            sources.setdefault(_source_id(source), source)
     for record in records:
         row = dict(record)
         ref = str(row.get("evidence_ref") or "")
         meta = metadata.get(ref, {})
+        source = str(row.get("source_ref") or "")
+        if source:
+            key = _source_id(source)
+            sources.setdefault(key, source)
+            row["source_ref"] = {"shared_source_pointer": key}
         body = lossless_nrsp_body(str(row.get("content") or ""), meta)
-        row["content"] = body.content
+        row["content"] = _share_resource_source_refs(body.content, meta, sources)
+        resource_sources_shared = resource_sources_shared or row["content"] != body.content
         row["body_status"] = str(meta.get("body_status") or "full")
         row["body_available"] = row["body_status"] == "full" and bool(body.original)
         row.update(card_delivery_facts(meta, raw_body_shown=row["body_available"]))
         row["normative_card_identity"] = normative_card_identity(meta)
         if body.catalog_id:
             catalogs.setdefault(body.catalog_id, body.catalog_text)
-        source = str(row.get("source_ref") or "")
-        if source:
-            key = _source_id(source)
-            sources.setdefault(key, source)
-            row["source_ref"] = {"shared_source_pointer": key}
         rows.append(row)
-    return [{"literal_source_catalog": sources, "literal_nrsp_catalog": catalogs}, rows]
+    shared = {"literal_source_catalog": sources, "literal_nrsp_catalog": catalogs}
+    if resource_sources_shared:
+        shared["resource_source_pointer_meaning"] = _RESOURCE_SOURCE_POINTER_MEANING
+    return [shared, rows]
 
 
 def _compact_unread_pointer_records(
@@ -508,12 +592,15 @@ def compact_read_replay(chunks: Sequence[Any]) -> list[Any]:
         buckets.setdefault(bucket, []).append(chunk)
     records = [row for bucket in buckets.values()
                for row in shown_evidence_registry(bucket)["previously_shown_evidence_registry"]]
-    catalogs = {"literal_source_catalog": {}, "literal_nrsp_catalog": {}}
+    catalogs = {"literal_source_catalog": dict(sources), "literal_nrsp_catalog": {}}
     rows = []
+    resource_sources_shared = False
     for row in records:
         ref = str(row.get("evidence_ref") or "")
         meta = metadata.get((str(row.get("global_evidence_id") or ""), ref), {})
-        shared, result = share_registry_catalogs([row], {ref: meta})
+        shared, result = share_registry_catalogs([row], {ref: meta},
+                                                source_catalog=catalogs["literal_source_catalog"])
+        resource_sources_shared = resource_sources_shared or "resource_source_pointer_meaning" in shared
         for name in catalogs:
             catalogs[name].update(shared[name])
         if meta.get("source_sha256") is not None:
@@ -543,7 +630,8 @@ def compact_read_replay(chunks: Sequence[Any]) -> list[Any]:
         else:
             pointers = [record[0] for record in pointer_records]
     return [catalogs, {"previously_shown_evidence_registry": compact,
-                      "body_delivery": "Full literal bodies and exact shared catalogs. Deferred entries below are unread identity pointers only."},
+                      "body_delivery": "Full literal bodies and exact shared catalogs. Deferred entries below are unread identity pointers only."
+                      + (" " + _RESOURCE_SOURCE_POINTER_MEANING if resource_sources_shared else "")},
             *([pointer_header + ":\n" + "\n".join(pointers)] if pointers else [])]
 
 

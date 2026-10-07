@@ -5691,7 +5691,7 @@
         "tests/test_model_result_resource_actions.py",
         "tests/test_model_retained_norm_delivery.py"
       ],
-      "lines": 629,
+      "lines": 717,
       "module": "proxy.services.model_rag_grouped_evidence_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5720,6 +5720,7 @@
         "tests/test_model_query_failure_job_lifecycle.py",
         "tests/test_model_query_metadata_transport.py",
         "tests/test_model_query_table_transport.py",
+        "tests/test_model_rag_grouped_evidence_service.py",
         "tests/test_model_rag_pointer_alias_replay.py",
         "tests/test_model_research_evidence_actions.py",
         "tests/test_model_research_tool_service.py",
@@ -5768,6 +5769,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/model_research_tool_service.py",
         "tests/test_model_initial_complete_card_frontier.py",
+        "tests/test_model_rag_grouped_evidence_service.py",
         "tests/test_model_retained_norm_delivery.py"
       ],
       "lines": 35,
@@ -13103,12 +13105,14 @@
     },
     {
       "inbound": [],
-      "lines": 789,
+      "lines": 1121,
       "module": "tests.test_model_rag_grouped_evidence_service",
       "outbound": [
         "proxy/services/context_governor_service.py",
         "proxy/services/model_execution_preset_service.py",
-        "proxy/services/model_rag_grouped_evidence_service.py"
+        "proxy/services/model_rag_grouped_evidence_service.py",
+        "proxy/services/model_research_tool_service.py",
+        "proxy/services/model_resource_reference_service.py"
       ],
       "path": "tests/test_model_rag_grouped_evidence_service.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -21440,7 +21444,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 750,
     "tracked_python_files": 1137,
-    "tracked_python_lines": 396197
+    "tracked_python_lines": 396617
   },
   "warnings": []
 }

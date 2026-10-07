@@ -480,6 +480,338 @@ def test_compact_read_replay_preserves_exact_catalog_bytes_and_full_resource_fie
     assert chunk == unchanged
 
 
+def _resource_source_fixture(ref="Q1.H1", *, source=None, sha="a" * 64, count=4):
+    from proxy.services.model_research_tool_service import _full_norm_card_content
+    from proxy.services.model_resource_reference_service import resource_slot_records
+
+    source = source if source is not None else (
+        'typed-norms://immutable/Состав "ресурсов"/' + "catalog-provenance/" * 18 + "#row=source"
+    )
+    card = {"norm_key": "literal-card", "norm_code": "fixture-code", "title": 'Объект "А"',
+            "measure_unit": "100 м²", "source_ref": source, "source_sha256": sha,
+            "work_steps": ["буквальный состав"], "resources_complete": True,
+            "resources_returned": count,
+            "resources": [{"kind": "material", "code": f"r-{i}", "name": 'Ресурс "А"\u2028Б',
+                           "unit": "м³", "per_unit": 0.125 + i, "source_ref": source,
+                           "source_sha256": sha, "optional": None, "flag": False,
+                           "literal": {"quoted": '«текст» \\ "строка"'}}
+                          for i in range(count)]}
+    meta = {**card, "resources": resource_slot_records(card), "exact_card_read": True,
+            "model_evidence_ref": ref, "global_evidence_id": "global-" + ref}
+    return EvidenceCard(ref, "literal header", normative_card_identity(meta),
+                        _full_norm_card_content(card), meta)
+
+
+def _resource_json_lines(content):
+    rows = []
+    for line in content.split("\n"):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and "resource_slot" in row:
+            rows.append(row)
+    return rows
+
+
+def _restore_resource_source_view(content, sources):
+    result = []
+    for line in content.split("\n"):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            row = None
+        if (isinstance(row, dict) and "resource_slot" in row
+                and isinstance(row.get("source_ref"), dict)
+                and set(row["source_ref"]) == {"shared_source_pointer"}):
+            row["source_ref"] = sources[row["source_ref"]["shared_source_pointer"]]
+            line = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+        result.append(line)
+    return "\n".join(result)
+
+
+def _page_source_catalog(page):
+    sources = {}
+    for line in "\n\n".join(page.groups).split("\n"):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if (isinstance(record, list) and len(record) == 2
+                and isinstance(record[0], str) and record[0].startswith("source_")):
+            sources[record[0]] = record[1]
+    return sources
+
+
+def test_resource_source_transport_restores_producer_bytes_and_literal_fields():
+    card = _resource_source_fixture()
+    unchanged = copy.deepcopy(card.meta)
+    catalogs, rows = share_registry_catalogs([
+        {"evidence_ref": card.ref, "content": card.content, "source_ref": card.meta["source_ref"]}
+    ], {card.ref: card.meta})
+    row, = rows
+    resources = _resource_json_lines(row["content"])
+
+    assert all(isinstance(resource["source_ref"], dict) for resource in resources)
+    assert len(resources) == len(card.meta["resources"]) == 4
+    assert _restore_resource_source_view(row["content"], catalogs["literal_source_catalog"]).encode("utf-8") == card.content.encode("utf-8")
+    assert "shared_source_pointer" in catalogs["resource_source_pointer_meaning"]
+    assert "literal_source_catalog" in catalogs["resource_source_pointer_meaning"]
+    for actual, original in zip(resources, card.meta["resources"]):
+        pointer = actual["source_ref"]["shared_source_pointer"]
+        actual["source_ref"] = catalogs["literal_source_catalog"][pointer]
+        assert actual == original
+    assert card.meta == unchanged
+
+
+def test_initial_and_native_resource_views_preserve_raw_resource_proof_and_aliases():
+    from proxy.services.model_resource_reference_service import shown_resource_record
+
+    card = _resource_source_fixture()
+    alias = EvidenceCard("Q2.H3", "alias header", card.identity, card.content,
+                         {**card.meta, "model_evidence_ref": "Q2.H3", "global_evidence_id": "global-Q2.H3"})
+    groups = [EvidenceGroup("literal query", [card, alias])]
+    frozen_groups = copy.deepcopy(groups)
+    page = plan_full_group_page(groups, 1_000_000)
+    initial = "\n\n".join(page.groups)
+    sources = _page_source_catalog(page)
+    assert '"source_ref": {"shared_source_pointer":' in initial
+    assert "shared_source_pointer" in initial and "literal_source_catalog" in initial
+    assert "Буквальные источники индекса (literal_source_catalog, пары [ID,значение])" in initial
+    assert page.body_by_ref == {card.ref: card.content, alias.ref: alias.content}
+    assert page.shared_refs == {alias.ref: card.ref}
+    assert all(shown_resource_record(card.meta, page.body_by_ref[card.ref], slot)
+               == {key: value for key, value in card.meta["resources"][slot - 1].items() if key != "resource_slot"}
+               for slot in range(1, 5))
+
+    chunks = [{"doc_name": "literal norms", "content": item.content, "meta": item.meta}
+              for item in (card, alias)]
+    frozen_chunks = copy.deepcopy(chunks)
+    catalogs, registry = compact_read_replay(chunks)
+    replay, = registry["previously_shown_evidence_registry"]
+    assert '"source_ref": {"shared_source_pointer":' in replay["content"]
+    assert _restore_resource_source_view(replay["content"], catalogs["literal_source_catalog"]) == card.content
+    assert replay["aliases"] == [{"evidence_ref": alias.ref, "global_evidence_id": alias.meta["global_evidence_id"]}]
+    assert replay["normative_card_complete"] is True and replay["normative_resources_status"] == "complete"
+    assert "shared_source_pointer" in registry["body_delivery"]
+    # The projected view cannot manufacture the existing raw literal proof.
+    assert shown_resource_record(card.meta, replay["content"], 1) is None
+    assert sources == catalogs["literal_source_catalog"]
+    assert groups == frozen_groups and chunks == frozen_chunks
+
+
+@pytest.mark.parametrize("changed", ["sha", "source", "resource"])
+def test_distinct_resource_provenance_never_shares_card_body(changed):
+    first = _resource_source_fixture()
+    other = _resource_source_fixture("Q2.H1", sha="b" * 64 if changed == "sha" else "a" * 64,
+                                    source=first.meta["source_ref"] + "/different" if changed == "source" else None)
+    if changed == "resource":
+        resources = copy.deepcopy(other.meta["resources"])
+        resources[0]["per_unit"] = 9.875
+        before = json.dumps(other.meta["resources"][0], ensure_ascii=False, sort_keys=True, default=str)
+        after = json.dumps(resources[0], ensure_ascii=False, sort_keys=True, default=str)
+        other = EvidenceCard(other.ref, other.header, other.identity, other.content.replace(before, after),
+                             {**other.meta, "resources": resources})
+    originals = copy.deepcopy([first, other])
+    catalogs, registry = compact_read_replay([
+        {"doc_name": "norms", "content": item.content, "meta": item.meta} for item in (first, other)])
+    rows = registry["previously_shown_evidence_registry"]
+    assert [row["evidence_ref"] for row in rows] == [first.ref, other.ref]
+    assert all("aliases" not in row and "shared_body_ref" not in row for row in rows)
+    assert [_restore_resource_source_view(row["content"], catalogs["literal_source_catalog"])
+            for row in rows] == [first.content, other.content]
+    assert [row["source_sha256"] for row in rows] == [first.meta["source_sha256"], other.meta["source_sha256"]]
+    assert [first, other] == originals
+
+
+@pytest.mark.parametrize("invalid", ["changed_metadata", "changed_source", "missing_line", "duplicate_line",
+                                      "inline_line", "reordered_lines", "missing_slot", "duplicate_slot", "bool_slot",
+                                      "missing_exact_read", "false_exact_read"])
+def test_unverified_resource_lines_are_kept_whole_without_factoring(invalid):
+    card = _resource_source_fixture()
+    meta = copy.deepcopy(card.meta)
+    content = card.content
+    lines = [json.dumps(row, ensure_ascii=False, sort_keys=True, default=str) for row in meta["resources"]]
+    if invalid == "changed_metadata":
+        meta["resources"][1]["per_unit"] = 17
+    elif invalid == "changed_source":
+        meta["resources"][1]["source_ref"] += "/changed"
+    elif invalid == "missing_line":
+        content = content.replace(lines[1] + "\n", "")
+    elif invalid == "duplicate_line":
+        content += "\n" + lines[1]
+    elif invalid == "inline_line":
+        content = content.replace(lines[1], "prefix " + lines[1])
+    elif invalid == "reordered_lines":
+        content = content.replace("\n".join(lines), "\n".join(reversed(lines)))
+    elif invalid == "missing_slot":
+        meta["resources"][1].pop("resource_slot")
+    elif invalid == "duplicate_slot":
+        meta["resources"][1]["resource_slot"] = 1
+    elif invalid == "bool_slot":
+        meta["resources"][0]["resource_slot"] = True
+    elif invalid == "missing_exact_read":
+        meta.pop("exact_card_read")
+    else:
+        meta["exact_card_read"] = False
+    unchanged = copy.deepcopy(meta)
+    catalogs, rows = share_registry_catalogs([
+        {"evidence_ref": card.ref, "content": content, "source_ref": meta["source_ref"]}], {card.ref: meta})
+    assert rows[0]["content"] == content
+    assert "resource_source_pointer_meaning" not in catalogs
+    assert meta == unchanged
+
+
+@pytest.mark.parametrize("invalid", ["short_source", "source_collision", "projected_line_collision"])
+def test_resource_sharing_never_grows_short_values_or_resolves_collisions(monkeypatch, invalid):
+    import proxy.services.model_rag_grouped_evidence_service as service
+
+    card = _resource_source_fixture(source="short" if invalid == "short_source" else None)
+    meta = copy.deepcopy(card.meta)
+    content = card.content
+    if invalid == "source_collision":
+        monkeypatch.setattr(service, "_source_id", lambda source: "source_collision")
+        meta["source_ref"] = "other literal top-level source"
+    elif invalid == "projected_line_collision":
+        row = dict(meta["resources"][0])
+        row["source_ref"] = {"shared_source_pointer": service._source_id(meta["source_ref"])}
+        content += "\n" + json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+    catalogs, rows = share_registry_catalogs([
+        {"evidence_ref": card.ref, "content": content, "source_ref": meta["source_ref"]}], {card.ref: meta})
+    assert rows[0]["content"] == content
+    assert "resource_source_pointer_meaning" not in catalogs
+
+
+@pytest.mark.parametrize("within_body", [False, True])
+def test_nested_resource_catalog_collision_cannot_overwrite_an_earlier_literal(monkeypatch, within_body):
+    import proxy.services.model_rag_grouped_evidence_service as service
+
+    first = _resource_source_fixture()
+    second = _resource_source_fixture("Q2.H1", sha="b" * 64)
+    cards = []
+    for index, card in enumerate((first, second)):
+        meta = copy.deepcopy(card.meta)
+        content = card.content
+        for row_index, resource in enumerate(meta["resources"]):
+            before = json.dumps(resource, ensure_ascii=False, sort_keys=True, default=str)
+            resource["source_ref"] = "resource-only://" + ("A" if index == 0 else "B") * 280
+            if within_body and row_index == 1:
+                resource["source_ref"] = "resource-only://" + "C" * 280
+            after = json.dumps(resource, ensure_ascii=False, sort_keys=True, default=str)
+            content = content.replace(before, after)
+        cards.append(EvidenceCard(card.ref, card.header, card.identity, content, meta))
+    original_id = service._source_id
+    monkeypatch.setattr(service, "_source_id", lambda source: "source_nested_collision"
+                        if source.startswith("resource-only://") else original_id(source))
+    chunks = [{"doc_name": "literal norms", "content": card.content, "meta": card.meta} for card in cards]
+    unchanged = copy.deepcopy(chunks)
+    catalogs, registry = compact_read_replay(chunks)
+    rows = registry["previously_shown_evidence_registry"]
+    if within_body:
+        assert [row["content"] for row in rows] == [card.content for card in cards]
+        assert "source_nested_collision" not in catalogs["literal_source_catalog"]
+    else:
+        assert catalogs["literal_source_catalog"]["source_nested_collision"] == cards[0].meta["resources"][0]["source_ref"]
+        assert isinstance(_resource_json_lines(rows[0]["content"])[0]["source_ref"], dict)
+        assert rows[1]["content"] == cards[1].content
+        assert [_restore_resource_source_view(row["content"], catalogs["literal_source_catalog"])
+                for row in rows] == [card.content for card in cards]
+    assert chunks == unchanged
+
+
+@pytest.mark.parametrize("surface", ["initial", "registry"])
+def test_resource_pointer_cannot_capture_a_future_visible_top_source(monkeypatch, surface):
+    import proxy.services.model_rag_grouped_evidence_service as service
+
+    first = _resource_source_fixture(source="top-zero://" + "Z" * 280)
+    nested = "resource-only://" + "A" * 280
+    future = "future-top://" + "B" * 280
+    meta = copy.deepcopy(first.meta)
+    content = first.content
+    for resource in meta["resources"]:
+        before = json.dumps(resource, ensure_ascii=False, sort_keys=True, default=str)
+        resource["source_ref"] = nested
+        content = content.replace(before, json.dumps(resource, ensure_ascii=False, sort_keys=True, default=str))
+    first = EvidenceCard(first.ref, first.header, first.identity, content, meta)
+    second = _resource_source_fixture("Q2.H1", source=future, sha="b" * 64)
+    original_id = service._source_id
+    monkeypatch.setattr(service, "_source_id", lambda source: "source_future_collision"
+                        if source in (nested, future) else original_id(source))
+    originals = copy.deepcopy([first, second])
+    if surface == "initial":
+        page = plan_full_group_page([EvidenceGroup("one", [first]), EvidenceGroup("two", [second])], 1_000_000)
+        sources = _page_source_catalog(page)
+        assert sources[json.loads(page.pointer_by_ref[second.ref])[6]] == future
+        assert page.body_by_ref == {card.ref: card.content for card in (first, second)}
+        assert first.content in "\n\n".join(page.groups)
+    else:
+        sources, rows = share_registry_catalogs([
+            {"evidence_ref": card.ref, "content": card.content, "source_ref": card.meta["source_ref"]}
+            for card in (first, second)], {card.ref: card.meta for card in (first, second)})
+        sources = sources["literal_source_catalog"]
+        assert sources[rows[1]["source_ref"]["shared_source_pointer"]] == future
+        assert rows[0]["content"] == first.content
+        assert [_restore_resource_source_view(row["content"], sources) for row in rows] == [card.content for card in (first, second)]
+    assert [first, second] == originals
+
+
+def test_resource_collision_reservation_does_not_expose_unshown_top_sources(monkeypatch):
+    import proxy.services.model_rag_grouped_evidence_service as service
+
+    first = _resource_source_fixture(source="top-zero://" + "Z" * 280)
+    nested = "resource-only://" + "A" * 280
+    unshown = "future-unshown://" + "B" * 280
+    meta = copy.deepcopy(first.meta)
+    content = first.content
+    for resource in meta["resources"]:
+        before = json.dumps(resource, ensure_ascii=False, sort_keys=True, default=str)
+        resource["source_ref"] = nested
+        content = content.replace(before, json.dumps(resource, ensure_ascii=False, sort_keys=True, default=str))
+    first = EvidenceCard(first.ref, first.header, first.identity, content, meta)
+    second = _resource_source_fixture("Q2.H1", source=unshown, sha="b" * 64)
+    original_id = service._source_id
+    monkeypatch.setattr(service, "_source_id", lambda source: "source_unshown_collision"
+                        if source in (nested, unshown) else original_id(source))
+    page = service._render([EvidenceGroup("one", [first]), EvidenceGroup("two", [second])], {first.ref}, 1)
+    sources = _page_source_catalog(page)
+    assert sources["source_unshown_collision"] == nested
+    assert unshown not in "\n\n".join(page.groups)
+    assert second.ref in page.unshown_refs and second.ref not in page.pointer_by_ref
+    assert '"source_ref": {"shared_source_pointer":' in "\n\n".join(page.groups)
+    assert page.body_by_ref == {first.ref: first.content}
+
+
+def test_resource_source_projection_leaves_other_literal_occurrences_and_nrsp_unchanged():
+    card = _resource_source_fixture()
+    rules = _rules()
+    raw = _body(rules) + "\n" + card.content + "\n" + "Unrelated quoted source: " + card.meta["source_ref"]
+    meta = {**card.meta, "nr_sp_candidates": rules}
+    nrsp = lossless_nrsp_body(raw, meta)
+    catalogs, rows = share_registry_catalogs([
+        {"evidence_ref": card.ref, "content": raw, "source_ref": meta["source_ref"]}], {card.ref: meta})
+    view = rows[0]["content"]
+    assert '"source_ref": {"shared_source_pointer":' in view
+    assert view.endswith("Unrelated quoted source: " + card.meta["source_ref"])
+    restored = _restore_resource_source_view(view, catalogs["literal_source_catalog"]).replace(
+        f"НР/СП: общий буквальный каталог [{nrsp.catalog_id}].", catalogs["literal_nrsp_catalog"][nrsp.catalog_id], 1)
+    assert restored.encode("utf-8") == raw.encode("utf-8")
+    assert catalogs["literal_nrsp_catalog"] == {nrsp.catalog_id: nrsp.catalog_text}
+
+
+def test_resource_source_projection_reduces_only_transport_size_not_raw_semantics():
+    card = _resource_source_fixture(count=18)
+    record = {"evidence_ref": card.ref, "content": card.content, "source_ref": card.meta["source_ref"]}
+    catalogs, rows = share_registry_catalogs([record], {card.ref: card.meta})
+    raw_projection = copy.deepcopy(rows)
+    raw_projection[0]["content"] = card.content
+    before = json.dumps([{name: value for name, value in catalogs.items() if name != "resource_source_pointer_meaning"}, raw_projection], ensure_ascii=False)
+    after = json.dumps([catalogs, rows], ensure_ascii=False)
+    assert len(after) < len(before)
+    assert len(after.encode("utf-8")) < len(before.encode("utf-8"))
+    assert record["content"] == card.content
+    assert _restore_resource_source_view(rows[0]["content"], catalogs["literal_source_catalog"]) == record["content"]
+
+
 @pytest.mark.parametrize("changed", [{"source_sha256": "e" * 64}, {"edition": "fixture-edition-2027"}])
 def test_compact_read_replay_never_aliases_identical_bodies_across_changed_provenance(changed):
     body = _body(_rules())
