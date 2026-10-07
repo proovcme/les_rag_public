@@ -1,5 +1,33 @@
 # RAG evidence flow
 
+## Кандидат 0.31.197 / 925 — ещё не показанный discovery inventory
+
+prepare_model_read_replay различает available discovery и established evidence
+по уже существующему lifecycle. Только search_sources/search_pricebook_resources
+с model_inventory_delivery_status=prepared и известным model_query_index, без explicit/cited/body-delivered
+факта, могут ждать допуска. Unknown legacy inventory, explicit exact reads,
+required refs и ранее delivered inventory/body остаются обязательными.
+
+Новые указатели собираются в целые query inventory pages со своими точными
+source catalogs; затем предлагаются целые body pages. Нет выбора нормы, изменения
+порядка queries/hits или усечения текста. Manifest показывает возвращённые counts,
+первый ref/cursor и правило: отсутствие обоих видов страницы означает unshown,
+а не пустой результат. Raw evidence и native receipts/IDs/args/opaque поля сохранены.
+ModelReadReplay.inventory_refs — planned; required_inventory_refs и
+optional_inventory_refs задают допуск. Старый пятичастный constructor сохраняет
+required inventory, явный пустой список нового producer отличается от отсутствия.
+govern_model_read_messages возвращает
+только admitted refs из фактических ContextPacket objects; подтверждение delivery
+происходит после ответа provider. Не показанные bodies/pointers остаются prepared.
+
+Регрессии: tests/test_model_discovery_read_admission.py (overflow новых pointers,
+отсутствие ложного delivery, последующий required frontier, delivered/legacy fail-closed).
+Целевые205 и последующие40 boundary tests passed; full925r2:4363 passed,
+20 исторических skipped, mail66, metadata31, structural/docs/map gates exit0.
+Первый full925 gate с2 failures сохранён; live925 pending. На924 Thinking16K B1 остановился
+required52012>47104, B0 LENGTH16384, оба0файлов. Эта правка не подтверждает
+профессиональные решения модели и не снимает output limit. customer-ready=false.
+
 ## Кандидат 0.31.196 / 924 — текущие данные после завершённых вызовов чтения
 
 924 вводит тип CURRENT_READ_FRAME только для продолжения после полностью

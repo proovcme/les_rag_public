@@ -1,5 +1,23 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-07 — обязательный непоказанный discovery inventory
+
+На924 полный БАП/Thinking16K впервые реально исполнил CURRENT_READ_FRAME:
+8 norm searches +7 price searches, затем required52012>47104. Новые30 price
+identities имели inventoryprepared, но replay включал их pointers/catalog в required.
+RED generic fixture:6707>4000 при одном большом новом query group и сохранённом
+старом evidence. Кандидат925 допускает свежие группы целиком по бюджету;
+established/exact/cited/legacy evidence сохраняется. Admitted refs возвращаются
+отдельно, поэтому omitted группы остаются prepared. Целевые205 tests GREEN.
+Первый full925 сохранил2 compatibility failures; после сохранения unknown query
+binding и старого пятичастного constructor boundary40 и fullr2 прошли:
+4363 passed,20 исторических skipped, mail66, metadata31; остальные гейты exit0.
+Профессиональная и установленная приёмка925 pending; customer-ready=false.
+Полные body duplicates и ошибочное promotion price bodies в required не подтверждены.
+Парный B0/Thinking16K отдельно закончился LENGTH16384 без строк/файла;
+исправление inventory не объявляется решением этого другого ограничения.
+Доказательства — artifacts/live_924/acceptance/thinking16_whole19_pair_quantitative_gate_924.json.
+
 ## Кандидат 0.31.196 / 924 — текущие данные после завершённых вызовов чтения
 
 924 вводит тип CURRENT_READ_FRAME только для продолжения после полностью

@@ -1,5 +1,20 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат 0.31.197 / 925
+
+Native evidence replay: bind_model_requested_read_evidence помечает новые
+результаты prepared; prepare_model_read_replay разделяет established required
+frontier и fresh whole-query inventory/body pages. ModelReadReplay сохраняет
+planned refs отдельно от admitted refs. govern_model_read_messages вычисляет
+admitted inventory по объектам фактического ContextPacket, затем caller передаёт
+его confirm_model_read_delivery после ответа provider. Raw chunks/receipts не меняются.
+Файлы: proxy/services/model_rag_grouped_evidence_service.py и
+proxy/services/chat_evidence_application_service.py; generic регрессии —
+tests/test_model_discovery_read_admission.py. Подробности — docs/modules/rag-evidence-flow.md.
+Целевые205 + boundary40 passed; full925r2:4363 passed,20 исторических skipped,
+mail66, metadata31, structural/docs/map gates exit0. Live925 pending,
+установлен924, customer-ready=false.
+
 ## Кандидат 0.31.196 / 924 — текущие данные после завершённых вызовов чтения
 
 924 вводит тип CURRENT_READ_FRAME только для продолжения после полностью

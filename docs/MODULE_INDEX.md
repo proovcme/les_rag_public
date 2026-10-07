@@ -1,5 +1,18 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат 0.31.197 / 925
+
+🟡 Evidence transport: prepare_model_read_replay / ModelReadReplay в
+proxy/services/model_rag_grouped_evidence_service.py бюджетируют только явно ещё
+не показанный discovery inventory целыми группами. govern_model_read_messages
+возвращает фактически допущенные refs; confirm_model_read_delivery не подтверждает
+непоказанные страницы. Exact/cited/previously delivered/unknown legacy сохранены.
+Док↔код: [rag-evidence-flow](modules/rag-evidence-flow.md); регрессии —
+tests/test_model_discovery_read_admission.py. Целевые205 + boundary40 passed;
+full925r2:4363 passed,20 исторических skipped, mail66, metadata31; live pending.
+Runtime924: парный Thinking16K контроль отрицательный (B0 LENGTH16384,
+B1 required52012>47104), customer-ready=false. См. [RELEASE_LEDGER](RELEASE_LEDGER.md).
+
 ## Кандидат 0.31.196 / 924 — текущие данные после завершённых вызовов чтения
 
 924 вводит тип CURRENT_READ_FRAME только для продолжения после полностью

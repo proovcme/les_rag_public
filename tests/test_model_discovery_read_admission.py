@@ -58,6 +58,88 @@ def _snapshot(chunks, receipts=()):
     return copy.deepcopy(([vars(chunk) for chunk in chunks], list(receipts)))
 
 
+def _prepared_price_group(*, source_padding=0, body_padding=0):
+    return [SimpleNamespace(doc_name='literal-price-resource', doc_id='literal-price-doc',
+        content=json.dumps({'code': f'literal-resource-{rank}', 'unit': 'm',
+                            'price_current': 10 + rank, 'literal_description': 'x' * body_padding}),
+        meta={'model_evidence_ref': f'Q2.H{rank}', 'global_evidence_id': f'future-price-{rank}',
+              'resource_code': f'literal-resource-{rank}', 'pricebook': 'literal-book',
+              'pricebook_sha256': 'b' * 64, 'source_sha256': 'b' * 64,
+              'source_ref': f'literal-price-{rank}:' + str(rank) * source_padding,
+              'model_query_index': 2, 'model_query_text': 'literal resource query',
+              'body_status': 'full', 'model_raw_body_retained': True,
+              'model_read_tool': 'search_pricebook_resources', 'model_delivery_status': 'prepared',
+              'model_inventory_delivery_status': 'prepared'}) for rank in range(1, 7)]
+
+
+def _small_read_preset(tokens=4000):
+    return ModelExecutionPreset(preset_id='never-shown-inventory', model_family='fixture',
+        input_token_limit=tokens, generation_reserve_tokens=0, safety_reserve_tokens=0,
+        normal_tool_count=5, max_tools=5, max_batch_items=6, parallel_read_limit=1,
+        reasoning_enabled=False, source_chain=('fixture',))
+
+
+def test_unshown_whole_discovery_inventory_waits_without_overflow_or_false_delivery():
+    established = SimpleNamespace(doc_name='literal-old-card', doc_id='old-doc', content='FULL_OLD_BODY',
+        meta={'model_evidence_ref': 'Q1.H1', 'global_evidence_id': 'old-card',
+              'norm_key': 'literal-old-key', 'norm_code': 'literal-old-code',
+              'source_ref': 'literal-old-source', 'source_sha256': 'a' * 64,
+              'body_status': 'full', 'model_delivery_status': 'delivered',
+              'model_inventory_delivery_status': 'delivered', 'model_read_tool': 'read_norm_card'})
+    discoveries = _prepared_price_group(source_padding=1800)
+    original = _snapshot([established, *discoveries])
+    messages, packet, inventory, bodies = chat.govern_model_read_messages(
+        preset=_small_read_preset(), profile_prefix='literal profile', request_payload='literal original task',
+        source_context=['WHOLE_ORIGINAL_SOURCE'], chunks=[established, *discoveries])
+    rendered = json.dumps(messages, ensure_ascii=False)
+    assert packet.included_tokens <= packet.input_budget_tokens
+    assert 'WHOLE_ORIGINAL_SOURCE' in rendered and 'FULL_OLD_BODY' in rendered
+    assert inventory == bodies == ['Q1.H1']
+    assert 'unshown' in rendered and 'returned_identity_count' in rendered
+    assert 'first_evidence_ref' in rendered and 'Q2.H1' in rendered
+    assert _snapshot([established, *discoveries]) == original
+    chat.confirm_model_read_delivery([established, *discoveries], inventory_refs=inventory, body_refs=bodies)
+    assert all(c.meta['model_inventory_delivery_status'] == c.meta['model_delivery_status'] == 'prepared'
+               for c in discoveries)
+
+
+def test_admitted_new_inventory_becomes_required_without_promoting_unread_bodies():
+    discoveries = _prepared_price_group(body_padding=6000)
+    original = _snapshot(discoveries)
+    messages, packet, inventory, bodies = chat.govern_model_read_messages(
+        preset=_small_read_preset(), profile_prefix='profile', request_payload='task',
+        source_context=['literal whole source'], chunks=discoveries)
+    expected = [f'Q2.H{rank}' for rank in range(1, 7)]
+    assert inventory == expected and bodies == []
+    assert 'discovery_inventory_page' in json.dumps(messages)
+    assert packet.omissions and _snapshot(discoveries) == original
+    chat.confirm_model_read_delivery(discoveries, inventory_refs=inventory, body_refs=bodies)
+    assert all(c.meta['model_inventory_delivery_status'] == 'delivered'
+               and c.meta['model_delivery_status'] == 'prepared' for c in discoveries)
+    replay = prepare_model_read_replay(discoveries)
+    assert replay.required_inventory_refs == expected
+    assert replay.exact_body_refs == []
+    assert 'new_discovery_inventory_pages' not in json.dumps(replay.required)
+    assert replay.optional_body_refs == [expected]
+
+
+@pytest.mark.parametrize('inventory_state', ['delivered', None, 'unknown_query'])
+def test_established_or_unknown_legacy_inventory_is_never_silently_dropped(inventory_state):
+    discoveries = _prepared_price_group(source_padding=1800)
+    for chunk in discoveries:
+        if inventory_state is None:
+            chunk.meta.pop('model_inventory_delivery_status')
+        elif inventory_state == 'unknown_query':
+            chunk.meta.pop('model_query_index')
+        else:
+            chunk.meta['model_inventory_delivery_status'] = inventory_state
+    original = _snapshot(discoveries)
+    with pytest.raises(ContextRequiredSectionOverflow):
+        chat.govern_model_read_messages(preset=_small_read_preset(), profile_prefix='profile',
+            request_payload='task', source_context=['literal whole source'], chunks=discoveries)
+    assert _snapshot(discoveries) == original
+
+
 def test_prepared_hydrated_search_body_is_optional_not_a_required_exact_read():
     chunks, receipts, _ = _results(groups=2, ranks=2)
     original = _snapshot(chunks, receipts)
@@ -68,7 +150,10 @@ def test_prepared_hydrated_search_body_is_optional_not_a_required_exact_read():
     replay = prepare_model_read_replay(chunks)
 
     assert replay.exact_body_refs == []
-    assert replay.optional_body_refs == [['Q2.H1', 'Q2.H2'], ['Q3.H1', 'Q3.H2']]
+    assert replay.optional_body_refs == [[], [], ['Q2.H1', 'Q2.H2'], ['Q3.H1', 'Q3.H2']]
+    assert replay.required_inventory_refs == []
+    assert replay.optional_inventory_refs == [['Q2.H1', 'Q2.H2'], ['Q3.H1', 'Q3.H2'],
+                                              ['Q2.H1', 'Q2.H2'], ['Q3.H1', 'Q3.H2']]
     assert replay.inventory_refs == ['Q2.H1', 'Q2.H2', 'Q3.H1', 'Q3.H2']
     required = json.dumps(replay.required, ensure_ascii=False)
     for chunk in chunks:

@@ -1,5 +1,40 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.197 / 925 — допуск ещё не показанных результатов поиска
+
+На установленной924/41ea6db3 полный БАП с тем же Qwen3.6-35B-A3B-NVFP4,
+r8/64K, frame0 и существующим профилем Thinking16K дал два отрицательных контроля.
+B1 за230.92с исполнил8 search_sources и7 search_pricebook_resources, затем
+получил required52012 > budget47104. CURRENT_READ_FRAME реально использован;
+read_norm_card не было, принятых строк и файлов0. B0 за356.81с завершил поисковый
+ответ STOP2052 и итоговый LENGTH16384; native вызовов, строк и файлов0.
+Это разные причины отказа, не доказательство отсутствия норм или поломки счёта.
+Сохранённые измерения: artifacts/live_924/acceptance/thinking16_full_bap_whole19_measurement_924.json,
+thinking16_baseline_bap_whole19_measurement_924.json и thinking16_whole19_pair_quantitative_gate_924.json.
+
+Воспроизводимый дефект925: prepare_model_read_replay делал обязательными даже
+новые discovery pointers со статусом model_inventory_delivery_status=prepared.
+Они ещё не являются ранее показанным evidence. Теперь только явно новые поисковые
+группы получают optional целый inventory page до optional целого body page.
+Точные чтения, цитированные и ранее показанные тела/указатели остаются required;
+неизвестный legacy lifecycle/query binding также required. Старый пятичастный
+ModelReadReplay сохраняет обязательный inventory; явный пустой required список
+нового producer отличается от отсутствующего. Исходник, queries/RRF order, данные,
+шифры/решения, источники, native IDs/args/reasoning и output/context лимиты не меняются.
+Manifest сообщает returned counts/cursors и условие unshown, не ложный NO_DATA.
+Подтверждаются лишь фактически допущенные inventory/body refs; durable raw остаётся прежним.
+
+Целевые205 regression tests прошли. Первый full gate сохранил2 failures старой
+совместимости; после её восстановления40 boundary tests и неизменённый full gate
+прошли:4363 passed,20 исторических skipped,5 warnings; mail66, metadata31,
+architecture/docs/map/version/artifact gates exit0. Доказательства:
+artifacts/gates_925_unshown_inventory_r2; failedr1 не удалён и не переписан.
+Установленная925 и профессиональная приёмка ещё не подтверждены.
+Регрессии находятся в tests/test_model_discovery_read_admission.py.
+Фактический runtime пока924, native EXE5.1.813. customer-ready=false: эта правка
+не доказывает достаточный контекст для всех exact reads, корректный подбор норм,
+разные ВОР/ЛСР,300+ строк и точный установщик. Default profile и модели не менялись.
+
 ## Кандидат 0.31.196 / 924 — текущие данные после завершённых вызовов чтения
 
 924 вводит тип CURRENT_READ_FRAME только для продолжения после полностью

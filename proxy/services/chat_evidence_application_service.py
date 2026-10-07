@@ -1770,7 +1770,11 @@ def govern_model_read_messages(*, source_context, chunks, receipts=(), **context
     body_refs = [*replay.exact_body_refs,
                  *(ref for index, refs in enumerate(replay.optional_body_refs)
                    if f"evidence:{index}" in admitted_objects for ref in refs)]
-    return messages, packet, replay.inventory_refs, body_refs
+    admitted_inventory = set(replay.required_inventory_refs)
+    admitted_inventory.update(ref for index, refs in enumerate(replay.optional_inventory_refs)
+                              if f"evidence:{index}" in admitted_objects for ref in refs)
+    inventory_refs = [ref for ref in replay.inventory_refs if ref in admitted_inventory]
+    return messages, packet, inventory_refs, body_refs
 
 
 class _WireCountNeeded(Exception):

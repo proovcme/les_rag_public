@@ -642,6 +642,14 @@ class ModelReadReplay:
     inventory_refs: list[str]
     exact_body_refs: list[str]
     optional_body_refs: list[list[str]]
+    required_inventory_refs: list[str] | None = None
+    optional_inventory_refs: list[list[str]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Five-field legacy replay producers declared every inventory required.
+        # An explicit empty list from the paged producer means none is required.
+        if self.required_inventory_refs is None:
+            object.__setattr__(self, "required_inventory_refs", list(self.inventory_refs))
 
 
 def prepare_model_read_replay(chunks: Sequence[Any], *, required_refs: Sequence[str] = ()) -> ModelReadReplay:
@@ -652,8 +660,9 @@ def prepare_model_read_replay(chunks: Sequence[Any], *, required_refs: Sequence[
     fits. Previously deferred views never manufacture an unseen stored body.
     """
     required_ids = set(required_refs)
-    replay, inventory, exact = [], [], []
+    replay, inventory, exact, required_inventory = [], [], [], []
     groups: dict[str, list[EvidenceCard]] = {}
+    fresh_inventory: dict[str, list[Any]] = {}
     seen: set[tuple[str, str]] = set()
     for chunk in chunks:
         raw = dict(chunk) if isinstance(chunk, Mapping) else dict(vars(chunk))
@@ -686,6 +695,8 @@ def prepare_model_read_replay(chunks: Sequence[Any], *, required_refs: Sequence[
             replay.append({**raw, "meta": {**meta, "body_status": "full"}} if has_body else raw)
             if ref and has_body:
                 exact.append(ref)
+            if ref:
+                required_inventory.append(ref)
             continue
         if has_body:
             group_key = str(meta.get("model_query_index") or ref)
@@ -693,15 +704,55 @@ def prepare_model_read_replay(chunks: Sequence[Any], *, required_refs: Sequence[
                 ref, f"[{ref} | {raw.get('doc_name') or ''}]", normative_card_identity(meta), content, meta))
         # This is a view clone. Neither raw bodies nor historical delivery flags
         # are overwritten by their present inventory-only representation.
-        replay.append({**raw, "meta": {**meta, "body_status": "deferred_capacity"}})
-    optional, optional_refs = [], []
+        pointer = {**raw, "meta": {**meta, "body_status": "deferred_capacity"}}
+        fresh_discovery = (
+            meta.get("model_inventory_delivery_status") == "prepared"
+            and meta.get("model_read_tool") in {"search_sources", "search_pricebook_resources"}
+            and bool(meta.get("model_query_index"))
+        )
+        if fresh_discovery:
+            # A newly prepared search is not the model's established frontier.
+            # Budget its whole query inventory before offering its whole bodies.
+            # Unknown legacy state remains required; no old pointer is dropped.
+            group_key = str(meta.get("model_query_index") or ref)
+            fresh_inventory.setdefault(group_key, []).append(pointer)
+        else:
+            replay.append(pointer)
+            if ref:
+                required_inventory.append(ref)
+    required = compact_read_replay(replay)
+    optional, optional_refs, optional_inventory = [], [], []
+    fresh_manifest = []
+    for pointers in fresh_inventory.values():
+        refs = [str(item["meta"].get("model_evidence_ref") or "") for item in pointers]
+        query = str(pointers[0]["meta"].get("model_query_text") or "")
+        fresh_manifest.append({"query": query, "returned_identity_count": len(refs),
+                               "first_evidence_ref": refs[0] if refs else None})
+        optional.append(json.dumps({"discovery_inventory_page": {"query": query, "evidence_refs": refs},
+                                    "literal_inventory": compact_read_replay(pointers)},
+                                   ensure_ascii=False, separators=(",", ":")))
+        optional_refs.append([])
+        optional_inventory.append(refs)
+    if fresh_manifest:
+        required.append({"new_discovery_inventory_pages": fresh_manifest,
+                         "visibility": "Each whole query inventory or body page below is admitted independently by capacity. "
+                         "A listed query without its discovery_inventory_page or discovery_body_page is unshown, not empty. "
+                         "Its returned count and first evidence reference remain a retained cursor; "
+                         "do not infer absence of data or complete delivery from a native receipt."})
     for cards in groups.values():
         query = str(cards[0].meta.get("model_query_text") or "")
         group = EvidenceGroup(f"Discovery query: {query}", cards)
         page = plan_full_group_page([group], 2**63 - 1)
-        optional.append("\n\n".join(page.groups))
+        content = "\n\n".join(page.groups)
+        if any(card.ref not in required_inventory for card in cards):
+            content = json.dumps({"discovery_body_page": {"query": query,
+                                  "evidence_refs": list(page.inventory_refs)}},
+                                 ensure_ascii=False, separators=(",", ":")) + "\n" + content
+        optional.append(content)
         optional_refs.append(list(page.body_refs))
-    return ModelReadReplay(compact_read_replay(replay), optional, inventory, exact, optional_refs)
+        optional_inventory.append(list(page.inventory_refs))
+    return ModelReadReplay(required, optional, inventory, exact, optional_refs,
+                           required_inventory, optional_inventory)
 
 
 def native_read_growth_budget(*, available_tokens: int, generation_tokens: int,
