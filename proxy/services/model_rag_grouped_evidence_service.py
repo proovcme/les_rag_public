@@ -161,7 +161,8 @@ def inventory_pointer(card: EvidenceCard, *, full: bool = False) -> str:
     return json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
 
 
-def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int) -> EvidencePage:
+def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int,
+            *, include_empty_queries: bool = False) -> EvidencePage:
     rendered: list[str] = []
     sources: dict[str, str] = {}
     catalogs: dict[str, str] = {}
@@ -176,7 +177,7 @@ def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int)
     metadata: dict[str, Mapping[str, Any]] = {}
     for index, group in enumerate(groups):
         parts = [group.header]
-        if not group.cards and index < full_count:
+        if not group.cards and (index < full_count or include_empty_queries):
             parts.append("hits=0")
         for card in group.cards:
             if card.ref not in visible:
@@ -264,6 +265,84 @@ explicit cursor/count; no truncated card can masquerade as a delivered body.
     return replace(fallback, complete_card_deferred_refs=[
         card.ref for group in groups for card in group.cards if card.preview_content is not None
     ])
+
+
+def inventory_expansion_page(groups: Sequence[EvidenceGroup], admitted: EvidencePage) -> EvidencePage:
+    """One whole candidate: all identities, exactly the previously admitted bodies.
+
+    The caller must count the complete provider wire before accepting this view.
+    Typed expansion is not a reason to replace a delivered preview or promote a
+    deferred resource card. Original metadata and bodies stay unchanged.
+    """
+    cards = [card for group in groups for card in group.cards]
+    refs = [card.ref for card in cards]
+    if len(set(refs)) != len(refs) or not set(admitted.inventory_refs).issubset(refs):
+        raise ValueError("inventory expansion needs unique retained evidence references")
+    expected_bodies = {card.ref for group in groups[:admitted.included_count] for card in group.cards}
+    if expected_bodies != set(admitted.body_refs):
+        raise ValueError("inventory expansion cannot change the admitted whole-group frontier")
+    expanded_groups = [EvidenceGroup(group.header, [
+        replace(card, content=admitted.body_by_ref.get(card.ref, card.content),
+                meta=admitted.meta_by_ref[card.ref], preview_content=None, preview_meta=None)
+        if card.ref in admitted.meta_by_ref else card
+        for card in group.cards]) for group in groups]
+    expanded = _render(expanded_groups, set(refs), admitted.included_count, include_empty_queries=True)
+    if (expanded.body_refs != admitted.body_refs or expanded.body_by_ref != admitted.body_by_ref
+            or any(expanded.meta_by_ref[ref] != admitted.meta_by_ref[ref]
+                   or expanded.pointer_by_ref[ref] != admitted.pointer_by_ref[ref]
+                   for ref in admitted.inventory_refs)):
+        raise ValueError("inventory expansion changed an admitted evidence field")
+    return replace(expanded, complete_card_deferred_refs=list(admitted.complete_card_deferred_refs))
+
+
+def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: EvidencePage) -> EvidencePage | None:
+    """Supplement the same shown frontier with complete, identity-bound typed bodies.
+
+    The old whole preview is a literal prefix. No identity or deferred body is
+    added, removed, or chosen here; complete-wire admission belongs to the caller.
+    """
+    from proxy.services.model_research_tool_service import _full_norm_card_content, norm_preview_metadata
+
+    cards = [card for group in groups for card in group.cards]
+    refs = [card.ref for card in cards]
+    if (len(set(refs)) != len(refs) or admitted.unshown_refs
+            or refs != admitted.inventory_refs
+            or [card.ref for group in groups[:admitted.included_count] for card in group.cards]
+               != admitted.body_refs):
+        return None
+    full = set(admitted.body_refs)
+    upgraded = set()
+    replacements = {}
+    for card in cards:
+        old_meta = admitted.meta_by_ref[card.ref]
+        content, meta = admitted.body_by_ref.get(card.ref, card.content), old_meta
+        if card.ref in full and (content != card.content or old_meta != card.meta):
+            if (card.preview_content != content or card.preview_meta != old_meta
+                    or norm_preview_metadata(card.meta) != old_meta
+                    or card.meta.get("hydration_status") != "ok"
+                    or card.meta.get("exact_card_read") is not True
+                    or _full_norm_card_content(card.meta) != card.content
+                    or hashlib.sha256(content.encode("utf-8")).hexdigest()
+                       != card.meta.get("hydration_preview_sha256")
+                    or normative_card_identity(card.meta) != normative_card_identity(old_meta)
+                    or not card_delivery_facts(card.meta, raw_body_shown=True).get("normative_card_complete")
+                    or inventory_pointer(card, full=True) != admitted.pointer_by_ref[card.ref]):
+                return None
+            content += "\n\nAdditional complete typed body; the original preview above is preserved:\n" + card.content
+            meta = card.meta
+            upgraded.add(card.ref)
+        replacements[card.ref] = replace(card, content=content, meta=meta,
+                                          preview_content=None, preview_meta=None)
+    if not upgraded:
+        return None
+    candidate = _render([EvidenceGroup(group.header, [replacements[card.ref] for card in group.cards])
+                         for group in groups], set(refs), admitted.included_count, include_empty_queries=True)
+    if (candidate.inventory_refs != admitted.inventory_refs or candidate.body_refs != admitted.body_refs
+            or candidate.pointer_by_ref != admitted.pointer_by_ref or candidate.shared_refs != admitted.shared_refs
+            or any(not candidate.body_by_ref[ref].startswith(admitted.body_by_ref[ref]) for ref in full)):
+        return None
+    return replace(candidate, complete_card_deferred_refs=[ref for ref in admitted.complete_card_deferred_refs
+                                                          if ref not in upgraded])
 
 
 def _plan_single_body_page(groups: Sequence[EvidenceGroup], max_chars: int) -> EvidencePage:

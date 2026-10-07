@@ -62,3 +62,26 @@ def test_explicit_work_volume_validation_is_still_blocking(tmp_path):
     assert "source_quantity_mismatch:Sheet!R2" in errors
     assert "source_quantity_mismatch:Sheet!R2" in service.blocking_model_rag_result_errors(
         errors, work_row_count=1, artifact_kind="lsr")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_actual_answer_and_read_continuation_explain_source_context_role_without_changing_rows(tmp_path, monkeypatch, variant):
+    from tests.test_model_rag_sheet_evidence_reads import _run_sheet
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
+                           norm_ref_read="Q1.H1", temperature=0.65)
+    policy = service._SOURCE_CONTEXT_ROLE_INSTRUCTION
+    assert "row_role=header" in policy
+    assert "Роль определяешь ты" in policy
+    assert "не создавай из них операцию или объём" in policy
+    for request in run.requests[1:]:
+        delivered = "\n".join(str(message.get("content", "")) for message in request.messages)
+        assert policy in delivered
+        assert "Answer only from shown evidence." in delivered
+        assert request.temperature == 0.65
+    assert policy not in str(run.requests[0].messages)
+    assert len(run.exact_reads) == 1 and len(run.executions) == 1
+    assert [(row["source_row"], row["unit"], row["quantity"]) for row in run.executions[0][0]["args"]["decisions"]] == [
+        ("S!R2", "m", 12), ("S!R3", "m", 3),
+    ]

@@ -1771,7 +1771,7 @@ class _WireCountNeeded(Exception):
         self.key, self.messages = key, messages
 
 
-async def govern_model_read_messages_bound(*, count_messages=None, **context):
+async def _govern_messages_bound(pack, *, count_messages=None):
     """Admit whole frames using the bound provider's tokenizer when available.
 
     Pure packing resumes from cached counts. Each distinct candidate wire is
@@ -1779,7 +1779,7 @@ async def govern_model_read_messages_bound(*, count_messages=None, **context):
     Unsupported counters keep the conservative fail-closed path.
     """
     if count_messages is None:
-        return govern_model_read_messages(**context)
+        return pack()
     counts = {}
     count_owner = None
     source = "bound_provider_wire"
@@ -1796,17 +1796,15 @@ async def govern_model_read_messages_bound(*, count_messages=None, **context):
 
     while True:
         try:
-            result = govern_model_read_messages(
-                **context, count_messages_tokens=cached_count, token_count_source=source,
-            )
+            result = pack(count_messages_tokens=cached_count, token_count_source=source)
         except _WireCountNeeded as pending:
             count = await count_messages(pending.messages)
             if count is None:
-                result = govern_model_read_messages(**context)
-                messages, packet, inventory, bodies = result
-                return messages, replace(packet, token_count_binding={
+                result = pack()
+                messages, packet, *tail = result
+                return (messages, replace(packet, token_count_binding={
                     "status": "fallback", "reason": "bound_counter_unavailable",
-                    "source": "conservative_chars_per_two"}), inventory, bodies
+                    "source": "conservative_chars_per_two"}), *tail)
             if type(count.tokens) is not int or count.tokens < 0:
                 raise ValueError("provider token count must be a nonnegative integer")
             owner = (count.model_id, count.connection_revision_id,
@@ -1814,27 +1812,40 @@ async def govern_model_read_messages_bound(*, count_messages=None, **context):
             if count_owner is not None and owner != count_owner:
                 counts.clear()
                 try:
-                    result = govern_model_read_messages(**context)
+                    result = pack()
                 except ContextRequiredSectionOverflow as error:
                     error.token_count_source = "conservative_chars_per_two:bound_counter_identity_changed"
                     raise
-                messages, packet, inventory, bodies = result
-                return messages, replace(packet, token_count_binding={
+                messages, packet, *tail = result
+                return (messages, replace(packet, token_count_binding={
                     "status": "fallback", "reason": "bound_counter_identity_changed",
-                    "source": "conservative_chars_per_two"}), inventory, bodies
+                    "source": "conservative_chars_per_two"}), *tail)
             count_owner = owner
             counts[pending.key] = count
             source = count.source
             continue
-        messages, packet, inventory, bodies = result
+        messages, packet, *tail = result
         count = counts[wire_key(messages)]
-        return messages, replace(packet, token_count_binding={
+        return (messages, replace(packet, token_count_binding={
             "status": "counted", "source": count.source, "model_id": count.model_id,
             "connection_revision_id": count.connection_revision_id,
             "model_identity_sha256": getattr(count, "model_identity_sha256", None),
             "wire_sha256": count.wire_sha256, "input_tokens": count.tokens,
             "distinct_count_requests": len(counts),
-        }), inventory, bodies
+        }), *tail)
+
+
+async def govern_model_read_messages_bound(*, count_messages=None, **context):
+    return await _govern_messages_bound(
+        lambda **count_options: govern_model_read_messages(**context, **count_options),
+        count_messages=count_messages)
+
+
+async def govern_inference_messages_bound(*, count_messages=None, **context):
+    """Reuse the bound whole-wire counter for an initial inference frame."""
+    return await _govern_messages_bound(
+        lambda **count_options: govern_inference_messages(**context, **count_options),
+        count_messages=count_messages)
 
 
 def measured_connection_revision(packet: ContextPacket) -> str:
@@ -1870,6 +1881,7 @@ def govern_inference_messages(
     evidence: Sequence[Any] = (),
     required_evidence: Sequence[Any] = (),
     source_map: Sequence[Any] = (),
+    required_source_map: Sequence[Any] = (),
     tool_exchange: Sequence[Any] = (),
     native_exchanges: Sequence[NativeToolExchange] = (),
     dialogue: Sequence[Any] = (),
@@ -1900,6 +1912,7 @@ def govern_inference_messages(
             required=True,
         ),
         ContextCandidate(ContextKind.EVIDENCE, _context_objects("evidence", evidence)),
+        ContextCandidate(ContextKind.SOURCE_MAP, _context_objects("source-required-map", required_source_map), required=True),
         ContextCandidate(ContextKind.SOURCE_MAP, _context_objects("source", source_map)),
         ContextCandidate(ContextKind.TOOL_EXCHANGE, _context_objects("exchange", tool_exchange)),
         ContextCandidate(
@@ -2056,7 +2069,15 @@ def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configur
 
 TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE = "tabular_attachment_estimator_path_v1"
 _TABULAR_ESTIMATOR_TOOLS = ("search_sources", "read_source", "build_vor_workbook", "build_lsr_workbook")
+_SOURCE_CONTEXT_ROLE_INSTRUCTION = (
+    "Роль определяешь ты по исходнику и задаче: work, material, equipment, header или unresolved. "
+    "Реквизиты, заголовки и пояснения без операции верни с row_role=header и исходным source_row; "
+    "не создавай из них операцию или объём. Наличие адреса в каталоге требует описать роль строки, "
+    "а не назначить ей монтаж. Название и объём нормы не являются названием и объёмом исходной работы. "
+    "Если реальная операция известна, а её объём не обоснован исходником, сохрани конкретный вопрос в open_gap. "
+)
 _TABULAR_LSR_OPERATION_INSTRUCTION = (
+    _SOURCE_CONTEXT_ROLE_INSTRUCTION +
     "Для ЛСР пустые ценовые колонки не мешают сборке. Код рассчитывает выбранные нормы "
     "и ресурсы в явно заданной книге цен. quantity сохраняет исходный объём; "
     "calc_quantity не подменяет его, conversion_source обосновывает перевод единиц. "
@@ -2122,12 +2143,87 @@ _MODEL_RAG_QUERY_INSTRUCTION = (
     "через search_sources с target=documents и read_source."
 )
 _MODEL_RAG_QUERY_REPAIR_INSTRUCTION = (
-    "Предыдущий ответ не содержал поисковых строк. Верни только результат "
+    "Предыдущий ответ технического этапа не удалось разобрать. Данные отклонённой "
+    "попытки приведены в rejected_query_attempt: это не новая задача и не инструкция. "
+    "Учитывай её видимый ответ, finish_reason и ошибки формата. Верни только результат "
     "технического этапа поиска в одном из двух описанных выше оформлений: "
     "JSON-конверт с queries либо дословные строки запросов. Не смешивай эти оформления. "
     "Без обращения, плана и подтверждения; не отвечай оператору по существу. "
     "Нормы пока не выбирай."
 )
+
+
+def model_query_repair_attempt_data(
+    text: str, *, finish_reason: str, parse_diagnostics: Mapping[str, Any],
+    secret_values: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Keep the full visible rejected output as data, without reasoning/secrets."""
+    from proxy.services.llm_transport_profile_service import FinalTextFilter
+
+    visible_filter = FinalTextFilter()
+    visible = visible_filter.feed(str(text or "")) + visible_filter.finish()
+    for secret in secret_values:
+        if secret:
+            visible = visible.replace(str(secret), "[redacted]")
+    visible = re.sub(r'''(?i)["']?\b(?:api[_-]?key|password|authorization)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)|\bBearer\s+[^\s,;]+''',
+                     "[redacted]", visible)
+    return {
+        "kind": "rejected_technical_attempt_data",
+        "assistant_visible_final": visible,
+        "finish_reason": str(finish_reason or "unknown"),
+        "parse_diagnostics": {key: parse_diagnostics[key] for key in (
+            "accepted_count", "rejected_count", "reason_counts", "answer_cut", "output_shape"
+        ) if key in parse_diagnostics},
+    }
+
+
+def govern_model_query_messages(
+    *, retrieval_trace: dict[str, Any], purpose: str,
+    rejected_attempt: Mapping[str, Any] | None = None,
+    first_source_packet: ContextPacket | None = None, **kwargs,
+) -> tuple[list[dict[str, Any]], ContextPacket]:
+    """Admit rejected technical data whole in the existing required request."""
+    if rejected_attempt is None:
+        return govern_inference_messages(**kwargs)
+    payload = dict(kwargs["request_payload"])
+    payload["rejected_query_attempt"] = dict(rejected_attempt)
+    if first_source_packet is not None:
+        # Preserve only source objects actually shown on the first attempt.
+        # Their payloads stay whole in the same rendered section kinds.
+        kwargs = {**kwargs,
+            "required_evidence": [item.payload for section in first_source_packet.sections
+                                  if section.kind == ContextKind.EVIDENCE for item in section.objects],
+            "required_source_map": [item.payload for section in first_source_packet.sections
+                                    if section.kind == ContextKind.SOURCE_MAP for item in section.objects],
+            "evidence": (), "source_map": ()}
+    visible = str(rejected_attempt.get("assistant_visible_final") or "")
+    summary = {
+        "purpose": purpose,
+        "previous_visible_chars": len(visible),
+        "previous_visible_sha256": hashlib.sha256(visible.encode("utf-8")).hexdigest(),
+        "finish_reason": rejected_attempt.get("finish_reason"),
+        "parse_diagnostics": dict(rejected_attempt.get("parse_diagnostics") or {}),
+    }
+    try:
+        result = govern_inference_messages(**{**kwargs, "request_payload": payload})
+    except ContextRequiredSectionOverflow as error:
+        summary.update(status="blocked_capacity", code="MODEL_QUERY_REPAIR_CONTEXT_OVERFLOW",
+                       budget_tokens=error.budget, required_tokens=error.required_tokens)
+        retrieval_trace.setdefault("query_repair_context", []).append(summary)
+        raise
+    except CloudBudgetStop as error:
+        if isinstance(error.__cause__, ContextRequiredWireOverflow):
+            summary.update(status="blocked_wire_budget", code="MODEL_QUERY_REPAIR_CONTEXT_OVERFLOW")
+        else:
+            summary["status"] = "blocked_spending_budget"
+        retrieval_trace.setdefault("query_repair_context", []).append(summary)
+        raise
+    summary["status"] = "admitted_complete"
+    summary["admission_scope"] = "required_context_packet_not_provider_execution"
+    retrieval_trace.setdefault("query_repair_context", []).append(summary)
+    return result
+
+
 _MODEL_RAG_QUERY_VOLUME_HINT = (
     "Пустые ценовые колонки исходника не ищи. Запросы — по работам и "
     "измерителям строк, не по прайсу. Если исходник называет изделие, "
@@ -6073,6 +6169,11 @@ def build_model_rag_evidence_groups(
         query_provenance=query_provenance, query_addresses=query_addresses,
     )
     page = plan_full_group_page(groups, max_chars)
+    return _model_rag_page_projection(page, hits, evidence_namespace=evidence_namespace)
+
+
+def _model_rag_page_projection(page, hits, *, evidence_namespace=""):
+    """Project the exact admitted page, shared by conservative and counted views."""
     chunks = []
     full = set(page.body_refs)
     for source_index, alias in enumerate(page.inventory_refs, 1):
@@ -6107,6 +6208,148 @@ def build_model_rag_evidence_groups(
             score=float(getattr(hit, "score", 0.0) or 0.0), meta=meta,
         ))
     return page.groups, chunks, page.deferred_refs
+
+
+async def govern_model_rag_initial_messages(
+    *, count_messages=None, query_hits, evidence_groups, evidence_chunks, omitted_refs,
+    max_chars, inventory_chars_limit, hits_per_query, source_context,
+    native_read_reserved_tokens=0, initial_input_budget_tokens=None,
+    evidence_namespace="", query_offset=0,
+    query_provenance=None, query_addresses=None, **context,
+):
+    """Try one exact all-inventory view; preserve the legacy page on any non-fit.
+
+    All pointer content and admitted whole previews remain literal. The original
+    input/generation/safety limits and the existing native-read reserve are both
+    enforced. No exact counter means the unchanged conservative initial frame.
+    """
+    trace = {"status": "unchanged", "reason": "counter_unavailable",
+             "native_read_reserved_tokens": max(0, int(native_read_reserved_tokens))}
+    legacy = lambda: govern_inference_messages(
+        **context, required_evidence=[*source_context, *evidence_groups])
+
+    def unchanged():
+        messages, packet = legacy()
+        return messages, packet, evidence_groups, evidence_chunks, omitted_refs, trace
+
+    if count_messages is None:
+        return unchanged()
+    from proxy.services.model_rag_grouped_evidence_service import inventory_expansion_page
+    groups, hits = _model_rag_full_groups(
+        query_hits, hits_per_query=hits_per_query, query_offset=query_offset,
+        query_provenance=query_provenance, query_addresses=query_addresses)
+    admitted = plan_full_group_page(groups, max_chars)
+    if admitted.groups != list(evidence_groups):
+        raise ValueError("initial evidence page changed before exact inventory admission")
+    char_limit = max(0, int(inventory_chars_limit))
+
+    async def complete_frontier(page, result, admission_budget):
+        from proxy.services.model_rag_grouped_evidence_service import complete_card_frontier_page
+        complete = complete_card_frontier_page(groups, page)
+        if complete is None:
+            return result
+        messages, packet, *projected, result_trace = result
+        full_trace = {"status": "unchanged", "reason": "registered_char_capacity"}
+        result_trace["complete_card_fit"] = full_trace
+        if char_limit and complete.rendered_chars > char_limit:
+            return result
+        full_unavailable = False
+
+        async def full_count(messages):
+            nonlocal full_unavailable
+            count = await count_messages(messages)
+            full_unavailable = full_unavailable or count is None
+            return count
+
+        try:
+            full_messages, full_packet = await govern_inference_messages_bound(
+                count_messages=full_count, **context,
+                required_evidence=[*source_context, *complete.groups])
+        except ContextRequiredSectionOverflow as error:
+            full_trace["reason"] = ("counter_unavailable" if full_unavailable else
+                "counter_identity_changed" if "bound_counter_identity_changed" in error.token_count_source
+                else "input_capacity")
+        except CloudBudgetStop as error:
+            if not isinstance(error.__cause__, ContextRequiredWireOverflow):
+                raise
+            full_trace["reason"] = "wire_capacity"
+        else:
+            binding = full_packet.token_count_binding
+            owner_fields = ("model_id", "connection_revision_id", "model_identity_sha256")
+            if binding.get("status") != "counted":
+                full_trace["reason"] = binding.get("reason") or "counter_unavailable"
+            elif (packet.token_count_binding.get("status") == "counted"
+                  and any(binding.get(key) != packet.token_count_binding.get(key) for key in owner_fields)):
+                full_trace["reason"] = "counter_identity_changed"
+            elif full_packet.included_tokens + trace["native_read_reserved_tokens"] > min(
+                    full_packet.input_budget_tokens, admission_budget):
+                full_trace["reason"] = ("native_read_reserve" if full_packet.included_tokens
+                    + trace["native_read_reserved_tokens"] > full_packet.input_budget_tokens
+                    else "initial_compatibility_headroom")
+            else:
+                projected = _model_rag_page_projection(complete, hits, evidence_namespace=evidence_namespace)
+                full_trace.update(status="expanded", reason="bound_whole_wire_fit",
+                                  input_tokens=full_packet.included_tokens,
+                                  initial_admission_budget_tokens=admission_budget,
+                                  preserved_body_refs=list(complete.body_refs))
+                result_trace.update(status="expanded", reason="bound_whole_wire_fit",
+                    inventory_before=len(admitted.inventory_refs), inventory_after=len(complete.inventory_refs),
+                    preserved_body_refs=list(complete.body_refs), input_tokens=full_packet.included_tokens,
+                    input_budget_tokens=full_packet.input_budget_tokens)
+                return full_messages, full_packet, *projected, result_trace
+        return result
+
+    if not admitted.unshown_refs:
+        trace["reason"] = "inventory_already_shown"
+        result = unchanged()
+        original_budget = (result[1].input_budget_tokens if initial_input_budget_tokens is None
+                           else max(0, int(initial_input_budget_tokens)))
+        return await complete_frontier(admitted, result, original_budget)
+    expanded = inventory_expansion_page(groups, admitted)
+    if char_limit and expanded.rendered_chars > char_limit:
+        trace["reason"] = "registered_char_capacity"
+        return unchanged()
+    unavailable = False
+
+    async def observed_count(messages):
+        nonlocal unavailable
+        result = await count_messages(messages)
+        unavailable = unavailable or result is None
+        return result
+
+    try:
+        messages, packet = await govern_inference_messages_bound(
+            count_messages=observed_count, **context,
+            required_evidence=[*source_context, *expanded.groups])
+    except ContextRequiredSectionOverflow as error:
+        trace["reason"] = ("counter_unavailable" if unavailable else
+                           "counter_identity_changed" if "bound_counter_identity_changed" in error.token_count_source
+                           else "input_capacity")
+        return unchanged()
+    if packet.token_count_binding.get("status") != "counted":
+        reason = packet.token_count_binding.get("reason") or "counter_unavailable"
+        trace["reason"] = ("counter_identity_changed" if reason == "bound_counter_identity_changed" else reason)
+        if unavailable:
+            trace["reason"] = "counter_unavailable"
+        return unchanged()
+    original_budget = (legacy()[1].input_budget_tokens if initial_input_budget_tokens is None
+                       else max(0, int(initial_input_budget_tokens)))
+    admission_budget = min(packet.input_budget_tokens, original_budget)
+    trace.update(original_input_budget_tokens=original_budget,
+                 exact_wire_input_budget_tokens=packet.input_budget_tokens,
+                 initial_admission_budget_tokens=admission_budget,
+                 compatibility_headroom_tokens=packet.input_budget_tokens - admission_budget)
+    if packet.included_tokens + trace["native_read_reserved_tokens"] > admission_budget:
+        trace["reason"] = ("native_read_reserve" if packet.included_tokens
+                           + trace["native_read_reserved_tokens"] > packet.input_budget_tokens
+                           else "initial_compatibility_headroom")
+        return unchanged()
+    projected = _model_rag_page_projection(expanded, hits, evidence_namespace=evidence_namespace)
+    trace.update(status="expanded", reason="bound_whole_wire_fit",
+                 inventory_before=len(admitted.inventory_refs), inventory_after=len(expanded.inventory_refs),
+                 preserved_body_refs=list(admitted.body_refs), input_tokens=packet.included_tokens,
+                 input_budget_tokens=packet.input_budget_tokens)
+    return await complete_frontier(expanded, (messages, packet, *projected, trace), admission_budget)
 
 
 def _model_rag_source_map(chunks: Sequence[_ModelRagEvidenceChunk]) -> list[dict[str, Any]]:
@@ -6243,6 +6486,11 @@ def model_query_failure(detail: Any, *, trace: Mapping[str, Any], session_id: st
                        "connection_id", "revision_id", "display_name", "model_id", "provider", "locality", "fallback_used") if key in connection},
                    "model_query_outputs": saved, "model_query_output_count": len(outputs),
                    "model_query_outputs_truncated": len(outputs) > 8}
+    if trace.get("query_repair_context"):
+        diagnostics["query_repair_context"] = [{key: item[key] for key in (
+            "purpose", "previous_visible_chars", "previous_visible_sha256", "finish_reason",
+            "parse_diagnostics", "status", "code", "budget_tokens", "required_tokens", "admission_scope"
+        ) if key in item} for item in trace["query_repair_context"][-8:]]
     return ModelQueryFailure(detail, diagnostics=diagnostics)
 
 
@@ -8623,27 +8871,40 @@ async def _execute_chat_evidence_application(
                     ]
                     model_queries = []
                     rejected_model_queries = []
+                    query_rejected_attempt = None
+                    query_first_source_packet = None
                     for query_attempt, query_instruction in enumerate(query_instructions, start=1):
-                        query_messages, query_packet = govern_inference_messages(
-                            preset=query_execution_preset,
-                            profile_prefix=(
-                                profile_system_prompt(profile_snapshot, strict=False, purpose="query")
-                                + "\n\n"
-                                + query_instruction
-                            ),
-                            request_payload={
-                                "question": str(req.question or ""),
-                                "dataset_ids": [str(item) for item in _dataset_ids],
-                            },
-                            checkpoint=(),
-                            working_memory=workspace_note_objects(
-                                memory_candidates, registered=workspace_memory_registered,
-                            ),
-                            evidence=() if initial_source_frame is not None else selector_evidence,
-                            required_evidence=selector_evidence if initial_source_frame is not None else (),
-                            source_map=selector_source_map,
-                            tool_exchange=(),
-                        )
+                        try:
+                            query_messages, query_packet = govern_model_query_messages(
+                                retrieval_trace=retrieval_trace,
+                                purpose="model_rag_queries" if query_attempt == 1 else "model_rag_query_repair",
+                                rejected_attempt=query_rejected_attempt,
+                                first_source_packet=query_first_source_packet,
+                                preset=query_execution_preset,
+                                profile_prefix=(
+                                    profile_system_prompt(profile_snapshot, strict=False, purpose="query")
+                                    + "\n\n"
+                                    + query_instruction
+                                ),
+                                request_payload={
+                                    "question": str(req.question or ""),
+                                    "dataset_ids": [str(item) for item in _dataset_ids],
+                                },
+                                checkpoint=(),
+                                working_memory=workspace_note_objects(
+                                    memory_candidates, registered=workspace_memory_registered,
+                                ),
+                                evidence=() if initial_source_frame is not None else selector_evidence,
+                                required_evidence=selector_evidence if initial_source_frame is not None else (),
+                                source_map=selector_source_map,
+                                tool_exchange=(),
+                            )
+                        except ContextRequiredSectionOverflow:
+                            if query_rejected_attempt is None:
+                                raise
+                            raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
+                                session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
+                                secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
                         retrieval_trace["context_governor"]["calls"].append(
                             context_packet_trace(
                                 query_packet,
@@ -8654,6 +8915,8 @@ async def _execute_chat_evidence_application(
                                 ),
                             )
                         )
+                        if query_first_source_packet is None:
+                            query_first_source_packet = query_packet
                         query_budget = governed_query_generation_budget(query_execution_preset, query_packet)
                         query_body = {
                             "messages": query_messages,
@@ -8702,6 +8965,10 @@ async def _execute_chat_evidence_application(
                             artifact_kind_declaration = update_model_artifact_kind(
                                 artifact_kind_declaration, declared["artifact_kind_declaration"], phase="query")
                             break
+                        query_rejected_attempt = model_query_repair_attempt_data(
+                            query_text, finish_reason=llm_usage_finish_reason(query_usage),
+                            parse_diagnostics=query_diagnostic["declared_parse"],
+                            secret_values=(llm_runtime.api_key,))
                     if not model_queries and not declared.get("intentional_empty"):
                         raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
                             session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
@@ -10114,6 +10381,8 @@ async def _execute_chat_evidence_application(
                                 )
                                 query_directive = query_base_instruction
                                 query_phase = "declare"
+                                query_rejected_attempt = None
+                                query_first_source_packet = None
                                 # Blocker § 2: a query is attributed to the row it
                                 # answers for by reading it against the same literal
                                 # row text the candidate author quotes, so the query
@@ -10140,7 +10409,10 @@ async def _execute_chat_evidence_application(
                                             )
                                         )
                                         query_instruction = query_directive
-                                        query_messages, query_packet = govern_inference_messages(
+                                        query_messages, query_packet = govern_model_query_messages(
+                                            retrieval_trace=retrieval_trace, purpose=query_purpose,
+                                            rejected_attempt=query_rejected_attempt,
+                                            first_source_packet=query_first_source_packet,
                                             preset=query_execution_preset,
                                             profile_prefix=(
                                                 profile_system_prompt(
@@ -10171,6 +10443,8 @@ async def _execute_chat_evidence_application(
                                                 purpose=query_purpose,
                                             )
                                         )
+                                        if query_first_source_packet is None:
+                                            query_first_source_packet = query_packet
                                         query_budget = governed_query_generation_budget(query_execution_preset, query_packet)
                                         query_body = {
                                             "messages": query_messages,
@@ -10304,6 +10578,11 @@ async def _execute_chat_evidence_application(
                                         )
                                         if not next_phase:
                                             break
+                                        query_rejected_attempt = (model_query_repair_attempt_data(
+                                            query_text, finish_reason=llm_usage_finish_reason(query_usage),
+                                            parse_diagnostics=query_diagnostic["declared_parse"],
+                                            secret_values=(llm_runtime.api_key,))
+                                            if next_phase == "repair" else None)
                                         query_phase = next_phase
                                         query_directive = (
                                             query_base_instruction
@@ -10589,8 +10868,6 @@ async def _execute_chat_evidence_application(
                                     query_provenance=pass_query_provenance,
                                     query_addresses=pass_query_addresses,
                                 )
-                            sheet_pass_evidence_chunks.extend(model_evidence_chunks)
-                            model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                             page_body_deferred = list(omitted_now)
                             included_refs = set(model_rag_query_hit_refs(
                                 included_hits, hits_per_query=retrieval_limits["model_evidence_k"],
@@ -10670,8 +10947,37 @@ async def _execute_chat_evidence_application(
                                         chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                         receipts=saved_read_receipts)
                                 else:
-                                    messages, answer_packet = govern_inference_messages(
-                                        **initial_context, required_evidence=answer_evidence)
+                                    (messages, answer_packet, model_rag_evidence_groups,
+                                     model_evidence_chunks, page_body_deferred,
+                                     inventory_fit) = await govern_model_rag_initial_messages(
+                                        count_messages=_bound_input_token_counter(answer_execution_preset, sheet_read_tools),
+                                        query_hits=pass_hits, evidence_groups=model_rag_evidence_groups,
+                                        evidence_chunks=model_evidence_chunks, omitted_refs=page_body_deferred,
+                                        max_chars=group_max_chars, inventory_chars_limit=context_chars_limit,
+                                        hits_per_query=retrieval_limits["model_evidence_k"],
+                                        source_context=pass_evidence,
+                                        native_read_reserved_tokens=native_growth_budget["reserved_tokens"],
+                                        initial_input_budget_tokens=fixed_packet.input_budget_tokens,
+                                        evidence_namespace=(row_packet_id(source_catalog, sheet=sheet_name,
+                                            locators=packet) + f":a{packet_attempts[fingerprint]}"),
+                                        query_offset=evidence_query_offset, query_provenance=pass_query_provenance,
+                                        query_addresses=pass_query_addresses, **initial_context)
+                                    page_trace = retrieval_trace["grouped_model_evidence_pages"][-1]
+                                    page_trace["exact_inventory_fit"] = inventory_fit
+                                    if inventory_fit["status"] == "expanded":
+                                        page_trace.update(inventory_hit_count=len(model_evidence_chunks), unshown_refs=[])
+                                        resumed_inventory_refs = {str(c.meta.get("model_evidence_ref") or "")
+                                            for c in model_evidence_chunks}
+                                        resumed_body_refs = {str(c.meta.get("model_evidence_ref") or "")
+                                            for c in model_evidence_chunks if c.meta.get("body_status") != "deferred_capacity"}
+                                        context = "\n\n".join(model_rag_evidence_groups)
+                                        answer_source_map = _model_rag_source_map(model_evidence_chunks)
+                                        selector_source_map = answer_source_map
+                                        final_evidence_packet = build_retrieval_evidence_packet(
+                                            question=req.question, chunks=model_evidence_chunks,
+                                            retrieval_trace=retrieval_trace, navigation=evidence_navigation,
+                                            deterministic_evidence=deterministic_evidence).to_dict(
+                                                max_chars=context_chars_limit, include_metadata=True)
                             except CloudBudgetStop:
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.pause(
@@ -10704,6 +11010,8 @@ async def _execute_chat_evidence_application(
                                         held_packet=pending_page, phase="evidence_capacity")
                                 run_stop_kinds.append("evidence_capacity")
                                 break
+                            sheet_pass_evidence_chunks.extend(model_evidence_chunks)
+                            model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                             retrieval_trace["context_governor"]["calls"].append(
                                 context_packet_trace(
                                     answer_packet, purpose="sheet_pass_answer"
@@ -11840,7 +12148,7 @@ async def _execute_chat_evidence_application(
                         ]
                     )
                     try:
-                        messages, answer_packet = govern_inference_messages(
+                        initial_answer_context = dict(
                             preset=answer_execution_preset,
                             profile_prefix=sys_msg + (ordinary_research_final_instruction(
                                 str((retrieval_trace.get("tool_loop") or {}).get("stop_reason") or "unknown"))
@@ -11849,13 +12157,46 @@ async def _execute_chat_evidence_application(
                             native_tools=answer_native_tools,
                             checkpoint=answer_checkpoint,
                             working_memory=answer_working_memory,
-                            evidence=() if model_driven_retrieval else answer_evidence,
-                            required_evidence=answer_evidence if model_driven_retrieval else (),
                             source_map=(() if model_driven_retrieval else answer_source_map),
                             tool_exchange=answer_tool_exchange,
                             native_exchanges=research_native_exchanges,
                             dialogue=[session_block] if session_block else [],
                         )
+                        if model_driven_retrieval:
+                            (messages, answer_packet, model_rag_evidence_groups,
+                             model_evidence_chunks, omitted_evidence_refs,
+                             inventory_fit) = await govern_model_rag_initial_messages(
+                                count_messages=_bound_input_token_counter(answer_execution_preset, answer_native_tools),
+                                query_hits=model_rag_query_hits, evidence_groups=model_rag_evidence_groups,
+                                evidence_chunks=model_evidence_chunks, omitted_refs=omitted_evidence_refs,
+                                max_chars=model_rag_group_char_budget(context_chars_limit=context_chars_limit,
+                                    remaining_group_tokens=native_growth_budget["remaining_group_tokens"]),
+                                inventory_chars_limit=context_chars_limit,
+                                hits_per_query=retrieval_limits["model_evidence_k"],
+                                source_context=fixed_model_rag_evidence,
+                                native_read_reserved_tokens=native_growth_budget["reserved_tokens"],
+                                initial_input_budget_tokens=fixed_packet.input_budget_tokens,
+                                query_provenance=_model_only_query_provenance(model_rag_query_hits),
+                                **initial_answer_context)
+                            grouped_trace = retrieval_trace["grouped_model_evidence"]
+                            grouped_trace["exact_inventory_fit"] = inventory_fit
+                            if inventory_fit["status"] == "expanded":
+                                model_research_tools.register_shown_norm_cards(model_evidence_chunks)
+                                context = "\n\n".join(model_rag_evidence_groups)
+                                grouped_trace.update(query_count=len(model_rag_evidence_groups),
+                                    hit_count=len(model_evidence_chunks), inventory_hit_count=len(model_evidence_chunks),
+                                    unshown_hit_count=0, rendered_chars=len(context),
+                                    group_ids=[f"Q{index}" for index in range(1,len(model_rag_evidence_groups)+1)])
+                                answer_source_map = _model_rag_source_map(model_evidence_chunks)
+                                selector_source_map = answer_source_map
+                                final_evidence_packet = build_retrieval_evidence_packet(
+                                    question=req.question, chunks=model_evidence_chunks,
+                                    retrieval_trace=retrieval_trace, navigation=evidence_navigation,
+                                    deterministic_evidence=deterministic_evidence).to_dict(
+                                        max_chars=context_chars_limit, include_metadata=True)
+                        else:
+                            messages, answer_packet = govern_inference_messages(
+                                **initial_answer_context, evidence=answer_evidence)
                     except ContextRequiredSectionOverflow as context_error:
                         retrieval_trace["context_governor"]["error"] = {
                             "code": context_error.code,
@@ -11959,8 +12300,9 @@ async def _execute_chat_evidence_application(
                                 headers,
                                 chat_body,
                                 allow_stream=not model_driven_retrieval,
-                                **({"expected_connection_revision_id": ordinary_connection_revision}
-                                   if ordinary_answer_tools else {}),
+                                **({"expected_connection_revision_id":
+                                    measured_connection_revision(answer_packet) or ordinary_connection_revision}
+                                   if ordinary_answer_tools or measured_connection_revision(answer_packet) else {}),
                             )
                             if active_model_result is not None:
                                 llm_model = active_model_result.connection.model_id
@@ -11979,6 +12321,7 @@ async def _execute_chat_evidence_application(
                                 headers,
                                 chat_body,
                                 allow_stream=not model_driven_retrieval,
+                                expected_connection_revision_id=measured_connection_revision(answer_packet),
                             )
                     except (httpx.TransportError, httpx.TimeoutException, asyncio.TimeoutError, httpx.HTTPStatusError) as net_err:
                         # W3.3/ADR-9: все облачные модели не ответили → деградация на

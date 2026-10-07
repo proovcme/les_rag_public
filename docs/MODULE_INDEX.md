@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+Candidate916 additionally maps model_rag_grouped_evidence_service.complete_card_frontier_page to an immutable typed-body supplement; chat_evidence_application_service._SOURCE_CONTEXT_ROLE_INSTRUCTION clarifies roles in model answer/continuation only. Tests: test_model_initial_complete_card_frontier and test_model_authored_header_roles. No professional choice is replaced.
+
+
+## Кандидат 0.31.188 / 916 — полная подача указателей и контекст технического повтора
+
+✅ док↔код: chat_evidence_application_service.govern_inference_messages_bound / govern_model_rag_initial_messages — initial exact inventory admission; model_query_repair_attempt_data / govern_model_query_messages — bounded repair DATA and capacity guard; model_rag_grouped_evidence_service.inventory_expansion_page — literal grouped pointer projection. Регрессии tests/test_model_initial_inventory_exact_fit.py и tests/test_model_query_repair_context.py включены в canonical gate. Качество профессионального выбора модели этим не объявляется подтверждённым.
+
+Frozen916 offline canonical gates PASS: 4227 passed, 20 skipped, 5 warnings in 268.05s (0:04:28); mail: 66 passed, 4 warnings in 6.48s; metadata: 31 passed in 4.39s. Установленная live-проверка и профессиональная приёмка916 ещё требуются; customer-ready=false.
+
 ## Кандидат 0.31.187 / 915 — авторские заголовки и сохранение характеристик поиска
 
 ✅ док↔код: proxy/services/chat_evidence_application_service.py:model_rag_row_kind — явный header остаётся нетрудовой строкой; proxy/services/lsr_candidate_query_service.py:_is_service_column — сохраняет значимые характеристики. Регрессии tests/test_model_authored_header_roles.py и tests/test_lsr_candidate_query_service.py включены в канонический gate. Предметные решения модели и исходные ячейки не изменяются.

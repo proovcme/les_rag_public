@@ -1,5 +1,18 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+Candidate916 final scope: exact complete typed bodies are offered only when the whole bound wire fits without changing the original ceiling, READ reserve or shown frontier. The model receives explicit source-context role instructions; code does not invent or classify operations. The first-scope4210PASS proof excludes these final additions; artifacts/gates_916_final is the required final gate. Installed915 live control failed professional acceptance despite complete file delivery (BAP: wrong norm/card bindings, double-counted retained materials and fictitious operations from context; SKS:18 material parents lacked operations). Customer-ready=false until fresh installed physical-document checks pass.
+
+
+## Кандидат 0.31.188 / 916 — полная подача указателей и контекст технического повтора
+
+Установленная 915/b648808b прошла RRF 1/1 и basic smoke 10/10. Обычный GUI-фактор системных запросов кандидатов включён; модель FreeToken:r8/CAS46, профиль и фактические 65536 токенов сохранены. БАП B0 за223.22с не создал документ: 8192-token незавершённый JSON запросов, затем ответ по существу вместо поисковой декларации. БАП B1 за331.83с создал одну ЛСР из22 строк модели; это техническая доставка, не доказательство применимости норм. СКС→ВОР B0 за355.98с создал122 строки (70 материалов,52 работы): все70 товарных позиций сохранены, но18 связей ведут к отсутствующей работе. Независимая профессиональная приёмка ВОР отрицательная (artifacts/live_915/acceptance/freetoken_sks_vor_baseline_independent_judge_915.json). Структурный draft=false не означает профессиональную полноту.
+
+Первичная подача evidence пробует целый расширенный inventory по exact счётчику установленного подключения и прежнему запасу READ. Состав прежних показанных тел, метаданные, порядок запросов/рангов и исходный admission ceiling сохраняются. Если измерение недоступно, владелец подключения изменился либо пакет не помещается, исходные page/messages/packing остаются прежними. Это доставка найденных источников, не переподбор норм.
+
+Единственный существующий технический повтор поиска получает полный видимый отклонённый ответ модели как DATA вместе с finish_reason и реальными ошибками разбора. Скрытые рассуждения и секреты исключены. Исходник, профиль и область не заменяются; потеря ранее показанного исходника либо переполнение дают явный отказ вместо усечения. Новых циклов и прямых модельных HTTP-вызовов нет; предметные решения модели код не меняет.
+
+Frozen916 offline canonical gates PASS: 4227 passed, 20 skipped, 5 warnings in 268.05s (0:04:28); mail: 66 passed, 4 warnings in 6.48s; metadata: 31 passed in 4.39s. Установленная live-проверка и профессиональная приёмка916 ещё требуются; customer-ready=false.
+
 ## Кандидат 0.31.187 / 915 — авторские заголовки и сохранение характеристик поиска
 
 На установленной 914/39cb94b5 FreeToken:r8/CAS46 восстановлен до фактических 65536 токенов: KV65536, MoE4025, Mamba24; роли, профиль, данные и существующие задания сохранены. Свежий БАП B0 закончился за177.95с без XLSX: четыре объявленных моделью header с quantity=0 ошибочно проверялись как работы и получили source_quantity_unconfirmed. B1 выдал файл за193.86с: 19 работ, 12 позиций, подтверждённая сумма0, предварительная781638.43. Шифры совпадают со своими сохранёнными карточками, но применимость не подтверждена: отдельному БАП предложен целый светильник, грунтовке — окраска, стеклохолсту потолка — обои стен. Полных карточек показано0, native READ0. Отрицательная профессиональная приёмка сохранена в artifacts/live_914/acceptance/freetoken_bap_independent_pair_judge_914.json; projection-correction уточняет, что durable job сохраняет gap_reason.

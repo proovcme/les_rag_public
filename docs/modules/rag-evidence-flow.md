@@ -1,5 +1,59 @@
 # RAG evidence flow
 
+### Complete typed cards and source-context roles in candidate916
+
+`complete_card_frontier_page` supplements only the already shown whole-group
+frontier with its existing complete typed card bodies. The old preview remains
+a literal prefix; aliases, ordering, source identity, metadata and hidden bodies
+are preserved. `govern_model_rag_initial_messages` tries this one complete wire
+through the current bound counter, retaining the original initial ceiling,
+registered character cap and native READ reserve. Unknown counting, owner
+changes, insufficient capacity or unsafe hydration retain the previous wire.
+Failed all-inventory expansion still returns the existing path before this
+trial. This is transport admission, not norm selection or a model READ.
+
+The shared answer/workbook-result instruction explicitly asks the model to
+classify requisites, headings and explanatory text by their actual role, without
+inventing an operation or volume from a norm's title. The application does not
+classify those rows or alter accepted professional decisions. Real operations
+without justified quantities retain the model's concrete question in open_gap.
+
+Regression: tests/test_model_initial_complete_card_frontier.py and the native
+answer/continuation cases in tests/test_model_authored_header_roles.py.
+Installed professional acceptance remains pending; customer-ready=false.
+
+
+## Candidate query-repair context — isolated 916, installed acceptance pending
+
+A rejected technical query response is now carried to the existing bounded
+format repair as DATA in the required request object. Both the direct baseline
+and sheet candidate retain the original question, source representation,
+dataset and literal bound profile/skill. The DATA contains the full visible
+assistant final, actual finish reason and structural parse diagnostics; it is
+neither a new operator task nor evidence. Hidden reasoning and credentials are
+excluded. Repair no longer claims that the model wrote no search strings when
+the application could not parse its output.
+
+`model_query_repair_attempt_data` and `govern_model_query_messages` use the
+existing ContextGovernor. The previous visible response is not clipped to the
+8192-character history excerpt or silently dropped to fit. Repair also retains
+the first packet's actually admitted EVIDENCE and SOURCE_MAP objects whole,
+in their original section kinds, as required context; unseen objects are not
+promoted. Source plus rejected DATA must fit together or repair stops before
+another model call. Required overflow
+records `MODEL_QUERY_REPAIR_CONTEXT_OVERFLOW` with only safe hash/count/parse
+metadata and preserves the existing technical failure and owner pause path.
+Whole-wire admission retains the existing cloud budget failure; only its
+ContextRequiredWireOverflow cause receives the context-overflow label, while a
+generic spending stop keeps its identity. An admitted
+context summary proves packet inclusion, not provider execution or a model READ.
+
+No model calls, attempts, temperature/output settings, query strings, artifact
+selection or professional decisions are added or replaced. Existing continuation
+semantics remain; only the format-repair phase receives this DATA. Regression:
+`tests/test_model_query_repair_context.py`. Live professional and installed
+comparison remain pending; these offline fixtures do not prove customer readiness.
+
 ## Candidate 0.31.184 / 912 - optional export declaration in model queries
 
 Installed911/ccfa7bfa passed4031 canonical tests (20 historical skips),
@@ -1701,3 +1755,34 @@ facts, finish reason, tokens/budget, counts/reasons declared parse и final text
 ограничения). Hidden thinking и credentials удаляются до ограничения текста.
 SSE/HTTP error содержит только безопасные code/detail; arbitrary HTTP detail не
 может подставить диагностический trace. Правила парсера и запросы модели не меняются.
+
+## Draft 916 — bound initial identity inventory admission
+
+`govern_model_rag_initial_messages` is shared by the direct B0 answer and the
+initial B1 sheet answer. It first retains the existing conservative evidence
+page. If that page leaves identities unshown, `inventory_expansion_page` offers
+one whole alternative containing every retained Q/H pointer in its original
+query/rank order, with exactly the previously admitted whole bodies. Previously
+shown pointer metadata, bodies, source literals and resource completeness flags
+remain unchanged; an additional pointer does not become a complete norm card.
+Literal empty-query groups are retained as `hits=0`.
+
+The existing bound whole-wire counter and ContextGovernor count the actual
+profile/request/source/optional context and native tool schemas. Each distinct
+wire is cached through `_govern_messages_bound`; there are no new model HTTP
+callsites or retrieval calls. Initial admission additionally preserves the old
+fixed packet allocation: counted wire plus the unchanged native-read reserve
+must fit `min(exact wire budget, original fixed packet input budget)`. The
+physical window, generation and safety reserves do not increase; schemas are
+not subtracted twice within the exact Governor. The extra compatibility
+headroom is explicit in `exact_inventory_fit` trace. Native continuation keeps
+its existing exact-count policy.
+
+An unavailable counter, changed bound identity, capacity failure, READ reserve
+or positive registered char ceiling keeps the original page and packing bytes.
+A zero char ceiling retains the existing unbounded-char meaning. Accepted
+messages are the measured messages used for generation, pinned to the measured
+connection revision. Focused fixtures cover 132 identities, whole preview and
+pointer metadata preservation, both physical and compatibility limits, and
+byte-equal fallbacks. These offline tests do not prove live tokenizer capacity,
+model query quality, native READ use or financial/document acceptance.
