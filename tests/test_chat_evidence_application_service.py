@@ -2580,10 +2580,12 @@ def test_governed_inference_trace_exposes_exact_evidence_but_not_private_memory(
         source_map=[{"label": "Источник 1"}],
         tool_exchange=[{"status": "ok"}],
         dialogue=["prior turn"],
+        terminal_instruction="bound final phase",
     )
 
     assert [section.kind for section in packet.sections] == list(ContextKind)
-    assert [message["role"] for message in messages] == ["system", "user"]
+    assert [message["role"] for message in messages] == ["system", "user", "user"]
+    assert messages[-1]["content"] == "bound final phase"
     trace = service.context_packet_trace(packet, purpose="answer")
     assert trace["purpose"] == "answer"
     assert [section["kind"] for section in trace["sections"]] == [kind.value for kind in ContextKind]
@@ -2594,6 +2596,10 @@ def test_governed_inference_trace_exposes_exact_evidence_but_not_private_memory(
     assert evidence["objects"][0]["text"] == '{"source":"evidence payload"}'
     assert len(evidence["objects"][0]["sha256"]) == 64
     assert source_map["objects"][0]["payload"] == {"label": "Источник 1"}
+    terminal = next(section for section in trace["sections"] if section["kind"] == "terminal_request")
+    assert terminal["object_ids"] == ["request:terminal-phase"]
+    assert "objects" not in terminal
+    assert "bound final phase" not in json.dumps(trace)
 
 
 def test_context_trace_records_exact_omitted_evidence_ids_and_cursor() -> None:

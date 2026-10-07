@@ -1,5 +1,31 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+
+## Кандидат 0.31.194 / 922 — явная граница итогового ответа
+
+🟡 `ContextGovernor` / ordinary research: `TERMINAL_REQUEST` — обязательная
+инструкция приложения после сохранённых native exchanges. Закрытие поиска
+передаётся последним user-сообщением; исходный запрос, источники, вызовы, их
+аргументы, ответы и canonical reasoning не переписываются. У Qwen новый user
+меняет выбор исторического reasoning в шаблоне; wire-lossless это не называется.
+Открытый READ и сметный маршрут не получают эту инструкцию.
+Точки: `context_governor_service.ContextPacket.as_messages`,
+`chat_evidence_application_service.govern_inference_messages` и
+`ordinary_research_final_instruction`; модуль: [RAG evidence flow](modules/rag-evidence-flow.md).
+
+Установленная921: query-phase завершилась, B0 БАП frame4 выдал XLSX за161.48с,
+но три выбранные нормы остались непрочитанными; подтверждённая сумма0.
+B1 остановился без файла:51162 >47104 входных токенов, paused checkpoint сохранён.
+Обычный smoke:8PASS/1WARN/1FAIL; повтор подтвердил XML-вызовы вместо ответа
+после `repeated_read_batch`, без переполнения контекста.
+Доказательства: `artifacts/live_921/acceptance/body_delivery_capacity_independent_review_921.json`
+и `ordinary_smoke_diagnostic/public_diagnostics.json` в той же папке.
+
+922 — кандидат, customer-ready=false; установленные приёмочные прогоны и
+качество полных ВОР/ЛСР ещё не подтверждены. Изменение не выбирает нормы,
+не добавляет цены и не доказывает работоспособность большого входа либо installer.
+Frozen922 offline canonical gates PASS: 4319 passed, 20 skipped, 5 warnings in 269.31s (0:04:29); mail: 66 passed, 4 warnings in 6.15s; metadata: 31 passed in 4.42s.
+
 ## Кандидат 0.31.193 / 921 — конечный поиск по представленным операциям
 
 На установленной 920/f4fa6af8 первый БАП B0 frame4 завершился за 132,69 с без файла:

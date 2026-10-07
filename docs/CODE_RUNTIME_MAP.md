@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1137 |
-| Строк Python | 396708 |
+| Python-файлов под git | 1138 |
+| Строк Python | 396916 |
 | PRODUCT_REACHABLE | 375 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 750 |
+| TEST_OR_TOOL_ONLY | 751 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 340 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 14268 | 80 |
+| proxy/services/chat_evidence_application_service.py | 14277 | 81 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7805 | 7 |
 | proxy/routers/chat.py | 4852 | 54 |
@@ -58,7 +58,7 @@
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
-| proxy/services/tool_harness_service.py | 1408 | 15 |
+| proxy/services/tool_harness_service.py | 1408 | 16 |
 | proxy/services/attachment_source_catalog_service.py | 1290 | 30 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |

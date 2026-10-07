@@ -22,6 +22,7 @@ class ContextKind(str, Enum):
     CHECKPOINT = "checkpoint"
     WORKING_MEMORY = "working_memory"
     DIALOGUE = "dialogue"
+    TERMINAL_REQUEST = "terminal_request"
 
 
 _PACKING_ORDER = tuple(ContextKind)
@@ -186,7 +187,7 @@ class ContextPacket:
             "\n".join(item.render() for item in section.objects
                       if not isinstance(item.payload, NativeToolExchange))
             for section in self.sections
-            if section.kind != ContextKind.PROFILE_PREFIX
+            if section.kind not in (ContextKind.PROFILE_PREFIX, ContextKind.TERMINAL_REQUEST)
         ]
         user_sections = [text for text in user_sections if text]
         messages: list[dict[str, Any]] = []
@@ -198,6 +199,9 @@ class ContextPacket:
             for item in section.objects:
                 if isinstance(item.payload, NativeToolExchange):
                     messages.extend(item.payload.as_messages())
+        for section in self.sections:
+            if section.kind == ContextKind.TERMINAL_REQUEST:
+                messages.append({"role": "user", "content": section.render()})
         return messages
 
 
@@ -261,6 +265,11 @@ class ContextGovernor:
         ordered = sorted(candidates, key=lambda candidate: _PACKING_RANK[candidate.kind])
         native_ids: set[str] = set()
         for candidate in ordered:
+            if candidate.kind == ContextKind.TERMINAL_REQUEST:
+                if (not candidate.required or len(candidate.objects) != 1
+                        or not isinstance(candidate.objects[0].payload, str)
+                        or not candidate.objects[0].payload.strip()):
+                    raise ValueError("terminal request must be one required nonempty literal instruction")
             if any(isinstance(item.payload, NativeToolExchange) for item in candidate.objects):
                 if candidate.kind != ContextKind.TOOL_EXCHANGE or not candidate.required:
                     raise ValueError("native exchanges must be required TOOL_EXCHANGE objects")

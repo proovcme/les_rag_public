@@ -965,12 +965,15 @@ def research_deadline_blocked_payload(tool_name: str) -> dict[str, Any]:
 def ordinary_research_final_instruction(stop_reason: str) -> str:
     """Expose the technical READ closure without changing model-owned evidence."""
     state = {"schema": "les.research-final-state.v1", "origin": "application",
-             "read_closed": True, "stop_reason": str(stop_reason or "unknown")}
+             "read_closed": True, "stop_reason": str(stop_reason or "unknown"),
+             "response_kind": "user_answer", "history_tool_calls": "completed"}
     return (FINAL_RESEARCH_INSTRUCTION
             + "\nФактическое состояние чтения от приложения: "
             + json.dumps(state, ensure_ascii=False, sort_keys=True)
             + "\nНовые READ-вызовы на этом этапе запрещены, включая повторные. "
               "Запросы инструментам в тексте не будут исполнены. "
+              "Предыдущие вызовы и ответы инструментов — завершённая история чтения; "
+              "сейчас требуется ответ пользователю, а не выбор следующего действия. "
               "Сформулируй итоговый ответ по сохранённым источникам и явно назови оставшиеся пробелы.")
 
 
@@ -1890,6 +1893,7 @@ def govern_inference_messages(
     tool_exchange: Sequence[Any] = (),
     native_exchanges: Sequence[NativeToolExchange] = (),
     dialogue: Sequence[Any] = (),
+    terminal_instruction: str | None = None,
     admit_messages=None,
     count_messages_tokens=None,
     token_count_source="conservative_chars_per_two",
@@ -1927,6 +1931,9 @@ def govern_inference_messages(
             required=True,
         ),
         ContextCandidate(ContextKind.DIALOGUE, _context_objects("dialogue", dialogue)),
+        *([ContextCandidate(ContextKind.TERMINAL_REQUEST,
+                            (ContextObject("request:terminal-phase", terminal_instruction),), required=True)]
+          if terminal_instruction is not None else []),
     ]
     external_tokens = (
         conservative_token_estimate(json.dumps(list(native_tools), ensure_ascii=False, sort_keys=True)) + 2
@@ -12215,9 +12222,10 @@ async def _execute_chat_evidence_application(
                     try:
                         initial_answer_context = dict(
                             preset=answer_execution_preset,
-                            profile_prefix=sys_msg + (ordinary_research_final_instruction(
+                            profile_prefix=sys_msg,
+                            terminal_instruction=(ordinary_research_final_instruction(
                                 str((retrieval_trace.get("tool_loop") or {}).get("stop_reason") or "unknown"))
-                                if research_native_exchanges and not model_driven_retrieval and not answer_native_tools else ""),
+                                if research_native_exchanges and not model_driven_retrieval and not answer_native_tools else None),
                             request_payload=question_tail,
                             native_tools=answer_native_tools,
                             checkpoint=answer_checkpoint,
@@ -12556,7 +12564,8 @@ async def _execute_chat_evidence_application(
                         try:
                             read_messages, read_packet = govern_inference_messages(
                                 preset=answer_execution_preset,
-                                profile_prefix=sys_msg + ("" if remaining_tools else ordinary_research_final_instruction(
+                                profile_prefix=sys_msg,
+                                terminal_instruction=(None if remaining_tools else ordinary_research_final_instruction(
                                     str(loop_trace.get("ordinary_read_stop") or
                                         ("calls_budget" if calls_remaining <= 0 else "deadline")))),
                                 request_payload=question_tail, native_tools=remaining_tools,

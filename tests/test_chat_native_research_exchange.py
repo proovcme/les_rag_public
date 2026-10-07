@@ -87,7 +87,8 @@ async def test_final_research_request_is_final_only_and_unfinished_protocol_is_n
         result = await service.run_chat_evidence_application(request, runtime,
             replace(boundary, token_sink=sink, save_chat_history=history))
         assert len(transport.requests) == 4 and not transport.responses
-        assert FINAL_RESEARCH_INSTRUCTION in transport.requests[-1].messages[0]["content"]
+        assert transport.requests[-1].messages[-1]["role"] == "user"
+        assert FINAL_RESEARCH_INSTRUCTION in transport.requests[-1].messages[-1]["content"]
         assert transport.requests[-1].tools == ()
         assert "PRIVATE_888_REASONING" not in json.dumps([result, events, histories], default=str)
         if incomplete:

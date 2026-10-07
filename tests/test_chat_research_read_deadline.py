@@ -335,9 +335,11 @@ async def test_initial_tools_off_final_exposes_actual_read_closure_without_anoth
     assert not final.tools
     prefix = next(message["content"] for message in final.messages if message["role"] == "system")
     assert captures["profile_prompt"] in prefix
-    assert '"read_closed": true' in prefix, "the tools-off final must disclose the actual read boundary"
-    assert f'"stop_reason": "{stop_reason}"' in prefix
-    assert "Новые READ-вызовы на этом этапе запрещены" in prefix
+    assert final.messages[-1]["role"] == "user"
+    phase = final.messages[-1]["content"]
+    assert '"read_closed": true' in phase, "the tools-off final must disclose the actual read boundary after history"
+    assert f'"stop_reason": "{stop_reason}"' in phase
+    assert "Новые READ-вызовы на этом этапе запрещены" in phase
     assert len(transport.requests) == (3 if stop_reason == "repeated_read_batch" else 2)
     assert len(set(transport.revisions)) == 1
     assert len(executions) == (0 if stop_reason == "deadline" else 1)
@@ -368,11 +370,12 @@ async def test_late_tools_off_final_exposes_closure_only_after_reading_is_closed
     open_read_request, final_request = run.transport.requests[2:]
     assert open_read_request.tools and not final_request.tools
     open_prefix = next(message["content"] for message in open_read_request.messages if message["role"] == "system")
-    final_prefix = next(message["content"] for message in final_request.messages if message["role"] == "system")
+    assert final_request.messages[-1]["role"] == "user"
+    final_phase = final_request.messages[-1]["content"]
     assert '"read_closed": true' not in open_prefix, "an available native READ must not receive a false closure"
-    assert '"read_closed": true' in final_prefix
-    assert f'"stop_reason": "{stop_reason}"' in final_prefix
-    assert "Новые READ-вызовы на этом этапе запрещены" in final_prefix
+    assert '"read_closed": true' in final_phase
+    assert f'"stop_reason": "{stop_reason}"' in final_phase
+    assert "Новые READ-вызовы на этом этапе запрещены" in final_phase
     assert len(set(run.transport.revisions)) == 1
     assert len(run.executions) == (3 if stop_reason == "calls_budget" else 1)
     assert run.result["answer"] == "Verified answer from the original and additional sources."
