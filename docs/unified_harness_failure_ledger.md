@@ -29,12 +29,31 @@ Qwen: сохранение канонических opaque-полей не оз�
 Доказательства: artifacts/gates_924_read_frame_final_r2/ и
 artifacts/live_924/acceptance/current_read_frame_flow_red_r2.xml.
 
-Установленное сравнение924 ещё не выполнено; customer-ready=false. Основной
-профиль не активируется. Предыдущая923: B0 первые четыре адреса, три работы и два
-материала без норм и сумм; B1 exact57026 при бюджете55296, evidence_read_capacity
-и отсутствие файла. Это честные отрицательные измерения. Не заменять их зелёным
-статусом тестов. Полный ВОР, разные документы, денежный расчёт и точный Windows-
-установщик требуют профессиональной живой приёмки.
+Runtime924 / source41ea6db3 проверен живыми опытами. B0 первые4 работы:
+152.80с, физический черновик,0 норм/денег. B1 те же первые4:169.83с,
+answer LENGTH8192,0 строк/файлов, job paused/resumable. Вход поместился;
+reasoning/final split неизвестен. Оба опыта не исполнили native READ, поэтому
+CURRENT_READ_FRAME не доказал устранение прежнего923 capacity stop.
+
+Штатный полный БАП/активный Default/frame0:224.31с,19/19 работ и количеств,
+один19094-byte XLSX. 12 MISSING;7 модельных EXACT,5 буквальных code/ref mismatch
+(R18,R19,R22,R24,R25). R21 — целый светильник вместо БАП, R22 — труба вместо
+кабеля. R23 без доказанного полного чтения, проверка пересечения креплений
+остаётся. Три суммы R21/R22/R23:12 779,37+45 766,71+35 128,65=93 674,73
+предварительных,0 подтверждённых. Код сохраняет authored norm_code; несоответствие
+evidence отражено в аудите, код не подменяет норму процитированной карточкой.
+19 accepted, remaining PDF_TEXT!R1; принятого HEADER от модели нет. Все6 вызовов
+STOP, native READ/CURRENT_READ_FRAME —0. Цена SPb3q2026/hash сохранена.
+
+Basic release smoke:8 passed,2 failed ReadTimeout по90с. Причина не установлена:
+trace этих запросов отсутствует. Статический audit не показывает утечку нового
+ContextKind в обычный чат. Глобальная FT статистика не доказывает причинность.
+customer-ready=false; pytest не заменяет отрицательную профессиональную приёмку.
+Доказательства924: artifacts/live_924/acceptance/
+installed_default_bap_whole19_measurement_924.json,
+installed_default_bap_whole19_scalar_924.json,
+current_read_frame_bap_pair_professional_judge_924.json,
+basic_timeout_current_kind_readonly_audit_924.json.
 
 Доказательства923: artifacts/live_923/acceptance/
 query_packet_bap_baseline_independent_expert_judge_923.json и

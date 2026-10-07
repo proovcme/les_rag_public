@@ -29,12 +29,12 @@ Qwen: сохранение канонических opaque-полей не оз�
 Доказательства: artifacts/gates_924_read_frame_final_r2/ и
 artifacts/live_924/acceptance/current_read_frame_flow_red_r2.xml.
 
-Установленное сравнение924 ещё не выполнено; customer-ready=false. Основной
-профиль не активируется. Предыдущая923: B0 первые четыре адреса, три работы и два
-материала без норм и сумм; B1 exact57026 при бюджете55296, evidence_read_capacity
-и отсутствие файла. Это честные отрицательные измерения. Не заменять их зелёным
-статусом тестов. Полный ВОР, разные документы, денежный расчёт и точный Windows-
-установщик требуют профессиональной живой приёмки.
+Установлен runtime924 / source41ea6db3. B0/B1 и штатный полный БАП завершены,
+но ни один не исполнил native READ/CURRENT_READ_FRAME; новый producer проверен
+офлайн, живое доказательство fit отсутствует. Штатный БАП сохраняет19 работ,
+но профессиональная проверка норм отрицательная, подтверждённых денег0.
+Basic smoke содержит2 chat timeout; их причина не установлена. Defaults и
+старые задания сохранены. customer-ready=false; см.[RELEASE_LEDGER](RELEASE_LEDGER.md).
 
 Доказательства923: artifacts/live_923/acceptance/
 query_packet_bap_baseline_independent_expert_judge_923.json и
