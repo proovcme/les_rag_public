@@ -127,3 +127,45 @@ async def test_direct_baseline_query_failure_creates_no_job_or_new_model_attempt
         await _run_sheet(tmp_path, monkeypatch, reads=False, variant='B0_DIRECT',
                          query_repair=FRESH_TABLE_OUTPUT, query_declaration=FRESH_TABLE_OUTPUT)
     assert 'MODEL_RAG_QUERY_LIST_EMPTY' in json.dumps(caught.value.detail)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fail_at', [2, 3, 5, 6])
+async def test_owned_provider_error_pauses_without_rewriting_checkpoint(tmp_path, monkeypatch, fail_at):
+    monkeypatch.setenv('RAG_META_DB_PATH', str(tmp_path / 'own-provider-failure.sqlite'))
+    original_begin = WorkbookResearchJobService.begin_or_resume
+    original_complete = application.BoundModelChatRunner.complete
+    captured = {}
+    count = 0
+
+    def begin(self, identity, **kwargs):
+        job = original_begin(self, identity, **kwargs)
+        captured.update(store=self, identity=identity, job_id=job['job_id'])
+        return job
+
+    async def complete(self, *args, **kwargs):
+        nonlocal count
+        count += 1
+        if count == fail_at:
+            captured['before'] = copy.deepcopy(captured['store'].get(captured['job_id']))
+            raise application.ModelTransportError('literal provider connection lost')
+        return await original_complete(self, *args, **kwargs)
+
+    monkeypatch.setattr(WorkbookResearchJobService, 'begin_or_resume', begin)
+    monkeypatch.setattr(application.BoundModelChatRunner, 'complete', complete)
+    with pytest.raises(application.HTTPException) as error:
+        await _run_sheet(tmp_path, monkeypatch, reads=True, packet_count=2 if fail_at > 4 else 1)
+    assert error.value.status_code == 502
+    assert 'literal provider connection lost' in str(error.value.detail)
+    job = captured['store'].get(captured['job_id'])
+    assert job['status'] == 'paused' and job['phase'] == 'model_transport_pending'
+    assert job['resumable'] is True
+    for key in ('accepted_rows', 'query_cache', 'evidence', 'remaining', 'task_context', 'identity'):
+        assert job[key] == captured['before'][key], key
+    assert len(job['accepted_rows']) == (2 if fail_at > 4 else 0)
+    assert captured['job_id'] not in application._LIVE_SHEET_PASS_GATES
+    assert count == fail_at
+    resumed = original_begin(captured['store'], captured['identity'])
+    assert resumed['job_id'] == job['job_id'] and resumed['status'] == 'running'
+    for key in ('accepted_rows', 'query_cache', 'evidence', 'remaining', 'task_context', 'identity'):
+        assert resumed[key] == job[key], key

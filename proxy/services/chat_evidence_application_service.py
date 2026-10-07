@@ -11744,6 +11744,15 @@ async def _execute_chat_evidence_application(
                         query_checkpoint_failed = True
                         retrieval_trace["query_checkpoint_failure"] = dict(failure)
                         answer_parts.append(failure["reason"] + " Код: " + query_code + ".")
+                    except ModelTransportError:
+                        # A failed provider call is a technical checkpoint, not
+                        # an executor that remains running after its gate exits.
+                        # Preserve every durable decision, read and query as-is.
+                        if owns_sheet_pass and research_job_service is not None and research_job is not None:
+                            research_job = research_job_service.pause(
+                                research_job["job_id"], phase="model_transport_pending",
+                            )
+                        raise
                     except CloudBudgetStop:
                         # Earlier packets already contain terminal model decisions.
                         # Deliver their ordinary partial workbook without another

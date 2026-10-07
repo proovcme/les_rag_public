@@ -1,5 +1,19 @@
 # RAG evidence flow
 
+## Кандидат 0.31.198 / 926 — отключение provider сохраняет паузу
+
+ModelTransportError внутри owned sheet pass сохраняет текущий durable checkpoint
+через pause(model_transport_pending), затем повторно поднимает исходную ошибку.
+finally освобождает process-local gate. Joined request не владеет checkpoint
+и не может его менять. Accepted rows, queries/cache, evidence, task/identity,
+remaining и модельные решения остаются прежними; дополнительных вызовов нет.
+Сбой не становится MISSING/NO_DATA/готовым XLSX. Контрольное resume возвращает
+тот же job ID со всеми сохранёнными данными. Ошибка502 не маскируется.
+Регрессии actual producer: tests/test_model_query_failure_job_lifecycle.py,
+четыре failure points (до/после чтения и во втором пакете). GREEN10 с исходными
+query/join/B0 cases; full926:4367 passed,20 historical skipped; mail66,metadata31; install/live pending. Внешний БАП контроль925 оборван и
+не доказывает качество подбора/расчёта; customer-ready=false.
+
 ## Кандидат 0.31.197 / 925 — ещё не показанный discovery inventory
 
 prepare_model_read_replay различает available discovery и established evidence

@@ -1,5 +1,16 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-10-07 — provider disconnect оставлял running checkpoint
+
+Контроль925 потерял клиент/внешний сервер1919; собственное задание оставалось
+running с29 cached queries и0 rows/artifacts. Причина остановки FreeToken
+не установлена. Actual-producer RED2 отдельно воспроизвёл orphan состояние
+на ModelTransportError после query и после первого exact read.926 сохраняет
+checkpoint и ставит model_transport_pending перед повторным поднятием ошибки.
+GREEN10:4 permanent failure points, готовый предыдущий пакет не потерян,
+resume не меняет job ID/rows/cache/evidence/task/identity. Full926:4367 passed,20 historical skipped; mail66,metadata31; install/live
+ещё pending; не объявляется профессиональная готовность или качество925.
+
 ## 2026-10-07 — обязательный непоказанный discovery inventory
 
 На924 полный БАП/Thinking16K впервые реально исполнил CURRENT_READ_FRAME:

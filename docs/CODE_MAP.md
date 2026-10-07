@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат 0.31.198 / 926
+
+chat_evidence_application_service owned sheet-pass exception boundary:
+ModelTransportError → durable pause(model_transport_pending) → прежняя502 error;
+finally освобождает gate. Нет подмены model results или нового предметного цикла.
+Тесты: tests/test_model_query_failure_job_lifecycle.py; док —
+docs/modules/rag-evidence-flow.md. GREEN10; full926:4367 passed,20 historical skipped; mail66,metadata31; install/live pending.
+Runtime925/f03a27f9; customer-ready=false.
+
 ## Кандидат 0.31.197 / 925
 
 Native evidence replay: bind_model_requested_read_evidence помечает новые

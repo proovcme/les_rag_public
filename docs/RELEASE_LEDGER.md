@@ -1,5 +1,28 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.198 / 926 — пауза при отключении назначенной модели
+
+Фактический runtime925/f03a27f9 установлен и проверен по3 SHA, API и полному
+прежнему control snapshot. PowerShell restart изменил общий snapshot hash;
+возврат штатного Python launcher восстановил его точно. Default profiles,
+FreeToken r8/64K и старые задания сохранены; откат924 подготовлен.
+Полный БАП/Thinking16K контроль925 прерван: терминальный клиент exit1,
+последний SSE113.77с,0 принятых строк/файлов; отдельно сервер1919 дал WinError10061.
+Причина остановки внешнего сервера неизвестна; сравнение качества925 не завершено.
+Своё orphan job wrj_a6760753637e4a1eb1f6e1db386ddcdc штатно поставлено на паузу,
+29 cached queries и task/source сохранены. Свидетельство:
+artifacts/live_925/acceptance/interrupted_full_bap_control_925.json.
+
+Actual-producer RED2 доказал: ModelTransportError после поиска/чтения оставляет
+running job, хотя gate уже освобождён.926 ловит только этот тип внутри owned
+sheet pass, сохраняет durable checkpoint без переписывания и ставит
+model_transport_pending, затем возвращает прежнюю ошибку. Ни нового поиска,
+решения, повторного model call, MISSING или успешного документа код не создаёт.
+GREEN10 включает4 permanent cases до/после чтения и после готового первого
+пакета; resume сохраняет job ID/rows/cache/evidence/task/identity.
+Точка и регрессии: chat_evidence_application_service / tests/test_model_query_failure_job_lifecycle.py.
+full926:4367 passed,20 historical skipped; mail66,metadata31; install/live pending; customer-ready=false. Модель вновь загружена пользователем.
+
 ## Кандидат 0.31.197 / 925 — допуск ещё не показанных результатов поиска
 
 На установленной924/41ea6db3 полный БАП с тем же Qwen3.6-35B-A3B-NVFP4,

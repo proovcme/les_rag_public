@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат 0.31.198 / 926
+
+🟡 Owned sheet lifecycle: ModelTransportError сохраняет checkpoint и переводит
+его в model_transport_pending перед прежней ошибкой; gate освобождается.
+Док↔код: [rag-evidence-flow](modules/rag-evidence-flow.md); actual-producer
+регрессии — tests/test_model_query_failure_job_lifecycle.py (GREEN10, full926:4367 passed,20 historical skipped; mail66,metadata31; install/live pending).
+Установлен925/f03a27f9; прерванный внешний контроль не квалифицирует качество,
+customer-ready=false. См. [RELEASE_LEDGER](RELEASE_LEDGER.md).
+
 ## Кандидат 0.31.197 / 925
 
 🟡 Evidence transport: prepare_model_read_replay / ModelReadReplay в

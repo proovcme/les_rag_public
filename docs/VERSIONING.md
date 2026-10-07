@@ -1,5 +1,9 @@
 # Версионирование ЛЕС
 
+Текущий кандидат0.31.198/build926; установлен925/f03a27f9, native EXE5.1.813.
+926 исправляет running checkpoint при ModelTransportError. GREEN10;
+full/install/live pending, customer-ready=false.
+
 Текущий кандидат —0.31.197/build925; фактически установлен924/41ea6db3,
 native shell5.1.813.925 исправляет допуск непоказанного discovery inventory;
 full925r2:4363 passed,20 исторических skipped, mail66, metadata31,
@@ -31,9 +35,9 @@ same-identity B0/B1 без XLSX, required46993/47433 при budget46246; гот�
 
 | Поле | Пример | Для чего |
 |---|---:|---|
-| `product_version` | `0.31.197` | Единственная версия, которую видит пользователь; обычный SemVer `X.Y.Z` |
-| `build_number` | `925` | Монотонный номер Windows-сборки; не является четвёртой частью версии |
-| `desktop_version` | `5.1.925` | Внутренняя версия Tauri/NSIS для обновления ранее выпущенных `5.1.x` пакетов |
+| `product_version` | `0.31.198` | Единственная версия, которую видит пользователь; обычный SemVer `X.Y.Z` |
+| `build_number` | `926` | Монотонный номер Windows-сборки; не является четвёртой частью версии |
+| `desktop_version` | `5.1.926` | Внутренняя версия Tauri/NSIS для обновления ранее выпущенных `5.1.x` пакетов |
 | `harness_schema_version` | `0.24` | Версия внутреннего строительного контракта, а не продукта |
 
 `proxy/services/version_service.py` читает этот файл и сохраняет старые поля API только для
