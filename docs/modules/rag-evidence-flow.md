@@ -1,18 +1,33 @@
 # RAG evidence flow
 
-## Кандидат 0.31.198 / 926 — отключение provider сохраняет паузу
+## Установлен 0.31.198 / 926 — техническая пауза и живые границы
 
-ModelTransportError внутри owned sheet pass сохраняет текущий durable checkpoint
-через pause(model_transport_pending), затем повторно поднимает исходную ошибку.
-finally освобождает process-local gate. Joined request не владеет checkpoint
-и не может его менять. Accepted rows, queries/cache, evidence, task/identity,
-remaining и модельные решения остаются прежними; дополнительных вызовов нет.
-Сбой не становится MISSING/NO_DATA/готовым XLSX. Контрольное resume возвращает
-тот же job ID со всеми сохранёнными данными. Ошибка502 не маскируется.
-Регрессии actual producer: tests/test_model_query_failure_job_lifecycle.py,
-четыре failure points (до/после чтения и во втором пакете). GREEN10 с исходными
-query/join/B0 cases; full926:4367 passed,20 historical skipped; mail66,metadata31; install/live pending. Внешний БАП контроль925 оборван и
-не доказывает качество подбора/расчёта; customer-ready=false.
+Установлен runtime **0.31.198 / 926**, code commit `8748b76f`.
+API, deploy stamp и три поставленных SHA сверены; native EXE остаётся 5.1.813.
+Default profile, назначение FreeToken r8/Qwen3.6-35B-A3B-NVFP4/64K и старые
+задания сохранены. Откат runtime925 подготовлен в `artifacts/rollback_925_to_926/`.
+Это runtime patch; приёмка точного нового установщика не проведена.
+
+926 исправляет только lifecycle: `ModelTransportError` внутри owned sheet pass
+сохраняет checkpoint, ставит `model_transport_pending` и возвращает исходную
+ошибку; `finally` освобождает gate. Принятые строки, evidence/cache, task/source
+и identity не переписываются. Ни нового поиска, решения, MISSING или успешного
+документа обработчик не создаёт. Actual-producer RED2 и GREEN10 сохранены;
+четыре постоянных failure-point регрессии находятся в
+`tests/test_model_query_failure_job_lifecycle.py`.
+Канонический full926: **4367 passed, 20 historical skipped**, mail66,
+metadata31; все 16 офлайн-гейтов exit0. Живые опыты ниже не заменены этими тестами.
+
+Живые контроли отрицательны: продолжение полного БАП сохранило тот же job,
+task/source и cache29→42, но required62232>47104 остановил его до файла.
+Парный первый frame4: B0_DIRECT доставил черновой XLSX с неправомерными
+аналогами (в том числе труба800мм вместо кабеля), confirmed0; B1 после
+сохранённого начального503 и одного явного повтора дважды исчерпал8192 на
+незавершённые запросы и остановился до RAG. Frame возвращён в0; Thinking16K
+не активирован. **customer-ready=false**: произвольные документы,300+ строк,
+профессиональный подбор и новый установщик не квалифицированы.
+Точные измерения и различия контрольных областей —
+[RELEASE_LEDGER](../RELEASE_LEDGER.md).
 
 ## Кандидат 0.31.197 / 925 — ещё не показанный discovery inventory
 

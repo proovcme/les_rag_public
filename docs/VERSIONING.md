@@ -1,8 +1,10 @@
 # Версионирование ЛЕС
 
-Текущий кандидат0.31.198/build926; установлен925/f03a27f9, native EXE5.1.813.
+Установлен runtime0.31.198/build926, code commit8748b76f; native EXE5.1.813.
 926 исправляет running checkpoint при ModelTransportError. GREEN10;
-full/install/live pending, customer-ready=false.
+full926:4367 passed,20 historical skipped, mail66,metadata31. Живые контроли
+полного БАП и первого frame4 завершены и отрицательны; customer-ready=false.
+Точная область и результаты — [RELEASE_LEDGER](RELEASE_LEDGER.md).
 
 Текущий кандидат —0.31.197/build925; фактически установлен924/41ea6db3,
 native shell5.1.813.925 исправляет допуск непоказанного discovery inventory;

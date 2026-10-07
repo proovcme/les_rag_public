@@ -1,27 +1,76 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-## Кандидат 0.31.198 / 926 — пауза при отключении назначенной модели
+## Установлен 0.31.198 / 926 — checkpoint и результаты живых контролей
 
-Фактический runtime925/f03a27f9 установлен и проверен по3 SHA, API и полному
-прежнему control snapshot. PowerShell restart изменил общий snapshot hash;
-возврат штатного Python launcher восстановил его точно. Default profiles,
-FreeToken r8/64K и старые задания сохранены; откат924 подготовлен.
-Полный БАП/Thinking16K контроль925 прерван: терминальный клиент exit1,
-последний SSE113.77с,0 принятых строк/файлов; отдельно сервер1919 дал WinError10061.
-Причина остановки внешнего сервера неизвестна; сравнение качества925 не завершено.
-Своё orphan job wrj_a6760753637e4a1eb1f6e1db386ddcdc штатно поставлено на паузу,
-29 cached queries и task/source сохранены. Свидетельство:
-artifacts/live_925/acceptance/interrupted_full_bap_control_925.json.
+Установлен runtime **0.31.198 / 926**, code commit `8748b76f`.
+API, deploy stamp и три поставленных SHA сверены; native EXE остаётся 5.1.813.
+Default profile, назначение FreeToken r8/Qwen3.6-35B-A3B-NVFP4/64K и старые
+задания сохранены. Откат runtime925 подготовлен в `artifacts/rollback_925_to_926/`.
+Это runtime patch; приёмка точного нового установщика не проведена.
 
-Actual-producer RED2 доказал: ModelTransportError после поиска/чтения оставляет
-running job, хотя gate уже освобождён.926 ловит только этот тип внутри owned
-sheet pass, сохраняет durable checkpoint без переписывания и ставит
-model_transport_pending, затем возвращает прежнюю ошибку. Ни нового поиска,
-решения, повторного model call, MISSING или успешного документа код не создаёт.
-GREEN10 включает4 permanent cases до/после чтения и после готового первого
-пакета; resume сохраняет job ID/rows/cache/evidence/task/identity.
-Точка и регрессии: chat_evidence_application_service / tests/test_model_query_failure_job_lifecycle.py.
-full926:4367 passed,20 historical skipped; mail66,metadata31; install/live pending; customer-ready=false. Модель вновь загружена пользователем.
+926 исправляет только lifecycle: `ModelTransportError` внутри owned sheet pass
+сохраняет checkpoint, ставит `model_transport_pending` и возвращает исходную
+ошибку; `finally` освобождает gate. Принятые строки, evidence/cache, task/source
+и identity не переписываются. Ни нового поиска, решения, MISSING или успешного
+документа обработчик не создаёт. Actual-producer RED2 и GREEN10 сохранены;
+четыре постоянных failure-point регрессии находятся в
+`tests/test_model_query_failure_job_lifecycle.py`.
+Канонический full926: **4367 passed, 20 historical skipped**, mail66,
+metadata31; все 16 офлайн-гейтов exit0. Живые опыты ниже не заменены этими тестами.
+
+Продолжение того же полного БАП, без новой загрузки, сохранило job
+`wrj_a6760753637e4a1eb1f6e1db386ddcdc`, task/регион/квартал и источник.
+За 552.61 с cache вырос 29→42, выполнены новые поиски и точные чтения карточек.
+После семи успешных exact reads обязательный пакет потребовал 62232 токена
+при бюджете 47104. Job paused/evidence_read_capacity; принятых строк и файлов0.
+Это незавершённый полный контроль, а не подтверждение качества или NO_DATA.
+
+Отдельный парный опыт предлагал первые четыре буквальные работы того же БАП,
+тот же файл/dataset/вопрос и существующий **неактивированный** Thinking16K
+профиль. Временный GUI-фактор source frame4 после опытов возвращён в0;
+остальные факторы и исторические jobs сверены. Это проверка первого пакета,
+не приёмка всех19 работ и не доказательство для300+ строк.
+
+B0_DIRECT: 366.23 с, 636 токенов поисковых запросов, шесть авторских строк
+(4 работы +2 материала) и один физический XLSX. Количества первых4 сохранены,
+книга `sankt-peterburg_3kv2026` выбрана exact. Подтверждённых денег0;
+предварительные313341.80 совпадают с физическим файлом, который помечен
+PRICED_PARTIAL — НЕ ДЛЯ СОГЛАСОВАНИЯ. Подбор профессионально неприемлем:
+например, для демонтажа кабеля выбран `ГЭСНр66-01-017-27` на демонтаж трубы
+диаметром800мм. Все четыре работы объявлены моделью ANALOGUE_CANDIDATE;
+полное чтение всех выбранных карточек не доказано, одна работа не попала в
+денежный блок из-за нерешённого перевода единиц. Публикация файла сама по себе
+не означает готовую ЛСР; независимое typed-card/OOXML измерение сохранено.
+
+B1_CANDIDATE: первоначальный отказ MODEL_SERVICE_UNAVAILABLE за0.8с до
+создания job; причина не установлена, последующие probes показали healthy
+provider и aligned64K cache. Один явный повтор в том же чате с теми же входами
+занял342.05с и завершился MODEL_RAG_QUERY_LIST_EMPTY. Объявление запросов и
+исправление формата оба закончились LENGTH8192, перечисляя выдуманные шифры
+и сочетания, без принятого списка запросов. RAG не был исполнен; job
+`wrj_4e6e3059fc2d494a8417ffdc6aa98044` paused/model_query_format_pending,
+0 cache/rows/artifacts. Первоначальный отказ и повтор сохранены отдельно.
+Парный гейт **не пройден**; нельзя приписать этот отказ отсутствию карточек
+или объявить, что именно лимит8192 является корнем.
+
+Работающий API профиля сохраняет query_output_tokens8192 и
+answer_output_tokens16384; Thinking16K меняет только answer reasoning.
+Контекст подключения65536. Эти настройки в926 не уменьшались и после опыта
+не менялись; существующий default reasoningOFF профиль остаётся активным.
+
+GET-only basic smoke:7 PASS/1 WARN/0 FAIL, область8 из10 проверок;
+две модельные chat-проверки этим smoke не исполнялись. Это не полный smoke.
+Профессиональная готовность разных ВОР/ЛСР,300+ строк и нового установщика
+не подтверждена: **customer-ready=false**. Следующий кандидат должен закрыть
+измеренные технические/профессиональные причины и пройти живую парную приёмку;
+увеличение лимита или зелёные mock-тесты не заменяют этот результат.
+
+Доказательства: `artifacts/live_926/installed_model_disconnect_patch_hashes.json`,
+`artifacts/live_926/acceptance/resumed_thinking16_bap_whole19_measurement_926.json`,
+`artifacts/live_926/frame4_thinking16/B0_DIRECT_domain_audit.json`,
+`artifacts/live_926/frame4_thinking16/B1_CANDIDATE_retry_query_failure_measurement.json`,
+`artifacts/live_926/frame4_thinking16/B1_CANDIDATE_retry_restoration.json`,
+`artifacts/live_926/acceptance/basic_get_smoke_926.json`.
 
 ## Кандидат 0.31.197 / 925 — допуск ещё не показанных результатов поиска
 
