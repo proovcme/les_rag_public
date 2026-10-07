@@ -926,6 +926,11 @@ def workbook_document_issues(
                            "reason": "Техническая ошибка таблицы; строка не включена в расчёт.",
                            "diagnostic": dict(diagnostic)})
     held = job.get("held_packet") or {}
+    query_failure = held.get("query_checkpoint_failure") if isinstance(held, Mapping) else None
+    if isinstance(query_failure, Mapping) and query_failure.get("schema") == "les.query-checkpoint-failure.v1":
+        issues.append({"code": str(query_failure.get("code") or "MODEL_QUERY_OUTPUT_INCOMPLETE"),
+                       "reason": str(query_failure.get("reason") or "Ошибка следующего поискового пакета; сохранённые решения включены в черновик."),
+                       "origin": "application", "technical_failure": True})
     if str(job.get("status") or "") != "complete" and isinstance(held, Mapping) and held.get("read_stop"):
         issues.append({"code": "MODEL_EVIDENCE_READ_STOP",
                        "reason": str(held["read_stop"])})
@@ -9983,6 +9988,7 @@ async def _execute_chat_evidence_application(
                         (research_job or {}).get("omitted") or ()
                     )
                     research_cancelled = False
+                    query_checkpoint_failed = False
                     # Which guard stopped the run, when one did.  Reported apart from
                     # `research_cancelled` so a per-run budget is never shown as an
                     # operator cancellation.
@@ -11627,6 +11633,48 @@ async def _execute_chat_evidence_application(
                                 sheet_name,
                                 never_reached,
                             )
+                    except ModelQueryFailure as query_error:
+                        # A failed later query has no professional rows to accept.
+                        # Existing completed durable packets can still use the same
+                        # no-model draft/calculation path as a bounded budget stop.
+                        detail = query_error.detail
+                        query_code = str(detail.get("error") or detail.get("code") or "") if isinstance(detail, Mapping) else str(detail or "")
+                        if (not owns_sheet_pass or research_job_service is None or research_job is None
+                                or query_code != "MODEL_QUERY_OUTPUT_INCOMPLETE"):
+                            raise
+                        try:
+                            saved_job = research_job_service.get(research_job["job_id"])
+                        except WorkbookResearchJobError:
+                            raise query_error
+                        if (not isinstance(saved_job, Mapping) or saved_job.get("job_id") != research_job.get("job_id")
+                                or saved_job.get("identity") != research_job.get("identity")
+                                or saved_job.get("task_context") != research_job.get("task_context")):
+                            raise
+                        saved_rows = [dict(row) for row in (saved_job or {}).get("accepted_rows") or () if isinstance(row, Mapping)]
+                        if not saved_rows:
+                            raise
+                        failure = {"schema": "les.query-checkpoint-failure.v1", "code": query_code,
+                                   "reason": "Следующий поисковый пакет технически не завершён. Сохранённые решения не изменены; задание можно продолжить.",
+                                   "origin": "application", "technical_failure": True,
+                                   "model_decisions_rewritten": False}
+                        held = dict((saved_job or {}).get("held_packet") or {})
+                        held.update({"model_query_output_missing": True, "query_checkpoint_failure": failure})
+                        held.setdefault("sheet", sheet_name)
+                        held.setdefault("locators", list(packet))
+                        settled_checkpoint = settled_source_keys(saved_rows, source_catalog)
+                        checkpoint_remaining = list(dict.fromkeys([
+                            *((saved_job or {}).get("remaining") or ()),
+                            *(locator for locator in source_catalog.work_locators() if locator not in settled_checkpoint),
+                        ]))
+                        research_job = research_job_service.pause(
+                            research_job["job_id"], phase="model_query_output_incomplete",
+                            remaining=checkpoint_remaining,
+                            held_packet=model_rag_with_pending_results(held, pending_result_packets),
+                        )
+                        accumulated_rows = saved_rows
+                        query_checkpoint_failed = True
+                        retrieval_trace["query_checkpoint_failure"] = dict(failure)
+                        answer_parts.append(failure["reason"] + " Код: " + query_code + ".")
                     except CloudBudgetStop:
                         # Earlier packets already contain terminal model decisions.
                         # Deliver their ordinary partial workbook without another
@@ -11716,7 +11764,7 @@ async def _execute_chat_evidence_application(
                                                  if locator not in resolved_transport_locators)
                     unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
                     if research_job_service is not None and research_job is not None:
-                        if owns_sheet_pass:
+                        if owns_sheet_pass and not query_checkpoint_failed:
                             if research_cancelled or unfinished_locators:
                                 research_job = research_job_service.pause(
                                     research_job["job_id"],

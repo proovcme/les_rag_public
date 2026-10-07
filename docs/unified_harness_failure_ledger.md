@@ -1,5 +1,37 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## Кандидат 0.31.190 / 918 — передача результатов поиска и черновик из контрольной точки
+
+Установленная917/7db62228 прошла4240 офлайн-тестов и RRF1/1. Release basic smoke
+показал8 PASS/1 WARN/1 P1 FAIL; отдельный сохранённый повтор того же вопроса завершился
+за19.45с. Это не заменяет первоначальный отрицательный smoke и не доказывает качество сметы.
+Свежий БАП B0 на той же FreeToken:r8/CAS46 с reasoning-copy e951 завершился за144.22с
+без файла: модель запросила10 дополнительных поисков, подготовлены60 карточек, но
+следующий model wire не отправлен из-за evidence_read_capacity (235187 > 46171).
+Причина: exact_card_read у hydrated search результата ошибочно делал полное непрочитанное
+тело обязательным. Входной query завершён:4369 tokens/stop; увеличение query reserve
+не исправляет этот сбой. Professional acceptance917=NOT_RUN_NO_DOCUMENT.
+
+918 различает доступность точной карточки и её чтение: prepared search_sources
+оставляет весь inventory и целые discovery groups, а тела допускаются по ёмкости.
+Явные read_norm_card/read_resource_price/read_source, required refs и уже переданные
+тела сохраняются обязательными; raw bytes, aliases, source identities и native tool
+exchange не переписываются. Нормы и профессиональные решения по-прежнему выбирает модель.
+
+Если следующий query завершился typed ModelQueryFailure после собственных durable
+решений, действующий расчёт/export выдаёт честный partial-документ без новой генерации.
+Исходная task identity/price basis, pause/held packet, все never-reached листы и lineage
+сохраняются. Ошибка без принятых решений остаётся ошибкой; private failure payload
+не переносится в публичный ответ. Повторная упаковка не принимает новых решений модели.
+
+Регрессии: tests/test_model_discovery_read_admission.py и
+tests/test_model_query_checkpoint_draft.py. Предыдущая профессиональная приёмка916
+отрицательна: неверные norm/card bindings и повторная покупка сохраняемых материалов.
+Новые технические тесты этого не отменяют. Exact desktop installer918 ещё не проверен;
+установленный EXE остаётся5.1.813. Customer-ready=false до свежей приёмки физических документов.
+Frozen918 offline canonical gates PASS: 4268 passed, 20 skipped, 5 warnings in 270.95s (0:04:30); mail: 66 passed, 4 warnings in 6.21s; metadata: 31 passed in 4.45s. Установленная live-приёмка ещё требуется.
+
+
 ## Кандидат 0.31.189 / 917 — полные карточки на прежней частичной странице
 
 Установленная916/11ca92ca прошла4227 офлайн-проверок, RRF1/1 и basic10/10,

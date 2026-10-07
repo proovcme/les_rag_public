@@ -577,8 +577,12 @@ def prepare_model_read_replay(chunks: Sequence[Any], *, required_refs: Sequence[
         seen.add(key)
         if ref:
             inventory.append(ref)
+        # Hydration describes the available catalog body, not a model request
+        # to read every discovered card. Whole unread discovery groups remain
+        # optional; explicit reads, citations and delivered bodies stay required.
         is_exact = (meta.get("model_read_tool") in {"read_norm_card", "read_resource_price", "read_source"}
-                    or meta.get("exact_card_read") is True or meta.get("source_read") is True
+                    or (meta.get("exact_card_read") is True and meta.get("model_read_tool") != "search_sources")
+                    or meta.get("source_read") is True
                     or ref in required_ids or key[0] in required_ids)
         content = str(raw.get("content") or "")
         has_body = bool(content) and (meta.get("body_status") != "deferred_capacity"
