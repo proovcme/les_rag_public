@@ -305,8 +305,10 @@ def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: Evide
 
     cards = [card for group in groups for card in group.cards]
     refs = [card.ref for card in cards]
-    if (len(set(refs)) != len(refs) or admitted.unshown_refs
-            or refs != admitted.inventory_refs
+    visible = set(admitted.inventory_refs)
+    if (len(set(refs)) != len(refs)
+            or [ref for ref in refs if ref in visible] != admitted.inventory_refs
+            or [ref for ref in refs if ref not in visible] != admitted.unshown_refs
             or [card.ref for group in groups[:admitted.included_count] for card in group.cards]
                != admitted.body_refs):
         return None
@@ -314,6 +316,9 @@ def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: Evide
     upgraded = set()
     replacements = {}
     for card in cards:
+        if card.ref not in visible:
+            replacements[card.ref] = card
+            continue
         old_meta = admitted.meta_by_ref[card.ref]
         content, meta = admitted.body_by_ref.get(card.ref, card.content), old_meta
         if card.ref in full and (content != card.content or old_meta != card.meta):
@@ -335,10 +340,17 @@ def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: Evide
                                           preview_content=None, preview_meta=None)
     if not upgraded:
         return None
+    # The expanded inventory exposes all empty query groups; a partial legacy
+    # page only exposes those within its existing whole-group prefix.
+    include_empty = any(not group.cards and index >= admitted.included_count
+                        and group.header + "\n\nhits=0" in admitted.groups
+                        for index, group in enumerate(groups))
     candidate = _render([EvidenceGroup(group.header, [replacements[card.ref] for card in group.cards])
-                         for group in groups], set(refs), admitted.included_count, include_empty_queries=True)
+                         for group in groups], visible, admitted.included_count,
+                        include_empty_queries=include_empty)
     if (candidate.inventory_refs != admitted.inventory_refs or candidate.body_refs != admitted.body_refs
             or candidate.pointer_by_ref != admitted.pointer_by_ref or candidate.shared_refs != admitted.shared_refs
+            or candidate.unshown_refs != admitted.unshown_refs or candidate.deferred_refs != admitted.deferred_refs
             or any(not candidate.body_by_ref[ref].startswith(admitted.body_by_ref[ref]) for ref in full)):
         return None
     return replace(candidate, complete_card_deferred_refs=[ref for ref in admitted.complete_card_deferred_refs

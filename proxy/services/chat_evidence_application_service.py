@@ -6243,7 +6243,7 @@ async def govern_model_rag_initial_messages(
         raise ValueError("initial evidence page changed before exact inventory admission")
     char_limit = max(0, int(inventory_chars_limit))
 
-    async def complete_frontier(page, result, admission_budget):
+    async def complete_frontier(page, result, admission_budget, expected_owner=None):
         from proxy.services.model_rag_grouped_evidence_service import complete_card_frontier_page
         complete = complete_card_frontier_page(groups, page)
         if complete is None:
@@ -6281,6 +6281,8 @@ async def govern_model_rag_initial_messages(
             elif (packet.token_count_binding.get("status") == "counted"
                   and any(binding.get(key) != packet.token_count_binding.get(key) for key in owner_fields)):
                 full_trace["reason"] = "counter_identity_changed"
+            elif expected_owner and any(binding.get(key) != expected_owner.get(key) for key in owner_fields):
+                full_trace["reason"] = "counter_identity_changed"
             elif full_packet.included_tokens + trace["native_read_reserved_tokens"] > min(
                     full_packet.input_budget_tokens, admission_budget):
                 full_trace["reason"] = ("native_read_reserve" if full_packet.included_tokens
@@ -6299,22 +6301,29 @@ async def govern_model_rag_initial_messages(
                 return full_messages, full_packet, *projected, result_trace
         return result
 
-    if not admitted.unshown_refs:
-        trace["reason"] = "inventory_already_shown"
+    async def complete_original_frontier(expected_owner=None):
         result = unchanged()
         original_budget = (result[1].input_budget_tokens if initial_input_budget_tokens is None
                            else max(0, int(initial_input_budget_tokens)))
-        return await complete_frontier(admitted, result, original_budget)
+        return await complete_frontier(admitted, result, original_budget, expected_owner)
+
+    if not admitted.unshown_refs:
+        trace["reason"] = "inventory_already_shown"
+        return await complete_original_frontier()
     expanded = inventory_expansion_page(groups, admitted)
     if char_limit and expanded.rendered_chars > char_limit:
         trace["reason"] = "registered_char_capacity"
-        return unchanged()
+        return await complete_original_frontier()
     unavailable = False
+    inventory_owner = None
 
     async def observed_count(messages):
-        nonlocal unavailable
+        nonlocal unavailable, inventory_owner
         result = await count_messages(messages)
         unavailable = unavailable or result is None
+        if result is not None and inventory_owner is None:
+            inventory_owner = {key: getattr(result, key, None) for key in
+                               ("model_id", "connection_revision_id", "model_identity_sha256")}
         return result
 
     try:
@@ -6325,7 +6334,9 @@ async def govern_model_rag_initial_messages(
         trace["reason"] = ("counter_unavailable" if unavailable else
                            "counter_identity_changed" if "bound_counter_identity_changed" in error.token_count_source
                            else "input_capacity")
-        return unchanged()
+        if trace["reason"] != "input_capacity":
+            return unchanged()
+        return await complete_original_frontier(inventory_owner)
     if packet.token_count_binding.get("status") != "counted":
         reason = packet.token_count_binding.get("reason") or "counter_unavailable"
         trace["reason"] = ("counter_identity_changed" if reason == "bound_counter_identity_changed" else reason)
@@ -6343,7 +6354,7 @@ async def govern_model_rag_initial_messages(
         trace["reason"] = ("native_read_reserve" if packet.included_tokens
                            + trace["native_read_reserved_tokens"] > packet.input_budget_tokens
                            else "initial_compatibility_headroom")
-        return unchanged()
+        return await complete_original_frontier(packet.token_count_binding)
     projected = _model_rag_page_projection(expanded, hits, evidence_namespace=evidence_namespace)
     trace.update(status="expanded", reason="bound_whole_wire_fit",
                  inventory_before=len(admitted.inventory_refs), inventory_after=len(expanded.inventory_refs),

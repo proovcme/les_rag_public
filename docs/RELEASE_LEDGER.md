@@ -1,5 +1,31 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Кандидат 0.31.189 / 917 — полные карточки на прежней частичной странице
+
+Установленная916/11ca92ca прошла4227 офлайн-проверок, RRF1/1 и basic10/10,
+но профессиональную приёмку не прошла. БАП B0 завершился MODEL_RAG_QUERY_LIST_EMPTY;
+B1 доставил19 исходных работ за410.48с, сохранив объёмы и СПб/3кв2026.
+Подтверждённая сумма0, предварительная185742.54; шесть шифров расходятся со своими
+цитируемыми карточками. Задание осталось paused на PDF_TEXT!R1: модель предложила
+несколько альтернативных JSON и новые операции из реквизитов, предложение целиком
+не принято. Отсутствие этих операций в XLSX не доказывает правильную классификацию
+моделью. СКС→ВОР B0 также не дал принятого документа. Готовность заказчику=false.
+
+Причина пропуска транспорта доказана тремя сохранёнными страницами БАП: all-inventory
+не прошёл reserve, а полный typed-body trial был связан с успехом all-inventory.
+Теперь один exact bound-wire trial полных тел уже показанного whole-group frontier
+допускается и на прежнем partial inventory после отказа по ёмкости. Сохраняются
+ordered inventory/unshown/deferred refs, показанные превью как буквальные префиксы,
+пустые группы запросов, hidden bodies, original ceiling, READ reserve и владелец
+счётчика, включая owner отвергнутого inventory probe. Unknown/changed owner,
+небезопасная hydration или non-fit сохраняют прежний wire. Подбора норм кодом,
+поэлементного greedy selection и дополнительных генераций модели нет.
+
+Регрессия: tests/test_model_partial_inventory_complete_frontier.py; до правки8 FAIL,
+после правки39 PASS вместе с соседними initial inventory/frontier suites.
+Frozen917 offline canonical gates PASS: 4240 passed, 20 skipped, 5 warnings in 289.19s (0:04:49); mail: 66 passed, 4 warnings in 6.99s; metadata: 31 passed in 4.48s. Установленная live-приёмка ещё требуется.
+
+
 Candidate916 final scope: exact complete typed bodies are offered only when the whole bound wire fits without changing the original ceiling, READ reserve or shown frontier. The model receives explicit source-context role instructions; code does not invent or classify operations. The first-scope4210PASS proof excludes these final additions; artifacts/gates_916_final is the required final gate. Installed915 live control failed professional acceptance despite complete file delivery (BAP: wrong norm/card bindings, double-counted retained materials and fictitious operations from context; SKS:18 material parents lacked operations). Customer-ready=false until fresh installed physical-document checks pass.
 
 
