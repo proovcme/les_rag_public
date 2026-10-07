@@ -38,13 +38,19 @@ runtime data, logs, model caches or private corpora.
   any other number of rows and queries are equally valid. `proxy/smeta_core/document_workflow.py` is
   historical/experimental compatibility code, not the product chat core. See
   `docs/ADR-15-model-rag-result.md`.
+- ADR-16 allows additive estimator candidate queries from literal row cells and
+  explicit headers/ciphers only, through the same shared retrieval contract.
+  They never replace or reorder model queries, infer operations or applicability,
+  or run in B0_DIRECT and ordinary chat. Ungrounded queries are dropped visibly;
+  caps and deferred locators are traced. See `docs/ADR-16-systematic-candidate-retrieval.md`.
 - **Never put an orchestration gate between the model and RAG.** Do not require a planning/status JSON
   handshake before retrieval; do not replace the attachment with a summary; do not drop the original
-  question or source access from the final model call; do not let code choose queries, norms, analogues,
+  question or source access from the final model call; do not let code replace model queries or choose norms, analogues,
   coverage or professional status; and do not require R1/R2 review, mapping lock, confirmation loops or
   a fixed row/turn count in the active path. Normal model text must never become a reason to deny RAG.
 - Before the model's terminal result, code may only resolve the explicit dataset scope, expose and
-  execute read-only RAG, preserve trace/source coordinates and stop technically infinite execution.
+  execute read-only RAG (including the literal ADR-16 candidate collection), preserve trace/source
+  coordinates and stop technically infinite execution.
   After the terminal model result, code may verify structural references, units and provenance, fill
   prices from the selected/default pricebook, calculate and package XLSX. It must preserve model choices
   and expose conflicts instead of silently rewriting or deleting them.

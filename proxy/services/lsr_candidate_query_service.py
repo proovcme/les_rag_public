@@ -137,29 +137,31 @@ def _presented_cipher(row_text: str) -> str:
 # and its explicitly written characteristics, «а не строку с формулами итоговой
 # стоимости и служебными колонками».  A cipher column is NOT here: a шифр written in
 # the source is exactly the kind of characteristic a search needs.
-_SERVICE_COLUMN_TERMS = (
-    "итого",
-    "стоимость",
-    "сумма",
-    "цена",
-    "всего",
-    "накладн",
-    "сметн",
-    "прибыл",
-    "эксплуатационн",
-    "п/п",
-    "пп",
-    "№",
-    "номер",
-    "ед. всего",
+_MONEY_COLUMN_RE = re.compile(
+    r"\b(?:стоимость|стоимости|сумма|суммы|цена|цены|прибыль|прибыли|"
+    r"руб|рубль|рубля|рублей)\b|"
+    r"\b(?:накладные|эксплуатационные)\s+расходы\b|₽"
 )
+_ORDINAL_COLUMN_LABELS = frozenset({
+    "№", "номер", "пп", "№пп", "номерпп", "№позиции", "номерпозиции",
+    "порядковыйномер", "№попорядку", "номерпопорядку",
+})
 
 
 def _is_service_column(label: str) -> bool:
     folded = " ".join(str(label or "").casefold().split())
     if not folded:
         return False
-    return any(term in folded for term in _SERVICE_COLUMN_TERMS)
+    # Numbering is a whole header, not the letters inside «группа» or a
+    # subject identifier such as «номер кабеля». Totals with a named quantity
+    # remain attributes; monetary headings are recognised by whole words.
+    ordinal = "".join(
+        character for character in folded
+        if not character.isspace() and character not in "./:"
+    )
+    return (ordinal in _ORDINAL_COLUMN_LABELS
+            or folded.strip(" .:") in {"итого", "всего"}
+            or _MONEY_COLUMN_RE.search(folded) is not None)
 
 
 def _cell_is_formula(cell: Any) -> bool:

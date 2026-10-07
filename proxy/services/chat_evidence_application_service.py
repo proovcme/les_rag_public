@@ -6141,13 +6141,15 @@ def _explicit_absence_value(value: Any) -> bool:
 def model_rag_row_kind(row: Mapping[str, Any]) -> str:
     """Classify a parsed row without rewriting model cells.
 
-    Authored ``row_role`` wins when present so material/equipment decisions are
-    not treated as install works for evidence/duplicate gates.
+    Authored ``row_role`` wins when present so non-work decisions are not
+    treated as install works for evidence/quantity/duplicate gates.
     """
 
     from proxy.services.lsr_source_coverage_service import canonicalize_row_role
 
     explicit = canonicalize_row_role(row.get("row_role"))
+    if explicit == "header":
+        return "section_header"
     if explicit in {"material", "equipment", "resource", "unresolved"}:
         return explicit
     if explicit == "work":

@@ -14,6 +14,8 @@ other operations in the packet.
 """
 from __future__ import annotations
 
+import pytest
+
 from proxy.services.attachment_source_catalog_service import (
     CatalogCell,
     CatalogRow,
@@ -331,6 +333,66 @@ def test_service_columns_and_formula_pointers_never_enter_a_system_query() -> No
     assert filtered["cells_dropped_service_column"] == 2
     assert filtered["cells_dropped_formula"] == 0
     assert filtered["cells_total"] == 6
+
+
+def test_soil_group_and_method_survive_the_numbering_column_filter() -> None:
+    row = _row_with_headers((
+        ("Наименование работ", "Разработка грунта"),
+        ("Группа грунта", "2"),
+        ("Способ производства", "вручную"),
+        ("№ п/п", "17"),
+    ))
+    report: dict = {}
+    queries = candidate_queries_for_rows([row], cap=10, report=report)
+    assert [item.text for item in queries if item.provenance == "original"] == [
+        "Разработка грунта | 2 | вручную"
+    ]
+    derived = next(item for item in queries if item.provenance == "derived")
+    assert derived.text == "Разработка грунта | 2 [Группа грунта] | вручную"
+    assert token_grounding_violations(derived.text, " ".join(derived.source_fields)) == ()
+    assert report["source_text_filter"]["cells_dropped_service_column"] == 1
+
+
+@pytest.mark.parametrize("header, value, labelled", [
+    ("Сметный шифр", "ГЭСН01-01-001-01", False),
+    ("Суммарная масса", "0,75", True),
+    ("Эксплуатационные условия", "во влажном помещении", False),
+    ("Количество всего", "12", True),
+    ("Номер кабеля", "24", True),
+])
+def test_attribute_headers_do_not_become_service_columns_by_substring(
+    header, value, labelled,
+) -> None:
+    row = _row_with_headers((
+        ("Наименование", "Монтаж элемента"), (header, value),
+        ("Стоимость, руб. итого", "999123"),
+    ))
+    report: dict = {}
+    queries = candidate_queries_for_rows([row], cap=10, report=report)
+    assert [item.text for item in queries if item.provenance == "original"] == [
+        f"Монтаж элемента | {value}"
+    ]
+    assert all("999123" not in item.text for item in queries)
+    if labelled:
+        derived = next(item for item in queries if item.provenance == "derived")
+        assert derived.text == f"Монтаж элемента | {value} [{header}]"
+    assert report["source_text_filter"]["cells_dropped_service_column"] == 1
+    assert all(token_grounding_violations(item.text, " ".join(item.source_fields)) == ()
+               for item in queries)
+
+
+@pytest.mark.parametrize("header", [
+    "№ п/п", "п/п", "ПП", "Номер", "№ позиции", "Порядковый номер",
+    "Цена за единицу", "Стоимость монтажа", "Сметная сумма",
+    "Сметная прибыль", "Накладные расходы", "Эксплуатационные расходы",
+    "Материал (итого), руб. без НДС", "Итого", "Всего",
+])
+def test_explicit_cost_and_ordinal_headers_still_do_not_enter_queries(header) -> None:
+    row = _row_with_headers((("Наименование", "Монтаж элемента"), (header, "999123")))
+    report: dict = {}
+    queries = candidate_queries_for_rows([row], cap=10, report=report)
+    assert [item.text for item in queries] == ["Монтаж элемента"]
+    assert report["source_text_filter"]["cells_dropped_service_column"] == 1
 
 
 def test_an_unresolved_formula_pointer_drops_only_itself() -> None:

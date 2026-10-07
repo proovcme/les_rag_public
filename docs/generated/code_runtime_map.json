@@ -2947,6 +2947,7 @@
         "tests/test_lsr_result_readiness_service.py",
         "tests/test_lsr_source_coverage_service.py",
         "tests/test_lsr_workbook_catalog_adapter.py",
+        "tests/test_model_authored_header_roles.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_research_tool_service.py",
         "tests/test_model_result_resource_code.py",
@@ -3210,6 +3211,7 @@
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_scheduler_starvation_824.py",
+        "tests/test_model_authored_header_roles.py",
         "tests/test_model_evidence_delivery_frontier.py",
         "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_evidence_read_contract.py",
@@ -3263,7 +3265,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 13858,
+      "lines": 13860,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4985,7 +4987,7 @@
         "tests/test_lsr_candidate_query_service.py",
         "tests/test_model_rag_query_declaration.py"
       ],
-      "lines": 646,
+      "lines": 648,
       "module": "proxy.services.lsr_candidate_query_service",
       "outbound": [
         "proxy/__init__.py",
@@ -11981,7 +11983,7 @@
     },
     {
       "inbound": [],
-      "lines": 532,
+      "lines": 594,
       "module": "tests.test_lsr_candidate_query_service",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -12475,6 +12477,19 @@
         "tests/test_model_rag_sheet_evidence_reads.py"
       ],
       "path": "tests/test_model_artifact_kind_authority.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 64,
+      "module": "tests.test_model_authored_header_roles",
+      "outbound": [
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "tests/test_workbook_tool_service.py"
+      ],
+      "path": "tests/test_model_authored_header_roles.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -16645,6 +16660,7 @@
     },
     {
       "inbound": [
+        "tests/test_model_authored_header_roles.py",
         "tests/test_model_vor_text_transport.py"
       ],
       "lines": 1326,
@@ -21298,9 +21314,9 @@
     "product_reachable": 375,
     "registered_api_routes": 340,
     "runtime_support": 11,
-    "test_or_tool_only": 743,
-    "tracked_python_files": 1130,
-    "tracked_python_lines": 394204
+    "test_or_tool_only": 744,
+    "tracked_python_files": 1131,
+    "tracked_python_lines": 394334
   },
   "warnings": []
 }

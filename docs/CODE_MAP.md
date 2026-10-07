@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат 0.31.187 / 915 — авторские заголовки и сохранение характеристик поиска
+
+✅ док↔код: proxy/services/chat_evidence_application_service.py:model_rag_row_kind — явный header остаётся нетрудовой строкой; proxy/services/lsr_candidate_query_service.py:_is_service_column — сохраняет значимые характеристики. Регрессии tests/test_model_authored_header_roles.py и tests/test_lsr_candidate_query_service.py включены в канонический gate. Предметные решения модели и исходные ячейки не изменяются.
+
+Frozen915 offline canonical gates PASS: 4185 passed, 20 skipped, 5 warnings in 264.86s (0:04:24); mail: 66 passed, 4 warnings in 6.31s; metadata: 31 passed in 4.47s. Установленный контроль исправления и независимая профессиональная приёмка ещё требуются; customer-ready=false.
+
 ## Кандидат 0.31.186 / 914 — контракт ВОР, транспорт запросов и возобновляемая ошибка
 
 proxy/services/model_lsr_result_contract.py: conditional VOR fields and exact commentary/query transport. proxy/services/chat_evidence_application_service.py: conditional operation instruction and owner-only durable pause before terminal query error. Model owns artifact kind and professional decisions; accepted rows and literal queries are preserved. Семипольные строки явно объявленной моделью ВОР принимаются также из Markdown и block text без norm_code. Сохраняются уже объявленные пустые поля этой ВОР; отсутствующие поля не добавляются. Для ЛСР, необъявленного, конфликтного или недопустимого типа прежнее требование norm_code не меняется. Это устраняет подтверждённое расхождение JSON и текстовых представлений, не назначая операции или нормы.
