@@ -44,7 +44,9 @@ def test_parser_preserves_native_id_and_whole_batch_above_execution_budget():
 async def test_active_sheet_second_request_has_native_assistant_and_matching_reply(tmp_path, monkeypatch, variant):
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant)
     messages = run.requests[2].messages
-    assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool"]
+    assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool", "user"]
+    assert "ВОР не создавай" in messages[1]["content"]
+    assert "source.xlsx" in messages[-1]["content"] and "S!R2" in messages[-1]["content"]
     call = messages[2]["tool_calls"][0]
     assert call["function"]["name"] == "read_norm_card"
     assert messages[3]["tool_call_id"] == call["id"]
@@ -53,10 +55,10 @@ async def test_active_sheet_second_request_has_native_assistant_and_matching_rep
     assert "fixture-resource-21" not in messages[3]["content"]
     final_messages = run.requests[3].messages
     assert [message["role"] for message in final_messages] == [
-        "system", "user", "assistant", "tool", "assistant", "tool", "tool"]
+        "system", "user", "assistant", "tool", "assistant", "tool", "tool", "user"]
     final_calls = final_messages[4]["tool_calls"]
     assert len({item["id"] for item in final_calls}) == 2
-    assert [message["tool_call_id"] for message in final_messages[5:]] == [item["id"] for item in final_calls]
+    assert [message["tool_call_id"] for message in final_messages[5:-1]] == [item["id"] for item in final_calls]
 
 
 @pytest.mark.asyncio

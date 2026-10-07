@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1140 |
-| Строк Python | 397320 |
+| Python-файлов под git | 1142 |
+| Строк Python | 397576 |
 | PRODUCT_REACHABLE | 375 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 753 |
+| TEST_OR_TOOL_ONLY | 755 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 340 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 14323 | 83 |
+| proxy/services/chat_evidence_application_service.py | 14329 | 85 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7805 | 7 |
 | proxy/routers/chat.py | 4852 | 54 |
@@ -49,7 +49,7 @@
 | proxy/services/lsr_norm_quality_gate_service.py | 2234 | 14 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
-| proxy/smeta_core/norm_browser.py | 1950 | 18 |
+| proxy/smeta_core/norm_browser.py | 1950 | 19 |
 | proxy/services/lsr_workbook_adapter_service.py | 1672 | 18 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |

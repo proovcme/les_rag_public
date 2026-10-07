@@ -147,8 +147,10 @@ async def test_exact_wire_admission_keeps_native_call_reply_ids_and_literal_argu
     )
     assert packet.included_tokens == 450
     assert seen == [messages]
-    assert messages[-2:] == exchange.as_messages()
-    assert messages[-2]["tool_calls"][0]["function"]["arguments"] == '{ "source_row" : "PDF!R4" }'
+    assert messages[-3:-1] == exchange.as_messages()
+    assert messages[-1]["role"] == "user"
+    assert "whole original attachment" in messages[-1]["content"]
+    assert messages[-3]["tool_calls"][0]["function"]["arguments"] == '{ "source_row" : "PDF!R4" }'
 
 
 @pytest.mark.asyncio

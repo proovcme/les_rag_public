@@ -1,5 +1,45 @@
 # RAG evidence flow
 
+## Кандидат 0.31.196 / 924 — текущие данные после завершённых вызовов чтения
+
+924 вводит тип CURRENT_READ_FRAME только для продолжения после полностью
+завершённых native reader exchanges. Исходный профиль и буквальный запрос идут
+перед ними, затем все канонические вызовы и ответы в прежнем порядке, затем один
+полный актуальный источник и evidence. Карточки, каталоги, реестр, ссылки, opaque
+поля и инструменты сохранены; новых вызовов, решений или поиска код не добавляет.
+Объекты имеют прежний приоритет evidence. Governor считает именно новый wire.
+Начальный ответ, поисковая фаза, обычные tools-OFF запросы и настройки не меняются.
+
+🟡 Точки: ContextKind.CURRENT_READ_FRAME, ContextPacket.as_messages,
+govern_model_read_messages, context_packet_trace и packet_evidence_text.
+Регрессии: tests/test_model_current_read_frame.py и
+tests/test_model_current_read_frame_flow.py. Независимый actual producer B0/B1
+на прежней923 RED2 FAIL, на кандидате GREEN2 PASS. Отдельный набор9 PASS проверяет
+whole payload, native history, priority, typed roles, count ordering и default paths.
+Старые enum/wire-order assertions в пяти adjacent test-файлах обновлены
+без изменения token/binding/IDs/args/card/domain checks; failedr1 сохранён.
+
+Перенос последнего user-сообщения меняет provider rendering прежних рассуждений
+Qwen: сохранение канонических opaque-полей не означает прежнего шаблонного wire.
+Синтетическое сравнение не доказывает fit, точность норм или экономию токенов.
+
+Изолированный канонический гейт: основной набор — 4358 passed, 20 skipped, 5 warnings in 273.63s (0:04:33);
+Е.Ж.И.К. — 66 passed, 4 warnings in 6.24s; метаданные — 31 passed in 4.55s.
+Версия, структура, документация, карта кода и поставляемая база также проверены.
+Доказательства: artifacts/gates_924_read_frame_final_r2/ и
+artifacts/live_924/acceptance/current_read_frame_flow_red_r2.xml.
+
+Установленное сравнение924 ещё не выполнено; customer-ready=false. Основной
+профиль не активируется. Предыдущая923: B0 первые четыре адреса, три работы и два
+материала без норм и сумм; B1 exact57026 при бюджете55296, evidence_read_capacity
+и отсутствие файла. Это честные отрицательные измерения. Не заменять их зелёным
+статусом тестов. Полный ВОР, разные документы, денежный расчёт и точный Windows-
+установщик требуют профессиональной живой приёмки.
+
+Доказательства923: artifacts/live_923/acceptance/
+query_packet_bap_baseline_independent_expert_judge_923.json и
+query_packet_bap_candidate_independent_expert_judge_923.json.
+
 ## Кандидат 0.31.195 / 923 — граница технического отказа поискового пакета
 
 923 исправляет подтверждённый дефект: после двух неразобранных ответов о запросах

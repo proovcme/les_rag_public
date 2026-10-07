@@ -2583,12 +2583,16 @@ def test_governed_inference_trace_exposes_exact_evidence_but_not_private_memory(
         terminal_instruction="bound final phase",
     )
 
-    assert [section.kind for section in packet.sections] == list(ContextKind)
+    assert [section.kind for section in packet.sections] == [
+        kind for kind in ContextKind if kind is not ContextKind.CURRENT_READ_FRAME
+    ]
     assert [message["role"] for message in messages] == ["system", "user", "user"]
     assert messages[-1]["content"] == "bound final phase"
     trace = service.context_packet_trace(packet, purpose="answer")
     assert trace["purpose"] == "answer"
-    assert [section["kind"] for section in trace["sections"]] == [kind.value for kind in ContextKind]
+    assert [section["kind"] for section in trace["sections"]] == [
+        kind.value for kind in ContextKind if kind is not ContextKind.CURRENT_READ_FRAME
+    ]
     assert "hidden" not in json.dumps(trace)
     evidence = next(section for section in trace["sections"] if section["kind"] == "evidence")
     source_map = next(section for section in trace["sections"] if section["kind"] == "source_map")

@@ -1764,7 +1764,8 @@ def govern_model_read_messages(*, source_context, chunks, receipts=(), **context
     exchanges = context.get("native_exchanges", ())
     required = model_read_frame_evidence(source_context, (), receipts, native_exchanges=exchanges)
     messages, packet = govern_inference_messages(
-        **context, required_evidence=[*required, *replay.required], evidence=replay.optional)
+        **context, required_evidence=[*required, *replay.required], evidence=replay.optional,
+        evidence_kind=ContextKind.CURRENT_READ_FRAME if exchanges else ContextKind.EVIDENCE)
     admitted_objects = {obj.object_id for section in packet.sections for obj in section.objects}
     body_refs = [*replay.exact_body_refs,
                  *(ref for index, refs in enumerate(replay.optional_body_refs)
@@ -1894,11 +1895,15 @@ def govern_inference_messages(
     native_exchanges: Sequence[NativeToolExchange] = (),
     dialogue: Sequence[Any] = (),
     terminal_instruction: str | None = None,
+    evidence_kind: ContextKind = ContextKind.EVIDENCE,
     admit_messages=None,
     count_messages_tokens=None,
     token_count_source="conservative_chars_per_two",
 ) -> tuple[list[dict[str, Any]], ContextPacket]:
     """Build the sole bounded packet used for one provider inference request."""
+    if not isinstance(evidence_kind, ContextKind) or evidence_kind not in {
+            ContextKind.EVIDENCE, ContextKind.CURRENT_READ_FRAME}:
+        raise ValueError("evidence kind must be typed EVIDENCE or CURRENT_READ_FRAME")
     if any(not isinstance(exchange, NativeToolExchange) for exchange in native_exchanges):
         raise TypeError("native exchange context needs typed NativeToolExchange objects")
     candidates = [
@@ -1916,11 +1921,11 @@ def govern_inference_messages(
         ContextCandidate(ContextKind.CHECKPOINT, tuple(checkpoint)),
         ContextCandidate(ContextKind.WORKING_MEMORY, tuple(working_memory)),
         ContextCandidate(
-            ContextKind.EVIDENCE,
+            evidence_kind,
             _context_objects("source-required", required_evidence),
             required=True,
         ),
-        ContextCandidate(ContextKind.EVIDENCE, _context_objects("evidence", evidence)),
+        ContextCandidate(evidence_kind, _context_objects("evidence", evidence)),
         ContextCandidate(ContextKind.SOURCE_MAP, _context_objects("source-required-map", required_source_map), required=True),
         ContextCandidate(ContextKind.SOURCE_MAP, _context_objects("source", source_map)),
         ContextCandidate(ContextKind.TOOL_EXCHANGE, _context_objects("exchange", tool_exchange)),
@@ -1954,7 +1959,7 @@ def govern_inference_messages(
 
 def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, Any]:
     """Expose exact model-visible evidence while keeping private prompt/memory redacted."""
-    visible_kinds = {ContextKind.EVIDENCE, ContextKind.SOURCE_MAP}
+    visible_kinds = {ContextKind.EVIDENCE, ContextKind.CURRENT_READ_FRAME, ContextKind.SOURCE_MAP}
 
     def section_trace(section) -> dict[str, Any]:
         item = {
@@ -2206,7 +2211,8 @@ def govern_model_query_messages(
         # Their payloads stay whole in the same rendered section kinds.
         kwargs = {**kwargs,
             "required_evidence": [item.payload for section in first_source_packet.sections
-                                  if section.kind == ContextKind.EVIDENCE for item in section.objects],
+                                  if section.kind in {ContextKind.EVIDENCE, ContextKind.CURRENT_READ_FRAME}
+                                  for item in section.objects],
             "required_source_map": [item.payload for section in first_source_packet.sections
                                     if section.kind == ContextKind.SOURCE_MAP for item in section.objects],
             "evidence": (), "source_map": ()}
@@ -6583,7 +6589,7 @@ def packet_evidence_text(packet: ContextPacket) -> str:
     return "\n".join(
         obj.render()
         for section in packet.sections
-        if section.kind is ContextKind.EVIDENCE
+        if section.kind in {ContextKind.EVIDENCE, ContextKind.CURRENT_READ_FRAME}
         for obj in section.objects
     )
 

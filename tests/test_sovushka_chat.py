@@ -1803,6 +1803,7 @@ def test_chat_prompt_uses_canonical_typed_context_order():
         "tool_shortlist",
         "request",
         "evidence",
+        "current_read_frame",
         "source_map",
         "tool_exchange",
         "checkpoint",

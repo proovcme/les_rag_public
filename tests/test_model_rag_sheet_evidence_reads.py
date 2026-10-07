@@ -764,10 +764,11 @@ async def test_bounded_inventory_reserves_native_growth_and_finishes_after_third
     assert answer_packet["included_tokens"] + budget["reserved_tokens"] <= answer_packet["input_budget_tokens"]
     assert read_packet["included_tokens"] <= read_packet["input_budget_tokens"]
     messages = run.requests[-1].messages
-    assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool", "tool", "tool"]
+    assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool", "tool", "tool", "user"]
     assert len(messages[2]["tool_calls"]) == 3
-    assert [message["tool_call_id"] for message in messages[3:]] == [call["id"] for call in messages[2]["tool_calls"]]
-    frame = messages[1]["content"]
+    assert [message["tool_call_id"] for message in messages[3:-1]] == [call["id"] for call in messages[2]["tool_calls"]]
+    assert "ВОР не создавай" in messages[1]["content"]
+    frame = messages[-1]["content"]
     assert "source.xlsx" in frame and "S!R2" in frame and "S!R3" in frame
     registry = next(json.loads(line) for line in frame.splitlines()
                     if line.startswith('{"body_delivery":'))

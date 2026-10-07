@@ -17,6 +17,7 @@ class ContextKind(str, Enum):
     TOOL_SHORTLIST = "tool_shortlist"
     REQUEST = "request"
     EVIDENCE = "evidence"
+    CURRENT_READ_FRAME = "current_read_frame"
     SOURCE_MAP = "source_map"
     TOOL_EXCHANGE = "tool_exchange"
     CHECKPOINT = "checkpoint"
@@ -187,7 +188,8 @@ class ContextPacket:
             "\n".join(item.render() for item in section.objects
                       if not isinstance(item.payload, NativeToolExchange))
             for section in self.sections
-            if section.kind not in (ContextKind.PROFILE_PREFIX, ContextKind.TERMINAL_REQUEST)
+            if section.kind not in (ContextKind.PROFILE_PREFIX, ContextKind.CURRENT_READ_FRAME,
+                                    ContextKind.TERMINAL_REQUEST)
         ]
         user_sections = [text for text in user_sections if text]
         messages: list[dict[str, Any]] = []
@@ -199,6 +201,10 @@ class ContextPacket:
             for item in section.objects:
                 if isinstance(item.payload, NativeToolExchange):
                     messages.extend(item.payload.as_messages())
+        current_frame = "\n".join(section.render() for section in self.sections
+                                  if section.kind == ContextKind.CURRENT_READ_FRAME)
+        if current_frame:
+            messages.append({"role": "user", "content": current_frame})
         for section in self.sections:
             if section.kind == ContextKind.TERMINAL_REQUEST:
                 messages.append({"role": "user", "content": section.render()})
