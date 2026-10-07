@@ -1,5 +1,34 @@
 # RAG evidence flow
 
+## Кандидат 0.31.191 / 919 — точный счёт контекста при продолжении native READ
+
+Установленная918/d14a4998:4268 офлайн-тестов PASS; RRF1/1 PASS; basic smoke8 PASS/1 WARN/1 P1 FAIL.
+Свежий БАП B0 с reasoning-copy e951 завершился за155.09с без файла. Входной query4029/stop,
+следующий ответ3503/tool_calls запросил6 дополнительных поисков. Подготовлены36 указателей,
+но следующий wire остановлен: required48730 > budget46171, overflow2559. Счётчик явно
+перешёл на conservative_chars_per_two из-за unsupported_assistant_message. Это отдельный
+дефект от исправленного918 ошибочного обязательного чтения всех hydrated discovery cards.
+Приватный native wire не сохранён в публичном trace; точный размер того wire не заявляется.
+
+919 поддерживает только проверенное текстовое reasoning_content в FreeToken count projection:
+один literal Anthropic thinking block преобразуется установленным0.1.3+gfa0e9537d обратно
+в то же reasoning_content до общего render_messages. Настоящие messages, native calls,
+evidence, профили, бюджеты, окно65536 и generation reserve не изменяются. Неизвестные поля,
+неправильные типы и неподдержанные протоколы сохраняют fail-closed conservative fallback.
+Регрессия находится в tests/test_model_wire_token_count.py, уже включённом в canonical gate.
+
+Обычный чат918: собственная запись901 подтверждает исчерпание12 READ за8 selector-ходов.
+Финальный ответ197/stop при tools=0 снова напечатал tool frame; это корректно отклонено
+как MODEL_OUTPUT_INCOMPLETE. Переполнение контекста или преждевременная остановка не доказаны.
+По этому случаю предметного обхода либо увеличения бюджетов в919 нет.
+
+Свежая установленная проверка физического XLSX и его профессиональная приёмка ещё требуются.
+Предыдущие документы916 содержали неверные norm/card bindings и повторную покупку сохраняемых
+материалов; техническая правка счётчика сама по себе не исправляет решения модели.
+Exact installer919 не проверен, установленный EXE остаётся5.1.813; customer-ready=false.
+Frozen919 offline canonical gates PASS: 4277 passed, 20 skipped, 5 warnings in 269.91s (0:04:29); mail: 66 passed, 4 warnings in 6.17s; metadata: 31 passed in 4.34s.
+
+
 ## Кандидат 0.31.190 / 918 — передача результатов поиска и черновик из контрольной точки
 
 Установленная917/7db62228 прошла4240 офлайн-тестов и RRF1/1. Release basic smoke

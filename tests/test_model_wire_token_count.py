@@ -71,11 +71,87 @@ def test_two_native_exchanges_preserve_literal_evidence_ids_arguments_and_schema
     assert body["messages"][3]["tool_call_id"] == MESSAGES[3]["tool_call_id"]
 
 
+@pytest.mark.parametrize("visible_prose", [False, True])
+def test_two_reasoning_native_exchanges_have_lossless_thinking_count_blocks(visible_prose):
+    original = _raw_body()
+    thoughts = ("Synthetic thought\r\n  {literal: α} <think>not a tool</think>",
+                "Second synthetic thought\nЦена='17,30'; end\n")
+    for index, thought in zip((2, 4), thoughts):
+        original["messages"][index]["reasoning_content"] = thought
+        if not visible_prose:
+            original["messages"][index]["content"] = ""
+    frozen = deepcopy(original)
+    body = normalize_freetoken_count_wire(original)
+    payload = freetoken_count_payload(body)
+    assert original == frozen
+    for index, thought, call_id in zip((1, 3), thoughts, ("call_A", "call_B")):
+        blocks = payload["messages"][index]["content"]
+        assert blocks[0] == {"type": "thinking", "thinking": thought}
+        assert "signature" not in blocks[0]  # Installed FreeToken accepts it as optional.
+        assert blocks[-1]["type"] == "tool_use" and blocks[-1]["id"] == call_id
+        assert "\n\n".join(block["thinking"] for block in blocks if block["type"] == "thinking") == thought
+    assert payload["messages"][2]["content"][0]["tool_use_id"] == "call_A"
+    assert payload["messages"][4]["content"][0]["tool_use_id"] == "call_B"
+    assert payload["messages"][4]["content"][0]["content"] == MESSAGES[5]["content"]
+    assert payload["tools"][0]["input_schema"] == TOOLS[0]["function"]["parameters"]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_count_and_actual_native_wire_keep_payload_and_private_snapshot(tmp_path):
+    messages = deepcopy(MESSAGES)
+    thoughts = ("fixture-only reasoning first\r\nUnicode λ", "fixture-only reasoning second\n终")
+    for index, thought in zip((2, 4), thoughts):
+        messages[index]["reasoning_content"] = thought
+    frozen = deepcopy(messages)
+    captured, peers = [], []
+    def handler(request):
+        captured.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json=_model())
+        if request.url.path.endswith("count_tokens"):
+            return httpx.Response(200, json={"input_tokens": 32123})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "fixture final"}, "finish_reason": "stop"}]})
+    transport, client = _transport(tmp_path, handler, environ={"OPENAI_API_KEY": "fixture-secret"},
+        peer_verifier=lambda response, endpoint: peers.append(endpoint))
+    connection = _resolved(extension_type="freetoken", secret_ref="env:OPENAI_API_KEY")
+    request = _request(messages=messages, reasoning_enabled=True)
+    try:
+        result = await transport.count_input_tokens(connection, request)
+        assert result is not None and result.tokens == 32123
+        snapshot = json.dumps(transport.token_count_snapshot(), ensure_ascii=False)
+        assert all(thought not in snapshot for thought in thoughts)
+        assert "fixture-secret" not in snapshot and "reasoning_content" not in snapshot
+        assert transport.token_count_snapshot()["status"] == "counted"
+        await transport.complete(connection, request)
+        assert [r.url.path for r in captured] == ["/v1/models", "/v1/messages/count_tokens", "/v1/models", "/v1/chat/completions"]
+        assert len(peers) == 4 and all(endpoint is connection.endpoint for endpoint in peers)
+        assert all(r.headers["Authorization"] == "Bearer fixture-secret" for r in captured)
+        counted, sent = json.loads(captured[1].content), json.loads(captured[3].content)
+        assert counted == freetoken_count_payload(sent)
+        for index, thought in zip((2, 4), thoughts):
+            assert sent["messages"][index]["reasoning_content"] == thought
+            assert sent["messages"][index]["tool_calls"] == frozen[index]["tool_calls"]
+        assert messages == frozen and list(request.messages) == frozen
+        assert request.max_output_tokens == sent["max_tokens"] == 16384
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("reasoning", [None, "", {}, [], True, 1])
+def test_malformed_reasoning_cannot_be_dropped_from_count_wire(reasoning):
+    body = normalize_freetoken_count_wire(_raw_body())
+    body["messages"][2]["reasoning_content"] = reasoning
+    frozen = deepcopy(body)
+    with pytest.raises(UnsupportedTokenCountWire):
+        freetoken_count_payload(body)
+    assert body == frozen
+
+
 @pytest.mark.parametrize("mutation,reason", [
     (lambda b: b.update(response_format={"type": "json_schema"}), "unsupported_prompt_fields"),
     (lambda b: b["chat_template_kwargs"].update(unknown=True), "unsupported_template_kwargs"),
     (lambda b: b["messages"][1].update(content=[{"type": "image_url", "image_url": "private"}]), "unsupported_user_message"),
-    (lambda b: b["messages"][2].update(reasoning_content="private thought"), "unsupported_assistant_message"),
+    (lambda b: b["messages"][2].update(reasoning_content={"not": "a literal string"}), "unsupported_assistant_reasoning_content"),
     (lambda b: b["messages"][3].update(tool_call_id="wrong"), "unmatched_tool_reply"),
     (lambda b: b["messages"][2]["tool_calls"][0]["function"].update(arguments="[]"), "tool_arguments_object_required"),
     (lambda b: b["messages"][2]["tool_calls"][0]["function"].update(arguments="{broken"), "invalid_tool_arguments"),

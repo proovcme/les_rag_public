@@ -137,11 +137,18 @@ def freetoken_count_payload(body: Mapping[str, Any]) -> dict[str, Any]:
                 raise UnsupportedTokenCountWire("unsupported_user_message")
             payload["messages"].append({"role": role, "content": content})
         elif role == "assistant":
-            if pending or set(message) - {"role", "content", "tool_calls"}:
+            if pending or set(message) - {"role", "content", "tool_calls", "reasoning_content"}:
                 raise UnsupportedTokenCountWire("unsupported_assistant_message")
+            reasoning = message.get("reasoning_content")
+            if "reasoning_content" in message and (not isinstance(reasoning, str) or not reasoning):
+                raise UnsupportedTokenCountWire("unsupported_assistant_reasoning_content")
             if "content" in message and (not isinstance(content, str) or not content):
                 raise UnsupportedTokenCountWire("unsupported_empty_assistant_content")
-            blocks = [{"type": "text", "text": content}] if content else []
+            # Installed FreeToken converts one thinking block back to this exact
+            # reasoning_content string before the shared OpenAI prompt renderer.
+            blocks = [{"type": "thinking", "thinking": reasoning}] if reasoning else []
+            if content:
+                blocks.append({"type": "text", "text": content})
             calls = message.get("tool_calls", ())
             if not isinstance(calls, (list, tuple)):
                 raise UnsupportedTokenCountWire("unsupported_tool_calls")
