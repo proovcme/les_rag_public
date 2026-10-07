@@ -3986,8 +3986,8 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert "При выборе дословных строк запросов" in first_messages
         assert "каждый запрос — отдельной строкой" in first_messages
         assert service._MODEL_RAG_QUERY_PHASE_INSTRUCTION in first_messages
-        assert "фиксированного лимита нет" in first_messages
-        assert "по всем фактическим строкам" in first_messages
+        assert "Число запросов определяешь ты по представленным операциям" in first_messages
+        assert "по фактически представленным операциям и данным" in first_messages
         assert "сохраняй язык и профессиональную терминологию исходных строк" in first_messages
         assert "не переводи и не транслитерируй" in first_messages
         assert "Код не выбирает норму и не меняет ячейки" in final_messages

@@ -196,3 +196,88 @@ def test_query_failure_prefers_actual_safe_connection_identity_over_legacy_confi
     execution = error.private_query_trace["model_execution"]
     assert execution["provider"] == "freetoken" and execution["model"] == "actual-Qwen"
     assert execution["configured_provider"] == "ollama" and execution["configured_model"] == "legacy-model"
+
+
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+@pytest.mark.asyncio
+async def test_finite_query_instruction_reaches_actual_producer_without_filtering_literal_queries(
+    tmp_path, monkeypatch, variant,
+):
+    # A compactness instruction is model guidance, not a row/query quota or code filter.
+    queries = [
+        'S!R2 — Cable A «A-5»: ГЭСНм10-10-006-01, literal supplied cipher',
+        'S!R3 — Cable B "Ω/Б": ГЭСН21-03-004-02, literal supplied cipher',
+        *[f'S!R{2 + index % 2} — literal query {index}: "Ω/{index}"; 2,5 м'
+          for index in range(17)],
+    ]
+    run = await _run_sheet(
+        tmp_path, monkeypatch, reads=False, variant=variant, temperature=0.7,
+        query_declaration=json.dumps({"artifact_kind": "lsr", "queries": queries}, ensure_ascii=False),
+    )
+
+    assert len(queries) > 12
+    assert run.queries[:len(queries)] == queries
+    assert len(run.requests) == 2 and not run.responses and len(run.executions) == 1
+    initial = run.requests[0]
+    prefix = initial.messages[0]["content"]
+    assert "Верни компактный законченный набор" in prefix
+    assert "Число запросов определяешь ты по представленным операциям" in prefix
+    assert "не разворачивай их в справочник или перебор всех возможных вариантов" in prefix
+    assert "До получения карточек ищи по операции и объекту исходника" in prefix
+    assert "Шифр для поиска не является подтверждённой нормой" in prefix
+    assert "фиксированного лимита нет" not in prefix
+    assert prefix.startswith("Answer only from shown evidence.")
+    wire_text = "\n".join(str(message.get("content") or "") for message in initial.messages)
+    assert "Собери ЛСР; ВОР не создавай. Санкт-Петербург, 3 квартал 2026" in wire_text
+    assert "Cable A" in wire_text and "Cable B" in wire_text
+    expected_query = presets.model_rag_query_execution_preset(run.connection.effective_preset)
+    expected_budget = presets.query_generation_budget(
+        expected_query, reserved_tokens=expected_query.generation_reserve_tokens)
+    assert initial.max_output_tokens == expected_budget["effective"] == 1600
+    assert expected_budget["source"] == "ordinary_query_default"
+    assert run.connection.effective_preset.generation_reserve_tokens == 5000
+    assert all(request.temperature == 0.7 for request in run.requests)
+    assert len(run.result["retrieval_trace"]["model_query_outputs"]) == 1
+
+
+@pytest.mark.parametrize("mode", ["estimator", "agent"])
+def test_finite_query_scope_keeps_literal_profile_skill_and_purpose_budgets(mode):
+    snapshot = {
+        "mode": mode, "revision_id": "user:profile:literal-query-policy",
+        "prompt_text": 'Literal saved profile «Ω»; preserve "A-5".',
+        "skill_text": '# Literal saved skill\nНе изменяй исходные данные «Б».',
+        "tabular_estimator_path": False,
+        "model_policy": {"temperature": 0.7, "reasoning_enabled": True,
+                         "query_reasoning_enabled": False,
+                         "query_output_tokens": 8192, "answer_output_tokens": 16384},
+    }
+    before = json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    selected = _preset(snapshot["model_policy"])
+    selected_before = selected.diagnostics()
+    query = presets.model_rag_query_execution_preset(selected)
+    answer = presets.model_rag_answer_execution_preset(selected, model_rag=True)
+    instruction = chat_service.model_rag_query_instruction(snapshot)
+    prefix = chat_service.profile_system_prompt(snapshot, strict=False, purpose="query")
+    source = 'Лист Ω!R17 | Изделие "A-5" | шт. | 3 | примечание «Б»'
+    question = 'Ответь по исходнику «Ω» и сохрани его единицы.'
+    messages, packet = chat_service.govern_inference_messages(
+        preset=query, profile_prefix=prefix + "\n\n" + instruction,
+        request_payload=question, required_evidence=[source],
+    )
+
+    assert snapshot["prompt_text"] in messages[0]["content"]
+    assert snapshot["skill_text"] in messages[0]["content"]
+    assert "Верни компактный законченный набор" in messages[0]["content"]
+    if mode == "estimator":
+        assert chat_service._MODEL_RAG_QUERY_VOLUME_HINT in messages[0]["content"]
+    else:
+        assert chat_service._MODEL_RAG_QUERY_VOLUME_HINT not in messages[0]["content"]
+        assert "До получения карточек ищи по операции и объекту исходника" not in messages[0]["content"]
+    wire_text = "\n".join(str(message.get("content") or "") for message in messages)
+    assert source in wire_text and question in wire_text and not packet.omissions
+    assert packet.generation_reserve_tokens == query.generation_reserve_tokens == 8192
+    assert answer.generation_reserve_tokens == 16384
+    assert query.reasoning_enabled is False and answer.reasoning_enabled is True
+    assert query.input_token_limit == answer.input_token_limit == selected.input_token_limit
+    assert selected.diagnostics() == selected_before
+    assert json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode("utf-8") == before
