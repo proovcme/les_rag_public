@@ -415,16 +415,27 @@ def update_model_artifact_kind(previous: Mapping | None, current: Mapping, *, ph
     return {**result, "authority": "result"}
 
 
-def decode_model_query_envelope(raw: str) -> dict | None:
+def decode_model_query_envelope(raw: str, *, format_errors: list[dict[str, str]] | None = None) -> dict | None:
     """An optional literal query list; ordinary query text keeps its old reader."""
+    def reject(path: str, code: str):
+        # Only contract paths/codes: never authored keys, values or decoder text.
+        if format_errors is not None and len(format_errors) < 32:
+            format_errors.append({"path": path, "code": code})
+        return None
+
     candidates, outer_commentary = _model_json_documents(raw)
     if len(candidates) not in (1, 2):
-        return None
-    try:
-        documents = [json.loads(candidate, object_pairs_hook=_unique_json_object)
-                     for candidate in candidates]
-    except (ValueError, TypeError):
-        return None
+        return reject("$", "QUERY_JSON_DOCUMENT_COUNT")
+    documents = []
+    for index, candidate in enumerate(candidates):
+        try:
+            documents.append(json.loads(candidate, object_pairs_hook=_unique_json_object))
+        except json.JSONDecodeError:
+            return reject(f"$[{index}]", "QUERY_JSON_INVALID")
+        except ValueError:
+            return reject(f"$[{index}]", "QUERY_JSON_DUPLICATE_FIELD")
+        except TypeError:
+            return reject(f"$[{index}]", "QUERY_JSON_INVALID")
     value = documents[0]
     if len(documents) == 2:
         # A separate commentary-only document carries no search or business
@@ -435,28 +446,35 @@ def decode_model_query_envelope(raw: str) -> dict | None:
                  if isinstance(document, dict) and set(document) == {"commentary"}
                  and isinstance(document["commentary"], str)]
         if len(notes) != 1:
-            return None
+            return reject("$", "QUERY_COMMENTARY_DOCUMENT_REQUIRED")
         value = documents[1 - notes[0]]
         if (not isinstance(value, dict) or "queries" not in value
                 or not set(value).issubset({"queries", "artifact_kind", "commentary"})):
-            return None
+            return reject("$", "QUERY_ENVELOPE_FIELDS_INVALID")
         declaration = decode_model_artifact_kind(raw)
         expected_status = "declared" if "artifact_kind" in value else "missing"
         if (declaration["status"] != expected_status
                 or (expected_status == "declared"
                     and declaration["artifact_kind"] != value["artifact_kind"])):
-            return None
+            return reject("$.artifact_kind", "QUERY_ARTIFACT_KIND_CONFLICT")
     if not isinstance(value, dict):
-        return None
+        return reject("$", "QUERY_ENVELOPE_OBJECT_REQUIRED")
     if "artifact_kind" in value and value["artifact_kind"] not in ("vor", "lsr"):
-        return None
+        return reject("$.artifact_kind", "QUERY_ARTIFACT_KIND_INVALID")
     if "artifact_kind" not in value and decode_model_artifact_kind(raw)["status"] != "missing":
         # A queries-only JSON object cannot legitimise separate invalid or
         # conflicting document metadata around it.
-        return None
+        return reject("$.artifact_kind", "QUERY_ARTIFACT_KIND_CONFLICT")
     queries = value.get("queries")
-    if not isinstance(queries, list) or any(not isinstance(q, str) or not q.strip() or "\n" in q or "\r" in q for q in queries):
-        return None
+    if not isinstance(queries, list):
+        return reject("$.queries", "QUERY_LIST_REQUIRED")
+    for index, query in enumerate(queries):
+        if not isinstance(query, str):
+            return reject(f"$.queries[{index}]", "QUERY_ENTRY_STRING_REQUIRED")
+        if not query.strip():
+            return reject(f"$.queries[{index}]", "QUERY_ENTRY_NONEMPTY_REQUIRED")
+        if "\n" in query or "\r" in query:
+            return reject(f"$.queries[{index}]", "QUERY_ENTRY_SINGLE_LINE_REQUIRED")
     result = {"queries": queries}
     comments = [item.strip() for item in outer_commentary if item.strip()]
     for document in documents:

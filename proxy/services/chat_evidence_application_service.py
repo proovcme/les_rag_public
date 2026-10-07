@@ -2186,7 +2186,7 @@ def model_query_repair_attempt_data(
         "assistant_visible_final": visible,
         "finish_reason": str(finish_reason or "unknown"),
         "parse_diagnostics": {key: parse_diagnostics[key] for key in (
-            "accepted_count", "rejected_count", "reason_counts", "answer_cut", "output_shape"
+            "accepted_count", "rejected_count", "reason_counts", "answer_cut", "output_shape", "mechanical_format_errors"
         ) if key in parse_diagnostics},
     }
 
@@ -6463,6 +6463,25 @@ def model_query_output_diagnostics(
                  and finish_reason_is_length(llm_usage_finish_reason(usage))}
 
 
+def add_rejected_query_visible_diagnostics(
+    diagnostic: dict[str, Any], text: str, *, secret_values: Sequence[str] = (),
+) -> None:
+    """Expose only a bounded sanitized final for an unsupported empty query result."""
+    parsed = diagnostic.get("declared_parse") or {}
+    if parsed.get("output_shape") != "unsupported_structured_output" or parsed.get("accepted_count") != 0:
+        return
+    # Match the existing public failure snapshot before secret redaction.
+    snapshot_text = re.sub(r"<think\b[^>]*>.*?(?:</think>|$)", "", str(text or ""), flags=re.I | re.S)
+    visible = model_query_repair_attempt_data(
+        snapshot_text, finish_reason=str(diagnostic.get("finish_reason") or ""),
+        parse_diagnostics=parsed, secret_values=secret_values,
+    )["assistant_visible_final"]
+    diagnostic["rejected_visible_final"] = {
+        "text": visible[:8192], "sha256": hashlib.sha256(visible.encode("utf-8")).hexdigest(),
+        "chars": len(visible), "truncated": len(visible) > 8192,
+    }
+
+
 class ModelExecutionFailure(HTTPException):
     """Trusted private execution diagnostics survive the public error boundary."""
 
@@ -6499,6 +6518,9 @@ def model_query_failure(detail: Any, *, trace: Mapping[str, Any], session_id: st
         output["declared_parse"] = {key: parsed[key] for key in ("accepted_count", "rejected_count", "answer_cut", "output_shape")
                                     if key in parsed}
         output["declared_parse"]["reason_counts"] = dict(list((parsed.get("reason_counts") or {}).items())[:32])
+        if parsed.get("mechanical_format_errors"):
+            output["declared_parse"]["mechanical_format_errors"] = parsed["mechanical_format_errors"][:32]
+        add_rejected_query_visible_diagnostics(output, raw, secret_values=secret_values)
         saved.append(output)
     connection = trace.get("model_connection") or {}
     execution = {"provider": str(provider), "model": str(model)}
@@ -6529,12 +6551,18 @@ def declared_query_output_diagnostics(raw: str, declared: Mapping[str, Any]) -> 
     for item in declared.get("accompanying_answer") or ():
         reason = str(item.get("reason") or "")
         reasons[reason] = reasons.get(reason, 0) + 1
-    shape = ("query_envelope" if decode_model_query_envelope(raw) is not None else
+    format_errors: list[dict[str, str]] = []
+    shape = ("query_envelope" if decode_model_query_envelope(raw, format_errors=format_errors) is not None else
              "empty_final" if not str(raw or "").strip() else
              "unsupported_structured_output" if not _unwrap_model_rag_query_lines(raw) else "declared_lines")
+    if shape != "unsupported_structured_output" or declared.get("queries"):
+        format_errors = []
+    for error in format_errors:
+        reasons[error["code"]] = reasons.get(error["code"], 0) + 1
     return {"accepted_count": len(declared.get("queries") or ()),
             "rejected_count": len(declared.get("accompanying_answer") or ()),
             "reason_counts": reasons, "answer_cut": bool(declared.get("answer_cut")), "output_shape": shape,
+            **({"mechanical_format_errors": format_errors} if format_errors else {}),
             **({"commentary": declared["commentary"]} if declared.get("commentary") else {})}
 
 
@@ -8981,6 +9009,7 @@ async def _execute_chat_evidence_application(
                             query_text, instruction=query_instruction, finish_reason=llm_usage_finish_reason(query_usage))
                         query_diagnostic["artifact_kind_declaration"] = declared["artifact_kind_declaration"]
                         query_diagnostic["declared_parse"] = declared_query_output_diagnostics(query_text, declared)
+                        add_rejected_query_visible_diagnostics(query_diagnostic, query_text, secret_values=(llm_runtime.api_key,))
                         logger.info("[MODEL_RAG_QUERY_OUTPUT] %s", query_diagnostic)
                         if query_diagnostic["output_incomplete"]:
                             raise model_query_failure({"error": "MODEL_QUERY_OUTPUT_INCOMPLETE"}, trace=retrieval_trace,
@@ -10002,6 +10031,7 @@ async def _execute_chat_evidence_application(
                     )
                     research_cancelled = False
                     query_checkpoint_failed = False
+                    query_format_pending = False
                     # Which guard stopped the run, when one did.  Reported apart from
                     # `research_cancelled` so a per-run budget is never shown as an
                     # operator cancellation.
@@ -10500,6 +10530,7 @@ async def _execute_chat_evidence_application(
                                         query_diagnostic["declared_parse"] = declared_query_output_diagnostics(
                                             query_text, read_model_query_response(query_text,
                                                 finish_reason=llm_usage_finish_reason(query_usage), instruction=query_directive))
+                                        add_rejected_query_visible_diagnostics(query_diagnostic, query_text, secret_values=(llm_runtime.api_key,))
                                         logger.info("[MODEL_RAG_QUERY_OUTPUT] %s", query_diagnostic)
                                         if query_diagnostic["output_incomplete"]:
                                             if research_job_service is not None and research_job is not None:
@@ -10629,7 +10660,21 @@ async def _execute_chat_evidence_application(
                                 pass_rejected.extend(rejected_now)
                                 pass_rejected_reasons.extend(rejected_reasons_now)
                                 if not model_queries and not declared_now.get("intentional_empty"):
-                                    break
+                                    # A failed technical declaration cannot advance to
+                                    # a later sheet and turn its headers into a result.
+                                    query_format_pending = True
+                                    if owns_sheet_pass and research_job_service is not None and research_job is not None:
+                                        research_job = research_job_service.pause(
+                                            research_job["job_id"], phase="model_query_format_pending",
+                                            held_packet=model_rag_with_pending_results({
+                                                "sheet": sheet_name, "locators": list(packet),
+                                                "model_query_output_missing": True,
+                                                "query_output": query_diagnostic,
+                                            }, pending_result_packets),
+                                        )
+                                    raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
+                                        session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
+                                        secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
                                 any_sheet_queries = True
                                 pass_hits: list[tuple[str, Sequence[Any]]] = []
                                 pass_tools: list[dict[str, Any]] = []
@@ -11653,7 +11698,8 @@ async def _execute_chat_evidence_application(
                         detail = query_error.detail
                         query_code = str(detail.get("error") or detail.get("code") or "") if isinstance(detail, Mapping) else str(detail or "")
                         if (not owns_sheet_pass or research_job_service is None or research_job is None
-                                or query_code != "MODEL_QUERY_OUTPUT_INCOMPLETE"):
+                                or (query_code != "MODEL_QUERY_OUTPUT_INCOMPLETE"
+                                    and not (query_format_pending and query_code == "MODEL_RAG_QUERY_LIST_EMPTY"))):
                             raise
                         try:
                             saved_job = research_job_service.get(research_job["job_id"])
@@ -11680,7 +11726,7 @@ async def _execute_chat_evidence_application(
                             *(locator for locator in source_catalog.work_locators() if locator not in settled_checkpoint),
                         ]))
                         research_job = research_job_service.pause(
-                            research_job["job_id"], phase="model_query_output_incomplete",
+                            research_job["job_id"], phase="model_query_format_pending" if query_format_pending else "model_query_output_incomplete",
                             remaining=checkpoint_remaining,
                             held_packet=model_rag_with_pending_results(held, pending_result_packets),
                         )
