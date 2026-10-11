@@ -248,7 +248,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
                      exact_resource_padding=0, query_declaration=None, budget_stop_at=None,
                      wire_budget_bytes=None, norm_ref_read=None, native_repeats=0,
-                     native_reasoning=None, temperature=None):
+                     native_reasoning=None, temperature=None, protocol_enabled=None,
+                     free_responses=None, skill_text=""):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -463,6 +464,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                                                    _native("read_resource_price", code=RESOURCE_B)), finish_reason="tool_calls", usage={}),
             lambda index=packet_index: final_response(index),
         ])
+    if free_responses is not None:
+        responses = list(free_responses)
     requests = []
 
     class Transport:
@@ -553,7 +556,10 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                                               if query_reasoning_enabled is not None else {})},
                           "tools": ["search_sources", "build_vor_workbook", "build_lsr_workbook"],
                           "rag_policy": {"iterative": True, "system_datasets": ["smeta"],
-                                         "model_authored_initial_query": True},
+                                         "model_authored_initial_query": True,
+                                         **({"application_protocol_enabled": protocol_enabled}
+                                            if protocol_enabled is not None else {})},
+                          "skill_text": skill_text,
                           "prompt_text": "Answer only from shown evidence."},
     )
     histories = []

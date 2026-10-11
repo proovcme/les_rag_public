@@ -1,5 +1,43 @@
 # RAG evidence flow
 
+## Кандидат930: явное отключение протокола приложения
+
+`rag_policy.application_protocol_enabled` — boolean в immutable версии профиля;
+отсутствие означает прежнее `true`, другие типы отвергаются до записи. В редакторе
+профиля «Обработка ВОР/ЛСР» предлагает обязательные этапы/формат или свободный ответ.
+Новая активная версия не меняет уже привязанный чат; смена требует explicit apply.
+Режим и revision/source видны в retrieval_trace.application_protocol и истории.
+
+`false` действует на model-driven RAG, включая табличное вложение. Он проходит
+тот же production chat и pinned governed transport с теми же scoped readers;
+диагностический clean baseline не вызывается. Нет предварительной генерации
+списка запросов, query repair, ADR-16 system queries, sheet splitting, application
+инструкций полей/каркаса, автоматической добавки сметного skill или format repair.
+Модель сразу получает полный исходник и исходный вопрос, сама вызывает native
+поиск/чтение и завершает обычным ответом, в том числе без поиска. Chosen prompt,
+skill и явная output directive сохраняются: выключение протокола не отменяет
+инструкции, которые владелец сам включил в профиль. Ordinary не-model-driven
+chat этот сметный переключатель не перестраивает.
+
+Режим требует active assigned model connection; legacy route не подменяет его.
+Переполнение исходника останавливает отправку с422, length/unknown tool/read limit
+показаны как техническая незавершённость без нового предметного вызова. Sources,
+native exchanges и archive reread929 сохраняются. Selected scope не расширяется.
+
+**Граница файлов и сохранения:** свободный текст не разбирается в строки сметы
+и не вызывает автоматическую сборку ВОР/ЛСР. Workbook job/packet cursor не
+создаётся и не возобновляется; старые workbook jobs не изменяются. Работают обычные
+история чата, привязка версии профиля, source_map и технический trace. Это не
+durable workbook calculation и не обещание расчётного XLSX из произвольного текста.
+Существующая best-effort запись chat history не заменяет workbook checkpoint.
+При `true` прежняя сборка и её fail-closed checkpoint остаются.
+
+Регрессии `test_application_protocol_switch` идут через production callback:
+plain final/own query/exact reader, no carrier/no implicit skill, полный source
+при включённом frame, source overflow до модели, length/unknown tool, pinned
+profile и atomic rejection. Прежний расчёт `true` остаётся control. Офлайн-проверки
+не являются installed live или профессиональной приёмкой; runtime не обновлён.
+
 ## Локальный кандидат 0.31.201 / 929: архив и рабочий контекст
 
 **Статус:** код и офлайн-регрессии; не установлен, live acceptance отсутствует.

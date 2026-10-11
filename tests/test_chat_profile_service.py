@@ -36,6 +36,27 @@ def test_effective_profile_adds_retrieval_limits_without_mutating_revision():
     assert stored == {"mode": "search", "rag_policy": {"grounded": True}}
 
 
+def test_protocol_profile_revision_is_pinned_until_explicit_change(tmp_path):
+    from proxy.services import chat_profile_service as profiles
+    db = tmp_path / 'profiles.db'
+    original = next(p['active'] for p in profiles.registry_snapshot(db_path=db)['profiles'] if p['mode'] == 'estimator')
+    free = profiles.publish_profile_revision(
+        mode='estimator', name='Free native model', prompt_revision_id=original['prompt_revision_id'],
+        skill_revision_id=original['skill_revision_id'], tools=original['tools'],
+        model_policy=original['model_policy'],
+        rag_policy={**original['rag_policy'], 'application_protocol_enabled': False}, db_path=db)
+    profiles.resolve_chat_profile(session_id='old', requested_mode='estimator', db_path=db)
+    profiles.activate_profile_revision('estimator', free['revision_id'], db_path=db)
+    assert profiles.application_protocol_enabled(profiles.resolve_chat_profile(session_id='old', requested_mode='estimator', db_path=db))
+    assert not profiles.application_protocol_enabled(profiles.resolve_chat_profile(session_id='new', requested_mode='estimator', db_path=db))
+    profiles.activate_profile_revision('estimator', original['revision_id'], db_path=db)
+    bound = profiles.resolve_chat_profile(session_id='new', requested_mode='estimator', db_path=db)
+    assert bound['revision_id'] == free['revision_id'] and not profiles.application_protocol_enabled(bound)
+    bound = profiles.resolve_chat_profile(session_id='new', requested_mode='estimator',
+        requested_revision_id=original['revision_id'], apply_revision=True, db_path=db)
+    assert profiles.application_protocol_enabled(bound)
+
+
 def test_effective_profile_pairs_reader_only_with_explicit_web_search():
     stored = {
         "mode": "agent",

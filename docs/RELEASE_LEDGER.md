@@ -1,5 +1,32 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## Локальный кандидат 0.31.202 / 930 — переключатель протокола
+
+Продолжение draft PR22, базовый repair commit2322f05d. Immutable boolean
+`rag_policy.application_protocol_enabled`: false включает свободный native
+model-RAG без query/result stages, системных запросов, implicit skill, source
+frames и автоматического XLSX; отсутствие поля сохраняет прежнее true.
+Выбранные prompt/skill действуют, профиль чата закреплён до explicit apply.
+Sources и mode trace сохраняются в обычной истории, workbook job не создаётся;
+это не эквивалент durable сметного расчёта. Старые jobs не меняются.
+GUI использует прежний select_field; режим показан в технических деталях ответа.
+
+Первый RED: missing setting import; после минимального flag reader behavioral
+RED4/GREEN7. Новый guard oversized source выявил raw overflow вместо422;
+unknown native tool — ложный MODEL_OUTPUT, а JSON-пример в обычном тексте
+исполнялся как legacy вызов. Эти RED сохранены и исправлены: полный исходник
+обязателен до отправки, техническая остановка не успех, только native calls
+исполняются в свободном режиме. Соседний bundle162 passed до последних guards;
+итоговый соседний bundle172 passed. Architecture guard первоначально запретил
+активацию профиля из нового test module; этот сценарий перенесён без ослабления
+в существующий разрешённый test_chat_profile_service. Preliminary full прерван
+до завершения для финального test layout/map и не считается зелёным.
+Финальный verify:4468 collected/exit0; заключительные protocol/profile/docs/map
+проверки85 passed. Architecture gate, public-check и diff whitespace прошли;
+финальный make test:4465 passed/3 skipped/209 warnings, exit0 (388.06s).
+Пропущенные сценарии не считаются пройденными. Installed/live и профессиональный paired
+gate отсутствуют, customer-ready=false; runtime/installer не обновлялись.
+
 ## Локальный кандидат 0.31.201 / 929 — рабочий контекст и сохранность задания
 
 Продолжение изолированного928 от PR21 `03ab194f`; runtime/публикация не менялись.

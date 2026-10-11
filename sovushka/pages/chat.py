@@ -2024,6 +2024,10 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
     kot = query_route.get("kot") if isinstance(query_route.get("kot"), dict) else {}
     trace = meta.get("retrieval_trace") if isinstance(meta.get("retrieval_trace"), dict) else {}
     validation = meta.get("validation") if isinstance(meta.get("validation"), dict) else {}
+    protocol = trace.get("application_protocol") or {}
+    if protocol.get("effective") in {"native", "guided"}:
+        out.append("ВОР/ЛСР: свободный ответ модели" if protocol["effective"] == "native"
+                   else "ВОР/ЛСР: обязательные этапы и формат")
     scenario = meta.get("scenario") if isinstance(meta.get("scenario"), dict) else {}
     contract = meta.get("answer_contract") if isinstance(meta.get("answer_contract"), dict) else {}
     contract_check = meta.get("answer_contract_check") if isinstance(meta.get("answer_contract_check"), dict) else {}

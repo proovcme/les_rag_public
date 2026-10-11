@@ -159,10 +159,20 @@ def _loads(value: str | None, fallback: Any) -> Any:
         return fallback
 
 
+def application_protocol_enabled(snapshot: Mapping[str, Any] | None) -> bool:
+    """Immutable profile opt-out; old revisions retain their existing workflow."""
+    policy = (snapshot or {}).get("rag_policy") or {}
+    value = policy.get("application_protocol_enabled", True)
+    if type(value) is not bool:
+        raise ValueError("application_protocol_enabled должен быть true или false")
+    return value
+
+
 def effective_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Apply runtime workflow invariants without mutating immutable revisions."""
 
     effective = dict(snapshot)
+    application_protocol_enabled(effective)
     rag_policy = dict(effective.get("rag_policy") or {})
     rag_policy.update(effective_retrieval_policy(effective))
     if canonical_profile_mode(effective.get("mode")) == "estimator":
@@ -591,6 +601,7 @@ def publish_profile_revision(
 
     validate_reasoning_policy(model_policy or {})
     validate_output_budget_policy(model_policy or {})
+    application_protocol_enabled({"rag_policy": rag_policy or {}})
     selected_tools = list(dict.fromkeys(str(item).strip() for item in tools if str(item).strip()))
     unknown = sorted(set(selected_tools) - _tool_names())
     if unknown:

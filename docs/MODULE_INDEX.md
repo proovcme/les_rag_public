@@ -1,5 +1,17 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат930: переключатель протокола ВОР/ЛСР
+
+🟡 [rag-evidence-flow](modules/rag-evidence-flow.md):
+`chat_profile_service.application_protocol_enabled` валидирует immutable bool;
+`profiles.application_protocol_choice/set_application_protocol_choice` — общий
+select_field редактора. Production chat opt-out убирает query/result stages и
+implicit skill, сохраняет native readers/полный source/профиль/history. Свободный
+режим не упаковывает XLSX и не создаёт workbook job. Регрессии:
+`test_application_protocol_switch`; installed/live qualification pending.
+Профили и пользовательское включение/отключение описаны в
+[chat-profiles](modules/chat-profiles.md); старые immutable привязки сохраняются.
+
 ## Локальный кандидат929: архив evidence и чистый контроль
 
 🟡 [rag-evidence-flow](modules/rag-evidence-flow.md):

@@ -31,6 +31,13 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 **не доказывает** отсутствие вмешательства. Offline fixture и status=terminal не являются
 профессиональной live приёмкой; контроль не создаёт XLSX и не является вторым production workflow.
 
+В immutable профиле `rag_policy.application_protocol_enabled=false` отключает
+application query/result stages production model-RAG, без автоматического skill
+и сборки XLSX; выбранные пользователем инструкции сохраняются. Прежние профили
+без поля остаются true. Не включать протокол скрытым override, продолжением или
+табличным вложением; не выдавать свободный текст за рассчитанный файл. Точная
+граница сохранения (chat history vs workbook checkpoint) — rag-evidence-flow930.
+
 Архив доказательств и рабочий контекст модели — разные границы. При overflow исторические тела
 можно вынести из wire только с явно показанным immutable archive и действующим exact reader;
 исходник, решения, текущие чтения и native protocol не теряются. Недоставленные bodies не получают

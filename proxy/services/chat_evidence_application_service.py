@@ -99,7 +99,7 @@ from proxy.services.project_summary_service import (
     format_project_inventory_prompt,
 )
 from proxy.services.prompt_registry_service import build_mode_system_prompt
-from proxy.services.chat_profile_service import effective_retrieval_policy
+from proxy.services.chat_profile_service import application_protocol_enabled, effective_retrieval_policy
 from proxy.services.retrieval_service import required_reranker_policy, retrieve_chat_chunks
 from proxy.services.runtime_admission import (
     acquire_generation_slot,
@@ -2400,6 +2400,9 @@ def overlay_tabular_estimator_snapshot(
         bridges.append(TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE)
     snapshot["effective_capability_bridges"] = bridges
     snapshot["tabular_estimator_path"] = True
+    if not application_protocol_enabled(snapshot):
+        # The attachment still grants literal readers, not an implicit skill.
+        return snapshot
     skill_path = Path(__file__).resolve().parents[2] / "skills" / "smeta" / "references" / "rag-estimator.md"
     workbook_skill = skill_path.read_text(encoding="utf-8").strip()
     existing_skill = str(snapshot.get("skill_text") or "").strip()
@@ -7315,6 +7318,10 @@ def profile_system_prompt(
     snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
     prompt = str(snapshot.get("prompt_text") or "").strip()
     skill = str(snapshot.get("skill_text") or "").strip()
+    if not application_protocol_enabled(snapshot) and profile_uses_model_driven_retrieval(snapshot):
+        # Owner-selected instructions remain literal. No implicit role fallback,
+        # query handshake, carrier, format repair or professional steps are added.
+        return "\n\n".join(part for part in (prompt, skill) if part)
     if not prompt:
         prompt = build_mode_system_prompt("rag")
     parts = [prompt]
@@ -8507,7 +8514,24 @@ async def _execute_chat_evidence_application(
     model_delivered_source_locators: set[str] = set()
     answer_finish_reason = ""
     model_driven_retrieval = profile_uses_model_driven_retrieval(profile_snapshot)
+    protocol_enabled = application_protocol_enabled(profile_snapshot)
+    free_model_rag = model_driven_retrieval and not protocol_enabled
+    if free_model_rag and canonical_execution_mode is not CanonicalRouteMode.ACTIVE:
+        raise HTTPException(409, detail={
+            "code": "NATIVE_PROTOCOL_CONNECTION_REQUIRED",
+            "message": "Свободный режим требует назначенного подключения модели с вызовом инструментов. "
+                       "Назначьте подключение для чата; сохранённый профиль не изменён.",
+        })
+    retrieval_trace["application_protocol"] = {
+        "enabled": protocol_enabled,
+        "effective": ("native" if free_model_rag else "guided") if model_driven_retrieval else "not_applicable",
+        "source": "profile_revision" if "application_protocol_enabled" in ((profile_snapshot or {}).get("rag_policy") or {}) else "legacy_default",
+        "profile_revision_id": str((profile_snapshot or {}).get("revision_id") or ""),
+        "automatic_workbook": model_driven_retrieval and protocol_enabled, "restart_required": False,
+    }
     source_frame_rows = configured_source_frame_rows(_env_int)
+    if free_model_rag:
+        source_frame_rows = 0  # Native model sees the whole source, chooses its own reads.
     initial_source_frame: ModelSourceFrame | None = None
     source_frame_contract: dict[str, Any] = {}
     source_frame_contract_sha256 = ""
@@ -8538,7 +8562,7 @@ async def _execute_chat_evidence_application(
     comparative_variant = str(
         getattr(req, "comparative_acceptance_variant", "") or ""
     ).upper()
-    if comparative_variant == "B0_DIRECT":
+    if comparative_variant == "B0_DIRECT" or free_model_rag:
         sheet_pass_active = False
     if comparative_variant:
         retrieval_trace["comparative_acceptance"] = {
@@ -8973,7 +8997,7 @@ async def _execute_chat_evidence_application(
                 model_research_tools = None
                 retrieval_limits = effective_retrieval_policy(profile_snapshot)
                 query_failure_final_texts: list[str] = []
-                if model_driven_retrieval and tool_loop_enabled and not sheet_pass_active:
+                if model_driven_retrieval and tool_loop_enabled and not sheet_pass_active and protocol_enabled:
                     retrieval_limits = effective_retrieval_policy(profile_snapshot)
                     query_headers = {}
                     if llm_runtime.api_key:
@@ -9212,7 +9236,7 @@ async def _execute_chat_evidence_application(
                         "rejected_queries": rejected_model_queries,
                         "omitted_evidence_refs": omitted_evidence_refs,
                     }
-                elif model_driven_retrieval and tool_loop_enabled and sheet_pass_active:
+                elif model_driven_retrieval and tool_loop_enabled and (sheet_pass_active or free_model_rag):
                     retrieval_limits = effective_retrieval_policy(profile_snapshot)
                     query_headers = {}
                     if llm_runtime.api_key:
@@ -9259,7 +9283,7 @@ async def _execute_chat_evidence_application(
                         **retrieval_limits,
                     )
                     retrieval_trace["tool_loop"] = {
-                        "schema": "les_model_rag_sheet_pass_v1",
+                        "schema": "les_model_rag_native_v1" if free_model_rag else "les_model_rag_sheet_pass_v1",
                         "enabled": True,
                         "model_owns_queries": True,
                         "passes": [],
@@ -12130,14 +12154,14 @@ async def _execute_chat_evidence_application(
                                 },
                             })
                         # ADR-12 §2: каркас формы под интент добавляем к нормальному промпту.
-                        workbook_carrier_required = model_workbook_carrier_required(
+                        workbook_carrier_required = protocol_enabled and model_workbook_carrier_required(
                             attachment_id=getattr(req, "attachment_id", None),
                             source_catalog=source_catalog, model_declaration=artifact_kind_declaration,
                         )
                         answer_profile = (profile_system_prompt(profile_snapshot, strict=False,
                                           purpose="workbook_result" if workbook_carrier_required else "source_read")
                                           if model_driven_retrieval else sys_normal)
-                        sys_msg = answer_profile + (f" {answer_form.instruction}" if answer_form.instruction else "")
+                        sys_msg = answer_profile + (f" {answer_form.instruction}" if answer_form.instruction and not free_model_rag else "")
                         # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
                         # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-директиву).
                         if req.output_directive and req.output_directive.strip():
@@ -12154,9 +12178,12 @@ async def _execute_chat_evidence_application(
                         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
                         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
                     )
+                    if free_model_rag:
+                        question_tail = str(req.question or "")
                     direct_read_tools = (
                         model_evidence_read_tool_schemas()
                         if model_driven_retrieval
+                        and (not free_model_rag or tool_loop_enabled)
                         and (str(getattr(req, "comparative_acceptance_variant", "") or "") == "B0_DIRECT"
                              or not workbook_carrier_required)
                         else []
@@ -12173,8 +12200,9 @@ async def _execute_chat_evidence_application(
                             source_name=str(getattr(source_catalog, "original_name", "") or ""),
                         )
                         model_research_tools.set_price_basis(direct_price_basis)
-                        sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
-                        sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(direct_price_basis, ensure_ascii=False)
+                        if not free_model_rag:
+                            sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
+                            sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(direct_price_basis, ensure_ascii=False)
                     if model_driven_retrieval:
                         if workbook_carrier_required:
                             question_tail = lsr_result_table_instruction(
@@ -12190,19 +12218,26 @@ async def _execute_chat_evidence_application(
                             source_catalog=source_catalog,
                             source_frame=initial_source_frame,
                         )
-                        _, fixed_packet = govern_inference_messages(
-                            preset=answer_execution_preset,
-                            profile_prefix=sys_msg,
-                            request_payload=question_tail,
-                            native_tools=direct_read_tools,
-                            checkpoint=(),
-                            working_memory=(),
-                            evidence=() if initial_source_frame is not None else fixed_model_rag_evidence,
-                            required_evidence=fixed_model_rag_evidence if initial_source_frame is not None else (),
-                            source_map=(),
-                            tool_exchange=(),
-                            dialogue=(),
-                        )
+                        try:
+                            _, fixed_packet = govern_inference_messages(
+                                preset=answer_execution_preset,
+                                profile_prefix=sys_msg,
+                                request_payload=question_tail,
+                                native_tools=direct_read_tools,
+                                checkpoint=(),
+                                working_memory=(),
+                                evidence=() if initial_source_frame is not None or free_model_rag else fixed_model_rag_evidence,
+                                required_evidence=fixed_model_rag_evidence if initial_source_frame is not None or free_model_rag else (),
+                                source_map=(),
+                                tool_exchange=(),
+                                dialogue=(),
+                            )
+                        except ContextRequiredSectionOverflow as context_error:
+                            retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
+                                context_error, purpose="original_source")
+                            raise HTTPException(422, detail={"code": context_error.code,
+                                "message": "Исходник и вопрос не помещаются в контекст назначенной модели. "
+                                           "Запрос к модели не отправлен; исходные данные не сокращены."}) from context_error
                         remaining_group_tokens = max(
                             0,
                             fixed_packet.input_budget_tokens
@@ -12784,9 +12819,16 @@ async def _execute_chat_evidence_application(
                                 completion_tokens=int(read_usage.get("completion_tokens") or 0))
                             return read_text, read_usage
 
+                        def _parse_direct_read_calls(text, **kwargs):
+                            # Plain text may quote a tool example. Opt-out exposes
+                            # provider native calls only, never this legacy text grammar.
+                            if free_model_rag and (active_model_result is None or not active_model_result.response.tool_calls):
+                                return []
+                            return _parse_model_tool_calls(text, **kwargs)
+
                         try:
                             read_turn = await run_model_evidence_read_turn(
-                                text=answer, usage=usage, parse_calls=_parse_model_tool_calls,
+                                text=answer, usage=usage, parse_calls=_parse_direct_read_calls,
                                 execute=model_research_tools.execute,
                                 continue_native_turn=_continue_direct_reads, on_read_results=_accept_direct_reads,
                                 on_read_replays=_accept_direct_read_replays,
@@ -12808,6 +12850,17 @@ async def _execute_chat_evidence_application(
                         answer_source_map = _model_rag_source_map(model_evidence_chunks)
                         selector_source_map = answer_source_map
                         if direct_read_stop:
+                            if free_model_rag:
+                                answer = ("Чтение источников остановлено: модель запросила недоступное действие "
+                                          "или достигнут технический предел чтений. Ответ не завершён; источники сохранены.")
+                                tokens = int(usage.get("completion_tokens") or 0)
+                                answer_finish_reason = llm_usage_finish_reason(usage)
+                                retrieval_trace["model_generation"] = {
+                                    "status": "technical_pending", "reason": direct_read_stop,
+                                    "finish_reason": answer_finish_reason,
+                                }
+                                crag_status = "MODEL_OUTPUT_INCOMPLETE"
+                                break
                             answer = ("Техническая остановка чтения источников: " + direct_read_stop
                                       + (". Решение модели не завершено; ЛСР не упакована."
                                          if workbook_carrier_required else ". Решение модели не завершено."))
@@ -12830,8 +12883,17 @@ async def _execute_chat_evidence_application(
                                   "действия вместо итогового ответа. Найденные источники сохранены в истории запроса.")
                         crag_status = "MODEL_OUTPUT_INCOMPLETE"
                         break
+                    if free_model_rag and finish_reason_is_length(llm_usage_finish_reason(usage)):
+                        answer_finish_reason = llm_usage_finish_reason(usage)
+                        tokens = int(usage.get("completion_tokens") or 0)
+                        retrieval_trace["model_generation"] = {
+                            "status": "technical_pending", "reason": "model_output_limit",
+                            "finish_reason": answer_finish_reason,
+                        }
+                        crag_status = "MODEL_OUTPUT_INCOMPLETE"
+                        break
                     if not answer:
-                        if execution_preset.reasoning_enabled or finish_reason_is_length(llm_usage_finish_reason(usage)):
+                        if free_model_rag or execution_preset.reasoning_enabled or finish_reason_is_length(llm_usage_finish_reason(usage)):
                             answer_finish_reason = llm_usage_finish_reason(usage)
                             tokens = int(usage.get("completion_tokens") or 0)
                             retrieval_trace["model_generation"] = {
@@ -12839,6 +12901,8 @@ async def _execute_chat_evidence_application(
                                 "finish_reason": answer_finish_reason,
                             }
                             answer = (
+                                "Генерация не завершена: модель не вернула финальный ответ."
+                                if free_model_rag else
                                 "Генерация не завершена: модель не вернула финальный ответ. "
                                 "Рассуждения не используются как строки сметы; ЛСР не упакована."
                             )
@@ -12865,11 +12929,11 @@ async def _execute_chat_evidence_application(
                     logger.info("[CHAT] model answer accepted unchanged; citation check is trace-only")
                     break
 
-                if model_driven_retrieval and not sheet_pass_done:
+                if model_driven_retrieval and protocol_enabled and not sheet_pass_done:
                     artifact_kind_declaration = update_model_artifact_kind(
                         artifact_kind_declaration, decode_model_artifact_kind(answer), phase="result")
                     retrieval_trace["artifact_target"] = dict(artifact_kind_declaration)
-                if model_driven_retrieval and model_workbook_carrier_required(
+                if model_driven_retrieval and protocol_enabled and model_workbook_carrier_required(
                     attachment_id=getattr(req, "attachment_id", None),
                     source_catalog=source_catalog, model_declaration=artifact_kind_declaration,
                 ):

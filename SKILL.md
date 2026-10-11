@@ -43,6 +43,17 @@ runtime data, logs, model caches or private corpora.
   They never replace or reorder model queries, infer operations or applicability,
   or run in B0_DIRECT and ordinary chat. Ungrounded queries are dropped visibly;
   caps and deferred locators are traced. See `docs/ADR-16-systematic-candidate-retrieval.md`.
+- The owner can opt out of application query/result stages with the immutable
+  profile boolean `rag_policy.application_protocol_enabled=false`. Old profiles
+  without it retain their existing enabled behavior. The production chat then
+  offers native scoped readers immediately with the full source/question and
+  literal owner-selected prompt/skill; it adds no implicit estimator skill or
+  carrier and does not execute JSON tool examples quoted in ordinary text.
+  Free answers are not parsed into automatic XLSX or durable workbook jobs.
+  Profile pinning, source maps, archive reads and ordinary chat history remain.
+  Do not equate that history with a workbook checkpoint or call the opt-out
+  professionally accepted without installed live comparison. See
+  `docs/modules/rag-evidence-flow.md` (candidate930).
 - **Never put an orchestration gate between the model and RAG.** Do not require a planning/status JSON
   handshake before retrieval; do not replace the attachment with a summary; do not drop the original
   question or source access from the final model call; do not let code replace model queries or choose norms, analogues,

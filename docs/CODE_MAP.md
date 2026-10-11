@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат930 (не установлен)
+
+`chat_profile_service.application_protocol_enabled` + publish/resolve revision;
+`sovushka/pages/profiles.py` — выбор «Обработка ВОР/ЛСР». В production
+`chat_evidence_application_service` отключает query/result stages и implicit
+skill для свободного model-driven RAG. Initial/native continuation используют
+тот же governor/reader, обычный финал остаётся текстом без workbook packaging.
+Границы/тесты — [rag-evidence-flow](modules/rag-evidence-flow.md).
+
 ## Изолированный кандидат929 (не установлен)
 
 `model_evidence_archive_service` отделяет immutable task snapshot от working

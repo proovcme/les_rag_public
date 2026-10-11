@@ -1,5 +1,17 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Candidate930: `test_application_protocol_switch` (18 cases) включён в canonical
+gate: actual production plain final без запросов/формата/файла, literal native
+query + exact read + source_map, enabled control с реальным fixture calculator,
+отказ implicit skill, полный исходник при frame1, overflow до model, length,
+unknown native tool, пустой финал, JSON tool example без исполнения; immutable
+session profile pin/explicit apply в `test_chat_profile_service`, type rejection
+до записи и UI control/chip. Всего19 новых сценариев.
+Исходные RED сохранены; focused172 и финальные protocol/profile/docs85 passed;
+verify4468 collected/exit0, make test4465 passed/3 skipped/209 warnings,
+exit0 (388.06s). Пропуски не считаются пройденными. Это offline synthetic, не live
+смета или установленный desktop/mobile сценарий.
+
 Candidate929: `test_model_evidence_working_archive.py` — overflow40 synthetic
 карточек, полный исходник/вопрос/решение, current body, fitting-frame parity,
 отказ без reader/при слишком большом current body, literal immutable reread,

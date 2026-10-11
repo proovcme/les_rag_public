@@ -73,6 +73,7 @@ UNIT_TESTS += tests/test_model_initial_inventory_exact_fit.py tests/test_model_q
 UNIT_TESTS += tests/test_model_partial_inventory_complete_frontier.py
 UNIT_TESTS += tests/test_model_discovery_read_admission.py
 UNIT_TESTS += tests/test_model_evidence_working_archive.py tests/test_clean_model_rag_baseline.py
+UNIT_TESTS += tests/test_application_protocol_switch.py
 UNIT_TESTS += tests/test_resource_consumption_integrity.py
 UNIT_TESTS += tests/test_pr21_remaining_integrity.py
 INTEGRATION_TESTS += tests/test_model_query_checkpoint_draft.py

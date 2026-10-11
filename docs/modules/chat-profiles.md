@@ -1,5 +1,22 @@
 # Chat profiles
 
+## Кандидат930: обязательный формат можно отключить
+
+В «Конфигурация → Профили» откройте нужную версию, в поле «Обработка ВОР/ЛСР»
+выберите «Свободный ответ модели», сохраните новую версию и явно примените её
+к нужному чату. Перезапуск не требуется. Уже открытые чаты сохраняют привязанную
+версию, даже если другая версия стала активной по умолчанию. Вернуть прежний
+режим можно явным применением версии с обязательными этапами/форматом.
+
+Поле snapshot/API: `rag_policy.application_protocol_enabled`, только boolean;
+без поля действует прежнее true. False снимает application query/result stages
+модельного RAG/табличного вложения, не отменяя выбранные prompt/skill. Приложение
+не добавляет сметный skill из-за таблицы. Обычный ответ без таблицы допустим;
+источники/режим сохраняются в chat trace/history. Автоматический сметный Excel
+и workbook checkpoint в этом режиме не создаются. Это переключатель сметного
+протокола, не замена обычного agent/web/MCP tooling. Детали/ограничения:
+[rag-evidence-flow](rag-evidence-flow.md). Runtime ещё не обновлён.
+
 ## Candidate 0.31.184 / 912 - optional export declaration in model queries
 
 Query JSON accepts queries without an artifact_kind for source questions; explicit model vor/lsr declarations and strict invalid-metadata checks remain. Bound profile/skill and literal searches are preserved. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s. Customer-ready false.
