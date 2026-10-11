@@ -296,7 +296,9 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
         for row_no in by_type.get(rtype, []):
             if ws.cell(row=row_no, column=8).value not in (None, "") and ws.cell(row=row_no, column=9).value not in (None, ""):
                 _set_formula(ws, row_no, 10, f"=ROUND(H{row_no}*I{row_no},2)", S["formula_values"])
-            if ws.cell(row=row_no, column=10).value not in (None, "") and ws.cell(row=row_no, column=11).value not in (None, ""):
+            if (ws.cell(row=row_no, column=7).value not in (None, "")
+                    and ws.cell(row=row_no, column=10).value not in (None, "")
+                    and ws.cell(row=row_no, column=11).value not in (None, "")):
                 _set_formula(ws, row_no, 12, f"=ROUND(G{row_no}*J{row_no}*K{row_no},2)", S["formula_values"])
             else:
                 ws.cell(row=row_no, column=12).value = None

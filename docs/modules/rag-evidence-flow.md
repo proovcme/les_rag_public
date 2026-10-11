@@ -1,5 +1,69 @@
 # RAG evidence flow
 
+## Локальный кандидат 0.31.201 / 929: архив и рабочий контекст
+
+**Статус:** код и офлайн-регрессии; не установлен, live acceptance отсутствует.
+Исправления целостности928 сохранены. Полные доказательства принадлежат durable
+заданию; они не обязаны пожизненно занимать весь следующий model wire.
+
+`ModelEvidenceArchive` — immutable task-local snapshot полных chunks. Он отделён
+от текущего контекста, но не заменяет SQLite checkpoint. ID — SHA всего снимка;
+переименование/смена источника не открывает новый файл при reread. ModelResearchToolService
+держит один снимок, перестраиваемый из сохранённых записей, без накопления копий
+каждой предыдущей версии. Чужой/stale ID, неоднозначный alias и неверный offset
+возвращают conflict. `read_source` с `evidence_archive_id + evidence_offset`
+выдаёт до12 literal inventory records в исходном порядке с next_offset;
+с `evidence_archive_id + evidence_ref` возвращает целое сохранённое тело и SHA.
+Эти аргументы используются отдельно от source_row/document selection.
+Новые Q/H handles имеют provenance исходного archive record.
+
+`govern_model_read_messages` сначала исполняет прежний полный replay. Только
+при required overflow и наличии зарегистрированного reader применяется archive
+working replay: полные исходник/вопрос/решения, текущий native batch, ещё не
+доставленные explicit reads и native protocol остаются обязательными. Старые
+карточки больше не перебираются для автоматического повторного допуска;
+модель сама запрашивает нужные сохранённые тела. Manifest объявляет весь архив и доступ к каждому
+непоместившемуся телу. Нормы и решения не ранжируются, raw records не меняются.
+Delivery подтверждается только для фактически допущенных refs после ответа.
+Fitting frames остаются прежними; schema read_source расширена для archive access.
+Fresh discovery сохраняет прежний допуск целых query inventory/body pages.
+Число старых карточек не создаёт отдельный tokenizer RPC для каждой: regression
+на100 synthetic bodies воспроизводит101 count requests до правки и2 после неё.
+Без reader переход запрещён. Одно слишком большое текущее тело, native history
+или полный исходник по-прежнему могут вызвать техническую остановку. Query/source
+preflight и initial grouped inventory этим fallback не заменены.
+
+Отказ begin_or_resume теперь возвращает503 WORKBOOK_CHECKPOINT_UNAVAILABLE до
+первого model/search/artifact действия, с оригинальной причиной в exception chain
+и без внутренних деталей в GUI. Исходный409 изменения source-frame сохранён.
+
+### Чистый контроль модели
+
+`clean_model_rag_baseline_service.run_clean_model_rag_baseline` — диагностический
+entrypoint для сравнительной приёмки, не альтернативный production workflow.
+Caller передаёт тот же exact connection revision, effective preset, исходный
+вопрос, полное представление вложения, явно выбранный профиль/скилл и тот же
+scoped ModelResearchToolService, что в candidate. Native read schemas описывают
+механику инструментов; приложение не добавляет этап объявления запросов,
+обязательные поля результата, JSON response_format, repair или профессиональную
+процедуру. Модель сама вызывает verbatim search_sources/точные readers и выдаёт
+обычный ответ. Governor и pinned BoundModelChatRunner остаются общими.
+
+Ответ без вызова инструментов заканчивает опыт; length, context/read budget,
+повтор и неверный native call видны как технические статусы. Ошибка provider
+не вызывает retry или переключение модели. `terminal` означает завершение
+ответа модели, а не правильную смету. XLSX и live receipt этот диагностический
+entrypoint не создаёт. Для приёмки нужны сохранённые реальные результаты обеих
+веток и экспертная проверка; прежний B0_DIRECT остаётся упрощённым harness и
+не является этим чистым контролем.
+
+Точки: `model_evidence_archive_service`, `ModelResearchToolService.register_evidence_archive`,
+`govern_model_read_messages[_bound]`, `run_clean_model_rag_baseline`.
+Регрессии: `test_model_evidence_working_archive` и `test_clean_model_rag_baseline`;
+проверяют реальные application callbacks с injected synthetic history и
+калькулятором, literal archive paging/reread, guards и отсутствие навязанной
+схемы в диагностическом wire. Они не доказывают профессиональный live результат.
+
 ## Установлен 0.31.198 / 926 — техническая пауза и живые границы
 
 Установлен runtime **0.31.198 / 926**, code commit `8748b76f`.

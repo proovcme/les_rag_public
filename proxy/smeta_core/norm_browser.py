@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from qdrant_client import QdrantClient, models
+from proxy.smeta_core.resource_quantity import resource_consumption
 
 from backend.inference.bm25_sparse import SPARSE_VECTOR_NAME, encode_bm25
 from backend.qdrant_adapter import EmbedClient
@@ -507,7 +508,7 @@ def _read_norm_card_connection(conn: sqlite3.Connection, selected_key: str) -> d
     consumption_known = True
     for resource in resource_rows:
         columns = set(resource.keys())
-        per_unit = resource["per_unit"] if "per_unit" in columns else None
+        per_unit = resource_consumption(resource["per_unit"]) if "per_unit" in columns else None
         consumption_known = consumption_known and per_unit is not None
         item = {
             "kind": str(resource["kind"] or ""),

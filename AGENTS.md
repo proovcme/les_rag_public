@@ -25,6 +25,18 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 получается в baseline. Mock/tool-call fixtures это не доказывают; перед выпуском
 изменений inference/RAG/workflow нужен установленный live-сравнительный gate.
 
+Чистый диагностический контроль — `clean_model_rag_baseline_service.run_clean_model_rag_baseline`:
+тот же pinned model/preset, полный исходник, вопрос, scoped readers и явно выбранный профиль/скилл,
+без application query/result handshake. Прежний `B0_DIRECT` отключает лишь часть обвязки и
+**не доказывает** отсутствие вмешательства. Offline fixture и status=terminal не являются
+профессиональной live приёмкой; контроль не создаёт XLSX и не является вторым production workflow.
+
+Архив доказательств и рабочий контекст модели — разные границы. При overflow исторические тела
+можно вынести из wire только с явно показанным immutable archive и действующим exact reader;
+исходник, решения, текущие чтения и native protocol не теряются. Недоставленные bodies не получают
+delivery. Ошибка сохранения owned-задания останавливает расчёт, а не переводит его в несохраняемый
+режим. Точки/ограничения — `docs/modules/rag-evidence-flow.md` (кандидат929, live pending).
+
 **Приёмочный инвариант № 2 — идентичность документа принадлежит приложению:** устойчивый
 `document identity` (вложение + hash исходника + scope + model/provider + нормативная база +
 регион/ценовая зона/год/квартал + pricebook hash) и цепочка ревизий держатся в коде и durable-состоянии.
@@ -94,6 +106,11 @@ scope. Повторная доставка с тем же `idempotency_key` не
 ## Грабли и осторожность
 - **uv-проект:** зависимости/запуск через `uv run`. Не ставить пакеты без одобрения (`uv add` меняет lock).
 - **Windows-гейт:** канонические pytest-цели `Makefile` уже используют workspace-local `.test-tmp/<gate>`. Если `make` отсутствует, сначала проверить команду и выполнить точные `uv`-команды цели, сохранив `--basetemp=.test-tmp/<gate>`; системный `%TEMP%\pytest-of-Oleg` на Legion может быть недоступен. Не считать setup `PermissionError` провалом кода и не запускать pytest без локального `--basetemp`.
+- Если дочерний `powershell.exe` не находит `Get-FileHash`, проверить наследование PSModulePath:
+  пути модулей PS7 из host/Codex могут ломать загрузку Utility в Windows PowerShell5.1.
+  Для тестового процесса задать штатные WindowsPowerShell module paths (user, ProgramFiles,
+  SystemRoot/System32/WindowsPowerShell/v1.0/Modules), не менять глобальную настройку и не скипать
+  проверки. Сохранить первоначальный failed run и повторить полный gate в исправленной среде.
 - **НЕ дёргать сервисы** (launchd: qdrant/mlx/proxy/sovushka/pauk) без явной нужды — это живой рантайм. Рестарты — `tools/les_runtime_control.py` / `lesctl.py`, осознанно.
 - **Деструктивное — запрещено без явной просьбы** (Guardrails в [SKILL.md](SKILL.md)): не удалять `data/qdrant/`, `data/les_meta_qwen.db`, `storage/`, `RAG_Content/`; не запускать полный реиндекс; беречь таблицу `structured_rules`; `VALIDATOR_BACKEND=rules` — текущий стабильный дефолт.
 - **MLX/память:** модели TTL-выгружаются, metal-семафор; не ломать `backend/mlx_adapter.py` логику памяти.

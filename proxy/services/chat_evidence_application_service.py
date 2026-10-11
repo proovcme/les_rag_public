@@ -1749,7 +1749,8 @@ def model_read_frame_evidence(source_context, chunks, receipts, *, native_exchan
     return [*source_objects, *(compact_read_replay(chunks) if chunks else []), *receipt_context]
 
 
-def govern_model_read_messages(*, source_context, chunks, receipts=(), **context):
+def govern_model_read_messages(*, source_context, chunks, receipts=(), evidence_archive=None,
+                               current_read_refs=(), **context):
     """Use one capacity contract for initial replay and both native continuations."""
     required_refs = [str(record.get("global_evidence_id") or record.get("ref") or "")
                      for item in source_context if isinstance(item, Mapping)
@@ -1763,9 +1764,30 @@ def govern_model_read_messages(*, source_context, chunks, receipts=(), **context
     replay = prepare_model_read_replay(chunks, required_refs=required_refs)
     exchanges = context.get("native_exchanges", ())
     required = model_read_frame_evidence(source_context, (), receipts, native_exchanges=exchanges)
-    messages, packet = govern_inference_messages(
-        **context, required_evidence=[*required, *replay.required], evidence=replay.optional,
-        evidence_kind=ContextKind.CURRENT_READ_FRAME if exchanges else ContextKind.EVIDENCE)
+    def pack(view):
+        return govern_inference_messages(
+            **context, required_evidence=[*required, *view.required], evidence=view.optional,
+            evidence_kind=ContextKind.CURRENT_READ_FRAME if exchanges else ContextKind.EVIDENCE)
+    try:
+        messages, packet = pack(replay)
+    except ContextRequiredSectionOverflow:
+        # Only a registered literal reader permits leaving historical bodies
+        # outside this wire. The complete source, decisions, current reads and
+        # native exchanges remain mandatory; normal fitting frames are unchanged.
+        if evidence_archive is None:
+            raise
+        if not evidence_archive.matches(chunks):
+            raise ValueError('working evidence archive differs from the governed source records')
+        current_refs = list(current_read_refs)
+        if exchanges:
+            last_ids = {reply.call_id for reply in exchanges[-1].replies}
+            current_refs.extend(str(ref) for receipt in receipts
+                if (receipt.get('call') or {}).get('call_id') in last_ids
+                and (receipt.get('call') or {}).get('tool') in {'read_norm_card', 'read_resource_price', 'read_source'}
+                for ref in [*(receipt.get('evidence_refs') or ()),
+                            *(receipt.get('evidence_bindings') or {}).values()])
+        replay = evidence_archive.working_replay(current_refs=current_refs)
+        messages, packet = pack(replay)
     admitted_objects = {obj.object_id for section in packet.sections for obj in section.objects}
     body_refs = [*replay.exact_body_refs,
                  *(ref for index, refs in enumerate(replay.optional_body_refs)
@@ -3599,6 +3621,10 @@ def bind_row_evidence_ids(
             if alias and global_id and alias not in merged:
                 merged[alias] = global_id
         payload["evidence_bindings"] = merged
+        if first_bind:
+            # Only application-delivered provenance can pin a generation;
+            # model-authored private fields must not establish this contract.
+            payload.pop("_normative_source_pin", None)
         # Q/H handles are packet-local. An already bound row must be checked
         # against its durable card, not the first same-named handle of another
         # packet when all sheets are collected for final packaging.
@@ -3621,6 +3647,7 @@ def bind_row_evidence_ids(
         evidence_check = row_evidence_provenance_check(
             payload, checkable_bindings, cards, queries
         )
+        normative_source_ids = set(checkable_bindings.values())
         if evidence_check is not None:
             deferred_refs = [ref for ref, identity in checkable_bindings.items()
                              if identity in deferred_norm_identities]
@@ -3680,6 +3707,7 @@ def bind_row_evidence_ids(
                 # identity previously pinned for this resource action.
                 action_bindings[str(index)] = resolved if first_bind else dict(prior)
                 cited_ids = set(checkable_bindings.values()) | set(resolved.values())
+                normative_source_ids.update(resolved.values())
                 bodies = [global_to_bodies[identity] for identity in cited_ids
                           if identity in global_to_bodies]
                 check = {"index": index, "evidence_bindings": resolved,
@@ -3696,6 +3724,7 @@ def bind_row_evidence_ids(
                     check["target_resource_reference_resolved"] = target is not None
                     if target is not None:
                         check["target_resource"] = target
+                        check["target_resource_slot"] = pointer[1]
                         check["target_code_in_refs"] = True
                         check["target_name_in_refs"] = True
                 for field, diagnostic in (("target_resource_code", "target_code_in_refs"),
@@ -3728,6 +3757,27 @@ def bind_row_evidence_ids(
                 action_checks.append(check)
             payload["_resource_binding_evidence_checks"] = action_checks
             payload["_resource_binding_evidence_bindings"] = action_bindings
+        if first_bind or "_normative_source_pin" not in payload:
+            # Older saved rows can acquire a pin only from their saved global
+            # citation map, never from a reused current-packet alias.
+            pins = []
+            for identity in sorted(normative_source_ids):
+                meta = global_to_resource_cards.get(identity, {})
+                generation = str(meta.get("normative_base_sha256") or "")
+                if (re.fullmatch(r"[0-9a-f]{64}", generation)
+                        and ciphers_identical(str(payload.get("norm_code") or ""),
+                                              global_to_card.get(identity, ""))):
+                    pin = {"norm_key": str(meta.get("norm_key") or ""),
+                           "normative_base_sha256": generation}
+                    if pin not in pins:
+                        pins.append(pin)
+            if pins:
+                payload["_normative_source_pin"] = (
+                    {"status": "pinned", **pins[0]} if len(pins) == 1
+                    else {"status": "conflict", "generations": pins}
+                )
+            elif not first_bind and merged and payload.get("norm_code"):
+                payload["_normative_source_pin"] = {"status": "saved_generation_unavailable"}
         bound.append(payload)
     return bound
 
@@ -9950,7 +10000,7 @@ async def _execute_chat_evidence_application(
                                     **({"source_frame": source_frame_contract} if source_frame_contract else {}),
                                 },
                             )
-                        except Exception as job_error:  # noqa: BLE001 - durability degrades visibly
+                        except Exception as job_error:  # noqa: BLE001 - fail closed with original cause
                             if isinstance(job_error, WorkbookResearchJobError) and str(job_error) == "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED":
                                 raise HTTPException(409, detail={
                                     "code": "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED",
@@ -9967,8 +10017,11 @@ async def _execute_chat_evidence_application(
                                 "status": "durability_unavailable",
                                 "error_type": type(job_error).__name__,
                             }
-                            research_job_service = None
-                            research_job = None
+                            raise HTTPException(503, detail={
+                                "code": "WORKBOOK_CHECKPOINT_UNAVAILABLE",
+                                "message": "Не удалось сохранить задание. Расчёт не запущен: "
+                                           "проверьте доступ к хранилищу и свободное место, затем повторите запрос.",
+                            }) from job_error
                     if (research_job is not None and research_job_service is not None
                             and research_job_service.is_plain_continuation(
                                 research_identity, {"original_question": str(req.question or "")})):
@@ -11030,6 +11083,8 @@ async def _execute_chat_evidence_application(
                                         count_messages=_bound_input_token_counter(answer_execution_preset, sheet_read_tools),
                                         **initial_context, source_context=pass_evidence,
                                         chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                        evidence_archive=model_research_tools.register_evidence_archive(
+                                            [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks]),
                                         receipts=saved_read_receipts)
                                 else:
                                     (messages, answer_packet, model_rag_evidence_groups,
@@ -11194,6 +11249,8 @@ async def _execute_chat_evidence_application(
                                     source_context=pass_evidence,
                                     admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                    evidence_archive=model_research_tools.register_evidence_archive(
+                                        [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks]),
                                     receipts=[*saved_read_receipts, *receipts],
                                 )
                                 retrieval_trace["context_governor"]["calls"].append(
@@ -12703,6 +12760,7 @@ async def _execute_chat_evidence_application(
                                 native_exchanges=native_exchanges,
                                 source_context=fixed_model_rag_evidence,
                                 chunks=model_evidence_chunks, receipts=receipts,
+                                evidence_archive=model_research_tools.register_evidence_archive(model_evidence_chunks),
                                 admit_messages=_cloud_message_admission(answer_execution_preset, direct_read_tools),
                             )
                             retrieval_trace["context_governor"]["calls"].append(

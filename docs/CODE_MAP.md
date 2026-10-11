@@ -1,5 +1,28 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Изолированный кандидат929 (не установлен)
+
+`model_evidence_archive_service` отделяет immutable task snapshot от working
+replay; `model_research_tool_service` обслуживает read_source archive paging/body.
+`govern_model_read_messages` сначала сохраняет прежний полный replay, при
+overflow использует registered archive; production sheet resume/native и direct
+callbacks регистрируют текущие records. Новые reads/источник/решения/native
+protocol не отбрасываются. Job creation failure возвращает503 до model/search.
+`clean_model_rag_baseline_service.run_clean_model_rag_baseline` использует тот же
+governed pinned runner и readers без query/result protocol; diagnostic-only,
+не вызывает production chat и не создаёт acceptance receipt.
+Тесты/границы — [rag-evidence-flow](modules/rag-evidence-flow.md).
+
+## Изолированный кандидат928 (не установлен)
+
+PR21 repair: `attachment_source_catalog_service._classify_row` сохраняет рабочие
+строки с total-словами; `bind_row_evidence_ids` закрепляет SHA поколения;
+`normative_calculation_source_service.resolve_calculation_norm` читает exact
+карточку с expected SHA; `positions_from_visible_lsr_rows` передаёт снимок в RIM;
+`model_resource_binding_service` сохраняет исходные адреса ресурсов. Неизвестный
+расход из927 остаётся NULL. Границы/проверки — RELEASE_LEDGER и ALGO-lsr-assembly.
+Развитие LES/FGIS MCP/ru-aec-skills отдельно; интеграция ими не заявлена.
+
 ## Установлен 0.31.198 / 926
 
 Установлен runtime **0.31.198 / 926**, code commit `8748b76f`.

@@ -248,7 +248,13 @@ def _classify_row(
         and any(marker in folded for marker in _HEADER_MARKERS)
     ):
         return "header", "column_header_marker", 0.95, ()
-    if any(marker in folded for marker in _SUBTOTAL_MARKERS):
+    # A quantity-bearing work stays in coverage even when its caption says
+    # «всего», names Total Control or starts with a total-like word. Only a
+    # separate total caption without a work unit can exclude a source row.
+    if not has_unit and any(
+        re.fullmatch(r"" + re.escape(marker) + r"(?:\s+по\b.*|\s*[:,].*|\s*)", value.casefold().strip())
+        for value in values for marker in _SUBTOTAL_MARKERS
+    ):
         return "subtotal", "subtotal_marker", 0.98, ()
     if any(folded.startswith(marker) for marker in _SECTION_MARKERS):
         return "section", "section_marker", 0.95, ()

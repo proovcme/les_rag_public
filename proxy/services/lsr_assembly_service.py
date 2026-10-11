@@ -344,6 +344,14 @@ def compute_position(
             resources = expanded
             from_norm_card = True
     resources = [dict(r) for r in resources]
+    from proxy.smeta_core.resource_quantity import resource_consumption
+
+    for resource in resources:
+        if resource_consumption(resource.get("qty")) is None:
+            raise ValueError(
+                f"Не указано количество ресурса: {resource.get('name') or '?'} "
+                f"({resource.get('code') or '—'}). Полный расчёт невозможен."
+            )
     if from_norm_card:
         # ADR-16 § 7: the rate written inside the norm card is not operator money.
         # Marking where it came from is what lets the ladder ask the chosen base

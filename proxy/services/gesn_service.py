@@ -494,12 +494,15 @@ def expand_position(
         return None
     q = _f(qty)
     lines: list[dict[str, Any]] = []
+    from proxy.smeta_core.resource_quantity import resource_consumption
+
     for r in norm.get("resources", []):
+        consumption = resource_consumption(r.get("per_unit"))
         line: dict[str, Any] = {
             "kind": r.get("kind"),
             "name": r.get("name", ""),
             "unit": r.get("unit", ""),
-            "qty": round(_f(r.get("per_unit")) * q, 6),
+            "qty": round(consumption * q, 6) if consumption is not None else None,
         }
         if r.get("code"):
             line["code"] = r["code"]

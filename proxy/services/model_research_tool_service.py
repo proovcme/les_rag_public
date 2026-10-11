@@ -213,7 +213,47 @@ class ModelResearchToolService:
         self._shown_norm_navigation: list[dict[str, Any]] = []
         self._shown_norm_refs: list[dict[str, Any]] = []
         self._shown_documents: dict[str, tuple[str, str]] = {}
+        self._evidence_archive = None
         self.set_price_basis(price_basis or {})
+
+    def register_evidence_archive(self, chunks):
+        """One immutable snapshot for this task; never reopen a changed source."""
+        from proxy.services.model_evidence_archive_service import ModelEvidenceArchive
+        if self._evidence_archive is None or not self._evidence_archive.matches(chunks):
+            self._evidence_archive = ModelEvidenceArchive(chunks)
+        return self._evidence_archive
+
+    def _read_evidence_archive(self, args):
+        from proxy.services.model_evidence_archive_service import EvidenceArchiveConflict
+        archive = self._evidence_archive
+        if archive is None or args.get('evidence_archive_id') != archive.archive_id:
+            return self._missing('read_source', 'archive snapshot is unavailable or changed', status='conflict')
+        fields = set(args)
+        if fields not in ({'evidence_archive_id', 'evidence_ref'}, {'evidence_archive_id', 'evidence_offset'}):
+            return self._missing('read_source', 'use one archive reference or inventory offset alone', status='conflict')
+        payload = {'schema': 'les_tool_result_v1', 'tool': 'read_source',
+            'operation': 'immutable_evidence_reread', 'status': 'ok', 'inputs': [dict(args)],
+            'sources': [], 'missing': [], 'warnings': [], 'trace': {}}
+        try:
+            if 'evidence_offset' in args:
+                payload['trace']['evidence_archive_page'] = archive.page(args['evidence_offset'])
+                return ModelResearchToolResult(payload=payload)
+            record = archive.read(args['evidence_ref'])
+        except EvidenceArchiveConflict as error:
+            return self._missing('read_source', str(error), status='conflict')
+        meta = dict(record.get('meta') or {})
+        body = str(record.get('content') or '')
+        if not body or (meta.get('body_status') == 'deferred_capacity' and not meta.get('model_raw_body_retained')):
+            return self._missing('read_source', 'archive record retains only an unread pointer')
+        meta['archive_original_global_evidence_id'] = meta.get('global_evidence_id')
+        meta['archive_original_evidence_ref'] = args['evidence_ref']
+        meta['source_read'] = True
+        meta['body_status'] = 'full'
+        payload['trace']['evidence_archive_read'] = {'archive_id': archive.archive_id,
+            'evidence_ref': args['evidence_ref'], 'global_evidence_id': meta.get('global_evidence_id')}
+        return ModelResearchToolResult(payload=payload, chunks=(_SmetaNormChunk(
+            content=body, doc_name=str(record.get('doc_name') or ''),
+            score=float(record.get('score') or 1.0), meta=meta),))
 
     def set_price_basis(self, price_basis: Mapping[str, Any]) -> None:
         """Bind application-owned durable task scope, never a model-chosen fallback."""
@@ -506,6 +546,8 @@ class ModelResearchToolService:
             return self._missing("", "tool call and args must be objects")
         tool = str(call.get("tool") or "")
         args = dict(call.get("args") or {})
+        if tool == 'read_source' and ('evidence_archive_id' in args or 'evidence_ref' in args or 'evidence_offset' in args):
+            return self._read_evidence_archive(args)
         if tool == "read_source" and "source_row" in args:
             result = self._read_attachment_source(args)
             if result.payload["status"] != "ok" and set(args) == {"source_row"}:

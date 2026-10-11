@@ -162,6 +162,11 @@ def resource_binding_position_fields(
     if "resource_bindings" not in row and "resource_review" not in row and not linked_supply_rows and not linked_resource_rows:
         return {}
     resources = copy.deepcopy([dict(resource) for resource in norm_resources])
+    # Address the original card order, never a shifted list after a removal.
+    # Explicit source slots survive mechanical labor normalization as well.
+    source_slots = [resource.get("resource_slot", index)
+                    for index, resource in enumerate(resources, 1)]
+    source_records = copy.deepcopy(resources)
     conflicts: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
     fields: dict[str, Any] = {"resource_binding_audit": audit, "resource_binding_conflicts": conflicts}
@@ -228,6 +233,11 @@ def resource_binding_position_fields(
                 matches = [i for i, target in enumerate(resources)
                            if (not binding.target_resource_code or _key(target.get("code")) == _key(binding.target_resource_code))
                            and (not binding.target_resource_name or _key(target.get("name")) == _key(binding.target_resource_name))
+                           and (pointed_target is None or (
+                               isinstance(source_slots[i], int) and not isinstance(source_slots[i], bool)
+                               and source_slots[i] == check.get("target_resource_slot")
+                               and all(source_records[i].get(key) == pointed_target.get(key)
+                                       for key in ("price", "source_ref"))))
                            and (pointed_target is None or all(target.get(key) == pointed_target.get(key)
                                 for key in ("kind", "code", "name", "unit", "per_unit")))]
                 target = None
@@ -272,8 +282,12 @@ def resource_binding_position_fields(
                 # All checks precede mutation: a rejected replacement retains its target.
                 if target is not None:
                     resources.pop(matches[0])
+                    original_slot = source_slots.pop(matches[0])
+                    original = source_records.pop(matches[0])
                 if replacement is not None:
                     resources.append(replacement)
+                    source_slots.append(original_slot if binding.action == "reuse" else None)
+                    source_records.append(original if binding.action == "reuse" else {})
                 entry.update({"status": "applied", "action": binding.action, "provenance": provenance})
                 entry["evidence_status"] = "checked" if check is not None else "unverified"
                 if check is None:
