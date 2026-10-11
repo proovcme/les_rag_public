@@ -17,9 +17,11 @@ def model_evidence_read_tool_schemas() -> list[dict[str, Any]]:
          {"q": {"type": "string"}}, ["q"]),
         ("read_resource_price", "Read price, unit and origin of one literal code in the bound pricebook.",
          {"code": {"type": "string"}}, ["code"]),
-        ("read_source", "Read a current attachment row (source_row only), or a shown/named document in selected datasets.",
+        ("read_source", "Read a current attachment row, selected document, or immutable saved evidence. For an archive use its evidence_archive_id with evidence_ref (whole body) or evidence_offset (inventory page), alone.",
          {"doc_id": {"type": "string"}, "dataset_id": {"type": "string"},
-          "doc_name": {"type": "string"}, "q": {"type": "string"}, "source_row": {"type": "string"}}, []),
+          "doc_name": {"type": "string"}, "q": {"type": "string"}, "source_row": {"type": "string"},
+          "evidence_archive_id": {"type": "string"}, "evidence_ref": {"type": "string"},
+          "evidence_offset": {"type": "integer", "minimum": 0}}, []),
     )
     return [{"type": "function", "function": {
         "name": name, "description": description,

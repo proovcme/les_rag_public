@@ -946,7 +946,7 @@ def collect_lsr_workbook_gaps(trace: Mapping[str, Any]) -> list[str]:
             reasons = (position.get("summary") or {}).get("completeness_reasons") or []
             for reason in reasons:
                 text = str(reason)
-                if text.startswith("price_missing:"):
+                if text.startswith(("price_missing:", "resource_quantity_missing:")):
                     gaps.append(text)
     return gaps
 

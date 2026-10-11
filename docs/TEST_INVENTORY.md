@@ -1,5 +1,50 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Candidate930: `test_application_protocol_switch` (18 cases) включён в canonical
+gate: actual production plain final без запросов/формата/файла, literal native
+query + exact read + source_map, enabled control с реальным fixture calculator,
+отказ implicit skill, полный исходник при frame1, overflow до model, length,
+unknown native tool, пустой финал, JSON tool example без исполнения; immutable
+session profile pin/explicit apply в `test_chat_profile_service`, type rejection
+до записи и UI control/chip. Всего19 новых сценариев.
+Исходные RED сохранены; focused172 и финальные protocol/profile/docs85 passed;
+verify4468 collected/exit0, make test4465 passed/3 skipped/209 warnings,
+exit0 (388.06s). Пропуски не считаются пройденными. Это offline synthetic, не live
+смета или установленный desktop/mobile сценарий.
+
+Candidate929: `test_model_evidence_working_archive.py` — overflow40 synthetic
+карточек, полный исходник/вопрос/решение, current body, fitting-frame parity,
+отказ без reader/при слишком большом current body, literal immutable reread,
+все40 inventory refs через paging, stale ID/ambiguous alias/bad args,
+actual B0/B1 callbacks с injected history и реальным fixture calculator,
+503 до model/search при отказе checkpoint; unaddressable historical body нельзя
+вынести под обещание перечитывания; fresh discovery сохраняет обычный допуск.
+Exact wire counter на100 старых телах:101 requests до исправления/2 после,
+без одного RPC на каждую историческую карточку. До правки:13 failed/1 pass.
+`test_clean_model_rag_baseline.py` — diagnostic wire без query/result handshake,
+verbatim native model query и обычный ответ, no forced search, LENGTH, provider
+failure, invalid native args и read budget. До реализации: import failure.
+Оба файла входят в canonical gate; это offline fixtures, не live acceptance.
+Итог929: verify4449 collected/exit0; полный test4446 passed/3 skipped/209 warnings,
+exit0 (408.17s). Первый полный test дал2 failures из-за наследованных PS7 module
+paths в дочернем PowerShell5.1; исправлена среда тестового процесса, проверки
+не ослаблялись. Целевые150 и Windows prepare17 passed; live gate ещё не выполнен.
+
+Candidate928: `test_pr21_remaining_integrity.py` включён в canonical gate:
+рабочие строки с total-словами, смена SQLite поколения после чтения,
+один проверенный снимок до фактического RIM, replay/конфликт поколений,
+запрет model-forged pin, pointer-only provenance и одинаковые ресурсы с точными
+адресами после удаления соседней записи. Восемь исходных регрессий сначала RED.
+Положительные суммы проверяются на synthetic SQLite; trust gate в этих тестах
+подменён явно и не доказывает нормативную пригодность базы или качество модели.
+Итог928: 19 новых сценариев; canonical verify4422 collected, test4419 passed /
+3 skipped. Пропуски и профессиональная live приёмка этим результатом не закрыты.
+
+Candidate927: `test_resource_consumption_integrity.py` проверяет отличие неизвестного
+от нуля на реальном Parquet→SQLite→exact card→calculator→XLSX, finite/invalid
+значения, сохранность явного None, partial/gaps и отказ legacy assembly. Новый
+тест включён в canonical Make gate. Это synthetic integrity, не live estimate.
+
 Candidate873 adds mandatory test_chat_native_research_exchange.py (actual ordinary
 chat rounds/final, literal native protocol, invalid IDs/args, physical overflow,
 legacy unchanged) and test_model_norm_evidence_ref_reads.py (actual admission,

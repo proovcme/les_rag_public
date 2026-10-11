@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Mapping, Optional
 
 from proxy.smeta_core.unit_contract import norm_measure
+from proxy.smeta_core.resource_quantity import resource_consumption
 
 from proxy.services.estimate_math_service import parse_ru_number
 from proxy.services import gesn_service, nr_sp_service
@@ -1136,6 +1137,9 @@ def _resolve_price_trace(
 def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """Вернуть норму и ресурсы с ``per_unit``; explicit resources поддержаны для тестов/ручного ввода."""
     code = str(position.get("code") or "").strip()
+    # A verified reader snapshot must reach the calculator without a second
+    # lookup by cipher against a mutable current base.
+    resolved_norm = position.get("_resolved_norm")
     # ``resources`` is a tri-state contract:
     # - key absent: hydrate the norm's source resources;
     # - non-empty list: use the explicit model revision;
@@ -1143,7 +1147,7 @@ def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None
     # Treating [] as "not supplied" resurrected the raw norm after an unresolved
     # model review and bypassed labor normalization.
     if code and "resources" not in position:
-        norm = gesn_service.get_norm(code)
+        norm = resolved_norm if isinstance(resolved_norm, Mapping) else gesn_service.get_norm(code)
         if norm is None:
             return None, []
         from proxy.smeta_core.resource_normalizer import normalize_norm_resources
@@ -1153,13 +1157,14 @@ def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None
             for res in normalize_norm_resources(list(norm.get("resources") or []))
         ]
 
-    norm = gesn_service.get_norm(code) if code else None
+    norm = (resolved_norm if isinstance(resolved_norm, Mapping) else gesn_service.get_norm(code)) if code else None
     work_qty = _f(position.get("qty")) or 1.0
     resources: list[dict[str, Any]] = []
     for res in position.get("resources") or []:
         line = _plain_resource_line(dict(res))
-        if line.get("per_unit") in (None, ""):
-            line["per_unit"] = _f(line.get("qty")) / work_qty if work_qty else _f(line.get("qty"))
+        if "per_unit" not in line:
+            total_quantity = resource_consumption(line.get("qty"))
+            line["per_unit"] = total_quantity / work_qty if total_quantity is not None and work_qty else None
         resources.append(line)
     return norm, resources
 
@@ -1446,8 +1451,11 @@ def build_position_trace(
     for res in resources:
         kind = str(res.get("kind") or "")
         coeff = _resource_coeff(kind, k_ozp=k_ozp, k_em=k_em)
-        per_unit = _f(res.get("per_unit"))
-        total_qty = round(per_unit * coeff * work_qty, 6)
+        per_unit = resource_consumption(res.get("per_unit"))
+        total_qty = round(per_unit * coeff * work_qty, 6) if per_unit is not None else None
+        if per_unit is None:
+            flags.append(f"Не указан нормативный расход: {res.get('name') or '?'} ({res.get('code') or '—'})")
+            completeness_reasons.append(f"resource_quantity_missing:{res.get('code') or res.get('name') or '?'}")
         price = _resolve_price_trace(res, pricebook=pricebook, kac_map=kac_lookup)
         if (price.price is None and price.action == "needs_machinist_rate"
                 and kind == "machinist" and not str(res.get("code") or "").strip()
@@ -1456,7 +1464,7 @@ def build_position_trace(
             # reconcile with FSEM. A tariff alone cannot repair that conflict.
             # Keep the price, quantity and monetary completeness unchanged.
             price = replace(price, action="needs_fsem_resolution")
-        cost = None if price.price is None else round(total_qty * price.price, 2)
+        cost = None if price.price is None or total_qty is None else round(total_qty * price.price, 2)
         if price.book_unit:
             flags.append(book_unit_conflict_note(res, price.book_unit))
         if price.price is None:
@@ -1535,7 +1543,8 @@ def build_position_trace(
             continue
         if cost is not None:
             sums[kind] = round(sums[kind] + cost, 2)
-        qty_sums[kind] = round(qty_sums[kind] + total_qty, 6)
+        if total_qty is not None:
+            qty_sums[kind] = round(qty_sums[kind] + total_qty, 6)
         detail_rows[kind].append(
             _row(
                 f"resource_{kind}",
@@ -1852,6 +1861,7 @@ def build_position_trace(
             "machinist_qty": qty_sums["machinist"],
             "flags": flags,
             "norm_source_integrity": norm_source_integrity,
+            "normative_base_sha256": (norm or {}).get("normative_base_sha256"),
             "nr_sp_trace": nr_sp,
             # the owner of the accrual rate, so the file and the chat can name
             # a card-written НР/СП as the open question it is
@@ -2771,7 +2781,15 @@ def positions_from_visible_lsr_rows(
                 )
             )
             continue
-        norm = gesn_service.get_norm(code)
+        from proxy.services.normative_calculation_source_service import resolve_calculation_norm
+
+        norm, source_conflict = resolve_calculation_norm(row, code)
+        if source_conflict:
+            bindings.append(_with_visible_identity({
+                "row": source_row, "code": code, "status": "norm_source_conflict",
+                "message": source_conflict, "source_row": row,
+            }, title=title, source_qty=source_qty, source_unit=source_unit))
+            continue
         if norm is None:
             binding = {
                 "row": source_row,
@@ -2817,6 +2835,7 @@ def positions_from_visible_lsr_rows(
             continue
         position = {
             "code": code,
+            "_resolved_norm": norm,
             "op_key": operation_identity(row),
             "qty": norm_qty,
             "section": str(_first_value(row, "section", "раздел") or "").strip() or "Без раздела",
@@ -2914,7 +2933,7 @@ def positions_from_visible_lsr_rows(
             "status": "bound",
             "quantity_trace": qty_trace,
             "source_row": row,
-            "position": {k: v for k, v in position.items() if k != "source_row"},
+            "position": {k: v for k, v in position.items() if k not in {"source_row", "_resolved_norm"}},
         }
         for key in (
             "coefficient",

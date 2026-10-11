@@ -22,6 +22,21 @@ from sovushka.uikit.components import (
 
 MODE_ORDER = ("search", "agent", "estimator", "engineer")
 QUERY_REASONING_CHOICES = {"inherit": "Наследовать общее", "on": "Включено", "off": "Выключено"}
+APPLICATION_PROTOCOL_CHOICES = {
+    "on": "Обязательные этапы и формат",
+    "off": "Свободный ответ модели",
+}
+
+
+def application_protocol_choice(draft: dict[str, Any]) -> str:
+    from proxy.services.chat_profile_service import application_protocol_enabled
+    return "on" if application_protocol_enabled(draft) else "off"
+
+
+def set_application_protocol_choice(draft: dict[str, Any], choice: str) -> None:
+    if choice not in APPLICATION_PROTOCOL_CHOICES:
+        raise ValueError("Неизвестный режим обработки ВОР/ЛСР")
+    draft.setdefault("rag_policy", {})["application_protocol_enabled"] = choice == "on"
 
 
 def query_reasoning_choice(policy: dict[str, Any]) -> str:
@@ -507,6 +522,18 @@ def build_profiles():
                         "reasoning_enabled", bool(event.value)
                     )
                 )
+                protocol = select_field(
+                    APPLICATION_PROTOCOL_CHOICES, value=application_protocol_choice(draft),
+                    label="Обработка ВОР/ЛСР", classes="w-full",
+                )
+                protocol.tooltip(
+                    "Свободный ответ: модель сама вызывает поиск и чтение, приложение не требует "
+                    "этапов или полей ответа и не собирает сметный Excel автоматически. "
+                    "Выбранные промпт и скилл остаются действующими — проверьте их инструкции. "
+                    "Применяется в модельном поиске и при табличном вложении. "
+                    "Сохраните новую версию профиля и явно примените её к чату; перезапуск не нужен."
+                )
+                protocol.on_value_change(lambda event: set_application_protocol_choice(draft, event.value))
                 query_reasoning = select_field(
                     QUERY_REASONING_CHOICES,
                     value=query_reasoning_choice(draft.get("model_policy") or {}),

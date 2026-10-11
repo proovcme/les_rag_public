@@ -99,7 +99,7 @@ from proxy.services.project_summary_service import (
     format_project_inventory_prompt,
 )
 from proxy.services.prompt_registry_service import build_mode_system_prompt
-from proxy.services.chat_profile_service import effective_retrieval_policy
+from proxy.services.chat_profile_service import application_protocol_enabled, effective_retrieval_policy
 from proxy.services.retrieval_service import required_reranker_policy, retrieve_chat_chunks
 from proxy.services.runtime_admission import (
     acquire_generation_slot,
@@ -1749,7 +1749,8 @@ def model_read_frame_evidence(source_context, chunks, receipts, *, native_exchan
     return [*source_objects, *(compact_read_replay(chunks) if chunks else []), *receipt_context]
 
 
-def govern_model_read_messages(*, source_context, chunks, receipts=(), **context):
+def govern_model_read_messages(*, source_context, chunks, receipts=(), evidence_archive=None,
+                               current_read_refs=(), **context):
     """Use one capacity contract for initial replay and both native continuations."""
     required_refs = [str(record.get("global_evidence_id") or record.get("ref") or "")
                      for item in source_context if isinstance(item, Mapping)
@@ -1763,9 +1764,30 @@ def govern_model_read_messages(*, source_context, chunks, receipts=(), **context
     replay = prepare_model_read_replay(chunks, required_refs=required_refs)
     exchanges = context.get("native_exchanges", ())
     required = model_read_frame_evidence(source_context, (), receipts, native_exchanges=exchanges)
-    messages, packet = govern_inference_messages(
-        **context, required_evidence=[*required, *replay.required], evidence=replay.optional,
-        evidence_kind=ContextKind.CURRENT_READ_FRAME if exchanges else ContextKind.EVIDENCE)
+    def pack(view):
+        return govern_inference_messages(
+            **context, required_evidence=[*required, *view.required], evidence=view.optional,
+            evidence_kind=ContextKind.CURRENT_READ_FRAME if exchanges else ContextKind.EVIDENCE)
+    try:
+        messages, packet = pack(replay)
+    except ContextRequiredSectionOverflow:
+        # Only a registered literal reader permits leaving historical bodies
+        # outside this wire. The complete source, decisions, current reads and
+        # native exchanges remain mandatory; normal fitting frames are unchanged.
+        if evidence_archive is None:
+            raise
+        if not evidence_archive.matches(chunks):
+            raise ValueError('working evidence archive differs from the governed source records')
+        current_refs = list(current_read_refs)
+        if exchanges:
+            last_ids = {reply.call_id for reply in exchanges[-1].replies}
+            current_refs.extend(str(ref) for receipt in receipts
+                if (receipt.get('call') or {}).get('call_id') in last_ids
+                and (receipt.get('call') or {}).get('tool') in {'read_norm_card', 'read_resource_price', 'read_source'}
+                for ref in [*(receipt.get('evidence_refs') or ()),
+                            *(receipt.get('evidence_bindings') or {}).values()])
+        replay = evidence_archive.working_replay(current_refs=current_refs)
+        messages, packet = pack(replay)
     admitted_objects = {obj.object_id for section in packet.sections for obj in section.objects}
     body_refs = [*replay.exact_body_refs,
                  *(ref for index, refs in enumerate(replay.optional_body_refs)
@@ -2378,6 +2400,9 @@ def overlay_tabular_estimator_snapshot(
         bridges.append(TABULAR_ATTACHMENT_ESTIMATOR_BRIDGE)
     snapshot["effective_capability_bridges"] = bridges
     snapshot["tabular_estimator_path"] = True
+    if not application_protocol_enabled(snapshot):
+        # The attachment still grants literal readers, not an implicit skill.
+        return snapshot
     skill_path = Path(__file__).resolve().parents[2] / "skills" / "smeta" / "references" / "rag-estimator.md"
     workbook_skill = skill_path.read_text(encoding="utf-8").strip()
     existing_skill = str(snapshot.get("skill_text") or "").strip()
@@ -3599,6 +3624,10 @@ def bind_row_evidence_ids(
             if alias and global_id and alias not in merged:
                 merged[alias] = global_id
         payload["evidence_bindings"] = merged
+        if first_bind:
+            # Only application-delivered provenance can pin a generation;
+            # model-authored private fields must not establish this contract.
+            payload.pop("_normative_source_pin", None)
         # Q/H handles are packet-local. An already bound row must be checked
         # against its durable card, not the first same-named handle of another
         # packet when all sheets are collected for final packaging.
@@ -3621,6 +3650,7 @@ def bind_row_evidence_ids(
         evidence_check = row_evidence_provenance_check(
             payload, checkable_bindings, cards, queries
         )
+        normative_source_ids = set(checkable_bindings.values())
         if evidence_check is not None:
             deferred_refs = [ref for ref, identity in checkable_bindings.items()
                              if identity in deferred_norm_identities]
@@ -3680,6 +3710,7 @@ def bind_row_evidence_ids(
                 # identity previously pinned for this resource action.
                 action_bindings[str(index)] = resolved if first_bind else dict(prior)
                 cited_ids = set(checkable_bindings.values()) | set(resolved.values())
+                normative_source_ids.update(resolved.values())
                 bodies = [global_to_bodies[identity] for identity in cited_ids
                           if identity in global_to_bodies]
                 check = {"index": index, "evidence_bindings": resolved,
@@ -3696,6 +3727,7 @@ def bind_row_evidence_ids(
                     check["target_resource_reference_resolved"] = target is not None
                     if target is not None:
                         check["target_resource"] = target
+                        check["target_resource_slot"] = pointer[1]
                         check["target_code_in_refs"] = True
                         check["target_name_in_refs"] = True
                 for field, diagnostic in (("target_resource_code", "target_code_in_refs"),
@@ -3728,6 +3760,27 @@ def bind_row_evidence_ids(
                 action_checks.append(check)
             payload["_resource_binding_evidence_checks"] = action_checks
             payload["_resource_binding_evidence_bindings"] = action_bindings
+        if first_bind or "_normative_source_pin" not in payload:
+            # Older saved rows can acquire a pin only from their saved global
+            # citation map, never from a reused current-packet alias.
+            pins = []
+            for identity in sorted(normative_source_ids):
+                meta = global_to_resource_cards.get(identity, {})
+                generation = str(meta.get("normative_base_sha256") or "")
+                if (re.fullmatch(r"[0-9a-f]{64}", generation)
+                        and ciphers_identical(str(payload.get("norm_code") or ""),
+                                              global_to_card.get(identity, ""))):
+                    pin = {"norm_key": str(meta.get("norm_key") or ""),
+                           "normative_base_sha256": generation}
+                    if pin not in pins:
+                        pins.append(pin)
+            if pins:
+                payload["_normative_source_pin"] = (
+                    {"status": "pinned", **pins[0]} if len(pins) == 1
+                    else {"status": "conflict", "generations": pins}
+                )
+            elif not first_bind and merged and payload.get("norm_code"):
+                payload["_normative_source_pin"] = {"status": "saved_generation_unavailable"}
         bound.append(payload)
     return bound
 
@@ -7265,6 +7318,10 @@ def profile_system_prompt(
     snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
     prompt = str(snapshot.get("prompt_text") or "").strip()
     skill = str(snapshot.get("skill_text") or "").strip()
+    if not application_protocol_enabled(snapshot) and profile_uses_model_driven_retrieval(snapshot):
+        # Owner-selected instructions remain literal. No implicit role fallback,
+        # query handshake, carrier, format repair or professional steps are added.
+        return "\n\n".join(part for part in (prompt, skill) if part)
     if not prompt:
         prompt = build_mode_system_prompt("rag")
     parts = [prompt]
@@ -8457,7 +8514,24 @@ async def _execute_chat_evidence_application(
     model_delivered_source_locators: set[str] = set()
     answer_finish_reason = ""
     model_driven_retrieval = profile_uses_model_driven_retrieval(profile_snapshot)
+    protocol_enabled = application_protocol_enabled(profile_snapshot)
+    free_model_rag = model_driven_retrieval and not protocol_enabled
+    if free_model_rag and canonical_execution_mode is not CanonicalRouteMode.ACTIVE:
+        raise HTTPException(409, detail={
+            "code": "NATIVE_PROTOCOL_CONNECTION_REQUIRED",
+            "message": "Свободный режим требует назначенного подключения модели с вызовом инструментов. "
+                       "Назначьте подключение для чата; сохранённый профиль не изменён.",
+        })
+    retrieval_trace["application_protocol"] = {
+        "enabled": protocol_enabled,
+        "effective": ("native" if free_model_rag else "guided") if model_driven_retrieval else "not_applicable",
+        "source": "profile_revision" if "application_protocol_enabled" in ((profile_snapshot or {}).get("rag_policy") or {}) else "legacy_default",
+        "profile_revision_id": str((profile_snapshot or {}).get("revision_id") or ""),
+        "automatic_workbook": model_driven_retrieval and protocol_enabled, "restart_required": False,
+    }
     source_frame_rows = configured_source_frame_rows(_env_int)
+    if free_model_rag:
+        source_frame_rows = 0  # Native model sees the whole source, chooses its own reads.
     initial_source_frame: ModelSourceFrame | None = None
     source_frame_contract: dict[str, Any] = {}
     source_frame_contract_sha256 = ""
@@ -8488,7 +8562,7 @@ async def _execute_chat_evidence_application(
     comparative_variant = str(
         getattr(req, "comparative_acceptance_variant", "") or ""
     ).upper()
-    if comparative_variant == "B0_DIRECT":
+    if comparative_variant == "B0_DIRECT" or free_model_rag:
         sheet_pass_active = False
     if comparative_variant:
         retrieval_trace["comparative_acceptance"] = {
@@ -8923,7 +8997,7 @@ async def _execute_chat_evidence_application(
                 model_research_tools = None
                 retrieval_limits = effective_retrieval_policy(profile_snapshot)
                 query_failure_final_texts: list[str] = []
-                if model_driven_retrieval and tool_loop_enabled and not sheet_pass_active:
+                if model_driven_retrieval and tool_loop_enabled and not sheet_pass_active and protocol_enabled:
                     retrieval_limits = effective_retrieval_policy(profile_snapshot)
                     query_headers = {}
                     if llm_runtime.api_key:
@@ -9162,7 +9236,7 @@ async def _execute_chat_evidence_application(
                         "rejected_queries": rejected_model_queries,
                         "omitted_evidence_refs": omitted_evidence_refs,
                     }
-                elif model_driven_retrieval and tool_loop_enabled and sheet_pass_active:
+                elif model_driven_retrieval and tool_loop_enabled and (sheet_pass_active or free_model_rag):
                     retrieval_limits = effective_retrieval_policy(profile_snapshot)
                     query_headers = {}
                     if llm_runtime.api_key:
@@ -9209,7 +9283,7 @@ async def _execute_chat_evidence_application(
                         **retrieval_limits,
                     )
                     retrieval_trace["tool_loop"] = {
-                        "schema": "les_model_rag_sheet_pass_v1",
+                        "schema": "les_model_rag_native_v1" if free_model_rag else "les_model_rag_sheet_pass_v1",
                         "enabled": True,
                         "model_owns_queries": True,
                         "passes": [],
@@ -9950,7 +10024,7 @@ async def _execute_chat_evidence_application(
                                     **({"source_frame": source_frame_contract} if source_frame_contract else {}),
                                 },
                             )
-                        except Exception as job_error:  # noqa: BLE001 - durability degrades visibly
+                        except Exception as job_error:  # noqa: BLE001 - fail closed with original cause
                             if isinstance(job_error, WorkbookResearchJobError) and str(job_error) == "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED":
                                 raise HTTPException(409, detail={
                                     "code": "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED",
@@ -9967,8 +10041,11 @@ async def _execute_chat_evidence_application(
                                 "status": "durability_unavailable",
                                 "error_type": type(job_error).__name__,
                             }
-                            research_job_service = None
-                            research_job = None
+                            raise HTTPException(503, detail={
+                                "code": "WORKBOOK_CHECKPOINT_UNAVAILABLE",
+                                "message": "Не удалось сохранить задание. Расчёт не запущен: "
+                                           "проверьте доступ к хранилищу и свободное место, затем повторите запрос.",
+                            }) from job_error
                     if (research_job is not None and research_job_service is not None
                             and research_job_service.is_plain_continuation(
                                 research_identity, {"original_question": str(req.question or "")})):
@@ -11030,6 +11107,8 @@ async def _execute_chat_evidence_application(
                                         count_messages=_bound_input_token_counter(answer_execution_preset, sheet_read_tools),
                                         **initial_context, source_context=pass_evidence,
                                         chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                        evidence_archive=model_research_tools.register_evidence_archive(
+                                            [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks]),
                                         receipts=saved_read_receipts)
                                 else:
                                     (messages, answer_packet, model_rag_evidence_groups,
@@ -11194,6 +11273,8 @@ async def _execute_chat_evidence_application(
                                     source_context=pass_evidence,
                                     admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                    evidence_archive=model_research_tools.register_evidence_archive(
+                                        [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks]),
                                     receipts=[*saved_read_receipts, *receipts],
                                 )
                                 retrieval_trace["context_governor"]["calls"].append(
@@ -12073,14 +12154,14 @@ async def _execute_chat_evidence_application(
                                 },
                             })
                         # ADR-12 §2: каркас формы под интент добавляем к нормальному промпту.
-                        workbook_carrier_required = model_workbook_carrier_required(
+                        workbook_carrier_required = protocol_enabled and model_workbook_carrier_required(
                             attachment_id=getattr(req, "attachment_id", None),
                             source_catalog=source_catalog, model_declaration=artifact_kind_declaration,
                         )
                         answer_profile = (profile_system_prompt(profile_snapshot, strict=False,
                                           purpose="workbook_result" if workbook_carrier_required else "source_read")
                                           if model_driven_retrieval else sys_normal)
-                        sys_msg = answer_profile + (f" {answer_form.instruction}" if answer_form.instruction else "")
+                        sys_msg = answer_profile + (f" {answer_form.instruction}" if answer_form.instruction and not free_model_rag else "")
                         # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
                         # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-директиву).
                         if req.output_directive and req.output_directive.strip():
@@ -12097,9 +12178,12 @@ async def _execute_chat_evidence_application(
                         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
                         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
                     )
+                    if free_model_rag:
+                        question_tail = str(req.question or "")
                     direct_read_tools = (
                         model_evidence_read_tool_schemas()
                         if model_driven_retrieval
+                        and (not free_model_rag or tool_loop_enabled)
                         and (str(getattr(req, "comparative_acceptance_variant", "") or "") == "B0_DIRECT"
                              or not workbook_carrier_required)
                         else []
@@ -12116,8 +12200,9 @@ async def _execute_chat_evidence_application(
                             source_name=str(getattr(source_catalog, "original_name", "") or ""),
                         )
                         model_research_tools.set_price_basis(direct_price_basis)
-                        sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
-                        sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(direct_price_basis, ensure_ascii=False)
+                        if not free_model_rag:
+                            sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
+                            sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(direct_price_basis, ensure_ascii=False)
                     if model_driven_retrieval:
                         if workbook_carrier_required:
                             question_tail = lsr_result_table_instruction(
@@ -12133,19 +12218,26 @@ async def _execute_chat_evidence_application(
                             source_catalog=source_catalog,
                             source_frame=initial_source_frame,
                         )
-                        _, fixed_packet = govern_inference_messages(
-                            preset=answer_execution_preset,
-                            profile_prefix=sys_msg,
-                            request_payload=question_tail,
-                            native_tools=direct_read_tools,
-                            checkpoint=(),
-                            working_memory=(),
-                            evidence=() if initial_source_frame is not None else fixed_model_rag_evidence,
-                            required_evidence=fixed_model_rag_evidence if initial_source_frame is not None else (),
-                            source_map=(),
-                            tool_exchange=(),
-                            dialogue=(),
-                        )
+                        try:
+                            _, fixed_packet = govern_inference_messages(
+                                preset=answer_execution_preset,
+                                profile_prefix=sys_msg,
+                                request_payload=question_tail,
+                                native_tools=direct_read_tools,
+                                checkpoint=(),
+                                working_memory=(),
+                                evidence=() if initial_source_frame is not None or free_model_rag else fixed_model_rag_evidence,
+                                required_evidence=fixed_model_rag_evidence if initial_source_frame is not None or free_model_rag else (),
+                                source_map=(),
+                                tool_exchange=(),
+                                dialogue=(),
+                            )
+                        except ContextRequiredSectionOverflow as context_error:
+                            retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
+                                context_error, purpose="original_source")
+                            raise HTTPException(422, detail={"code": context_error.code,
+                                "message": "Исходник и вопрос не помещаются в контекст назначенной модели. "
+                                           "Запрос к модели не отправлен; исходные данные не сокращены."}) from context_error
                         remaining_group_tokens = max(
                             0,
                             fixed_packet.input_budget_tokens
@@ -12703,6 +12795,7 @@ async def _execute_chat_evidence_application(
                                 native_exchanges=native_exchanges,
                                 source_context=fixed_model_rag_evidence,
                                 chunks=model_evidence_chunks, receipts=receipts,
+                                evidence_archive=model_research_tools.register_evidence_archive(model_evidence_chunks),
                                 admit_messages=_cloud_message_admission(answer_execution_preset, direct_read_tools),
                             )
                             retrieval_trace["context_governor"]["calls"].append(
@@ -12726,9 +12819,16 @@ async def _execute_chat_evidence_application(
                                 completion_tokens=int(read_usage.get("completion_tokens") or 0))
                             return read_text, read_usage
 
+                        def _parse_direct_read_calls(text, **kwargs):
+                            # Plain text may quote a tool example. Opt-out exposes
+                            # provider native calls only, never this legacy text grammar.
+                            if free_model_rag and (active_model_result is None or not active_model_result.response.tool_calls):
+                                return []
+                            return _parse_model_tool_calls(text, **kwargs)
+
                         try:
                             read_turn = await run_model_evidence_read_turn(
-                                text=answer, usage=usage, parse_calls=_parse_model_tool_calls,
+                                text=answer, usage=usage, parse_calls=_parse_direct_read_calls,
                                 execute=model_research_tools.execute,
                                 continue_native_turn=_continue_direct_reads, on_read_results=_accept_direct_reads,
                                 on_read_replays=_accept_direct_read_replays,
@@ -12750,6 +12850,17 @@ async def _execute_chat_evidence_application(
                         answer_source_map = _model_rag_source_map(model_evidence_chunks)
                         selector_source_map = answer_source_map
                         if direct_read_stop:
+                            if free_model_rag:
+                                answer = ("Чтение источников остановлено: модель запросила недоступное действие "
+                                          "или достигнут технический предел чтений. Ответ не завершён; источники сохранены.")
+                                tokens = int(usage.get("completion_tokens") or 0)
+                                answer_finish_reason = llm_usage_finish_reason(usage)
+                                retrieval_trace["model_generation"] = {
+                                    "status": "technical_pending", "reason": direct_read_stop,
+                                    "finish_reason": answer_finish_reason,
+                                }
+                                crag_status = "MODEL_OUTPUT_INCOMPLETE"
+                                break
                             answer = ("Техническая остановка чтения источников: " + direct_read_stop
                                       + (". Решение модели не завершено; ЛСР не упакована."
                                          if workbook_carrier_required else ". Решение модели не завершено."))
@@ -12772,8 +12883,17 @@ async def _execute_chat_evidence_application(
                                   "действия вместо итогового ответа. Найденные источники сохранены в истории запроса.")
                         crag_status = "MODEL_OUTPUT_INCOMPLETE"
                         break
+                    if free_model_rag and finish_reason_is_length(llm_usage_finish_reason(usage)):
+                        answer_finish_reason = llm_usage_finish_reason(usage)
+                        tokens = int(usage.get("completion_tokens") or 0)
+                        retrieval_trace["model_generation"] = {
+                            "status": "technical_pending", "reason": "model_output_limit",
+                            "finish_reason": answer_finish_reason,
+                        }
+                        crag_status = "MODEL_OUTPUT_INCOMPLETE"
+                        break
                     if not answer:
-                        if execution_preset.reasoning_enabled or finish_reason_is_length(llm_usage_finish_reason(usage)):
+                        if free_model_rag or execution_preset.reasoning_enabled or finish_reason_is_length(llm_usage_finish_reason(usage)):
                             answer_finish_reason = llm_usage_finish_reason(usage)
                             tokens = int(usage.get("completion_tokens") or 0)
                             retrieval_trace["model_generation"] = {
@@ -12781,6 +12901,8 @@ async def _execute_chat_evidence_application(
                                 "finish_reason": answer_finish_reason,
                             }
                             answer = (
+                                "Генерация не завершена: модель не вернула финальный ответ."
+                                if free_model_rag else
                                 "Генерация не завершена: модель не вернула финальный ответ. "
                                 "Рассуждения не используются как строки сметы; ЛСР не упакована."
                             )
@@ -12807,11 +12929,11 @@ async def _execute_chat_evidence_application(
                     logger.info("[CHAT] model answer accepted unchanged; citation check is trace-only")
                     break
 
-                if model_driven_retrieval and not sheet_pass_done:
+                if model_driven_retrieval and protocol_enabled and not sheet_pass_done:
                     artifact_kind_declaration = update_model_artifact_kind(
                         artifact_kind_declaration, decode_model_artifact_kind(answer), phase="result")
                     retrieval_trace["artifact_target"] = dict(artifact_kind_declaration)
-                if model_driven_retrieval and model_workbook_carrier_required(
+                if model_driven_retrieval and protocol_enabled and model_workbook_carrier_required(
                     attachment_id=getattr(req, "attachment_id", None),
                     source_catalog=source_catalog, model_declaration=artifact_kind_declaration,
                 ):
