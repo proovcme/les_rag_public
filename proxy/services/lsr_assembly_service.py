@@ -29,6 +29,7 @@ from typing import Any, Optional
 from backend.runtime_paths import mutable_path
 from proxy.services import fsem_machinist_service as fsem
 from proxy.services import stesnennost_service as st
+from proxy.services.gesn_service import _optional_quantity
 from proxy.services.rim_lsr_trace_service import (
     BOOK_UNIT_CONFLICT_ACTION,
     CARD_PRICE_ACTION,
@@ -379,7 +380,9 @@ def compute_position(
 
     for res in resources:
         kind = str(res.get("kind") or "")
-        qty = _f(res.get("qty"))
+        qty = _optional_quantity(res.get("qty"))
+        if qty is None:
+            flags.append(f"неизвестный расход: {res.get('name', '?')} ({res.get('code', '—')})")
         rejected_book_unit = _rejected_book_unit(res, pricebook)
         price, src = _resource_price(res, pricebook, kac_map)
         conversion = None
@@ -411,7 +414,11 @@ def compute_position(
             flags.append(req["message"])
             cost = 0.0
         else:
-            cost = round(qty * price, 2)
+            cost = _optional_quantity(qty * price) if qty is not None else None
+            if cost is not None:
+                cost = round(cost, 2)
+            elif qty is not None:
+                flags.append(f"стоимость ресурса вне числового диапазона: {res.get('name', '?')}")
             if src == CARD_PRICE_SOURCE:
                 # Money exists, but nobody owns the number.  Named with the same
                 # words the РИМ trace and the delivered sheet use, so one card is
@@ -424,18 +431,22 @@ def compute_position(
                 # Money exists from another rung of the ladder; the rejected row is
                 # still named so the operator can see the book was checked.
                 flags.append(book_unit_conflict_note(res, rejected_book_unit))
+        if qty is None:
+            cost = None
+        known_cost = cost if cost is not None else 0.0
         if kind == "labor":
-            ozp += cost
+            ozp += known_cost
         elif kind == "machinist":
-            zpm += cost
+            zpm += known_cost
         elif kind == "machine":
-            machine_only += cost
+            machine_only += known_cost
         elif kind == "material":
-            mat += cost
+            mat += known_cost
         else:
             flags.append(f"неизвестный вид ресурса: {kind!r}")
         priced.append({
             **res,
+            "qty": qty,
             "price_used": price,
             "price_source": src,
             **({"price_unit_conversion": conversion} if conversion else {}),

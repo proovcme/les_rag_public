@@ -5,6 +5,9 @@ round-trip source_path в метабазе и чтение внешнего ис
 БЕЗ копии в storage.
 """
 from types import SimpleNamespace
+import os
+from pathlib import Path
+import subprocess
 
 import pytest
 from fastapi import HTTPException
@@ -84,13 +87,37 @@ def test_validate_external_source_rejects_symlink_escaping_root(tmp_path, monkey
     root.mkdir()
     outside = tmp_path / "outside_target"
     outside.mkdir()
+    marker = outside / "preserved.txt"
+    marker.write_text("fixture target survives link removal", encoding="utf-8")
     link = root / "escape"
-    link.symlink_to(outside, target_is_directory=True)
-    monkeypatch.setenv("LES_EXTERNAL_SOURCE_ROOTS", str(root))
-    # Симлинк внутри корня указывает наружу → resolve() снимает его, путь вне корня.
-    with pytest.raises(HTTPException) as exc:
-        validate_external_source(str(link))
-    assert exc.value.status_code == 403
+    junction_created = False
+    try:
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except OSError as error:
+            if os.name != "nt" or error.winerror != 1314:
+                raise
+            # A real NTFS junction exercises the same filesystem escape without
+            # requiring Windows Developer Mode or symlink privileges.
+            subprocess.run([
+                "powershell.exe", "-NoProfile", "-NonInteractive", "-File",
+                str(Path(__file__).parent / "support" / "create_test_junction.ps1"),
+                "-TestRoot", str(tmp_path), "-LinkPath", str(link), "-TargetPath", str(outside),
+            ], check=True, capture_output=True, timeout=30)
+            junction_created = True
+            assert link.is_junction()
+        assert outside.resolve().is_relative_to(tmp_path.resolve())
+        assert link.resolve() == outside.resolve()
+        monkeypatch.setenv("LES_EXTERNAL_SOURCE_ROOTS", str(root))
+        # A filesystem link inside the root resolves to an outside directory.
+        with pytest.raises(HTTPException) as exc:
+            validate_external_source(str(link))
+        assert exc.value.status_code == 403
+    finally:
+        if junction_created:
+            assert link.parent.resolve() == root.resolve()
+            link.rmdir()  # Remove only the junction, never its target directory.
+    assert marker.read_text(encoding="utf-8") == "fixture target survives link removal"
 
 
 def test_validate_external_source_rejects_file(tmp_path, monkeypatch):
@@ -139,10 +166,7 @@ class ExternalPendingDB:
     def update_dataset_chunk_count(self, dataset_id):
         pass
 
-    def clear_structured_rules(self, file_key):
-        pass
-
-    def insert_structured_rules(self, rules):
+    def replace_structured_rules(self, dataset_id, file_key, rules):
         pass
 
 
@@ -176,7 +200,8 @@ def test_sync_parse_reads_external_source_in_place(tmp_path, monkeypatch):
         def __init__(self, url, **kwargs):
             self.url = url
 
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, *, wait=False):
+            assert wait is True
             return None
 
     monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)

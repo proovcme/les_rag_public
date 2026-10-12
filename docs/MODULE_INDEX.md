@@ -1,5 +1,42 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат929: расчёт неизвестного расхода, Windows OCR и границы датасета
+
+Frozen r3 завершён: **4683 passed, 20 historical skipped, 5 warnings**;
+version/compile/collect/architecture/map/docs/active-artifacts/mail/metadata
+успешны (mail66, metadata31). Receipts: `artifacts/gates_929_frontier_r3/`.
+Пять посторонних файлов не менялись. Все11 обновляемых runtime-файлов
+соответствуют известной928 при предустановочной сверке; очередь свободна.
+Кандидат ещё не установлен, live929 pending; **customer-ready=false**.
+
+🟡 Док↔код: [LSR assembly](ALGO-lsr-assembly.md), [GESN](ALGO-gesn.md),
+[PDF ingestion](ALGO-pdf-ingestion.md). Importer/gesn_service/norm_browser/RIM
+сохраняют неизвестный расход отдельно от нуля; XLSX не вычисляет пустой расход
+как ноль. backend/ocr_parser.TesseractOCRParser использует доступный subprocess
+временный PNG с очисткой. MetaDB.replace_structured_rules делает scoped
+транзакционную замену dataset+file, без OR REPLACE чужого ID. Qdrant replacement
+не менялся. Источник идей: PR23/73bc3429, не whole-branch merge.
+Дефекты воспроизведены RED→GREEN; полный frozen r3 и installed live pending.
+Runtime928; **customer-ready=false**. Подробные числа — RELEASE_LEDGER.
+
+## Кандидат 0.31.201 / 929 — полнота доставки отдельно от полноты нормы
+
+`chat_evidence_application_service.parse_model_rag_result` теперь отделяет
+порядковые №/позицию от source_row. Без буквального адреса авторское решение
+сохраняется в transport_diagnostics с MODEL_RESULT_SOURCE_LOCATOR_MISSING;
+не связывается с другой строкой по совпавшему номеру. Явные адреса и сценарий
+уточнений через номера в чате сохранены. RED→GREEN: 324 узких проверки.
+
+🟡 Док↔код: [rag-evidence-flow](modules/rag-evidence-flow.md).
+`model_rag_grouped_evidence_service.complete_card_frontier_page` допускает
+полное typed тело с полными ресурсами даже при отсутствующем составе работ.
+`card_delivery_facts` по-прежнему отмечает такой состав missing_in_source
+или unknown, а normative_card_complete=false. Идентичность, literal prefix,
+SHA и все exact-wire ограничения сохранены; предметного выбора кодом нет.
+Установлен928/e80564d7; B0/B1 имеют0 полных карточек и0 подтверждённых денег.
+Регрессия929: RED4→GREEN161; полный gate и installed live ещё не завершены.
+**customer-ready=false**; подробные измерения и ограничения — RELEASE_LEDGER.
+
 ## Кандидат 0.31.200 / 928 — транспорт и идентичность документа
 
 🟡 Док↔код: [rag-evidence-flow](modules/rag-evidence-flow.md),

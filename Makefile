@@ -40,6 +40,7 @@ UNIT_TESTS += tests/test_model_result_resource_actions.py tests/test_model_resou
 UNIT_TESTS += tests/test_model_rag_grouped_evidence_service.py
 UNIT_TESTS += tests/test_model_rag_pointer_alias_replay.py tests/test_model_norm_pointer_navigation.py
 UNIT_TESTS += tests/test_model_result_table_transport.py
+UNIT_TESTS += tests/test_unknown_resource_consumption.py tests/test_tesseract_ocr.py tests/test_parse_pipeline_w14.py tests/test_external_index.py
 UNIT_TESTS += tests/test_model_reasoning_control.py
 UNIT_TESTS += tests/test_release_local_full.py
 UNIT_TESTS += tests/test_release_candidate_freeze.py

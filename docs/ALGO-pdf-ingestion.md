@@ -1,5 +1,22 @@
 # ALGO: PDF ingestion for RAG
 
+## Кандидат929 — Windows OCR и владелец извлечённых правил
+
+TesseractOCRParser сохраняет RGB-копию страницы в TemporaryDirectory/page.png,
+закрывает копию, затем запускает subprocess. Это устраняет Windows sharing
+violation открытого NamedTemporaryFile. Исходное изображение остаётся доступным;
+аргументы, язык/PSM/timeout/UTF8 и существующий контракт ошибок сохранены.
+После success/missing executable/timeout временные PNG и каталог удаляются.
+Это проверка транспорта PNG, не доказательство качества распознавания.
+
+MetaDB.replace_structured_rules(dataset_id,file_key,rules) валидирует владельца
+каждой строки и делает scoped DELETE+INSERT в одной SQLite-транзакции. Любая
+коллизия ID/ошибка вставки откатывает удаление и предыдущие вставки; чужой набор
+не перезаписывается. _sync_parse публикует только полностью извлечённый набор,
+сбой извлечения виден как ошибка. clear требует dataset_id. Это не атомарная
+транзакция с Qdrant/FTS: прежний порядок их replacement остаётся отдельной границей.
+Пустой parse по-прежнему отклоняется до удаления прежнего индекса.
+
 Status: current canon from `0.24.30`.
 
 ## Rule

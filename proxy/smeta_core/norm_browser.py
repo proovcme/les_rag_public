@@ -27,6 +27,7 @@ from backend.rag_config import prepare_query_for_embedding
 from backend.reranker import select_reranker_cls
 
 from proxy.services.smeta_norm_store import SmetaNormRow, get_smeta_norm_store
+from proxy.services.gesn_service import _optional_quantity
 from proxy.smeta_core.integrity import normative_base_integrity
 
 
@@ -507,7 +508,7 @@ def _read_norm_card_connection(conn: sqlite3.Connection, selected_key: str) -> d
     consumption_known = True
     for resource in resource_rows:
         columns = set(resource.keys())
-        per_unit = resource["per_unit"] if "per_unit" in columns else None
+        per_unit = _optional_quantity(resource["per_unit"]) if "per_unit" in columns else None
         consumption_known = consumption_known and per_unit is not None
         item = {
             "kind": str(resource["kind"] or ""),

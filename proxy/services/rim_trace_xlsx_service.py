@@ -185,8 +185,8 @@ def _header_block(ws, put, S: dict[str, Any], *, name: str, summary: dict[str, A
     put(r, 6, "руб.", font=S["dim"]); r += 1
     put(r, 1, "  средства на оплату труда рабочих", font=S["dim"]); put(r, 4, _f(summary.get("ozp", 0)), font=S["dim"], num=True); r += 1
     put(r, 1, "  средства на оплату труда машинистов", font=S["dim"]); put(r, 4, _f(summary.get("zpm", 0)), font=S["dim"], num=True); r += 1
-    put(r, 1, "  нормативные затраты труда рабочих, чел.-ч", font=S["dim"]); put(r, 4, _f(summary.get("labor_qty", 0)), font=S["dim"], num=True); r += 1
-    put(r, 1, "  нормативные затраты труда машинистов, чел.-ч", font=S["dim"]); put(r, 4, _f(summary.get("machinist_qty", 0)), font=S["dim"], num=True); r += 2
+    put(r, 1, "  нормативные затраты труда рабочих, чел.-ч", font=S["dim"]); put(r, 4, summary.get("labor_qty", 0), font=S["dim"], num=True); r += 1
+    put(r, 1, "  нормативные затраты труда машинистов, чел.-ч", font=S["dim"]); put(r, 4, summary.get("machinist_qty", 0), font=S["dim"], num=True); r += 2
     return r
 
 
@@ -296,7 +296,7 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
         for row_no in by_type.get(rtype, []):
             if ws.cell(row=row_no, column=8).value not in (None, "") and ws.cell(row=row_no, column=9).value not in (None, ""):
                 _set_formula(ws, row_no, 10, f"=ROUND(H{row_no}*I{row_no},2)", S["formula_values"])
-            if ws.cell(row=row_no, column=10).value not in (None, "") and ws.cell(row=row_no, column=11).value not in (None, ""):
+            if all(ws.cell(row=row_no, column=column).value not in (None, "") for column in (7, 10, 11, 12)):
                 _set_formula(ws, row_no, 12, f"=ROUND(G{row_no}*J{row_no}*K{row_no},2)", S["formula_values"])
             else:
                 ws.cell(row=row_no, column=12).value = None
@@ -315,7 +315,10 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     for kind, row_no in group_rows.items():
         if row_no is None:
             continue
-        _set_formula(ws, row_no, 7, _sum_formula(detail_rows[kind], "G"), S["formula_values"])
+        if all(ws.cell(row=detail, column=7).value not in (None, "") for detail in detail_rows[kind]):
+            _set_formula(ws, row_no, 7, _sum_formula(detail_rows[kind], "G"), S["formula_values"])
+        else:
+            ws.cell(row=row_no, column=7).value = None
         cost_rows = detail_rows[kind]
         if kind == "machine":
             cost_rows = cost_rows + detail_rows["machinist"]
@@ -565,8 +568,12 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
             else:
                 price_note = "цена не задана"
             unit_note = ""
+            if f"quantity_missing:{identity}" in open_reasons:
+                unit_note += " — неизвестный расход"
+            if f"resource_amount_nonfinite:{identity}" in open_reasons:
+                unit_note += " — стоимость вне числового диапазона"
             if str(entry.get("price_book_unit") or ""):
-                unit_note = f" — единица книги: {entry.get('price_book_unit')}"
+                unit_note += f" — единица книги: {entry.get('price_book_unit')}"
             # § 3: a derived шифр must never read as the card's own.  The ОЗП line of a
             # norm card names only a разряд, so when the calculator priced it from a
             # tariff code it worked out, the sheet says where that code came from.

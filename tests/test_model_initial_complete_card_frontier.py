@@ -13,7 +13,7 @@ from proxy.services.model_research_tool_service import _norm_search_chunk
 from tests.test_model_initial_inventory_exact_fit import _context
 
 
-def fixture(*, all_inventory=False):
+def fixture(*, all_inventory=False, missing_steps=None):
     hits = []
     for q in range(1, 23):
         cards = []
@@ -26,6 +26,11 @@ def fixture(*, all_inventory=False):
                                 unit="m", per_unit=0 if n == 0 else 1.5) for n in range(20)],
                 resource_count=20, resources_returned=20, resources_complete=True,
                 hydration_status="ok")
+            if q == 1 and h == 2 and missing_steps:
+                if missing_steps == "empty":
+                    card["work_steps"] = []
+                else:
+                    card.pop("work_steps")
             cards.append(_norm_search_chunk(card, score=7-h, matched_before_cap=2))
         hits.append((f"literal query {q}", cards))
     groups, by_ref = service._model_rag_full_groups(hits, hits_per_query=6)
@@ -54,8 +59,8 @@ def counter(*, full_tokens=300, owner_change=False, unsupported_full=False):
     return count, calls
 
 
-async def run(count, *, reserve=5000, ceiling=27000, all_inventory=False):
-    hits, old, groups, by_ref, page = fixture(all_inventory=all_inventory)
+async def run(count, *, reserve=5000, ceiling=27000, all_inventory=False, missing_steps=None):
+    hits, old, groups, by_ref, page = fixture(all_inventory=all_inventory, missing_steps=missing_steps)
     before = copy.deepcopy(hits)
     result = await service.govern_model_rag_initial_messages(count_messages=count,
         query_hits=hits, evidence_groups=old[0], evidence_chunks=old[1], omitted_refs=old[2],
@@ -82,6 +87,51 @@ def test_complete_candidate_keeps_all_aliases_and_literal_old_body_prefix():
                                            displayed_body=full.body_by_ref[ref])["normative_card_complete"]
     for ref in set(inventory.inventory_refs) - set(inventory.body_refs):
         assert full.meta_by_ref[ref] == inventory.meta_by_ref[ref]
+
+
+@pytest.mark.parametrize("missing_steps,status", [("empty", "missing_in_source"), ("absent", "unknown")])
+def test_missing_composition_does_not_hide_whole_resource_bodies(missing_steps, status):
+    _, _, groups, _, page = fixture(missing_steps=missing_steps)
+    inventory = grouped.inventory_expansion_page(groups, page)
+    before = copy.deepcopy(groups)
+    full = grouped.complete_card_frontier_page(groups, inventory)
+    assert full is not None and groups == before
+    assert full.inventory_refs == inventory.inventory_refs and full.body_refs == inventory.body_refs
+    assert full.pointer_by_ref == inventory.pointer_by_ref and full.shared_refs == inventory.shared_refs
+    for ref in inventory.body_refs:
+        assert full.body_by_ref[ref].startswith(inventory.body_by_ref[ref])
+        assert "resources_complete=True" in full.body_by_ref[ref]
+        facts = grouped.card_delivery_facts(full.meta_by_ref[ref], raw_body_shown=True,
+                                           displayed_body=full.body_by_ref[ref])
+        assert facts["normative_resources_status"] == "complete"
+        assert facts["normative_card_complete"] is (ref != "Q1.H2")
+        assert facts["normative_composition_shown"] is (ref != "Q1.H2")
+        if ref == "Q1.H2":
+            assert facts["normative_work_steps_status"] == status
+    for ref in set(inventory.inventory_refs) - set(inventory.body_refs):
+        assert full.meta_by_ref[ref] == inventory.meta_by_ref[ref]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_steps", ["empty", "absent"])
+async def test_missing_composition_is_delivered_without_fabricated_completeness(missing_steps):
+    count, calls = counter()
+    result, page = await run(count, missing_steps=missing_steps)
+    assert any(full for _, full in calls)
+    assert result[5]["complete_card_fit"]["status"] == "expanded"
+    shown = {c.meta["model_evidence_ref"]: c for c in result[3] if c.meta["body_status"] == "full"}
+    assert list(shown) == page.body_refs
+    for ref, chunk in shown.items():
+        assert chunk.content.startswith(page.body_by_ref[ref])
+        assert chunk.meta["normative_resources_status"] == "complete"
+        assert chunk.meta["normative_card_complete"] is (ref != "Q1.H2")
+        assert chunk.meta["normative_composition_shown"] is (ref != "Q1.H2")
+        from proxy.services.model_resource_reference_service import shown_resource_record
+        assert len(chunk.meta["resources"]) == 20
+        assert shown_resource_record(chunk.meta, chunk.content, 1)["per_unit"] == 0
+    assert result[1].included_tokens + 5000 <= 27000
+    assert service.measured_connection_revision(result[1]) == "fixture:r8"
+    assert "whole original attachment" in str(result[0])
 
 
 @pytest.mark.asyncio

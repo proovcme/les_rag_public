@@ -245,6 +245,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      input_token_limit=100_000, candidate_padding=0, native_read_batch=False,
                      malformed_first_packet=False, malformed_all_first_packet=False,
                      malformed_second_packet=False, duplicate_json_first_packet=False,
+                     duplicate_json_alias_first_packet=False,
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
                      exact_resource_padding=0, query_declaration=None, budget_stop_at=None,
                      wire_budget_bytes=None, norm_ref_read=None, native_repeats=0,
@@ -441,11 +442,15 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
             answer = answer.replace(f"| {RESOURCE_A} | {refs[0]} |", f"| {RESOURCE_A} |")
             if malformed_all_first_packet:
                 answer = answer.replace(f"| {RESOURCE_B} | {refs[1]} |", f"| {RESOURCE_B} |")
-        if duplicate_json_first_packet and packet_index == 0:
+        if (duplicate_json_first_packet or duplicate_json_alias_first_packet) and packet_index == 0:
             conflict = ('{"source_row":"S!R2","row_role":"material","title":"Cable A",'
                         '"unit":"m","quantity":12,"norm_code":"authored-first","norm_code":"",'
                         '"resource_code":' + json.dumps(RESOURCE_A) + ',"evidence_refs":' + json.dumps([refs[0]])
                         + ',"evidence_refs":[]}')
+            if duplicate_json_alias_first_packet:
+                conflict = json.dumps({"source_row": "S!R2", "row_role": "material", "title": "Cable A",
+                    "Наименование": "Different authored title", "unit": "m", "quantity": 12,
+                    "norm_code": "", "resource_code": RESOURCE_A, "evidence_refs": [refs[0]]})
             unique = {"source_row": "S!R3", "row_role": "material", "title": "Cable B", "unit": "m",
                       "quantity": 3, "norm_code": "", "resource_code": RESOURCE_B, "evidence_refs": [refs[1]]}
             answer = '{"artifact_kind":"lsr","rows":[' + conflict + ',' + json.dumps(unique) + ']}'
@@ -1166,6 +1171,9 @@ async def test_duplicate_json_row_keeps_other_decisions_and_only_conflicting_loc
     assert "norm_code" not in raw_proposal["decision"]
     assert run.result["retrieval_trace"]["model_result"]["packaged"] is True
     assert run.executions[-1][1]["artifact"]["draft"] is True
+    assert run.executions[-1][0]["args"]["decisions"] == job["accepted_rows"]
+    assert "повторяющиеся поля JSON" in run.result["answer"]
+    assert "число ячеек не соответствует заголовку" not in run.result["answer"]
     request_count = len(run.requests)
     await run.resume_same_request()
     assert len(run.requests) == request_count  # plain continuation cannot repair it
@@ -1184,6 +1192,44 @@ async def test_duplicate_json_row_keeps_other_decisions_and_only_conflicting_loc
     assert result["retrieval_trace"]["model_result"]["packaged"] is True
     assert len(run.executions) == 3
     assert not run.executions[-1][1]["document_issues"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unknown_diagnostic", [False, True])
+async def test_duplicate_json_alias_partial_draft_is_narrowly_classified(tmp_path, monkeypatch, unknown_diagnostic):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+
+    if unknown_diagnostic:
+        original_parse = service.parse_model_rag_result
+
+        def unknown_proposal(*args, **kwargs):
+            parsed = original_parse(*args, **kwargs)
+            for item in kwargs.get("diagnostics", []):
+                if item.get("code") == "MODEL_RESULT_JSON_DUPLICATE_FIELD_ALIAS":
+                    item["code"] = "MODEL_RESULT_UNKNOWN_TRANSPORT_FAILURE"
+            return parsed
+
+        monkeypatch.setattr(service, "parse_model_rag_result", unknown_proposal)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, packet_count=2,
+                           duplicate_json_alias_first_packet=True)
+    job = WorkbookResearchJobService().latest(session_id="sheet-session")
+    assert job["status"] == "paused" and job["remaining"] == ["S!R2"]
+    assert {row["source_row"] for row in job["accepted_rows"]} == {"S!R3", "S!R4", "S!R5"}
+    proposal = job["unapplied_proposals"][0]
+    assert proposal["decision"]["raw_proposal"]["title"] == "Cable A"
+    assert proposal["decision"]["raw_proposal"]["Наименование"] == "Different authored title"
+    assert len(run.requests) == 8 and not run.responses
+    if unknown_diagnostic:
+        assert proposal["code"] == "MODEL_RESULT_UNKNOWN_TRANSPORT_FAILURE"
+        assert run.result["retrieval_trace"]["model_result"]["packaged"] is False
+        assert run.executions == []
+    else:
+        assert proposal["code"] == "MODEL_RESULT_JSON_DUPLICATE_FIELD_ALIAS"
+        assert run.result["retrieval_trace"]["model_result"]["packaged"] is True
+        assert run.executions[-1][1]["artifact"]["draft"] is True
+        assert run.executions[-1][0]["args"]["decisions"] == job["accepted_rows"]
+        assert "повторяющиеся поля JSON" in run.result["answer"]
+        assert "число ячеек не соответствует заголовку" not in run.result["answer"]
 
 
 @pytest.mark.asyncio

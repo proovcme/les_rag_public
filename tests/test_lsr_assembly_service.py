@@ -16,6 +16,10 @@
 
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from proxy.services import lsr_assembly_service as la
 from proxy.services.lsr_assembly_service import assemble, compute_position, export_assembled
 from tests.lsr_gold_pricebook import gold_pricebook  # noqa: F401  (фикстура по имени)
@@ -36,6 +40,50 @@ GOLD_POS = {
     ],
 }
 GOLD_TOTAL = 16_628.00
+
+
+@pytest.mark.parametrize("value,expected", [(None, None), (0, 0), (float("nan"), None),
+    (float("inf"), None), ("invalid", None), ("0.00", 0), ("0,00", 0), (1.5, 1.5)])
+@pytest.mark.parametrize("from_norm", [False, True])
+def test_assembly_unknown_consumption_stays_partial_and_exports_blank(monkeypatch, value, expected, from_norm):
+    from copy import deepcopy
+    from proxy.services import gesn_service as gs
+    from proxy.services.fgis_price_service import PriceBook
+
+    resources = [{"kind": "material", "code": code, "name": code, "unit": "m",
+                  "per_unit" if from_norm else "qty": quantity}
+                 for code, quantity in (("UNKNOWN", value), ("KNOWN", 2))]
+    norm = {"code": "ГЭСН01-01-001-01", "unit": "m", "resources": resources}
+    monkeypatch.setattr(gs, "get_norm", lambda *args, **kwargs: deepcopy(norm))
+    book = PriceBook([{"code": code, "unit": "m", "price_current": 10, "price_current_eff": 10}
+                      for code in ("UNKNOWN", "KNOWN")])
+    monkeypatch.setattr(la, "_resolve_book", lambda *args, **kwargs: book)
+    position = {"name": "Synthetic quantity", "qty": 1, "nr_pct": 0, "sp_pct": 0}
+    position.update({"code": norm["code"]} if from_norm else {"resources": resources})
+    result = assemble([position])
+    resource = next(row for row in result["positions"][0]["resources"] if row["code"] == "UNKNOWN")
+    assert resource["qty"] == expected
+    assert resource["cost"] == (None if expected is None else expected * 10)
+    assert result["summary"]["total"] == 20 + (0 if expected is None else expected * 10)
+    assert result["summary"]["result_status"] == ("priced_partial" if expected is None else "priced_final")
+    if expected is None:
+        assert any("неизвестный расход" in flag for flag in result["summary"]["flags"])
+    exported = next(row for row in la.assembled_rows(result) if row.get("resource_code") == "UNKNOWN")
+    assert exported["resource_qty"] == expected
+    assert exported["cost"] == (None if expected is None else expected * 10)
+    json.dumps(result, allow_nan=False)
+
+
+def test_assembly_resource_amount_overflow_is_partial_without_losing_known_money(monkeypatch):
+    monkeypatch.setattr(la, "_resolve_book", lambda *args, **kwargs: None)
+    result = assemble([{"name": "Synthetic overflow", "qty": 1, "nr_pct": 0, "sp_pct": 0,
+        "resources": [{"kind": "material", "code": "OVERFLOW", "qty": 1e308, "price": 10},
+                      {"kind": "material", "code": "KNOWN", "qty": 2, "price": 10}]}])
+    assert result["positions"][0]["resources"][0]["cost"] is None
+    assert result["summary"]["total"] == 20
+    assert result["summary"]["result_status"] == "priced_partial"
+    assert any("числового диапазона" in flag for flag in result["summary"]["flags"])
+    json.dumps(result, allow_nan=False)
 
 
 def test_gold_position_is_the_sum_of_its_own_named_rates():

@@ -1583,13 +1583,17 @@ def test_model_rag_result_reads_an_ordinary_russian_table_with_combined_norm_cel
 | 2 | Разработка проема | шт. | 10 | *(Нет прямого аналога)*<br>Аналог: **ГЭСН15-02-035-03**<br>[Q6.H1] | Аналог по составу | Обратная операция |
 """
 
-    parsed = service.parse_model_rag_result(answer)
+    diagnostics = []
+    parsed = service.parse_model_rag_result(answer, diagnostics=diagnostics)
 
     assert parsed is not None
     assert parsed[0] == answer
-    assert parsed[1] == [
+    assert parsed[1] == []
+    assert [item["display_ordinal"] for item in diagnostics] == ["1", "2"]
+    assert all(item["code"] == "MODEL_RESULT_SOURCE_LOCATOR_MISSING" for item in diagnostics)
+    assert [{k: v for k, v in item["decision"].items()
+             if k not in {"raw_line", "raw_cells", "table_header"}} for item in diagnostics] == [
         {
-            "source_row": 1,
             "section": "Раздел 1. Демонтажные работы",
             "title": "Защитное укрытие",
             "unit": "м²",
@@ -1600,7 +1604,6 @@ def test_model_rag_result_reads_an_ordinary_russian_table_with_combined_norm_cel
             "evidence_refs": ["Q3.H2"],
         },
         {
-            "source_row": 2,
             "section": "Раздел 1. Демонтажные работы",
             "title": "Разработка проема",
             "unit": "шт.",
@@ -1626,22 +1629,25 @@ def test_model_rag_result_collects_every_ordinary_table_across_sections():
 | 2 | Работа 3 | м | 160 | **ГЭСНм08-02-146-02** | Аналог 3 | **Evidence:** Q9.H4 |
 """
 
-    parsed = service.parse_model_rag_result(answer)
+    diagnostics = []
+    parsed = service.parse_model_rag_result(answer, diagnostics=diagnostics)
 
     assert parsed is not None
     assert parsed[0] == answer
-    assert [row["source_row"] for row in parsed[1]] == [1, 1, 2]
-    assert [row["section"] for row in parsed[1]] == [
+    assert parsed[1] == []
+    assert [item["display_ordinal"] for item in diagnostics] == ["1", "1", "2"]
+    assert all("source_row" not in item["decision"] for item in diagnostics)
+    assert [item["decision"]["section"] for item in diagnostics] == [
         "Раздел 1. Демонтаж",
         "Раздел 2. Монтаж",
         "Раздел 2. Монтаж",
     ]
-    assert [row["norm_code"] for row in parsed[1]] == [
+    assert [item["decision"]["norm_code"] for item in diagnostics] == [
         "ГЭСН26-02-010-02",
         "ГЭСН17-01-010-01",
         "ГЭСНм08-02-146-02",
     ]
-    assert [row["evidence_refs"] for row in parsed[1]] == [
+    assert [item["decision"]["evidence_refs"] for item in diagnostics] == [
         ["Q1.H3"],
         ["Q3.H3"],
         ["Q9.H4"],
@@ -1655,12 +1661,15 @@ def test_model_rag_result_accepts_the_models_short_ordinary_column_names():
 | 1 | Работа | м² | 116 | Текст модели | ГЭСН26-01-055-01 | Аналог модели | Частичное | 1.0 | [Q1.H2] |
 """
 
-    parsed = service.parse_model_rag_result(answer)
+    diagnostics = []
+    parsed = service.parse_model_rag_result(answer, diagnostics=diagnostics)
 
     assert parsed is not None
-    assert parsed[1] == [
+    assert parsed[1] == []
+    assert [item["display_ordinal"] for item in diagnostics] == ["1"]
+    assert [{k: v for k, v in item["decision"].items()
+             if k not in {"raw_line", "raw_cells", "table_header"}} for item in diagnostics] == [
         {
-            "source_row": 1,
             "section": "Раздел 1. Работы",
             "title": "Работа",
             "unit": "м²",
@@ -1681,11 +1690,12 @@ def test_model_rag_result_accepts_maxim_explicit_headers_and_missing_numbers():
 | 2 | Плёнка модели | м2 |  | CUSTOM-NORM-B | 1/100 | Нет прямого аналога | Q4.H1 |
 """
 
-    assert service.parse_model_rag_result(answer) == (
-        answer,
-        [
+    diagnostics = []
+    assert service.parse_model_rag_result(answer, diagnostics=diagnostics) == (answer, [])
+    assert [item["display_ordinal"] for item in diagnostics] == ["1", "2"]
+    assert [{k: v for k, v in item["decision"].items()
+             if k not in {"raw_line", "raw_cells", "table_header"}} for item in diagnostics] == [
             {
-                "source_row": 1,
                 "title": "Кабель модели",
                 "unit": "м",
                 "quantity": 12,
@@ -1694,7 +1704,6 @@ def test_model_rag_result_accepts_maxim_explicit_headers_and_missing_numbers():
                 "evidence_refs": ["Q3.H2"],
             },
             {
-                "source_row": 2,
                 "title": "Плёнка модели",
                 "unit": "м2",
                 "norm_code": "CUSTOM-NORM-B",
@@ -1702,8 +1711,7 @@ def test_model_rag_result_accepts_maxim_explicit_headers_and_missing_numbers():
                 "coverage": "Нет прямого аналога",
                 "evidence_refs": ["Q4.H1"],
             },
-        ],
-    )
+        ]
 
 
 @pytest.mark.parametrize("field", ["quantity", "calc_quantity", "conversion_factor", "confirmed_price"])

@@ -1163,12 +1163,16 @@ def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None
             for res in normalize_norm_resources(list(norm.get("resources") or []))
         ]
 
-    work_qty = _f(position.get("qty")) or 1.0
+    work_qty = gesn_service._optional_quantity(position.get("qty"))
     resources: list[dict[str, Any]] = []
     for res in position.get("resources") or []:
         line = _plain_resource_line(dict(res))
         if line.get("per_unit") in (None, ""):
-            line["per_unit"] = _f(line.get("qty")) / work_qty if work_qty else _f(line.get("qty"))
+            supplied_qty = gesn_service._optional_quantity(line.get("qty"))
+            line["per_unit"] = (
+                gesn_service._optional_quantity(supplied_qty / work_qty)
+                if supplied_qty is not None and work_qty not in (None, 0) else None
+            )
         resources.append(line)
     return norm, resources
 
@@ -1455,8 +1459,16 @@ def build_position_trace(
     for res in resources:
         kind = str(res.get("kind") or "")
         coeff = _resource_coeff(kind, k_ozp=k_ozp, k_em=k_em)
-        per_unit = _f(res.get("per_unit"))
-        total_qty = round(per_unit * coeff * work_qty, 6)
+        per_unit = gesn_service._optional_quantity(res.get("per_unit"))
+        total_qty = (
+            gesn_service._optional_quantity(per_unit * coeff * work_qty)
+            if per_unit is not None else None
+        )
+        if total_qty is not None:
+            total_qty = round(total_qty, 6)
+        else:
+            flags.append(f"неизвестный расход: {res.get('name', '?')} ({res.get('code', '—')})")
+            completeness_reasons.append(f"quantity_missing:{res.get('code') or res.get('name') or '?'}")
         price = _resolve_price_trace(res, pricebook=pricebook, kac_map=kac_lookup)
         if (price.price is None and price.action == "needs_machinist_rate"
                 and kind == "machinist" and not str(res.get("code") or "").strip()
@@ -1465,7 +1477,15 @@ def build_position_trace(
             # reconcile with FSEM. A tariff alone cannot repair that conflict.
             # Keep the price, quantity and monetary completeness unchanged.
             price = replace(price, action="needs_fsem_resolution")
-        cost = None if price.price is None else round(total_qty * price.price, 2)
+        cost = (
+            gesn_service._optional_quantity(total_qty * price.price)
+            if total_qty is not None and price.price is not None else None
+        )
+        if cost is not None:
+            cost = round(cost, 2)
+        elif total_qty is not None and price.price is not None:
+            flags.append(f"стоимость ресурса вне числового диапазона: {res.get('name', '?')}")
+            completeness_reasons.append(f"resource_amount_nonfinite:{res.get('code') or res.get('name') or '?'}")
         if price.book_unit:
             flags.append(book_unit_conflict_note(res, price.book_unit))
         if price.price is None:
@@ -1544,7 +1564,10 @@ def build_position_trace(
             continue
         if cost is not None:
             sums[kind] = round(sums[kind] + cost, 2)
-        qty_sums[kind] = round(qty_sums[kind] + total_qty, 6)
+        qty_sums[kind] = (
+            round(qty_sums[kind] + total_qty, 6)
+            if qty_sums[kind] is not None and total_qty is not None else None
+        )
         detail_rows[kind].append(
             _row(
                 f"resource_{kind}",
@@ -1762,8 +1785,10 @@ def build_position_trace(
             )
         )
 
-    if resource_binding_conflicts or position.get("norm_card_body_unread"):
+    if (resource_binding_conflicts or position.get("norm_card_body_unread")
+            or any(reason.startswith(("quantity_missing:", "resource_amount_nonfinite:")) for reason in completeness_reasons)):
         # An attributed position price cannot hide an unapplied resource action.
+        # Nor can it certify an unknown quantity in the selected composition.
         full_amount = None
     rows.extend(
         [
@@ -1970,8 +1995,12 @@ def build_lsr_trace(
                     continue
                 summary[k] = round(summary[k] + _f(value), 2)
             if not reference_only:
-                summary["labor_qty"] = round(summary["labor_qty"] + _f(s.get("labor_qty")), 6)
-                summary["machinist_qty"] = round(summary["machinist_qty"] + _f(s.get("machinist_qty")), 6)
+                for quantity_key in ("labor_qty", "machinist_qty"):
+                    value = s.get(quantity_key)
+                    summary[quantity_key] = (
+                        round(summary[quantity_key] + value, 6)
+                        if summary[quantity_key] is not None and value is not None else None
+                    )
             else:
                 summary["reference_only_positions"] += 1
             flags.extend(s.get("flags") or [])
@@ -3241,8 +3270,13 @@ def build_lsr_trace_from_visible_rows(
                 and not bool(model_row.get("confirm_ambiguous"))
                 and not bool(pos_summary.get("resource_binding_conflicts"))
             )
+            resource_quantities_ok = not any(
+                str(reason).startswith(("quantity_missing:", "resource_amount_nonfinite:"))
+                for reason in (pos_summary.get("completeness_reasons") or [])
+            )
             preliminary = not (
                 norm_applicability_ok and units_ok and price_ok and conflicts_ok
+                and resource_quantities_ok
             )
             readiness["norm_applicability_ok"] = bool(norm_applicability_ok)
             readiness["units_ok"] = bool(units_ok)

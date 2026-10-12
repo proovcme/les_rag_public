@@ -28,6 +28,7 @@ import re
 import json
 import os
 import hashlib
+import math
 import sqlite3
 from functools import lru_cache
 from copy import deepcopy
@@ -120,6 +121,17 @@ def _f(value: Any) -> float:
         return 0.0
 
 
+def _optional_quantity(value: Any) -> float | None:
+    """A source quantity is finite or unknown; a literal zero remains known."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value).replace("\xa0", "").replace(" ", "").replace(",", "."))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _resource_text_key(value: Any) -> str:
     return " ".join(str(value or "").replace("\xa0", " ").split()).casefold()
 
@@ -127,7 +139,8 @@ def _resource_text_key(value: Any) -> str:
 def _resource_number_key(value: Any) -> str:
     if value in (None, ""):
         return ""
-    return format(_f(value), ".12g")
+    parsed = _optional_quantity(value)
+    return format(parsed, ".12g") if parsed is not None else f"invalid:{value}"
 
 
 def _resource_identity(resource: dict[str, Any]) -> tuple[str, str, str, str, str]:
@@ -351,7 +364,7 @@ def _structured_norm_snapshot(sqlite_path: str, sha256: str, byte_size: int) -> 
                 "kind": row["kind"],
                 "name": row["resource_name"] or "",
                 "unit": row["resource_unit"] or "",
-                "per_unit": row["per_unit"],
+                "per_unit": _optional_quantity(row["per_unit"]),
             }
             if row["resource_code"]:
                 res["code"] = row["resource_code"]
@@ -456,7 +469,7 @@ def _parquet_norm_snapshot(sources: tuple[tuple[str, str, int], ...]) -> dict[st
                 "kind": rec.get("kind"),
                 "name": rec.get("resource_name") or "",
                 "unit": rec.get("resource_unit") or "",
-                "per_unit": rec.get("per_unit"),
+            "per_unit": _optional_quantity(rec.get("per_unit")),
             }
             if rec.get("resource_code"):
                 res["code"] = rec["resource_code"]
@@ -595,14 +608,16 @@ def expand_position(
     norm = get_norm(code, path=path, base_path=base_path, include_seed=include_seed)
     if norm is None:
         return None
-    q = _f(qty)
+    q = _optional_quantity(qty)
     lines: list[dict[str, Any]] = []
     for r in norm.get("resources", []):
+        per_unit = _optional_quantity(r.get("per_unit"))
+        total_qty = _optional_quantity(per_unit * q) if per_unit is not None and q is not None else None
         line: dict[str, Any] = {
             "kind": r.get("kind"),
             "name": r.get("name", ""),
             "unit": r.get("unit", ""),
-            "qty": round(_f(r.get("per_unit")) * q, 6),
+            "qty": round(total_qty, 6) if total_qty is not None else None,
         }
         if r.get("code"):
             line["code"] = r["code"]

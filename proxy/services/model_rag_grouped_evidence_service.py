@@ -427,6 +427,8 @@ def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: Evide
 
     The old whole preview is a literal prefix. No identity or deferred body is
     added, removed, or chosen here; complete-wire admission belongs to the caller.
+    Missing work composition remains a separate delivery fact; it must not
+    withhold an otherwise complete, source-bound resource body.
     """
     from proxy.services.model_research_tool_service import _full_norm_card_content, norm_preview_metadata
 
@@ -457,8 +459,8 @@ def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: Evide
                     or hashlib.sha256(content.encode("utf-8")).hexdigest()
                        != card.meta.get("hydration_preview_sha256")
                     or normative_card_identity(card.meta) != normative_card_identity(old_meta)
-                    or not card_delivery_facts(card.meta, raw_body_shown=True,
-                                               displayed_body=card.content).get("normative_card_complete")
+                    or card_delivery_facts(card.meta, raw_body_shown=True,
+                                           displayed_body=card.content).get("normative_resources_status") != "complete"
                     or inventory_pointer(card, full=True) != admitted.pointer_by_ref[card.ref]):
                 return None
             content += "\n\nAdditional complete typed body; the original preview above is preserved:\n" + card.content

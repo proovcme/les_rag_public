@@ -14,6 +14,7 @@ import os
 import gc
 import base64
 import logging
+from contextlib import closing
 from pathlib import Path
 from typing import List, Optional
 
@@ -228,11 +229,14 @@ class TesseractOCRParser:
         import subprocess
         import tempfile
 
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as f:
-            image.convert("RGB").save(f.name)
+        # Windows cannot reopen an active delete-on-close temporary file.
+        with tempfile.TemporaryDirectory(prefix="les_ocr_") as directory:
+            image_path = Path(directory) / "page.png"
+            with closing(image.convert("RGB")) as rgb_image:
+                rgb_image.save(image_path)
             try:
                 out = subprocess.run(
-                    [self.binary, f.name, "stdout", "-l", self.lang, "--psm", self.psm],
+                    [self.binary, str(image_path), "stdout", "-l", self.lang, "--psm", self.psm],
                     capture_output=True, timeout=float(os.getenv("RAG_OCR_TESSERACT_TIMEOUT", "120")),
                 )
                 return out.stdout.decode("utf-8", errors="ignore").strip()

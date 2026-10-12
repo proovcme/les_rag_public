@@ -1,5 +1,31 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат929: точечные адаптации после сравнения PR23
+
+`tools/build_smeta_structured_base.py` → nullable конечный расход;
+`gesn_service.py`/`smeta_core/norm_browser.py` → неизвестное отдельно от нуля;
+`rim_lsr_trace_service.py` → incomplete quantities, без NaN и ложного confirmed;
+`rim_trace_xlsx_service.py` → пустой расчёт неизвестного, явная причина.
+`backend/ocr_parser.py` → Windows-readable temporary PNG, cleanup RGB-copy;
+`backend/qdrant_adapter.py::MetaDB.replace_structured_rules` → owner-scoped
+transaction, collision rollback; `_sync_parse` заменяет только полный набор.
+`Makefile` включает новые расход/OCR и полные external/pipeline regression tests.
+
+## Кандидат 0.31.201 / 929 — complete_card_frontier_page
+
+`chat_evidence_application_service.parse_model_rag_result` → отдельный
+display ordinal; целое предложение без адреса → transport_diagnostics, а не
+catalog.lookup(int). Существующий carrier сохраняет все ячейки, исходный ответ
+и корректные соседние решения; публичное сообщение называет причину привязки.
+
+`proxy/services/model_rag_grouped_evidence_service.py` отделяет транспортную
+полноту resource body от отсутствующего состава работ. Exact-wire candidate
+не отклоняется целиком по признаку normative_card_complete; требуются полные
+ресурсы, неизменная source identity, producer SHA и сохранённый literal preview.
+`tests/test_model_initial_complete_card_frontier.py` проверяет оба варианта
+отсутствующего состава и сохранение статусов, ресурсов, указателей и бюджета.
+Живой928 не принят;929 ожидает installed comparison.
+
 ## Кандидат 0.31.200 / 928 — literal intake → model → pinned calculation
 
 `attachment_source_catalog_service.py` → неопределённые объёмы, escaped pipe,

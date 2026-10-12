@@ -29,10 +29,7 @@ class TrackingDB:
     def update_dataset_chunk_count(self, dataset_id):
         pass
 
-    def clear_structured_rules(self, file_key):
-        pass
-
-    def insert_structured_rules(self, rules):
+    def replace_structured_rules(self, dataset_id, file_key, rules):
         pass
 
 
@@ -40,7 +37,8 @@ class FakeQdrant:
     def __init__(self, url, **kwargs):
         self.url = url
 
-    def upsert(self, collection_name, points):
+    def upsert(self, collection_name, points, *, wait=False):
+        assert wait is True
         return None
 
 
@@ -181,7 +179,8 @@ def test_resume_after_crash_no_duplicate_points(tmp_path, monkeypatch):
     deleted = []
 
     class RecordingQdrant(FakeQdrant):
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, *, wait=False):
+            assert wait is True
             upserts.append(len(points))
 
     crash = {"armed": True}

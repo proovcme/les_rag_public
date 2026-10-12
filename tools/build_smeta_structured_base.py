@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from proxy.services.gesn_service import _display_code, _f, _norm_code, _split_norm_ref, _work_steps
+from proxy.services.gesn_service import _display_code, _f, _norm_code, _optional_quantity, _split_norm_ref, _work_steps
 
 DEFAULT_SOURCE = Path("data/gesn_base/gesn2022_unified.parquet")
 DEFAULT_OUT = Path("data/smeta_base/les_smeta_base.sqlite")
@@ -122,7 +122,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             resource_code TEXT NOT NULL DEFAULT '',
             resource_name TEXT NOT NULL,
             resource_unit TEXT NOT NULL DEFAULT '',
-            per_unit REAL NOT NULL,
+          per_unit REAL,
             price REAL,
             source_doc TEXT,
             source_guid TEXT,
@@ -241,7 +241,7 @@ def build_structured_base(
             "resource_code": _text(rec.get("resource_code")),
             "resource_name": name,
             "resource_unit": _text(rec.get("resource_unit")),
-            "per_unit": _f(rec.get("per_unit")),
+            "per_unit": _optional_quantity(rec.get("per_unit")),
             "price": _optional_float(rec.get("price")),
             "source_doc": _text(rec.get("source_doc")),
             "source_guid": _text(rec.get("source_guid")),

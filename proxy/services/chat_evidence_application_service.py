@@ -4734,9 +4734,9 @@ def parse_model_rag_result(
         "expected_revision": "expected_revision",
         "base_revision": "base_revision",
         "source_row": "source_row",
-        "№": "source_row",
-        "№ п/п": "source_row",
-        "№ пп": "source_row",
+        "№": "_display_ordinal",
+        "№ п/п": "_display_ordinal",
+        "№ пп": "_display_ordinal",
         "section": "section",
         "раздел": "section",
         "title": "title",
@@ -4802,7 +4802,7 @@ def parse_model_rag_result(
         "выбранная норма": "norm_code",
         "код нормы": "norm_code",
         "гэсн": "norm_code",
-        "позиция": "source_row",
+        "позиция": "_display_ordinal",
         "строка": "source_row",
         "locator": "source_row",
         "код строки": "source_row",
@@ -4896,6 +4896,35 @@ def parse_model_rag_result(
             normalized = normalized[:opening].rstrip()
         return header_fields.get(normalized, "")
 
+    def preserve_unlocated_ordinal(row: dict[str, Any], **presentation: Any) -> bool:
+        """Numbering is not a source identity, even when its integer happens to exist."""
+        if "_display_ordinal" not in row:
+            return False
+        ordinal = row.pop("_display_ordinal")
+        if row.get("source_row") not in (None, ""):
+            return False
+        # Legacy number columns may contain a literal address, not an ordinal.
+        # Preserve that authored address; never resolve numbering by title/quantity.
+        if isinstance(ordinal, str):
+            prefix, delimiter, coordinate = ordinal.rpartition("!")
+            coordinate = coordinate if delimiter else ordinal
+            digits = coordinate[1:]
+            if (coordinate[:1].upper() == "R" and digits.isascii() and digits.isdigit()
+                    and not digits.startswith("0")
+                    and (not delimiter or prefix and not any(char in prefix for char in "!\r\n"))):
+                row["source_row"] = ordinal
+                return False
+        proposal = {
+            "code": "MODEL_RESULT_SOURCE_LOCATOR_MISSING",
+            "reason": "display_ordinal_is_not_source_locator",
+            "display_ordinal": ordinal,
+            "decision": {**row, **presentation},
+        }
+        transport_diagnostics.append(proposal)
+        if diagnostics is not None:
+            diagnostics.append(proposal)
+        return True
+
     if json_rows is None and not transport_diagnostics:
         inline_diagnostics: list[dict[str, Any]] = []
         json_rows = decode_model_inline_rows(raw, fields=set(header_fields), diagnostics=inline_diagnostics)
@@ -4932,7 +4961,8 @@ def parse_model_rag_result(
                 public["evidence_refs"] = extract_model_evidence_refs(public["evidence_refs"])
             for key in resource_fields & public.keys():
                 public[key] = decode_model_resource_field(public[key])
-            public_rows.append(public)
+            if not preserve_unlocated_ordinal(public, raw_proposal=row):
+                public_rows.append(public)
         return str(raw or ""), public_rows
 
     if transport_diagnostics:
@@ -5077,17 +5107,6 @@ def parse_model_rag_result(
         header = cells(lines[header_index])
         header_has_trailing_boundary = table_line(lines[header_index]).endswith("|")
         mapped_header = [field_name(item) for item in header]
-        # A display ordinal is not a second source locator when the model
-        # explicitly supplies source_row. Keep the explicit identity verbatim.
-        normalized_header = [
-            " ".join(item.replace("**", "").strip().split()).casefold()
-            for item in header
-        ]
-        if "source_row" in normalized_header:
-            mapped_header = [
-                "" if label in {"№", "№ п/п", "№ пп"} else field
-                for label, field in zip(normalized_header, mapped_header, strict=True)
-            ]
         if "coverage_fallback" in mapped_header:
             fallback_name = "" if "coverage" in mapped_header else "coverage"
             mapped_header = [
@@ -5166,7 +5185,7 @@ def parse_model_rag_result(
             row: dict[str, Any] = {}
             for name, value in raw_row.items():
                 if not value:
-                    if declared_vor and name in vor_core_fields:
+                    if (declared_vor and name in vor_core_fields) or name == "_display_ordinal":
                         row[name] = value
                     continue
                 if name == "source_row":
@@ -5211,7 +5230,9 @@ def parse_model_rag_result(
             if row:
                 if table_section and not row.get("section"):
                     row["section"] = table_section
-                table_rows.append(row)
+                if not preserve_unlocated_ordinal(row, raw_line=lines[row_index],
+                        raw_cells=values, table_header=header):
+                    table_rows.append(row)
             row_index += 1
         header_index = max(row_index, header_index + 1)
     block_fields = {
@@ -13423,8 +13444,11 @@ async def _execute_chat_evidence_application(
                         )
                         if research_cancelled:
                             model_result_errors.append("workbook_research_cancelled")
-                        if retrieval_trace.get("model_result_transport_diagnostics"):
-                            model_result_errors.append("MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH")
+                        transport_error_codes = list(dict.fromkeys(
+                            str(item.get("code") or "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH")
+                            for item in retrieval_trace.get("model_result_transport_diagnostics", [])
+                        ))
+                        model_result_errors.extend(transport_error_codes)
                         work_row_count = sum(
                             1
                             for row in model_result_rows
@@ -13445,8 +13469,8 @@ async def _execute_chat_evidence_application(
                             # longer suppress the complete artifact.
                             model_result_rows = durable_packaging_rows
                             model_result_blocking_errors = []
-                        elif retrieval_trace.get("model_result_transport_diagnostics"):
-                            model_result_blocking_errors.append("MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH")
+                        elif transport_error_codes:
+                            model_result_blocking_errors.extend(transport_error_codes)
                         notice_kwargs = {
                             "errors": model_result_errors,
                             "row_count": len(model_result_rows),
@@ -13511,15 +13535,45 @@ async def _execute_chat_evidence_application(
                         result_meta["finish_reason"] = answer_finish_reason
                     transport_diagnostics = retrieval_trace.get("model_result_transport_diagnostics") or []
                     if transport_diagnostics:
-                        notice = (
-                            "Техническая ошибка таблицы: число ячеек не соответствует заголовку "
-                            f"в {len(transport_diagnostics)} строках. Исходные строки сохранены как "
-                            "неприменённые предложения; их нормы, объёмы и цены не подставлены."
+                        missing_source_locators = sum(
+                            item.get("code") == "MODEL_RESULT_SOURCE_LOCATOR_MISSING"
+                            for item in transport_diagnostics
                         )
+                        duplicate_json_fields = sum(
+                            item.get("code") in {"MODEL_RESULT_JSON_DUPLICATE_FIELD",
+                                                 "MODEL_RESULT_JSON_DUPLICATE_FIELD_ALIAS"}
+                            for item in transport_diagnostics
+                        )
+                        table_width_errors = sum(
+                            item.get("code") == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH"
+                            for item in transport_diagnostics
+                        )
+                        notice_parts = []
+                        if missing_source_locators:
+                            notice_parts.append(
+                                f"Не удалось привязать {missing_source_locators} строк к исходнику: "
+                                "модель указала порядковые номера вместо адресов исходных строк. "
+                            )
+                        if duplicate_json_fields:
+                            notice_parts.append(
+                                f"Техническая ошибка: повторяющиеся поля JSON в {duplicate_json_fields} предложениях. "
+                            )
+                        if table_width_errors:
+                            notice_parts.append(
+                                "Техническая ошибка таблицы: число ячеек не соответствует заголовку "
+                                f"в {table_width_errors} строках. "
+                            )
+                        if len(transport_diagnostics) > missing_source_locators + duplicate_json_fields + table_width_errors:
+                            notice_parts.append("Есть другие технические ошибки передачи решения модели. ")
+                        notice = "".join(notice_parts)
+                        notice += ("Исходные строки сохранены как неприменённые предложения; "
+                                   "их нормы, объёмы и цены не подставлены.")
                         if notice not in answer:
                             answer = f"{answer.rstrip()}\n\n{notice}"
                         if isinstance(result_meta, dict):
                             result_meta["transport_diagnostics"] = transport_diagnostics
+                            if missing_source_locators and result_meta.get("status") == "unstructured":
+                                result_meta.update(status="structural_error", reason="MODEL_RESULT_SOURCE_LOCATOR_MISSING")
                     if token_sink is not None:
                         await token_sink({"event": "reset", "data": ""})
                         if answer:
@@ -13558,7 +13612,8 @@ async def _execute_chat_evidence_application(
                             and artifact_kind_declaration.get("artifact_kind") == "vor"
                             and artifact_kind_declaration.get("authority") in {"query", "result"}
                             or packaging_tools == ["build_lsr_workbook"]
-                            and all(str(error) == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH"
+                            and all(str(error) in {"MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH", "MODEL_RESULT_SOURCE_LOCATOR_MISSING",
+                                                  "MODEL_RESULT_JSON_DUPLICATE_FIELD", "MODEL_RESULT_JSON_DUPLICATE_FIELD_ALIAS"}
                                     or str(error).startswith(("source_quantity_unconfirmed:", "source_quantity_mismatch:"))
                                     for error in model_result_blocking_errors)
                         )

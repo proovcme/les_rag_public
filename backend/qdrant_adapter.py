@@ -1937,7 +1937,7 @@ class MetaDB:
             return
         with self._get_conn() as conn:
             conn.executemany("""
-                INSERT OR REPLACE INTO structured_rules (
+                INSERT INTO structured_rules (
                     id, document_id, file_key, chunk_id, subject, parameter, operator, value, unit, condition, char_start, char_end
                 ) VALUES (
                     :id, :document_id, :file_key, :chunk_id, :subject, :parameter, :operator, :value, :unit, :condition, :char_start, :char_end
@@ -1957,9 +1957,27 @@ class MetaDB:
         with self._get_conn() as conn:
             return conn.execute(query, params).fetchall()
 
-    def clear_structured_rules(self, file_key: str) -> None:
+    def replace_structured_rules(
+        self, dataset_id: str, file_key: str, rules: List[Dict[str, Any]],
+    ) -> None:
+        """Replace one file owner's rules atomically; never overwrite another owner."""
+        if any(rule.get("document_id") != dataset_id or rule.get("file_key") != file_key for rule in rules):
+            raise ValueError("structured rule owner mismatch")
         with self._get_conn() as conn:
-            conn.execute("DELETE FROM structured_rules WHERE file_key = ?", (file_key,))
+            conn.execute(
+                "DELETE FROM structured_rules WHERE document_id = ? AND file_key = ?",
+                (dataset_id, file_key),
+            )
+            conn.executemany("""
+                INSERT INTO structured_rules (
+                    id, document_id, file_key, chunk_id, subject, parameter, operator, value, unit, condition, char_start, char_end
+                ) VALUES (
+                    :id, :document_id, :file_key, :chunk_id, :subject, :parameter, :operator, :value, :unit, :condition, :char_start, :char_end
+                )
+            """, rules)
+
+    def clear_structured_rules(self, dataset_id: str, file_key: str) -> None:
+        self.replace_structured_rules(dataset_id, file_key, [])
 
 
 # ── Основной адаптер ──────────────────────────────────────────────────────────
@@ -2664,15 +2682,12 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     _delete_file_lexical(file_key)
                     _add_timing("delete_sec", phase_start)
 
-                    # Стираем старые правила для этого файла перед переиндексацией
-                    self.db.clear_structured_rules(file_key)
-
                     # Извлекаем структурированные правила для нормативных и сложных документов
+                    extracted_rules = []
                     if route and route.doc_type in ("NORMATIVE", "SPEC"):
                         try:
                             from .rules_extractor import StructuredRulesExtractor
                             extractor = StructuredRulesExtractor()
-                            extracted_rules = []
                             for node in file_nodes:
                                 chunk_rules = extractor.extract_rules(
                                     text=node["text"],
@@ -2684,10 +2699,13 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                     extracted_rules.extend(chunk_rules)
 
                             if extracted_rules:
-                                self.db.insert_structured_rules(extracted_rules)
                                 logger.info(f"[OCR_RULES] Извлечено структурированных правил из {file_key}: {len(extracted_rules)}")
                         except Exception as rule_err:
                             logger.error(f"[OCR_RULES] Ошибка извлечения структурированных правил для {file_key}: {rule_err}", exc_info=True)
+                            raise
+                    # Only a complete extraction replaces this dataset/file owner.
+                    # A failed insert rolls back the deletion and earlier inserts.
+                    self.db.replace_structured_rules(dataset_id, file_key, extracted_rules)
 
                     _stage(db_file_key, "EMBED")
                     # Батч-эмбеддинги по EMBED_BATCH чанков. Upsert начинаем только

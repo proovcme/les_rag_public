@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from email.message import EmailMessage
+import sqlite3
 
 import httpx
 import pytest
@@ -29,16 +30,149 @@ class LegacyNamePendingDB:
     def update_dataset_chunk_count(self, dataset_id):
         pass
 
-    def clear_structured_rules(self, file_key):
-        pass
-
-    def insert_structured_rules(self, rules):
+    def replace_structured_rules(self, dataset_id, file_key, rules):
         pass
 
 
 class StatusTrackingDB(LegacyNamePendingDB):
     def update_document_status(self, dataset_id, file_name, status, chunk_count, route=None, last_error=""):
         self.updated.append((dataset_id, file_name, status, chunk_count, last_error))
+
+
+def _scoped_rule(identity, dataset_id, file_key):
+    return {
+        "id": identity, "document_id": dataset_id, "file_key": file_key,
+        "chunk_id": "source-chunk", "subject": "wall", "parameter": "height",
+        "operator": ">=", "value": 3.0, "unit": "m", "condition": "",
+        "char_start": 0, "char_end": 12,
+    }
+
+
+@pytest.fixture
+def scoped_rules_db(tmp_path):
+    db = MetaDB(str(tmp_path / "rules.sqlite"))
+    dataset_id = db.create_dataset("First project")
+    other_dataset_id = db.create_dataset("Second project")
+    file_key = "Раздел с пробелом 'документ'.md"
+    db.insert_structured_rules([
+        _scoped_rule("accepted", dataset_id, file_key),
+        _scoped_rule("other-owner", other_dataset_id, file_key),
+        _scoped_rule("other-file", dataset_id, "other.md"),
+    ])
+    return db, dataset_id, other_dataset_id, file_key
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_structured_rules_replacement_is_dataset_and_file_scoped(scoped_rules_db, empty):
+    db, dataset_id, _, file_key = scoped_rules_db
+    replacement = [] if empty else [_scoped_rule("replacement", dataset_id, file_key)]
+
+    db.replace_structured_rules(dataset_id, file_key, replacement)
+
+    expected = {"other-owner", "other-file"} | (set() if empty else {"replacement"})
+    assert {row["id"] for row in db.get_structured_rules()} == expected
+
+
+def test_structured_rules_clear_requires_dataset_scope(scoped_rules_db):
+    db, dataset_id, _, file_key = scoped_rules_db
+
+    db.clear_structured_rules(dataset_id, file_key)
+
+    assert {row["id"] for row in db.get_structured_rules()} == {"other-owner", "other-file"}
+
+
+@pytest.mark.parametrize("failure", ["invalid_insert", "owner_collision"])
+def test_structured_rules_replacement_rolls_back_all_writes(scoped_rules_db, failure):
+    db, dataset_id, _, file_key = scoped_rules_db
+    before = [dict(row) for row in db.get_structured_rules()]
+    broken = _scoped_rule("other-owner" if failure == "owner_collision" else "broken", dataset_id, file_key)
+    if failure == "invalid_insert":
+        del broken["subject"]
+    error = sqlite3.ProgrammingError if failure == "invalid_insert" else sqlite3.IntegrityError
+
+    with pytest.raises(error):
+        db.replace_structured_rules(dataset_id, file_key, [
+            _scoped_rule("first-insert", dataset_id, file_key), broken,
+        ])
+
+    assert [dict(row) for row in db.get_structured_rules()] == before
+
+
+@pytest.mark.parametrize("wrong_owner", ["dataset", "file"])
+def test_structured_rules_replacement_rejects_mismatched_owner(scoped_rules_db, wrong_owner):
+    db, dataset_id, other_dataset_id, file_key = scoped_rules_db
+    before = [dict(row) for row in db.get_structured_rules()]
+    rule = _scoped_rule("replacement", dataset_id, file_key)
+    rule["document_id" if wrong_owner == "dataset" else "file_key"] = (
+        other_dataset_id if wrong_owner == "dataset" else "other.md"
+    )
+
+    with pytest.raises(ValueError, match="owner mismatch"):
+        db.replace_structured_rules(dataset_id, file_key, [rule])
+
+    assert [dict(row) for row in db.get_structured_rules()] == before
+
+
+def test_structured_rules_insert_cannot_overwrite_another_owner(scoped_rules_db):
+    db, dataset_id, _, file_key = scoped_rules_db
+    before = [dict(row) for row in db.get_structured_rules()]
+
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_structured_rules([
+            _scoped_rule("first-insert", dataset_id, file_key),
+            _scoped_rule("other-owner", dataset_id, file_key),
+        ])
+
+    assert [dict(row) for row in db.get_structured_rules()] == before
+
+
+@pytest.mark.parametrize("document_type", ["DOCUMENT", "SPEC", "SPEC_COLLISION", "SPEC_INVALID", "SPEC_ERROR"])
+def test_parse_preserves_same_named_file_rules_in_other_dataset(
+    tmp_path, monkeypatch, scoped_rules_db, document_type,
+):
+    db, dataset_id, _, file_key = scoped_rules_db
+    dataset_dir = tmp_path / dataset_id
+    dataset_dir.mkdir()
+    (dataset_dir / file_key).write_text("Searchable source text for rule extraction.", encoding="utf-8")
+    db.add_document(dataset_id, file_key)
+    monkeypatch.setattr(qdrant_adapter, "current_dataset_revision_id", lambda *_args: "")
+    monkeypatch.setattr(qdrant_adapter, "PARSE_PREFETCH", False)
+    route_type = "SPEC" if document_type.startswith("SPEC") else document_type
+    route = qdrant_adapter.DocumentRoute("general", "test", route_type, "text", "simple", "markdown", {})
+    monkeypatch.setattr(QdrantLlamaIndexAdapter, "_convert_file", lambda *_args, **_kwargs: (
+        route, [{"text": "Searchable source text for rule extraction.", "doc_id": "new", "payload": {}}],
+    ))
+    from backend.rules_extractor import StructuredRulesExtractor
+    def extract(_self, **_kwargs):
+        if document_type == "SPEC_ERROR":
+            raise RuntimeError("controlled rule extraction failure")
+        rule = _scoped_rule("other-owner" if document_type == "SPEC_COLLISION" else "replacement", dataset_id, file_key)
+        if document_type == "SPEC_INVALID":
+            del rule["subject"]
+        return [rule]
+
+    monkeypatch.setattr(StructuredRulesExtractor, "extract_rules", extract)
+    points = []
+    monkeypatch.setattr(qdrant_adapter.qdrant_client, "QdrantClient", lambda **_kwargs: SimpleNamespace(
+        upsert=lambda **kwargs: points.extend(kwargs["points"]),
+    ))
+    adapter = SimpleNamespace(
+        db=db, content_dir=tmp_path, qdrant_url="unused", collection_name="test",
+        embed=SimpleNamespace(encode_sync=lambda texts: [[0.25] * 1024 for _ in texts]),
+        _sync_delete_file_points=lambda *_args: None,
+        _sync_count_file_points=lambda *_args: len(points),
+    )
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, dataset_id, limit=1)
+
+    failed = document_type in {"SPEC_COLLISION", "SPEC_INVALID", "SPEC_ERROR"}
+    assert result["errors"] == int(failed)
+    assert result["files_parsed"] == 1
+    expected = {"other-owner", "other-file"} | ({"replacement"} if document_type == "SPEC" else set())
+    if failed:
+        expected.add("accepted")
+        assert not points
+    assert {row["id"] for row in db.get_structured_rules()} == expected
 
 
 def test_embed_client_accepts_actual_qwen_model_contract(monkeypatch):
@@ -670,8 +804,12 @@ def _preserved_evidence_parse_harness(tmp_path, monkeypatch, nodes_by_name):
                 dataset_id, file_name, "ERROR", 0, last_error=failure["message"],
             )
 
-        def clear_structured_rules(self, file_key):
-            state.rules.pop(file_key, None)
+        def replace_structured_rules(self, dataset_id, file_key, rules):
+            assert dataset_id == "ds-1"
+            if rules:
+                state.rules[file_key] = list(rules)
+            else:
+                state.rules.pop(file_key, None)
 
         def set_document_source_fingerprint(self, dataset_id, file_name, **fingerprint):
             state.fingerprints.append(file_name)
