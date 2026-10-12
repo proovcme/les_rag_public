@@ -88,16 +88,17 @@ def analyze_kac(
         offers = [o for o in groups[key] if o["price"] is not None]
         offers.sort(key=lambda o: o["price"])
         prices = [o["price"] for o in offers]
-        n = len(offers)
+        n = len({_norm_material(o["supplier"]) for o in offers if o["supplier"].strip()})
         units = {o["unit"] for o in offers if o["unit"]}
+        compatible_units = len(units) == 1 and all(o["unit"] for o in offers)
         chosen = None
-        if prices:
+        if prices and compatible_units:
             if strategy == "median":
                 target = statistics.median(prices)
                 chosen = min(offers, key=lambda o: abs(o["price"] - target))
             else:  # 'min' — наиболее экономичный
                 chosen = offers[0]
-        is_ok = n >= min_suppliers
+        is_ok = n >= min_suppliers and compatible_units
         if is_ok:
             sufficient += 1
         spread = (max(prices) - min(prices)) if prices else 0.0
@@ -128,7 +129,7 @@ def analyze_kac(
             "materials": len(materials),
             "sufficient": sufficient,
             "insufficient": len(materials) - sufficient,
-            "total_quotes": sum(m["suppliers"] for m in materials),
+            "total_quotes": sum(len(m["offers"]) for m in materials),
         },
     }
 

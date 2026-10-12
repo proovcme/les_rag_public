@@ -309,6 +309,11 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
             status = _status(str(src.get("status_if_missing") or "degraded"), present)
             if present and not integrity.get("trusted_for_pricing"):
                 status = "quarantined_blocking"
+        external = {}
+        if src.get("id") == "etm_supplier":
+            from proxy.services.etm_supplier_service import source_status
+            external = source_status()
+            status = "ok" if external["state"] == "connected" else "missing_degraded"
         totals[status] = totals.get(status, 0) + 1
         item = {
             "id": src.get("id"),
@@ -328,6 +333,8 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
             "integrity": integrity,
         }
         item["facts"] = _facts_for_source(str(item["id"]), files, dataset)
+        if external:
+            item["facts"].update(external)
         out.append(item)
     return {
         "schema": "service_sources_v1",
@@ -355,6 +362,15 @@ def process_service_source(source_id: str, path: Path | str = DEFAULT_CONFIG) ->
     item = service_source(source_id, path)
     if item is None:
         return {"ok": False, "source_id": source_id, "status": "not_found", "message": "Источник данных не найден."}
+    if source_id == "etm_supplier":
+        from proxy.services.etm_supplier_service import EtmError, error_message, get_client
+        try:
+            get_client().probe()
+        except EtmError as error:
+            return {"ok": False, "source_id": source_id, "status": "missing_degraded",
+                    "message": error_message(str(error))}
+        return {"ok": True, "source_id": source_id, "status": "ok",
+                "message": "Доступ к каталогу ЭТМ проверен. Цены можно получить по кодам товаров; заказы не отправляются."}
     status = str(item.get("status") or "")
     folders = [f["path"] for f in item.get("folders") or [] if f.get("path")]
     missing_files = [f["path"] for f in item.get("files") or [] if not f.get("exists")]

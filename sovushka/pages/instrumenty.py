@@ -6,6 +6,8 @@ v0.24.0.2: экран оставлен только под служебные и
 from __future__ import annotations
 
 import subprocess
+import asyncio
+import re
 from pathlib import Path
 from nicegui import ui
 
@@ -16,6 +18,8 @@ from sovushka.uikit.components import (
     panel,
     section_heading,
     status_badge,
+    text_field,
+    select_field,
 )
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -68,6 +72,14 @@ async def _open_folder(rel_path: str) -> None:
 
 def _facts_text(item: dict) -> str:
     facts = item.get("facts") or {}
+    if item.get("id") == "etm_supplier":
+        return {
+            "disabled": "Подключение выключено.",
+            "needs_credentials": "Нужно задать учётную запись iPRO.",
+            "not_checked": "Учётная запись задана; доступ к API ещё не проверен.",
+            "invalid_configuration": "Проверьте адрес и параметры подключения.",
+            "connected": "Доступ к API проверен. ЭТМ — один поставщик; цены актуальны на дату запроса.",
+        }.get(facts.get("state"), "Доступ к API пока не подтверждён.")
     labels = {
         "base_norms": "норм",
         "seed_norms": "семя",
@@ -85,6 +97,40 @@ def _facts_text(item: dict) -> str:
     if files:
         return "найдено: " + ", ".join(str(f.get("path") or "") for f in files[:2])
     return "данные пока не найдены"
+
+
+async def _download_etm_quotes(raw_codes: str) -> None:
+    codes = [value for value in re.split(r"[,;\s]+", raw_codes.strip()) if value]
+    if not 1 <= len(codes) <= 500:
+        ui.notify("Укажите от 1 до 500 кодов товаров ЭТМ через запятую.", type="warning")
+        return
+    result = await api_post("/api/service-sources/etm/quotes", {"codes": codes})
+    if not isinstance(result, dict) or result.get("schema") != "etm_supplier_quotes_v1":
+        ui.notify(last_api_error_text("Прайс ЭТМ не получен"), type="negative")
+        return
+    from proxy.services.etm_supplier_service import quotes_to_xlsx
+    content = await asyncio.to_thread(quotes_to_xlsx, result)
+    date = re.sub(r"[^0-9-]", "", str(result.get("retrieved_at") or "")[:10])
+    ui.download(content, filename=f"Прайс_ЭТМ_{date or 'текущий'}.xlsx")
+    ui.notify(f"Цены найдены: {result['found']} из {result['requested']}. "
+              "Пропуски указаны в прайсе; добавьте файл в датасет «Прайсы».",
+              type="positive" if not result["missing"] else "warning")
+
+
+async def _search_etm_catalog(query: str) -> dict[str, str] | None:
+    if not query.strip():
+        ui.notify("Укажите название или артикул товара.", type="warning")
+        return None
+    result = await api_post("/api/service-sources/etm/catalog", {"query": query.strip(), "rows": 20})
+    if not isinstance(result, dict) or result.get("schema") != "etm_catalog_v1":
+        ui.notify(last_api_error_text("Каталог ЭТМ не получен"), type="negative")
+        return None
+    options = {row["code"]: " · ".join(str(row[key]) for key in ("name", "article", "unit") if row.get(key))
+               + f" (ЭТМ {row['code']})" for row in result["rows"]}
+    ui.notify(f"Найдено на первой странице: {len(options)}. "
+              "Если нужного товара нет, уточните название или артикул.",
+              type="info" if options else "warning")
+    return options
 
 
 def _folder_text(item: dict) -> str:
@@ -331,7 +377,9 @@ def build_instrumenty():
                         ui.label(str(item.get("domain") or "Служебный источник")).classes(
                             "sov-tools-source__domain"
                         )
-                        ui.label(f"Папка: {_folder_text(item)}").classes("sov-tools-source__line")
+                        location = (f"Подключение: {(item.get('facts') or {}).get('base_url') or 'нужно настроить'}"
+                                    if item.get("id") == "etm_supplier" else f"Папка: {_folder_text(item)}")
+                        ui.label(location).classes("sov-tools-source__line")
                         ui.label(f"Принимает: {accepted}").classes("sov-tools-source__meta")
                         ui.label(f"Нужен для: {needed}").classes("sov-tools-source__meta")
                         action = str(item.get("operator_action") or "").strip()
@@ -368,6 +416,25 @@ def build_instrumenty():
                                 icon_only=True,
                                 aria_label="Обновить базу ГЭСН",
                             ).tooltip("Скачать/обновить базу ГЭСН из ФГИС ЦС")
+                if item.get("id") == "etm_supplier":
+                    with ui.column().classes("w-full"):
+                        query_field = text_field(label="Название или артикул товара", classes="w-full")
+                        selection = select_field({}, value=[], label="Товары из каталога ЭТМ", multiple=True,
+                                                 clearable=True, classes="w-full")
+                        async def _search(_event=None, query_input=query_field, choices=selection):
+                            options = await _search_etm_catalog(str(query_input.value or ""))
+                            if options is not None:
+                                choices.set_value([])
+                                choices.set_options(options)
+                        action_button("Найти в каталоге", icon="o_search", on_click=_search,
+                                      variant="secondary")
+                        field = text_field(label="Коды ЭТМ, если уже известны", placeholder="Через запятую",
+                                           aria_label="Коды товаров ЭТМ для получения прайса", classes="w-full")
+                        async def _download(_event=None, code_field=field, choices=selection):
+                            codes = ",".join(str(code) for code in (choices.value or []))
+                            await _download_etm_quotes(codes + "," + str(code_field.value or ""))
+                        action_button("Получить прайс XLSX", icon="o_download", on_click=_download,
+                                      variant="secondary")
                 if required_docs:
                     with ui.expansion("Какие документы нужны", icon="o_inventory_2").classes(
                         "w-full sov-tools-disclosure"

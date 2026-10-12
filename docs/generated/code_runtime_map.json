@@ -1090,6 +1090,7 @@
         "proxy/services/electrical_schematic_service.py",
         "proxy/services/estimate_harness_service.py",
         "proxy/services/estimate_math_service.py",
+        "proxy/services/etm_supplier_service.py",
         "proxy/services/evidence_contract.py",
         "proxy/services/evidence_packet_service.py",
         "proxy/services/external_radar_service.py",
@@ -2316,14 +2317,16 @@
     {
       "inbound": [
         "proxy/app.py",
+        "tests/test_etm_source_workflow.py",
         "tests/test_notebook_api.py"
       ],
-      "lines": 59,
+      "lines": 93,
       "module": "proxy.routers.service_sources",
       "outbound": [
         "proxy/__init__.py",
         "proxy/routers/__init__.py",
         "proxy/security.py",
+        "proxy/services/etm_supplier_service.py",
         "proxy/services/fgis_update_service.py",
         "proxy/services/gesn_update_service.py",
         "proxy/services/notebook_service.py",
@@ -2486,6 +2489,7 @@
         "tests/test_artifacts_router.py",
         "tests/test_candidate_acceptance_service.py",
         "tests/test_checklist_review_api.py",
+        "tests/test_etm_source_workflow.py",
         "tests/test_finalization_defects_782.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_memory_api.py",
@@ -2571,6 +2575,7 @@
         "proxy/services/electrical_schematic_service.py",
         "proxy/services/estimate_harness_service.py",
         "proxy/services/estimate_math_service.py",
+        "proxy/services/etm_supplier_service.py",
         "proxy/services/evidence_contract.py",
         "proxy/services/evidence_packet_service.py",
         "proxy/services/external_radar_service.py",
@@ -4133,6 +4138,25 @@
     },
     {
       "inbound": [
+        "proxy/routers/service_sources.py",
+        "proxy/services/runtime_config_registry_service.py",
+        "proxy/services/service_source_registry.py",
+        "sovushka/pages/instrumenty.py",
+        "tests/test_etm_source_workflow.py",
+        "tests/test_etm_supplier_service.py"
+      ],
+      "lines": 334,
+      "module": "proxy.services.etm_supplier_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/etm_supplier_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
         "proxy/services/checklist_review_service.py",
         "proxy/services/construction_harness_service.py",
         "proxy/services/doc_review_service.py",
@@ -4663,7 +4687,7 @@
         "tests/test_kac_service.py",
         "tools/les_mcp_server.py"
       ],
-      "lines": 222,
+      "lines": 223,
       "module": "proxy.services.kac_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7085,18 +7109,20 @@
         "proxy/routers/settings.py",
         "tests/test_candidate_acceptance_service.py",
         "tests/test_chat_model_source_frame.py",
+        "tests/test_etm_source_workflow.py",
         "tests/test_model_query_reasoning.py",
         "tests/test_model_reasoning_control.py",
         "tests/test_rtf_input_transport.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 495,
+      "lines": 532,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
         "proxy/__init__.py",
         "proxy/config.py",
         "proxy/services/__init__.py",
+        "proxy/services/etm_supplier_service.py",
         "proxy/services/llm_transport_profile_service.py"
       ],
       "path": "proxy/services/runtime_config_registry_service.py",
@@ -7212,15 +7238,17 @@
         "proxy/routers/chat.py",
         "proxy/routers/service_sources.py",
         "proxy/services/estimate_harness_service.py",
+        "tests/test_etm_source_workflow.py",
         "tests/test_gesn_seed_is_test_only_830.py",
         "tests/test_service_source_registry.py"
       ],
-      "lines": 398,
+      "lines": 414,
       "module": "proxy.services.service_source_registry",
       "outbound": [
         "backend/rag_config.py",
         "proxy/__init__.py",
         "proxy/services/__init__.py",
+        "proxy/services/etm_supplier_service.py",
         "proxy/services/gesn_service.py",
         "proxy/services/normcontrol_review_map_service.py",
         "proxy/smeta_core/base_registry.py",
@@ -9202,12 +9230,14 @@
     {
       "inbound": [
         "sovushka_ng.py",
+        "tests/test_etm_source_workflow.py",
         "tests/test_fgis_full_update.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 531,
+      "lines": 598,
       "module": "sovushka.pages.instrumenty",
       "outbound": [
+        "proxy/services/etm_supplier_service.py",
         "sovushka/__init__.py",
         "sovushka/checklist_review_panel.py",
         "sovushka/pages/__init__.py",
@@ -11127,6 +11157,33 @@
     },
     {
       "inbound": [],
+      "lines": 91,
+      "module": "tests.test_etm_source_workflow",
+      "outbound": [
+        "proxy/routers/service_sources.py",
+        "proxy/security.py",
+        "proxy/services/etm_supplier_service.py",
+        "proxy/services/runtime_config_registry_service.py",
+        "proxy/services/service_source_registry.py",
+        "sovushka/pages/instrumenty.py"
+      ],
+      "path": "tests/test_etm_source_workflow.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 150,
+      "module": "tests.test_etm_supplier_service",
+      "outbound": [
+        "proxy/services/etm_supplier_service.py"
+      ],
+      "path": "tests/test_etm_supplier_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 49,
       "module": "tests.test_evidence_contract",
       "outbound": [
@@ -11782,7 +11839,7 @@
     },
     {
       "inbound": [],
-      "lines": 67,
+      "lines": 90,
       "module": "tests.test_kac_service",
       "outbound": [
         "proxy/services/doc_classifier.py",
@@ -21169,6 +21226,18 @@
       "source": "proxy/routers/service_sources.py"
     },
     {
+      "handler": "etm_catalog",
+      "method": "POST",
+      "path": "/api/service-sources/etm/catalog",
+      "source": "proxy/routers/service_sources.py"
+    },
+    {
+      "handler": "etm_quotes",
+      "method": "POST",
+      "path": "/api/service-sources/etm/quotes",
+      "source": "proxy/routers/service_sources.py"
+    },
+    {
       "handler": "fgis_update",
       "method": "POST",
       "path": "/api/service-sources/fgis/update",
@@ -21533,12 +21602,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 375,
-    "registered_api_routes": 340,
+    "product_reachable": 376,
+    "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 755,
-    "tracked_python_files": 1142,
-    "tracked_python_lines": 397767
+    "test_or_tool_only": 757,
+    "tracked_python_files": 1145,
+    "tracked_python_lines": 398520
   },
   "warnings": []
 }

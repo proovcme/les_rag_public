@@ -1,5 +1,11 @@
 # Версионирование ЛЕС
 
+Кандидат0.31.199/build927: read-only ЭТМ и две регрессии коммерческих цен.
+Frozen927:4411 passed,20 historical skipped,mail66,metadata31;
+структурные гейты exit0. Установка pending; фактически установлен926/8748b76f,
+native EXE5.1.813. Приёмка iPRO и профессиональная готовность разных ВОР/ЛСР
+не подтверждены. customer-ready=false. [RELEASE_LEDGER](RELEASE_LEDGER.md).
+
 Установлен runtime0.31.198/build926, code commit8748b76f; native EXE5.1.813.
 926 исправляет running checkpoint при ModelTransportError. GREEN10;
 full926:4367 passed,20 historical skipped, mail66,metadata31. Живые контроли
@@ -37,9 +43,9 @@ same-identity B0/B1 без XLSX, required46993/47433 при budget46246; гот�
 
 | Поле | Пример | Для чего |
 |---|---:|---|
-| `product_version` | `0.31.198` | Единственная версия, которую видит пользователь; обычный SemVer `X.Y.Z` |
-| `build_number` | `926` | Монотонный номер Windows-сборки; не является четвёртой частью версии |
-| `desktop_version` | `5.1.926` | Внутренняя версия Tauri/NSIS для обновления ранее выпущенных `5.1.x` пакетов |
+| `product_version` | `0.31.199` | Единственная версия, которую видит пользователь; обычный SemVer `X.Y.Z` |
+| `build_number` | `927` | Монотонный номер Windows-сборки; не является четвёртой частью версии |
+| `desktop_version` | `5.1.927` | Внутренняя версия Tauri/NSIS для обновления ранее выпущенных `5.1.x` пакетов |
 | `harness_schema_version` | `0.24` | Версия внутреннего строительного контракта, а не продукта |
 
 `proxy/services/version_service.py` читает этот файл и сохраняет старые поля API только для

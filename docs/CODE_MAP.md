@@ -1,5 +1,20 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат 0.31.199 / 927 — источник ЭТМ
+
+`etm_supplier_service.py` → read-only iPRO session/catalog/exact-code quotes;
+`service_sources.py` → auth API и worker thread;
+`service_source_registry.py` + `config/service_sources.yaml` → источник и
+реально проверенный статус; `runtime_config_registry_service.py` → пять
+GUI-факторов; `sovushka/pages/instrumenty.py` → поиск, выбор и XLSX.
+Snapshot → существующий датасет «Прайсы» → общий RAG → решение модели;
+автоматической привязки или нового сметного маршрута нет.
+`kac_service.py` исправляет distinct suppliers и блокирование unit mismatch.
+Регрессии: `test_etm_supplier_service.py`, `test_etm_source_workflow.py`,
+`test_kac_service.py`. [Контракт](modules/etm-supplier.md).
+Пока установлен926; frozen927:4411 passed,20 historical skipped;
+mail66,metadata31 и structural gates exit0. Live ЭТМ pending; customer-ready=false.
+
 ## Установлен 0.31.198 / 926
 
 Установлен runtime **0.31.198 / 926**, code commit `8748b76f`.

@@ -33,6 +33,26 @@ _EFFECTIVE_FACTOR_LABELS = {
     "answer_output_tokens": "Лимит итогового ответа",
 }
 _FACTOR_PRESENTATION = {
+    "LES_ETM_ENABLED": {
+        "label": "Использовать цены ЭТМ", "secret": False, "category": "smeta",
+        "help_text": "Разрешает чтение клиентского API iPRO. Заказы не отправляются; цены получаются только по явному запросу. Перезапуск не нужен.",
+    },
+    "LES_ETM_LOGIN": {
+        "label": "Логин iPRO ЭТМ", "secret": True, "category": "smeta",
+        "help_text": "Учётная запись покупателя iPRO с доступом к API. Значение скрыто; применяется к следующему запросу без перезапуска.",
+    },
+    "LES_ETM_PASSWORD": {
+        "label": "Пароль iPRO ЭТМ", "secret": True, "category": "smeta",
+        "help_text": "Защищённый ввод. Значение не возвращается из API и не передаётся модели. Перезапуск не нужен.",
+    },
+    "LES_ETM_BASE_URL": {
+        "label": "Адрес клиентского API ЭТМ", "secret": False, "category": "smeta",
+        "help_text": "Официальный рабочий или тестовый адрес API покупателя. Сторонние адреса не принимаются. Перезапуск не нужен.",
+    },
+    "LES_ETM_TIMEOUT_SEC": {
+        "label": "Ожидание API ЭТМ, секунд", "secret": False, "category": "smeta",
+        "help_text": "От 1 до 60 секунд на сетевой запрос. Перезапуск не нужен.",
+    },
     "LES_CHAT_SOURCE_FRAME_ROWS": {
         "secret": False,
         "label": "Строк исходника в пакете модели",
@@ -178,6 +198,8 @@ _FACTOR_PRESENTATION = {
     },
 }
 _EXPLICIT_FACTOR_DEFAULTS = {
+    "LES_ETM_ENABLED": "0", "LES_ETM_LOGIN": "", "LES_ETM_PASSWORD": "",
+    "LES_ETM_BASE_URL": "https://ipro.etm.ru/api/v1", "LES_ETM_TIMEOUT_SEC": "20",
     # The config accessor joins a tuple; AST discovery cannot infer that value.
     "RAG_UPLOAD_SUFFIXES": ",".join(DEFAULT_RAG_UPLOAD_SUFFIXES),
     "LES_CHAT_SOURCE_FRAME_ROWS": "0",
@@ -246,8 +268,9 @@ def env_path() -> Path:
 
 
 def _is_secret(key: str) -> bool:
-    if _FACTOR_PRESENTATION.get(key, {}).get("secret") is False:
-        return False
+    override = _FACTOR_PRESENTATION.get(key, {}).get("secret")
+    if isinstance(override, bool):
+        return override
     # FreeToken is a product/provider name, not a credential marker.
     scan_key = key.removeprefix("FREETOKEN_")
     return any(marker in scan_key for marker in _SECRET_MARKERS)
@@ -462,6 +485,20 @@ def update_factors(
         value = str(raw_value)
         if "\n" in value or "\r" in value or "\x00" in value:
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
+        if key == "LES_ETM_ENABLED" and value.lower() not in {"0", "1", "true", "false"}:
+            raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
+        if key == "LES_ETM_BASE_URL":
+            from proxy.services.etm_supplier_service import ALLOWED_BASE_URLS
+            if value.rstrip("/") not in ALLOWED_BASE_URLS:
+                raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
+        if key == "LES_ETM_TIMEOUT_SEC":
+            import math
+            try:
+                valid = math.isfinite(float(value)) and 1 <= float(value) <= 60
+            except ValueError:
+                valid = False
+            if not valid:
+                raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         if key in {"QDRANT_URL", "LES_SEARXNG_URL", "LES_CRAWL4AI_URL"} and value:
             parsed = urlparse(value)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:

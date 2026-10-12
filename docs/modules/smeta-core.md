@@ -388,6 +388,10 @@ Conflict-only global review возвращает полный terminal mapping �
 - Прежние `etm_price_service` и `/api/prices/etm/*` удалены в 0.30.21 как
   неиспользуемый альтернативный price island. Живой точный источник —
   `fgis_price_service`; КАЦ остаётся model-owned через свои evidence sources.
+  Кандидат927 добавляет [read-only источник ЭТМ](etm-supplier.md) через реестр
+  служебных источников: поиск оператора → XLSX → обычный датасет «Прайсы».
+  Он не выбирает нормы и не применяет цены к ЛСР; установленная
+  профессиональная приёмка ВОР/ЛСР остаётся открытой.
 - `proxy.routers.chat` — request context, вызов application flow и общий history/response contract.
 
 `estimate_harness_service` временно исполняет старый tool-loop только за

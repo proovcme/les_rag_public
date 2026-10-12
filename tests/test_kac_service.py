@@ -65,3 +65,26 @@ def test_classifier_recognizes_kp():
     res = classify_table(["Наименование", "Цена", "Поставщик", "Ед.изм"],
                          title="Коммерческое предложение № 5")
     assert res["type"] == "коммерческое_предложение"
+
+
+def test_repeated_supplier_is_not_three_independent_suppliers():
+    quotes = [dict(QUOTES[0], supplier=name, price=price)
+              for name, price in (("ЭТМ", 100), (" этм ", 110), ("ЭТМ", 120))]
+    result = analyze_kac(quotes)
+    material = result["materials"][0]
+    assert material["suppliers"] == 1
+    assert material["sufficient"] is False
+    assert len(material["offers"]) == 3
+    assert result["summary"]["total_quotes"] == 3
+
+
+def test_incompatible_offer_units_cannot_supply_an_lsr_price():
+    quotes = [dict(row) for row in QUOTES[:3]]
+    quotes[1]["unit"] = "упак"
+    result = analyze_kac(quotes)
+    material = result["materials"][0]
+    assert material["unit_mismatch"] is True
+    assert material["sufficient"] is False
+    assert material["chosen_price"] is None
+    assert len(material["offers"]) == 3
+    assert kac_to_lsr_lines(result) == []
