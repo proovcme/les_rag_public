@@ -341,6 +341,12 @@ def _select_pricebook_for_question(question: str):
     return None, ""
 
 
+def _visible_quantity(row: dict[str, Any]) -> Any:
+    """A literal zero is a quantity, while None remains an empty display cell."""
+    quantity = row.get("quantity")
+    return quantity if quantity is not None else ""
+
+
 def _build_rim_trace_form(lsr_form: dict[str, Any], *, question: str = "") -> dict[str, Any] | None:
     """Build a checked RIM form from visible rows that already contain norm codes.
 
@@ -422,10 +428,10 @@ def _build_rim_trace_form(lsr_form: dict[str, Any], *, question: str = "") -> di
             continue
         out_rows.append(
             {
-                "basis": "нужен подбор нормы",
+                "basis": source_row.get("norm_code") or source_row.get("code") or binding.get("code") or "нужен подбор нормы",
                 "title": _stable_lsr_text(source_row.get("title") or source_row.get("name")) or "Позиция сметы",
                 "unit": source_row.get("unit") or "",
-                "quantity": source_row.get("quantity") or "",
+                "quantity": _visible_quantity(source_row),
                 "unit_price": "0.00",
                 "amount": 0.0,
                 "status": binding.get("status") or "norm_selection_required",
@@ -441,8 +447,8 @@ def _build_rim_trace_form(lsr_form: dict[str, Any], *, question: str = "") -> di
     flags = [str(flag) for flag in (summary.get("flags") or []) if str(flag).strip()]
     note = (
         "ЛСР-форма построена по расчётной РИМ-трассе из видимых строк с выбранными шифрами норм: "
-        "код раскрыл ресурсы, цены/индексы, НР/СП и итог. Строки без выбранного шифра нормы "
-        "не попали в проверяемую сумму и перечислены в доборе."
+        "код раскрыл ресурсы, цены/индексы, НР/СП и итог. Нерассчитанные строки "
+        "сохраняют авторские шифры и объёмы; причины указаны отдельно."
     )
     if pricebook_name:
         note += f" Книга цен: {pricebook_name}."
@@ -496,7 +502,7 @@ def build_smeta_artifact_from_rim_form(
             str(row.get("unit") or ""),
             "1",
             "1",
-            str(row.get("quantity") or ""),
+            str(_visible_quantity(row)),
             "",
             "",
             str(row.get("unit_price") or ""),
@@ -564,9 +570,9 @@ def _lsr_markdown(lsr_form: dict[str, Any] | None) -> list[str]:
             str(row.get("basis") or ""),
             str(row.get("title") or ""),
             str(row.get("unit") or ""),
-            str(row.get("quantity") or ""),
+            str(_visible_quantity(row)),
             "1",
-            str(row.get("quantity") or ""),
+            str(_visible_quantity(row)),
             "",
             "",
             str(row.get("unit_price") or ""),
@@ -997,9 +1003,9 @@ def persist_smeta_artifact_exports(
             ws.cell(row=row_idx, column=2, value=row.get("basis") or "")
             ws.cell(row=row_idx, column=3, value=row.get("title") or "")
             ws.cell(row=row_idx, column=4, value=row.get("unit") or "")
-            ws.cell(row=row_idx, column=5, value=row.get("quantity") or "")
+            ws.cell(row=row_idx, column=5, value=_visible_quantity(row))
             ws.cell(row=row_idx, column=6, value=1)
-            ws.cell(row=row_idx, column=7, value=row.get("quantity") or "")
+            ws.cell(row=row_idx, column=7, value=_visible_quantity(row))
             ws.cell(row=row_idx, column=10, value=row.get("unit_price") or "")
             ws.cell(row=row_idx, column=11, value=1)
             ws.cell(row=row_idx, column=12, value=row.get("amount") if row.get("amount") is not None else "")
@@ -1066,9 +1072,9 @@ def persist_smeta_artifact_exports(
                 csv_row[1] = row.get("basis") or ""
                 csv_row[2] = row.get("title") or ""
                 csv_row[3] = row.get("unit") or ""
-                csv_row[4] = row.get("quantity") or ""
+                csv_row[4] = _visible_quantity(row)
                 csv_row[5] = 1
-                csv_row[6] = row.get("quantity") or ""
+                csv_row[6] = _visible_quantity(row)
                 csv_row[9] = row.get("unit_price") or ""
                 csv_row[10] = 1
                 csv_row[11] = row.get("amount") if row.get("amount") is not None else ""

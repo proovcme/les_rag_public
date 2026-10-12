@@ -234,12 +234,19 @@ def test_repeated_plain_continuation_rejects_foreign_intermediate_scope(tmp_path
     first, middle = _later_corrected_research(service, _identity(service, "Продолжи"),
                                             first_question="Продолжи", later_identity=foreign)
     last = service.begin_or_resume(_identity(service, "Добавь строку"))
-    assert last["continues_job_id"] == middle["job_id"]
+    # The foreign profile owns an independent document binding. Returning to
+    # the original binding continues its own latest revision, never the foreign
+    # decisions/cache/task that happened to be written more recently.
+    assert middle["continues_job_id"] == ""
+    assert last["continues_job_id"] == first["job_id"]
+    assert last["accepted_rows"] == first["accepted_rows"]
+    assert last["evidence"] == first["evidence"]
+    assert last["task_context"] == first["task_context"]
 
     resumed = service.begin_or_resume(_identity(service, "Продолжи"),
                                      task_context={"original_question": "Продолжи"})
 
-    assert resumed["job_id"] == first["job_id"]
+    assert resumed["job_id"] == last["job_id"]
     assert resumed["accepted_rows"] == first["accepted_rows"]
 
 

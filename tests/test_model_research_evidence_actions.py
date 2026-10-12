@@ -257,12 +257,16 @@ async def test_read_source_cannot_replace_the_requested_document_inside_a_datase
 @pytest.mark.asyncio
 async def test_exact_norm_read_keeps_all_resource_consumption_and_nrsp_choices(monkeypatch):
     from proxy.services import model_research_tool_service as module
+    from proxy.services.model_resource_reference_service import resource_slot_records, shown_resource_record
 
     monkeypatch.setattr(module.nr_sp_service, "model_candidates", lambda **_: [{
         "rule_id": "nrsp-user-choice", "label": "Known condition", "nr_pct": 10, "sp_pct": 5,
         "basis": "Synthetic source", "source_ref": "rules#choice",
     }])
     calls = []
+    expected_resources = [{"kind": "material", "code": f"literal-{i}", "name": f"Resource {i}",
+                           "unit": "m", "per_unit": i / 10, "source_ref": f"typed#resource-{i}"}
+                          for i in range(40)]
 
     def exact_reader(**kwargs):
         calls.append(kwargs)
@@ -271,8 +275,7 @@ async def test_exact_norm_read_keeps_all_resource_consumption_and_nrsp_choices(m
             "source_ref": "typed#norm-immutable", "measure_unit": "m", "work_steps": ["Install"],
             "resource_count": 40, "resources_returned": 40, "resources_complete": True,
             "resource_consumption_known": True,
-            "resources": [{"kind": "material", "code": f"literal-{i}", "name": f"Resource {i}",
-                           "unit": "m", "per_unit": i / 10, "source_ref": f"typed#resource-{i}"} for i in range(40)],
+            "resources": [dict(row) for row in expected_resources],
         }, "missing": [], "warnings": []}
 
     reader = service(norm_card_reader=exact_reader)
@@ -286,10 +289,14 @@ async def test_exact_norm_read_keeps_all_resource_consumption_and_nrsp_choices(m
     assert admitted[0].meta["model_inventory_delivery_status"] == "delivered"
     result = await reader.execute(exact_call)
     assert calls == [{"norm_key": "norm-immutable", "norm_code": NORM_CODE}]
-    assert len(result.payload["result"]["card"]["resources"]) == 40
-    assert '"code": "literal-39"' in result.chunks[0].content
-    assert '"per_unit": 3.9' in result.chunks[0].content
-    assert '"source_ref": "typed#resource-39"' in result.chunks[0].content
+    assert result.payload["result"]["card"]["resources"] == expected_resources
+    expected_meta = {"exact_card_read": True,
+                     "resources": resource_slot_records({"resources": expected_resources})}
+    shown_resources = [shown_resource_record(expected_meta, result.chunks[0].content, slot)
+                       for slot in range(1, 41)]
+    assert json.dumps(shown_resources, ensure_ascii=False, sort_keys=True) == json.dumps(
+        expected_resources, ensure_ascii=False, sort_keys=True)
+    assert shown_resources[-1] == expected_resources[-1]
     assert "nrsp-user-choice" in result.chunks[0].content
     assert result.chunks[0].meta["resources_complete"] is True
     assert result.chunks[0].meta["minimum_evidence_body_chars"] == len(result.chunks[0].content)

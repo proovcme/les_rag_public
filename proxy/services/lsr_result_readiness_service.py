@@ -18,6 +18,8 @@ from proxy.services.lsr_norm_quality_gate_service import (
     MODEL_GAP_REASONS,
     applicability_gap_kind,
     gap_reason_of,
+    norm_applicability_substantiated,
+    qualified_norm_key,
 )
 from proxy.services.rim_lsr_trace_service import (
     BOOK_UNIT_CONFLICT_ACTION,
@@ -201,6 +203,8 @@ _ROW_STATUS_LABEL = {
     "missing_quantity": "объём не задан",
     "norm_not_found": "шифр не найден в нормативной базе",
     "norm_selection_required": "норма не выбрана",
+    "norm_identity_conflict": "шифр не определяет полное семейство и элемент нормы; авторский выбор сохранён",
+    "normative_generation_conflict": "поколение процитированной нормы не воспроизведено для расчёта; авторский выбор сохранён",
     "unresolved": "роль строки не определена",
 }
 _ROW_STATUS_FALLBACK = "строка не рассчитана"
@@ -501,7 +505,9 @@ def build_lsr_result_readiness(
                 ),
             }
         )
-    unbound_priced = [item for item in unbound if item.get("status") != "norm_not_found"]
+    source_conflict_statuses = {"norm_identity_conflict", "normative_generation_conflict"}
+    unbound_priced = [item for item in unbound
+                      if item.get("status") not in source_conflict_statuses | {"norm_not_found"}]
     for locator in remaining:
         gap_kind = "structure_incomplete" if locator in cited else "unprocessed"
         if research_finished:
@@ -740,14 +746,20 @@ def build_lsr_result_readiness(
         "norms_selected": sum(
             1
             for row in work_rows
-            if inferred_row_role(row) == "work" and _selected_cipher(row) and not classify_norm_gap(row)
+            if inferred_row_role(row) == "work" and _selected_cipher(row)
+        ),
+        "norms_applicability_substantiated": sum(
+            1
+            for row in work_rows
+            if inferred_row_role(row) == "work" and qualified_norm_key(_selected_cipher(row))
+            and norm_applicability_substantiated(row)
         ),
         # distinct ciphers are reported apart from the per-operation count
         "norms_unique_ciphers": len(
             {
-                _selected_cipher(row).casefold()
+                qualified_norm_key(_selected_cipher(row)) or _selected_cipher(row).casefold()
                 for row in work_rows
-                if inferred_row_role(row) == "work" and _selected_cipher(row) and not classify_norm_gap(row)
+                if inferred_row_role(row) == "work" and _selected_cipher(row)
             }
         ),
     }
@@ -759,7 +771,30 @@ def build_lsr_result_readiness(
         counts["preliminary_amount"] = round(float(preliminary_amount), 2)
 
     technical_issues = [dict(item) for item in document_issues if isinstance(item, Mapping)]
+    reported_source_conflicts = {
+        (_text(item.get("code")), _text(item.get("locator")))
+        for item in technical_issues if item.get("code") in source_conflict_statuses
+    }
+    for item in [*row_projection, *unbound]:
+        if not isinstance(item, Mapping) or item.get("status") not in source_conflict_statuses:
+            continue
+        status, locator = _text(item.get("status")), _text(item.get("locator"))
+        if (status, locator) in reported_source_conflicts:
+            continue
+        reported_source_conflicts.add((status, locator))
+        technical_issues.append({
+            "code": status, "locator": locator,
+            "message": _text(item.get("binding_message") or item.get("reason")) or _ROW_STATUS_LABEL[status],
+            **({"reason": _text(item["normative_generation_reason"])}
+               if item.get("normative_generation_reason") else {}),
+        })
     technical_complete = file_status == "ready" and not technical_issues
+    counts["normative_generation_conflicts"] = sum(
+        item.get("code") == "normative_generation_conflict" for item in technical_issues
+    )
+    counts["normative_generation_unconfirmed_rows"] = sum(
+        item.get("reason") == "cited_normative_generation_unconfirmed" for item in technical_issues
+    )
     # A row the application closed on its own because no model offer produced a
     # decision is an admitted hole in the estimate, so it must block every
     # "complete" claim even though coverage is closed and no norm/price gap is
@@ -1045,6 +1080,10 @@ def format_lsr_readiness_notice(
     )
     norms_dim = dimensions.get("norms") if isinstance(dimensions.get("norms"), Mapping) else {}
     prices_dim = dimensions.get("prices") if isinstance(dimensions.get("prices"), Mapping) else {}
+    integrity_dim = dimensions.get("document_integrity")
+    integrity_dim = integrity_dim if isinstance(integrity_dim, Mapping) else {}
+    technical_issues = [item for item in (payload.get("document_issues") or integrity_dim.get("issues") or [])
+                        if isinstance(item, Mapping)]
     file_bit = f" Файл: {filename}." if filename else ""
     file_ready = bool(file_dim.get("ready"))
     coverage_complete = bool(coverage_dim.get("complete"))
@@ -1068,6 +1107,7 @@ def format_lsr_readiness_notice(
         and norms_complete
         and prices_complete
         and declared_count == 0
+        and not technical_issues
     ):
         done_line = f"ЛСР собрана.{file_bit}".strip()
         if basis_visible:
@@ -1097,6 +1137,13 @@ def format_lsr_readiness_notice(
         parts.append(composition + ".")
     file_label = "файл готов" if file_ready else "файл не готов"
     parts.append(f"Файл: {file_label}. {_text(file_dim.get('action'))}".strip())
+    if technical_issues:
+        issue_labels = [
+            (_text(item.get("locator")) + ": " if item.get("locator") else "")
+            + (_text(item.get("message")) or _text(item.get("code")))
+            for item in technical_issues
+        ]
+        parts.append("Техническая проверка расчёта: " + _preview(issue_labels) + ".")
     if coverage_complete:
         parts.append("Покрытие исходника: полное.")
     else:

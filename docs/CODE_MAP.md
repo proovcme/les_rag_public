@@ -1,5 +1,21 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат 0.31.200 / 928 — literal intake → model → pinned calculation
+
+`attachment_source_catalog_service.py` → неопределённые объёмы, escaped pipe,
+строгий audit model-authored ВОР; `workbook_tool_service.py` → единый маршрут
+DOCX/RTF/CSV; `bor_service.py` → main rows + «Решения модели» без потери JSON.
+`workbook_research_job_service.py` → scope/profile/model/connection lineage;
+`chat_evidence_application_service.py` → bound calls и stamp показанной базы;
+`model_norm_snapshot_binding_service.py` → проверка issued norm snapshots;
+`gesn_service.py` → квалифицированный ключ и pinned deepcopy;
+`rim_lsr_trace_service.py` → расчёт ровно этой карточки и technical conflicts;
+`model_resource_literal_service.py` → обратимая resource table проекция;
+`model_rag_grouped_evidence_service.py` → состав/ресурсы/условия как отдельные
+факты; `public_error_service.py` → видимая остановка генерации запросов.
+Нет новой инженерной поисковой петли, выбора норм кодом или смены модели.
+Runtime927; candidate928 и качество разных документов ещё не приняты.
+
 ## Установлен 0.31.199 / 927 — источник ЭТМ
 
 `etm_supplier_service.py` → read-only iPRO session/catalog/exact-code quotes;

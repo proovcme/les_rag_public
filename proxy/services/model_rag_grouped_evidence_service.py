@@ -41,7 +41,8 @@ def normative_card_identity(meta: Mapping[str, Any]) -> str:
     return "norm_card_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def card_delivery_facts(meta: Mapping[str, Any], *, raw_body_shown: bool) -> dict[str, Any]:
+def card_delivery_facts(meta: Mapping[str, Any], *, raw_body_shown: bool,
+                        displayed_body: str) -> dict[str, Any]:
     """A whole RAG preview is distinct from a complete typed normative card."""
     is_norm = bool(meta.get("norm_key") or meta.get("norm_code"))
     if not is_norm:
@@ -50,17 +51,31 @@ def card_delivery_facts(meta: Mapping[str, Any], *, raw_body_shown: bool) -> dic
     resources = meta.get("resources")
     returned = meta.get("resources_returned")
     count = meta.get("resource_count")
-    complete = (raw_body_shown and meta.get("resources_complete") is True
+    resources_complete = (raw_body_shown and meta.get("resources_complete") is True
                 and isinstance(resources, (list, tuple))
                 and isinstance(returned, int) and not isinstance(returned, bool)
                 and returned == len(resources)
                 and (count is None or count == returned))
-    status = ("not_read" if not raw_body_shown else "complete" if complete else
+    steps = meta.get("work_steps")
+    steps_known = isinstance(steps, (list, tuple)) and all(isinstance(step, str) for step in steps)
+    literal_steps = [step for step in steps if step.strip()] if steps_known else []
+    composition = "Состав работы: " + "; ".join(literal_steps)
+    # Verify the exact producer block with its line boundaries. Metadata and
+    # scattered matching words cannot prove that this composition was shown.
+    steps_shown = (raw_body_shown and bool(literal_steps)
+                   and "\n" + composition + "\n" in "\n" + displayed_body + "\n")
+    steps_status = ("not_read" if not raw_body_shown else "complete" if steps_shown else
+                    "not_shown" if literal_steps else "missing_in_source" if steps_known else "unknown")
+    status = ("not_read" if not raw_body_shown else "complete" if resources_complete else
               "preview" if "resource_preview" in meta or meta.get("resources_complete") is False
               or isinstance(count, int) else "unknown")
     return {"raw_hit_body_shown": raw_body_shown, "card_body_shown": raw_body_shown,
-            "normative_card_complete": complete, "normative_resources_status": status,
-            "normative_conditions_shown": raw_body_shown, "evidence_body_kind": "norm_card"}
+            "normative_card_complete": bool(resources_complete and steps_shown),
+            "normative_resources_status": status, "normative_work_steps_status": steps_status,
+            "normative_composition_shown": bool(steps_shown),
+            # Work composition is not the technical-part conditions. Current
+            # typed cards contain no separate proved delivery of those parts.
+            "normative_conditions_shown": False, "evidence_body_kind": "norm_card"}
 
 
 @dataclass(frozen=True)
@@ -146,6 +161,42 @@ def _share_resource_source_refs(content: str, meta: Mapping[str, Any], sources: 
     resources = meta.get("resources")
     if meta.get("exact_card_read") is not True or not isinstance(resources, (list, tuple)) or not resources:
         return content
+    from proxy.services.model_resource_literal_service import (
+        RESOURCE_TABLE_PREFIX, resource_jsonl, resource_table_literal, restore_resource_table,
+    )
+    table_lines = [line for line in content.split("\n") if line.startswith(RESOURCE_TABLE_PREFIX)]
+    if table_lines:
+        rows = restore_resource_table(content, resources)
+        if rows is None:
+            return content
+        columns = sorted(rows[0])
+        table = resource_table_literal(rows, columns)
+        # Only the exact current producer view may be factored, never unknown text.
+        if table_lines != [table]:
+            return content
+        start = 0 if content.startswith(table) else content.index("\n" + table) + 1
+        suffix = content[start + len(table):]
+        legacy = content[:start] + resource_jsonl(rows) + suffix
+        trial_sources = dict(sources)
+        shared = _share_resource_source_refs(legacy, meta, trial_sources)
+        if shared == legacy:
+            return content
+        end = len(shared) - len(suffix) if suffix else len(shared)
+        try:
+            projected = [json.loads(line) for line in shared[start:end].split("\n")]
+            candidate_table = resource_table_literal(projected, columns)
+        except (ValueError, TypeError, KeyError):
+            return content
+        if restore_resource_table(candidate_table, resources, source_catalog=trial_sources) is None:
+            return content
+        candidate = content[:start] + candidate_table + suffix
+        meaning = json.dumps({"resource_source_pointer_meaning": _RESOURCE_SOURCE_POINTER_MEANING}, ensure_ascii=False)
+        before = content + json.dumps(sources, ensure_ascii=False)
+        after = candidate + json.dumps(trial_sources, ensure_ascii=False) + meaning
+        if len(after) >= len(before) or len(after.encode("utf-8")) >= len(before.encode("utf-8")):
+            return content
+        sources.update(trial_sources)
+        return candidate
     # The producer joins with LF; splitlines would also split literal U+2028
     # inside an ensure_ascii=False JSON string and corrupt that resource.
     lines = content.split("\n")
@@ -268,11 +319,13 @@ def _render(groups: Sequence[EvidenceGroup], visible: set[str], full_count: int,
                 continue
             body_refs.append(card.ref)
             bodies[card.ref] = card.content
-            facts = card_delivery_facts(card.meta, raw_body_shown=True)
+            facts = card_delivery_facts(card.meta, raw_body_shown=True, displayed_body=card.content)
             if facts["evidence_body_kind"] == "norm_card":
                 marker = {"evidence_ref": card.ref, "card_delivery_facts": {
                     "normative_card_complete": facts["normative_card_complete"],
                     "normative_resources_status": facts["normative_resources_status"],
+                    "normative_composition_shown": facts["normative_composition_shown"],
+                    "normative_conditions_shown": facts["normative_conditions_shown"],
                 }}
                 if facts["normative_resources_status"] in ("preview", "unknown"):
                     marker["available_read"] = {"tool": "read_norm_card", "args": {"evidence_ref": card.ref}}
@@ -404,7 +457,8 @@ def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: Evide
                     or hashlib.sha256(content.encode("utf-8")).hexdigest()
                        != card.meta.get("hydration_preview_sha256")
                     or normative_card_identity(card.meta) != normative_card_identity(old_meta)
-                    or not card_delivery_facts(card.meta, raw_body_shown=True).get("normative_card_complete")
+                    or not card_delivery_facts(card.meta, raw_body_shown=True,
+                                               displayed_body=card.content).get("normative_card_complete")
                     or inventory_pointer(card, full=True) != admitted.pointer_by_ref[card.ref]):
                 return None
             content += "\n\nAdditional complete typed body; the original preview above is preserved:\n" + card.content
@@ -497,7 +551,8 @@ def share_registry_catalogs(records: Sequence[Mapping[str, Any]], metadata: Mapp
         resource_sources_shared = resource_sources_shared or row["content"] != body.content
         row["body_status"] = str(meta.get("body_status") or "full")
         row["body_available"] = row["body_status"] == "full" and bool(body.original)
-        row.update(card_delivery_facts(meta, raw_body_shown=row["body_available"]))
+        row.update(card_delivery_facts(meta, raw_body_shown=row["body_available"],
+                                       displayed_body=body.original))
         row["normative_card_identity"] = normative_card_identity(meta)
         if body.catalog_id:
             catalogs.setdefault(body.catalog_id, body.catalog_text)
@@ -610,7 +665,8 @@ def compact_read_replay(chunks: Sequence[Any]) -> list[Any]:
     keep = {"evidence_ref", "global_evidence_id", "doc_name", "norm_key", "norm_code",
             "source_ref", "source_sha256", "edition", "base_type", "doc_id", "dataset_id", "resource_code",
             "pricebook", "content", "body_available", "body_status", "body_missing",
-            "shared_body_ref", "normative_card_complete", "normative_resources_status"}
+            "shared_body_ref", "normative_card_complete", "normative_resources_status",
+            "normative_composition_shown", "normative_conditions_shown", "normative_work_steps_status"}
     compact = []
     for row in rows:
         record = {key: value for key, value in row.items() if key in keep}

@@ -84,7 +84,8 @@ def test_first_full_group_fit_cannot_hide_existing_preview_native_read_frontier(
     assert groups == before
     for ref in delivered.body_refs:
         assert delivered.body_by_ref[ref] == legacy.body_by_ref[ref]
-        assert grouped.card_delivery_facts(delivered.meta_by_ref[ref], raw_body_shown=True)["normative_card_complete"] is False
+        assert grouped.card_delivery_facts(delivered.meta_by_ref[ref], raw_body_shown=True,
+                                           displayed_body=delivered.body_by_ref[ref])["normative_card_complete"] is False
 
 
 def test_full_resources_remain_when_both_original_frontiers_fit():
@@ -95,7 +96,11 @@ def test_full_resources_remain_when_both_original_frontiers_fit():
     assert page.inventory_refs == page.body_refs == [card.ref for group in groups for card in group.cards]
     assert page.complete_card_deferred_refs == []
     for ref in page.body_refs:
-        assert grouped.card_delivery_facts(page.meta_by_ref[ref], raw_body_shown=True)["normative_card_complete"] is True
+        facts = grouped.card_delivery_facts(page.meta_by_ref[ref], raw_body_shown=True,
+                                            displayed_body=page.body_by_ref[ref])
+        assert facts["normative_resources_status"] == "complete"
+        assert facts["normative_card_complete"] is False
+        assert facts["normative_work_steps_status"] == "unknown"
         assert page.meta_by_ref[ref]["resources"][0]["per_unit"] == 0
 
 

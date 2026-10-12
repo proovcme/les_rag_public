@@ -124,7 +124,7 @@ def test_work_price_is_preserved_without_fabricated_operator_source(monkeypatch)
 
     monkeypatch.setattr(service.gesn_service, "get_norm", lambda _: {"unit": "м", "resources": [], "nr": 0, "sp": 0})
     row = {"source_row": "S!R2", "row_role": "work", "title": "Authored work", "unit": "м", "quantity": 3,
-           "norm_code": "08-02-409-09", "norm_status": "EXACT", "confirmed_price": 25}
+           "norm_code": "ГЭСНм08-02-409-09", "norm_status": "EXACT", "confirmed_price": 25}
     position = positions_from_visible_lsr_rows([row])["positions"][0]
     assert position["confirmed_price"] == 25
     assert position["price_source"] == ""
@@ -136,10 +136,10 @@ def test_whole_position_price_has_the_actual_owner_in_amount_and_trace(monkeypat
     from proxy.services import rim_lsr_trace_service as service
 
     monkeypatch.setattr(service.gesn_service, "get_norm", lambda _: {
-        "code": "08-02-409-09", "name": "Authored work", "unit": "м", "resources": [], "nr": 0, "sp": 0,
+        "code": "ГЭСНм08-02-409-09", "name": "Authored work", "unit": "м", "resources": [], "nr": 0, "sp": 0,
     })
     row = {"source_row": "S!R2", "row_role": "work", "title": "Authored work", "unit": "м", "quantity": 3,
-           "norm_code": "08-02-409-09", "norm_status": "EXACT", "confirmed_price": 25,
+           "norm_code": "ГЭСНм08-02-409-09", "norm_status": "EXACT", "confirmed_price": 25,
            "evidence_refs": ["Q1.H1"]}
     overlay = None
     if owner == "operator":

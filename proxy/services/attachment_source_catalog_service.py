@@ -9,6 +9,7 @@ It does not choose norms or rewrite model cells.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass, replace
@@ -18,6 +19,8 @@ from typing import Any, Mapping, Sequence
 from proxy.smeta_core.unit_contract import norm_measure
 
 CATALOG_SCHEMA = "les.attachment-source-catalog.v2"
+VOR_MODEL_AUDIT_SCHEMA = "les.vor-model-decisions.v1"
+VOR_MODEL_AUDIT_HEADERS = ("Строка ВОР", "Фрагмент", "Авторские поля (JSON)")
 _PDF_TEXT_BLOCK_CHARS = 4096
 _PDF_REFERENCE_CONTEXT_CHARS = 8192
 _WORK_UNITS = {
@@ -32,6 +35,7 @@ _HEADER_MARKERS = ("наименование", "единица", "ед изм", 
 _QUANTITY_HEADER_TOKENS = (
     "кол-во", "кол", "количество", "объем", "объём", "qty", "quantity", "число",
 )
+_SUBJECT_HEADER_TOKENS = ("наименован", "описан", "назван", "name", "description")
 
 
 def _compact_cell(value: Any, *, max_len: int | None = None) -> str:
@@ -116,6 +120,28 @@ def _column_letter(column: int) -> str:
     return letters
 
 
+def _markdown_table_cells(line: str) -> tuple[str, ...]:
+    """Split Markdown cells without treating an escaped pipe as a column."""
+    cells: list[str] = []
+    current: list[str] = []
+    index = 0
+    inner = line[1:-1]
+    while index < len(inner):
+        character = inner[index]
+        if character == "\\" and index + 1 < len(inner) and inner[index + 1] in {"\\", "|"}:
+            current.append(inner[index + 1])
+            index += 2
+            continue
+        if character == "|":
+            cells.append(_compact_cell("".join(current)))
+            current = []
+        else:
+            current.append(character)
+        index += 1
+    cells.append(_compact_cell("".join(current)))
+    return tuple(cells)
+
+
 def _markdown_table_row_spans(text: str) -> list[tuple[tuple[str, ...], int, int]]:
     """Read converter-produced Markdown tables without interpreting their domain content."""
 
@@ -126,7 +152,7 @@ def _markdown_table_row_spans(text: str) -> list[tuple[tuple[str, ...], int, int
         line = raw_line.strip()
         if not (line.startswith("|") and line.endswith("|")):
             continue
-        values = tuple(_compact_cell(item) for item in line[1:-1].split("|"))
+        values = _markdown_table_cells(line)
         if not values or all(not item for item in values):
             continue
         if all(item and set(item.replace(":", "")) <= {"-"} for item in values):
@@ -375,6 +401,17 @@ def _bind_column_headers(rows: Sequence[CatalogRow]) -> list[CatalogRow]:
         if not parts:
             bound.append(row)
             continue
+        # A blank or formula-only quantity must not turn a populated subject
+        # cell into a discarded note. Proven column labels establish only its
+        # source scope; the model still owns its role and any missing quantity.
+        subject_columns = {column for column, label in headers.items()
+                           if any(token in _normalize_header(label) for token in _SUBJECT_HEADER_TOKENS)}
+        subject_without_literal_quantity = (
+            row.classification_reason == "text_without_quantity"
+            and row.row_classification == "note"
+            and quantity_col is not None
+            and any(cell.column in subject_columns and cell.display_value for cell in row.cells)
+        )
         bound.append(
             replace(
                 row,
@@ -385,6 +422,11 @@ def _bind_column_headers(rows: Sequence[CatalogRow]) -> list[CatalogRow]:
                 # consumer can tell *which* header governs a cell instead of
                 # re-parsing prose brackets (see CatalogRow.column_headers).
                 column_headers=tuple(sorted(labels.items())),
+                **({"row_classification": "ambiguous",
+                    "classification_reason": "subject_row_requires_model_role",
+                    "classification_confidence": 0.0,
+                    "ambiguities": (*row.ambiguities, "row_role_unconfirmed")}
+                   if subject_without_literal_quantity else {}),
             )
         )
     return bound
@@ -544,6 +586,16 @@ def catalog_sheet_pack_lines(
                     else catalog.rows)
     for row in ordered_rows:
         if row.sheet != wanted:
+            if row.classification_reason == "application_authored_decision_audit":
+                # The exported audit names the exact main-sheet row. Include
+                # all fragments for offered rows, without duplicating unrelated
+                # decisions in every packet or making audit rows new work.
+                requested = remaining if remaining is not None else {
+                    item.locator for item in catalog.rows if item.sheet == wanted and item.is_work_row()
+                }
+                if row.excel_row <= 3 or (row.values and row.values[0] in requested):
+                    lines.append(row.line)
+                continue
             # A separate conditions/notes sheet otherwise never reaches a work
             # packet. Its literal rows are references, not new requested work.
             if (row.sheet not in work_sheets
@@ -866,6 +918,54 @@ def _pdf_text_rows(markdown: str, source_sha256: str) -> tuple[list[CatalogRow],
     return rows, tuple(warnings)
 
 
+def _is_vor_model_audit(worksheet: Any, workbook: Any) -> bool:
+    """Recognize only the complete application-owned reference table shape."""
+    if (worksheet.cell(1, 1).value != VOR_MODEL_AUDIT_SCHEMA
+            or tuple(worksheet.cell(3, column).value for column in range(1, 4)) != VOR_MODEL_AUDIT_HEADERS
+            or "ВОР" not in workbook.sheetnames):
+        return False
+    groups: dict[str, tuple[int, list[str]]] = {}
+    for values in worksheet.iter_rows(min_row=4, values_only=True):
+        if not any(value is not None for value in values):
+            continue
+        if len(values) < 3 or any(value is not None for value in values[3:]):
+            return False
+        target, part, literal = values[:3]
+        match = re.fullmatch(r"ВОР!R([1-9][0-9]{0,6})", str(target or ""))
+        part_match = re.fullmatch(r"Фрагмент ([1-9][0-9]{0,6})/([1-9][0-9]{0,6})", str(part or ""))
+        if (match is None or not 4 <= int(match.group(1)) <= workbook["ВОР"].max_row
+                or part_match is None
+                or not isinstance(literal, str) or not literal.startswith("JSON: ")):
+            return False
+        number, total = (int(value) for value in part_match.groups())
+        declared_total, pieces = groups.setdefault(str(target), (total, []))
+        if total != declared_total or number != len(pieces) + 1 or number > total:
+            return False
+        pieces.append(literal[len("JSON: "):])
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate audit JSON field")
+            result[key] = value
+        return result
+
+    def invalid_constant(_constant):
+        raise ValueError("invalid audit JSON constant")
+
+    for total, pieces in groups.values():
+        if len(pieces) != total:
+            return False
+        try:
+            decision = json.loads("".join(pieces), object_pairs_hook=unique_object, parse_constant=invalid_constant)
+        except (ValueError, RecursionError):
+            return False
+        if not isinstance(decision, dict):
+            return False
+    return bool(groups)
+
+
 def load_tabular_source_catalog(
     path: str | Path,
     *,
@@ -894,6 +994,10 @@ def load_tabular_source_catalog(
                 cached_sheet = cached_workbook[sheet]
                 sheet_id = _stable_id(source_sha256, sheet_index, sheet, prefix="sheet")
                 hidden_sheet = worksheet.sheet_state != "visible"
+                authored_audit = _is_vor_model_audit(worksheet, workbook)
+                if (not authored_audit and worksheet.cell(1, 1).value == VOR_MODEL_AUDIT_SCHEMA
+                        and tuple(worksheet.cell(3, column).value for column in range(1, 4)) == VOR_MODEL_AUDIT_HEADERS):
+                    extraction_warnings = (*extraction_warnings, f"vor_model_audit_invalid:{sheet}")
                 merged_ranges = tuple(worksheet.merged_cells.ranges)
                 rows: list[CatalogRow] = []
                 section_context = ""
@@ -904,7 +1008,10 @@ def load_tabular_source_catalog(
                         raw_value = cell.value
                         if raw_value in (None, ""):
                             continue
-                        display_value = _compact_cell(raw_value)
+                        # JSON fragments are literal application transport:
+                        # compacting spaces inside a quoted value or at a
+                        # fragment boundary would alter the authored decision.
+                        display_value = str(raw_value) if authored_audit else _compact_cell(raw_value)
                         values.append(display_value)
                         merged_range = next(
                             (
@@ -948,6 +1055,10 @@ def load_tabular_source_catalog(
                         numbers,
                         excel_row=excel_row,
                     )
+                    if authored_audit:
+                        row_class, reason, confidence, ambiguities = (
+                            "note", "application_authored_decision_audit", 1.0, (),
+                        )
                     if row_class == "section":
                         section_context = " | ".join(value_tuple)
                     locator = f"{sheet}!R{excel_row}"

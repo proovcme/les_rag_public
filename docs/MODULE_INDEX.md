@@ -1,5 +1,21 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат 0.31.200 / 928 — транспорт и идентичность документа
+
+🟡 Док↔код: [rag-evidence-flow](modules/rag-evidence-flow.md),
+[smeta-core](modules/smeta-core.md), [spec-to-bor](ALGO-spec-to-bor.md).
+Установлен927/`9221b04c`; installed live gate928 и customer acceptance pending.
+`model_resource_literal_service.py` — обратимая columns/records проекция;
+`model_norm_snapshot_binding_service.py` — привязка только к выданному
+полностью квалифицированному norm_key и SHA базы. `gesn_service.get_norm`
+закрепляет карточку; `rim_lsr_trace_service` различает технический конфликт
+и инженерное решение. `workbook_research_job_service` ограничивает наследование
+scope/profile/model/connection; активный chat передаёт immutable revision.
+`attachment_source_catalog_service` сохраняет неопределённые объёмы и проверяет
+audit; `bor_service` сохраняет авторские операции/ресурсы на листе решений.
+`public_error_service` различает MODEL_QUERY_GENERATION_LIMIT. Эти границы
+не выбирают нормы, цены, родители или коэффициенты за модель.
+
 ## Установлен 0.31.199 / 927 — ЭТМ и коммерческие расценки
 
 🟡 Док↔код: [etm-supplier](modules/etm-supplier.md),

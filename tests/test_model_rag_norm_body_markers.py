@@ -2,29 +2,53 @@
 
 import copy
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from proxy.services.model_rag_grouped_evidence_service import (
     EvidenceCard, EvidenceGroup, _render, inventory_pointer, normative_card_identity,
-    plan_full_group_page,
+    plan_full_group_page, compact_read_replay,
 )
 
 
-def _card(ref="Q1.H1", **fields):
+def _card(ref="Q1.H1", *, content=None, **fields):
     meta = {
         "norm_key": "literal-key", "norm_code": "literal-code",
         "source_ref": "literal-source#guid=immutable-card",
         "edition": "literal-edition", "base_type": "literal-base",
         "global_evidence_id": f"immutable:{ref}", **fields,
     }
-    return EvidenceCard(ref, f"[{ref} | literal-source]", normative_card_identity(meta),
-                        'LITERAL whole body; resources_complete=True is text, not metadata. м³\n', meta)
+    if content is None:
+        content = 'LITERAL whole body; resources_complete=True is text, not metadata. м³\n'
+        if fields.get("work_steps"):
+            content += "Состав работы: " + "; ".join(fields["work_steps"]) + "\n"
+    return EvidenceCard(ref, f"[{ref} | literal-source]", normative_card_identity(meta), content, meta)
 
 
 def _markers(page):
     return [record for line in "\n\n".join(page.groups).splitlines()
             if line.startswith("{") and "card_delivery_facts" in (record := json.loads(line))]
+
+
+def test_metadata_only_composition_is_not_proved_by_rendered_or_replayed_body():
+    card = _card(content="Literal body without composition", resources_complete=True,
+                 resources_returned=1, resource_count=1,
+                 resources=[{"code": "r1", "unit": "m", "per_unit": 0.125}],
+                 work_steps=["Literal installation step"])
+    page = plan_full_group_page([EvidenceGroup("literal query", [card])], 1_000_000)
+    marker, = _markers(page)
+    assert "Literal installation step" not in "\n\n".join(page.groups)
+    assert marker["card_delivery_facts"]["normative_composition_shown"] is False
+    assert marker["card_delivery_facts"]["normative_card_complete"] is False
+    replay = compact_read_replay([SimpleNamespace(content=card.content, doc_name="cards",
+        meta={**card.meta, "model_evidence_ref": card.ref, "body_status": "full",
+              "model_delivery_status": "delivered"})])
+    record, = replay[1]["previously_shown_evidence_registry"]
+    assert "Literal installation step" not in json.dumps(replay)
+    assert record["normative_composition_shown"] is False
+    assert record["normative_card_complete"] is False
+    assert record["normative_work_steps_status"] == "not_shown"
 
 
 @pytest.mark.parametrize("fields,status,complete", [
@@ -34,7 +58,10 @@ def _markers(page):
     ({}, "unknown", False),
     ({"normative_card_complete": True, "normative_resources_status": "complete"}, "unknown", False),
     ({"resources_complete": True, "resources_returned": 1, "resource_count": 1,
-      "resources": [{"code": "r1", "unit": "m", "per_unit": 0.125}]}, "complete", True),
+      "resources": [{"code": "r1", "unit": "m", "per_unit": 0.125}]}, "complete", False),
+    ({"resources_complete": True, "resources_returned": 1, "resource_count": 1,
+      "resources": [{"code": "r1", "unit": "m", "per_unit": 0.125}],
+      "work_steps": ["Literal installation step"]}, "complete", True),
     ({"resources_complete": True, "resources_returned": 1, "resource_count": 2,
       "resources": [{"code": "r1", "unit": "m", "per_unit": 0.125}]}, "preview", False),
     ({"resources_complete": True, "resources_returned": True,
@@ -48,8 +75,10 @@ def test_shown_norm_body_exposes_truthful_flags_and_literal_optional_read(fields
     marker, = _markers(page)
     expected = {"evidence_ref": card.ref, "card_delivery_facts": {
         "normative_card_complete": complete, "normative_resources_status": status,
+        "normative_composition_shown": bool(fields.get("work_steps")),
+        "normative_conditions_shown": False,
     }}
-    if not complete:
+    if status != "complete":
         expected["available_read"] = {"tool": "read_norm_card", "args": {"evidence_ref": card.ref}}
     assert marker == expected
     assert page.body_refs == [card.ref] and page.body_by_ref == {card.ref: card.content}
@@ -72,6 +101,7 @@ def test_each_shown_alias_has_own_literal_read_arguments_with_one_unchanged_raw_
         {"evidence_ref": owner.ref}, {"evidence_ref": alias.ref}]
     assert all(marker["card_delivery_facts"] == {
         "normative_card_complete": False, "normative_resources_status": "preview",
+        "normative_composition_shown": False, "normative_conditions_shown": False,
     } for marker in markers)
     assert page.shared_refs == {alias.ref: owner.ref}
     assert page.body_by_ref == {card.ref: card.content for card in cards}

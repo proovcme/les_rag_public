@@ -7,7 +7,7 @@ import pytest
 from proxy.services import chat_evidence_application_service as service
 from proxy.smeta_core import norm_browser
 from test_chat_model_source_frame import _frames, _run_frame
-from test_model_rag_sheet_evidence_reads import RESOURCE_A, RESOURCE_B, _native
+from test_model_rag_sheet_evidence_reads import RESOURCE_A, RESOURCE_B, _native, _shown_full_resource
 
 
 OPAQUE_REASONING = "SYNTHETIC_OPAQUE_NATIVE_REASONING_Ж_Ω"
@@ -102,7 +102,14 @@ async def test_actual_current_cards_follow_completed_native_history_without_rewr
             registries.extend(value.get("previously_shown_evidence_registry", ()))
     full_card = [item["content"] for item in registries if "fixture-resource-21" in item.get("content", "")]
     assert len(full_card) == 1 and LITERAL_CARD_TABLE in full_card[0]
-    assert '"per_unit": 21.25' in full_card[0] and "resources_complete=True" in full_card[0]
+    # The JSONL and columns/records carriers must expose the same complete,
+    # ordered resource list. Metadata alone cannot satisfy the body proof.
+    shown_resources = [_shown_full_resource(run, full_card[0], slot)
+                       for slot in range(1, len(run.exact_resources) + 1)]
+    assert json.dumps(shown_resources, ensure_ascii=False, sort_keys=True) == json.dumps(
+        run.exact_resources, ensure_ascii=False, sort_keys=True)
+    assert shown_resources[21]["per_unit"] == 21.25
+    assert "resources_complete=True" in full_card[0]
     assert sum(message.get("content", "").count("fixture-resource-21") for message in messages) == 1
 
     trace = run.result["retrieval_trace"]["context_governor"]["calls"]

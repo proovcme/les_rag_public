@@ -1,5 +1,72 @@
 # RAG evidence flow
 
+## Кандидат 0.31.200 / 928 — буквальные ресурсы и границы полноты
+
+Установлен runtime **0.31.199 / 927**, code commit `9221b04c`.
+Изменения ниже относятся к кандидату928: **live928 не выполнен, готовность
+не подтверждена, customer-ready=false**. Отрицательные контроли926 и история
+предыдущих сборок ниже сохранены; offline-проверки их не заменяют.
+
+`model_resource_literal_service.render_resource_literals` может передать полный
+список ресурсов одной строкой `literal_resources_v1={"columns":...,"records":...}`.
+Это допускается только для одинаковой известной схемы всех строк: обязательные
+`kind/code/name/unit/per_unit/resource_slot`, необязательные `source_ref/price`;
+текстовые поля — строки, расход/цена — конечные int/float либо null, slots — 1..N.
+Проекция должна быть короче прежнего JSONL и в символах, и в UTF-8 bytes.
+Неизвестные поля, неодинаковые наборы ключей или нестандартные типы сохраняют
+прежний полный JSONL. Значения, типы (включая0/0.0/null), порядок строк и полей,
+resource_slot и provenance не заменяются; immutable исходники, metadata и ранее
+сохранённые evidence не переписываются.
+
+`_share_resource_source_refs` поддерживает этот table view через существующий
+`literal_source_catalog`: сначала точно восстанавливает весь список против
+metadata, затем применяет прежнее source-ref sharing и проверяет обратную
+проекцию. Каталог публикуется только при экономии с учётом его стоимости;
+неизвестный либо несовпадающий producer view остаётся целым.
+`shown_resource_record` сохраняет proof прежней буквальной JSON-строки;
+новая таблица требует полного точного восстановления всех records, включая
+source pointers по показанному каталогу. Metadata без показанной записи
+не доказывает выбранный `Qx.Hy#resource=N`.
+
+`card_delivery_facts` разделяет ресурсы, состав работ и условия применения.
+`normative_resources_status=complete` требует shown body, `resources_complete=True`
+и совпадения `resources_returned` с длиной списка; `resource_count`, если не null,
+также должен совпасть. `normative_work_steps_status` различает
+`not_read/complete/not_shown/missing_in_source/unknown`: полный состав требует
+известного списка строк с хотя бы одним непустым шагом и точного блока producer
+`Состав работы: ` + соединённые через `; ` непустые шаги в фактически переданном
+теле, с границами строк. Слова по отдельности и metadata без этого блока показа
+не доказывают: известный непустой состав без блока получает `not_shown`, пустой
+известный список — `missing_in_source`, неизвестный — `unknown`.
+Проверка использует исходное переданное тело также в compact replay; буквальные
+пробелы, Unicode и переводы строк в шагах сохраняются. `normative_card_complete`
+требует и полных ресурсов, и показанного состава; `normative_composition_shown`
+отражает доказанный показ этого блока. Текущая typed card не содержит отдельного доказанного чтения
+технических условий, поэтому `normative_conditions_shown=False`. Полный ресурсный
+список и НР/СП-каталог сами по себе не доказывают условия применимости нормы.
+
+Query diagnostics сохраняет `generation_limit_reached` для length/max_tokens/
+length_truncated. После существующей bounded repair, если принято0 запросов
+и последний ответ остановлен этим лимитом, возвращается
+`MODEL_QUERY_GENERATION_LIMIT`, owned job получает `model_query_generation_pending`.
+Завершённый невалидный final остаётся `MODEL_RAG_QUERY_LIST_EMPTY`; пустой final
+с length сохраняет прежний `MODEL_QUERY_OUTPUT_INCOMPLETE` без repair.
+Принятые буквальные строки не выбрасываются, прежняя continuation непрочитанного
+хвоста сохранена; новых поисковых, предметных или model cycles не добавлено.
+
+Offline projection сохранённого первого read registry926 (6refs/46resources)
+на коде кандидата после source sharing: **58514→54364 UTF-8 bytes**,
+**20094→18019 estimated tokens**.
+Synthetic24: shared replay **5559→3111 bytes**, **2768→1544 estimated tokens**.
+Это conservative `ceil(chars/2)` harness, **не provider tokenizer** и не замер
+полного input packet. Второй обязательный пакет `required62232>47104` и его native
+messages в артефактах этого опыта не сохранены: whole second replay **N/A**,
+новый fit не доказан.
+Воспроизводитель: `tools/measure_model_resource_literal_capacity.py`.
+Регрессии: `tests/test_model_resource_literal_capacity.py`,
+`tests/test_norm_card_completeness_facts.py`,
+`tests/test_model_query_generation_limit_boundary.py`.
+
 ## Установлен 0.31.198 / 926 — техническая пауза и живые границы
 
 Установлен runtime **0.31.198 / 926**, code commit `8748b76f`.
@@ -2094,3 +2161,29 @@ connection revision. Focused fixtures cover 132 identities, whole preview and
 pointer metadata preservation, both physical and compatibility limits, and
 byte-equal fallbacks. These offline tests do not prove live tokenizer capacity,
 model query quality, native READ use or financial/document acceptance.
+
+## Candidate 928 — initial whole-wire schema reserve
+
+The saved build 927 B0 BAP receipt (`artifacts/live_928/baseline927_bap_full`)
+records successful typed hydration for all 24 search results, but the six shown
+cards remained previews. The complete-frontier attempt was rejected with
+`initial_compatibility_headroom`: the legacy input budget was 46171 tokens,
+the bound whole-wire budget 47104, and native-read growth reserve 16111.
+The 933-token difference was the conservative estimate of native tool schemas,
+already included by the exact whole-wire counter, not a separate workflow reserve.
+
+Candidate 928 changes only the initial B0 and B1 production callsites: their
+initial ceiling is `fixed_packet.input_budget_tokens + fixed_packet.provider_payload_tokens`.
+This puts the ceiling and measured wire in the same units. Generation, safety,
+native-read growth, registered character limits and explicit lower caller ceilings
+remain enforced. An unavailable counter retains the original conservative page,
+messages and schema reservation. This does not add a reader, query, model turn or
+norm-selection rule; the unshown inventory cursor still has no next-page tool.
+
+`tests/test_model_initial_schema_reserve_928.py` executes both literal production
+governor invocations with offline frames and the real governor. It covers schema
+recovery only after bound counting, preservation of the shown bodies and source,
+unchanged unsupported-counter fallback, and refusal to spend native-read reserve.
+The existing initial-admission tests retain their explicit lower-ceiling contract.
+These checks establish the budget correction, not installed or professional
+acceptance of candidate 928.

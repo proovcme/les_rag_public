@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Any, Mapping, Optional
 
@@ -31,6 +32,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
     applicability_gap_kind,
     canonicalize_norm_status,
     norm_applicability_substantiated,
+    qualified_norm_key,
 )
 from proxy.services.attachment_source_catalog_service import (
     AttachmentSourceCatalog,
@@ -745,6 +747,8 @@ def row_projection(binding: Mapping[str, Any]) -> dict[str, Any]:
         # ЛСР which unit that price was multiplied by.
         "price_note": str(binding.get("price_note") or ""),
         "binding_message": str(binding.get("message") or ""),
+        **({"normative_generation_reason": str(binding["normative_generation_reason"])}
+           if binding.get("normative_generation_reason") else {}),
     }
 
 
@@ -1136,6 +1140,13 @@ def _resolve_price_trace(
 def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """Вернуть норму и ресурсы с ``per_unit``; explicit resources поддержаны для тестов/ручного ввода."""
     code = str(position.get("code") or "").strip()
+    # A visible row's quantity/unit conversion and resource actions used this
+    # app-owned snapshot. A later lookup must not mix another generation into
+    # the same calculation, even if the source was replaced at the same path.
+    snapshot = position.get("_norm_snapshot")
+    norm = deepcopy(snapshot) if isinstance(snapshot, Mapping) else (
+        gesn_service.get_norm(code) if code else None
+    )
     # ``resources`` is a tri-state contract:
     # - key absent: hydrate the norm's source resources;
     # - non-empty list: use the explicit model revision;
@@ -1143,7 +1154,6 @@ def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None
     # Treating [] as "not supplied" resurrected the raw norm after an unresolved
     # model review and bypassed labor normalization.
     if code and "resources" not in position:
-        norm = gesn_service.get_norm(code)
         if norm is None:
             return None, []
         from proxy.smeta_core.resource_normalizer import normalize_norm_resources
@@ -1153,7 +1163,6 @@ def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None
             for res in normalize_norm_resources(list(norm.get("resources") or []))
         ]
 
-    norm = gesn_service.get_norm(code) if code else None
     work_qty = _f(position.get("qty")) or 1.0
     resources: list[dict[str, Any]] = []
     for res in position.get("resources") or []:
@@ -1852,6 +1861,12 @@ def build_position_trace(
             "machinist_qty": qty_sums["machinist"],
             "flags": flags,
             "norm_source_integrity": norm_source_integrity,
+            **({"normative_source_snapshot": {
+                "norm_key": str(norm.get("key") or qualified_norm_key(position.get("code"))),
+                "sha256": str(norm["_source_sha256"]),
+                "source_kind": str(norm.get("_source_kind") or ""),
+                "source_path": str(norm.get("_source_path") or ""),
+            }} if norm and norm.get("_source_sha256") else {}),
             "nr_sp_trace": nr_sp,
             # the owner of the accrual rate, so the file and the chat can name
             # a card-written НР/СП as the open question it is
@@ -2771,7 +2786,58 @@ def positions_from_visible_lsr_rows(
                 )
             )
             continue
-        norm = gesn_service.get_norm(code)
+        evidence_check = row.get("_evidence_check")
+        application_bound = isinstance(evidence_check, Mapping)
+        evidence_check = evidence_check if application_bound else {}
+        norm_key = qualified_norm_key(code)
+        expected_key = str(evidence_check.get("norm_key") or "")
+        expected_norm_key = qualified_norm_key(expected_key)
+        expected_sha = str(evidence_check.get("normative_base_sha256") or "")
+        identity_conflict = not norm_key or (expected_norm_key and expected_norm_key != norm_key)
+        generation_unconfirmed = application_bound and (
+            not expected_norm_key or not re.fullmatch(r"[0-9a-f]{64}", expected_sha)
+        )
+        snapshot_conflict = evidence_check.get("normative_snapshot_conflict")
+        norm = None
+        snapshot_error = ""
+        generation_reason = ""
+        if identity_conflict:
+            conflict_status = "norm_identity_conflict"
+            conflict_message = "шифр не определяет полное семейство и элемент нормы; авторский выбор сохранён"
+        elif snapshot_conflict:
+            conflict_status = "normative_generation_conflict"
+            conflict_message = "приведённые карточки не определяют единое поколение нормы; расчёт не выполнен"
+            generation_reason = "cited_normative_generations_conflict"
+        elif generation_unconfirmed:
+            conflict_status = "normative_generation_conflict"
+            conflict_message = "поколение процитированной нормы не подтверждено полным ключом и SHA-256; авторский выбор сохранён"
+            generation_reason = "cited_normative_generation_unconfirmed"
+        else:
+            try:
+                norm = gesn_service.get_norm(code, expected_base_sha256=expected_sha) if expected_sha else gesn_service.get_norm(code)
+            except gesn_service.NormativeSnapshotConflict as error:
+                snapshot_error = str(error)
+            conflict_status = "normative_generation_conflict" if snapshot_error else ""
+            conflict_message = "поколение нормы из карточки не воспроизведено для расчёта; авторский выбор сохранён"
+            generation_reason = "cited_normative_generation_mismatch" if snapshot_error else ""
+        if conflict_status:
+            binding = {
+                "row": source_row, "code": code, "status": conflict_status,
+                "message": conflict_message, "row_role": role,
+                "norm_status": model_status, "source_row": row,
+            }
+            if snapshot_error:
+                binding["normative_snapshot_error"] = snapshot_error
+            if generation_reason:
+                binding["normative_generation_reason"] = generation_reason
+            if source_qty is not None:
+                binding["source_quantity"] = source_qty
+            if source_unit:
+                binding["source_unit"] = source_unit
+            bindings.append(_with_visible_identity(
+                binding, title=title, source_qty=source_qty, source_unit=source_unit
+            ))
+            continue
         if norm is None:
             binding = {
                 "row": source_row,
@@ -2825,6 +2891,7 @@ def positions_from_visible_lsr_rows(
             "source_quantity": source_qty,
             "source_unit": source_unit,
             "norm_quantity": norm_qty,
+            "_norm_snapshot": deepcopy(norm),
         }
         if title:
             position["name"] = title
@@ -3261,6 +3328,19 @@ def build_lsr_trace_from_visible_rows(
     # calculated position, so the two numbers are reported apart instead of the built
     # count being labelled "calculated".
     summary["positions_built"] = len(bound["positions"])
+    summary["normative_generation_conflicts"] = sum(
+        item.get("status") == "normative_generation_conflict" for item in bound["row_bindings"]
+    )
+    summary["normative_generation_unconfirmed_rows"] = sum(
+        item.get("normative_generation_reason") == "cited_normative_generation_unconfirmed"
+        for item in bound["row_bindings"]
+    )
+    summary["normative_source_snapshots"] = [
+        dict(entry["summary"]["normative_source_snapshot"])
+        for section in lsr.get("sections") or []
+        for entry in section.get("positions") or []
+        if (entry.get("summary") or {}).get("normative_source_snapshot")
+    ]
     summary["confirmed_amount"] = confirmed_amount
     summary["preliminary_amount"] = preliminary_amount
     if conflict_locators:

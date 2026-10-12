@@ -602,9 +602,16 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         return await resume_same_request()
 
     return SimpleNamespace(result=result, executions=executions, requests=requests, responses=responses,
-                           exact_reads=exact_reads, lookups=lookups, queries=search_queries, histories=histories,
+                           exact_reads=exact_reads, exact_resources=full_resources,
+                           lookups=lookups, queries=search_queries, histories=histories,
                            declared_queries=declared_queries, resume_same_request=resume_same_request,
                            corrected_source_row=corrected_source_row, connection=connection)
+
+
+def _shown_full_resource(run, body, slot):
+    from proxy.services.model_resource_reference_service import resource_slot_records, shown_resource_record
+    return shown_resource_record({"exact_card_read": True,
+        "resources": resource_slot_records({"resources": run.exact_resources})}, body, slot)
 
 
 @pytest.mark.asyncio
@@ -631,7 +638,8 @@ async def test_native_sheet_reads_keep_full_resources_distinct_price_arguments_a
             if isinstance(item, dict) and "previously_shown_evidence_registry" in item:
                 registries.extend(item["previously_shown_evidence_registry"])
     full_card = next(item["content"] for item in registries if "fixture-resource-21" in item["content"])
-    assert '"per_unit": 21.25' in full_card and "resources_complete=True" in full_card
+    assert _shown_full_resource(run, full_card, 22)["per_unit"] == 21.25
+    assert "resources_complete=True" in full_card
     assert sum("fixture-resource-21" in item["content"] for item in registries) == 1
     assert RESOURCE_A in str(run.requests[3].messages) and RESOURCE_B in str(run.requests[3].messages)
     # Same tool name with different literal codes must execute both reads.
@@ -703,7 +711,7 @@ async def test_native_discovery_inventory_keeps_exact_reads_and_real_json_workbo
                     if line.startswith('{"body_delivery":'))
     full_card = next(row["content"] for row in registry["previously_shown_evidence_registry"]
                      if "fixture-resource-21" in row["content"])
-    assert "resources_complete=True" in full_card and '"per_unit": 21.25' in full_card
+    assert "resources_complete=True" in full_card and _shown_full_resource(run, full_card, 22)["per_unit"] == 21.25
     assert sum("fixture-resource-21" in message["content"] for message in run.requests[-1].messages) == 1
     inventory_refs = {ref for read in discoveries for ref in read["evidence_refs"]}
     indexed = {item["id"]: item for item in trace["evidence_manifest"]["model_visible"]}
@@ -774,7 +782,7 @@ async def test_bounded_inventory_reserves_native_growth_and_finishes_after_third
                     if line.startswith('{"body_delivery":'))
     full_card = next(row["content"] for row in registry["previously_shown_evidence_registry"]
                      if "fixture-resource-21" in row["content"])
-    assert '"per_unit": 21.25' in full_card and "resources_complete=True" in full_card
+    assert _shown_full_resource(run, full_card, 22)["per_unit"] == 21.25 and "resources_complete=True" in full_card
     assert sum("fixture-resource-21" in str(message["content"]) for message in messages) == 1
     assert not trace["tool_loop"].get("evidence_read_stop")
     assert [(row["source_row"], row["resource_code"], row["quantity"])

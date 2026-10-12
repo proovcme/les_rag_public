@@ -5,6 +5,7 @@ import asyncio
 import inspect
 import json
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -186,6 +187,10 @@ def _vor_rows_from_draft(draft: Any, *, source_label: str) -> list[dict[str, Any
             "row_role": str(item.get("row_role") or "").strip(),
             "work_row": str(item.get("work_row") or "").strip(),
             "open_gap": str(item.get("open_gap") or "").strip(),
+            # Keep the complete authored result alongside the display cells.
+            # Renderers must not discard operation/coverage/resource decisions
+            # or their literal conversion/source metadata during packaging.
+            "_authored_decision": deepcopy(dict(item)),
         })
     return rows
 
@@ -536,6 +541,8 @@ async def _build_workbook(
             supported.update({".pdf", ".docx", ".csv", ".rtf"})
     else:
         supported = {".pdf", ".xlsx", ".xlsm"}
+        if draft_rows:
+            supported.update({".docx", ".csv", ".rtf"})
     if source_path.suffix.lower() not in supported:
         return {**_rejected("UNSUPPORTED_ATTACHMENT_TYPE", f"unsupported attachment type: {source_path.suffix}"), "tool": tool_name}
 

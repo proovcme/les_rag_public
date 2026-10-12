@@ -11,7 +11,7 @@ from proxy.services.model_resource_binding_service import resource_binding_posit
 from proxy.services.model_research_tool_service import _full_norm_card_content
 
 
-CODE = "GESN-01-02-003-04"
+CODE = "ГЭСН01-02-003-04"
 RESOURCE = {"kind": "material", "code": "A-1", "name": "Exact long resource name",
             "unit": "m", "per_unit": 12, "price": None}
 

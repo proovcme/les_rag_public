@@ -949,9 +949,28 @@ def _same_code(left: Any, right: Any) -> bool:
     return bool(first and second and first == second)
 
 
+_QUALIFIED_CIPHER_RE = re.compile(
+    r"(?P<family>ГЭСН|ФЕР|ТЕР)(?P<suffix>мр|м|п|р)?"
+    r"(?P<bare>\d{2}-\d{2}-\d{3}-\d{2})",
+    re.IGNORECASE,
+)
+
+
+def qualified_norm_key(value: Any) -> str:
+    """Full family and item identity; presentation changes never supply a family."""
+
+    text = _code_key(value).replace("–", "-").replace("—", "-")
+    match = _QUALIFIED_CIPHER_RE.fullmatch(text)
+    if not match:
+        return ""
+    family = match.group("family").upper() + (match.group("suffix") or "").lower()
+    return f"{family}:{match.group('bare')}"
+
+
 def ciphers_identical(left: Any, right: Any) -> bool:
-    """Exact item identity after presentation folding; never parent containment."""
-    return _same_code(left, right)
+    """Exact qualified item identity; bare codes and tables identify no item."""
+    first, second = qualified_norm_key(left), qualified_norm_key(right)
+    return bool(first and second and first == second)
 
 
 _CIPHER_SHAPE_RE = re.compile(r"\d{1,3}[-–]\d{1,2}[-–]\d{1,3}(?:[-–]\d{1,2})?[а-яё]?")
@@ -969,19 +988,9 @@ def looks_like_cipher(value: Any) -> bool:
 
 
 def ciphers_compatible(left: Any, right: Any) -> bool:
-    """One cipher in two spellings is one cipher.
+    """Two presentations must name the same complete family-qualified item."""
 
-    ``ГЭСН 10-01-001-05`` and ``ГЭСН10-01-001-05`` differ by a space and a
-    colon, not by norm.  Containment is kept on purpose: a cited paragraph card
-    (``10-01-001``) and the item the model wrote (``10-01-001-05``) are the same
-    citation chain, so only a genuinely different number counts as a
-    contradiction.
-    """
-
-    first, second = _code_key(left), _code_key(right)
-    if not first or not second:
-        return False
-    return first == second or first in second or second in first
+    return ciphers_identical(left, right)
 
 
 def apply_verifier_row(

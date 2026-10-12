@@ -133,12 +133,21 @@ def test_readiness_asks_about_billed_work_without_asking_covered_row_for_another
 
 def _active_resource_norm(monkeypatch):
     from proxy.services import gesn_service
+    from tests.lsr_citation_support import issued_norm_metadata
     norm = {"code": "ГЭСНм08-02-409-09", "name": "Authored work", "unit": "100 м",
             "resources": [
                 {"kind": "material", "code": "A-1", "name": "Target", "unit": "m", "per_unit": 2, "price": 777},
                 {"kind": "material", "code": "A-10", "name": "Other", "unit": "m", "per_unit": 3, "price": 888},
             ]}
-    monkeypatch.setattr(gesn_service, "get_norm", lambda *_args, **_kwargs: norm)
+    issued = issued_norm_metadata(norm, synthetic=True)
+    norm["_source_sha256"] = issued["normative_base_sha256"]
+
+    def get_norm(*_args, **kwargs):
+        if kwargs.get("expected_base_sha256"):
+            assert kwargs["expected_base_sha256"] == issued["normative_base_sha256"]
+        return norm
+
+    monkeypatch.setattr(gesn_service, "get_norm", get_norm)
     return {"source_row": "S!R2", "operation_id": "op_model", "row_role": "work", "title": "Authored work",
             "quantity": 1000, "unit": "м", "norm_code": norm["code"], "norm_status": "EXACT",
             "nr_sp_rule_id": "nrsp-49.3", "evidence_refs": ["Q1.H1"]}
@@ -337,6 +346,8 @@ async def test_active_model_resource_public_result_reaches_actual_adapter_and_xl
     from proxy.services import attachment_source_catalog_service as catalog_service
     from proxy.services import chat_evidence_application_service as chat_service
     from proxy.services import lsr_workbook_adapter_service as adapter_service
+    from proxy.services import gesn_service
+    from tests.lsr_citation_support import issued_norm_metadata
 
     row = _active_resource_norm(monkeypatch)
     row["resource_bindings"] = [{"action": action, "target_resource_code": "A-1",
@@ -352,7 +363,8 @@ async def test_active_model_resource_public_result_reaches_actual_adapter_and_xl
     answer = json.dumps({"rows": authored_rows}, ensure_ascii=False)
     chunks = [
         SimpleNamespace(content=f"Norm {row['norm_code']}\nA-1 Target 2 m\nA-10 Other 3 m", doc_name="smeta_norm_cards.v1",
-                        meta={"model_evidence_ref": "Q1.H1", "global_evidence_id": "norm-card", "norm_code": row["norm_code"]}),
+                        meta={"model_evidence_ref": "Q1.H1", "global_evidence_id": "norm-card",
+                              **issued_norm_metadata(gesn_service.get_norm(row["norm_code"]), synthetic=True)}),
         SimpleNamespace(content=f"Original source {'S!R3' if linked_supply else 'S!R2'}: Target A-1 is supplied", doc_name="Original source",
                         meta={"model_evidence_ref": "Q2.H1", "global_evidence_id": "source-card"}),
     ]

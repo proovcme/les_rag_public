@@ -9,12 +9,12 @@ from proxy.services import rim_lsr_trace_service as rim
 from proxy.services.lsr_workbook_adapter_service import collect_lsr_price_gaps
 from tests.test_chat_evidence_application_service import _lsr_tool_result_with_basis
 from tests.test_rim_lsr_trace_service import _active_resource_norm
-from tests.lsr_citation_support import cited
+from tests.lsr_citation_support import cited_snapshot
 
 
 @pytest.mark.parametrize("authored_ids", [True, False])
 def test_covered_operation_survives_chat_history_and_harvest(monkeypatch, authored_ids):
-    parent = cited(_active_resource_norm(monkeypatch))
+    parent = cited_snapshot(_active_resource_norm(monkeypatch), synthetic=True)
     child = dict(parent, source_row="S!R3", operation_id="child", norm_code="",
                  covered_by_work_id="R2", coverage="Included by the cited composition")
     parent["norm_status"] = "NEEDS_RESEARCH"
@@ -56,7 +56,7 @@ def test_history_preserves_coverage_identity_without_unbounded_body():
 def test_catalog_annotations_keep_coverage_identity_from_the_model_boundary(monkeypatch, authored_ids):
     from proxy.services.lsr_source_coverage_service import operation_identity
 
-    parent = cited(_active_resource_norm(monkeypatch))
+    parent = cited_snapshot(_active_resource_norm(monkeypatch), synthetic=True)
     child = dict(parent, source_row="S!R3", operation_id="child", norm_code="",
                  covered_by_work_id="R2", coverage="Included by the cited composition")
     parent["norm_status"] = "NEEDS_RESEARCH"

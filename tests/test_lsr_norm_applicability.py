@@ -46,9 +46,9 @@ MATCH_YES = {
 @pytest.mark.parametrize("status", ["EXACT", "EXACT_VERIFIED"])
 @pytest.mark.parametrize("flag", ["unknown", "no"])
 def test_exact_token_does_not_confirm_a_condition_the_same_model_left_open(status, flag):
-    row = {"source_row": "Other!R18", "row_role": "work", "norm_code": "01-02-003-04",
+    row = {"source_row": "Other!R18", "row_role": "work", "norm_code": "ГЭСН01-02-003-04",
            "norm_status": status, **MATCH_YES, "condition_match": flag,
-           "_evidence_check": {"citation_checkable": True, "cited_ciphers": ["01-02-003-04"]}}
+           "_evidence_check": {"citation_checkable": True, "cited_ciphers": ["ГЭСН01-02-003-04"]}}
     before = dict(row)
     assert applicability_gap_kind(row) == "exact_match_unresolved"
     assert norm_applicability_substantiated(row) is False
@@ -91,6 +91,22 @@ def test_cited_card_of_another_cipher_is_a_structural_contradiction() -> None:
     assert classify_norm_gap(row) == "cipher_not_in_cited_evidence"
 
 
+@pytest.mark.parametrize("selected,cited", [
+    ("10-01-001-05", "10-01-001-05"),
+    ("ГЭСН10-01-001-05", "10-01-001-05"),
+    ("ГЭСН10-01-001-05", "ГЭСНм10-01-001-05"),
+    ("ГЭСН10-01-001-05", "ГЭСН10-01-001"),
+])
+def test_partial_or_foreign_family_citation_never_identifies_selected_item(selected, cited):
+    check = _check(selected, {"Q1.H1": cited})
+    row = {"norm_code": selected, "norm_status": "EXACT", "_evidence_check": check}
+    assert check["code_not_in_refs"] is True
+    assert check["citation_checkable"] is True
+    assert cited_cipher_matches_evidence(row) is False
+    assert applicability_gap_kind(row) == "cipher_not_in_cited_evidence"
+    assert norm_applicability_substantiated(row) is False
+
+
 def test_cipher_spelling_alone_is_not_read_as_a_contradiction() -> None:
     # The catalog stores «ГЭСНм:10-02-016-06», the model writes «ГЭСНм10-02-016-06».
     assert ciphers_compatible("ГЭСН 10-01-001-05", "ГЭСН10-01-001-05") is True
@@ -131,7 +147,7 @@ def test_readiness_keeps_a_mismatched_citation_out_of_the_finished_document() ->
             "row_role": "work",
             "norm_code": "ГЭСН 10-01-001-06",
             "norm_status": "EXACT",
-            "_evidence_check": _check("ГЭСН 10-01-001-06", {"Q1.H3": "10-01-001-06"}),
+            "_evidence_check": _check("ГЭСН 10-01-001-06", {"Q1.H3": "ГЭСН10-01-001-06"}),
         },
     ]
     readiness = build_lsr_result_readiness(
@@ -149,7 +165,8 @@ def test_readiness_keeps_a_mismatched_citation_out_of_the_finished_document() ->
     assert "не совпадает с шифром приведённых карточек" in gaps[0]["action"]
     assert readiness["dimensions"]["norms"]["complete"] is False
     assert readiness["estimate_complete"] is False
-    assert readiness["counts"]["norms_selected"] == 1
+    assert readiness["counts"]["norms_selected"] == 2
+    assert readiness["counts"]["norms_applicability_substantiated"] == 1
     assert readiness["gap_states"]["norm_unsubstantiated"]["count"] == 1
     assert readiness["gap_states"]["norm_missing"]["count"] == 0
 

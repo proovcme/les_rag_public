@@ -84,11 +84,13 @@ def _norm_card_content(card: Mapping[str, Any]) -> str:
 
 def _full_norm_card_content(card: Mapping[str, Any]) -> str:
     from proxy.services.model_resource_reference_service import resource_slot_records
+    from proxy.services.model_resource_literal_service import render_resource_literals
 
     parts = [_norm_card_content({**card, "resource_preview": []})]
     parts.append("Полные ресурсы выбранной карточки; применимость выбирает модель:")
-    parts.extend(json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
-                 for row in resource_slot_records(card))
+    resources = render_resource_literals(resource_slot_records(card))
+    if resources:
+        parts.append(resources)
     parts.append(f"resources_complete={card.get('resources_complete')!r}; "
                  f"resources_returned={card.get('resources_returned', len(card.get('resources') or []))}")
     return "\n".join(parts)
@@ -399,7 +401,7 @@ class ModelResearchToolService:
         from proxy.services.model_resource_reference_service import resource_slot_records
         card_meta["resources"] = resource_slot_records(card)
         card_meta["normative_card_identity"] = normative_card_identity(card_meta)
-        card_meta.update(card_delivery_facts(card_meta, raw_body_shown=True))
+        card_meta.update(card_delivery_facts(card_meta, raw_body_shown=True, displayed_body=content))
         chunk = _SmetaNormChunk(content=content, doc_name="smeta_norm_cards.v1", score=1.0, meta=card_meta)
         return ModelResearchToolResult(payload={
             "schema": "les_tool_result_v1", "tool": "read_norm_card", "operation": "typed_exact_norm_read",

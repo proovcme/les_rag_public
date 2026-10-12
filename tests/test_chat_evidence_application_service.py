@@ -4040,7 +4040,12 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "reason": "terminal_model_result_preserved",
             "norms_status": "model_authored",
         }
-        assert "confirm" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
+        history_wire = json.dumps(history_rows[0], ensure_ascii=False).casefold()
+        # This numeric provenance diagnostic is not a confirmation action or
+        # gate. Keep rejecting every other confirmation token in the payload.
+        diagnostic = '"normative_generation_unconfirmed_rows": 0'
+        assert diagnostic in history_wire
+        assert "confirm" not in history_wire.replace(diagnostic, "")
         return
     if inactive_workbook:
         assert result["answer"] == "legacy visible answer"

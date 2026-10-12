@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.lsr_citation_support import cited
+from tests.lsr_citation_support import cited, cited_snapshot, issued_norm_metadata
 
 from proxy.services.chat_evidence_application_service import (
     merge_model_rag_rows,
@@ -60,6 +60,23 @@ def _operator_price(row, price):
     # This fixture uses the same application-owned confirmation overlay as the
     # chat. A model's confirmed_price field alone does not create an operator.
     return apply_confirmed_data([row], {row["source_row"]: {"confirmed_price": price}})[0]
+
+
+def _install_issued_catalog(monkeypatch, catalog):
+    """A local lookup must reproduce the same synthetic card that was issued."""
+    from copy import deepcopy
+    from proxy.services import gesn_service
+
+    for card in catalog.values():
+        card["_source_sha256"] = issued_norm_metadata(card, synthetic=True)["normative_base_sha256"]
+
+    def get_norm(code, *args, expected_base_sha256="", **kwargs):
+        card = catalog.get(str(code or ""))
+        if expected_base_sha256:
+            assert card is not None and expected_base_sha256 == card["_source_sha256"]
+        return deepcopy(card)
+
+    monkeypatch.setattr(gesn_service, "get_norm", get_norm)
 
 
 # --------------------------------------------------------------------------- 1.1
@@ -321,15 +338,13 @@ def test_confirmed_price_prices_the_addressed_work_position(monkeypatch, tmp_pat
             "sp_pct": 0,
         }
     }
-    monkeypatch.setattr(
-        gesn_service, "get_norm",
-        lambda code, *a, **k: catalog.get(str(code or "")),
-    )
+    _install_issued_catalog(monkeypatch, catalog)
     work = _operator_price(
         _work_row("ВОР!R3", "Монтаж шкафа", operation_id="op_w", revision=1,
                   norm_status="EXACT", norm_code="ГЭСНм08-03-575-01", quantity=2),
         123.45,
     )
+    work = cited_snapshot(work, synthetic=True)
     trace = build_lsr_trace_from_visible_rows([work])
     positions = [
         pos for entry in trace.get("sections") or [] for pos in entry.get("positions") or []
@@ -507,10 +522,7 @@ def test_confirmed_price_does_not_confirm_norm_applicability(monkeypatch):
             "sp_pct": 0,
         }
     }
-    monkeypatch.setattr(
-        gesn_service, "get_norm",
-        lambda code, *a, **k: catalog.get(str(code or "")),
-    )
+    _install_issued_catalog(monkeypatch, catalog)
     work = _operator_price(
         _work_row(
             "\u0412\u041e\u0420!R5", "Mount a device",
@@ -521,6 +533,7 @@ def test_confirmed_price_does_not_confirm_norm_applicability(monkeypatch):
         ),
         246.90,
     )
+    work = cited_snapshot(work, synthetic=True)
     trace = build_lsr_trace_from_visible_rows([work])
     summary = trace["summary"]
     # The operator set a price; that alone must NOT certify the position.
@@ -550,10 +563,7 @@ def test_norm_reference_resources_do_not_inflate_summary(monkeypatch):
             "sp_pct": 0,
         }
     }
-    monkeypatch.setattr(
-        gesn_service, "get_norm",
-        lambda code, *a, **k: catalog.get(str(code or "")),
-    )
+    _install_issued_catalog(monkeypatch, catalog)
     work = _operator_price(
         _work_row(
             "\u0412\u041e\u0420!R6", "Mount a device",
@@ -565,6 +575,7 @@ def test_norm_reference_resources_do_not_inflate_summary(monkeypatch):
         ),
         99.99,
     )
+    work = cited_snapshot(work, synthetic=True)
     trace = build_lsr_trace_from_visible_rows([work])
     positions = [
         pos for entry in trace.get("sections") or [] for pos in entry.get("positions") or []

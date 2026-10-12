@@ -2687,6 +2687,8 @@ def append_actual_model_call(
             "provider_usage": provider_usage,
             "canonical_request_sha256": canonical_sha,
             "canonical_request_source": "canonical_inference_request" if canonical_sha else None,
+            **({"model_connection_revision_id": str(execution["model_connection_revision_id"])}
+               if execution.get("model_connection_revision_id") else {}),
             **({"canonical_native_tools": dict(execution["canonical_native_tools"])}
                if isinstance(execution.get("canonical_native_tools"), Mapping) else {}),
             **({"native_tool_call_identities": list(execution["native_tool_call_identities"])}
@@ -3520,6 +3522,7 @@ def bind_row_evidence_ids(
     global_to_bodies: dict[str, str] = {}
     global_to_body_shown: dict[str, bool] = {}
     global_to_resource_cards: dict[str, Mapping[str, Any]] = {}
+    global_to_norm_snapshots: dict[str, list[Mapping[str, Any]]] = {}
     # Whole delivered RAG bodies prove their conditions, not complete typed
     # resource consumption; exact native reads expose that separate metadata.
     delivered_norm_identities: set[str] = set()
@@ -3541,6 +3544,9 @@ def bind_row_evidence_ids(
             else:
                 alias_to_global[alias] = global_id
         if global_id:
+            # Only issued evidence metadata can pin the calculation generation.
+            # Keep contradictions instead of overwriting one SHA with another.
+            global_to_norm_snapshots.setdefault(global_id, []).append(meta)
             body_shown = (
                 meta.get("model_delivery_status") in (None, "", "delivered")
                 and (
@@ -3622,6 +3628,11 @@ def bind_row_evidence_ids(
             payload, checkable_bindings, cards, queries
         )
         if evidence_check is not None:
+            from proxy.services.model_norm_snapshot_binding_service import cited_norm_snapshot_stamp
+            evidence_check.update(cited_norm_snapshot_stamp(
+                payload, checkable_bindings, global_to_norm_snapshots,
+                prior_check=None if first_bind else payload.get("_evidence_check"),
+            ))
             deferred_refs = [ref for ref, identity in checkable_bindings.items()
                              if identity in deferred_norm_identities]
             if deferred_refs:
@@ -6227,7 +6238,7 @@ def _model_rag_page_projection(page, hits, *, evidence_namespace=""):
             "evidence_namespace": str(evidence_namespace or "ordinary"),
             "model_source_index": source_index,
             "body_status": "full" if body_shown else "deferred_capacity",
-            **card_delivery_facts(meta, raw_body_shown=body_shown),
+            **card_delivery_facts(meta, raw_body_shown=body_shown, displayed_body=content),
             "normative_card_identity": normative_card_identity(meta),
         })
         chunks.append(_ModelRagEvidenceChunk(
@@ -6469,8 +6480,21 @@ def model_query_output_diagnostics(
             "finish_reason": llm_usage_finish_reason(usage),
             "completion_tokens": int(usage.get("completion_tokens") or 0),
             "final_chars": len(text or ""),
+            "generation_limit_reached": finish_reason_is_length(llm_usage_finish_reason(usage)),
             "output_incomplete": not str(text or "").strip()
                  and finish_reason_is_length(llm_usage_finish_reason(usage))}
+
+
+def model_query_empty_failure_code(diagnostic: Mapping[str, Any]) -> str:
+    """Classify only a terminal zero-query result; accepted queries stay usable."""
+    parsed = diagnostic.get("declared_parse") or {}
+    if parsed.get("accepted_count") == 0 and diagnostic.get("generation_limit_reached") is True:
+        return "MODEL_QUERY_GENERATION_LIMIT"
+    return "MODEL_RAG_QUERY_LIST_EMPTY"
+
+
+def model_query_pending_phase(code: str) -> str:
+    return "model_query_generation_pending" if code == "MODEL_QUERY_GENERATION_LIMIT" else "model_query_format_pending"
 
 
 def add_rejected_query_visible_diagnostics(
@@ -6519,7 +6543,7 @@ def model_query_failure(detail: Any, *, trace: Mapping[str, Any], session_id: st
                 final = final.replace(str(secret), "[redacted]")
         final = re.sub(r'''(?i)["']?\b(?:api[_-]?key|password|authorization)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)|\bBearer\s+[^\s,;]+''',
                        "[redacted]", final)
-        output = {key: item[key] for key in ("purpose", "finish_reason", "completion_tokens", "final_chars", "output_incomplete")
+        output = {key: item[key] for key in ("purpose", "finish_reason", "completion_tokens", "final_chars", "output_incomplete", "generation_limit_reached")
                   if key in item}
         output.update(final_text=final[:8192], final_text_truncated=len(final) > 8192)
         output["budget"] = {key: value for key, value in (item.get("budget") or {}).items()
@@ -8496,6 +8520,46 @@ async def _execute_chat_evidence_application(
             "sheet_packet_harness": comparative_variant == "B1_CANDIDATE",
             "model_owned_query_rag_result": True,
         }
+    workbook_connection_revision_id = (
+        str(getattr(resolved_connection, "revision_id", "") or "")
+        if canonical_execution_mode is CanonicalRouteMode.ACTIVE
+        and model_driven_retrieval and source_catalog is not None else ""
+    )
+    guard_attachment_id = str(getattr(req, "attachment_id", "") or "")
+    if sheet_pass_active and guard_attachment_id and source_catalog.source_file_sha256:
+        guard_identity = WorkbookResearchJobService.identity(
+            session_id=str(req.session_id or ""), attachment_id=guard_attachment_id,
+            source_sha256=source_catalog.source_file_sha256,
+            dataset_ids=[str(item) for item in _dataset_ids],
+            profile_revision_id=str((profile_snapshot or {}).get("revision_id") or ""),
+            model_identity=str(getattr(resolved_connection, "model_id", "") or llm_model),
+            question=str(req.question or ""),
+            source_frame_contract_sha256=source_frame_contract_sha256,
+            model_connection_revision_id=workbook_connection_revision_id,
+        )
+        guard_context = {"original_question": str(req.question or "")}
+        if WorkbookResearchJobService.is_plain_continuation(guard_identity, guard_context):
+            try:
+                WorkbookResearchJobService().assert_continuation_compatible(
+                    guard_identity, task_context=guard_context,
+                )
+            except WorkbookResearchJobError as continuation_error:
+                if str(continuation_error) == "WORKBOOK_CONTINUATION_CONTEXT_CHANGED":
+                    raise HTTPException(409, detail={
+                        "code": "WORKBOOK_CONTINUATION_CONTEXT_CHANGED",
+                        "message": "Подключение модели, профиль или область данных изменились. "
+                                   "Верните прежние настройки для продолжения либо отправьте полное новое "
+                                   "задание с регионом и периодом цен. Сохранённые решения и файлы "
+                                   "прежнего задания доступны без изменений.",
+                    }) from continuation_error
+                if str(continuation_error) == "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED":
+                    raise HTTPException(409, detail={
+                        "code": "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED",
+                        "message": "Область исходника или размер пакета изменились. Верните прежнюю настройку "
+                                   "для продолжения либо отправьте полное новое задание с регионом и периодом цен. "
+                                   "Сохранённые решения и файлы прежнего задания доступны без изменений.",
+                    }) from continuation_error
+                raise
     sheet_pass_names = (
         catalog_work_sheet_names(source_catalog)
         if sheet_pass_active and source_catalog is not None
@@ -8585,6 +8649,9 @@ async def _execute_chat_evidence_application(
                     мере генерации), иначе — обычный POST (поведение неизменно).
                     Возвращает (answer_text, usage_dict)."""
                     nonlocal active_model_result, active_pending_tool_calls
+                    expected_connection_revision_id = (
+                        expected_connection_revision_id or workbook_connection_revision_id
+                    )
                     call_preset = inference_preset if inference_preset is not None else execution_preset
                     if not isinstance(call_preset, ModelExecutionPreset):
                         raise TypeError("model call needs a typed execution preset")
@@ -8636,6 +8703,9 @@ async def _execute_chat_evidence_application(
                         provider_usage = active_model_result.response.usage
                         provider_usage = provider_usage if isinstance(provider_usage, Mapping) else {}
                         execution = retrieval_trace["last_model_call_execution"]
+                        execution["model_connection_revision_id"] = str(
+                            getattr(active_model_result.connection, "revision_id", "") or ""
+                        )
                         execution["provider_usage"] = {
                             key: value if type(value := provider_usage.get(key)) is int and value >= 0 else None
                             for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens")
@@ -8969,7 +9039,7 @@ async def _execute_chat_evidence_application(
                         except ContextRequiredSectionOverflow:
                             if query_rejected_attempt is None:
                                 raise
-                            raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
+                            raise model_query_failure(model_query_empty_failure_code(query_diagnostic), trace=retrieval_trace,
                                 session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
                                 secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
                         retrieval_trace["context_governor"]["calls"].append(
@@ -8999,6 +9069,7 @@ async def _execute_chat_evidence_application(
                             query_body,
                             allow_stream=False,
                             inference_preset=query_execution_preset,
+                            expected_connection_revision_id=workbook_connection_revision_id,
                         )
                         t_llm += time.time() - t_query_model
                         record_source_frame_delivery(retrieval_trace, initial_source_frame,
@@ -9038,7 +9109,7 @@ async def _execute_chat_evidence_application(
                             parse_diagnostics=query_diagnostic["declared_parse"],
                             secret_values=(llm_runtime.api_key,))
                     if not model_queries and not declared.get("intentional_empty"):
-                        raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
+                        raise model_query_failure(model_query_empty_failure_code(query_diagnostic), trace=retrieval_trace,
                             session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
                             secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
 
@@ -9936,6 +10007,7 @@ async def _execute_chat_evidence_application(
                                     or llm_model
                                 ),
                                 question=str(req.question or ""),
+                                model_connection_revision_id=workbook_connection_revision_id,
                                 **({"source_frame_contract_sha256": source_frame_contract_sha256}
                                    if source_frame_contract_sha256 else {}),
                             )
@@ -9951,6 +10023,14 @@ async def _execute_chat_evidence_application(
                                 },
                             )
                         except Exception as job_error:  # noqa: BLE001 - durability degrades visibly
+                            if isinstance(job_error, WorkbookResearchJobError) and str(job_error) == "WORKBOOK_CONTINUATION_CONTEXT_CHANGED":
+                                raise HTTPException(409, detail={
+                                    "code": "WORKBOOK_CONTINUATION_CONTEXT_CHANGED",
+                                    "message": "Подключение модели, профиль или область данных изменились. "
+                                               "Верните прежние настройки для продолжения либо отправьте полное новое "
+                                               "задание с регионом и периодом цен. Сохранённые решения и файлы "
+                                               "прежнего задания доступны без изменений.",
+                                }) from job_error
                             if isinstance(job_error, WorkbookResearchJobError) and str(job_error) == "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED":
                                 raise HTTPException(409, detail={
                                     "code": "SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED",
@@ -10527,6 +10607,7 @@ async def _execute_chat_evidence_application(
                                             query_body,
                                             purpose=query_purpose,
                                             inference_preset=query_execution_preset,
+                                            expected_connection_revision_id=workbook_connection_revision_id,
                                         )
                                         t_llm += time.time() - t_query_model
                                         record_source_frame_delivery(retrieval_trace, pass_source_frame, purpose=query_purpose)
@@ -10673,16 +10754,17 @@ async def _execute_chat_evidence_application(
                                     # A failed technical declaration cannot advance to
                                     # a later sheet and turn its headers into a result.
                                     query_format_pending = True
+                                    query_empty_code = model_query_empty_failure_code(query_diagnostic)
                                     if owns_sheet_pass and research_job_service is not None and research_job is not None:
                                         research_job = research_job_service.pause(
-                                            research_job["job_id"], phase="model_query_format_pending",
+                                            research_job["job_id"], phase=model_query_pending_phase(query_empty_code),
                                             held_packet=model_rag_with_pending_results({
                                                 "sheet": sheet_name, "locators": list(packet),
                                                 "model_query_output_missing": True,
                                                 "query_output": query_diagnostic,
                                             }, pending_result_packets),
                                         )
-                                    raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
+                                    raise model_query_failure(query_empty_code, trace=retrieval_trace,
                                         session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
                                         secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
                                 any_sheet_queries = True
@@ -11042,7 +11124,8 @@ async def _execute_chat_evidence_application(
                                         hits_per_query=retrieval_limits["model_evidence_k"],
                                         source_context=pass_evidence,
                                         native_read_reserved_tokens=native_growth_budget["reserved_tokens"],
-                                        initial_input_budget_tokens=fixed_packet.input_budget_tokens,
+                                        initial_input_budget_tokens=(fixed_packet.input_budget_tokens
+                                            + fixed_packet.provider_payload_tokens),
                                         evidence_namespace=(row_packet_id(source_catalog, sheet=sheet_name,
                                             locators=packet) + f":a{packet_attempts[fingerprint]}"),
                                         query_offset=evidence_query_offset, query_provenance=pass_query_provenance,
@@ -11709,7 +11792,7 @@ async def _execute_chat_evidence_application(
                         query_code = str(detail.get("error") or detail.get("code") or "") if isinstance(detail, Mapping) else str(detail or "")
                         if (not owns_sheet_pass or research_job_service is None or research_job is None
                                 or (query_code != "MODEL_QUERY_OUTPUT_INCOMPLETE"
-                                    and not (query_format_pending and query_code == "MODEL_RAG_QUERY_LIST_EMPTY"))):
+                                    and not (query_format_pending and query_code in {"MODEL_RAG_QUERY_LIST_EMPTY", "MODEL_QUERY_GENERATION_LIMIT"}))):
                             raise
                         try:
                             saved_job = research_job_service.get(research_job["job_id"])
@@ -11736,7 +11819,7 @@ async def _execute_chat_evidence_application(
                             *(locator for locator in source_catalog.work_locators() if locator not in settled_checkpoint),
                         ]))
                         research_job = research_job_service.pause(
-                            research_job["job_id"], phase="model_query_format_pending" if query_format_pending else "model_query_output_incomplete",
+                            research_job["job_id"], phase=model_query_pending_phase(query_code) if query_format_pending else "model_query_output_incomplete",
                             remaining=checkpoint_remaining,
                             held_packet=model_rag_with_pending_results(held, pending_result_packets),
                         )
@@ -11783,13 +11866,14 @@ async def _execute_chat_evidence_application(
                             release_sheet_pass(live_job_id)
                     if (not any_sheet_queries and not accumulated_rows and not research_cancelled
                             and not terminal_packet_locators and not pending_result_packets):
+                        query_outputs = retrieval_trace.get("model_query_outputs") or []
+                        failed_query_output = query_outputs[-1] if query_outputs else {}
+                        query_empty_code = model_query_empty_failure_code(failed_query_output)
                         if owns_sheet_pass and research_job_service is not None and research_job is not None:
-                            query_outputs = retrieval_trace.get("model_query_outputs") or []
-                            failed_query_output = query_outputs[-1] if query_outputs else {}
                             failed_sheet_query = str(failed_query_output.get("purpose") or "").startswith("model_rag_sheet_")
                             previous_held = dict(research_job.get("held_packet") or {})
                             research_job = research_job_service.pause(
-                                research_job["job_id"], phase="model_query_format_pending",
+                                research_job["job_id"], phase=model_query_pending_phase(query_empty_code),
                                 held_packet={
                                     "sheet": sheet_name if failed_sheet_query else str(previous_held.get("sheet") or research_job.get("sheet") or ""),
                                     "locators": list(packet) if failed_sheet_query else list(previous_held.get("locators") or research_job.get("packet_locators") or []),
@@ -11797,7 +11881,7 @@ async def _execute_chat_evidence_application(
                                     "query_output": failed_query_output,
                                 },
                             )
-                        raise model_query_failure("MODEL_RAG_QUERY_LIST_EMPTY", trace=retrieval_trace,
+                        raise model_query_failure(query_empty_code, trace=retrieval_trace,
                             session_id=req.session_id, provider=llm_runtime.provider, model=llm_model,
                             secret_values=(llm_runtime.api_key,), final_texts=query_failure_final_texts)
                     # A row the model adjudicated with any terminal role is finished for
@@ -12313,7 +12397,8 @@ async def _execute_chat_evidence_application(
                                 hits_per_query=retrieval_limits["model_evidence_k"],
                                 source_context=fixed_model_rag_evidence,
                                 native_read_reserved_tokens=native_growth_budget["reserved_tokens"],
-                                initial_input_budget_tokens=fixed_packet.input_budget_tokens,
+                                initial_input_budget_tokens=(fixed_packet.input_budget_tokens
+                                    + fixed_packet.provider_payload_tokens),
                                 query_provenance=_model_only_query_provenance(model_rag_query_hits),
                                 **initial_answer_context)
                             grouped_trace = retrieval_trace["grouped_model_evidence"]

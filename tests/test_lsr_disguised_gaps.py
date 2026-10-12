@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.lsr_citation_support import cited
+from tests.lsr_citation_support import cited, cited_snapshot, issued_norm_metadata
 
 from proxy.services import gesn_service
 from proxy.services.lsr_result_readiness_service import (
@@ -101,9 +101,12 @@ def _legacy_demontade_card(**overrides) -> dict[str, object]:
 def _install_card(monkeypatch, card: dict[str, object]) -> None:
     """Serve ``card`` for its own шифр, keep the canonical base for every other code."""
     real_get_norm = gesn_service.get_norm
+    card = dict(card, _source_sha256=issued_norm_metadata(card, synthetic=True)["normative_base_sha256"])
 
     def _get_norm(code, *args, **kwargs):
         if str(code or "").strip() == str(card["code"]):
+            if kwargs.get("expected_base_sha256"):
+                assert kwargs["expected_base_sha256"] == card["_source_sha256"]
             return dict(card)
         return real_get_norm(code, *args, **kwargs)
 
@@ -147,7 +150,7 @@ def _dismantling_row(**overrides) -> dict[str, object]:
     row.update(overrides)
     # «EXACT» is the model's claim; the record of the card it cited is what
     # readiness and the money gate accept as its basis (§ 3).
-    return cited(row)
+    return cited_snapshot(row)
 
 
 def test_the_reversal_is_read_from_the_two_texts_that_are_already_in_the_row():

@@ -59,11 +59,13 @@ def test_empty_search_query_headers_remain_visible_without_invented_cards():
 def test_whole_raw_resource_preview_does_not_claim_a_complete_typed_norm_card():
     meta = {"norm_code": "fixture", "resource_count": 2,
             "resource_preview": [{"code": "r1", "unit": "kg"}, {"code": "r2", "unit": "m"}]}
-    facts = card_delivery_facts(meta, raw_body_shown=True)
-    assert facts["raw_hit_body_shown"] and facts["normative_conditions_shown"] and facts["card_body_shown"]
+    facts = card_delivery_facts(meta, raw_body_shown=True, displayed_body="Literal resource preview")
+    assert facts["raw_hit_body_shown"] and facts["card_body_shown"]
+    assert facts["normative_conditions_shown"] is False
+    assert facts["normative_work_steps_status"] == "unknown"
     assert facts["normative_card_complete"] is False
     assert facts["normative_resources_status"] == "preview"
-    unread = card_delivery_facts(meta, raw_body_shown=False)
+    unread = card_delivery_facts(meta, raw_body_shown=False, displayed_body="")
     assert unread["normative_conditions_shown"] is False and unread["card_body_shown"] is False
     assert unread["normative_resources_status"] == "not_read"
 
@@ -71,9 +73,14 @@ def test_whole_raw_resource_preview_does_not_claim_a_complete_typed_norm_card():
 def test_exact_resource_count_and_complete_flag_are_separate_from_raw_body_delivery():
     meta = {"norm_code": "fixture", "resource_count": 1, "resources_returned": 1,
             "resources_complete": True, "resources": [{"code": "r1", "unit": "kg", "per_unit": 2.5}]}
-    facts = card_delivery_facts(meta, raw_body_shown=True)
-    assert facts["normative_card_complete"] and facts["normative_resources_status"] == "complete"
-    mismatch = card_delivery_facts({**meta, "resources_returned": 0}, raw_body_shown=True)
+    facts = card_delivery_facts(meta, raw_body_shown=True, displayed_body="Literal resource body")
+    assert facts["normative_card_complete"] is False and facts["normative_resources_status"] == "complete"
+    complete = card_delivery_facts({**meta, "work_steps": ["Literal installation step"]}, raw_body_shown=True,
+                                   displayed_body="Состав работы: Literal installation step")
+    assert complete["normative_card_complete"] and complete["normative_composition_shown"]
+    assert complete["normative_conditions_shown"] is False
+    mismatch = card_delivery_facts({**meta, "resources_returned": 0}, raw_body_shown=True,
+                                   displayed_body="Literal resource body")
     assert mismatch["raw_hit_body_shown"] and not mismatch["normative_card_complete"]
 
 
@@ -456,7 +463,8 @@ def test_compact_read_replay_preserves_exact_catalog_bytes_and_full_resource_fie
         "doc_name": "fixture-norms", "content": original,
         "meta": {**_norm_identity_meta(), "model_evidence_ref": "Q1.H1", "global_evidence_id": "g1",
                  "nr_sp_candidates": rules, "resources": [resource], "resource_count": 1,
-                 "resources_returned": 1, "resources_complete": True},
+                 "resources_returned": 1, "resources_complete": True,
+                 "work_steps": ["первая операция", "вторая операция. Условия: без изменения."]},
     }
     unchanged = copy.deepcopy(chunk)
 

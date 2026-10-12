@@ -279,13 +279,20 @@ async def test_authored_rtf_vor_preserves_decision_but_remains_partial_on_source
 
 
 @pytest.mark.asyncio
-async def test_rtf_cannot_enter_unauthored_vor_or_direct_lsr(tmp_path, monkeypatch):
+async def test_rtf_requires_authored_rows_and_explicit_lsr_adapter(tmp_path, monkeypatch):
     source, _text = _source(tmp_path, monkeypatch)
     meta = preserve_read_attachment(source, attachment_id="read_123456abcdef", original_name=source.name,
                                     root=tmp_path / "attachments")
     context = _context(tmp_path)
     result = await workbook_service.build_vor_workbook({"attachment_id": meta["attachment_id"]}, context)
     assert result["code"] == "UNSUPPORTED_ATTACHMENT_TYPE"
+    result = await workbook_service.build_lsr_workbook({"attachment_id": meta["attachment_id"]}, context)
+    assert result["code"] == "UNSUPPORTED_ATTACHMENT_TYPE"
     result = await workbook_service.build_lsr_workbook({"attachment_id": meta["attachment_id"], "decisions": [
         {"source_row": "RTF_T1!R2", "row_role": "work", "title": "Работа", "quantity": 0, "unit": "м"}]}, context)
-    assert result["code"] == "UNSUPPORTED_ATTACHMENT_TYPE"
+    # Supported authored input reaches the real packaging boundary. Missing
+    # adapter must still be an explicit failure, never a fabricated workbook.
+    assert result["code"] == "WORKBOOK_ADAPTER_UNAVAILABLE"
+    assert result["status"] == "failed"
+    assert result["blockers"] == ["LSR_ADAPTER_REQUIRED"]
+    assert not result.get("artifact")

@@ -331,7 +331,7 @@ def test_ready_document_is_reported_separately_from_outstanding_actions() -> Non
         rows=cited_all([
             {
                 "source_row": "АР!R11",
-                "norm_code": "ГЭСНр1-01-001",
+                "norm_code": "ГЭСНр01-01-001-01",
                 "norm_status": "EXACT",
                 "row_role": "work",
             }
@@ -361,7 +361,7 @@ def _vor_rows() -> list[dict]:
     return cited_all([
         {
             "source_row": "АР!R11",
-            "norm_code": "ГЭСНр1-01-001",
+            "norm_code": "ГЭСНр01-01-001-01",
             "norm_status": "EXACT",
             "row_role": "work",
         },
@@ -469,7 +469,7 @@ def test_finished_and_fully_closed_job_offers_no_action_at_all() -> None:
         rows=cited_all([
             {
                 "source_row": "АР!R11",
-                "norm_code": "ГЭСНр1-01-001",
+                "norm_code": "ГЭСНр01-01-001-01",
                 "norm_status": "EXACT",
                 "row_role": "work",
             }

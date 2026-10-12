@@ -202,15 +202,48 @@ def source_rows_to_vor_xlsx(
         sheet["A2"] = "ЧЕРНОВИК — есть вопросы к исходным объёмам или решениям; см. примечания строк"
     if draft or document_issues:
         sheet["A2"] = "ВОР НЕ ЗАВЕРШЁН — промежуточная ревизия; см. лист «Проверка»"
-    authored_columns = any(row.get("row_role") or row.get("work_row") or row.get("open_gap") or row.get("source_audit") for row in rows)
+    authored_columns = any(row.get("row_role") or row.get("work_row") or row.get("open_gap") or row.get("source_audit") or row.get("_authored_decision") for row in rows)
+    authored_metadata = any(isinstance(row.get("_authored_decision"), dict) for row in rows)
     headers = ["№", "Раздел", "Наименование", "Код/Шифр", "Ед. изм.", "Кол-во",
                "Источник", "Предполагаемая работа", "Статус решения"]
     if authored_columns:
         headers += ["Тип строки", "Связанная работа", "Замечания / проверка исходника"]
+    if authored_metadata:
+        headers += ["ID операции", "Учтено работой", "Полное решение модели"]
     sheet.append(headers)
     for cell in sheet[3]:
         cell.font = Font(bold=True)
         cell.alignment = Alignment(wrap_text=True)
+
+    audit_rows: dict[int, int] = {}
+    operation_rows: dict[str, list[int]] = {}
+    if authored_metadata:
+        from proxy.services.attachment_source_catalog_service import VOR_MODEL_AUDIT_HEADERS, VOR_MODEL_AUDIT_SCHEMA
+
+        audit = workbook.create_sheet("Решения модели")
+        audit.append([VOR_MODEL_AUDIT_SCHEMA])
+        audit.append(["Полные авторские поля сохранены; для одной строки соедините JSON-фрагменты в порядке записи."])
+        audit.append(list(VOR_MODEL_AUDIT_HEADERS))
+        for index, row in enumerate(rows, 4):
+            decision = row.get("_authored_decision")
+            if not isinstance(decision, dict):
+                continue
+            audit_rows[index] = audit.max_row + 1
+            operation = str(decision.get("operation_id") or "")
+            if operation:
+                operation_rows.setdefault(operation, []).append(index)
+            literal = json.dumps(decision, ensure_ascii=False, separators=(",", ":"))
+            # Excel silently truncates a string cell above 32767 characters.
+            # Fragmenting its literal JSON preserves every field and character.
+            fragments = [literal[offset:offset + 32000] for offset in range(0, len(literal), 32000)]
+            for part, fragment in enumerate(fragments, 1):
+                audit.append([f"ВОР!R{index}", f"Фрагмент {part}/{len(fragments)}", f"JSON: {fragment}"])
+                audit.cell(audit.max_row, 1).hyperlink = f"#'ВОР'!A{index}"
+        for column, width in {"A": 24, "B": 18, "C": 100}.items():
+            audit.column_dimensions[column].width = width
+        for row in audit.iter_rows(min_row=3):
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
 
     for index, row in enumerate(rows, 1):
         source = str(row.get("source_file") or "").strip()
@@ -240,10 +273,23 @@ def source_rows_to_vor_xlsx(
         if authored_columns:
             values += [str(row.get("row_role") or ""), str(row.get("work_row") or ""),
                        "; ".join(str(row.get(key) or "").strip() for key in ("open_gap", "source_audit") if row.get(key))]
+        decision = row.get("_authored_decision")
+        if authored_metadata:
+            decision = decision if isinstance(decision, dict) else {}
+            audit_row = audit_rows.get(index + 3)
+            values += [str(decision.get("operation_id") or ""), str(decision.get("covered_by_work_id") or ""),
+                       f"Решения модели!R{audit_row}" if audit_row is not None else ""]
         sheet.append(values)
+        if authored_metadata and audit_row is not None:
+            sheet.cell(index + 3, 15).hyperlink = f"#'Решения модели'!C{audit_row}"
+            covered = str(decision.get("covered_by_work_id") or "")
+            targets = operation_rows.get(covered, [])
+            if len(targets) == 1:
+                sheet.cell(index + 3, 14).hyperlink = f"#'ВОР'!M{targets[0]}"
 
     for column, width in {"A": 6, "B": 18, "C": 60, "D": 16, "E": 10, "F": 12, "G": 42,
-                          "H": 46, "I": 18, **({"J": 14, "K": 20, "L": 64} if authored_columns else {})}.items():
+                          "H": 46, "I": 18, **({"J": 14, "K": 20, "L": 64} if authored_columns else {}),
+                          **({"M": 28, "N": 28, "O": 32} if authored_metadata else {})}.items():
         sheet.column_dimensions[column].width = width
     if draft or document_issues:
         check = workbook.create_sheet("Проверка")

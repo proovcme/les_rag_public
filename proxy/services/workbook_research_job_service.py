@@ -514,11 +514,12 @@ class WorkbookResearchIdentity:
     model_identity: str
     question_sha256: str
     source_frame_contract_sha256: str = ""
+    model_connection_revision_id: str = ""
 
     def payload(self) -> dict[str, Any]:
-        # Zero/full mode must retain the exact pre-frame durable identity.
+        # Empty optional bindings retain the exact legacy durable identity.
         return {key: value for key, value in self.__dict__.items()
-                if key != "source_frame_contract_sha256" or value}
+                if key not in {"source_frame_contract_sha256", "model_connection_revision_id"} or value}
 
     def digest(self) -> str:
         payload = {
@@ -532,6 +533,8 @@ class WorkbookResearchIdentity:
         }
         if self.source_frame_contract_sha256:
             payload["source_frame_contract_sha256"] = self.source_frame_contract_sha256
+        if self.model_connection_revision_id:
+            payload["model_connection_revision_id"] = self.model_connection_revision_id
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -555,7 +558,10 @@ def _same_research_scope(row: sqlite3.Row, identity: WorkbookResearchIdentity) -
     return all(
         stored.get(key) == (list(value) if key == "dataset_ids" else value)
         for key, value in identity.payload().items() if key != "question_sha256"
-    ) and str(stored.get("source_frame_contract_sha256") or "") == identity.source_frame_contract_sha256
+    ) and (
+        str(stored.get("source_frame_contract_sha256") or "") == identity.source_frame_contract_sha256
+        and str(stored.get("model_connection_revision_id") or "") == identity.model_connection_revision_id
+    )
 
 
 class WorkbookResearchJobService:
@@ -653,6 +659,7 @@ class WorkbookResearchJobService:
         model_identity: str,
         question: str,
         source_frame_contract_sha256: str = "",
+        model_connection_revision_id: str = "",
     ) -> WorkbookResearchIdentity:
         if not session_id or not attachment_id or len(source_sha256) != 64:
             raise WorkbookResearchJobError("durable workbook identity is incomplete")
@@ -667,7 +674,56 @@ class WorkbookResearchJobService:
             model_identity=str(model_identity or "unknown"),
             question_sha256=hashlib.sha256(str(question).encode("utf-8")).hexdigest(),
             source_frame_contract_sha256=source_frame_contract_sha256,
+            model_connection_revision_id=str(model_connection_revision_id or ""),
         )
+
+    @staticmethod
+    def _compatible_document_row(
+        conn: sqlite3.Connection, identity: WorkbookResearchIdentity, *, exclude_job_id: str = "",
+    ) -> sqlite3.Row | None:
+        """Match only persisted technical bindings, independent of question/session."""
+        return conn.execute(
+            "SELECT * FROM workbook_research_jobs"
+            " WHERE json_extract(identity_json,'$.attachment_id')=?"
+            "   AND json_extract(identity_json,'$.source_sha256')=?"
+            "   AND COALESCE(json_extract(identity_json,'$.source_frame_contract_sha256'),'')=?"
+            "   AND json_extract(identity_json,'$.dataset_ids')=json(?)"
+            "   AND json_extract(identity_json,'$.profile_revision_id')=?"
+            "   AND json_extract(identity_json,'$.model_identity')=?"
+            "   AND COALESCE(json_extract(identity_json,'$.model_connection_revision_id'),'')=?"
+            "   AND job_id<>?"
+            " ORDER BY rowid DESC LIMIT 1",
+            (identity.attachment_id, identity.source_sha256, identity.source_frame_contract_sha256,
+             json.dumps(list(identity.dataset_ids), ensure_ascii=False), identity.profile_revision_id,
+             identity.model_identity, identity.model_connection_revision_id, str(exclude_job_id)),
+        ).fetchone()
+
+    def _assert_continuation_compatible(
+        self, conn: sqlite3.Connection, identity: WorkbookResearchIdentity,
+        task_context: Mapping[str, Any] | None,
+    ) -> None:
+        if not _is_plain_continuation(identity, task_context):
+            return
+        prior_frames = conn.execute(
+            "SELECT COALESCE(json_extract(identity_json,'$.source_frame_contract_sha256'),'')"
+            " FROM workbook_research_jobs"
+            " WHERE json_extract(identity_json,'$.attachment_id')=?"
+            " AND json_extract(identity_json,'$.source_sha256')=?",
+            (identity.attachment_id, identity.source_sha256),
+        ).fetchall()
+        if not prior_frames:
+            return
+        if not any(frame[0] == identity.source_frame_contract_sha256 for frame in prior_frames):
+            raise WorkbookResearchJobError("SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED")
+        if self._compatible_document_row(conn, identity) is None:
+            raise WorkbookResearchJobError("WORKBOOK_CONTINUATION_CONTEXT_CHANGED")
+
+    def assert_continuation_compatible(
+        self, identity: WorkbookResearchIdentity, *, task_context: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Check a literal continuation before inference, without creating a job."""
+        with self._connect() as conn:
+            self._assert_continuation_compatible(conn, identity, task_context)
 
     def begin_or_resume(
         self, identity: WorkbookResearchIdentity, *, task_context: Mapping[str, Any] | None = None,
@@ -690,16 +746,7 @@ class WorkbookResearchJobService:
                     row = self._latest_compatible_continuation(conn, row, identity)
                     retargeted = str(row["job_id"]) != matched_id
             if row is None:
-                if _is_plain_continuation(identity, task_context):
-                    prior_scopes = conn.execute(
-                        "SELECT COALESCE(json_extract(identity_json,'$.source_frame_contract_sha256'),'')"
-                        " FROM workbook_research_jobs"
-                        " WHERE json_extract(identity_json,'$.attachment_id')=?"
-                        " AND json_extract(identity_json,'$.source_sha256')=?",
-                        (identity.attachment_id, identity.source_sha256),
-                    ).fetchall()
-                    if prior_scopes and not any(scope[0] == identity.source_frame_contract_sha256 for scope in prior_scopes):
-                        raise WorkbookResearchJobError("SOURCE_FRAME_CONTINUATION_SCOPE_CHANGED")
+                self._assert_continuation_compatible(conn, identity, task_context)
                 job_id = f"wrj_{uuid4().hex}"
                 conn.execute(
                     """INSERT INTO workbook_research_jobs
@@ -877,10 +924,10 @@ class WorkbookResearchJobService:
         re-derived **277** evidence records it already held — while its own sheet
         queue never got past СКС, short of the ЭОМ the first research had reached.
 
-        The scope is the *document*, exactly as § 7/§ 9 already scope its price
-        basis: same attachment, same source hash.  A replaced file under the same
-        attachment inherits nothing, and a regenerated UI session does not lose the
-        state it is continuing.  What carries is the state the scheduler reads —
+        The document binding includes the attachment/hash, dataset scope, profile
+        revision, model identity, connection revision and source frame. A changed binding inherits
+        nothing; a new question or regenerated UI session within the same binding
+        still preserves progress. What carries is the state the scheduler reads —
         decided rows, evidence, omitted rows, the query cache, the packet still held,
         the outstanding remainder and the deferrals — while the run-scoped guard
         counters (``run_round_count``, ``stall_count``, ``held_attempts``) start
@@ -891,15 +938,7 @@ class WorkbookResearchJobService:
         document had not seen, which is the "without new data" the blocker names.
         """
 
-        parent = conn.execute(
-            "SELECT * FROM workbook_research_jobs"
-            " WHERE json_extract(identity_json,'$.attachment_id')=?"
-            "   AND json_extract(identity_json,'$.source_sha256')=?"
-            "   AND COALESCE(json_extract(identity_json,'$.source_frame_contract_sha256'),'')=?"
-            "   AND job_id<>?"
-            " ORDER BY rowid DESC LIMIT 1",
-            (identity.attachment_id, identity.source_sha256, identity.source_frame_contract_sha256, str(job_id)),
-        ).fetchone()
+        parent = self._compatible_document_row(conn, identity, exclude_job_id=job_id)
         if parent is None:
             return {}
         # A refused first model turn can have no decisions yet. Its user's price
@@ -954,8 +993,7 @@ class WorkbookResearchJobService:
             "from_job": str(parent["job_id"]),
             "parent_status": str(parent["status"] or ""),
             "parent_sheet": str(parent["sheet_name"] or ""),
-            # Named apart because a continuation that carries another model's or
-            # another profile's decisions across it must be visible in the trace.
+            # Keep both bindings explicit in the durable lineage receipt.
             "parent_model_identity": str(parent_identity.get("model_identity") or ""),
             "parent_profile_revision_id": str(
                 parent_identity.get("profile_revision_id") or ""
@@ -963,6 +1001,9 @@ class WorkbookResearchJobService:
             "parent_question_sha256": str(parent_identity.get("question_sha256") or ""),
             "continuation_model_identity": str(identity.model_identity or ""),
             "continuation_profile_revision_id": str(identity.profile_revision_id or ""),
+            **({"parent_model_connection_revision_id": str(parent_identity.get("model_connection_revision_id") or ""),
+                "continuation_model_connection_revision_id": identity.model_connection_revision_id}
+               if identity.model_connection_revision_id else {}),
             "decided_rows": len(accepted),
             "evidence_records": len(evidence),
             "omitted_rows": len(omitted),

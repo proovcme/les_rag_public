@@ -123,7 +123,11 @@ async def test_unfittable_previous_response_blocks_without_truncation_or_extra_m
     assert context[0]['previous_visible_sha256'] == hashlib.sha256(raw.encode('utf-8')).hexdigest()
     assert context[0]['required_tokens'] > context[0]['budget_tokens']
     assert 'VISIBLE_TAIL_MUST_SURVIVE' not in str(context)
-    assert 'MODEL_RAG_QUERY_LIST_EMPTY' in str(caught.value.detail)
+    assert caught.value.detail == 'MODEL_QUERY_GENERATION_LIMIT'
+    output = caught.value.private_query_trace['model_query_outputs'][-1]
+    assert output['generation_limit_reached'] is True
+    assert output['finish_reason'] == 'length'
+    assert output['declared_parse']['accepted_count'] == 0
 
 
 def test_repair_data_excludes_reasoning_and_secrets_but_keeps_all_visible_literals():

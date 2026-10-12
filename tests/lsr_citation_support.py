@@ -14,6 +14,8 @@ application actually stores.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Iterable, Mapping
 
 from proxy.services.chat_evidence_application_service import row_evidence_provenance_check
@@ -55,3 +57,41 @@ def cited_all(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Cite every cipher-bearing row of a fixture table, leaving the rest alone."""
 
     return [cited(row) for row in rows]
+
+
+def issued_norm_metadata(norm: Mapping[str, Any], *, synthetic: bool = False) -> dict[str, str]:
+    """Metadata for an actual base card or an explicitly local synthetic fixture.
+
+    Synthetic identities hash the complete fixture card. They must be used with
+    the corresponding local lookup stub, never to label a canonical base card.
+    """
+    from proxy.services.lsr_norm_quality_gate_service import qualified_norm_key
+
+    code = str(norm.get("code") or "")
+    key = qualified_norm_key(code)
+    assert key, "the issued fixture must name a full family and norm item"
+    sha = str(norm.get("_source_sha256") or "")
+    if not sha and synthetic:
+        sha = hashlib.sha256(json.dumps(dict(norm), ensure_ascii=False, sort_keys=True,
+                                       separators=(",", ":")).encode("utf-8")).hexdigest()
+    assert len(sha) == 64, "a real card requires its actual normative source SHA-256"
+    return {"norm_code": code, "norm_key": key, "normative_base_sha256": sha}
+
+
+def cited_snapshot(row: Mapping[str, Any], *, norm: Mapping[str, Any] | None = None,
+                   synthetic: bool = False) -> dict[str, Any]:
+    """Opt in to the application's issued-snapshot binding for calculation tests."""
+    from proxy.services import gesn_service
+    from proxy.services.model_norm_snapshot_binding_service import cited_norm_snapshot_stamp
+
+    payload = cited(row)
+    if norm is None:
+        norm = gesn_service.get_norm(str(payload.get("norm_code") or ""))
+    assert norm is not None, "the calculation fixture must have an issued card"
+    metadata = issued_norm_metadata(norm, synthetic=synthetic)
+    bindings = payload["evidence_bindings"]
+    stamp = cited_norm_snapshot_stamp(payload, bindings,
+                                    {identity: [metadata] for identity in bindings.values()})
+    assert stamp == {key: metadata[key] for key in ("norm_key", "normative_base_sha256")}
+    payload["_evidence_check"] = {**payload["_evidence_check"], **stamp}
+    return payload

@@ -78,7 +78,8 @@ def test_complete_candidate_keeps_all_aliases_and_literal_old_body_prefix():
         assert full.body_by_ref[ref].startswith(inventory.body_by_ref[ref])
         assert "resources_complete=True" in full.body_by_ref[ref]
         assert grouped.normative_card_identity(full.meta_by_ref[ref]) == grouped.normative_card_identity(inventory.meta_by_ref[ref])
-        assert grouped.card_delivery_facts(full.meta_by_ref[ref], raw_body_shown=True)["normative_card_complete"]
+        assert grouped.card_delivery_facts(full.meta_by_ref[ref], raw_body_shown=True,
+                                           displayed_body=full.body_by_ref[ref])["normative_card_complete"]
     for ref in set(inventory.inventory_refs) - set(inventory.body_refs):
         assert full.meta_by_ref[ref] == inventory.meta_by_ref[ref]
 

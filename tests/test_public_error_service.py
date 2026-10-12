@@ -37,7 +37,7 @@ def test_known_user_rejection_remains_readable():
 
 
 @pytest.mark.parametrize("code", ["MODEL_RAG_QUERY_LIST_EMPTY", "MODEL_RAG_SEARCH_INCOMPLETE",
-                                  "MODEL_QUERY_OUTPUT_INCOMPLETE"])
+                                  "MODEL_QUERY_OUTPUT_INCOMPLETE", "MODEL_QUERY_GENERATION_LIMIT"])
 def test_known_query_failure_survives_both_chat_boundaries_without_internal_payload(code):
     for detail in (code, {"error": code, "raw": "password=do-not-leak"}):
         first = public_error_payload(status_code=503, detail=detail)

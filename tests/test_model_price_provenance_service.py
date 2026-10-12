@@ -134,6 +134,24 @@ def test_real_cited_commercial_quote_calculates_without_operator_impersonation()
     assert trace["row_bindings"][0]["readiness"]["operator_confirmed_price"] is False
 
 
+@pytest.mark.parametrize("role", ["material", "equipment"])
+def test_normless_commercial_quote_does_not_require_a_normative_snapshot(monkeypatch, role):
+    from proxy.services import gesn_service
+    from proxy.services.chat_evidence_application_service import bind_row_evidence_ids
+
+    def no_norm_lookup(*args, **kwargs):
+        pytest.fail("a quoted supply must not acquire a normative dependency")
+
+    monkeypatch.setattr(gesn_service, "get_norm", no_norm_lookup)
+    row = _row(row_role=role, norm_code="")
+    decisions = bind_row_evidence_ids([row], [_chunk(model_evidence_ref="Q1.H1")])
+    assert "_evidence_check" not in decisions[0]
+    trace = build_lsr_trace_from_visible_rows(decisions)
+    assert trace["summary"]["confirmed_amount"] == 75
+    assert trace["summary"]["preliminary_amount"] == 0
+    assert trace["row_bindings"][0]["status"] == "bound"
+
+
 def test_actual_operator_confirmation_bypasses_failed_model_quote_check():
     row = _row(price_source="operator", _price_evidence_check={"price_in_refs": False})
     trace = build_lsr_trace_from_visible_rows([row], confirmed_data={"S!R2": {"confirmed_price": 25}})
@@ -167,10 +185,10 @@ def test_work_commercial_price_requires_its_explicit_meaning_and_uses_source_qua
     from proxy.services import rim_lsr_trace_service as service
 
     monkeypatch.setattr(service.gesn_service, "get_norm", lambda _: {
-        "code": "08-02-409-09", "name": "Authored work", "unit": "100 м", "resources": [], "nr": 0, "sp": 0,
+        "code": "ГЭСНм08-02-409-09", "name": "Authored work", "unit": "100 м", "resources": [], "nr": 0, "sp": 0,
     })
     row = _row(row_role="work", title="Authored work", unit="м", quantity=12, confirmed_price=100,
-               norm_code="08-02-409-09", norm_status="EXACT", price_kind=kind)
+               norm_code="ГЭСНм08-02-409-09", norm_status="EXACT", price_kind=kind)
     chunk = _chunk("Commercial price: 100 RUB per м")
     check = _check(row, [chunk])
     assert _complete(check)
@@ -180,7 +198,7 @@ def test_work_commercial_price_requires_its_explicit_meaning_and_uses_source_qua
     assert summary["full_amount"] == expected
     assert trace["summary"]["confirmed_amount"] == (expected or 0)
     if kind is None:
-        assert "position_price_kind_unknown:08-02-409-09" in summary["completeness_reasons"]
+        assert "position_price_kind_unknown:ГЭСНм08-02-409-09" in summary["completeness_reasons"]
         assert summary["known_amount"] == 12  # the previous candidate is preserved, never confirmed
     else:
         assert summary["operator_price_trace"]["qty"] == (12 if kind == "unit_price" else 1)
@@ -190,10 +208,10 @@ def test_work_unit_quote_conflict_keeps_its_authored_price_preliminary(monkeypat
     from proxy.services import rim_lsr_trace_service as service
 
     monkeypatch.setattr(service.gesn_service, "get_norm", lambda _: {
-        "code": "08-02-409-09", "name": "Authored work", "unit": "м", "resources": [], "nr": 0, "sp": 0,
+        "code": "ГЭСНм08-02-409-09", "name": "Authored work", "unit": "м", "resources": [], "nr": 0, "sp": 0,
     })
     row = _row(row_role="work", title="Authored work", unit="м", quantity=12, confirmed_price=100,
-               norm_code="08-02-409-09", norm_status="EXACT", price_kind="unit_price", price_unit="kg")
+               norm_code="ГЭСНм08-02-409-09", norm_status="EXACT", price_kind="unit_price", price_unit="kg")
     check = _check(row, [_chunk("Commercial price: 100 RUB per kg")])
     assert _complete(check)
     trace = service.build_lsr_trace_from_visible_rows([{**row, "_price_evidence_check": check,
@@ -201,7 +219,7 @@ def test_work_unit_quote_conflict_keeps_its_authored_price_preliminary(monkeypat
     summary = trace["sections"][0]["positions"][0]["summary"]
     assert summary["known_amount"] == 1200
     assert summary["full_amount"] is None
-    assert "position_price_unit_conflict:08-02-409-09" in summary["completeness_reasons"]
+    assert "position_price_unit_conflict:ГЭСНм08-02-409-09" in summary["completeness_reasons"]
 
 
 def test_explicit_typed_price_meaning_cannot_be_relabelled_by_the_model():

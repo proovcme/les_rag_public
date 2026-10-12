@@ -54,7 +54,7 @@ def _started(tmp_path):
                 "title": "Монтаж шкафа",
                 "unit": "шт",
                 "quantity": 4,
-                "norm_code": "ГЭСН-2020-01-01",
+                "norm_code": "ГЭСНм08-03-575-01",
                 "norm_status": "EXACT",
             }
         ],

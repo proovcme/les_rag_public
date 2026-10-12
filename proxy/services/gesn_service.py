@@ -27,8 +27,10 @@ from __future__ import annotations
 import re
 import json
 import os
+import hashlib
 import sqlite3
 from functools import lru_cache
+from copy import deepcopy
 from pathlib import Path
 from backend.runtime_paths import mutable_path
 from typing import Any, Optional
@@ -251,7 +253,19 @@ def _connect_structured_base_readonly(path: Path) -> sqlite3.Connection:
         ) from error
 
 
-@lru_cache(maxsize=4)
+class NormativeSnapshotConflict(ValueError):
+    """The calculation source cannot reproduce the bytes of the cited card."""
+
+
+def normative_source_identity(path: str | Path) -> tuple[str, int]:
+    """Uncached byte identity, including replacements at the same file path."""
+
+    with Path(path).open("rb") as source:
+        sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+        byte_size = os.fstat(source.fileno()).st_size
+    return sha256, byte_size
+
+
 def load_norms(path: str | None = None) -> dict[str, dict[str, Any]]:
     """Каталог норм из СЕМЕНИ (yaml) → {нормализованный_код: норма}. Кешируется.
 
@@ -259,26 +273,58 @@ def load_norms(path: str | None = None) -> dict[str, dict[str, Any]]:
     назван явно (`path=` или `LES_GESN_SEED_ENABLED=1`). Каждая карточка помечается
     `_source_kind`, чтобы поиск и расчёт могли назвать демо-подмену (§ 3).
     """
+    p = Path(path) if path else DEFAULT_PATH
+    p = p.resolve()
+    identity = normative_source_identity(p)
+    norms = _seed_norm_snapshot(str(p), *identity)
+    if normative_source_identity(p) != identity:
+        raise NormativeSnapshotConflict("demo normative seed changed during reading")
+    return norms
+
+
+@lru_cache(maxsize=4)
+def _seed_norm_snapshot(path: str, sha256: str, byte_size: int) -> dict[str, dict[str, Any]]:
     import yaml
 
-    p = Path(path) if path else DEFAULT_PATH
+    p = Path(path)
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    if normative_source_identity(p) != (sha256, byte_size):
+        raise NormativeSnapshotConflict("demo normative seed changed during reading")
     out: dict[str, dict[str, Any]] = {}
     for n in data.get("norms", []):
         code = n.get("code")
         if code:
             n.setdefault("_source_kind", SEED_SOURCE_KIND)
             n.setdefault("_source_path", str(p))
+            n["_source_sha256"] = sha256
+            n["_source_byte_size"] = byte_size
             out[_norm_key(code)] = n
     return out
 
 
-@lru_cache(maxsize=4)
+load_norms.cache_clear = _seed_norm_snapshot.cache_clear
+load_norms.cache_info = _seed_norm_snapshot.cache_info
+load_norms.cache_parameters = _seed_norm_snapshot.cache_parameters
+
+
 def load_structured_base_norms(sqlite_path: str | None = None) -> dict[str, dict[str, Any]]:
-    """Каталог норм из canonical SQLite → {код: норма}. {} если базы нет."""
+    """Reuse a SQLite catalogue only for the exact same source bytes."""
+    from proxy.smeta_core.base_registry import runtime_data_path
+
     p = Path(sqlite_path) if sqlite_path else _structured_base_path()
+    p = runtime_data_path(p)
     if not p.exists():
         return {}
+    identity = normative_source_identity(p)
+    norms = _structured_norm_snapshot(str(p), *identity)
+    if normative_source_identity(p) != identity:
+        raise NormativeSnapshotConflict("normative SQLite changed during reading")
+    return norms
+
+
+@lru_cache(maxsize=4)
+def _structured_norm_snapshot(sqlite_path: str, sha256: str, byte_size: int) -> dict[str, dict[str, Any]]:
+    p = Path(sqlite_path)
 
     conn = _connect_structured_base_readonly(p)
     conn.row_factory = sqlite3.Row
@@ -317,6 +363,9 @@ def load_structured_base_norms(sqlite_path: str | None = None) -> dict[str, dict
     finally:
         conn.close()
 
+    if normative_source_identity(p) != (sha256, byte_size):
+        raise NormativeSnapshotConflict("normative SQLite changed during reading")
+
     out: dict[str, dict[str, Any]] = {}
     for row in norm_rows:
         key = str(row["norm_key"])
@@ -332,11 +381,17 @@ def load_structured_base_norms(sqlite_path: str | None = None) -> dict[str, dict
             "_resource_identity_duplicates_dropped": duplicates_dropped,
             "_source_kind": "structured_sqlite",
             "_source_path": str(p),
+            "_source_sha256": sha256,
+            "_source_byte_size": byte_size,
         }
     return out
 
 
-@lru_cache(maxsize=4)
+load_structured_base_norms.cache_clear = _structured_norm_snapshot.cache_clear
+load_structured_base_norms.cache_info = _structured_norm_snapshot.cache_info
+load_structured_base_norms.cache_parameters = _structured_norm_snapshot.cache_parameters
+
+
 def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]]:
     """Каталог норм из canonical base/parquet → {код: норма}. {} если базы нет. Кешируется.
 
@@ -354,11 +409,23 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
     paths = [p for p in paths if p.exists()]
     if not paths:
         return {}
+    sources = tuple((str(p.resolve()), *normative_source_identity(p)) for p in paths)
+    norms = _parquet_norm_snapshot(sources)
+    if any(normative_source_identity(path) != (sha256, size) for path, sha256, size in sources):
+        raise NormativeSnapshotConflict("normative parquet changed during reading")
+    return norms
+
+
+@lru_cache(maxsize=4)
+def _parquet_norm_snapshot(sources: tuple[tuple[str, str, int], ...]) -> dict[str, dict[str, Any]]:
     import pandas as pd
 
     out: dict[str, dict[str, Any]] = {}
-    for p in paths:
+    for path, sha256, byte_size in sources:
+        p = Path(path)
         df = pd.read_parquet(p)
+        if normative_source_identity(p) != (sha256, byte_size):
+            raise NormativeSnapshotConflict("normative parquet changed during reading")
         legacy_untyped = "base_type" not in df.columns and "norm_key" not in df.columns
         df = df.astype(object).where(pd.notnull(df), None)
         local: dict[str, dict[str, Any]] = {}
@@ -380,6 +447,8 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
                     "resources": [],
                     "_source_kind": "legacy_untyped_parquet" if legacy_untyped else "base_parquet",
                     "_source_path": str(p),
+                    "_source_sha256": sha256,
+                    "_source_byte_size": byte_size,
                 }
             elif not norm.get("work_steps"):
                 norm["work_steps"] = _work_steps(rec.get("work_steps"))
@@ -412,7 +481,16 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
     return out
 
 
-@lru_cache(maxsize=4)
+def _clear_base_norm_cache() -> None:
+    _structured_norm_snapshot.cache_clear()
+    _parquet_norm_snapshot.cache_clear()
+
+
+load_base_norms.cache_clear = _clear_base_norm_cache
+load_base_norms.cache_info = _parquet_norm_snapshot.cache_info
+load_base_norms.cache_parameters = _parquet_norm_snapshot.cache_parameters
+
+
 def load_overlay_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]]:
     """Official FGIS overlay parquet. Fills missing keys only; never chooses a work."""
 
@@ -420,6 +498,11 @@ def load_overlay_norms(parquet_path: str | None = None) -> dict[str, dict[str, A
     if not path.exists():
         return {}
     return load_base_norms(str(path))
+
+
+load_overlay_norms.cache_clear = _parquet_norm_snapshot.cache_clear
+load_overlay_norms.cache_info = _parquet_norm_snapshot.cache_info
+load_overlay_norms.cache_parameters = _parquet_norm_snapshot.cache_parameters
 
 
 def _merged_norms(
@@ -453,19 +536,39 @@ def get_norm(
     base_path: str | None = None,
     strict_family: bool = False,
     include_seed: bool | None = None,
+    expected_base_sha256: str = "",
 ) -> Optional[dict[str, Any]]:
-    norms = _merged_norms(path=path, base_path=base_path, include_seed=include_seed)
+    if expected_base_sha256 and not re.fullmatch(r"[0-9a-f]{64}", expected_base_sha256):
+        raise NormativeSnapshotConflict("invalid normative source SHA-256")
+    try:
+        norms = _merged_norms(path=path, base_path=base_path, include_seed=include_seed)
+    except (OSError, sqlite3.DatabaseError) as error:
+        if expected_base_sha256:
+            raise NormativeSnapshotConflict("cited normative source cannot be read") from error
+        raise
     key = _norm_key(code)
     if _has_explicit_base_prefix(code):
-        return norms.get(key)
-    bare = _norm_code(code)
-    if bare and strict_family:
-        matches = [norm for norm_key, norm in norms.items() if str(norm_key).endswith(f":{bare}")]
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            return None
-    return norms.get(key)
+        norm = norms.get(key)
+    else:
+        bare = _norm_code(code)
+        if bare and strict_family:
+            matches = [norm for norm_key, norm in norms.items() if str(norm_key).endswith(f":{bare}")]
+            norm = matches[0] if len(matches) == 1 else None
+        else:
+            norm = norms.get(key)
+    if expected_base_sha256:
+        if norm is None:
+            raise NormativeSnapshotConflict("cited normative item is absent from the calculation snapshot")
+        if str(norm.get("_source_sha256") or "") != expected_base_sha256:
+            raise NormativeSnapshotConflict("cited normative generation differs from the calculation source")
+        try:
+            actual_sha256, _ = normative_source_identity(str(norm.get("_source_path") or ""))
+        except OSError as error:
+            raise NormativeSnapshotConflict("cited normative source is unavailable") from error
+        if actual_sha256 != expected_base_sha256:
+            raise NormativeSnapshotConflict("cited normative source changed during lookup")
+    # A caller's resource actions must never edit the cached source generation.
+    return deepcopy(norm) if norm is not None else None
 
 
 def list_norms(
