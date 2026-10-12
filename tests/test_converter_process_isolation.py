@@ -7,6 +7,7 @@ import backend.converter as converter
 
 def test_indexing_uses_isolated_converter_for_pdf_and_excel(monkeypatch):
     calls = []
+    monkeypatch.setattr(converter, "_pdf_source_is_unreadable", lambda _path: False)
 
     monkeypatch.setattr(
         converter,
@@ -27,6 +28,7 @@ def test_indexing_uses_isolated_converter_for_pdf_and_excel(monkeypatch):
 
 def test_isolated_converter_can_be_disabled(monkeypatch):
     monkeypatch.setenv("RAG_CONVERT_SUBPROCESS_ENABLED", "0")
+    monkeypatch.setattr(converter, "_pdf_source_is_unreadable", lambda _path: False)
     monkeypatch.setattr(converter, "convert_to_markdown_isolated", lambda *args, **kwargs: "isolated")
     monkeypatch.setattr(converter, "convert_to_markdown", lambda *args, **kwargs: "direct")
 
@@ -35,14 +37,14 @@ def test_isolated_converter_can_be_disabled(monkeypatch):
 
 def test_large_pdf_indexing_uses_fast_text_first(tmp_path, monkeypatch):
     path = tmp_path / "project.pdf"
-    path.write_bytes(b"%PDF placeholder")
+    path.write_bytes(b"%PDF-1.7\nplaceholder")
     calls = []
 
     monkeypatch.setattr(converter, "_pdf_page_count", lambda _path: 83)
     monkeypatch.setattr(
         converter,
         "_parse_pdf_fast_text_layer",
-        lambda p, reason="": calls.append(("fast", reason)) or "page text",
+        lambda p, reason="", min_chars_per_page=None: calls.append(("fast", reason)) or "page text",
     )
     monkeypatch.setattr(
         converter,
@@ -56,7 +58,7 @@ def test_large_pdf_indexing_uses_fast_text_first(tmp_path, monkeypatch):
 
 def test_pdf_timeout_falls_back_to_fast_text(tmp_path, monkeypatch):
     path = tmp_path / "project.pdf"
-    path.write_bytes(b"%PDF placeholder")
+    path.write_bytes(b"%PDF-1.7\nplaceholder")
     calls = []
 
     monkeypatch.setenv("RAG_PDF_INDEX_FAST_TEXT_FIRST", "0")
@@ -68,11 +70,126 @@ def test_pdf_timeout_falls_back_to_fast_text(tmp_path, monkeypatch):
     monkeypatch.setattr(
         converter,
         "_parse_pdf_fast_text_layer",
-        lambda p, reason="": calls.append(reason) or "fallback page text",
+        lambda p, reason="", min_chars_per_page=None: calls.append(
+            (reason, min_chars_per_page)
+        ) or "fallback page text",
     )
 
     assert converter.convert_to_markdown_for_indexing(path) == "fallback page text"
-    assert calls == ["isolated_convert_failed: convert subprocess timeout: >162s"]
+    assert calls == [("isolated_convert_failed: convert subprocess timeout: >162s", 0.0)]
+
+
+def test_pdf_timeout_does_not_index_empty_fast_text_placeholder(tmp_path, monkeypatch):
+    import fitz
+
+    path = tmp_path / "scan.pdf"
+    with fitz.open() as document:
+        document.new_page()
+        document.save(path)
+    monkeypatch.setenv("RAG_PDF_INDEX_FAST_TEXT_FIRST", "0")
+    monkeypatch.setattr(
+        converter,
+        "convert_to_markdown_isolated",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("convert subprocess timeout: >162s")),
+    )
+    with pytest.raises(RuntimeError, match="convert subprocess timeout"):
+        converter.convert_to_markdown_for_indexing(path)
+
+
+def test_required_ocr_timeout_cannot_fall_back_to_existing_text_layer(tmp_path, monkeypatch):
+    import fitz
+    from types import SimpleNamespace
+
+    path = tmp_path / "requires-ocr.pdf"
+    with fitz.open() as document:
+        document.new_page().insert_text((72, 72), "Existing incomplete text layer")
+        document.save(path)
+    monkeypatch.setattr(converter, "convert_to_markdown_isolated", lambda *a, **k: (
+        _ for _ in ()
+    ).throw(RuntimeError("convert subprocess timeout: >162s")))
+    with pytest.raises(converter.OCRRequiredError) as raised:
+        converter.convert_to_markdown_for_indexing(
+            path, route=SimpleNamespace(pipeline="markdown_needs_ocr")
+        )
+    assert raised.value.code == "ocr_required_execution_failed"
+
+
+def _in_process_conversion_context():
+    class ResultQueue:
+        def __init__(self):
+            self.result = None
+
+        def put(self, result):
+            self.result = result
+
+        def get(self, timeout=None):
+            return self.result
+
+        def get_nowait(self):
+            return self.result
+
+    class InProcess:
+        exitcode = 0
+
+        def __init__(self, *, target, args, name):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            self.target(*self.args)
+
+        def join(self, timeout=None):
+            return None
+
+        def is_alive(self):
+            return False
+
+    class FakeContext:
+        def Queue(self, maxsize=1):
+            return ResultQueue()
+
+        def Process(self, target, args, name):
+            return InProcess(target=target, args=args, name=name)
+
+    return FakeContext()
+
+
+def test_isolated_required_ocr_preserves_tesseract_reason_code(tmp_path, monkeypatch):
+    path = tmp_path / "scan.pdf"
+    path.write_bytes(b"%PDF-1.7\n")
+    route = type("Route", (), {"pipeline": "markdown_needs_ocr"})()
+    monkeypatch.setenv("RAG_OCR_ENABLED", "true")
+    monkeypatch.setattr(
+        "backend.ocr_parser.make_ocr_parser",
+        lambda: type("Parser", (), {"parse_pdf": lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            __import__("backend.ocr_parser", fromlist=["OCRProcessingError"]).OCRProcessingError(
+                "tesseract_timeout"
+            )
+        )})(),
+    )
+    monkeypatch.setenv("RAG_CONVERT_SUBPROCESS_ENABLED", "true")
+    monkeypatch.setattr(
+        converter.multiprocessing, "get_context", lambda method: _in_process_conversion_context()
+    )
+
+    with pytest.raises(converter.OCRRequiredError) as raised:
+        converter.convert_to_markdown_for_indexing(path, route=route)
+    assert raised.value.code == "tesseract_timeout"
+
+
+def test_isolated_explicit_ocr_disabled_preserves_required_error(tmp_path, monkeypatch):
+    path = tmp_path / "scan.pdf"
+    path.write_bytes(b"%PDF-1.7\nplaceholder")
+    monkeypatch.setenv("RAG_OCR_ENABLED", "false")
+    monkeypatch.setattr(
+        converter.multiprocessing, "get_context", lambda method: _in_process_conversion_context()
+    )
+    route = type("Route", (), {"pipeline": "markdown_needs_ocr"})()
+
+    with pytest.raises(converter.OCRRequiredError) as raised:
+        converter.convert_to_markdown_for_indexing(path, route=route)
+
+    assert raised.value.code == "ocr_required_disabled"
 
 
 def test_fast_pdf_text_does_not_run_global_boilerplate_regex(tmp_path, monkeypatch):

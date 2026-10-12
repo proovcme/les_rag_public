@@ -264,6 +264,16 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert "bootstrap PowerShell stayed alive after terminal ready" in text
 
 
+def test_windows_prepare_update_hashing_does_not_depend_on_module_autoload():
+    prepare = (
+        build_windows_installer.ROOT / "tools" / "windows_prepare_update.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "function Get-LesFileSha256" in prepare
+    assert "[System.Security.Cryptography.SHA256]::Create()" in prepare
+    assert "Get-FileHash" not in prepare
+
+
 def test_windows_release_smoke_resets_incompatible_powershell_module_path():
     smoke = build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
     text = smoke.read_text(encoding="utf-8-sig")
@@ -307,7 +317,7 @@ def test_start_light_uses_direct_console_free_python_processes():
     assert '@("pythonw.exe", "python.exe")' in text
     assert "Start-Process -FilePath $LesPython" in text
     assert '"-m", "uvicorn", "proxy_server:app"' in text
-    assert 'process_contract = "direct_python_no_console_v1"' in text
+    assert 'process_contract = "direct_python_no_console_v2"' in text
     assert "function Get-LesFreePort" in text
     assert '$ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")' in text
     assert '$env:PROXY_URL = if ($Mode -eq "ui") { $BackendUrl } else { "http://127.0.0.1:$ProxyPort" }' in text
@@ -333,7 +343,8 @@ def test_windows_scripts_expose_independent_full_backend_and_ui_modes():
     assert '[string]$BackendUrl = ""' in start
     assert '$env:LES_RUNTIME_MODE = $Mode' in start
     assert '$Mode -eq "ui"' in start
-    assert 'lemonade_adapter_url = if ($lemonadeHost)' in start
+    assert "New-LesLemonadeLifecycleState" in start
+    assert "lemonade_host_port = $lemonadeLifecycle.lemonade_host_port" in start
     assert '--mode $Mode' in stop
 
 

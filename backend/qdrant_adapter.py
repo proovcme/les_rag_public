@@ -11,6 +11,7 @@ qdrant_adapter.py — RAG бэкенд: SQLite метабаза + Qdrant век�
   7. retrieve: get_query_embedding синхронный в asyncio → заменён на async httpx
   8. _ensure_collection: race condition при параллельных startup вызовах → asyncio.Lock
 """
+from backend.http_client_policy import trust_env_for_url
 import asyncio
 import hashlib
 import logging
@@ -22,6 +23,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Mapping
@@ -35,9 +37,15 @@ from qdrant_client import models
 
 from backend.runtime_paths import mutable_path
 
-from .converter import convert_to_markdown_for_indexing, normalize_pdf_text
+from .converter import (
+    OCRRequiredError,
+    UnsupportedPdfSourceError,
+    convert_to_markdown_for_indexing,
+    normalize_pdf_text,
+)
 from .document_router import DocumentRoute, route_document
 from .interface import Chunk, DatasetInfo, EmbeddingContractError, RAGBackend
+from .ingestion_ownership import file_ingestion_lock
 from .mail_profile import build_mail_vector_profile, deterministic_mail_node_id
 from .parquet_writer import TableNormalizer
 from proxy.services.dataset_memory_service import chunk_payload_typing, current_dataset_revision_id
@@ -110,6 +118,51 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _attach_pdf_source_provenance(file_nodes: list[dict], file_path: Path) -> list[dict]:
+    """Attach immutable source identity to every PDF-derived evidence node."""
+    if not file_nodes or file_path.suffix.lower() not in PDF_PAGE_NODE_SUFFIXES:
+        return file_nodes
+    source_sha256 = _sha256_file(file_path)
+    source_format = file_path.suffix.lower().lstrip(".") or "pdf"
+    for node in file_nodes:
+        payload = dict(node.get("payload") or {})
+        payload.update(
+            {
+                "source_format": source_format,
+                "content_format": "pdf",
+                "source_sha256": source_sha256,
+            }
+        )
+        node["payload"] = payload
+    return file_nodes
+
+
+def _has_complete_ocr_pdf_provenance(file_nodes: list[dict]) -> bool:
+    """Required OCR may replace evidence only when every node identifies source and page."""
+    # Public adds non-admissible navigation nodes after page conversion. They
+    # route retrieval, but are not OCR evidence and must not invalidate valid pages.
+    evidence_nodes = [
+        node for node in file_nodes
+        if not (
+            (node.get("payload") or {}).get("node_role") == "navigation"
+            and (node.get("payload") or {}).get("evidence_admissible") is False
+        )
+    ]
+    for node in evidence_nodes:
+        payload = node.get("payload") or {}
+        page = payload.get("page")
+        if (
+            payload.get("type") != "pdf_page_text"
+            or payload.get("source_format") not in {"pdf", "p7m"}
+            or payload.get("content_format") != "pdf"
+            or type(page) is not int
+            or page <= 0
+            or not re.fullmatch(r"[0-9a-f]{64}", str(payload.get("source_sha256") or ""))
+        ):
+            return False
+    return bool(evidence_nodes)
 
 
 class UnsupportedIndexingSourceError(RuntimeError):
@@ -752,6 +805,36 @@ def _prepare_named_sparse_nodes(file_nodes: list[dict], file_key: str) -> list[d
     return searchable_nodes
 # ── Прямой клиент эмбеддингов (httpx, без llama-index) ───────────────────────
 
+
+def _resolve_embedding_runtime(
+    mlx_url: str,
+    parse_url: str,
+    *,
+    configured_backend: str,
+    platform: str,
+) -> tuple[str, str | None, str, str | None]:
+    """Resolve embedding endpoints without overriding an explicit backend."""
+    backend = str(configured_backend or "").strip().lower()
+    resolved_url = str(mlx_url or "").strip()
+    legacy_windows_default = platform == "win32" and not backend
+    if (backend == "ollama" or legacy_windows_default) and (
+        re.search(r":8080(?:/|$)", resolved_url) or not resolved_url
+    ):
+        resolved_url = "http://127.0.0.1:11434"
+    resolved_backend = backend or (
+        "ollama"
+        if "11434" in resolved_url or "ollama" in resolved_url.lower()
+        else None
+    )
+    resolved_parse_url = str(parse_url or "").strip() or resolved_url
+    resolved_parse_backend = backend or (
+        "ollama"
+        if "11434" in resolved_parse_url or "ollama" in resolved_parse_url.lower()
+        else None
+    )
+    return resolved_url, resolved_backend, resolved_parse_url, resolved_parse_backend
+
+
 class EmbedClient:
     """
     Тонкий клиент к /v1/embeddings MLX Host.
@@ -828,7 +911,10 @@ class EmbedClient:
             response = await self.connection_transport.embed(connection, texts)
         else:
             secret_store = self._connection_secret_store or EnvironmentSecretStore(ENV_PATH)
-            async with httpx.AsyncClient(timeout=EMBED_TIMEOUT) as client:
+            async with httpx.AsyncClient(
+                trust_env=trust_env_for_url(connection.base_url),
+                timeout=EMBED_TIMEOUT,
+            ) as client:
                 transport = OpenAICompatibleTransport(
                     client=client,
                     secret_store=secret_store,
@@ -976,7 +1062,9 @@ class EmbedClient:
             return await self._encode_connection_async(payload_texts)
         if self.connection_mode == "shadow":
             self._shadow_compare()
-        async with httpx.AsyncClient(timeout=30.0) as c:
+        # Эмбеддер стоит на loopback: унаследованный ALL_PROXY (в том числе socks4,
+        # который httpx не поддерживает) не должен уводить туда запросы.
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(self.url), timeout=30.0) as c:
             r = await c.post(
                 self.url,
                 json={"model": self.model, "input": payload_texts},
@@ -1957,8 +2045,55 @@ class MetaDB:
         with self._get_conn() as conn:
             conn.execute("DELETE FROM structured_rules WHERE file_key = ?", (file_key,))
 
+    def replace_structured_rules(self, dataset_id: str, file_key: str, rules: list[dict]) -> None:
+        """Replace one owner's extracted rules atomically after replacement writes succeed."""
+        if any(r.get("document_id") != dataset_id or r.get("file_key") != file_key for r in rules):
+            raise ValueError("structured rule owner mismatch")
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM structured_rules WHERE document_id=? AND file_key=?",
+                         (dataset_id, file_key))
+            conn.executemany("""
+                INSERT INTO structured_rules (
+                    id, document_id, file_key, chunk_id, subject, parameter, operator, value, unit,
+                    condition, char_start, char_end
+                ) VALUES (
+                    :id, :document_id, :file_key, :chunk_id, :subject, :parameter, :operator, :value,
+                    :unit, :condition, :char_start, :char_end
+                )
+            """, rules)
+
 
 # ── Основной адаптер ──────────────────────────────────────────────────────────
+
+def _page_provenance_row(payload: dict[str, Any]) -> dict[str, Any]:
+    """Project explicit PDF provenance without guessing it from ``chunk_ord``."""
+    import json as _json
+
+    page = payload.get("source_page") or payload.get("page") or payload.get("page_number")
+    if not isinstance(page, int) or isinstance(page, bool) or page <= 0:
+        page = None
+    bbox: list[float] | None = None
+    fragments = payload.get("pdf_fragment_bboxes")
+    candidates = []
+    if isinstance(fragments, list):
+        candidates.extend(item.get("bbox") for item in fragments if isinstance(item, dict))
+    candidates.append(payload.get("bbox"))
+    for candidate in candidates:
+        if not isinstance(candidate, (list, tuple)) or len(candidate) != 4:
+            continue
+        try:
+            bbox = [float(value) for value in candidate]
+        except (TypeError, ValueError):
+            continue
+        break
+    return {
+        "source_page": page,
+        "source_ref": str(payload.get("source_ref") or ""),
+        "bbox_json": _json.dumps(bbox, separators=(",", ":")) if bbox else "",
+        "extraction_method": str(payload.get("source_layer") or payload.get("extraction_method") or ""),
+        "extraction_version": str(payload.get("pdf_page_passport_schema") or payload.get("extraction_version") or ""),
+    }
+
 
 class QdrantLlamaIndexAdapter(RAGBackend):
     @classmethod
@@ -2006,19 +2141,22 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         # check_compatibility=False: пропустить версии-чек клиент↔сервер. Иначе на Windows он
         # вис («Failed to obtain server version») и держал /api/health/ретрив десятками секунд,
         # когда Qdrant недоступен (#2). Skip → операции фейлятся быстро, версия не блокирует старт.
-        self.aclient         = qdrant_client.AsyncQdrantClient(
+        self.aclient         = qdrant_client.AsyncQdrantClient(trust_env=trust_env_for_url(qdrant_url), 
             url=qdrant_url, timeout=60.0, check_compatibility=False)
         self.qdrant_url      = qdrant_url
-        if (sys.platform == "win32" or os.getenv("EMBED_BACKEND") == "ollama") and ("8080" in mlx_url or not mlx_url):
-            mlx_url = "http://127.0.0.1:11434"
-        embed_backend = "ollama" if ("11434" in mlx_url or sys.platform == "win32" or os.getenv("EMBED_BACKEND") == "ollama") else None
+        configured_embed_backend = os.getenv("EMBED_BACKEND", "").strip().lower()
+        _parse_url = os.getenv("EMBED_URL_PARSE", "").strip()
+        mlx_url, embed_backend, _parse_url, parse_backend = _resolve_embedding_runtime(
+            mlx_url,
+            _parse_url,
+            configured_backend=configured_embed_backend,
+            platform=sys.platform,
+        )
         self.embed           = EmbedClient(mlx_url, model=embed_model_name.replace(":latest", ""), backend=embed_backend)
         # Отдельный эмбеддер для ПАРСА (опц.): EMBED_URL_PARSE → парс-эмбеддинги уходят на
         # ВТОРОЙ инстанс, не голодая чат-эмбеддинг на основном :8080 во время индексации.
         # Дефолт = основной URL (ноль изменений, пока env не задан). Активация: поднять второй
         # MLX-эмбеддер на альт-порту + EMBED_URL_PARSE=http://127.0.0.1:<порт>.
-        _parse_url = os.getenv("EMBED_URL_PARSE", "").strip() or mlx_url
-        parse_backend = "ollama" if ("11434" in _parse_url or sys.platform == "win32" or os.getenv("EMBED_BACKEND") == "ollama") else None
         self.embed_parse     = EmbedClient(_parse_url, model=embed_model_name.replace(":latest", ""), backend=parse_backend)
         if _parse_url != mlx_url:
             logger.info("[INIT] парс-эмбеддер на отдельном инстансе: %s", _parse_url)
@@ -2493,7 +2631,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     "elapsed_sec": 0,
                 }
 
-            sync_qdrant = qdrant_client.QdrantClient(
+            sync_qdrant = qdrant_client.QdrantClient(trust_env=trust_env_for_url(self.qdrant_url), 
                 url=self.qdrant_url,
                 timeout=60.0,
                 check_compatibility=False,  # #2: версии-чек вис на Windows при недоступном Qdrant
@@ -2556,15 +2694,35 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 except Exception:
                     pass
 
-            def _delete_file_lexical(file_key: str) -> None:
-                delete_lexical = getattr(self, "_sync_delete_file_lexical", None)
-                if delete_lexical is not None:
-                    delete_lexical(dataset_id, file_key)
-
             def _upsert_file_lexical(points: list[Any]) -> None:
                 upsert_lexical = getattr(self, "_sync_upsert_file_lexical", None)
                 if upsert_lexical is not None:
                     upsert_lexical(points)
+
+            def _mark_terminal_document_error(
+                db_key: str,
+                code: str,
+                route: DocumentRoute | None,
+            ) -> None:
+                mark_parse_error = getattr(self.db, "mark_document_parse_error", None)
+                if callable(mark_parse_error):
+                    mark_parse_error(
+                        dataset_id,
+                        db_key,
+                        message=code,
+                        error_code=code,
+                        retryable=False,
+                        retry_after=0.0,
+                    )
+                else:
+                    self.db.update_document_status(
+                        dataset_id,
+                        db_key,
+                        "ERROR",
+                        0,
+                        route=route,
+                        last_error=code,
+                    )
 
             def _submit_convert(index: int):
                 f, fk, _dbk = files_to_parse[index]
@@ -2580,9 +2738,15 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             for i, (file_path, file_key, db_file_key) in enumerate(files_to_parse, 1):
                 if i % 50 == 0 or i == total:
                     logger.info(f"[PARSE] {i}/{total} ({_t.time()-t0:.0f}с)")
-                begin_attempt = getattr(self.db, "begin_document_attempt", None)
-                attempts = int(begin_attempt(dataset_id, db_file_key) or 1) if begin_attempt else 1
+                route = None
+                attempts = 0
+                ownership = ExitStack()
                 try:
+                    db_path = getattr(self.db, "db_path", None)
+                    lock_root = Path(db_path).resolve().parent if db_path else self.content_dir.resolve()
+                    ownership.enter_context(file_ingestion_lock(dataset_id, file_key, root=lock_root))
+                    begin_attempt = getattr(self.db, "begin_document_attempt", None)
+                    attempts = int(begin_attempt(dataset_id, db_file_key) or 1) if begin_attempt else 1
                     _stage(db_file_key, "CONVERT")
                     if next_convert is not None:
                         future, local_timings = next_convert
@@ -2633,6 +2797,27 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     if _qdrant_schema_mode() == "named":
                         file_nodes = _prepare_named_sparse_nodes(file_nodes, file_key)
 
+                    if route and route.pipeline == "markdown_needs_ocr" and not file_nodes:
+                        code = "ocr_required_no_searchable_text"
+                        phase_start = _t.time()
+                        _mark_terminal_document_error(db_file_key, code, route)
+                        _add_timing("db_sec", phase_start)
+                        errors += 1
+                        continue
+
+                    if (
+                        route
+                        and route.pipeline == "markdown_needs_ocr"
+                        and file_path.suffix.lower() in PDF_PAGE_NODE_SUFFIXES
+                        and not _has_complete_ocr_pdf_provenance(file_nodes)
+                    ):
+                        code = "ocr_required_invalid_provenance"
+                        phase_start = _t.time()
+                        _mark_terminal_document_error(db_file_key, code, route)
+                        _add_timing("db_sec", phase_start)
+                        errors += 1
+                        continue
+
                     phase_start = _t.time()
                     existing_vectors = (
                         self._sync_existing_file_vectors_by_hash(
@@ -2646,29 +2831,23 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     )
                     _add_timing("cache_sec", phase_start)
 
-                    # W1.4: старые точки удаляем ПОСЛЕ успешной конвертации — сбой
-                    # конвертации больше не оставляет файл без старого индекса.
-                    phase_start = _t.time()
-                    self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
-                    _delete_file_lexical(file_key)
-                    _add_timing("delete_sec", phase_start)
-
                     if not file_nodes:
-                        phase_start = _t.time()
-                        self.db.update_document_status(dataset_id, db_file_key, "INDEXED", 0, route=route)
-                        _add_timing("db_sec", phase_start)
-                        continue
+                        raise RuntimeError("replacement contains no searchable evidence")
 
-                    # Стираем старые правила для этого файла перед переиндексацией
-                    self.db.clear_structured_rules(file_key)
+                    old_point_ids = QdrantLlamaIndexAdapter._sync_file_point_ids(
+                        self, sync_qdrant, dataset_id, file_key
+                    )
+                    extracted_rules = []
 
                     # Извлекаем структурированные правила для нормативных и сложных документов
                     if route and route.doc_type in ("NORMATIVE", "SPEC"):
                         try:
                             from .rules_extractor import StructuredRulesExtractor
                             extractor = StructuredRulesExtractor()
-                            extracted_rules = []
                             for node in file_nodes:
+                                payload = node.get("payload") or {}
+                                if payload.get("evidence_admissible") is False:
+                                    continue
                                 chunk_rules = extractor.extract_rules(
                                     text=node["text"],
                                     document_id=dataset_id,
@@ -2679,10 +2858,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                     extracted_rules.extend(chunk_rules)
 
                             if extracted_rules:
-                                self.db.insert_structured_rules(extracted_rules)
                                 logger.info(f"[OCR_RULES] Извлечено структурированных правил из {file_key}: {len(extracted_rules)}")
                         except Exception as rule_err:
                             logger.error(f"[OCR_RULES] Ошибка извлечения структурированных правил для {file_key}: {rule_err}", exc_info=True)
+                            raise
 
                     _stage(db_file_key, "EMBED")
                     # Батч-эмбеддинги по EMBED_BATCH чанков. Upsert начинаем только
@@ -2766,6 +2945,13 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         )
                         _add_timing("upsert_sec", phase_start)
                     _upsert_file_lexical(points)
+                    self.db.replace_structured_rules(dataset_id, file_key, extracted_rules)
+                    # Retire only this window's captured generation after new writes succeed.
+                    # Never file-wide cleanup on failure: old accepted evidence stays reachable.
+                    phase_start = _t.time()
+                    QdrantLlamaIndexAdapter._sync_delete_point_ids(self, sync_qdrant, old_point_ids)
+                    QdrantLlamaIndexAdapter._sync_delete_lexical_point_ids(self, old_point_ids)
+                    _add_timing("delete_sec", phase_start)
 
                     file_chunk_count = len(file_nodes)
                     # W1.2: exact-count в Qdrant — дорогая проверка; выборочно (каждый N-й файл
@@ -2802,16 +2988,21 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         )
                     _add_timing("db_sec", phase_start)
 
-                except UnsupportedIndexingSourceError as file_err:
+                except (UnsupportedIndexingSourceError, UnsupportedPdfSourceError) as file_err:
                     logger.info("[PARSE] SKIPPED %s: %s", file_key, file_err)
                     phase_start = _t.time()
                     mark_skipped = getattr(self.db, "mark_document_skipped", None)
+                    error_code = (
+                        "PDF_SOURCE_UNREADABLE"
+                        if isinstance(file_err, UnsupportedPdfSourceError)
+                        else "UNSUPPORTED_INDEXING_SOURCE"
+                    )
                     if mark_skipped:
                         mark_skipped(
                             dataset_id,
                             db_file_key,
                             message=str(file_err),
-                            error_code="UNSUPPORTED_INDEXING_SOURCE",
+                            error_code=error_code,
                         )
                     else:
                         self.db.update_document_status(
@@ -2819,13 +3010,15 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         )
                     _add_timing("db_sec", phase_start)
 
+                except OCRRequiredError as file_err:
+                    logger.error("[PARSE] OCR REQUIRED %s: %s", file_key, file_err.code)
+                    phase_start = _t.time()
+                    _mark_terminal_document_error(db_file_key, file_err.code, route)
+                    _add_timing("db_sec", phase_start)
+                    errors += 1
+
                 except Exception as file_err:
                     logger.error(f"[PARSE] ERROR {file_key}: {file_err}", exc_info=True)
-                    try:
-                        self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
-                        _delete_file_lexical(file_key)
-                    except Exception as cleanup_err:
-                        logger.error("[PARSE] cleanup failed %s: %s", file_key, cleanup_err)
                     phase_start = _t.time()
                     error_code, retryable, retry_after = _parse_failure_policy(
                         file_err,
@@ -2854,6 +3047,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         )
                     _add_timing("db_sec", phase_start)
                     errors += 1
+
+                finally:
+                    ownership.close()
 
             if convert_pool is not None:
                 convert_pool.shutdown(wait=False, cancel_futures=True)
@@ -3000,6 +3196,33 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             wait=True,
         )
 
+    def _sync_file_point_ids(self, sync_qdrant, dataset_id: str, file_key: str) -> list:
+        ids = []
+        offset = None
+        while True:
+            points, next_offset = sync_qdrant.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=QdrantLlamaIndexAdapter._file_filter(self, dataset_id, file_key),
+                limit=256, offset=offset, with_payload=False, with_vectors=False,
+            )
+            ids.extend(point.id for point in points)
+            if next_offset is None:
+                return ids
+            if next_offset == offset:
+                raise RuntimeError("replacement census cursor did not advance")
+            offset = next_offset
+
+    def _sync_delete_point_ids(self, sync_qdrant, point_ids: list) -> None:
+        for start in range(0, len(point_ids), 256):
+            sync_qdrant.delete(collection_name=self.collection_name,
+                               points_selector=models.PointIdsList(points=point_ids[start:start + 256]),
+                               wait=True)
+
+    def _sync_delete_lexical_point_ids(self, point_ids: list) -> None:
+        if point_ids:
+            from proxy.services.lexical_index_service import LexicalIndex
+            LexicalIndex().delete_point_ids(self.collection_name, [str(pid) for pid in point_ids])
+
     def _sync_delete_file_lexical(self, dataset_id: str, file_key: str) -> None:
         try:
             from proxy.services.lexical_index_service import LexicalIndex
@@ -3039,6 +3262,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "context_before": payload.get("context_before"),
                 "context_after": payload.get("context_after"),
                 "context_kind": payload.get("context_kind"),
+                **_page_provenance_row(payload),
             })
         return rows
 
@@ -3053,6 +3277,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             logger.debug("[LEXICAL] upsert FTS chunks collection=%s count=%s", self.collection_name, indexed)
         except Exception as error:  # noqa: BLE001
             logger.warning("[LEXICAL] upsert skipped collection=%s: %s", self.collection_name, error)
+            raise
 
     def _sync_count_file_points(
         self,
@@ -3071,7 +3296,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         """РЕКОНСАЙЛ MetaDB↔Qdrant: для каждого INDEXED-документа сверяет chunk_count (SQLite) с числом
         точек в Qdrant. Несовпавшие → PENDING (переиндексируются и встанут на место). Лечит рассинхрон
         от сбоя cleanup/краша/ручных операций. Дорогая (count на файл) — это разовая операция-ремонт."""
-        sync_qdrant = qdrant_client.QdrantClient(
+        sync_qdrant = qdrant_client.QdrantClient(trust_env=trust_env_for_url(self.qdrant_url), 
             url=self.qdrant_url, timeout=60.0, check_compatibility=False,
         )
         files = self.db.indexed_files_with_counts(dataset_id)
@@ -3187,7 +3412,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         sync_qdrant = getattr(self, "_catalog_sync_qdrant", None)
         owns_client = sync_qdrant is None
         if sync_qdrant is None:
-            sync_qdrant = qdrant_client.QdrantClient(
+            sync_qdrant = qdrant_client.QdrantClient(trust_env=trust_env_for_url(self.qdrant_url), 
                 url=self.qdrant_url,
                 timeout=60.0,
                 check_compatibility=False,
@@ -3345,7 +3570,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         MISSING, FTS is rebuilt from its content table, and points with no registered document are
         removed.  The parse job itself is started by the API layer so the operator sees one job.
         """
-        sync_qdrant = qdrant_client.QdrantClient(
+        sync_qdrant = qdrant_client.QdrantClient(trust_env=trust_env_for_url(self.qdrant_url), 
             url=self.qdrant_url,
             timeout=60.0,
             check_compatibility=False,
@@ -3675,7 +3900,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             if timings is not None:
                 timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
             if file_nodes:
-                return file_nodes
+                return _attach_pdf_source_provenance(file_nodes, file_path)
 
         doc = Document(
             text=md_content,
@@ -3706,7 +3931,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 })
         if timings is not None:
             timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
-        return file_nodes
+        return _attach_pdf_source_provenance(file_nodes, file_path)
 
     def _sync_pdf_page_text_nodes(
         self,
@@ -3800,7 +4025,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
     @staticmethod
     def _split_pdf_page_markdown(md_content: str) -> list[tuple[int, str]]:
-        matches = list(re.finditer(r"(?m)^## (?:Page|Стр\.)\s+(\d+)\s*$", md_content or ""))
+        matches = list(re.finditer(r"(?m)^##\s+(?:Page|Стр\.?)\s+(\d+)\s*$", md_content or ""))
         pages: list[tuple[int, str]] = []
         for index, match in enumerate(matches):
             start = match.end()

@@ -72,6 +72,15 @@ def test_version_surfaces_have_no_drift():
     assert sync_version_contract.drifted_surfaces() == []
 
 
+def test_offline_lock_root_identity_matches_project_without_reresolution():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    roots = [package for package in lock["package"] if package.get("source") == {"editable": "."}]
+    assert len(roots) == 1
+    assert roots[0]["name"] == project["project"]["name"]
+    assert roots[0]["version"] == project["project"]["version"]
+
+
 def test_offline_python_support_matches_bundled_runtime():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
@@ -80,3 +89,19 @@ def test_offline_python_support_matches_bundled_runtime():
     assert project["project"]["requires-python"].replace(" ", "") == ">=3.12,<3.14"
     assert lock["requires-python"].replace(" ", "") == ">=3.12,<3.14"
     assert bundled["version"] == "3.13.12"
+
+
+def test_uv_lock_root_package_version_is_a_managed_surface():
+    """Корневой пакет в uv.lock входит в контракт версии.
+
+    Синхронизатор обновлял pyproject, но не uv.lock, поэтому расхождение повторялось при
+    каждом выпуске: .125 при конфигурации .128 (аудит Codex 17.09), до этого — при .125.
+    """
+    import re
+
+    contract = sync_version_contract.load_contract()
+    surfaces = sync_version_contract.desired_surfaces(contract)
+    lock = sync_version_contract.ROOT / "uv.lock"
+    assert lock in surfaces, "uv.lock обязан быть управляемой поверхностью версии"
+    match = re.search(r'name = "les-v2"\r?\nversion = "([^"]+)"', surfaces[lock])
+    assert match and match.group(1) == contract["product_version"]

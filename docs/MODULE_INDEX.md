@@ -1,5 +1,693 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 11.10.2026 — .204, шаг 4: однозначная область поисковых запросов
+
+В model_rag_query_instruction сметная инструкция начинает с работ и материалов,
+заголовки оставляет контекстом. Убрано противоречивое требование охватить «все
+строки»; generic RAG сохраняет прежний текст. Парсер и исполнение literal queries
+не менялись. Доставка проверена интеграционным тестом (focused136 PASS).
+Живой .203 не улучшил запросы: заголовки2→3, цены0; новая .204 ещё не принята.
+Полные факты и следующий шаг — audits/lsr-pr21-integration-20261008/p9/query-step4-20261011/REPORT.md.
+
+
+## 11.10.2026 — .203, подготовка
+
+Кандидат .203/build843: query-инструкция различает контекст раздела и работу силами модели; literal retrieval неизменен. Док/код синхронизированы, live ещё не проверен. См. `modules/rag-evidence-flow.md` и `audits/lsr-pr21-integration-20261008/p9/query-step4-20261011/REPORT.md`.
+
+
+11.10.2026: оба коммита Claude fc606ba1 (.201) и 61b2e2c1 (.202) перенесены
+fast-forward в codex/public-03064-modular-uplift. Установлено .201/build841/fc606ba13d47;
+.202 находится в исходниках, не выложена. Локальные документы и исходный индекс
+сохранены в .test-tmp/claude-integration-20261011; предыдущий HEAD защищён веткой
+codex/backup-before-claude-integration-20261011. Код до переноса совпадал с frozen .200.
+Модели/настройки не менялись: answer r11 IQ3_XXS-text/Vulkan, bge CPU, timeout1800.
+Следующий шаг: формирование запросов, сохранённый v2-контроль; практика none, STOP318.
+Новые контрольные прогоны: только p9-run-control-vulkan-text.py, probe-vor-v2.xlsx,
+--expected-rows 9, абсолютный --out, без --question-file. Это 9 исходных строк,
+из которых 3 содержательные работы, не расширенный набор из 9 работ.
+Поправка: срез v1 и дополнение к вопросу ошибочно связывали АР1.31 с демонтажом.
+Оценка «укладка вместо демонтажа» отозвана как оценка полной ВОР; прежнее0/3
+нельзя использовать как сопоставимую метрику. Неверный стеклянный материал,
+несовпадение ссылок и неполнота доставки сохраняют собственные доказательства.
+Текущий источник истины: CLAUDE-SMETA-HANDOFF-2026-10-11.md и план10.10;
+сведения о прошлых установках ниже исторические. D1 на v1/r10 не запускать.
+
+
+P9.19 .202/build842 (Claude, 11.10): reranker по умолчанию — bge-reranker-v2-m3.
+Адаптер `lemonade_host.py` читает `LEMONADE_RERANK_MODEL`, затем общий `RERANK_MODEL`, умолчание
+`bge-reranker-v2-m3-GGUF` (было зашито `Qwen3-Reranker-0.6B-Q8_0-GGUF`). Замер на 48 реальных
+карточках норм, один запрос, два повтора: Qwen3-Reranker CPU 54 с / Vulkan 10,6 с; bge CPU 17,6 с /
+Vulkan 4,0 с; топ-5 почти совпадает. bge на Vulkan рядом с 35B IQ3_XXS-text даёт
+ErrorOutOfDeviceMemory на генерации, поэтому в Lemonade ему сохранён backend cpu; с ним
+реальный запрос ответа .199 прошёл (157 ток/с промпт, 15,7 ток/с ответ).
+Качество на трёх запросах не хуже Qwen; это замер скорости, не приёмка подбора норм.
+
+P9.18 .201/build841 (Claude, 11.10): доставка нормативных карточек целиком.
+`_fit_evidence_into_budget` мерит запрос по полным телам карточек: поздние запросы, которым
+не хватило места, уходят целиком и объявляются в [ОХВАТ]; карточка больше доли бюджета на
+запрос (max_chars // 5) сокращается открыто и чужие запросы не вытесняет. Replay сохранённой
+выдачи .199 (28137 символов, без модели): было 15 запросов / 0 целых из 60 нормативных
+карточек; стало 8 запросов / 19 целых + 6 ссылок / 0 обрезанных.
+Бюджет запросов считается по строкам порции с единицей или количеством
+(`query_rows_in_pass`): на входе .199 12 вместо 40; предел генерации списка запросов —
+48 токенов на запрос бюджета, не выше LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS (576 вместо 1600).
+Это ограничивает повтор запросов, но не устраняет его.
+Контракт теста `test_model_rag_evidence_keeps_configured_candidates_*` изменён осознанно:
+прежний закреплял «все запросы, тела урезаны поровну».
+Installed остаётся .200; живого контроля .201 нет; профессиональная приёмка 0/3 не закрыта.
+Известно: `test_assigned_model_timeout_is_named_and_restart_bound` падает на чистом checkout
+и до этих правок — умолчание 300.0 он находит только в неотслеживаемых копиях сборки
+`desktop/tauri/src-tauri/{resources,target}/runtime`.
+
+P9.16 .200/build840: focused root47PASS; canonical2655PASS/19SKIP/5warnings
+201.26s, verify2674collected/all4commands0, architecture0. Installed still199.
+Closed material-status grammar reports exact raw invalid row, no guessed cells.
+Installed199 saved-row replay reproduces accepted invalid prose; candidate200
+installed replay and official rollback acceptance next. Professional0/3 not closed.
+
+Release accounting repair: main index enumerates1160Pythonfiles, frozen1991167,
+candidate2001168. Candidate map generated/checked with isolated index; main index
+and HEAD preserved. All frozen199 Python bytes equal workspace except intended
+chat_evidence parser; the new test is explicit. Full behavior suite ran before
+generated-map-only refresh; fresh verify uses candidate-index ONLY for map command,
+never for pytest (Git fixture subprocesses must keep their own indexes).
+Candidate builder asserts frozen tree1168 matches generatedmap. After immutable
+freeze regenerate workspace map for original main-index inventory; this does not
+change tested runtime code or frozen artifact. Proof: table-width-20261010/candidate-index-proof.json.
+
+.199 control finished2012.7s/all3restored, actualr10/IQ3 nofallback, nativecalls0,
+fullpreviews0/102.84XLSXformulasPASS, same20queries/source/question197; wire verified
+factoryadapter, system5491→5393,40remainingevidencechanges. Content audit pending.
+35B officiallyidle-unloaded, noactiveinference. Practice none,STOP318,nopublic.
+
+Historical installed .200 checkpoint:
+P9.16 .200/build840 установлена: frozen5544c8e66e59,2replace/0delete,
+install→rollback199→reinstall, nativeRRF3/3,33runtimefiles exact.
+Canonical2655PASS19SKIP/verify2674/architecture0. Installed saved-row replay
+199→200: invalid prose status now diagnosed, original31/32cells preserved.
+Это подтверждает decoder boundary, не новую модельную/сметную приёмку.
+.199 same-input control completed2012.7s/all3restored;0/102fullpreviews,reads0,
+84формулыPASS. Content audit и direct thin baseline preparation следующий шаг.
+Practice none,STOP318,nopublic. Подробности: p9/table-width-20261010 и handoff.
+
+Исторические точки:
+
+P9.15 .199/build839 установлена: exact frozen9affdc415e35,4replace/0delete,
+install→rollback198→reinstall, nativeRRF3/3,33runtimefiles exact.
+Canonical2641PASS19SKIP/verify2660/architecture0. Same-input none/r10 контроль
+ACTIVE16770 в p9/candidate-0199-none-available-tools; результата ещё нет.
+Последний .198 pass2: полные receipts8/8+1/1, но0/3; новый mismatch и31/32cells.
+P9.16 source-only диагностика format status начата отдельно, в runtime199 её нет.
+
+Исторические точки:
+
+P9.15 source-кандидат .199/build839: ACTIVE model-driven estimator answer использует
+только фактически доступный search_sources и Qn.Hm citations. Исправляются лишь
+code-owned fragments проверенного factory prompt/skill (IDs + exact texts + hashes).
+Custom/unknown historical тексты, query stage и nonestimate/legacy/shadow сохранены.
+Registered factory texts/seed не менялись; original/rendered fingerprints разделены.
+Root independently177PASS9.69s; live влияние на чтение и профессиональный выбор не доказано.
+Runtime .198, последний pass2 завершён: полные receipts8/8+1/1, но профессионально0/3.
+Canonical/installed .199 ещё pending. Модуль: docs/modules/chat-profiles.md.
+
+P9.14 .198/build838 установлена и принята: frozen7efee9e69f26,
+install→rollback197→reinstall, nativeRRF3/3,31runtimefiles exact.
+GET-проверка показала честный tools UNKNOWN/legacy_http_accepted_no_native_proof;
+выбранная r10/IQ3_XXS/32768 сохраняется без fallback. Snapshots/reprobe не менялись.
+Canonical2632PASS/19SKIP,verify2651,architecture0. Это исправление диагностики.
+Сейчас обычный pass2 той же сессии .197 идёт на .198 (exec59456): модель получает
+настоящие расчётные чеки и сама решает, что исправить. Это не новый свежий baseline.
+Последняя профессиональная приёмка pass1:0/3; текущий pass2 ещё не завершён.
+
+Исторические срезы ниже:
+
+P9.14 source-кандидат .198/build838: capability TOOLS требует наблюдаемого native
+вызова вместо одного HTTP200. Старое HTTP2xx и advertised SUPPORTED показываются
+как UNKNOWN без изменения immutable snapshots. Optional UNKNOWN сохраняет выбранный
+primary и schema; explicit UNSUPPORTED и обязательные CHAT/security gates остаются.
+Root review обнаружил и закрыл две границы через RED/GREEN; independently92PASS.
+Canonical:2632PASS/19SKIP/5warnings156.46s; verify2651/all0; architecture0.
+Installed .198 acceptance pending. Runtime .197/build837: контроль завершён,
+native reads0, full previews0/102, частичный XLSX79формулPASS; профессионально0/3.
+Модульный док: docs/ALGO-model-connections.md; evidence p9/capability-boundary-20261010.
+
+Final .197 r1 canonical:2595PASS/19SKIP/5warnings, verify2614/all0,
+architecture0. Wall11824.72s includes Windows Modern Standby observed in System:
+506 at05:19:58 (SC_MONITORPOWER),507 at08:33:44 (Power Button),10.10.2026.
+No caller identity is established. Initial pre-review gate199.22s is preserved
+but is not the final release gate. Review availability P2 closed by conditional
+wording with RED1→GREEN1; independent static review closed. Installed .197 accepted:
+install→rollback196→reinstall/nativeRRF3/3, 30runtimefiles exact, 3HTTP norm reads
+with14resources each. Same-input none/r10 control ACTIVE53086; professional result pending.
+
+P9.13 source-кандидат .197/build837: `model_answer_request` явно ограничивает
+Markdown/первую строку/noJSON итоговым пользовательским ответом; до него доступен
+необязательный native search_sources по решению модели. Профессиональные правила,
+schema, profile, queries и обычный ответный путь неизменны. RED1 → GREEN1;
+diff-proof подтверждает старый contract после удаления одного уточнения.
+Гипотеза требует installed same-input проверки, улучшение нормы не доказано.
+Предыдущий .196 final: exact wire schema присутствует/HTTP200, reads0, книги нет
+из-за6duplicateworkIDs; все3temporarysettings восстановлены, профессионально0/3.
+
+P9.11/P9.12 source-кандидат .196/build836, после frozen .195: `smeta_card_text` явно помечает пустой
+preview при известном положительном числе ресурсов; `ModelRequestAudit` и transport
+сохраняют точные HTTP body для ACTIVE сметного answer/read. Query и прочие чаты
+не записываются; trace содержит ссылки, частные messages остаются локально.
+Ни поиск, ни выбор нормы, ни число inference не меняются. P9.11: 11 focused PASS,
+независимый review без P1/P2. P9.12 review исправления потери корреляции и
+перезаписи receipt закрыт: RED4 → 27 transport PASS, independent11 PASS.
+Канонический gate:2594PASS/19SKIP, verify2613/all0, architecture0.
+Installed .196 install/rollback/reinstall PASS,RRF3/3,30runtimefiles exact.
+Новый same-input actual-wire/model контроль идёт; professional acceptance pending.
+[Поток evidence](modules/rag-evidence-flow.md).
+
+Source-кандидат .195/build835: `chat_evidence_application_service.shifted_decision_fields`
+принимает числовые dotted group codes в resource_code/target_resource_code;
+не считает отсутствие дефиса сдвигом колонок. Identity/price/duplicate gates не менялись.
+Код↔док согласован,67focusedPASS; canonical2572PASS/19SKIP,
+verify2591/architecture0; installed .195 install/rollback/reinstall PASS,
+nativeRRF3/3,28payloadfiles exact. Свежий модельный контроль ещё идёт.
+[ЛСР](ALGO-lsr-assembly.md).
+
+Source-кандидат .194/build834: `row_decision` — явный модельный SECTION и отдельные
+source_resolved/decision_resolved; `rim_lsr_trace_service`, receipt/registry/cursor/chat
+сохраняют heading outcome без расчётной работы. Конфликты не удаляют авторские строки.
+8 focused +4 соседних PASS; canonical2555PASS/19SKIP, verify2574/architecture0;
+installed .194 install/rollback/reinstall PASS,RRF3/3,28payloadfiles exact.
+Первый memoryguard отказ сохранён, затем исправлен запас RAM idle unload35B;
+модельный heading outcome ещё не принят. Код↔док согласован.
+[ЛСР](ALGO-lsr-assembly.md), [доказательства](audits/lsr-pr21-integration-20261008/p9/heading-boundary-20261010/REPORT.md).
+
+Кандидат .193/build833: `chat_evidence_application_service` исполняет необязательные
+модельные чтения после batch через тот же `ModelResearchToolService` и Governor;
+whole current evidence, Q-offset, schema reserve, явные omissions и durable failure
+receipt. `norm_browser` сохраняет source_doc/source_guid ресурсов. Код↔док согласован;
+canonical2545PASS/19SKIP, verify2564/architecture0; exact install→rollback.192→reinstall.193,
+nativeRRF3/3. Первый реальный контроль: duplicate work_id, без книги; пропущен
+source supplement прежнего опыта. Предстоит сопоставимый повтор, приёмка pending.
+[ЛСР](ALGO-lsr-assembly.md), [RAG](modules/rag-evidence-flow.md).
+
+Installed .192/build832/1b29db25: full union + CE24 batches; canonical 2532 PASS / 19 SKIP, verify2551, architecture0; install→rollback.191→reinstall PASS, 25 files exact. Frozen27: native hybrid/rerank27/27. Real three-row chat completed: partial XLSX, 92 formulas independently verified, professional acceptance failed; full previews0/102, groups15/20. Next P9.8: model-addressed full reads within the existing route. [Текущий разбор](audits/lsr-pr21-integration-20261008/p9/SEARCH-REPAIR-2026-10-10.md).
+
+Source-only reader candidate: `norm_browser._card` preserves each resource's literal `source_doc/source_guid` in preview/full cards; legacy columns become NULL, without parent inheritance. 25 focused PASS. Visible renderer unchanged: publication-text experiment rejected for +32.24% context cost. Installed gate pending; no claim of model-visible provenance or corrected data. [ЛСР](ALGO-lsr-assembly.md).
+
+P9/.192 installed: full lexical/native union + sequential CrossEncoder24 batches; raw scores/global indices preserved; any failed or zero-valid batch raises. 65s per HTTP request, max browser100→5 requests. 70 focused PASS; live46 indices and 24 identical scores PASS. Canonical/installed completed as recorded above. See [algorithm](ALGO-lsr-assembly.md).
+
+Кандидат .191/build831: `backend.reranker.CrossEncoderReranker` — внешний timeout65с
+вместо30с, согласован с60с host-вызова; явные overrides и полные документы сохранены.
+RED1→6PASS клиентского файла; canonical2521PASS/19SKIP, installed cfb403f7
+с rollback PASS. Basic chat smoke не принят (два timeout90с). Это транспортный ремонт,
+не новая формула ранжирования. [ЛСР](ALGO-lsr-assembly.md).
+
+Следующий source-кандидат `norm_browser.browse_norms_many`: полный union двух
+ограниченных каналов до rerank, output limit после него. RED1→60PASS; live ёмкость
+и установленная приёмка pending. Без новых запросов, scope или выбора норм кодом.
+
+Кандидат .190/build830: `norm_browser._typed_cards/_fts_query` сохраняет дроби,
+одиночные цифры и хвост после 12 слов. Trace без скрытых omissions, exact/scope/
+RRF/rerank не изменены. RED6 → 59 focused PASS; frozen18 typed replay без изменения
+первой шестёрки. Это узкий технический ремонт, не доказательство пригодного подбора.
+Installed .189 остаётся; verify2540/architecture0 и2521PASS/19SKIP пройдены;
+nativeRRF после восстановления служб работает. [ЛСР](ALGO-lsr-assembly.md).
+
+
+Кандидат .189/build829: `smeta_portion_rows(attachment_context)` предлагает
+бюджетному fitter все исходные строки вместо фиксированных семи. Явный лимит,
+целые receipts, pending и резерв retrieval сохранены. `vor_rows.decision_anchor`
+также распознаёт целую метку `[Строка ВОР: …]`, сохраняя авторскую строку.
+RED3 для лимита, RED2 для ссылки →73focusedPASS; replay реального .188 ответа
+снял семь ложных ошибок адреса без изменения авторских полей.
+Гейты2516PASS/19SKIP,verify2535,architecture0; exactea64be3 установлен с
+rollback .188 и3nativeRRF,24файла совпали. Новый none-контроль активен;
+профессиональная приёмка не пройдена.
+[ЛСР](ALGO-lsr-assembly.md).
+
+Кандидат .188/build828: `chat_evidence_application_service.model_answer_request`
+согласует пять уже запрошенных смысловых колонок с разрешённым списком,
+убирает конфликт одной/нескольких таблиц. Parser/решения не меняются.
+RED6→focused169PASS;2500PASS/19SKIP,verify2519,architecture0.
+Установлен exact fdd86f49 с rollback .187; none pass1 доставил весь пакет,
+но книга не собрана из-за четырёх повторённых work_id; none pass2 идёт.
+Профессиональная приёмка не пройдена. [ЛСР](ALGO-lsr-assembly.md).
+
+Кандидат .187/build827: `chat_evidence_application_service.withhold_unreferenced_norms`
+получает `observed_refs` и проверяет новые локальные ссылки с тем же приоритетом,
+что `bind_normative_identity`; старое доказательство не скрывает чужую/недоставленную
+новую ссылку. Модельные решения не заменяются. [ЛСР](ALGO-lsr-assembly.md).
+RED2 → focused17PASS; гейты2493PASS/19SKIP,verify2512,architecture0.
+Установка .187 с rollback.186 и3nativeRRF пройдена;24runtimeфайла совпали
+сexact744de7196ca4478e7b95275644d76fe3111d0cdd.
+
+Кандидат .186/build826: `chat_evidence_application_service._fit_evidence_into_budget`
+резервирует тела собственных запросов перед optional practice и сохраняет этот
+резерв в renderer; `fgis_price_service.get_pricebook` повторно сверяет SHA после
+decode при новом unpinned чтении. Запросы/выдача/
+модельные решения не меняются; [ЛСР](ALGO-lsr-assembly.md). Регрессия RED→GREEN,
+полные гейты2487PASS/19SKIP, verify2506 и architecture0 пройдены.
+Установлен exact .186/build826/f7451fd17522204bb04e669f21d4d99e44cae7a8:
+install→rollback .185→reinstall .186 и три nativeRRF PASS.
+Профессиональная приёмка не пройдена; активен pass3 прежней .186 сессии.
+
+Установленный .185/build825: точечный `gesn_service.get_norm` читает только выбранные
+SQLite-записи; полный каталог отделён ключом кэша. SHA/read lock/revision pin
+сохранены. Исправляет installed smoke timeout .184, откатившегося на .171.
+[Поток и доказательства](ALGO-lsr-assembly.md). Гейты .185: 2468 PASS /19 SKIP,
+verify2487, architecture0; technical install/rollback/reinstall пройден.
+
+Кандидат 0.30.184/build824 P9: исправлена активная связка `model_research_tool_service.retrieve_smeta_norm_cards → norm_browser.browse_norms`: явное `expand_queries=False`, без подстановки условий кодом. Четыре callback→browser→SQLite регрессии: RED 4 → focused 145 PASS. [ЛСР](ALGO-lsr-assembly.md). P9 .184/build824: canonical 2467 PASS / 19 SKIP, verify 2486 collected/0, architecture0. Installed .171/811 неизменен; пакет .183 не устанавливать: обнаруженный D04 ещё присутствует в нём.
+
+Кандидат0.30.183 P8: `chat_evidence_application_service` сохраняет завершённый модельный результат в finally; `workbook_tool_service` + `ArtifactRevisionStore.revisions_for_checkpoint` восстанавливают разрыв artifact→checkpoint; `routers/chat` ожидает своего idempotency worker при отмене. [ЛСР](ALGO-lsr-assembly.md). Код↔док P8 согласован; P8 .183/build823: canonical 2463 PASS / 19 SKIP, verify 2482 collected/0, architecture0. Сохранность старого Qdrant/lexical replacement подтверждается регрессией существующего guard. Installed .171/811 неизменен.
+
+Кандидат0.30.182 P7: `norm_browser` пересекает explicit scope в exact/table/typed/nativeRRF доtop-k; literal table heading проходит reader→preview/full→rerank. [ЛСР](ALGO-lsr-assembly.md). Код↔док P7 согласован; P7 .182/build822: canonical 2402 PASS / 19 SKIP, verify 2421 collected/0, architecture0. Installed .171/811 неизменен.
+
+Кандидат0.30.181 P6: `model_research_tool_service.smeta_card_text` явно помечает сокращённый состав обычного preview. Full-read/manifest/alias/Governor границы сохранены и replay проверены; [ЛСР](ALGO-lsr-assembly.md), [аудит](audits/lsr-pr21-integration-20261008/p6-preparation.md). Код↔док P6 согласован; P6 .181/build821: canonical 2379 PASS / 19 SKIP, verify 2398 collected/0, architecture0. Installed .171/811 неизменен.
+
+Кандидат0.30.180: `fgis_price_service` — ревизии/exact price ambiguity; cursor/chat/research/workbook context — document pin; `lsr_workbook_adapter_service`/RIM/receipt/XLSX — current-only primary calculation и provenance. [ЛСР](ALGO-lsr-assembly.md). Код↔док P5 согласован; 2376PASS19SKIP/verify2395/architecture0. Installed .171/811 неизменен.
+
+Кандидат0.30.179: `resource_identity` → `gesn_service`/`norm_browser` → `model_research_tool_service`; proof actual messages в `smeta_evidence_delivery_service`/chat, сохранение cursor; exact accounting → receipt/XLSX. [ЛСР](ALGO-lsr-assembly.md). Код↔док P4 согласован; 2330PASS19SKIP/verify2349/architecture0. Installed .171/811 неизменен.
+
+Кандидат0.30.178: `pdf_layout` сохраняет столбцы sparse table; `tabular_attachment_service` сохраняет empty/0; `vor_rows` сохраняет unknown quantity и неоднозначные нумерованные строки. `smeta_source_registry_service`/`portion_plan_service` получают полный denominator без нового профессионального классификатора. [ЛСР](ALGO-lsr-assembly.md); код↔док согласован; P3 2290PASS19SKIP, verify2309/0, architecture0, installed .171/811 неизменен.
+
+Кандидат0.30.177: `smeta_core.norm_revision` + `gesn_service`/`norm_browser` закрепляют SQLite SHA и согласованный read; `chat_evidence_application_service.bind_normative_identity` связывает только доставленные source metadata; `portion_cursor_service` включает identity в revision; `rim_lsr_trace_service`/receipt/XLSX сохраняют pin либо явный конфликт. Код↔док согласованы; offline gates P2 2276PASS19SKIP, verify2295/0, architecture0, installed остаётся .171/811. [ГЭСН](ALGO-gesn.md), [ЛСР](ALGO-lsr-assembly.md).
+
+Кандидат0.30.176: `build_smeta_structured_base` сохраняет nullable расход; `rim_lsr_trace_service`/`fsem_machinist_service`/`rim_trace_xlsx_service` сохраняют неизвестные количества и стоимости, трудовые итоги и частичный статус. Код↔док согласованы; гейты/installed pending. [ГЭСН](ALGO-gesn.md), [ЛСР](ALGO-lsr-assembly.md).
+
+Кандидат0.30.174: `smeta_evidence_delivery_service` + общий renderer metadata всех трёх сметных маршрутов. Последние answer messages сверяются по телам/секциям/операциям/ресурсам, full read практики тоже защищён от усечения. Код↔док согласованы; installed pending. [RAG evidence flow](modules/rag-evidence-flow.md).
+
+Кандидат0.30.173: norm_browser._code_listing/_card → model_research_tool_service.smeta_card_text → chat_evidence_application_service._required_evidence_body_chars сохраняют полное точное чтение ресурсов. Код↔док согласованы, installed pending. См. [RAG evidence flow](modules/rag-evidence-flow.md).
+
+R25 / кандидат 0.30.172: `chat_evidence_application_service` сохраняет
+`answer_generations` отдельно от query_usage: фактическая модель, попытка,
+бюджет, finish_reason и usage провайдера, включая отклонённые ответы.
+Неизвестные поля не заменяются нулями; ответ и модельные решения не меняются.
+
+R22 / кандидат0.30.171: `rim_lsr_trace_service.positions_from_visible_lsr_rows`
+сохраняет сообщение quantity_trace в reason для расчётного чека и XLSX.
+Статус: код/док согласованы, installed-проверка ожидается.
+См. [ADR-15](ADR-15-model-rag-result.md) и [R21/R22](audits/SMETA-R21-PRACTICE-COMPARISON-2026-09-20.md).
+
+
+R19 / кандидат 0.30.170: нормативный reader `norm_browser._card` сохраняет
+`resources.per_unit`; `smeta_card_text` подписывает расход на измеритель нормы.
+Статус: код и документ согласованы, live-приёмка ожидается.
+См. [ADR-15](ADR-15-model-rag-result.md) и [аудит R18/R19](audits/SMETA-R18-R19-RESOURCE-EVIDENCE-2026-09-19.md).
+
+
+> 0.30.169 (кандидат): model_research_tool_service.price_card_text сохраняет
+> точность исходной цены; `:g` больше не округляет значащие цифры. Поиск/выбор
+> не меняются. [RAG evidence flow](modules/rag-evidence-flow.md).
+
+> **T119.9 / 0.30.125 (код↔док ✅; installed pending):** `model_rag_failure_detail`
+> сохраняет номера неуспешных запросов, статус, маршрут, коллекцию и причину поиска.
+> `public_error_payload` передаёт эту ограниченную диагностику через HTTP/SSE вместо
+> generic 503; сырые исключения/запросы не публикуются. Условия остановки поиска и
+> решения модели не изменены. См. [ADR-15](ADR-15-model-rag-result.md).
+
+> **T119.9 / 0.30.152 (код↔док ✅; installed pending):** базовая шапка ответа — семь обязательных колонок.
+
+> **T119.9 / 0.30.151 (код↔док ✅; installed pending):** работы и материалы можно давать отдельными
+> таблицами; таблица материалов больше не теряется молча.
+
+> **T119.9 / 0.30.150 (код↔док ✅; installed pending):** форма поля проверяется в любой строке ответа.
+
+> **T119.9 / 0.30.149 (код↔док ✅; installed pending):** ресурс нормы, названный изделием, требует объяснения
+> автора; подсказка больше не срабатывает на самой строке материала.
+
+> **T119.9 / 0.30.148 (код↔док ✅; installed pending):** чек называет совпадение кода изделия с ресурсом
+> нормы строки (`matches_norm_resource`).
+
+> **T119.9 / 0.30.147 (код↔док ✅; installed pending):** совпавшая ссылка на чек подтверждает расчёт без
+> отдельной колонки статуса; явный отказ сильнее.
+
+> **T119.9 / 0.30.146 (код↔док ✅; installed pending):** подтверждение чека требуется каждой операции,
+> включая самостоятельный материал.
+
+> **T119.9 / 0.30.145 (код↔док ✅; installed pending):** переименование материала с кодом не пересматривает
+> подтверждённый расчёт (`calculation_ref` без формулировки модели).
+
+> **T119.9 / 0.30.144 (код↔док ✅; installed pending):** бюджет выполнения поисковых запросов по строкам порции
+> с честным перечнем невыполненных; формат ссылки Qn.Hm в контракте.
+
+> **T119.9 / 0.30.143 (код↔док ✅; installed pending):** подтверждение чека требует значения calculation_ref;
+> область действия, записанная в coefficient, читается как coefficient_target.
+
+> **T119.9 / 0.30.142 (код↔док ✅; installed pending):** шифр сверяется тот же, что берёт расчёт; несколько
+> шифров в поле — конфликт формата; карточка-ссылка подтверждает только вместе с доставленным оригиналом.
+
+> **T119.9 / 0.30.141 (код↔док ✅; installed pending):** ссылка на несуществующую карточку отказывает строке
+> (`evidence_ref_unknown`), а не порции; выбор нормы подтверждает только доставленная карточка с тем же шифром
+> (`evidence_card_mismatch`); в трассе различаются собранные и доставленные группы.
+
+> **T119.9 / 0.30.140 (код↔док ✅; installed pending):** колонки подтверждения чека входят в упорядоченный
+> перечень дополнительных колонок; роль ответа — UD-IQ2_M.
+
+> **T119.9 / 0.30.139 (код↔док ✅; installed pending):** порядок дополнительных колонок ответа (частые
+> первыми); сдвиг полей в короткой строке — ошибка формата; профиль запуска UD-IQ2_M.
+
+> **T119.9 / 0.30.138 (код↔док ✅; installed pending):** служебное «поиск:» снимается с запроса модели.
+
+> **T119.9 / 0.30.137 (код↔док ✅; installed pending):** норма без ссылки на карточку отказывается
+> построчно (`withhold_unreferenced_norms`, статус `evidence_ref_required`), а не всей порцией.
+
+> **T119.9 / 0.30.136 (код↔док ✅; installed pending):** выдача цен до 10 карточек и при упаковке
+> (`evidence_limit`); совпадение в голове наименования ФССЦ весит больше.
+
+> **T119.9 / 0.30.135 (код↔док ✅; installed pending):** неразобранная строка ответа не блокирует
+> соседние операции позиции (`portion_structure_errors`); подпись строки ведомости снимается с запроса.
+
+> **T119.9 / 0.30.134 (код↔док ✅; installed pending):** поиск карточек цен ФССЦ по основам слов и
+> редкости слова, 10 карточек цен модели; запросы без марки, базы, региона и квартала; практика
+> учитывает частоту применения нормы к близким по названию изделиям; модель выбирает НР/СП
+> (`nr_sp_rule_id`) из вариантов каталога в чеке расчёта, ref чека от выбора не меняется.
+
+> **T119.9 / 0.30.133 (код↔док ✅; installed pending):** work_id в базовой шапке ответа; ценовой
+> запрос распознаётся в формулировке модели; поставка изделия — в дополнение к монтажу.
+
+> **T119.9 / 0.30.132 (код↔док ✅; installed pending):** запрос «цена:» — карточки цен ФССЦ
+> того справочника, по которому считается смета; код выбирает модель. Цена за укрупнённую
+> единицу (1000 м, 100 шт) приводится к единице ресурса; разные физические единицы — конфликт.
+
+> **T119.9 / 0.30.131 (код↔док ✅; installed pending):** снимаются материал и машина нормы;
+> машина — только `not_required` с обоснованием, её часы экипажа уходят из агрегата
+> машинистов при сверке ФСЭМ; труд нормы не снимается.
+
+> **T119.9 / 0.30.130 (код↔док ✅; installed pending):** снятие ресурса нормы применяется
+> только при доказанном решении модели: `replaced_by` на поставку той же строки с количеством
+> больше нуля либо `not_required` с обоснованием. Снятый ресурс не требует цены. Пустая выдача
+> поиска — только при доказанном выполнении; `blocked` общего RAG остаётся отказом.
+
+> **T119.9 / 0.30.129 (код↔док ✅; installed pending):** `row_decision` — единое
+> определение учтённой строки и исполненной операции; снятие ресурса — модификатор,
+> который строку не учитывает и чужой сбой не скрывает. Пустая выдача поиска уходит
+> модели с явной меткой, отказом остаются `blocked` и пустой `q`. Контракт ответа требует
+> решения по изделию строки. `sync_version_contract` ведёт `uv.lock`.
+
+> **T119.9 / 0.30.128 (код↔док ✅; installed pending):** `resource_action=excluded` —
+> модель снимает материал нормы, заменяемый изделием строки; без этого добавление
+> изделия рядом считало покрытие дважды. Проверки адресуемости те же, что у `included`;
+> выбор снимаемого ресурса остаётся за моделью, состав работ и прочие ресурсы не меняются.
+
+> **T119.9 / 0.30.126 (код↔док ✅; installed pending):** `material_review_holds` —
+> общее `keep_all_confirmed` не перекрывает собственную пометку автора о непокрытии;
+> строка остаётся открытой и возвращается со своим чеком. Снятие — только явным
+> `material_review_status` модели, обе колонки читаются из её таблицы. Выбор нормы
+> код не меняет и негодной её не объявляет.
+
+> **T119.9 / 0.30.123 (код↔док ✅; installed pending):** порция резервирует половину
+> мест под проверку посчитанных чеков: строка с `resource_review_required` и
+> `calculation_receipts` возвращается к модели вместе со своим `calculation_ref`,
+> иначе подтверждать нечего и `completed` остаётся нулём. Блок работ прошлых
+> проходов ограничен листами текущей порции и MAX_PRIOR_WORKS=40 — он больше не
+> вытесняет строки из бюджета источника.
+
+> **T119.8aa / 0.30.122 (код↔док ✅; installed pending):** PortionFeedbackService
+> сохраняет server-owned portion_shown в immutable event. observation_order и
+> for_anchors дают очередь ещё не рассмотренным строкам и возвращают ошибки
+> текущих строк. PortionProgress.last_observed_pass отделён от решений, попыток,
+> подтверждения и XLSX; структурный отказ не зацикливает начало целого файла.
+
+> **T119.8z / 0.30.121 (код↔док ✅; installed pending):** smeta_card_text показывает
+> существующий состав работ перед длинным resource_preview. Заголовок/единица,
+> архивная атомарность, порядок норм и модельные запросы сохранены. Fixed replay
+> 42 карточек: видимый состав 9→30 при том же бюджете; это не приёмка выбора норм.
+
+> **T119.8y / 0.30.120 (код↔док ✅; installed pending):** build_model_rag_evidence_groups
+> не выводит число архивных применений как score; при пропуске архивного контекста
+> сообщает об этом в заголовке карточки с предварительным резервированием бюджета.
+> Порядок кандидатов, запросы, решения и расчёт не меняются.
+
+> **T119.8x / 0.30.119 (код↔док ✅; installed pending):** query_attachment_context
+> сохраняет пустую complete-порцию; исходная ведомость не возвращается в поиск.
+> Нераспознанное вложение по-прежнему передаётся целиком. Регрессия:1RED→PASS.
+
+> **T119.8w / 0.30.118 (код↔док ✅; installed pending):** profile_query_prompt
+> передаёт роль/skill на поисковый этап; query_attachment_context получает исходные
+> строки по shown anchors с полными ячейками/заголовками/разделом. Инструкции таблицы
+> и ресурсного review остаются в ответе. Actual transport и live контроль в SESSION_LOG.
+
+> **T119.8v / 0.30.117 (код↔док ✅; installed pending):** parse_model_rag_queries
+> снимает формальные «Запрос N:» до точного dedup. Actual transport проверяет
+> неизменные фразы/порядок, исходный raw trace и раздельные ссылки двух запросов.
+
+> **T119.8t / 0.30.116 (код↔док ✅; installed pending):** chat_evidence late portion
+> guard принимает несколько операций с одинаковым source_row и разными work_id.
+> Actual transport regression проверяет две операции/количества/раздельное evidence
+> и историю; unnamed duplicates и смешанные alias labels отклоняются явно.
+
+> **T119.9b / 0.30.115 (код↔док ✅; installed pending):**
+> tabular_attachment.load_full_tabular_attachment_context → estimate chat →
+> portion/governor: verified оригинал XLSX/CSV вместо bounded preview; source SHA
+> и число строк в trace. Поиск/частотные примеры получают текущую порцию.
+> Actual transport regression + hash/size/missing-source/profile boundary tests.
+
+> **T119.8s / 0.30.114 (код↔док ✅; installed pending):**
+> portion_cursor.last_decision_pass → portion_plan: сначала новые строки, затем
+> открытые по давности ответа модели. Смена диагностики не возвращает очередь
+> в начало. Attempts/exhausted — диагностика, не закрытие строк; additive migration
+> не меняет decision_json. Tests: portion_plan/cursor + smeta_portion_review_regressions.
+
+> **T119.9a / 0.30.113 (код↔док ✅; installed pending):**
+> vor_rows сохраняет составные номера 1.10/1.10.1 как текстовые идентификаторы.
+> Чтение XLSX, скрепка и исходный реестр книги различают такие позиции и разделы.
+> test_smeta_source_registry_workbook: оба reader-пути и официальный adapter;
+> [ADR-15](ADR-15-model-rag-result.md). Runtime текущей пары СКС остаётся .112.
+
+> **T119.8n / 0.30.112 (код↔док ✅; installed pending):**
+> smeta_card_context → model/practice/material chunks → build_model_rag_evidence_groups:
+> архивная подсказка вместе с происхождением/unknowns либо убирается целиком.
+> Флаг model_archive_evidence_delivered, нормативный header сохраняется;
+> test_smeta_norm_context_delivery проверяет3маршрута/2бюджета/aliases.
+
+> **T119.8m / 0.30.111 (код↔док ✅; installed pending):**
+> parse_model_rag_queries: известный первый вводный заголовок распознаётся
+> с «Вот» и без него. Literal queries не переписываются; actual replay43/43.
+
+> **T119.8l / 0.30.110 (код↔док ✅; installed acceptance pending):**
+> tabular_attachment_service — общий reader скрепки/исходной таблицы;
+> smeta_source_registry_service — реестр всех распознанных исходных позиций
+> по проверенному файлу, отдельно от решений модели. XLSX «Исходные строки»,
+> незавершённые позиции и полный знаменатель coverage. Регрессии:
+> test_smeta_source_registry_workbook; [ADR-15](ADR-15-model-rag-result.md).
+
+> **T119.8i / 0.30.109 (код↔док ✅; installed acceptance pending):**
+> parse_model_rag_queries распознаёт вводный заголовок списка с «по строкам
+> N–M:». Содержательные запросы остаются дословными. test_smeta_evidence_dedup;
+> actual trace replay сохраняет все47запросов, убирает только вводную строку.
+
+> **T119.8h / 0.30.108 (код↔док ✅; installed acceptance pending):**
+> model_research_tool_service.smeta_card_header переносит фактический ближайший
+> родительский раздел source_ref. Все три маршрута карточек передают обязательную
+> длину заголовка; chat_evidence_application_service сохраняет его целиком при
+> упаковке. Машины включены в неполный resource preview. Решения не выбираются
+> кодом. test_smeta_norm_context_delivery, test_evidence_coverage_delivery; ADR-15.
+
+> **T119.8g / 0.30.107 (код↔док ✅; installed acceptance pending):**
+> lsr_workbook_adapter_service использует имя server-owned вложения в заголовке
+> и основании; текст chat question остаётся в истории. calculation_receipt даёт
+> явный счётчик ожидающих review операций; rim_trace_xlsx показывает предварительную
+> рассчитанную сумму отдельно от числа подтверждённых строк. Формулы и ресурсы
+> сохраняются. Regression test_smeta_workbook_review_presentation; ADR-15.
+
+> **T119.8d / 0.30.106 (код↔док ✅; live acceptance pending):**
+> chat_evidence_application_service выбирает default answer form для профиля
+> нормативной сметы: лексический prose intent не сжимает структурированную таблицу.
+> Явная response_length сохраняется; прочие профили используют прежний classifier.
+> Regression: actual transport с «несколько операций», default и short. ADR-15.
+
+> **T119.8b / 0.30.105 (код↔док ✅; live acceptance pending):**
+> fit_smeta_portion_context планирует целые строки вместе с receipts по effective
+> budget; model_answer_request/prefix общие для измерения и реального ответа.
+> Половина остатка окна отведена retrieval; непоказанные строки остаются pending.
+> Одна слишком большая строка явно диагностируется. test_smeta_receipt_budget;
+> подробности ADR-15, private offline receipts replay.
+
+> **T119.8a / 0.30.104 (код↔док ✅; live comparison pending):** явный
+> ChatRequest.smeta_practice_mode none/frequency/similar/both; trace хранит режим
+> и revision источников. None/similar удаляют frequency и из поисковых карточек.
+> Архивные альтернативы группируются по полному тексту/provenance, два примера
+> на строку с очередностью first-before-second; общий governor сохраняется.
+> tools/smeta_practice_comparison — read-only JSON comparator, без выбора норм;
+> точная цепь evidence→calculation→XLSX и независимые unknown/ошибки. ADR-15.
+
+> **T119.7 / 0.30.103 (код↔док ✅; installed acceptance pending):**
+> portion_plan сохраняет очередь повторных отказов, не закрывая их числом попыток;
+> выбранная порция совпадает с реально показанными строками, remaining включает их.
+> artifact_revision_service.available и chat callback проверяют байты; workbook tool
+> восстанавливает недоступную книгу дочерней ревизией с идемпотентным checkpoint.
+> Расчётный review согласован со счётчиками и XLSX ref. ADR-15; tests:
+> test_smeta_continuation_integrity, test_workbook_tool_service, actual transport.
+
+> **T119.6 / 0.30.102 (код↔док ✅; installed acceptance pending):**
+> calculation_receipt переносит расчётные ресурсы/стоимость/price-card через adapter,
+> tool revision и cursor в следующий обычный проход модели; review_calculation
+> требует подтверждения текущего calculation_ref. Нет дополнительного вызова модели.
+> material_accounting запрещает включение по одному norm_code/незавершённому parent;
+> RIM проверяет единицы pricebook, book_audit читает work_id/все операции и кеш формул.
+> Контракт ADR-15; test_smeta_resource_receipt.py.
+
+ > **T119.5 / 0.30.101 (код↔док ✅; installed acceptance pending):**
+> RIM/XLSX разделяют физический объём и model coefficient_basis/target;
+> неподтверждённый коэффициент не закрывает строку; material_accounting учитывает
+> коэффициент материалов в доступном расходе. Контракт ADR-15; test_smeta_physical_xlsx.py.
+
+
+ > **T119.4 / 0.30.100 (код↔док ✅; installed acceptance pending):**
+> row_decision.operation_rows/aggregate_operation_statuses; parser→cursor→RIM→XLSX
+> сохраняют несколько work_id одного source_row и их evidence. Контракт: ADR-15.
+> Регрессии: test_smeta_multiple_operations.py; legacy cursor/wiring покрыты.
+
+
+> **T119.3 / 0.30.99 (код↔док ✅; installed acceptance pending):**
+> build_material_norm_index/build_estimate_usage_corpus сохраняют examples;
+> estimate_usage.archive_provenance сравнивает исходную запись с текущей карточкой;
+> material_practice сохраняет альтернативы; chat evidence передаёт provenance в текст/snapshot.
+> Контракт и ограничения: ADR-15-model-rag-result.md; тест test_smeta_practice_provenance.py.
+
+
+> **T119.2 / 0.30.98 (код↔док ✅; installed acceptance pending):**
+> `chat_evidence_application_service` упаковывает точные дубли ссылками с сохранением
+> всех Qx.Hy и полных snapshots; `model_research_tool_service` сохраняет norm_id/edition
+> и показывает измеритель перед длинным названием. Тест `test_smeta_evidence_dedup.py`,
+> [ADR-15](ADR-15-model-rag-result.md). Нет предметных весов/подмены запросов.
+
+> **T119.1 / 0.30.97 (код↔док ✅; installed acceptance pending):**
+> `gesn_service._merged_norms` использует canonical SQLite без demo overlay;
+> norm_id/edition/source_ref проходят через `rim_lsr_trace_service` и
+> `rim_trace_xlsx_service` в скачиваемую книгу. Регрессия:
+> `tests/test_smeta_norm_identity_chain.py`; канон [ADR-15](ADR-15-model-rag-result.md).
+
+> **T115 / 0.30.95:** построчные статусы калькулятора проходят через LSR adapter,
+> artifact tool/revision/resume и chat projection в курсор и воронку. Подтверждённые
+> material_bound/resource_bound закрываются без фиктивного norm_code; отсутствующая
+> цена не становится успехом. Док↔код: ✅; тест `test_workbook_tool_service` проверяет
+> всю цепочку до реальной SQLite курсора. [Контракт](audits/SMETA-RECOVERY-2026-09-12.md).
+
+> **T114 / 0.30.94:** `smeta_selection_funnel` разделяет результат всей книги и текущей
+> порции; `coefficient_needs_basis` — диагностика, а не отказ привязки. Док↔код: ✅;
+> [восстановление и контракт измерений](audits/SMETA-RECOVERY-2026-09-12.md).
+
+> **T112 / 0.30.93:** исправлена регрессия карточек: practice/application перед длинными
+> ресурсами; оба вида evidence проверяются после governor. Живой контроль продолжается.
+> **Chat packaging notice:** `sovushka/pages/chat.py` сохраняет `model_result_notice`
+> в metadata и отдельно показывает сообщение через общий UI-kit feedback при
+> завершении ответа и в истории (включая fallback из retrieval trace).
+> Ответ модели неизменён. Док↔код: ✅; регрессия `test_chat_model_result_notice`;
+> [UI-kit contract](modules/sovushka-uikit.md). Проверка в установленном GUI ещё не проведена.
+
+> **T111.9 / 0.30.92:** `portion_feedback_service.py` хранит отказы отдельно от решений;
+> следующий model call и UI получают диагностику, курсор и пересборка её не исполняют.
+> Проверено transport-тестом и UI-тестами; живой повтор ещё не принят.
+> **T111.1, сметные материалы:** `proxy/smeta_core/material_accounting.py` проверяет
+> явное включение в конкретный ресурс и строит самостоятельные материальные позиции.
+> Дополнительные поля parser/cursor и физический пересчёт с источником проходят до XLSX.
+> Полнота цен/технологии остаётся предметом приёмки; [документ](audits/SMETA-SKS-RERUN-2026-09-11.md).
+> Граница общего чата проверяется `test_smeta_portion_profile_boundary.py`.
+> **T111.2 / 0.30.90:** частичная ресурсная привязка сохраняет остаток и не закрывает строку;
+> исходная потребность пересчитывается отдельно от уже выраженного количества ресурса.
+> **T111.3 / 0.30.91:** ресурсные идентификаторы стоят перед длинными пояснениями;
+> `test_resource_evidence_delivery_review.py` проверяет их в конечных messages после governor.
+> **T111.4:** неоднозначная строка с ведущим source_row сохраняется как raw_cells/parse_error,
+> не стирая соседние решения; расчёт отклоняет её отдельно. Стандартная порция снижена до 7.
+
+> **0.30.89 / T110.1, сметный расчёт и сверка:** `rim_lsr_trace_service.positions_from_visible_lsr_rows`
+> сохраняет ресурсное решение в диагностике, не превращая ссылку на работу в повторный монтаж.
+> `tools/smeta_book_audit.py` сверяет уникальные позиции основного листа по названию и количеству,
+> отличает формулы без кеша от отсутствия цены. Учёт ресурсов и самостоятельных материалов пока
+> не подтверждён. Док↔код: 🟡; [проверка выгруженной книги](audits/SMETA-REVIEW-2026-09-11-FINAL-XLSX.md).
+
+> **Аудит Lemonade 08.09.2026 — разработка отложена владельцем (I30.61).**
+> [Факты, восемь направлений и очередь возобновления](audits/LEMONADE-ARCHITECTURE-2026-09-08.md),
+> [проверка выводов Claude](audits/CLAUDE-LEMONADE-REVIEW-2026-09-08.md).
+> Это датированный аудит и предложения, не реализованная миграция. Host18080 сохраняется;
+> перед продолжением I30.62/TLA.5.1 повторно проверить live identity и effective настройки.
+
+> **0.30.86 prebundle process contract:** `tools/windows_prebundle_smoke.py` requires current v2
+> for a newly built runtime; old/unknown contracts fail closed. Direct Python PID and API/UI
+> probes remain mandatory. Tests: `test_windows_prebundle_smoke`; doc: WINDOWS_DESKTOP. ✅ source-only.
+
+> **0.30.85 non-blocking desktop probes:** Tauri `setup_snapshot` delegates its unchanged JSON
+> collector via `spawn_blocking`; `setup_probe::output` bounds owned diagnostic CLI children to3s
+> and512KiB stdout. No provider service ownership or model selection. Docs: WINDOWS_DESKTOP;
+> tests: Rust setup_probe real children + test_tauri_desktop. Status: ✅ source-only.
+
+> **0.30.84 file replacement:** `backend/ingestion_ownership.file_ingestion_lock` serializes each
+> dataset/file's replace window. `qdrant_adapter._sync_parse` captures old IDs, writes the replacement,
+> then retires exact IDs; failures do not erase accepted evidence. `MetaDB.replace_structured_rules`
+> is owner-scoped/transactional; `LexicalIndex.delete_point_ids` is collection-scoped/batched.
+> Status: ✅ source-only. Algorithm: `ALGO-pdf-ingestion.md`; tests: `test_ingestion_ownership`,
+> `test_ingestion_replacement` with real disposable SQLite and in-memory Qdrant.
+
+> **0.30.83 required OCR:** `converter`/`ocr_parser` preserve typed OCR errors across subprocesses;
+> empty projections and error messages are not evidence. `qdrant_adapter` validates required
+> OCR page/source provenance before deletion while preserving Public navigation nodes and short
+> labels. Tesseract's temporary PNG is Windows-safe. Module `rag/pdf`, algorithm
+> `ALGO-pdf-ingestion.md`, regressions: eight converter/OCR/parse suites. Status: ✅ source-only.
+
+> **0.30.82 optional rerank failure:** `retrieval_service.retrieve_chat_chunks` retains retrieved
+> evidence on cross-encoder constructor/inference errors and exposes typed bypass diagnostics.
+> Native retrieval/contract guards remain unchanged. Regression: `test_retrieval_service.py`;
+> algorithm: `ALGO-rag-best-practices.md`. Status: ✅, source-only; live corpus pending.
+
+> **0.30.81 detached updater import closure:** hard and soft update staging carry one exact
+> six-file Lemonade dependency list, including the imports of its package initializer. Soft
+> staging uses checksum-declared target dependency bytes when present, otherwise installed bytes.
+> Entry points: `update_service._stage_hard_update_helpers`, `_stage_vps_patch_launcher`;
+> tests execute all detached helper CLIs with checkout/editable imports excluded. Status: ✅.
+
+> **0.30.80 exact storage-code packaging fix:** Windows Tauri staging and the Windows/Mac/VPS
+> update validators retain the persistent `storage` segment denial except for exactly two tracked
+> application modules: `proxy/storage/__init__.py` and `proxy/storage/file_storage.py`. No storage
+> subtree, data file, secret, traversal, symlink payload or extension storage path is admitted.
+> Points: `tools/{build_tauri_app,vps_patch,vps_patch_apply}.py`,
+> `proxy/services/update_service.py`, `tests/test_extension_package_boundaries.py`.
+> Status doc↔code: ✅; candidate is not installed or published.
+
+> **0.30.79 deterministic Public release behavior:** RIM audit preserves chronological timestamp
+> order and uses SQLite insertion order only when Windows timestamps tie, never random UUID order.
+> Release `prepare` receives the same local
+> install/runtime/state boundaries as acceptance. Windows prepare computes SHA-256 with a local
+> .NET helper without PowerShell module autoload. Entry points:
+> `proxy/smeta_core/rim_session.py`, `tools/{release_orchestrator.py,windows_prepare_update.ps1}`
+> and their focused regression tests. Status doc↔code: ✅.
+
+> **0.30.175 canonical observed Lemonade transport:** exact `/models` record сохраняет в
+> capability snapshot normalized backend и configured `ctx_size`; bounded read-only
+> `/models/<id>/options` уточняет `resolved_ctx_size` с provenance. Паспортный
+> `max_context_window` не подменяет доступное окно. Shared resolver выбирает 35B preset по observed capacity, а общий
+> OpenAI-compatible transport применяет Qwen 3.6 no-thinking policy по immutable
+> `extension_type=lemonade` + `llama_cpp`. Display name и отдельный provider transport не
+> используются. Точки: `proxy/services/{model_capability,openai_compatible_transport}_service.py`,
+> `tests/test_lemonade_model_connection_flow.py`. Статус док↔код: ✅.
+
+> **0.30.77 unified Windows Lemonade lifecycle:** `provider-env.ps1` и
+> `extensions/lemonade/runtime_env.py` задают одну provider-owned проекцию endpoint/model/backend/
+> vector identity для installer bootstrap, direct runtime и hard-update transaction. Adapter
+> PID/port входят в start/stop/readiness/rollback ownership. Явный `llama_cpp` больше не
+> подменяется Windows-default Ollama; `RAG_CHUNK_*` не назначаются provider-профилем.
+> Точки: `installers/windows/{provider-env,start-light}.ps1`,
+> `tools/{windows_runtime,windows_update_engine}.py`, `proxy/services/update_service.py`,
+> `tests/test_windows_lemonade_provider_env.py`. Статус док↔код: ✅; installed live ещё не заявлен.
+
+
+> **0.30.75 Lemonade provider extension:** factual vendor health не смешивает configured и loaded
+> model state; embedding contract закреплён как `Qwen3-Embedding-0.6B-GGUF / llama_cpp / 1024 /
+> 430 / 50`; Qwen 3.6 no-thinking применяется только при доказанном `llama_cpp`. Flash Attention
+> доступен через общий EngineExtensionRegistry, loopback validation и exact dry-run receipt; FLM
+> не мутируется. Точки: `extensions/lemonade/**`, `lemonade_host.py`,
+> `proxy/services/{llm_transport_profile,model_engine_extension}_service.py`, соответствующие
+> Lemonade tests. `runtime_env.py` is consumed by the Windows lifecycle; observed transport
+> activation follows the same extension policy. [Алгоритм](ALGO-model-connections.md).
+> Статус док↔код: ✅; live не заявлен.
+
+> **0.30.74 package/runtime module roots:** tracked `modules/` and `extensions/` are explicit
+> wheel packages and Windows runtime prefixes. Tauri staging admits only the fixed runtime-prefix
+> set; the Windows and Mac update feed validators plus both VPS patch helpers admit the same roots
+> while rejecting absolute/traversal paths and persistent, cache and plugin segments. Points:
+> `pyproject.toml`, `config/windows_runtime_manifest.json`,
+> `tools/{build_tauri_app,vps_patch,vps_patch_apply}.py`,
+> `proxy/services/update_service.py`, and `tests/test_extension_package_boundaries.py`.
+> Status doc↔code: ✅; candidate is not installed or published.
+
 > **0.30.64 model-result packaging continuity:** Qwen-authored explanations
 > beside `norm_code` are accepted when the referenced card code is present,
 > without trimming or rewriting the field. A real code/evidence disagreement
@@ -722,13 +1410,14 @@
 |---|---|---|---|---|
 | workbook-tools | Канонические `build_lsr_workbook` / `build_vor_workbook`: server-owned attachment, required idempotency, durable checkpoint, immutable artifact lineage и bounded result без filesystem path. Оба контракта context-bound и не выдаются обычным ToolHarness shortlist. Единый chat capability manifest одновременно определяет, что видит модель и какой callable исполняет tool. VOR использует built-in adapter; тонкий LSR adapter принимает выбранные моделью строки/шифры, использует exact calculation/renderer и не запускает второго агента | `proxy/services/{workbook_tool_service,lsr_workbook_adapter_service,artifact_revision_service,workflow_checkpoint_service,bor_service,rim_lsr_trace_service,rim_trace_xlsx_service}.py`; `proxy/routers/{chat,artifacts}.py` | [ALGO-tool-harness](ALGO-tool-harness.md) | ✅ |
 | smeta/model-quality | Воспроизводимый live Qwen↔Gemma A/B на одном canonical XLSX/PDF→ЛСР workflow: одинаковые prompt, corpus, tools, seed, limits и начальное состояние; per-row calculated/partial/missing, tool calls/repeats, **stage_latency** (catalog/search/read/bind/llm p50/p95), unit/volume/provenance integrity, hierarchical-route trace и реальный checkpoint/resume. `--resume-run` продолжает существующий run только после совпадения source SHA, model profiles и fixed contract. Главный сравнительный gate вместо golden/ranx. Профессиональная правильность — только по явному `les.smeta.qrels.v1` | `tools/smeta_model_quality_benchmark.py`; `tests/test_smeta_model_quality_benchmark.py` | [modules/smeta-core.md](modules/smeta-core.md) · [BACKLOG_RAG_EXCEL_PDF.md](BACKLOG_RAG_EXCEL_PDF.md) | ✅ |
-| core/modules | лёгкий реестр профессиональных модулей LES: smeta, normcontrol, BIM/QTO, docs_review, procurement, contracts, project RAG; router выбирает модуль, но не решает предметную область | `les_module_service`, `active_state_service`, `scoped_rag_builder`, `skill_snippet_registry`, `tool_trace_policy` | [ALGO-routing.md](ALGO-routing.md) | ✅ |
-| core/chat-evidence | application-граница model-owned evidence-first RAG: явный user scope либо typed system datasets роли → первый no-tools model call возвращает обычные поисковые строки → estimator исполняет exact queries через настраиваемую dedicated сметную dense+sparse RRF collection, остальные профили — через scoped общий RAG → по 6 карточек на запрос группируются только как `Qx.Hy` и все группы резервируются в context → второй no-tools call той же модели возвращает обычный итоговый текст → механический reader собирает Markdown-таблицы, секционные блоки или обычные подписанные строки ответа без изменения решений → затем код вызывает `build_lsr_workbook`. Пустые/дублированные строки и отсутствующие/неизвестные ссылки блокируют упаковку; несовпадение model-authored шифра с указанной карточкой остаётся warning и передаётся упаковщику без исправления, чтобы partial XLSX был доступен. Нет JSON-schema, native-tool selector/workbook loop, `status`, confirm/review и row-count cap; packaging failure не меняет model result. Неготовый сметный RRF не откатывается в смешанный `les_rag` | `proxy/services/chat_evidence_application_service.py`, `proxy/services/{context_governor,model_execution_preset,llm_transport_profile,model_research_tool}_service.py`, `proxy/routers/chat.py`, `retrieval_service`, `evidence_packet_service` | [ALGO-evidence-packet.md](ALGO-evidence-packet.md) · [ADR-15](ADR-15-model-rag-result.md) | ✅ |
+| core/modules | лёгкий реестр профессиональных модулей LES и fail-closed версия расширений: legacy router выбирает контекст, а явный `config/modules.json` допускает только проверенные manifest/router/panel/chat entry points. Optional chat handlers могут добавить ограниченный контекст модели, но не terminal-ответ; коллизии маршрутов останавливают mount до регистрации. Начальный registry пуст. | `proxy/services/{les_module_service,les_module_contracts,les_module_mount_service}.py`, `proxy/app.py`, `proxy/routers/chat.py`, `sovushka/pages/instrumenty.py` | [ALGO-routing.md](ALGO-routing.md) | ✅ |
+| core/chat-evidence | application-граница model-owned evidence-first RAG: явный user scope либо typed system datasets роли → первый no-tools model call возвращает обычные поисковые строки → estimator исполняет exact queries через настраиваемую dedicated сметную dense+sparse RRF collection, остальные профили — через scoped общий RAG → по 6 карточек на запрос группируются только как `Qx.Hy` и вошедшие группы вместе с предупреждением об охвате получают бюджет context → второй no-tools call той же модели возвращает обычный итоговый текст → механический reader собирает Markdown-таблицы, секционные блоки или обычные подписанные строки ответа без изменения решений → затем код вызывает `build_lsr_workbook`. Пустые/дублированные строки и отсутствующие/неизвестные ссылки блокируют упаковку; несовпадение model-authored шифра с указанной карточкой остаётся warning и передаётся упаковщику без исправления, чтобы partial XLSX был доступен. Распознанная ведомость подаётся порциями (см. smeta/portions); нет JSON-schema, native-tool selector/workbook loop, `status`, confirm/review; packaging failure не меняет model result. Неготовый сметный RRF не откатывается в смешанный `les_rag` | `proxy/services/chat_evidence_application_service.py`, `proxy/services/{context_governor,model_execution_preset,llm_transport_profile,model_research_tool}_service.py`, `proxy/routers/chat.py`, `retrieval_service`, `evidence_packet_service` | [ALGO-evidence-packet.md](ALGO-evidence-packet.md) · [ADR-15](ADR-15-model-rag-result.md) | ✅ |
+| smeta/portions | Разбор исходных строк с листом, шапкой, разделом и точным текстом; SQLite хранит последние решения и признак закрытия. Многолистовые якоря, порции незакрытых строк, склейка в порядке ВОР, сохранение скрепки. Ответ — Markdown с согласованными десятью колонками и разделителем (0.30.88). Половина порции резервируется под проверку посчитанных чеков (`resource_review_required` + `calculation_receipts`), вторая половина берёт ещё не разобранные строки: без возврата строки её `calculation_ref` модель не видит и не закрывает ни одной позиции. Блок работ прошлых проходов ограничен листами порции и MAX_PRIOR_WORKS=40. Живой прогон описан оператором; «70/70» не доказывает завершение решений, приёмка закрытия строк ещё не выполнена на установленном рантайме | `proxy/smeta_core/vor_rows.py`, `proxy/services/{portion_plan,portion_cursor,chat_evidence_application}_service.py` | [ADR-15](ADR-15-model-rag-result.md) · [ревью 55aa521f](audits/SMETA-REVIEW-2026-09-11-55aa521f.md) | 🟡 |
 | core/tool-harness | controlled registry/executor для инструментов: карта датасета, source search/read, PDF/Excel readers, bounded public web search и read-only filesystem. Model shortlist строится только из runtime-исполняемых контрактов: registry-запись сама по себе не делает context-bound tool доступным. В Agent restrictive shortlist `web_search` не вытесняется filesystem tools старого user-profile snapshot; модель по-прежнему сама выбирает вызовы и запросы. В grounded chat `ModelResearchToolService` исполняет `search_sources` тем же production native RRF и не позволяет модели расширить операторский dataset scope; общий call budget применяется ко всему research loop, затем финальный ответ модели сохраняется без rewrite | `proxy/services/{tool_contract_service,tool_registry_service,capability_broker_service,trusted_executor_service,tool_harness_service,model_research_tool_service,workbook_tool_service}.py`, `proxy/routers/tools.py`, `tools/les_tool_harness.py`, `routers/chat.py` | [ALGO-tool-harness.md](ALGO-tool-harness.md) · [CHAT_OPERATOR_CONTRACT.md](CHAT_OPERATOR_CONTRACT.md) | ✅ |
 | core/public-provider-session | обязательный выбор локальной или BYOK-облачной модели после публичного ключа; API-ключ хранится только в process-memory vault с TTL, runtime изолирован `ContextVar`, общий `.env` не меняется | `sovushka/{auth,provider_setup,provider_session,state}.py`, `proxy/services/chat_provider_session_service.py`, `proxy/routers/chat.py`, `/provider-setup`, `/api/chat[/stream]` | [modules/public-provider-session.md](modules/public-provider-session.md) | ✅ |
 | core/test-infrastructure | комплексная автоматизированная тестовая инфраструктура: unit, offline smoke, test runner, coverage и CI отчёты | `tools/test_runner.py`, `tests/test_smoke_offline.py`, `tests/test_unit_core_business.py`, `Makefile` | [TESTING_GUIDE.md](TESTING_GUIDE.md) · [TEST_INVENTORY.md](TEST_INVENTORY.md) | ✅ |
 | core/runtime-config | GUI-first реестр runtime/env и фактических model/context-факторов: для preset/input/reserves/reasoning показывает человеческое `requested → effective · source`, restart и честный read-only/profile-clone путь; внешний Qdrant имеет отдельное человеческое имя и редактируемый HTTP(S)-адрес для local/LAN/VPS, а общий таймаут назначенной answer model виден как restart-bound фактор. Env сохраняет masked secrets, read-only bootstrap, `Danger` confirmation и recoverable atomic write. Advanced RAG policy хранится отдельно от env | `proxy/services/runtime_config_registry_service.py`, `proxy/services/rag_advanced_policy_service.py`, `proxy/routers/settings.py`, `proxy/routers/rag_advanced.py`, `sovushka/pages/diag.py` | [modules/sovushka-uikit.md](modules/sovushka-uikit.md) · [modules/chat-profiles.md](modules/chat-profiles.md) | ✅ |
-| core/chat-profiles | Factory Base синхронизируется с текущим code contract при startup; пользовательские версии prompt/skill/profile остаются immutable. Четыре явных режима, tool allowlist, model/RAG policy, active revision и per-chat snapshot binding в MetaDB. Estimator Base явно привязывает system dataset role `smeta` и ровно `search_sources`, `read_source`, `build_lsr_workbook`, `build_vor_workbook`; это scope/capability, не скрытый сценарий или выбор нормы. Prompt ограничен 16 000, skill — 8 000 символов. Пользовательский snapshot меняется только явно; заводской binding получает актуальный Base-контракт при upgrade | `proxy/services/chat_profile_service.py`, `proxy/routers/profiles.py`, `proxy/services/profile_resolver.py`, `proxy/routers/chat.py`, `sovushka/pages/profiles.py` | [modules/chat-profiles.md](modules/chat-profiles.md) · [modules/sovushka-uikit.md](modules/sovushka-uikit.md) · [design](superpowers/specs/2026-08-24-chat-profile-studio-design.md) | ✅ |
+| core/chat-profiles | .199 answer-only availability adapter проверяет exact factory provenance; original/rendered hashes раздельны, custom/query unchanged (см. модуль). Factory Base синхронизируется с текущим code contract при startup; пользовательские версии prompt/skill/profile остаются immutable. Четыре явных режима, tool allowlist, model/RAG policy, active revision и per-chat snapshot binding в MetaDB. Estimator Base явно привязывает system dataset role `smeta` и ровно `search_sources`, `read_source`, `build_lsr_workbook`, `build_vor_workbook`; это scope/capability, не скрытый сценарий или выбор нормы. Prompt ограничен 16 000, skill — 8 000 символов. Пользовательский snapshot меняется только явно; заводской binding получает актуальный Base-контракт при upgrade | `proxy/services/chat_profile_service.py`, `proxy/routers/profiles.py`, `proxy/services/profile_resolver.py`, `proxy/routers/chat.py`, `sovushka/pages/profiles.py` | [modules/chat-profiles.md](modules/chat-profiles.md) · [modules/sovushka-uikit.md](modules/sovushka-uikit.md) · [design](superpowers/specs/2026-08-24-chat-profile-studio-design.md) | ✅ |
 | core/agent-foundation | Canonical 0.29 Agent Foundation завершён и проверен: structural gate, Registry, CapabilityBroker, TrustedExecutor и fail-closed ordinary-chat route; default `shadow` сохраняет legacy answer, рассматривает максимум один canonical call и не допускает persistence, `active` требует exact promotion receipt. Runtime presets, ContextGovernor и typed advisory memory подключены к ordinary-chat candidate; live model quality/promotion отдельно не заявлены | `tools/architecture_contract_gate.py`, `proxy/services/{tool_contract_service,tool_registry_service,capability_broker_service,trusted_executor_service,canonical_route_service,tool_harness_service,chat_evidence_application_service,runtime_config_registry_service}.py`, `proxy/routers/tools.py` | [ALGO-tool-harness.md](ALGO-tool-harness.md) · [ALGO-context-memory.md](ALGO-context-memory.md) · [current architecture](CURRENT_ARCHITECTURE.md) | ✅ |
 | core/model-execution-presets | Фактическая requested/observed context capacity модели является total window; фабричные Qwen 9B/35B значения используются только как fallback. Если заданы оба источника, берётся безопасный минимум; generation/safety reserves вычитаются Governor ровно один раз. Effective/source виден в version API и GUI-first runtime registry; resolver не меняет route/backend | `proxy/services/model_execution_preset_service.py`, `proxy/services/llm_transport_profile_service.py`, `proxy/services/version_service.py`, `proxy/services/runtime_config_registry_service.py`, `sovushka/pages/diag.py` | [modules/chat-profiles.md](modules/chat-profiles.md) · [ALGO-context-memory.md](ALGO-context-memory.md) | ✅ |
 | core/context-governor | Единый budget-aware packer inference: после reserves и обязательных profile/request целиком упаковываются evidence/source map, затем tool exchange, checkpoint, working memory и dialogue. Omission возвращает IDs/cursor, required overflow блокирует model call; evidence packet trace хранит точный model-visible текст и SHA-256, не раскрывая память/profile | `proxy/services/context_governor_service.py`, `proxy/services/llm_transport_profile_service.py`, `proxy/services/chat_evidence_application_service.py` | [ALGO-context-memory.md](ALGO-context-memory.md) · [canonical design](superpowers/specs/2026-08-30-model-owned-evidence-first-rag-design.md) | ✅ |
@@ -1502,7 +2191,6 @@ Qdrant payload-индексы создаются best-effort после гото
 | ops/versioning | единый `config/version.json`: пользовательский SemVer, отдельный монотонный номер сборки и внутренняя Tauri/NSIS-версия; `make version-sync` обновляет машинные поверхности, а `make verify` ловит drift; `/api/version` показывает repo↔runtime divergence. `make release` — единственная публичная операторская граница и ведёт persisted prepare→Legion acceptance→draft→postflight; старые patch/full/multiplatform targets остаются внутренними адаптерами. Internal Mac updater отделён и не меняет public release metadata | `version_service`; `tools/{sync_version_contract,release_receipt,release_orchestrator,patch_release,github_patch_release,mac_update,mac_update_apply}.py`; `GET /api/version`; `make {version-sync,release}` | [RELEASE_PROCEDURE.md](RELEASE_PROCEDURE.md), [INTERNAL_MAC_UPDATE.md](INTERNAL_MAC_UPDATE.md), [RELEASE_LEDGER.md](RELEASE_LEDGER.md), [VERSIONING.md](VERSIONING.md), [SOFTWARE_VERSIONS.md](SOFTWARE_VERSIONS.md) | ✅ |
 | ops/service-sources | видимый реестр служебных источников для смет и нормоконтроля; `SMETA_SERVICE` Play показывает manifest требуемых сметных документов и форматов по классам нормы/цены/методика/формы. Полное обновление ФГИС запускается из GUI как backend-job; экран показывает этап, текущий регион/сборник, completed/total, bytes/rate/ETA и живой лог, а уже идущий отдельный ГЭСН не блокирует скачивание Сплит-форм | `service_source_registry`; `fgis_update_service`; `gesn_update_service`; `tools/fgis_full_update.py`; `routers/service_sources.py`; `config/service_sources.yaml`; GUI `sovushka/pages/instrumenty.py`, чат `sovushka/pages/chat.py` | [SKILL.md](../SKILL.md), [CODE_MAP.md](CODE_MAP.md) | ✅ |
 | ops/http-client-policy | внутренние loopback HTTP-вызовы не наследуют системный SOCKS/HTTP proxy; внешние, LAN и ZeroTier URL сохраняют обычный `httpx` contract | `backend/http_client_policy.py`, критические callers в `sovushka/state.py`, `proxy/app.py`, diagnostics/runtime, metrics/reranker | [modules/http-client-policy.md](modules/http-client-policy.md) | ✅ |
-| normcontrol/checklist-review | evidence-led проверка ПД/РД по корпоративным шаблонам Glorax: 335 пунктов ПД, 692 пункта РД, formal/parametric/ПП РФ №87 checks, immutable run, отдельные решения инженера и XLSX/HTML/JSON; UI показывает evidence-статус отдельно от решения и не формирует code-owned chat answer | `proxy/services/checklist_*`, `proxy/services/pp87_composition_service.py`, `proxy/routers/checklist_review.py`, `config/checklists/*`, `sovushka/checklist_review_*` | [CHECKLIST_REVIEW.md](CHECKLIST_REVIEW.md), [ALGO-glorax-checklist-review.md](ALGO-glorax-checklist-review.md) | ✅ |
 | ops/dataset-integrity | единый аудит источников и всех поисковых проекций датасета: source fingerprint, MetaDB, Qdrant point ids, named dense+sparse, lexical/FTS, текстовые страницы PDF и orphan-документы. Health сравнивает активную пользовательскую collection с `user`-чанками MetaDB и явно учитывает исключённые module-owned `system`-чанки. Обычное удаление остаётся recoverable через MetaDB backup, Qdrant snapshot и storage quarantine; recovery-free ветка закрыта exact release-acceptance fixture. Ремонт не перестраивает весь корпус: удаляет stale/orphan-проекции, помечает отсутствующие исходники и ставит только повреждённые файлы в видимый bounded parse-job. Ошибка одного датасета не блокирует запуск ЛЕС; в «Документах» оператор получает одну кнопку и русский статус | `backend/qdrant_adapter.py`; `proxy/routers/datasets.py`; `proxy/services/dataset_deletion_service.py`; `sovushka/pages/documents.py`; `GET /api/rag/datasets/{id}/integrity`; `POST /api/rag/datasets/{id}/integrity/repair` | [CODE_MAP.md](CODE_MAP.md) | ✅ |
 | ops/external-radar | радар внешних папок: configured roots + filemap + in-place `source_path` без reindex/OCR/LLM; ручная сверка in-place датасета по папке показывает new/changed/deleted и может синхронизировать изменения без фонового watcher-а. Добавление/синк внешней папки с `parse=true` создаёт видимый dataset-scoped `rag_parse_drain` job и продолжает bounded партии, а одиночный `parse-batch` честно показывает `PARTIAL`, если pending ещё остался. Intake-plan выполняется как внутренняя preflight-проверка без системного браузерного confirm; основная кнопка сразу запускает создание и индексацию. Карты `LES.md`/`00_dataset_map.md` создаются как служебный слой папки, но не регистрируются как RAG-документы. Google Drive / Яндекс Диск подключаются через web/API: облачная папка синхронизируется в mirror-кэш и дальше регистрируется существующим `index-external`; локальные sync-папки остаются fallback | `external_radar_service`, `cloud_drive_service`; `GET /api/external-radar/summary`; `GET /api/rag/cloud-drives`; `POST /api/rag/cloud-drives/list`; `POST /api/rag/cloud-drives/sync`; `POST /api/rag/external/intake-plan`; `POST /api/rag/index-external`; `POST /api/rag/external/check`; `POST /api/rag/external/sync`; `POST /api/rag/parse-batch/{dataset_id}`; GUI Самовар | [ALGO-external-radar.md](ALGO-external-radar.md) | ✅ |
 | ops/public-showcase | curated public GitHub/Pages surface без приватных датасетов и runtime-секретов; README и versioned release document разделяют готовые, preview и planned surfaces, описывают Совушку/backend/model/Qdrant как независимые узлы и не выдают наличие внутреннего модуля за product acceptance; release staging берёт только файлы под контролем Git и дополнительно исключает runtime-данные и отдельный продукт `products/artel/**`, поэтому локальные рабочие папки коллег не могут попасть в установщик | `README.md`, `docs/index.md`, `docs/public/{overview,releases/0.29.3}.md`, `tools/publication_check.py`, `tools/build_release_artifacts.py` | [PUBLICATION_CHECKLIST.md](PUBLICATION_CHECKLIST.md), [public/overview.md](public/overview.md), [public/releases/0.29.3.md](public/releases/0.29.3.md) | ✅ |
@@ -1556,3 +2244,27 @@ Offline uv cache использует dependency-only fingerprint с exact lock/
 >
 > Канон 0-LLM ядер — `docs/ALGO-*.md` (по кирпичу). Этот индекс их агрегирует; при добавлении/правке
 > модуля — обнови строку здесь и поставь честный статус (✅/🟡/🗄/📋).
+
+0.30.96: chat._execute_chat_workbook_tool раскрывает overflow cursor до проекции; PortionCursorService.record_calculation сверяет состояния после пересборки, без изменения решений. Проверки/границы: docs/audits/SMETA-RECOVERY-2026-09-12.md (T116).
+
+0.30.163: smeta evidence/portion — saved_norm_evidence использует доставленный snapshot своей операции; record_portion_pass согласует все статусы книги; CALCULATION_CONTRACT_REVISION инвалидирует старую книгу; selector_evidence_payload доставляет отложенные запросы. Код↔док ✅, живая приёмка ожидается. См. ADR-15-model-rag-result.md; тест test_smeta_evidence_reuse.py.
+
+0.30.164: receipt_context описывает явное сохранение незавершённой работы/снятие отвергнутой нормы; context_packet_trace добавляет отпечатки всех объектов/сообщений без раскрытия приватного текста. Код↔док ✅; live pending. Регрессии: test_smeta_resource_receipt.py и test_chat_evidence_application_service.py; ADR-15-model-rag-result.md.
+0.30.165: rim_lsr_trace_service.PriceTrace.unit_price_precision → rim_trace_xlsx_service:
+масштабированная индексная цена сохраняет шесть знаков в XLSX, как в чеке; обычная два.
+CALCULATION_CONTRACT_REVISION v3 пересобирает старые книги. Код↔док ✅;
+test_smeta_price_cards.py проверяет суммы формул и редактирование количества; ADR-15.
+0.30.166: model_rag_query_instruction получает rows_in_pass и сообщает существующий
+бюджет plan_model_rag_queries; trace.tool_loop.model_queries_budget позволяет сверку.
+Алгоритм исполнения/лимит/порядок не менялись. Код↔док ✅; ADR-15,
+test_model_rag_partial_rows.py и test_chat_evidence_application_service.py; live pending.
+
+0.30.167: rim_lsr_trace_service переносит авторские component_review_status/reason
+в binding; rim_trace_xlsx_service сохраняет их текстом на листе «Проверка».
+Подтверждение остаётся в apply_model_review; контракт v4 обновляет книги.
+Код↔док ✅; test_smeta_resource_receipt.py, ADR-15; installed pending.
+
+0.30.168: material_accounting → resource.meta.price_card_name → XLSX:
+видны имя выбранного ресурса справочника и название модели. Поле только для
+экспорта, чеки и суммы прежние; контракт v5. Код↔док ✅; ADR-15,
+test_smeta_resource_receipt.py; installed pending.

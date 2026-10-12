@@ -10,6 +10,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import time
 import tracemalloc
 import urllib.request
@@ -18,12 +19,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# The lifecycle helper is also executed as a standalone update artifact.  When it
+# lives in ``runtime/tools`` (or the source tree), make the application root
+# importable without relying on an editable virtualenv installation.
+_APPLICATION_ROOT = Path(__file__).resolve().parents[1]
+if str(_APPLICATION_ROOT) not in sys.path:
+    sys.path.insert(0, str(_APPLICATION_ROOT))
+
+from extensions.lemonade.runtime_env import windows_runtime_environment
+
 
 CREATE_NO_WINDOW = 0x08000000
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 PROCESS_CONTRACT = "direct_python_no_console_v2"
 RUNTIME_MODES = ("full", "backend", "ui")
 MAX_ENV_BYTES = 1024 * 1024
+DEFAULT_LEMONADE_HOST_PORT = 18080
 _DIAGNOSTICS_PATH = os.getenv("LES_RUNTIME_DIAGNOSTICS_PATH", "").strip()
 if _DIAGNOSTICS_PATH:
     tracemalloc.start(10)
@@ -239,6 +250,8 @@ def runtime_environment(
             )
         )
         environment["OPENAI_MODEL"] = model
+    elif provider == "lemonade":
+        environment.update(windows_runtime_environment())
     return environment
 
 
@@ -274,6 +287,34 @@ def _process_name(pid: int) -> str:
         return next(csv.reader([text]))[0].casefold()
     except (csv.Error, IndexError):
         return ""
+
+
+def _process_executable(pid: int) -> Path | None:
+    """Return a process image path without accepting a PID from state alone."""
+    if pid <= 0 or os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    query_limited_information = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(
+        query_limited_information, False, pid
+    )
+    if not handle:
+        return None
+    try:
+        capacity = 32768
+        value = ctypes.create_unicode_buffer(capacity)
+        length = wintypes.DWORD(capacity)
+        if not ctypes.windll.kernel32.QueryFullProcessImageNameW(
+            handle, 0, value, ctypes.byref(length)
+        ):
+            return None
+        return Path(value.value).resolve()
+    except (OSError, RuntimeError):
+        return None
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
 
 
 def _terminate_pid(pid: int, *, image_confirmed: bool = False) -> None:
@@ -404,10 +445,11 @@ def _recorded_runtime_owns_listeners(
     mode: str,
 ) -> bool:
     """Recover a hung LES only from the exact current process-state contract."""
+    contract = str(payload.get("process_contract") or "")
     if (
         payload.get("status") != "started"
         or payload.get("mode") != mode
-        or payload.get("process_contract") != PROCESS_CONTRACT
+        or contract not in {PROCESS_CONTRACT, "direct_python_no_console_v1"}
     ):
         return False
     try:
@@ -420,9 +462,60 @@ def _recorded_runtime_owns_listeners(
     expected = {proxy_port: int(payload.get("proxy_pid") or 0)}
     if mode == "full":
         expected[ui_port] = int(payload.get("ui_pid") or 0)
+    host_port = _recorded_lemonade_host_port(payload, mode)
+    if host_port is not None:
+        expected[host_port] = int(payload.get("lemonade_host_pid") or 0)
     if set(listeners) != ports or listeners != expected or any(pid <= 0 for pid in expected.values()):
         return False
-    return all(_process_name(pid) in {"python.exe", "pythonw.exe"} for pid in expected.values())
+    if not all(_process_name(pid) in {"python.exe", "pythonw.exe"} for pid in expected.values()):
+        return False
+    if contract == "direct_python_no_console_v1":
+        # v1 state was emitted by the original PowerShell launcher.  It lacks
+        # v2's complete port schema, so only recover it when every recorded
+        # listener still runs the exact persistent state Python executable.
+        expected_python = _python(state).resolve()
+        return all(_process_executable(pid) == expected_python for pid in expected.values())
+    return True
+
+
+def _state_adapter_port(payload: dict[str, Any], mode: str) -> int | None:
+    """Read a current field or a validated loopback URL from legacy state."""
+    if payload.get("provider") != "lemonade" or mode == "ui":
+        return None
+    if int(payload.get("lemonade_host_pid") or 0) <= 0:
+        return None
+    raw_port = payload.get("lemonade_host_port")
+    if raw_port not in (None, ""):
+        try:
+            host_port = int(raw_port)
+        except (TypeError, ValueError):
+            return None
+        return host_port if 1 <= host_port <= 65535 else None
+    adapter_url = str(payload.get("lemonade_adapter_url") or "").strip()
+    if not adapter_url:
+        return None
+    try:
+        parsed = urlsplit(adapter_url)
+        host_port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.casefold() != "http"
+        or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+        or host_port is None
+    ):
+        return None
+    return host_port if 1 <= host_port <= 65535 else None
+
+
+def _recorded_lemonade_host_port(payload: dict[str, Any], mode: str) -> int | None:
+    """Compatibility alias for state callers retained with the lifecycle helper."""
+    return _state_adapter_port(payload, mode)
 
 
 def stop(
@@ -448,7 +541,15 @@ def stop(
             payload = json.loads(state_path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             payload = {}
+    host_port = _recorded_lemonade_host_port(payload, normalized_mode)
+    if host_port is not None:
+        ports.add(host_port)
     listeners = _listening_pids(ports)
+    if host_port is not None:
+        recorded_host_pid = int(payload.get("lemonade_host_pid") or 0)
+        listening_host_pid = listeners.get(host_port)
+        if listening_host_pid is not None and listening_host_pid != recorded_host_pid:
+            raise RuntimeError(f"foreign_port_owner: {host_port}:{listening_host_pid}")
     if normalized_mode == "ui" and listeners:
         recorded_ui_pid = int(payload.get("ui_pid") or 0)
         if recorded_ui_pid <= 0 or set(listeners.values()) != {recorded_ui_pid}:
@@ -627,14 +728,44 @@ def start(
         mode=normalized_mode,
         backend_url=backend_url,
     )
+    lemonade_host_port = (
+        int(environment.get("LEMONADE_HOST_PORT") or DEFAULT_LEMONADE_HOST_PORT)
+        if normalized_mode != "ui" and environment["LES_LLM_PROVIDER"] == "lemonade"
+        else None
+    )
+    if lemonade_host_port is not None:
+        ports = set(ports)
+        ports.add(lemonade_host_port)
+        if not _port_free(lemonade_host_port):
+            raise RuntimeError(f"Lemonade adapter port {lemonade_host_port} is occupied")
     _diagnostic("after_environment", environment_keys=len(environment))
     logs = state / "logs"
     processes: list[subprocess.Popen[bytes]] = []
+    lemonade_host_stderr = logs / "windows-light-lemonade-host.err.log"
     proxy_stderr = logs / "windows-light-proxy.err.log"
     ui_stderr = logs / "windows-light-ui.err.log"
+    lemonade_host: subprocess.Popen[bytes] | None = None
     proxy: subprocess.Popen[bytes] | None = None
     ui: subprocess.Popen[bytes] | None = None
     try:
+        if lemonade_host_port is not None:
+            lemonade_host = _spawn(
+                python,
+                ["lemonade_host.py"],
+                runtime=runtime,
+                environment=environment,
+                stdout_path=logs / "windows-light-lemonade-host.out.log",
+                stderr_path=lemonade_host_stderr,
+            )
+            processes.append(lemonade_host)
+            _diagnostic("after_lemonade_host_spawn", lemonade_host_pid=lemonade_host.pid)
+            _wait_process_url(
+                lemonade_host,
+                f"http://127.0.0.1:{lemonade_host_port}/api/health",
+                25,
+                label="Lemonade adapter",
+                stderr_path=lemonade_host_stderr,
+            )
         if normalized_mode != "ui":
             proxy = _spawn(
                 python,
@@ -686,7 +817,16 @@ def start(
             "proxy_url": environment["PROXY_URL"],
             "proxy_pid": proxy.pid if proxy is not None else None,
             "ui_pid": ui.pid if ui is not None else None,
-            "lemonade_host_pid": None,
+            "lemonade_host_pid": lemonade_host.pid if lemonade_host is not None else None,
+            "lemonade_host_port": lemonade_host_port,
+            "lemonade_adapter_url": (
+                f"http://127.0.0.1:{lemonade_host_port}"
+                if lemonade_host_port is not None
+                else None
+            ),
+            "lemonade_host_alive": (
+                lemonade_host.poll() is None if lemonade_host is not None else None
+            ),
             "proxy_alive": proxy.poll() is None if proxy is not None else None,
             "ui_alive": ui.poll() is None if ui is not None else None,
             "state_root": str(state),

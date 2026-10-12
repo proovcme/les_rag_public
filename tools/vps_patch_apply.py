@@ -27,8 +27,18 @@ except ImportError:  # project import during tests and direct repo execution
 
 
 SCHEMA = "les.vps-patch.v2"
+FORBIDDEN_RUNTIME_PARTS = {
+    ".env", "data", "qdrant", "storage", "RAG_Content",
+    "__pycache__", ".cache", "plugins",
+}
+TRUSTED_APPLICATION_CODE_FILES = {
+    "proxy/storage/__init__.py",
+    "proxy/storage/file_storage.py",
+}
 ALLOWED_ROOTS = (
     "backend/",
+    "extensions/",
+    "modules/",
     "proxy/",
     "qdrant_visualizer/",
     "sovushka/",
@@ -43,6 +53,7 @@ ALLOWED_FILES = {
     "env.example",
     "sovushka_ng.py",
     "proxy_server.py",
+    *TRUSTED_APPLICATION_CODE_FILES,
     "installers/windows/runtime-entrypoints.json",
     "tools/activate_smeta_rag_generation.py",
     "tools/build_smeta_norm_rag.py",
@@ -158,8 +169,13 @@ def safe_relative_path(value: str) -> PurePosixPath:
     if rel.is_absolute() or ".." in rel.parts or not rel.parts:
         raise RuntimeError(f"unsafe path in update: {value}")
     normalized = rel.as_posix()
-    if any(part in DENIED_PARTS for part in rel.parts):
-        raise RuntimeError(f"denied update path: {value}")
+    forbidden = {part.casefold() for part in FORBIDDEN_RUNTIME_PARTS}
+    if (normalized not in TRUSTED_APPLICATION_CODE_FILES and any(
+        part.casefold() in forbidden for part in rel.parts
+    )) or any(
+        part in DENIED_PARTS for part in rel.parts
+    ):
+        raise RuntimeError(f"path is outside update allowlist: {value}")
     if not (normalized in ALLOWED_FILES or normalized.startswith(ALLOWED_ROOTS)):
         raise RuntimeError(f"path is outside update allowlist: {value}")
     if normalized != "env.example" and Path(normalized).suffix.lower() not in ALLOWED_SUFFIXES:

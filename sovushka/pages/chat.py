@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import uuid
 import re
 import time
 from datetime import datetime
@@ -3707,6 +3708,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "Фактические датасеты, из которых взяты фрагменты ответа"
         )
 
+    def _render_model_result_notice(meta: dict | None) -> None:
+        """Show packaging feedback separately from the original model answer."""
+        notice = meta.get("model_result_notice") if isinstance(meta, dict) else None
+        if not notice and isinstance(meta, dict):
+            trace = meta.get("retrieval_trace")
+            notice = trace.get("model_result_notice") if isinstance(trace, dict) else None
+        if not isinstance(notice, dict):
+            return
+        message = str(notice.get("message") or "").strip()
+        if notice.get("status") not in {"structural_error", "unstructured"} or not message:
+            return
+        from sovushka.uikit import render_feedback_state
+
+        render_feedback_state("error", detail=message)
+
     def _render_answer_timing(meta: dict | None) -> None:
         payload = meta if isinstance(meta, dict) else {}
         line = format_answer_timing_line(
@@ -3755,6 +3771,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ui.markdown(_link_visible_sources(_disp, srcs or [], meta)).classes("sov-chat-message-text sov-chat-md")
                 else:
                     ui.label(_disp).classes("sov-chat-message-text")
+            if _is_ai:
+                _render_model_result_notice(meta)
             _render_source_tags(srcs or [], crag, meta, str(text or ""))
             if meta:
                 _render_suggestions(meta)
@@ -3810,6 +3828,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     )
                 else:
                     label.set_text(str(text or ""))
+            if not error:
+                _render_model_result_notice(meta)
             _render_source_tags(srcs or [], crag, meta, str(text or ""))
             if meta:
                 _render_suggestions(meta)
@@ -4288,6 +4308,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "output_directive": extra_prompt or None,
             "session_id": state.get("session_id"),
             "response_length": str(response_length_select.value or "standard"),
+            # Ключ хода: повторная доставка одного и того же сообщения не должна
+            # засчитываться как новый проход по ведомости. Вывести это на сервере
+            # нельзя — два «Продолжай» подряд текстуально неотличимы, поэтому
+            # идентичность задаёт отправитель (ревью Codex 11.09).
+            "turn_id": uuid.uuid4().hex,
         }
         payload["selected_sources_only"] = bool(
             scope_state.get("selected_sources_only", False)
@@ -4416,6 +4441,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "scenario": d.get("scenario") or {},
                 "answer_contract": d.get("answer_contract") or {},
                 "answer_contract_check": d.get("answer_contract_check") or {},
+                "model_result_notice": d.get("model_result_notice") or {},
                 "workflow_plan": d.get("workflow_plan") or {},
                 "artifact": d.get("artifact") or {},
                 "source_map": d.get("source_map") or {},

@@ -1,6 +1,7 @@
 """Runtime, status, mode, warmup and metrics routes for LES Proxy."""
 
 from __future__ import annotations
+from backend.http_client_policy import trust_env_for_url
 
 import asyncio
 import json
@@ -18,7 +19,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from backend.http_client_policy import trust_env_for_url
 from backend.metrics_collector import DB_PATH, heartbeats
 from backend.rag_config import index_contract_status, rag_meta_db_path, rag_runtime_config
 from backend.runtime_paths import mutable_path
@@ -828,7 +828,7 @@ async def get_backup_status(_admin=Depends(require_admin)):
     collection_name = rag_collection_name()
     try:
         qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
-        client = QdrantClient(url=qdrant_url, timeout=5.0)
+        client = QdrantClient(trust_env=trust_env_for_url(qdrant_url), url=qdrant_url, timeout=5.0)
         if client.collection_exists(collection_name):
             snaps = client.list_snapshots(collection_name)
             # Sort newest first
@@ -895,7 +895,7 @@ async def delete_backup(req: BackupDeleteRequest, _admin=Depends(require_root_ad
         from qdrant_client import QdrantClient
         collection_name = rag_collection_name()
         qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
-        client = QdrantClient(url=qdrant_url, timeout=10.0)
+        client = QdrantClient(trust_env=trust_env_for_url(qdrant_url), url=qdrant_url, timeout=10.0)
         try:
             client.delete_snapshot(collection_name, req.name)
             return {"status": "ok", "message": f"Qdrant snapshot {req.name} deleted"}

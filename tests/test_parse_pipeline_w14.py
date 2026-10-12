@@ -1,10 +1,13 @@
 """W1.4: конвейер индексации — стадии, префетч, таймаут конвертации, resume."""
 
+import sys
 from pathlib import Path
+from types import ModuleType
 from types import SimpleNamespace
 
 import pytest
 
+import backend.converter as converter
 import backend.qdrant_adapter as qa
 from backend.qdrant_adapter import MetaDB, QdrantLlamaIndexAdapter
 
@@ -35,13 +38,19 @@ class TrackingDB:
     def insert_structured_rules(self, rules):
         pass
 
+    def replace_structured_rules(self, dataset_id, file_key, rules):
+        pass
+
 
 class FakeQdrant:
     def __init__(self, url, **kwargs):
         self.url = url
 
-    def upsert(self, collection_name, points):
+    def upsert(self, collection_name, points, **_kwargs):
         return None
+
+    def scroll(self, **kwargs):
+        return [], None
 
 
 def _adapter(tmp_path, db, nodes_fn=None, deleted=None):
@@ -156,6 +165,167 @@ def test_convert_failure_keeps_old_points(tmp_path, monkeypatch):
     assert deleted.count("bad.md") <= 1
 
 
+def test_required_ocr_with_page_heading_keeps_public_hierarchy(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["scan.pdf"])
+    db = TrackingDB(["scan.pdf"])
+    adapter = _adapter(tmp_path, db)
+    route = qa.DocumentRoute(
+        domain="general", dataset_name="test", doc_type="DOCUMENT",
+        content_type="scan", complexity="simple", pipeline="markdown_needs_ocr", metadata={},
+    )
+    uploaded = []
+    adapter._sync_count_file_points = lambda *a: len(uploaded)
+
+    class RecordingQdrant(FakeQdrant):
+        def upsert(self, collection_name, points, **kwargs):
+            uploaded.extend(points)
+
+    monkeypatch.setattr(qa, "PARSE_PREFETCH", False)
+    monkeypatch.setattr(qa.qdrant_client, "QdrantClient", RecordingQdrant)
+    monkeypatch.setattr(QdrantLlamaIndexAdapter, "_convert_file", lambda *a, **k: (route, [{
+        "text": "## Page 1\n\nТехнические условия подключения к водоснабжению",
+        "doc_id": "page-1", "payload": {
+            "type": "pdf_page_text", "page": 1, "source_format": "pdf",
+            "content_format": "pdf", "source_sha256": "a" * 64,
+        },
+    }]))
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+    assert result["errors"] == 0
+    assert db.statuses[-1][1] == "INDEXED"
+    assert {point.payload["node_role"] for point in uploaded} == {"evidence", "navigation"}
+    assert any("водоснабжению" in point.payload["text"] for point in uploaded)
+
+
+def test_explicit_ocr_empty_nodes_keep_existing_evidence(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["scan.pdf"])
+    db = TrackingDB(["scan.pdf"])
+    deleted = []
+    lexical_deleted = []
+    ocr_route = SimpleNamespace(pipeline="markdown_needs_ocr")
+    adapter = _adapter(tmp_path, db, deleted=deleted)
+    adapter._sync_delete_file_lexical = lambda _dataset_id, key: lexical_deleted.append(key)
+    monkeypatch.setattr(qa, "PARSE_PREFETCH", False)
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+    monkeypatch.setattr(
+        QdrantLlamaIndexAdapter,
+        "_convert_file",
+        lambda *_args, **_kwargs: (ocr_route, []),
+    )
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 1
+    assert db.statuses[-1][1:3] == ("ERROR", 0)
+    assert db.statuses[-1][3] == "ocr_required_no_searchable_text"
+    assert deleted == []
+    assert lexical_deleted == []
+
+
+@pytest.mark.parametrize("failure_code", ["tesseract_timeout", "ollama_vision_failed", "mlx_vision_load_failed"])
+def test_explicit_ocr_failure_keeps_existing_evidence(tmp_path, monkeypatch, failure_code):
+    _make_files(tmp_path, ["scan.pdf"])
+    db = TrackingDB(["scan.pdf"])
+    deleted = []
+    lexical_deleted = []
+    adapter = _adapter(tmp_path, db, deleted=deleted)
+    adapter._sync_delete_file_lexical = lambda _dataset_id, key: lexical_deleted.append(key)
+    monkeypatch.setattr(qa, "PARSE_PREFETCH", False)
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+    monkeypatch.setattr(
+        QdrantLlamaIndexAdapter,
+        "_convert_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(qa.OCRRequiredError(failure_code)),
+    )
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 1
+    assert db.statuses[-1][1:3] == ("ERROR", 0)
+    assert db.statuses[-1][3] == failure_code
+    assert "private" not in db.statuses[-1][3]
+    assert deleted == []
+    assert lexical_deleted == []
+
+
+def test_explicit_ocr_incomplete_provenance_keeps_existing_evidence(tmp_path, monkeypatch):
+    _make_files(tmp_path, ["scan.pdf"])
+    db = TrackingDB(["scan.pdf"])
+    deleted = []
+    lexical_deleted = []
+    route = SimpleNamespace(pipeline="markdown_needs_ocr")
+    adapter = _adapter(tmp_path, db, deleted=deleted)
+    adapter._sync_delete_file_lexical = lambda _dataset_id, key: lexical_deleted.append(key)
+    monkeypatch.setattr(qa, "PARSE_PREFETCH", False)
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+    monkeypatch.setattr(
+        QdrantLlamaIndexAdapter,
+        "_convert_file",
+        lambda *_args, **_kwargs: (route, [{
+            "text": "Технические условия подключения достаточно длинные для индекса",
+            "doc_id": "node-1",
+            "payload": {"type": "pdf_page_text", "page": True},
+        }]),
+    )
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 1
+    assert db.statuses[-1][3] == "ocr_required_invalid_provenance"
+    assert deleted == []
+    assert lexical_deleted == []
+
+
+def test_dynamic_sparse_ocr_failure_preserves_evidence_and_never_indexes_warning(tmp_path, monkeypatch):
+    """Short nonempty converter output must not erase prior evidence when OCR is disabled."""
+    filename = f"{'x' * 140}.pdf"
+    dataset_dir = tmp_path / "ds-1"
+    dataset_dir.mkdir()
+    (dataset_dir / filename).write_bytes(b"%PDF-1.7\n")
+    db = TrackingDB([filename])
+    deleted = []
+    lexical_deleted = []
+    route = SimpleNamespace(pipeline="markdown", doc_type="DOCUMENT")
+    adapter = _adapter(tmp_path, db, deleted=deleted)
+    adapter._sync_delete_file_lexical = lambda _dataset_id, key: lexical_deleted.append(key)
+    monkeypatch.setattr(qa, "PARSE_PREFETCH", False)
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+
+    class FakeDocument:
+        page_count = 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def __getitem__(self, _index):
+            return SimpleNamespace(get_text=lambda *_args, **_kwargs: "verified source text " * 10)
+
+    fake_fitz = ModuleType("fitz")
+    fake_fitz.open = lambda *_args, **_kwargs: FakeDocument()
+    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
+    fake_pymupdf = ModuleType("pymupdf4llm")
+    fake_pymupdf.to_markdown = lambda *_args, **_kwargs: "x"
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", fake_pymupdf)
+    monkeypatch.setenv("RAG_OCR_ENABLED", "false")
+    monkeypatch.setenv("RAG_PDF_PARSER", "pymupdf")
+    monkeypatch.setenv("LES_LAYOUT_PDF", "false")
+
+    def convert_sparse_pdf(_self, file_path, *_args, **_kwargs):
+        markdown = converter._parse_pdf(file_path, route=route)
+        return route, [{"text": markdown, "doc_id": "warning", "payload": {}}]
+
+    monkeypatch.setattr(QdrantLlamaIndexAdapter, "_convert_file", convert_sparse_pdf)
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 1
+    assert db.statuses[-1][1:4] == ("ERROR", 0, "ocr_required_disabled")
+    assert deleted == []
+    assert lexical_deleted == []
+
+
 def test_raw_cad_bim_source_is_skipped_not_indexed_zero(tmp_path, monkeypatch):
     dataset_dir = tmp_path / "ds-1" / "raw"
     dataset_dir.mkdir(parents=True)
@@ -174,15 +344,66 @@ def test_raw_cad_bim_source_is_skipped_not_indexed_zero(tmp_path, monkeypatch):
     assert all(status != "INDEXED" for _, status, *_ in db.statuses)
 
 
+def test_mislabeled_pdf_is_skipped_without_deleting_or_indexing(tmp_path, monkeypatch):
+    dataset_dir = tmp_path / "ds-1"
+    dataset_dir.mkdir(exist_ok=True)
+    (dataset_dir / "underlay.pdf").write_bytes(b"\x89PNG\r\n\x1a\nnot a pdf")
+    db = TrackingDB(["underlay.pdf"])
+    deleted = []
+    adapter = _adapter(tmp_path, db, deleted=deleted)
+    adapter._sync_markdown_nodes = QdrantLlamaIndexAdapter._sync_markdown_nodes.__get__(adapter)
+    monkeypatch.setattr(qa, "PARSE_PREFETCH", False)
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 0
+    assert db.statuses[-1][0:3] == ("underlay.pdf", "SKIPPED", 0)
+    assert db.statuses[-1][3] == "pdf_source_unreadable: underlay.pdf"
+    assert deleted == []
+
+
+def test_truncated_pdf_header_is_skipped_without_indexing_warning(tmp_path, monkeypatch):
+    dataset_dir = tmp_path / "ds-1"
+    dataset_dir.mkdir(exist_ok=True)
+    (dataset_dir / "truncated.pdf").write_bytes(b"%PDF-1.7\n")
+    db = TrackingDB(["truncated.pdf"])
+    deleted = []
+    adapter = _adapter(tmp_path, db, deleted=deleted)
+    adapter._sync_markdown_nodes = QdrantLlamaIndexAdapter._sync_markdown_nodes.__get__(adapter)
+    monkeypatch.setattr(qa, "PARSE_PREFETCH", False)
+    monkeypatch.setenv("RAG_CONVERT_SUBPROCESS_ENABLED", "0")
+    monkeypatch.setenv("RAG_OCR_ENABLED", "false")
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 0
+    assert db.statuses[-1] == (
+        "truncated.pdf", "SKIPPED", 0, "pdf_source_unreadable: truncated.pdf"
+    )
+    assert deleted == []
+
+
 def test_resume_after_crash_no_duplicate_points(tmp_path, monkeypatch):
     """kill посреди файла → файл остаётся PENDING → повторный прогон удаляет старые точки и доводит."""
     _make_files(tmp_path, ["a.md"])
     upserts = []
     deleted = []
+    stored_points = {}
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(tmp_path / "lexical.db"))
 
     class RecordingQdrant(FakeQdrant):
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, **_kwargs):
             upserts.append(len(points))
+            stored_points.update({point.id: point for point in points})
+
+        def scroll(self, **kwargs):
+            return list(stored_points.values()), None
+
+        def delete(self, **kwargs):
+            for pid in kwargs["points_selector"].points:
+                stored_points.pop(pid)
 
     crash = {"armed": True}
 
@@ -210,7 +431,8 @@ def test_resume_after_crash_no_duplicate_points(tmp_path, monkeypatch):
     # Прогон 2: файл всё ещё PENDING → старые точки удалены, upsert повторён, статус записан.
     result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
     assert result["files_parsed"] == 1
-    assert deleted.count("a.md") == 2  # по одному delete на каждый прогон — дублей точек нет
+    assert deleted == []  # never whole-file cleanup
+    assert len(stored_points) == 1  # only the replacement generation survives
     assert len(upserts) == 2
     assert db.statuses[-1][1] == "INDEXED"
 

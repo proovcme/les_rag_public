@@ -16,8 +16,9 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -29,6 +30,22 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.inference.validator import rules_validate
+from extensions.lemonade.model_policy import apply_recipe_options_bootstrap
+from extensions.lemonade.role_model import (
+    RoleModelCache,
+    answer_model_from_registry,
+    select_chat_model,
+)
+from extensions.lemonade.vendor_status import (
+    _record_proves_loaded,
+    EMBEDDING_BACKEND,
+    EMBEDDING_MODEL_ID,
+    EMBEDDING_VECTOR_SIZE,
+    embedding_identity,
+    lemonade_health_from_vendor,
+    vendor_has_loaded_models,
+    VendorIdleGuard,
+)
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] LemonadeHost: %(message)s")
@@ -52,10 +69,36 @@ def _model_env(*names: str, default: str) -> str:
 
 LLM_MODEL = _model_env("LEMONADE_MODEL", "LLM_MODEL", default="qwen3.5-4b-FLM")
 VAL_MODEL = _model_env("MLX_VAL_MODEL", "LEMONADE_VAL_MODEL", "LEMONADE_MODEL", "LLM_MODEL", default=LLM_MODEL)
-EMBED_MODEL = _model_env("LEMONADE_EMBED_MODEL", "EMBED_MODEL", default="Qwen3-Embedding-0.6B-GGUF").replace(":latest", "")
-RERANK_MODEL = _model_env("LEMONADE_RERANK_MODEL", default="Qwen3-Reranker-0.6B-Q8_0-GGUF")
+EMBED_MODEL = EMBEDDING_MODEL_ID
+# bge-reranker-v2-m3 на том же CPU втрое быстрее Qwen3-Reranker-0.6B при том же порядке
+# кандидатов (замер 11.10: 48 карточек норм — 17,6 с против 54 с). Общая настройка
+# RERANK_MODEL действует и здесь, чтобы имя модели не расходилось с реестром LES.
+RERANK_MODEL = _model_env("LEMONADE_RERANK_MODEL", "RERANK_MODEL", default="bge-reranker-v2-m3-GGUF")
 IDLE_UNLOAD_SEC = _env_int("LES_LEMONADE_IDLE_UNLOAD_SEC", 600)
 _last_activity = time.monotonic()
+
+# Выбранную модель ответа знает реестр ролей; окружение отстаёт от смены ревизии и
+# называет прежнюю. Короткий кэш держит SQLite вне горячего пути запроса.
+_role_cache = RoleModelCache(
+    answer_model_from_registry,
+    ttl_seconds=float(_env_int("LES_LEMONADE_ROLE_TTL_SEC", 5)),
+)
+
+
+def _role_answer_model() -> str:
+    """Имя модели роли «Ответы»; пустая строка, если реестр недоступен."""
+    return _role_cache.get()
+
+
+async def _vendor_model_ids() -> list[str]:
+    """Идентификаторы каталога вендора; при недоступности — пустой список."""
+    try:
+        catalogue = await _get_json(_openai_candidates("/models"), timeout=5.0)
+    except Exception as error:  # noqa: BLE001 — каталог не обязателен для решения
+        logger.warning("[MODEL] vendor catalogue unavailable: %s", error)
+        return []
+    data = catalogue.get("data") if isinstance(catalogue, dict) else None
+    return [str(item.get("id")) for item in (data or []) if isinstance(item, dict) and item.get("id")]
 
 
 class ValidateRequest(BaseModel):
@@ -171,7 +214,7 @@ async def _models_loaded() -> bool:
         data = await _get_json(_api_candidates("/health"), timeout=5.0)
     except Exception:
         return False
-    return bool(data.get("all_models_loaded") or data.get("model_loaded"))
+    return vendor_has_loaded_models(data)
 
 
 async def _idle_unloader() -> None:
@@ -179,20 +222,59 @@ async def _idle_unloader() -> None:
         logger.info("[STANDBY] idle unload disabled")
         return
     logger.info("[STANDBY] idle unload after %s sec", IDLE_UNLOAD_SEC)
+    vendor_idle = VendorIdleGuard()
     while True:
         await asyncio.sleep(30)
         try:
-            idle = time.monotonic() - _last_activity
-            if idle >= IDLE_UNLOAD_SEC and await _models_loaded():
+            now = time.monotonic()
+            idle = now - _last_activity
+            health = await _get_json(_api_candidates("/health"), timeout=5.0)
+            vendor_safe = vendor_idle.may_unload(health, now=now, idle_seconds=IDLE_UNLOAD_SEC)
+            if idle >= IDLE_UNLOAD_SEC and vendor_safe:
                 logger.info("[STANDBY] idle %.0f sec -> unloading Lemonade models", idle)
                 await _lemonade_unload()
         except Exception as exc:  # noqa: BLE001
+            vendor_idle = VendorIdleGuard()
             logger.warning("[STANDBY] unload loop: %s", exc)
+
+
+async def _bootstrap_recipe_options() -> None:
+    """Восполнить настройки наших моделей в кэше Lemonade, если их там нет.
+
+    `recipe_options.json` принадлежит вендору и живёт вне репозитория: после
+    переустановки модель стартует без `ctx_size`, снимок теряет
+    `observed_context_tokens`, а исполнение падает на пресет qwen-9b-restrictive.
+    Дописываем только отсутствующее; ручные правки оператора не трогаем.
+    """
+    path = os.getenv("LEMONADE_RECIPE_OPTIONS_PATH") or str(
+        Path.home() / ".cache" / "lemonade" / "recipe_options.json"
+    )
+    try:
+        catalogue = await _get_json(_api_candidates("/models"), timeout=10.0)
+        model_ids = [
+            str(item.get("id"))
+            for item in (catalogue.get("data") or [])
+            if isinstance(item, dict) and item.get("id")
+        ]
+        if not model_ids:
+            return
+        report = apply_recipe_options_bootstrap(path, model_ids)
+        if report.get("added"):
+            logger.info(
+                "recipe options bootstrapped: added=%s backup=%s",
+                report["added"],
+                report.get("backup"),
+            )
+        if report.get("differs"):
+            logger.info("recipe options differ from verified values: %s", report["differs"])
+    except Exception as error:  # noqa: BLE001 — вендор недоступен: старт не блокируем
+        logger.warning("recipe options bootstrap skipped: %s", error)
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     asyncio.create_task(_idle_unloader())
+    asyncio.create_task(_bootstrap_recipe_options())
     yield
 
 
@@ -209,14 +291,54 @@ app.add_middleware(
 async def health() -> dict[str, Any]:
     vm = psutil.virtual_memory()
     sw = psutil.swap_memory()
+    try:
+        vendor = await _get_json(_api_candidates("/health"), timeout=5.0)
+    except Exception:
+        vendor = None
+    snapshot = lemonade_health_from_vendor(
+        vendor,
+        chat_model=_role_answer_model() or LLM_MODEL,
+        validation_model=VAL_MODEL,
+        rerank_model=RERANK_MODEL,
+    )
+    role_keys = {
+        "chat": "main_model",
+        "validation": "val_model",
+        "embedding": "embed_model",
+        "rerank": "rerank_model",
+    }
+    vendor_types = {
+        "chat": "llm",
+        "validation": "llm",
+        "embedding": "embedding",
+        "rerank": "reranking",
+    }
+    roles = {
+        role_keys[descriptor.role]: {
+            "path": descriptor.model_id,
+            "type": vendor_types[descriptor.role],
+            "loaded": descriptor.loaded,
+            "backend": descriptor.backend,
+        }
+        for descriptor in snapshot.models
+    }
+    all_roles_loaded = all(role["loaded"] for role in roles.values())
+    status = "unavailable" if not snapshot.available else ("ok" if all_roles_loaded else "degraded")
+    reason = snapshot.detail if not snapshot.available else ("ready" if all_roles_loaded else "required_models_not_ready")
+    roles["embed_model"].update(
+        {
+            "profile": "windows-lemonade",
+            "embedding_backend": EMBEDDING_BACKEND,
+            "vector_size": EMBEDDING_VECTOR_SIZE,
+            "embedding_identity": embedding_identity(),
+        }
+    )
     return {
-        "status": "ok",
+        "status": status,
+        "reason": reason,
         "backend": "lemonade",
         "lemonade_root": _lemonade_root(),
-        "main_model": {"path": LLM_MODEL, "loaded": True},
-        "val_model": {"path": VAL_MODEL, "loaded": True},
-        "embed_model": {"path": EMBED_MODEL, "profile": "windows-lemonade", "loaded": True},
-        "rerank_model": {"path": RERANK_MODEL, "loaded": True},
+        **roles,
         "memory": {
             "ram_free_gb": round(vm.available / 1e9, 1),
             "swap_used_gb": round(sw.used / 1e9, 1),
@@ -285,8 +407,17 @@ async def validate_answer(req: ValidateRequest) -> dict[str, Any]:
         "HALLUCINATION — ответ противоречит контексту или не отвечает на вопрос.\n"
         "Одно слово:"
     )
+    # Имя роли валидатора историческое, MLX-овское (mlx-community/…), а на Windows у
+    # вендора такой модели нет: опыт 18.09 на живом стенде вернул 404 model_not_found.
+    # То есть валидация молча падала бы на каждом вызове. Отправляем имя, которое
+    # вендор действительно знает, — по тому же правилу, что и чат.
     payload = {
-        "model": VAL_MODEL,
+        "model": select_chat_model(
+            VAL_MODEL,
+            catalogue=await _vendor_model_ids(),
+            role_model=_role_answer_model(),
+            fallback=LLM_MODEL,
+        ),
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
         "max_tokens": 15,
@@ -309,7 +440,12 @@ async def validate_answer(req: ValidateRequest) -> dict[str, Any]:
 async def chat_completions(req: dict[str, Any]):
     _touch()
     req = dict(req or {})
-    req["model"] = LLM_MODEL
+    req["model"] = select_chat_model(
+        req.get("model"),
+        catalogue=await _vendor_model_ids(),
+        role_model=_role_answer_model(),
+        fallback=LLM_MODEL,
+    )
     if req.get("stream"):
         url = _openai_candidates("/chat/completions")[0]
 
@@ -329,9 +465,14 @@ async def embeddings(req: dict[str, Any]) -> dict[str, Any]:
     _touch()
     req = dict(req or {})
     requested_model = str(req.get("model") or "").strip()
-    if not requested_model or requested_model in {"bge-m3", "user.bge-m3-GGUF", "qwen3-embedding-0.6b"}:
-        req["model"] = EMBED_MODEL
-    return await _post_json(_openai_candidates("/embeddings"), req, timeout=60.0)
+    if requested_model and requested_model.casefold().removesuffix(":latest") != EMBED_MODEL.casefold():
+        raise HTTPException(409, "embedding_model_mismatch")
+    req["model"] = EMBED_MODEL
+    data = await _post_json(_openai_candidates("/embeddings"), req, timeout=60.0)
+    data["embedding_model"] = EMBED_MODEL
+    data["embedding_backend"] = EMBEDDING_BACKEND
+    data["embedding_identity"] = embedding_identity()
+    return data
 
 
 @app.post("/v1/rerank")
@@ -357,21 +498,33 @@ async def rerank_endpoint(req: RerankRequest) -> dict[str, Any]:
 
 @app.get("/api/ps")
 async def api_ps() -> dict[str, Any]:
+    """Модели, которые сейчас в памяти вендора, — не каталог скачанного.
+
+    Прежняя редакция строила ответ из `/models` и при нуле загруженных отдавала весь
+    каталог; сборщик метрик суммировал его `size` и показывал 72 ГБ занятой моделями
+    памяти на машине с 31 ГБ ОЗУ. Недоступный вендор даёт пустой список: молчание
+    честнее выдуманной резидентности.
+
+    `size` вендор в этих записях не сообщает, а брать его из каталога нельзя —
+    скачанный вес не равен занятой памяти. Ноль означает «неизвестно».
+    """
     try:
-        data = await _get_json(_openai_candidates("/models"), timeout=5.0)
-        models = []
-        for model in data.get("data", []):
-            models.append(
-                {
-                    "name": model.get("id"),
-                    "model": model.get("id"),
-                    "size": int(float(model.get("size", 0) or 0) * 1e9),
-                    "details": {"family": model.get("recipe", "lemonade")},
-                }
-            )
-        return {"models": models}
-    except Exception:
-        return {"models": [{"name": LLM_MODEL, "model": LLM_MODEL}]}
+        vendor = await _get_json(_api_candidates("/health"), timeout=5.0)
+    except Exception as error:  # noqa: BLE001 — вендор недоступен, резидентных моделей нет
+        logger.warning("[PS] vendor health unavailable: %s", error)
+        return {"models": []}
+    records = vendor.get("all_models_loaded") if isinstance(vendor, dict) else None
+    models = [
+        {
+            "name": str(record.get("model_name")),
+            "model": str(record.get("model_name")),
+            "size": 0,
+            "details": {"family": str(record.get("recipe") or "lemonade")},
+        }
+        for record in (records or [])
+        if isinstance(record, Mapping) and record.get("model_name") and _record_proves_loaded(record)
+    ]
+    return {"models": models}
 
 
 if __name__ == "__main__":

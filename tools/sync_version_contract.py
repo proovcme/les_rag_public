@@ -47,6 +47,15 @@ def desired_surfaces(contract: dict[str, object] | None = None) -> dict[Path, st
         pyproject.read_text(encoding="utf-8"), label="pyproject product version",
     )
 
+    # Корневой пакет uv.lock — та же версия продукта. Без этой поверхности lock отставал
+    # при каждом выпуске (.125 при .128, аудит Codex 17.09). Меняется только версия
+    # les-v2, зависимости не пересчитываются.
+    uv_lock = ROOT / "uv.lock"
+    updates[uv_lock] = _replace(
+        r'(^name = "les-v2"\r?\nversion = ")[^"]+(")', rf"\g<1>{product}\g<2>",
+        uv_lock.read_text(encoding="utf-8"), label="uv.lock les-v2 version",
+    )
+
     package = ROOT / "desktop" / "tauri" / "package.json"
     payload = json.loads(package.read_text(encoding="utf-8"))
     payload["version"] = product

@@ -1,6 +1,7 @@
 """Conservative startup reconciliation for an already verified smeta RAG generation."""
 
 from __future__ import annotations
+from backend.http_client_policy import trust_env_for_url
 
 import hashlib
 import json
@@ -267,7 +268,7 @@ def start_background_rebuild(
 
 def reconcile_runtime_generation(*, apply: bool = True) -> dict[str, Any]:
     inputs = _runtime_reconciliation_inputs()
-    client = QdrantClient(
+    client = QdrantClient(trust_env=trust_env_for_url(os.getenv("QDRANT_URL", "http://127.0.0.1:6333")), 
         url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
         timeout=60.0,
         check_compatibility=False,

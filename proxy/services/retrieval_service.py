@@ -1223,11 +1223,14 @@ async def retrieve_chat_chunks(
             trace.score_kind = "rerank_logit"
             logger.info("[RERANK-CE] гибридный пул %s переупорядочен", len(chunks))
         except Exception as rerank_error:
-            log_error("[RERANKER] required rerank failed closed: %s", rerank_error)
-            return blocked_result(
-                "reranker_failed",
-                detail=f"{type(rerank_error).__name__}: {rerank_error}",
-            )
+            log_error("[RERANKER] optional rerank failed; preserving retrieved evidence: %s", rerank_error)
+            trace.rerank = {
+                "status": "bypassed",
+                "reason": "failed",
+                "error_code": "RERANKER_FAILED",
+                "detail": type(rerank_error).__name__,
+                "preserved_order": "native_rrf",
+            }
 
     # ADR-12 (Ц9): после реранка гарантируем табличным приложениям места в видимом
     # окне ответа — иначе cross-encoder топит сырой текст таблицы под прозой и

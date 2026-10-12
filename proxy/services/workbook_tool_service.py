@@ -5,6 +5,7 @@ import asyncio
 import inspect
 import json
 import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +14,9 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from proxy.services.artifact_revision_service import (
     ArtifactRevisionRequest,
+    ArtifactRevisionError,
     ArtifactRevisionStore,
+    ArtifactUnavailableError,
 )
 from proxy.services.chat_attachment_service import resolve_read_attachment
 from proxy.services.tool_contract_service import (
@@ -56,6 +59,7 @@ _LSR_INPUT_SCHEMA = {
     "required": ["attachment_id", "decisions"],
     "properties": {
         **_BASE_INPUT_PROPERTIES,
+        "review_calculation": {"type": "boolean", "description": "Return calculation facts for explicit model review before final accounting."},
         "decisions": {
             "type": "array",
             "minItems": 1,
@@ -180,6 +184,9 @@ class WorkbookExecutionContext:
     work_dir: Path
     checkpoints: WorkflowCheckpointService
     artifacts: ArtifactRevisionStore
+    document_price_basis: Mapping[str, Any] | None = None
+    source_revision: str = ''
+    source_attachment_sha256: str = ''
     lsr_adapter: WorkbookAdapter | None = None
     vor_adapter: WorkbookAdapter | None = None
     progress_sink: Callable[[Mapping[str, Any]], None] | None = None
@@ -228,10 +235,16 @@ def _checkpoint_payload(checkpoint: WorkflowCheckpoint, *, resumed: bool) -> dic
 
 def _result_from_revision(
     *, revision, checkpoint: WorkflowCheckpoint, attachment_meta: Mapping[str, Any],
-    source_rows: int = 0, resumed: bool,
+    source_rows: int = 0, bound_rows: int | None = None,
+    row_calculation: list[dict[str, Any]] | None = None, resumed: bool,
 ) -> dict[str, Any]:
     if not source_rows and revision.tool_calls:
         source_rows = int(revision.tool_calls[-1].get("source_rows") or 0)
+    if revision.tool_calls:
+        if bound_rows is None:
+            bound_rows = revision.tool_calls[-1].get("bound_rows")
+        if row_calculation is None:
+            row_calculation = revision.tool_calls[-1].get("row_calculation")
     return {
         "schema": "les.workbook_tool_result.v1",
         "status": "complete",
@@ -245,6 +258,10 @@ def _result_from_revision(
         "checkpoint": _checkpoint_payload(checkpoint, resumed=resumed),
         "missing": list(revision.missing),
         "blockers": list(revision.blockers),
+        # Сколько строк расчёт связал. Раньше число доходило до адаптера и терялось
+        # здесь, и воронка меряла успех арифметикой (ревью Codex 11.09).
+        "bound_rows": bound_rows,
+        "row_calculation": row_calculation,
     }
 
 
@@ -320,6 +337,10 @@ async def _build_workbook(
     if unknown:
         return {**_rejected("INVALID_TOOL_ARGUMENTS", f"unknown arguments: {', '.join(unknown)}"), "tool": tool_name}
     normalized = _normalized_args(args, allowed_args=allowed_args)
+    if artifact_kind == 'lsr_workbook' and ctx.document_price_basis is not None:
+        from proxy.services.portion_cursor_service import document_price_basis_identity
+        normalized['_document_price_basis'] = document_price_basis_identity(ctx.document_price_basis)
+        normalized['_source_revision'] = ctx.source_revision
     if not normalized["attachment_id"]:
         return {**_rejected("INVALID_TOOL_ARGUMENTS", "attachment_id is required"), "tool": tool_name}
     try:
@@ -330,6 +351,10 @@ async def _build_workbook(
         )
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
         return {**_rejected("ATTACHMENT_INVALID", str(error)), "tool": tool_name}
+    if artifact_kind == 'lsr_workbook' and ctx.document_price_basis is not None:
+        if not ctx.source_attachment_sha256 or ctx.source_attachment_sha256 != attachment_meta['sha256']:
+            return {**_rejected('DOCUMENT_PRICE_BASIS_SOURCE_MISMATCH',
+                               'document price basis does not belong to this attachment'), 'tool': tool_name}
     draft_rows = [
         dict(item) for item in (normalized.get("decisions") or []) if isinstance(item, Mapping)
     ]
@@ -351,8 +376,66 @@ async def _build_workbook(
         normalized_args=normalized,
         model_decision_revision=ctx.model_decision_revision,
     ))
-    if checkpoint.status == "complete" and checkpoint.artifact_revision_id:
-        revision = ctx.artifacts.get_revision(checkpoint.artifact_revision_id)
+    source_scope = tuple(
+        [f"attachment:{normalized['attachment_id']}"]
+        + [f"dataset:{item}" for item in normalized['dataset_ids']]
+        + ([f"project:{normalized['project_id']}"] if normalized.get('project_id') is not None else [])
+    )
+    repair_parent_revision_id = None
+    while True:
+        if checkpoint.status == 'complete' and checkpoint.artifact_revision_id:
+            revision = ctx.artifacts.get_revision(checkpoint.artifact_revision_id)
+        else:
+            try:
+                committed = ctx.artifacts.revisions_for_checkpoint(checkpoint.checkpoint_id)
+            except (ArtifactRevisionError, ValueError, TypeError, KeyError, sqlite3.DatabaseError) as error:
+                return {**_rejected('WORKBOOK_ARTIFACT_RECOVERY_CONFLICT', str(error)), 'tool': tool_name}
+            if not committed:
+                break
+            if len(committed) != 1:
+                return {**_rejected('WORKBOOK_ARTIFACT_RECOVERY_AMBIGUOUS',
+                    'Multiple immutable artifacts belong to this checkpoint'), 'tool': tool_name}
+            revision = committed[0]
+            expected_call = dict(name=tool_name, idempotency_key=ctx.idempotency_key,
+                model_decision_revision=ctx.model_decision_revision)
+            call = revision.tool_calls[0] if len(revision.tool_calls) == 1 else {}
+            optional_ownership = dict(session_id=ctx.session_id,
+                attachment_sha256=checkpoint.attachment_sha256,
+                normalized_args_sha256=checkpoint.normalized_args_sha256)
+            valid = (revision.artifact_kind == artifact_kind
+                and revision.source_scope == source_scope
+                and revision.profile_revision_id == ctx.profile_revision_id
+                and revision.model_identity == ctx.model_identity
+                and revision.model_preset == ctx.model_preset
+                and revision.decision_checkpoint_id == checkpoint.checkpoint_id
+                and isinstance(call, Mapping)
+                and all(call.get(k) == v for k, v in expected_call.items())
+                and all(k not in call or call[k] == v for k, v in optional_ownership.items()))
+            if not valid:
+                return {**_rejected('WORKBOOK_ARTIFACT_RECOVERY_CONFLICT',
+                    'Committed artifact provenance differs from the resumed operation'), 'tool': tool_name}
+        try:
+            ctx.artifacts.read_bytes(revision.revision_id)
+        except ArtifactUnavailableError:
+            # Never overwrite a registered artifact or its completed checkpoint.
+            # A deterministic repair key resumes one child built from the same
+            # authored decisions, including after a process restart.
+            repair_parent_revision_id = revision.revision_id
+            checkpoint = ctx.checkpoints.begin_or_resume(CheckpointBeginRequest(
+                session_id=ctx.session_id,
+                idempotency_key=f'{ctx.idempotency_key}:repair:{repair_parent_revision_id}',
+                tool_name=tool_name, attachment_id=normalized['attachment_id'],
+                attachment_sha256=str(attachment_meta['sha256']), normalized_args=normalized,
+                model_decision_revision=ctx.model_decision_revision))
+            continue
+        if checkpoint.status != 'complete':
+            try:
+                checkpoint = ctx.checkpoints.complete(checkpoint.checkpoint_id, revision.revision_id)
+            except Exception as error:
+                current = ctx.checkpoints.get(checkpoint.checkpoint_id)
+                if current.status != 'complete' or current.artifact_revision_id != revision.revision_id:
+                    return {**_rejected('WORKBOOK_CHECKPOINT_RECOVERY_FAILED', str(error)), 'tool': tool_name}
+                checkpoint = current
         return {**_result_from_revision(
             revision=revision,
             checkpoint=checkpoint,
@@ -394,6 +477,8 @@ async def _build_workbook(
         }
     try:
         adapter_args = {**normalized, "_source_name": str(attachment_meta["original_name"])}
+        if artifact_kind == 'lsr_workbook' and ctx.document_price_basis is not None:
+            adapter_args['_document_price_basis'] = ctx.document_price_basis
         generated = await _call_adapter(adapter, source_path, adapter_args, output_path, progress)
         generated_path = Path(str(generated.get("file_path") or output_path))
         display_name = workbook_download_filename(
@@ -409,11 +494,7 @@ async def _build_workbook(
         revision = ctx.artifacts.create_revision(ArtifactRevisionRequest(
             artifact_kind=artifact_kind,
             file_path=generated_path,
-            source_scope=tuple(
-                [f"attachment:{normalized['attachment_id']}"]
-                + [f"dataset:{item}" for item in normalized["dataset_ids"]]
-                + ([f"project:{normalized['project_id']}"] if normalized.get("project_id") is not None else [])
-            ),
+            source_scope=source_scope,
             profile_revision_id=ctx.profile_revision_id,
             model_identity=ctx.model_identity,
             model_preset=ctx.model_preset,
@@ -422,12 +503,17 @@ async def _build_workbook(
                 "version": "1.0.0",
                 "idempotency_key": ctx.idempotency_key,
                 "model_decision_revision": ctx.model_decision_revision,
+                "session_id": ctx.session_id,
+                "attachment_sha256": checkpoint.attachment_sha256,
+                "normalized_args_sha256": checkpoint.normalized_args_sha256,
                 "source_rows": int(generated.get("source_rows") or 0),
+                "bound_rows": generated.get("bound_rows"),
+                "row_calculation": generated.get("row_calculation"),
             },),
             decision_checkpoint_id=checkpoint.checkpoint_id,
             missing=missing,
             blockers=blockers,
-            parent_revision_id=normalized["parent_revision_id"],
+            parent_revision_id=repair_parent_revision_id or normalized["parent_revision_id"],
         ))
         completed = ctx.checkpoints.complete(checkpoint.checkpoint_id, revision.revision_id)
         return {**_result_from_revision(
@@ -435,9 +521,25 @@ async def _build_workbook(
             checkpoint=completed,
             attachment_meta=attachment_meta,
             source_rows=int(generated.get("source_rows") or 0),
+            bound_rows=generated.get("bound_rows"),
+            row_calculation=generated.get("row_calculation"),
             resumed=checkpoint.status != "running" or checkpoint.phase != "started",
         ), "tool": tool_name}
+    except asyncio.CancelledError as cancelled:
+        try:
+            if ctx.checkpoints.get(checkpoint.checkpoint_id).status != 'complete':
+                ctx.checkpoints.record_status(checkpoint.checkpoint_id, status='blocked',
+                    blockers=('WORKBOOK_CANCELLED',))
+        except Exception as cleanup_error:
+            raise cancelled from cleanup_error
+        raise
     except Exception as error:
+        current = ctx.checkpoints.get(checkpoint.checkpoint_id)
+        if current.status == 'complete' and current.artifact_revision_id:
+            revision = ctx.artifacts.get_revision(current.artifact_revision_id)
+            ctx.artifacts.read_bytes(revision.revision_id)
+            return {**_result_from_revision(revision=revision, checkpoint=current,
+                attachment_meta=attachment_meta, resumed=True), 'tool': tool_name}
         failed = ctx.checkpoints.record_status(
             checkpoint.checkpoint_id,
             status="failed",

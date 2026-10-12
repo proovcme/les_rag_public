@@ -5,6 +5,7 @@ import pytest
 
 from proxy.routers.chat import (
     ChatRequest,
+    _assistant_text,
     _compact_question_excerpt,
     _estimate_harness_plan_tokens,
     _format_harness,
@@ -25,6 +26,24 @@ from proxy.routers.chat import (
     _format_tool_results_for_model,
     _chat_model_final_answer,
 )
+
+
+def test_chat_visible_answer_never_echoes_control_items():
+    assert _assistant_text({"content": "<think>draft</think>Ответ [1]"}) == "Ответ [1]"
+    # Эхо собственного контекста ответом не является — раньше пользователь получал этот дамп.
+    checkpoint = '{"context_role":"advisory_state","item_id":"chat-checkpoint:s1","kind":"checkpoint"}'
+    blocker = '{"context_role":"advisory_state","item_id":"chat-blocker:s1:0","kind":"blocker"}'
+    envelope = '{"result":{"reference":"tool-result:compat:dataset_map:1:2"},"status":"error"}'
+    assert _assistant_text({"content": None, "reasoning_content": checkpoint}) == ""
+    assert _assistant_text({"content": "", "reasoning": blocker}) == ""
+    assert _assistant_text({"content": None, "reasoning_content": envelope}) == ""
+    assert _assistant_text({"content": None}) == ""
+    # Провайдеры, кладущие финальный текст в reasoning (ollama qwen3.5, FreeToken), не затронуты.
+    assert _assistant_text({"content": "", "reasoning": "Итог: да."}) == "Итог: да."
+    # Структурированные пути (submit_json) возвращают ответ аргументами — это не служебный канал.
+    assert _assistant_text(
+        {"content": None, "tool_calls": [{"function": {"arguments": '{"rows":[]}'}}]}
+    ) == '{"rows":[]}'
 from proxy.services.smeta_chat_adapter_service import (
     _format_smeta_norm_lookup_results_for_model,
     _smeta_direct_max_tokens,
@@ -2087,3 +2106,304 @@ def test_harness_direct_quantity_title_does_not_show_planner_area():
 
     assert "Монтаж металлоконструкций" in text
     assert "150 м²" not in text
+
+
+def test_model_driven_generation_budget_respects_operator_length():
+    """Model-driven ответ не игнорирует явный выбор длины и потолок пресета."""
+    from proxy.services.answer_form_service import apply_response_length, classify_answer_form
+
+    reserve = 4096
+    for preference, expected in (
+        ("short", 1024),        # выбор оператора строже пресета — он и применяется
+        ("detailed", reserve),  # запрос длиннее пресета — режет пресет
+        (None, reserve),        # умолчание 8192 > резерва — режет пресет
+    ):
+        form = apply_response_length(classify_answer_form("Есть ли в источниках ХОВС"), preference)
+        assert min(form.max_tokens, reserve) == expected, preference
+
+
+def test_truncated_answer_preserves_model_text_and_marks_the_limit():
+    """A length limit must not delete model-authored evidence or decisions."""
+    from proxy.services.answer_form_service import finalize_truncated_answer
+
+    text = ("**Вывод**\n\nХОВС в источниках нет [Источник 1].\n"
+            "*   Химическая очистка воды (в контек")
+    closed = finalize_truncated_answer(text)
+    assert closed.startswith(text)
+    assert "ХОВС в источниках нет [Источник 1]." in closed
+    assert "усеч" in closed.casefold()
+
+    # Уже завершённый текст не трогаем, кроме пометки.
+    whole = "Ответ полон. Второе предложение."
+    assert finalize_truncated_answer(whole).startswith(whole)
+
+    # Без единой границы предложения текст сохраняется целиком.
+    ragged = "однострочный фрагмент без точки"
+    assert ragged in finalize_truncated_answer(ragged)
+
+
+@pytest.mark.parametrize("text", [
+    "Расход 12.5 м3/ч [Источник 1]",
+    "| Норма | Количество |\n| 08-02.1 | 12.5 |",
+    'Расчёт по СП 60.13330.2020, п. 7.2 [Источник 2]',
+])
+def test_truncation_never_cuts_numbers_tables_or_citations(text):
+    from proxy.services.answer_form_service import finalize_truncated_answer
+    assert finalize_truncated_answer(text).startswith(text)
+
+
+@pytest.mark.parametrize("text", ['{"answer":"12.5", "rows":[{"quantity":12.5}]}', '{"rows":[{"quantity":12.5', '```json\n{"quantity":12.5}\n```'])
+def test_truncation_preserves_structured_payload_bytes(text):
+    from proxy.services.answer_form_service import finalize_truncated_answer
+    assert finalize_truncated_answer(text) == text
+
+
+def test_answer_echoing_the_system_prompt_is_rejected():
+    """Вырождение в пересказ собственной инструкции — не ответ."""
+    from proxy.services.answer_form_service import answer_echoes_prompt
+
+    system = ("Ты — Л.Е.С. Сам выбирай инструменты, но профессиональные выводы формулируй "
+              "сам по evidence.\n\n# Правила\n- Отделяй подтверждённое источниками от "
+              "инженерного вывода. Если вывод является обобщением по нескольким фрагментам, "
+              "так и скажи.\n- Если источники конфликтуют, покажи конфликт.")
+
+    echo = ("Ты — Л.Е.С. Сам выбирай инструменты, но профессиональные выводы формулируй "
+            "сам по evidence.\n\n# Правила\n- Отделяй подтверждённое источниками от "
+            "инженерного вывода. Если вывод является обобщением по нескольким фрагментам, "
+            "так и скажи.")
+    assert answer_echoes_prompt(echo, system) is True
+
+    real = ("**Вывод**\n\nХОВС в источниках нет [Источник 1]. Проверены разделы 5 и 12: "
+            "холодильное оборудование в спецификациях отсутствует.")
+    assert answer_echoes_prompt(real, system) is False
+
+    # Короткое совпадение формулировок не считается эхом.
+    assert answer_echoes_prompt("Отделяй подтверждённое источниками.", system) is False
+    assert answer_echoes_prompt("", system) is False
+    assert answer_echoes_prompt(real, "") is False
+
+
+def test_degenerate_repetition_is_rejected():
+    """Зацикливание на одном фрагменте — не ответ, даже если текст осмысленный."""
+    from proxy.services.answer_form_service import answer_is_degenerate_repetition
+
+    block = ("Итоговый инженерный ответ. В источниках ХОВС нет. Источник 1 описывает "
+             "ландшафтные работы, растительность и рельеф. Источник 2 содержит расчёты "
+             "санузлов и душевых для посетителей и персонала. ")
+    assert answer_is_degenerate_repetition(block * 6) is True
+    assert answer_is_degenerate_repetition(block * 2) is False
+    assert answer_is_degenerate_repetition(block) is False
+
+    normal = ("**Вывод**\n\nХарактеристики систем вентиляции приведены в таблице "
+              "[Источник 3]: П1 — 1200 м3/ч, В1 — 950 м3/ч. Марки оборудования "
+              "в выборку не попали.\n\n**Источники:**\n* [Источник 3] — раздел ОВ.")
+    assert answer_is_degenerate_repetition(normal) is False
+
+    # Повторяющиеся короткие строки списка не считаются вырождением.
+    listing = "\n".join(f"* [Источник {i}] — раздел {i}" for i in range(1, 9))
+    assert answer_is_degenerate_repetition(listing) is False
+
+
+def test_transient_retrieval_blocks_are_distinguished_from_user_facing_ones():
+    """Временный сбой контура — не ответ диалога; отсутствие данных — ответ."""
+    from proxy.services.answer_form_service import is_transient_retrieval_block
+
+    # Инфраструктура: пропадает при повторе, в историю попадать не должна.
+    assert is_transient_retrieval_block("native_rrf_failed") is True
+    assert is_transient_retrieval_block("reranker_unavailable") is True
+    assert is_transient_retrieval_block("reranker_failed") is True
+    assert is_transient_retrieval_block("retrieval_blocked") is True
+
+    # Состояние корпуса: осмысленный ответ пользователю, история нужна.
+    assert is_transient_retrieval_block("dataset_scope_not_found") is False
+    assert is_transient_retrieval_block("no_datasets") is False
+    assert is_transient_retrieval_block("corpus_empty") is False
+    assert is_transient_retrieval_block("") is False
+
+
+def test_carnice_recipe_options_are_owned_by_the_module():
+    """Настройки запуска Carnice живут в модуле, а не только в кэше Lemonade."""
+    from extensions.lemonade.model_policy import recommended_recipe_options
+
+    for model in ("Carnice-Qwen3.6-MoE-35B-A3B-i1-GGUF-IQ2_M",
+                  "Carnice-Qwen3.6-MoE-35B-A3B-i1-GGUF-IQ2_S"):
+        options = recommended_recipe_options(model)
+        # Ниже 16384 пресет падает до qwen-9b-restrictive; реальные запросы дают 17-20 тыс.
+        assert options["ctx_size"] >= 24576, model
+        args = options["llamacpp_args"]
+        assert "--temp 0.2" in args, model
+        assert "--flash-attn on" in args, model
+        # preserve_thinking Lemonade добавляет сам; закреплять его в модуле нельзя.
+        assert "preserve_thinking" not in args, model
+        assert options["merge_args"] is True
+
+    assert recommended_recipe_options("qwen3.5-9b-FLM") == {}
+    assert recommended_recipe_options("") == {}
+
+
+def test_selected_answer_model_has_its_own_recipe_profile():
+    """Профиль выбранной модели ответа принадлежит модулю, а не только кэшу вендора."""
+    from extensions.lemonade.model_policy import recommended_recipe_options
+
+    options = recommended_recipe_options("Qwen3.6-35B-A3B-GGUF-UD-IQ2_XXS-unsloth")
+    assert options["ctx_size"] == 32768
+    args = options["llamacpp_args"]
+    assert "--temp 0.2" in args
+    assert "--flash-attn on" in args
+    # Несколько слотов KV-кэша делят одно окно: при 28-32 тыс. входа запрос не помещается.
+    assert "--parallel 1" in args
+    assert "preserve_thinking" not in args
+    assert options["merge_args"] is True
+
+    # Регистр идентификатора приходит из каталога вендора и меняется между версиями.
+    assert recommended_recipe_options("qwen3.6-35b-a3b-gguf-ud-iq2_xxs-unsloth") == options
+
+    # Соседние квантования того же семейства своего проверенного профиля не имеют:
+    # переносить чужие значения по совпадению имени нельзя.
+    assert recommended_recipe_options("Qwen3.6-35B-A3B-GGUF-UD-Q2_K_XL") == {}
+    assert recommended_recipe_options("Qwen3.6-35B-A3B-MTP-GGUF-UD-IQ2_M") == {}
+
+
+def test_fabricated_links_are_stripped_but_text_survives():
+    """Модель выдумывает URL источников — разметку снимаем, содержание оставляем."""
+    from proxy.services.answer_form_service import strip_unsupported_links
+
+    known = ["sample_pd/РАЗДЕЛ 8/Часть 1/ООС.pdf", "sample_pd/РАЗДЕЛ 5/ОВ.pdf"]
+
+    fabricated = ("*   Источник 1: [Раздел ПД №8. Часть 1. ООС.pdf](https://example.com/source1)\n"
+                  "*   Источник 2: [ОВ.pdf](http://localhost:9999/x)")
+    cleaned, removed = strip_unsupported_links(fabricated, known)
+    assert "example.com" not in cleaned
+    assert "localhost:9999" not in cleaned
+    assert "Раздел ПД №8. Часть 1. ООС.pdf" in cleaned  # текст ссылки сохранён
+    assert "ОВ.pdf" in cleaned
+    assert removed == 2
+
+    # Ссылка на известный источник остаётся нетронутой.
+    supported = "См. [ОВ](sample_pd/РАЗДЕЛ 5/ОВ.pdf) — таблица 3.2."
+    kept, n = strip_unsupported_links(supported, known)
+    assert kept == supported and n == 0
+
+    # Текст без ссылок не меняется.
+    plain = "Таблица 3.5 приведена в [Источник 1]."
+    assert strip_unsupported_links(plain, known) == (plain, 0)
+
+
+def test_source_map_dump_is_recognised_as_control_output():
+    """Элементы карты источников — контекст модели, а не ответ пользователю."""
+    from proxy.services.llm_transport_profile_service import is_control_channel_text
+
+    # Фактический дамп из chat_history 195.
+    dump = ('{"dataset_id":"8349b7ec","doc_id":"982a44f2:budget:720b4af2",'
+            '"doc_name":"sample_pd/РАЗДЕЛ 5/ПВ.pdf","header":"[Источник 2 | score=0.200]",'
+            '"index":2,"label":"Источник 2","original_chunk_index":1,"score":0.2,'
+            '"snippet":"Раздел: Page 11 part 1/2"}')
+    assert is_control_channel_text(dump) is True
+
+    # Прежние виды служебных объектов по-прежнему распознаются.
+    assert is_control_channel_text('{"context_role":"advisory_state","kind":"blocker"}') is True
+    assert is_control_channel_text('{"result":{"reference":"tool-result:x:1"}}') is True
+
+    # Ответ модели и структурированный результат — не служебный вывод.
+    assert is_control_channel_text("Расход для П1: 1200 м³/ч [Источник 1]") is False
+    assert is_control_channel_text('{"rows":[{"work_id":"w1"}]}') is False
+
+
+def test_context_section_headers_are_control_output():
+    """Служебные заголовки контекста модель иногда пересказывает как ответ."""
+    from proxy.services.llm_transport_profile_service import is_control_channel_text
+
+    # Фактический случай: на вопрос про МОПБ пришёл индекс evidence прошлых реплик.
+    index_block = (
+        "Индекс evidence предыдущих реплик (это адреса для повторного чтения, "
+        "не самостоятельное основание):\n"
+        "- S1: sample_pd/РАЗДЕЛ 8/Часть 2/ООС.pdf · цитировался\n"
+        "- S2: sample_pd/РАЗДЕЛ 5/ОВ.pdf · цитировался"
+    )
+    assert is_control_channel_text(index_block) is True
+
+    assert is_control_channel_text(
+        "ПАСПОРТ ОБЛАСТИ ДЛЯ МОДЕЛИ (навигация, не источник фактов)\nschema: v1"
+    ) is True
+    assert is_control_channel_text("Материалы из найденных документов:\n- фрагмент") is True
+
+    # Обычный ответ, в том числе со ссылками на источники, не задевается.
+    assert is_control_channel_text(
+        "Таблица 3.5 содержит акустические характеристики [Источник 1]."
+    ) is False
+
+
+def test_source_header_listing_is_control_output():
+    """Модель иногда выводит заголовки карты источников вместо ответа."""
+    from proxy.services.llm_transport_profile_service import is_control_channel_text
+
+    # Фактический случай: chat_history 202, нормативный датасет.
+    listing = (
+        "[Источник 1 | СП 500.1325800.2018. Свод правил. Здания полиции.pdf | score=0.500 | стр. 17]\n"
+        "[Источник 2 | СП 13-101-99. Правила надзора, обследования.pdf | score=0.333 | стр. 1]\n"
+        "[Источник 3 | СП 60.13330.2020.pdf | score=0.250 | стр. 4]"
+    )
+    assert is_control_channel_text(listing) is True
+
+    # Одиночная ссылка в живом ответе не задевается.
+    assert is_control_channel_text(
+        "Кратность воздухообмена задана в [Источник 1], пункт 7.1.3."
+    ) is False
+    # И перечень источников в конце нормального ответа тоже.
+    assert is_control_channel_text(
+        "**Вывод:** требования заданы СП 60.13330.\n\n"
+        "**Источники:**\n* [Источник 1] — СП 60.13330\n* [Источник 2] — СП 51.13330"
+    ) is False
+
+
+def test_chat_httpx_clients_never_trust_environment_proxies():
+    """Системный SOCKS-прокси Windows ломает loopback-запросы к модели."""
+    import re
+    from pathlib import Path
+
+    source = Path("proxy/routers/chat.py").read_text(encoding="utf-8", errors="replace")
+    clients = re.findall(r"httpx\.AsyncClient\((?:[^()]|\([^()]*\))*\)", source)
+    assert clients, "клиенты httpx не найдены — проверь селектор"
+    unguarded = [c for c in clients if "trust_env" not in c]
+    assert not unguarded, (
+        "httpx.AsyncClient без trust_env=False подхватит socks4:// из окружения Windows "
+        f"и уронит чат: {unguarded}"
+    )
+
+
+def test_embedding_profile_frees_memory_before_generation():
+    """Эмбеддер обязан уходить из памяти раньше модели ответа.
+
+    Обе модели держались по 300 с и вместе занимали ~14 ГБ из 31; на KV-кэш при
+    декодировании места не оставалось, и вендор отвечал
+    `decode() failed: vk::Device::allocateMemory: ErrorOutOfDeviceMemory`.
+    """
+    from extensions.lemonade.model_policy import recommended_recipe_options
+
+    options = recommended_recipe_options("Qwen3-Embedding-0.6B-GGUF")
+    assert options["evict_idle_timeout"] == 60
+    assert options["ctx_size"] == 2048
+    # Модель ответа держится дольше: её загрузка стоит минуты, эмбеддера — секунды.
+    answer = recommended_recipe_options("Qwen3.6-35B-A3B-GGUF-UD-IQ2_XXS-unsloth")
+    assert answer["evict_idle_timeout"] > options["evict_idle_timeout"]
+
+
+def test_bootstrap_keeps_the_vendor_key_of_a_builtin_model():
+    """Вендор хранит встроенные модели под `builtin.`; второй ключ создал бы дубль."""
+    from extensions.lemonade.model_policy import plan_recipe_options_bootstrap
+
+    existing = {"builtin.Qwen3-Embedding-0.6B-GGUF": {"ctx_size": 2048}}
+    plan = plan_recipe_options_bootstrap(existing, ["Qwen3-Embedding-0.6B-GGUF"])
+
+    assert "user.Qwen3-Embedding-0.6B-GGUF" not in plan["add"]
+    assert "builtin.Qwen3-Embedding-0.6B-GGUF" in plan["differs"]
+    mismatch = plan["differs"]["builtin.Qwen3-Embedding-0.6B-GGUF"]
+    assert mismatch["evict_idle_timeout"]["recommended"] == 60
+
+
+def test_bootstrap_adds_unknown_model_under_the_user_prefix():
+    """Модель, которой в файле нет, добавляется как пользовательская."""
+    from extensions.lemonade.model_policy import plan_recipe_options_bootstrap
+
+    plan = plan_recipe_options_bootstrap({}, ["Qwen3.6-35B-A3B-GGUF-UD-IQ2_XXS-unsloth"])
+    assert "user.Qwen3.6-35B-A3B-GGUF-UD-IQ2_XXS-unsloth" in plan["add"]

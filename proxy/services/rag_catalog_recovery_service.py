@@ -6,6 +6,7 @@ before applying orphan dataset rows.
 """
 
 from __future__ import annotations
+from backend.http_client_policy import trust_env_for_url
 
 import sqlite3
 import time
@@ -34,7 +35,7 @@ def scan_qdrant_catalog(
 ) -> dict[str, Any]:
     """Return bounded summaries plus file-level rows for orphan datasets."""
     known = _catalog_dataset_ids(meta_db_path)
-    client = QdrantClient(url=qdrant_url, timeout=60.0, check_compatibility=False)
+    client = QdrantClient(trust_env=trust_env_for_url(qdrant_url), url=qdrant_url, timeout=60.0, check_compatibility=False)
     offset = None
     datasets: dict[str, dict[str, Any]] = {}
     try:
@@ -233,7 +234,7 @@ def rebuild_lexical_catalog(
     selected = [str(value) for value in dataset_ids if str(value)]
     if not selected:
         return {"indexed": 0, "points": 0}
-    client = QdrantClient(url=qdrant_url, timeout=60.0, check_compatibility=False)
+    client = QdrantClient(trust_env=trust_env_for_url(qdrant_url), url=qdrant_url, timeout=60.0, check_compatibility=False)
     offset = None
     indexed = 0
     points_seen = 0

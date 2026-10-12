@@ -15,6 +15,9 @@ use tauri::{
 };
 use serde_json::{json, Value};
 
+#[cfg(target_os = "windows")]
+mod setup_probe;
+
 const UI_URL: &str = "http://127.0.0.1:8051/les";
 const HEALTH_URL: &str = "http://127.0.0.1:8051/healthz";
 static LIFECYCLE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
@@ -260,18 +263,21 @@ fn read_dotenv_value(path: &std::path::Path, key: &str) -> String {
 }
 
 #[tauri::command]
-fn setup_snapshot(app: AppHandle) -> Value {
+async fn setup_snapshot(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || collect_setup_snapshot(app))
+        .await.map_err(|error| format!("setup snapshot worker failed: {error}"))
+}
+
+fn collect_setup_snapshot(app: AppHandle) -> Value {
     #[cfg(target_os = "windows")]
     {
         let (ollama, docker) = windows_programs();
         let ollama_output = ollama
             .as_ref()
             .and_then(|program| {
-                windows_command(program)
-                    .arg("list")
-                    .stderr(Stdio::null())
-                    .output()
-                    .ok()
+                setup_probe::output(
+                    windows_command(program).arg("list"), Duration::from_secs(3),
+                ).ok()
             });
         let ollama_running = ollama_output
             .as_ref()
@@ -291,14 +297,11 @@ fn setup_snapshot(app: AppHandle) -> Value {
         let docker_running = docker
             .as_ref()
             .and_then(|program| {
-                windows_command(program)
-                    .arg("info")
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .ok()
+                setup_probe::output(
+                    windows_command(program).arg("info"), Duration::from_secs(3),
+                ).ok()
             })
-            .is_some_and(|status| status.success());
+            .is_some_and(|output| output.status.success());
         let env_path = windows_state_root().map(|root| root.join(".env"));
         let configured_provider = env_path
             .as_ref()

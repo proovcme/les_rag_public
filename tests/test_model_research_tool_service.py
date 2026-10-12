@@ -5,6 +5,42 @@ import pytest
 from proxy.services.model_research_tool_service import ModelResearchToolService
 
 
+def test_model_rag_failure_preserves_search_boundary_without_query_or_raw_trace():
+    from proxy.services.model_research_tool_service import model_rag_failure_detail
+    rows = [
+        {'status': 'ok'},
+        {'status': 'missing', 'operation': 'smeta_norm_native_rrf',
+         'inputs': [{'q': 'original model query'}],
+         'trace': {'rag': {'status': 'ok', 'collection': 'les_smeta_norm_cards'}}},
+        {'status': 'blocked', 'operation': 'native_rrf',
+         'trace': {'error_code': 'RAG_NOT_READY', 'reason': 'generation_coverage_incomplete',
+                   'collection': 'les_rag', 'exception': 'password=secret'}},
+    ]
+    detail = model_rag_failure_detail(rows)
+    assert detail['code'] == 'MODEL_RAG_SEARCH_INCOMPLETE'
+    # До 17.09 выполненный поиск без совпадений (строка 2) тоже считался отказом прохода.
+    # Аудит Codex P2: это ответ базы, он уходит модели как пустая выдача; остановкой
+    # остаётся только технический отказ (строка 3). См. test_model_rag_empty_search.
+    assert detail['blocked_queries'] == [3]
+    assert detail['query_failures'][0]['error_code'] == 'RAG_NOT_READY'
+    assert 'secret' not in str(detail) and 'original model query' not in str(detail)
+    assert model_rag_failure_detail([{'status': 'ok'}]) is None
+
+
+def test_failed_tool_guard_ignores_call_id_but_allows_changed_args_and_success():
+    from proxy.services.model_research_tool_service import FailedToolCallGuard
+    guard = FailedToolCallGuard()
+    call = {"call_id": "one", "tool": "dataset_map", "args": {"dataset_id": "d", "depth": "deep"}}
+    assert not guard.repeated(call)
+    guard.record(call, {"status": "error", "warnings": ["TOOL_RESULT_BUDGET_EXCEEDED"]})
+    assert guard.repeated({"call_id": "two", "tool": "dataset_map", "args": {"depth": "deep", "dataset_id": "d"}})
+    changed = {"tool": "dataset_map", "args": {"dataset_id": "d", "depth": "shallow"}}
+    assert not guard.repeated(changed)
+    guard.record(changed, {"status": "ok"})
+    assert not guard.repeated(changed)
+    assert not FailedToolCallGuard().repeated(call)
+
+
 class _Retrieval:
     def __init__(self):
         self.chunks = [
@@ -187,6 +223,31 @@ async def test_estimator_search_uses_dedicated_smeta_rrf_and_configured_limit():
 
 
 @pytest.mark.asyncio
+async def test_smeta_trace_does_not_claim_user_dataset_filter_was_applied_to_norms():
+    calls = []
+    def norm_retrieve(query, *, limit):
+        calls.append((query, limit))
+        return {'cards': [], 'retrieval_trace': {
+            'filters': {'base_types': ['explicit-family'], 'collections': []},
+            'rag': {'status': 'ok', 'collection': 'dedicated-generation'}}}
+    service = ModelResearchToolService(
+        retrieve=lambda **kwargs: pytest.fail('No general search expected'),
+        frozen_dataset_ids=('selected-user-archive', 'selected-normative-reference'),
+        retrieval_kwargs={}, fallback=lambda *args: pytest.fail('No fallback expected'),
+        smeta_norm_retrieve=norm_retrieve, model_evidence_k=6)
+    result = await service.execute({'tool': 'search_sources', 'args': {'q': 'literal query'}})
+    assert calls == [('literal query', 6)]
+    assert result.payload['status'] == 'missing'
+    routing = result.retrieval_trace['scope_routing']
+    assert routing['user_rag']['dataset_ids'] == ['selected-user-archive', 'selected-normative-reference']
+    assert routing['user_rag']['applied_to_normative'] is False
+    assert routing['normative']['collection'] == 'dedicated-generation'
+    assert routing['normative']['filters'] == {'base_types': ['explicit-family'], 'collections': []}
+    assert routing['practice']['user_dataset_filter_applied'] is False
+    assert result.payload['trace']['scope_routing'] == routing
+
+
+@pytest.mark.asyncio
 async def test_estimator_search_never_falls_back_when_dedicated_rrf_is_not_ready():
     async def general_retrieve(**_kwargs):
         pytest.fail("blocked smeta RRF must not fall back to mixed les_rag")
@@ -238,3 +299,22 @@ async def test_non_search_tool_delegates_unchanged():
     assert delegated == [("read_source", {"doc_id": "d1"})]
     assert result.payload is payload
     assert result.chunks == ()
+
+
+def test_failed_tool_call_guard_reports_calls_for_the_prompt():
+    """Модель должна видеть, какие вызовы уже неуспешны, иначе повторяет их."""
+    from proxy.services.model_research_tool_service import FailedToolCallGuard
+
+    guard = FailedToolCallGuard()
+    assert guard.failed_summary() == ()
+
+    call = {"tool": "dataset_map", "args": {"dataset_id": "x", "depth": "deep"}}
+    guard.record(call, {"status": "error"})
+    guard.record({"tool": "search_sources", "args": {"q": "вентиляция"}}, {"status": "ok"})
+
+    summary = guard.failed_summary()
+    assert len(summary) == 1
+    assert summary[0]["tool"] == "dataset_map"
+    assert summary[0]["args"] == {"dataset_id": "x", "depth": "deep"}
+    # Успешный вызов в сводку не попадает.
+    assert all(item["tool"] != "search_sources" for item in summary)

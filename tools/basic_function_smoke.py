@@ -9,7 +9,7 @@
   uv run python tools/basic_function_smoke.py --proxy-url http://127.0.0.1:8050 --release
 
 Каждый кейс → {name,status,severity,elapsed_ms,evidence,reason}. P0 fail → exit 1. P1 fail → exit 1 при --release.
-Транзиентный memory-guard на чате (503) = WARN (честный отказ), не FAIL.
+Известный транзиентный memory/admission отказ = WARN; остальные 503 = FAIL.
 """
 
 from __future__ import annotations
@@ -172,13 +172,40 @@ def _has_version_trace(payload: dict) -> bool:
     return isinstance(versions, dict) and isinstance(versions.get("version_info"), dict)
 
 
+def _chat_unavailable(resp, name, severity, t0):
+    """Keep the actual 503 detail; only recognized admission refusals are transient."""
+    try:
+        payload = resp.json()
+    except ValueError:
+        payload = getattr(resp, "text", "")
+    detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+    code = ""
+    if isinstance(detail, dict):
+        code = str(detail.get("error_code") or detail.get("code") or "")
+        reason = str(detail.get("reason") or detail.get("message") or "")
+        rendered = json.dumps(detail, ensure_ascii=False)
+    else:
+        reason = str(detail or "")
+        rendered = reason
+    # These are the actual formats emitted by runtime_admission. An explicit
+    # unrelated error code must never be downgraded because its message mentions RAM.
+    transient = code == "MODEL_QUEUE_TIMEOUT" or (
+        not code and (reason == "MODEL_QUEUE_TIMEOUT"
+                      or reason.startswith(("ram_free_gb=", "swap_pct=")))
+    )
+    evidence = {"http": 503}
+    if code:
+        evidence["error_code"] = code
+    return _r(name, severity, "warn" if transient else "fail", t0,
+              f"http=503: {code + ': ' if code else ''}{rendered[:500]}", evidence)
+
+
 def check_chat_glossary(c, base, *, timeout: float):
     t0 = time.monotonic()
     try:
         resp = _chat(c, base, "что такое ОЖР", timeout=timeout)
         if resp.status_code == 503:
-            return _r("chat_glossary", "P0", "warn", t0, f"memory-guard (транзиент): {resp.json().get('detail','')[:80]}",
-                      {"http": 503})
+            return _chat_unavailable(resp, "chat_glossary", "P0", t0)
         d = resp.json()
         ans = (d.get("answer") or "").strip()
         status = d.get("crag_status") or d.get("status") or ""
@@ -211,7 +238,7 @@ def check_chat_project_noscope(c, base, *, timeout: float):
     try:
         resp = _chat(c, base, "расскажи про котельную на лесном 64", timeout=timeout)
         if resp.status_code == 503:
-            return _r("chat_project_noscope", "P1", "warn", t0, "memory-guard (транзиент)", {"http": 503})
+            return _chat_unavailable(resp, "chat_project_noscope", "P1", t0)
         d = resp.json()
         ans = (d.get("answer") or "").strip()
         status = d.get("crag_status") or d.get("status") or ""

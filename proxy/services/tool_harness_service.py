@@ -596,6 +596,47 @@ class ToolHarness:
         )
 
 
+def _compact_dataset_navigation(value: dict[str, Any]) -> dict[str, Any]:
+    """Bound navigation, never source evidence, including nested list counts.
+
+    The tool envelope also carries a trace copy. Reserve room for both under
+    the executor's 7000-character/20-item budget rather than raising that budget.
+    """
+    remaining_items = 6
+    remaining_chars = 1800
+    truncated = False
+
+    def project(item: Any, depth: int = 0) -> Any:
+        nonlocal remaining_items, remaining_chars, truncated
+        if isinstance(item, str):
+            limit = min(160, max(0, remaining_chars))
+            text = item[:limit]
+            remaining_chars -= len(text)
+            truncated |= len(text) != len(item)
+            return text
+        if isinstance(item, dict):
+            entries = list(item.items())
+            limit = 8 if depth < 4 else 0
+            truncated |= len(entries) > limit
+            return {str(key)[:80]: project(child, depth + 1)
+                    for key, child in entries[:limit]}
+        if isinstance(item, (list, tuple)):
+            limit = min(2, remaining_items) if depth < 4 else 0
+            remaining_items -= min(limit, len(item))
+            truncated |= len(item) > limit
+            return [project(child, depth + 1) for child in item[:limit]]
+        return item
+
+    # Keep identity outside projection; prioritize summary over deep maps.
+    result = {"dataset_id": value["dataset_id"], "schema": value["schema"]}
+    result.update(project({key: child for key, child in value.items()
+                           if key not in result}))
+    result["navigation_truncated"] = truncated
+    if truncated:
+        result["detail"] = "Compact navigation preview; use search_sources/read_source for evidence."
+    return result
+
+
 def _tool_dataset_map(args: dict[str, Any]) -> dict[str, Any]:
     dataset_id = str(args.get("dataset_id") or "").strip()
     if not dataset_id:
@@ -623,7 +664,7 @@ def _tool_dataset_map(args: dict[str, Any]) -> dict[str, Any]:
         operation="build",
         inputs=[{"dataset_id": dataset_id, "depth": str(args.get("depth") or "deep")}],
         status="ok",
-        result=result,
+        result=_compact_dataset_navigation(result),
         evidence=[{"kind": "navigation", "dataset_id": dataset_id, "is_evidence": False}],
         trace="built dataset navigation map from notebook/typed memory",
     )

@@ -12,6 +12,7 @@
 
 ```
 запрос → runtime_admission (очередь/режим)
+       → optional module manifest handlers (bounded non-terminal model context only)
        → ProfileResolver.resolve() → Profile
        → retrieval / exact readers / typed context
        → model-owned research loop выбирает read-only tools
@@ -78,5 +79,12 @@ shortlist и исполнении. Trace явно сообщает `tool_policy_
 - Операторские заметки не создаются, не читаются и не подмешиваются в чат.
 - Кодовый visible final для любого обычного текстового запроса запрещён независимо от формулировки и
   доступности router/tool-selector.
+- Optional feature modules are loaded only from the versioned explicit registry
+  `config/modules.json`. Their manifests are validated before entry-point resolution; a malformed
+  registry fails closed, unavailable optional code is isolated, and router method/path collisions
+  abort mounting before FastAPI registration. Module chat handlers may prepend only bounded
+  `system_instructions` or `tool_instructions` to the existing model-generation directive. A
+  terminal/message-bearing handler response is rejected, so modules cannot replace the model-authored
+  answer, source locators, or estimate packaging.
 - Глоссарий и реестр проектов возвращают структурированное evidence без поля `answer`;
   блокеры могут быть сформированы кодом, но не подменяют предметное объяснение.

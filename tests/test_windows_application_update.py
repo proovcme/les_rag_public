@@ -788,6 +788,52 @@ def test_windows_runtime_recovers_hung_exact_recorded_runtime(monkeypatch, tmp_p
     assert terminated == [(55, True), (56, True)]
 
 
+def test_windows_runtime_v1_state_requires_recorded_python_executable(monkeypatch, tmp_path):
+    state = tmp_path / "LES"
+    runtime = tmp_path / "runtime"
+    logs = state / "logs"
+    python = state / ".venv" / "Scripts" / "pythonw.exe"
+    logs.mkdir(parents=True)
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"fixture")
+    (logs / "windows-light-state.json").write_text(
+        json.dumps(
+            {
+                "status": "started",
+                "mode": "full",
+                "proxy_pid": 55,
+                "ui_pid": 56,
+                "state_root": str(state),
+                "process_contract": "direct_python_no_console_v1",
+                "python_executable": str(python),
+            }
+        ),
+        encoding="utf-8",
+    )
+    listeners = {8050: 55, 8051: 56}
+    terminated: list[int] = []
+    monkeypatch.setattr(windows_runtime, "_listening_pids", lambda _ports: dict(listeners))
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(windows_runtime, "_process_name", lambda _pid: "pythonw.exe")
+    monkeypatch.setattr(windows_runtime, "_process_executable", lambda _pid: python)
+    def terminate(pid, **_kwargs):
+        terminated.append(pid)
+        for port, owner in list(listeners.items()):
+            if owner == pid:
+                listeners.pop(port)
+
+    monkeypatch.setattr(windows_runtime, "_terminate_pid", terminate)
+    monkeypatch.setattr(windows_runtime, "_port_free", lambda _port: True)
+
+    assert windows_runtime.stop(state, runtime=runtime)["pids"] == [55, 56]
+    assert terminated == [55, 56]
+
+    listeners.update({8050: 55, 8051: 56})
+    monkeypatch.setattr(windows_runtime, "_process_executable", lambda _pid: tmp_path / "foreign.exe")
+    with pytest.raises(RuntimeError, match="foreign_port_owner: 8050:55,8051:56"):
+        windows_runtime.stop(state, runtime=runtime)
+
+
 def test_windows_backend_stop_owns_only_proxy_port(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(
@@ -1039,6 +1085,192 @@ def test_hard_update_restores_whole_previous_tree_when_smoke_fails(tmp_path, mon
     assert (state / "data" / "user.db").read_bytes() == b"user-owned"
     assert status["stage"] == "rolled_back"
     assert "identity smoke failed" in status["error"]
+
+
+def test_hard_update_recovers_v1_dynamic_lemonade_before_identity_smoke_rollback(
+    tmp_path, monkeypatch
+):
+    install, state, job = _hard_job(tmp_path)
+    _mock_hard_lifecycle(monkeypatch)
+    python = state / ".venv" / "Scripts" / "pythonw.exe"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"fixture")
+    (state / ".env").write_text("LES_LLM_PROVIDER=lemonade\n", encoding="utf-8")
+    logs = state / "logs"
+    logs.mkdir(parents=True)
+    # Genuine pre-fix PowerShell state: v1 and adapter port only in URL.
+    (logs / "windows-light-state.json").write_text(
+        json.dumps(
+            {
+                "status": "started",
+                "mode": "full",
+                "provider": "lemonade",
+                "proxy_port": 8050,
+                "ui_port": 8051,
+                "proxy_pid": 501,
+                "ui_pid": 502,
+                "lemonade_host_pid": 503,
+                "lemonade_adapter_url": "http://127.0.0.1:18081",
+                "state_root": str(state),
+                "process_contract": "direct_python_no_console_v1",
+                "python_executable": str(python),
+            }
+        ),
+        encoding="utf-8",
+    )
+    listeners = {8050: 501, 8051: 502, 18081: 503}
+    terminated: list[int] = []
+    spawned: list[list[str]] = []
+
+    class Process:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+        def poll(self):
+            return None
+
+    def listening_pids(ports):
+        return {port: pid for port, pid in listeners.items() if port in ports}
+
+    def terminate(pid, **_kwargs):
+        terminated.append(pid)
+        for port, owner in list(listeners.items()):
+            if owner == pid:
+                listeners.pop(port)
+
+    def spawn(_python, arguments, **kwargs):
+        kwargs["stdout_path"].parent.mkdir(parents=True, exist_ok=True)
+        spawned.append(arguments)
+        pid = 600 + len(spawned)
+        if arguments == ["lemonade_host.py"]:
+            listeners[18080] = pid
+        elif "uvicorn" in arguments:
+            listeners[8050] = pid
+        else:
+            listeners[8051] = pid
+        return Process(pid)
+
+    monkeypatch.setattr(windows_runtime, "_listening_pids", listening_pids)
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(windows_runtime, "_process_name", lambda _pid: "pythonw.exe")
+    monkeypatch.setattr(
+        windows_runtime, "_process_executable", lambda _pid: python, raising=False
+    )
+    monkeypatch.setattr(windows_runtime, "_terminate_pid", terminate)
+    monkeypatch.setattr(windows_runtime, "_port_free", lambda port: port not in listeners)
+    monkeypatch.setattr(windows_runtime, "_wait_process_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(windows_runtime, "_spawn", spawn)
+
+    stopped: list[list[int]] = []
+
+    def stop_runtime(runtime, state_root, _log_root):
+        stopped.append(windows_runtime.stop(state_root, runtime=runtime)["pids"])
+
+    def start_runtime(runtime, state_root, _log_root):
+        windows_runtime.start(runtime, state_root)
+
+    class HealthyUi:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def unavailable_adapter(url, timeout=5):
+        if url.endswith(":8050/api/version"):
+            return {
+                "product_version": "0.25.20",
+                "build_number": 493,
+                "deployed_commit": "b" * 40,
+            }
+        if url.endswith(":8050/api/health"):
+            return {"rag": {"index_contract": {"compatible": True}, "qdrant": {}}}
+        if url.endswith(":18080/api/health"):
+            raise OSError("adapter identity endpoint unavailable")
+        raise AssertionError(url)
+
+    def failed_candidate_smoke(**kwargs):
+        snapshot, failure = windows_update_engine._ready_snapshot(**kwargs)
+        assert snapshot is None
+        assert failure.startswith("lemonade_adapter=OSError")
+        raise RuntimeError(failure)
+
+    monkeypatch.setattr(windows_update_engine, "stop_runtime", stop_runtime)
+    monkeypatch.setattr(windows_update_engine, "start_runtime", start_runtime)
+    monkeypatch.setattr(windows_update_engine, "_json_url", unavailable_adapter)
+    monkeypatch.setattr(
+        windows_update_engine.urllib.request, "urlopen", lambda *_args, **_kwargs: HealthyUi()
+    )
+    monkeypatch.setattr(windows_update_engine, "_pid_running", lambda pid: pid in {601, 602, 603})
+    monkeypatch.setattr(windows_update_engine, "wait_ready", failed_candidate_smoke)
+
+    assert windows_update_engine.apply_hard_job(job) == 1
+
+    status = json.loads(
+        (state / "artifacts" / "updates" / "hard-status.json").read_text(encoding="utf-8")
+    )
+    assert status["stage"] == "rolled_back"
+    assert stopped == [[501, 502, 503], [601, 602, 603]]
+    assert terminated == [501, 502, 503, 601, 602, 603]
+    assert 18081 not in listeners
+    assert listeners[18080] == 604
+    assert [arguments for arguments in spawned if arguments == ["lemonade_host.py"]] == [
+        ["lemonade_host.py"],
+        ["lemonade_host.py"],
+    ]
+
+
+def test_hard_update_does_not_stop_foreign_v1_dynamic_lemonade_adapter(tmp_path, monkeypatch):
+    install, state, job = _hard_job(tmp_path)
+    _mock_hard_lifecycle(monkeypatch)
+    python = state / ".venv" / "Scripts" / "pythonw.exe"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"fixture")
+    logs = state / "logs"
+    logs.mkdir(parents=True)
+    (logs / "windows-light-state.json").write_text(
+        json.dumps(
+            {
+                "status": "started",
+                "mode": "full",
+                "provider": "lemonade",
+                "proxy_pid": 501,
+                "ui_pid": 502,
+                "lemonade_host_pid": 503,
+                "lemonade_adapter_url": "http://127.0.0.1:18081",
+                "state_root": str(state),
+                "process_contract": "direct_python_no_console_v1",
+                "python_executable": str(python),
+            }
+        ),
+        encoding="utf-8",
+    )
+    listeners = {8050: 501, 8051: 502, 18081: 999}
+    terminated: list[int] = []
+    monkeypatch.setattr(
+        windows_runtime,
+        "_listening_pids",
+        lambda ports: {port: pid for port, pid in listeners.items() if port in ports},
+    )
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(windows_runtime, "_process_name", lambda _pid: "pythonw.exe")
+    monkeypatch.setattr(
+        windows_runtime, "_process_executable", lambda _pid: python, raising=False
+    )
+    monkeypatch.setattr(windows_runtime, "_terminate_pid", lambda pid, **_kwargs: terminated.append(pid))
+    monkeypatch.setattr(windows_update_engine, "stop_runtime", lambda runtime, state_root, _log_root: windows_runtime.stop(state_root, runtime=runtime))
+
+    assert windows_update_engine.apply_hard_job(job) == 1
+
+    status = json.loads(
+        (state / "artifacts" / "updates" / "hard-status.json").read_text(encoding="utf-8")
+    )
+    assert status["stage"] == "rejected"
+    assert "foreign_port_owner: 18081:999" in status["error"]
+    assert terminated == []
+    assert listeners[18081] == 999
 
 
 def test_accepted_soft_patch_can_be_rolled_back_byte_exact(tmp_path, monkeypatch):

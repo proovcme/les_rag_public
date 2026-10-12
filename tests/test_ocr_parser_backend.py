@@ -7,10 +7,12 @@ vision-запроса (как mail-VLM путь).
 from __future__ import annotations
 
 import pytest
+from PIL import Image
 
 from backend.ocr_parser import (
     DEFAULT_OCR_MODEL,
     MLXVisualOCRParser,
+    OCRProcessingError,
     OllamaVisualOCRParser,
     build_vlm_ocr_body,
     make_ocr_parser,
@@ -79,3 +81,69 @@ def test_build_body_shape():
 def test_no_glm_default_anywhere_in_active_path():
     # дефолтная фабрика не должна тянуть удалённую GLM-OCR модель
     assert "GLM" not in make_ocr_parser().model_id
+
+
+def test_ollama_failure_is_typed_and_does_not_leak_transport_details(monkeypatch):
+    import httpx
+
+    parser = OllamaVisualOCRParser(base_url="http://private-host:11434")
+    logged = []
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("C:/secret/model.gguf token=private")
+        ),
+    )
+    monkeypatch.setattr("backend.ocr_parser.logger.error", lambda *args: logged.append(args))
+
+    with pytest.raises(OCRProcessingError) as raised:
+        parser.ocr_page(Image.new("RGB", (8, 8)))
+
+    assert raised.value.code == "ollama_vision_failed"
+    assert "secret" not in str(raised.value)
+    assert "private-host" not in str(logged)
+    assert "model.gguf" not in str(logged)
+
+
+def test_mlx_load_failure_is_typed_and_does_not_leak_details(monkeypatch):
+    parser = MLXVisualOCRParser(model_id="C:/secret/model")
+    logged = []
+    monkeypatch.setattr(
+        parser,
+        "load_model",
+        lambda: (_ for _ in ()).throw(RuntimeError("C:/secret/model weights corrupt")),
+    )
+    monkeypatch.setattr("backend.ocr_parser.logger.error", lambda *args: logged.append(args))
+
+    with pytest.raises(OCRProcessingError) as raised:
+        parser.ocr_page(Image.new("RGB", (8, 8)))
+
+    assert raised.value.code == "mlx_vision_load_failed"
+    assert "secret" not in str(raised.value)
+    assert "secret" not in str(logged)
+
+
+@pytest.mark.parametrize("parser", [OllamaVisualOCRParser(), MLXVisualOCRParser()])
+def test_visual_parse_pdf_annotates_typed_failure_with_page(monkeypatch, tmp_path, parser):
+    images = [Image.new("RGB", (8, 8)), Image.new("RGB", (8, 8))]
+    if isinstance(parser, MLXVisualOCRParser):
+        monkeypatch.setattr(parser, "pdf_to_images", lambda *_args, **_kwargs: images)
+        monkeypatch.setattr(parser, "unload_model", lambda: None)
+    else:
+        monkeypatch.setattr("backend.ocr_parser.render_pdf_to_images", lambda *_args, **_kwargs: images)
+    calls = 0
+
+    def fail_second(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OCRProcessingError("vision_backend_failed")
+        return "page one"
+
+    monkeypatch.setattr(parser, "ocr_page", fail_second)
+    with pytest.raises(OCRProcessingError) as raised:
+        parser.parse_pdf(tmp_path / "scan.pdf")
+    assert raised.value.code == "vision_backend_failed"
+    assert raised.value.page == 2
+    assert "Ошибка распознавания" not in str(raised.value)

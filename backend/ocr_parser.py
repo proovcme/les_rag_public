@@ -1,19 +1,22 @@
 """
 ocr_parser.py — Визуальное распознавание документов (скан-OCR).
 
-Два бэкенда:
+Три бэкенда:
 - ``mlx``    — MLXVisualOCRParser (исторический GLM-OCR / любой MLX-VLM, оффлайн на Metal);
 - ``ollama`` — OllamaVisualOCRParser: OpenAI-совместимый vision-эндпоинт (ollama/llama.cpp),
   по умолчанию модель ``gemma4:12b`` (локальный vision-кандидат, ADR-9).
+- ``tesseract`` — локальный CLI с постраничным рендерингом и закрытым PNG на Windows.
 
 GLM-OCR-модель удалена из рантайма → дефолтный бэкенд скан-OCR — ``ollama`` (gemma4:12b).
 Бэкенд и модель выбираются через env (см. ``make_ocr_parser``); при отсутствии конфигурации
-парсер деградирует мягко (пустой результат + лог), не роняя индексацию.
+ошибка распознавания возвращается как OCRProcessingError, никогда как текст evidence.
+Обязательный OCR завершает файл явной ошибкой, сохраняя его прежний индекс.
 """
 import os
 import gc
 import base64
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import List, Optional
 
@@ -26,6 +29,44 @@ _OCR_PROMPT = (
     "заголовки, списки, таблицы (как текст со столбцами). Только распознанный текст, без "
     "комментариев и пояснений."
 )
+
+
+class OCRProcessingError(RuntimeError):
+    """Stable, non-secret OCR failure contract for callers and subprocesses."""
+
+    def __init__(self, code: str, *, page: int | None = None):
+        self.code = code
+        self.page = page
+        suffix = f":page={page}" if page is not None else ""
+        super().__init__(f"{code}{suffix}")
+
+
+def iter_pdf_images(pdf_path: Path, dpi: int = 150) -> Iterator[tuple[int, "PIL.Image.Image"]]:
+    """Yield one independent page image at a time and release renderer resources."""
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(str(pdf_path))
+    try:
+        for page_index in range(len(doc)):
+            page = doc[page_index]
+            bitmap = None
+            image = None
+            try:
+                bitmap = page.render(scale=dpi / 72.0)
+                image = bitmap.to_pil().copy()
+                yield page_index + 1, image
+            finally:
+                if image is not None:
+                    image.close()
+                if bitmap is not None:
+                    close = getattr(bitmap, "close", None)
+                    if callable(close):
+                        close()
+                close = getattr(page, "close", None)
+                if callable(close):
+                    close()
+    finally:
+        doc.close()
 
 
 def render_pdf_to_images(pdf_path: Path, dpi: int = 150) -> List["PIL.Image.Image"]:
@@ -57,21 +98,23 @@ class MLXVisualOCRParser:
         if self.model is not None and self.processor is not None:
             return
 
-        logger.info(f"[OCR] Загрузка модели MLX GLM-OCR: {self.model_id}")
+        logger.info("[OCR] Загрузка модели MLX vision-OCR")
         try:
             from mlx_vlm import load
             self.model, self.processor = load(self.model_id)
             logger.info("[OCR] Модель успешно загружена")
-        except Exception as e:
-            logger.error(f"[OCR] Ошибка загрузки модели {self.model_id}: {e}", exc_info=True)
+        except OCRProcessingError:
             raise
+        except Exception:
+            logger.error("[OCR] MLX vision failed: mlx_vision_load_failed")
+            raise OCRProcessingError("mlx_vision_load_failed") from None
 
     def unload_model(self) -> None:
         """Unload model from memory and clean Metal device caches."""
         if self.model is None and self.processor is None:
             return
 
-        logger.info(f"[OCR] Выгрузка модели MLX GLM-OCR {self.model_id}")
+        logger.info("[OCR] Выгрузка модели MLX vision-OCR")
         self.model = None
         self.processor = None
 
@@ -83,8 +126,8 @@ class MLXVisualOCRParser:
             import mlx.core as mx
             mx.metal.clear_cache()
             logger.info("[OCR] Кэш Metal успешно очищен")
-        except Exception as e:
-            logger.warning(f"[OCR] Не удалось очистить кэш Metal: {e}")
+        except Exception:
+            logger.warning("[OCR] Не удалось очистить кэш Metal")
 
     def pdf_to_images(self, pdf_path: Path, dpi: int = 150) -> List["PIL.Image.Image"]:
         """Convert PDF pages to PIL Images using pypdfium2."""
@@ -92,11 +135,18 @@ class MLXVisualOCRParser:
 
     def ocr_page(self, image: "PIL.Image.Image", prompt: str = "Text Recognition:") -> str:
         """Run OCR on a single PIL Image."""
-        self.load_model()
-        from mlx_vlm import generate
-        from mlx_vlm.prompt_utils import apply_chat_template
+        try:
+            self.load_model()
+        except OCRProcessingError:
+            raise
+        except Exception:
+            logger.error("[OCR] MLX vision failed: mlx_vision_load_failed")
+            raise OCRProcessingError("mlx_vision_load_failed") from None
 
         try:
+            from mlx_vlm import generate
+            from mlx_vlm.prompt_utils import apply_chat_template
+
             formatted_prompt = apply_chat_template(
                 self.processor, self.model.config, prompt, num_images=1
             )
@@ -113,9 +163,11 @@ class MLXVisualOCRParser:
             if hasattr(res, "text"):
                 return res.text or ""
             return res or ""
-        except Exception as e:
-            logger.error(f"[OCR] Ошибка генерации OCR для страницы: {e}", exc_info=True)
-            return f"[Ошибка распознавания страницы: {e}]"
+        except OCRProcessingError:
+            raise
+        except Exception:
+            logger.error("[OCR] MLX vision failed: mlx_vision_generate_failed")
+            raise OCRProcessingError("mlx_vision_generate_failed") from None
 
     def parse_pdf(self, pdf_path: Path, prompt: str = "Text Recognition:", dpi: int = 150) -> str:
         """Perform OCR on all pages of a PDF document and return unified Markdown."""
@@ -127,7 +179,10 @@ class MLXVisualOCRParser:
             pages_md = []
             for idx, img in enumerate(images, 1):
                 logger.info(f"[OCR] Обработка страницы {idx}/{len(images)} ({pdf_path.name})")
-                page_text = self.ocr_page(img, prompt=prompt)
+                try:
+                    page_text = self.ocr_page(img, prompt=prompt)
+                except OCRProcessingError as error:
+                    raise OCRProcessingError(error.code, page=idx) from error
                 pages_md.append(f"## Стр. {idx}\n\n{page_text}")
 
             return "\n\n".join(pages_md)
@@ -191,9 +246,11 @@ class OllamaVisualOCRParser:
             resp.raise_for_status()
             content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
             return str(content or "").strip()
-        except Exception as e:
-            logger.error(f"[OCR] Ошибка vision-OCR ({self.model_id} @ {self.base_url}): {e}")
-            return f"[Ошибка распознавания страницы: {e}]"
+        except OCRProcessingError:
+            raise
+        except Exception:
+            logger.error("[OCR] Ollama vision failed: ollama_vision_failed")
+            raise OCRProcessingError("ollama_vision_failed") from None
 
     def parse_pdf(self, pdf_path: Path, prompt: Optional[str] = None, dpi: int = 150) -> str:
         if prompt:
@@ -204,7 +261,11 @@ class OllamaVisualOCRParser:
         pages_md = []
         for idx, img in enumerate(images, 1):
             logger.info(f"[OCR] Стр. {idx}/{len(images)} ({pdf_path.name}) → {self.model_id}")
-            pages_md.append(f"## Стр. {idx}\n\n{self.ocr_page(img)}")
+            try:
+                page_text = self.ocr_page(img)
+            except OCRProcessingError as error:
+                raise OCRProcessingError(error.code, page=idx) from error
+            pages_md.append(f"## Стр. {idx}\n\n{page_text}")
         return "\n\n".join(pages_md)
 
 
@@ -228,30 +289,41 @@ class TesseractOCRParser:
         import subprocess
         import tempfile
 
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as f:
-            image.convert("RGB").save(f.name)
+        with tempfile.TemporaryDirectory(prefix="les-ocr-") as directory:
+            image_path = Path(directory) / "page.png"
+            converted = image.convert("RGB")
             try:
-                out = subprocess.run(
-                    [self.binary, f.name, "stdout", "-l", self.lang, "--psm", self.psm],
-                    capture_output=True, timeout=float(os.getenv("RAG_OCR_TESSERACT_TIMEOUT", "120")),
+                converted.save(image_path)
+            finally:
+                converted.close()
+            try:
+                completed = subprocess.run(
+                    [self.binary, str(image_path), "stdout", "-l", self.lang, "--psm", self.psm],
+                    capture_output=True,
+                    timeout=float(os.getenv("RAG_OCR_TESSERACT_TIMEOUT", "120")),
                 )
-                return out.stdout.decode("utf-8", errors="ignore").strip()
             except FileNotFoundError:
-                logger.error("[OCR] tesseract не найден (%s) — brew install tesseract tesseract-lang", self.binary)
-                return ""
-            except Exception as e:  # noqa: BLE001
-                logger.error("[OCR] tesseract ошибка: %s", e)
-                return ""
+                logger.error("[OCR] tesseract execution failed: tesseract_missing")
+                raise OCRProcessingError("tesseract_missing") from None
+            except subprocess.TimeoutExpired:
+                logger.error("[OCR] tesseract превысил таймаут")
+                raise OCRProcessingError("tesseract_timeout") from None
+            if completed.returncode != 0:
+                logger.error("[OCR] tesseract завершился с кодом %s", completed.returncode)
+                raise OCRProcessingError(f"tesseract_exit_{completed.returncode}")
+            return completed.stdout.decode("utf-8", errors="ignore").strip()
 
     def parse_pdf(self, pdf_path: Path, prompt: Optional[str] = None, dpi: int = 0) -> str:
         dpi = dpi or int(os.getenv("RAG_OCR_TESSERACT_DPI", "300"))  # tesseract любит 300
-        images = render_pdf_to_images(pdf_path, dpi=dpi)
-        if not images:
-            return ""
         pages = []
-        for idx, img in enumerate(images, 1):
-            logger.info("[OCR] Стр. %s/%s (%s) → tesseract %s", idx, len(images), pdf_path.name, self.lang)
-            pages.append(f"## Стр. {idx}\n\n{self.ocr_page(img)}")
+        for page_number, image in iter_pdf_images(pdf_path, dpi):
+            logger.info("[OCR] Стр. %s (%s) → tesseract %s", page_number, pdf_path.name, self.lang)
+            try:
+                text = self.ocr_page(image)
+            except OCRProcessingError as error:
+                raise OCRProcessingError(error.code, page=page_number) from error
+            if text.strip():
+                pages.append(f"## Стр. {page_number}\n\n{text}")
         return "\n\n".join(pages)
 
 

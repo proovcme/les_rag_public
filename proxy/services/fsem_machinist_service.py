@@ -120,6 +120,23 @@ def enrich_machinists(
         }
     detailed: list[dict[str, Any]] = []
     missing: list[str] = []
+    # Reconciliation cannot prove an equality when either source quantity is unknown.
+    import math
+    for item in machines + aggregate:
+        field = "excluded_" + quantity_field if item.get("excluded") else quantity_field
+        try:
+            quantity = float(str(item.get(field)).replace("\xa0", "").replace(" ", "").replace(",", "."))
+        except (TypeError, ValueError):
+            quantity = None
+        if quantity is None or not math.isfinite(quantity):
+            return [dict(resource) for resource in resources], {
+                "schema": "fsem_enrichment_v1", "status": "unresolved",
+                "reasons": [f"unknown {field}: {item.get('code') or '<aggregate>'}"],
+            }
+    # Часы экипажа снятой решением модели машины уходят из агрегата вместе с ней. Без этого
+    # сверка «агрегат = сумма по машинам» рвётся, и в смете остаются машинисты машины,
+    # которой в работе больше нет (снятие машин, 17.09).
+    excluded_hours = 0.0
     for machine in machines:
         code = str(machine.get("code") or "").strip()
         row = lookup(code, target) if code else None
@@ -133,6 +150,9 @@ def enrich_machinists(
         if crew <= 0 or not driver_code:
             missing.append(code)
             continue
+        if machine.get("excluded"):
+            excluded_hours += _f(machine.get("excluded_" + quantity_field)) * crew
+            continue
         detailed.append({
             "kind": "machinist",
             "name": f"Машинисты, средний разряд {_f(row.get('driver_grade')):g}",
@@ -142,7 +162,7 @@ def enrich_machinists(
             "machinist_basis": f"ФСЭМ-2022 {code}, экипаж {crew:g}",
             "fsem_source_page": row.get("source_page"),
         })
-    source_total = round(sum(_f(item.get(quantity_field)) for item in aggregate), 6)
+    source_total = round(sum(_f(item.get(quantity_field)) for item in aggregate) - excluded_hours, 6)
     derived_total = round(sum(_f(item.get(quantity_field)) for item in detailed), 6)
     tolerance = max(0.0001, abs(source_total) * 0.001)
     if missing or abs(source_total - derived_total) > tolerance:

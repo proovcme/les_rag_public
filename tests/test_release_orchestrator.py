@@ -16,6 +16,18 @@ from tools import release_orchestrator, release_receipt
 
 def test_local_host_alias_selects_on_machine_acceptance():
     assert release_orchestrator.is_local_host("local") is True
+
+
+def test_prepare_parser_has_local_acceptance_boundaries(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+
+    args = release_orchestrator._parser().parse_args(["prepare"])
+
+    assert args.install == tmp_path / "Local" / "Programs" / "LES"
+    assert args.runtime == args.install / "runtime"
+    assert args.state == tmp_path / "Local" / "LES"
+
+
 from tools.release_classification import ReleaseClassification
 
 

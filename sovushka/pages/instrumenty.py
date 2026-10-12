@@ -10,10 +10,12 @@ from pathlib import Path
 from nicegui import ui
 
 from sovushka.checklist_review_panel import build_checklist_review_card
+from proxy.services.les_module_mount_service import render_module_panels
 from sovushka.state import add_log, api_get, api_post, last_api_error_text
 from sovushka.uikit.components import (
     action_button,
     panel,
+    render_feedback_state,
     section_heading,
     status_badge,
 )
@@ -220,6 +222,14 @@ def build_instrumenty():
 
         return _handler
 
+    def _render_module_error(module_id: str, error_code: str) -> None:
+        with panel(variant="inset", classes="sov-tools-section"):
+            render_feedback_state(
+                "error",
+                error_code=error_code,
+                detail=f"Модуль «{module_id}» временно недоступен; остальные инструменты работают.",
+            )
+
     with ui.column().classes("w-full sov-tools-page"):
         with panel(variant="raised", classes="sov-tools-hero"):
             with ui.row().classes("sov-tools-hero__row"):
@@ -242,6 +252,7 @@ def build_instrumenty():
                     )
 
         build_checklist_review_card()
+        render_module_panels(on_error=_render_module_error)
 
         with panel(variant="plain", classes="sov-tools-section"):
             section_heading(

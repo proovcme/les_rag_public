@@ -999,8 +999,18 @@ async def test_retrieve_chat_chunks_runs_reranker_inside_llm_budget():
 
 
 @pytest.mark.asyncio
-async def test_retrieve_chat_chunks_blocks_on_reranker_error():
-    backend = FakeBackend()
+@pytest.mark.parametrize("fail_at", ["construct", "call"])
+async def test_retrieve_chat_chunks_preserves_native_results_on_reranker_error(fail_at):
+    class EvidenceBackend(FakeBackend):
+        async def retrieve_native_hybrid(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+            return [Chunk("first evidence", "first.pdf", 0.9), Chunk("second evidence", "second.pdf", 0.8)]
+
+    class BrokenReranker(FailingReranker):
+        def __init__(self, mlx_url, mode):
+            if fail_at == "construct":
+                raise RuntimeError("unavailable model")
+
+    backend = EvidenceBackend()
 
     result = await retrieve_chat_chunks(
         question="q",
@@ -1008,15 +1018,20 @@ async def test_retrieve_chat_chunks_blocks_on_reranker_error():
         rag_backend=backend,
         reranker_enabled=True,
         reranker_available=True,
-        reranker_cls=FailingReranker,
+        reranker_cls=BrokenReranker,
         mlx_url="http://mlx",
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
         return_trace=True,
     )
 
-    assert result.chunks == []
-    assert result.trace.status == "blocked"
-    assert result.trace.error_code == "reranker_failed"
+    assert [(c.doc_name, c.content) for c in result.chunks] == [
+        ("first.pdf", "first evidence"), ("second.pdf", "second evidence"),
+    ]
+    assert result.trace.status != "blocked"
+    assert result.trace.rerank == {
+        "status": "bypassed", "reason": "failed", "error_code": "RERANKER_FAILED",
+        "detail": "RuntimeError", "preserved_order": "native_rrf",
+    }
 
 
 @pytest.mark.asyncio

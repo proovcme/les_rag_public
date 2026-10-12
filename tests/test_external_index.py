@@ -85,7 +85,14 @@ def test_validate_external_source_rejects_symlink_escaping_root(tmp_path, monkey
     outside = tmp_path / "outside_target"
     outside.mkdir()
     link = root / "escape"
-    link.symlink_to(outside, target_is_directory=True)
+    import os
+    import subprocess
+    if os.name == "nt":
+        # Directory junction exercises the real resolve escape without admin symlink privilege.
+        subprocess.run(["cmd.exe", "/c", "mklink", "/J", str(link), str(outside)],
+                       check=True, capture_output=True)
+    else:
+        link.symlink_to(outside, target_is_directory=True)
     monkeypatch.setenv("LES_EXTERNAL_SOURCE_ROOTS", str(root))
     # Симлинк внутри корня указывает наружу → resolve() снимает его, путь вне корня.
     with pytest.raises(HTTPException) as exc:
@@ -145,6 +152,9 @@ class ExternalPendingDB:
     def insert_structured_rules(self, rules):
         pass
 
+    def replace_structured_rules(self, dataset_id, file_key, rules):
+        pass
+
 
 def test_sync_parse_reads_external_source_in_place(tmp_path, monkeypatch):
     # storage/datasets/ds-1 существует (для дериватов), но внешний файл лежит ВНЕ него.
@@ -176,8 +186,11 @@ def test_sync_parse_reads_external_source_in_place(tmp_path, monkeypatch):
         def __init__(self, url, **kwargs):
             self.url = url
 
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, *, wait=False):
             return None
+
+        def scroll(self, **kwargs):
+            return [], None
 
     monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
 

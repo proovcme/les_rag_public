@@ -24,10 +24,7 @@ from typing import Any
 
 import psutil
 
-try:
-    import windows_runtime
-except ImportError:
-    from tools import windows_runtime
+from extensions.lemonade.vendor_status import embedding_identity
 
 
 CREATE_NO_WINDOW = 0x08000000
@@ -248,10 +245,13 @@ def stop_desktop() -> None:
 def stop_runtime(runtime: Path, state: Path, log_root: Path) -> None:
     environment = dict(os.environ)
     environment["LES_WINDOWS_STATE_ROOT"] = str(state)
+    lifecycle = Path(__file__).resolve().with_name("windows_runtime.py")
+    if not lifecycle.is_file():
+        raise RuntimeError(f"transaction runtime lifecycle is missing: {lifecycle}")
     run_bounded(
         [
             sys.executable,
-            str(Path(windows_runtime.__file__).resolve()),
+            str(lifecycle),
             "stop",
             "--runtime",
             str(runtime),
@@ -326,10 +326,13 @@ def probe_environment(runtime: Path, state: Path, log_root: Path) -> None:
 def start_runtime(runtime: Path, state: Path, log_root: Path) -> None:
     environment = dict(os.environ)
     environment["LES_WINDOWS_STATE_ROOT"] = str(state)
+    lifecycle = Path(__file__).resolve().with_name("windows_runtime.py")
+    if not lifecycle.is_file():
+        raise RuntimeError(f"transaction runtime lifecycle is missing: {lifecycle}")
     run_bounded(
         [
             sys.executable,
-            str(Path(windows_runtime.__file__).resolve()),
+            str(lifecycle),
             "start",
             "--runtime",
             str(runtime),
@@ -497,12 +500,23 @@ def _ready_snapshot(
 
     proxy_pid = int(runtime_state.get("proxy_pid") or 0)
     ui_pid = int(runtime_state.get("ui_pid") or 0)
+    provider = str(runtime_state.get("provider") or "").strip().lower()
+    lemonade_host_pid = int(runtime_state.get("lemonade_host_pid") or 0)
+    lemonade_host_port = int(runtime_state.get("lemonade_host_port") or 0)
+    lemonade_adapter_url = str(runtime_state.get("lemonade_adapter_url") or "").rstrip("/")
     direct = (
         runtime_state.get("process_contract")
         in {"direct_python_no_console_v1", "direct_python_no_console_v2"}
         and _pid_running(proxy_pid)
         and _pid_running(ui_pid)
     )
+    if provider == "lemonade":
+        direct = (
+            direct
+            and lemonade_host_port == 18080
+            and lemonade_adapter_url == "http://127.0.0.1:18080"
+            and _pid_running(lemonade_host_pid)
+        )
     actual_commit = str(version.get("deployed_commit") or "")
     same_commit = len(actual_commit) >= 8 and (
         expected_commit.startswith(actual_commit)
@@ -533,6 +547,34 @@ def _ready_snapshot(
         return (
             None,
             f"contract={contract.get('status')}",
+        )
+    lemonade_adapter_ready = False
+    embedding_contract = ""
+    if provider == "lemonade":
+        identity = embedding_identity()
+        try:
+            adapter = _json_url(
+                f"{lemonade_adapter_url}/api/health",
+                timeout=min(10.0, health_timeout),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return None, f"lemonade_adapter={type(exc).__name__}: {exc}"
+        embedding = health.get("embedding") or {}
+        adapter_embedding = adapter.get("embed_model") or {}
+        lemonade_contract_ok = (
+            adapter.get("backend") == "lemonade"
+            and adapter_embedding.get("path") == identity["model"]
+            and adapter_embedding.get("embedding_backend") == identity["backend"]
+            and int(adapter_embedding.get("vector_size") or 0) == identity["vector_size"]
+            and embedding.get("embedding_model") == identity["family"]
+            and embedding.get("embedding_api_model") == identity["model"]
+            and int(embedding.get("vector_size") or 0) == identity["vector_size"]
+        )
+        if not lemonade_contract_ok:
+            return None, "lemonade_contract=mismatch"
+        lemonade_adapter_ready = True
+        embedding_contract = (
+            f"{identity['family']}/{identity['backend']}/{identity['vector_size']}"
         )
     qdrant_ready = qdrant.get("ok") is True
     try:
@@ -586,6 +628,9 @@ def _ready_snapshot(
             "process_contract": str(runtime_state.get("process_contract")),
             "proxy_pid": proxy_pid,
             "ui_pid": ui_pid,
+            "lemonade_adapter_ready": lemonade_adapter_ready,
+            "lemonade_host_pid": lemonade_host_pid if provider == "lemonade" else None,
+            "embedding_contract": embedding_contract,
         },
         "",
     )

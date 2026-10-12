@@ -1,0 +1,49 @@
+{
+  "schema": "les.test.resource-group-parser.v1",
+  "provenance": [
+    {
+      "path": "docs/audits/lsr-pr21-integration-20261008/p9/candidate-0193-none-context-reads/pass-2-audit/answer.txt",
+      "sha256": "728bbdebbc0562f9c285e5c6516b0de6aa01f69f577b21b785d564adedce94ca"
+    },
+    {
+      "path": "docs/audits/lsr-pr21-integration-20261008/p9/candidate-0193-none-context-reads/pass-1-audit/decisions-and-calculation.json",
+      "sha256": "eaf5931ccced512bc2b35de0b54128c616919635e0f2bdffa627414b14182d47"
+    }
+  ],
+  "header": [
+    "| source_row | work_id | title | unit | quantity | norm_code | evidence_refs | decision_kind | nr_sp_rule_id | resource_review_status | resource_review_ref | resource_code | resource_quantity | resource_unit | included_in | resource_action | target_resource_code | target_resource_id | replaced_by | material_review_status | material_review_reason | conversion_factor | conversion_unit | conversion_source | coefficient | coefficient_basis | coefficient_target | section | operation | analogue | coverage | not_covered |",
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+  ],
+  "rows": [
+    "| АР!1.31 | AR-04 | Укладка ковровой плитки | м2 | 66.7 | ГЭСН11-01-037-07 | Q1.H1 | работа | nrsp-11 | keep_all_confirmed | 960528670a601b9dd5259e462ad359412d9231d64fa5ecdd0c142586a368b43c | 12.2.07.02 | 68.034 | м2 | AR-04 | included | | | | | | | | | | | | | | |",
+    "| АР!1.31 | AR-04 | Укладка ковровой плитки | м2 | 66.7 | ГЭСН11-01-037-07 | Q1.H1 | работа | nrsp-11 | keep_all_confirmed | 960528670a601b9dd5259e462ad359412d9231d64fa5ecdd0c142586a368b43c | 01.7.20.08-0051 | 0.3335 | кг | AR-04 | included | | | | | | | | | | | | | | |",
+    "| АР!1.31 | AR-04 | Укладка ковровой плитки | м2 | 66.7 | ГЭСН11-01-037-07 | Q1.H1 | работа | nrsp-11 | keep_all_confirmed | 960528670a601b9dd5259e462ad359412d9231d64fa5ecdd0c142586a368b43c | 01.6.03.03 | 68.034 | м2 | AR-04 | included | | | | | | | | | | | | | | |",
+    "| АР!1.31 | AR-04 | Укладка ковровой плитки | м2 | 66.7 | ГЭСН11-01-037-07 | Q1.H1 | работа | nrsp-11 | keep_all_confirmed | 960528670a601b9dd5259e462ad359412d9231d64fa5ecdd0c142586a368b43c | 14.1.02.04 | 73.37 | кг | AR-04 | included | | | | | | | | | | | | | | |"
+  ],
+  "receipt_resources": [
+    {
+      "code": "12.2.07.02",
+      "unit": "м2",
+      "quantity": 68.034,
+      "per_unit": 102.0
+    },
+    {
+      "code": "01.6.03.03",
+      "unit": "м2",
+      "quantity": 68.034,
+      "per_unit": 102.0
+    },
+    {
+      "code": "14.1.02.04",
+      "unit": "кг",
+      "quantity": 73.37,
+      "per_unit": 110.0
+    },
+    {
+      "code": "01.7.20.08-0051",
+      "unit": "кг",
+      "quantity": 0.3335,
+      "per_unit": 0.5
+    }
+  ]
+}

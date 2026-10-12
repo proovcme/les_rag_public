@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from email.message import EmailMessage
+import hashlib
 
 import httpx
 import pytest
@@ -14,6 +15,20 @@ from backend.document_router import route_document
 class EmptyPendingDB:
     def get_pending_files(self, dataset_id, limit=None):
         return []
+
+
+class ReplacementQdrantProtocol:
+    def scroll(self, **kwargs):
+        return [], None
+
+    def delete(self, **kwargs):
+        assert kwargs["wait"] is True
+        assert isinstance(kwargs["points_selector"], qdrant_adapter.models.PointIdsList)
+
+
+@pytest.fixture(autouse=True)
+def isolated_lexical_retirement(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(tmp_path / "lexical.db"))
 
 
 class LegacyNamePendingDB:
@@ -35,10 +50,73 @@ class LegacyNamePendingDB:
     def insert_structured_rules(self, rules):
         pass
 
+    def replace_structured_rules(self, dataset_id, file_key, rules):
+        pass
+
 
 class StatusTrackingDB(LegacyNamePendingDB):
     def update_document_status(self, dataset_id, file_name, status, chunk_count, route=None, last_error=""):
         self.updated.append((dataset_id, file_name, status, chunk_count, last_error))
+
+
+@pytest.mark.parametrize('parsed_nodes', [[], [
+    {'text': '_' * 470, 'doc_id': 'noise', 'payload': {}},
+]], ids=['empty-converter', 'all-sparse-noise'])
+def test_empty_replacement_preserves_previous_dense_sparse_and_lexical(tmp_path, monkeypatch, parsed_nodes):
+    """A failed replacement must leave the previously searchable document intact."""
+    from copy import deepcopy
+    from proxy.services.lexical_index_service import LexicalIndex
+
+    monkeypatch.setenv('RAG_QDRANT_SCHEMA', 'named')
+    directory = tmp_path / 'ds-1'
+    directory.mkdir()
+    (directory / 'doc.md').write_text('replacement source', encoding='utf-8')
+    db = StatusTrackingDB()
+    events = []
+    text = 'Previously accepted searchable document'
+    points = {'old-id': {'dense': [0.25] * 1024, 'bm25_sparse': {'indices': [17], 'values': [1.0]}}}
+    original = deepcopy(points)
+    lexical = LexicalIndex()
+    lexical.upsert_chunks('les_rag', [dict(point_id='old-id', dataset_id='ds-1',
+        doc_id='accepted', doc_name='doc.md', text=text)])
+    with lexical.connect() as conn:
+        lexical_before = [tuple(row) for row in conn.execute('SELECT * FROM lexical_chunks')]
+
+    def unexpected_embedding(texts):
+        events.append('embed')
+        raise AssertionError('Empty replacement must not request embeddings')
+
+    adapter = SimpleNamespace(content_dir=tmp_path, db=db,
+        qdrant_url='http://127.0.0.1:6333', collection_name='les_rag',
+        embed=SimpleNamespace(encode_sync=unexpected_embedding),
+        _sync_delete_file_points=lambda *_args: (events.append('whole-file-delete'), points.clear()),
+        _sync_count_file_points=lambda *_args: len(points),
+        _sync_markdown_nodes=lambda *_args: deepcopy(parsed_nodes))
+
+    class FakeQdrant(ReplacementQdrantProtocol):
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def scroll(self, **kwargs):
+            return [SimpleNamespace(id=key) for key in points], None
+
+        def delete(self, **kwargs):
+            events.append('delete')
+            points.clear()
+
+        def upsert(self, **kwargs):
+            events.append('upsert')
+
+    monkeypatch.setattr(qdrant_adapter.qdrant_client, 'QdrantClient', FakeQdrant)
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, 'ds-1', limit=1)
+
+    assert result['errors'] == 1  # files_parsed counts attempted files, including errors.
+    assert db.updated[-1][2] == 'ERROR'
+    assert 'no searchable evidence' in db.updated[-1][4]
+    assert events == [] and points == original
+    with lexical.connect() as conn:
+        assert [tuple(row) for row in conn.execute('SELECT * FROM lexical_chunks')] == lexical_before
+    assert [chunk.content for chunk in lexical.search('accepted', collection='les_rag', dataset_ids=['ds-1'])] == [text]
 
 
 def test_embed_client_accepts_actual_qwen_model_contract(monkeypatch):
@@ -314,7 +392,8 @@ def test_sync_markdown_nodes_marks_spreadsheet_projection_payload(tmp_path):
 
 def test_sync_markdown_nodes_uses_pdf_page_nodes(tmp_path, monkeypatch):
     source = tmp_path / "project.pdf"
-    source.write_bytes(b"%PDF placeholder")
+    source_bytes = b"%PDF placeholder"
+    source.write_bytes(source_bytes)
 
     import backend.qdrant_adapter as qa
 
@@ -353,7 +432,51 @@ def test_sync_markdown_nodes_uses_pdf_page_nodes(tmp_path, monkeypatch):
     assert nodes[0]["payload"]["page"] == 1
     assert nodes[-1]["payload"]["page"] == 2
     assert nodes[-1]["payload"]["page_parts"] == 3
+    assert {node["payload"]["source_format"] for node in nodes} == {"pdf"}
+    assert {node["payload"]["source_sha256"] for node in nodes} == {
+        hashlib.sha256(source_bytes).hexdigest()
+    }
     assert nodes[0]["doc_id"] == nodes[0]["doc_id"]
+
+
+def test_split_pdf_page_markdown_normalizes_tesseract_russian_page_heading():
+    pages = QdrantLlamaIndexAdapter._split_pdf_page_markdown(
+        "## Стр. 12\n\nТехнические условия подключения"
+    )
+    assert pages == [(12, "Технические условия подключения")]
+
+
+@pytest.mark.parametrize(
+    ("page", "expected"),
+    [(7, True), (True, False), (0, False), ("7", False)],
+)
+def test_required_ocr_provenance_accepts_only_positive_integer_pages(page, expected):
+    nodes = [{
+        "payload": {
+            "type": "pdf_page_text",
+            "page": page,
+            "source_format": "pdf",
+            "content_format": "pdf",
+            "source_sha256": "a" * 64,
+        }
+    }]
+    assert qdrant_adapter._has_complete_ocr_pdf_provenance(nodes) is expected
+
+
+def test_required_ocr_navigation_alone_is_not_evidence():
+    assert not qdrant_adapter._has_complete_ocr_pdf_provenance([
+        {"payload": {"node_role": "navigation", "evidence_admissible": False}}
+    ])
+
+
+def test_p7m_pdf_projection_keeps_container_and_content_formats(tmp_path):
+    source = tmp_path / "signed.p7m"
+    source.write_bytes(b"signed container")
+    nodes = [{"payload": {"type": "pdf_page_text", "page": 1}}]
+    result = qdrant_adapter._attach_pdf_source_provenance(nodes, source)
+    assert result[0]["payload"]["source_format"] == "p7m"
+    assert result[0]["payload"]["content_format"] == "pdf"
+    assert qdrant_adapter._has_complete_ocr_pdf_provenance(result) is True
 
 
 def test_sync_table_nodes_projects_large_row_sets(tmp_path, monkeypatch):
@@ -424,7 +547,7 @@ def test_sync_parse_updates_legacy_pending_file_name(tmp_path, monkeypatch):
         ],
     )
 
-    class FakeQdrant:
+    class FakeQdrant(ReplacementQdrantProtocol):
         def __init__(self, url, **kwargs):
             self.url = url
 
@@ -473,7 +596,7 @@ def test_sync_parse_prefers_exact_relative_path_over_legacy_basename(tmp_path, m
         or [{"text": "content with enough text for a chunk", "doc_id": "doc-1", "payload": {}}],
     )
 
-    class FakeQdrant:
+    class FakeQdrant(ReplacementQdrantProtocol):
         def __init__(self, url, **kwargs):
             self.url = url
 
@@ -509,7 +632,7 @@ def test_sync_parse_marks_error_when_qdrant_count_mismatches(tmp_path, monkeypat
         ],
     )
 
-    class FakeQdrant:
+    class FakeQdrant(ReplacementQdrantProtocol):
         def __init__(self, url, **kwargs):
             self.url = url
 
@@ -521,7 +644,7 @@ def test_sync_parse_marks_error_when_qdrant_count_mismatches(tmp_path, monkeypat
     result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
 
     assert result["errors"] == 1
-    assert deleted == ["doc.md", "doc.md"]
+    assert deleted == []  # count failure must never trigger whole-file cleanup
     assert db.updated[-1][0:4] == ("ds-1", "doc.md", "ERROR", 0)
     assert "qdrant point count mismatch" in db.updated[-1][4]
 
@@ -557,13 +680,14 @@ def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch
         QdrantLlamaIndexAdapter._sync_existing_file_vectors_by_hash.__get__(adapter)
     )
 
-    class FakeQdrant:
+    class FakeQdrant(ReplacementQdrantProtocol):
         def __init__(self, url, **kwargs):
             self.url = url
 
         def scroll(self, **kwargs):
             return [
                 SimpleNamespace(
+                    id=1,
                     payload={"text": text, "embedding_fingerprint": _embedding_cache_fingerprint()},
                     vector={"dense": vector},
                 )
@@ -615,7 +739,7 @@ def test_sync_parse_skips_empty_sparse_noise_without_rejecting_pdf(tmp_path, mon
         ],
     )
 
-    class FakeQdrant:
+    class FakeQdrant(ReplacementQdrantProtocol):
         def __init__(self, url, **kwargs):
             self.url = url
 
@@ -668,13 +792,14 @@ def test_sync_parse_ignores_cached_vector_with_different_embedding_fingerprint(t
         QdrantLlamaIndexAdapter._sync_existing_file_vectors_by_hash.__get__(adapter)
     )
 
-    class FakeQdrant:
+    class FakeQdrant(ReplacementQdrantProtocol):
         def __init__(self, url, **kwargs):
             self.url = url
 
         def scroll(self, **kwargs):
             return [
                 SimpleNamespace(
+                    id=1,
                     payload={"text": text, "embedding_fingerprint": "old-fingerprint"},
                     vector={"dense": old_vector},
                 )

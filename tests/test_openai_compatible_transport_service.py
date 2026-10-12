@@ -31,6 +31,247 @@ from proxy.services.openai_compatible_transport_service import (
 NOW = datetime(2026, 8, 28, tzinfo=timezone.utc)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", [None, "native_chat_v1"])
+@pytest.mark.parametrize("state,source,detail", [
+    (CapabilityState.UNKNOWN, "probe", "http_accepted_no_tool_call"),
+    (CapabilityState.SUPPORTED, "template_default", "template_claim"),
+    (CapabilityState.SUPPORTED, "operator_declaration", "operator_claim"),
+    (CapabilityState.SUPPORTED, "probe", "http_201"),
+    (CapabilityState.SUPPORTED, "probe", "http_204"),
+])
+async def test_unknown_optional_tools_preserve_primary_native_call_without_fallback(tmp_path, protocol, state, source, detail):
+    from dataclasses import replace
+    from proxy.services.canonical_route_service import BoundModelChatRunner, CanonicalRouteMode
+    primary = _resolved(chat_protocol=protocol)
+    observations = tuple(replace(item, state=state, evidence_source=source, detail=detail)
+        if item.capability is CapabilityName.TOOLS else item for item in primary.capability_snapshot.observations)
+    primary = replace(primary, capability_snapshot=replace(primary.capability_snapshot, observations=observations))
+    bodies = []
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        call = {"id": "r10-call", "type": "function", "function": {"name": "search_sources", "arguments": "{}"}}
+        return httpx.Response(200, json=({"message": {"tool_calls": [call]}, "done": True}
+            if protocol else {"choices": [{"message": {"tool_calls": [call]}, "finish_reason": "tool_calls"}]}))
+    class Resolver:
+        def resolve(self, _role):
+            return primary
+        def resolve_fallback(self, *_):
+            pytest.fail("UNKNOWN optional tools must not change the selected model route")
+    transport, client = _transport(tmp_path, handler)
+    tools = ({"type": "function", "function": {"name": "search_sources", "parameters": {"type": "object"}}},)
+    try:
+        result = await BoundModelChatRunner(resolver=Resolver(), transport=transport).complete(
+            mode=CanonicalRouteMode.ACTIVE, request=InferenceRequest(messages=({"role": "user", "content": "Read"},),
+                max_output_tokens=32, tools=tools), legacy_complete=lambda _: pytest.fail("no legacy route"))
+    finally:
+        await client.aclose()
+    assert len(bodies) == 1 and bodies[0]["tools"] == list(tools)
+    assert result.connection.revision_id == primary.revision_id and not result.fallback_used
+    assert result.response.tool_calls[0]["function"]["name"] == "search_sources"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", [None, "native_chat_v1"])
+async def test_optional_tools_do_not_weaken_mandatory_chat_gate(tmp_path, protocol):
+    from dataclasses import replace
+    primary = _resolved(chat_protocol=protocol)
+    observations = tuple(replace(item, state=CapabilityState.UNKNOWN)
+        if item.capability in {CapabilityName.CHAT_COMPLETIONS, CapabilityName.TOOLS} else item
+        for item in primary.capability_snapshot.observations)
+    primary = replace(primary, capability_snapshot=replace(primary.capability_snapshot, observations=observations))
+    transport, client = _transport(tmp_path, lambda _: pytest.fail("CHAT rejection must occur before sending"))
+    try:
+        with pytest.raises(ModelTransportError, match="CAPABILITY_REQUIRED: chat_completions"):
+            await transport.complete(primary, InferenceRequest(messages=({"role": "user", "content": "Read"},),
+                max_output_tokens=32, tools=({"type": "function", "function": {"name": "search_sources"}},)))
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", [None, "native_chat_v1"])
+@pytest.mark.parametrize("source", ["operator_declaration", "template_default"])
+async def test_explicit_tools_unsupported_prevents_optional_send(tmp_path, protocol, source):
+    from dataclasses import replace
+    primary = _resolved(chat_protocol=protocol)
+    observations = tuple(replace(item, state=CapabilityState.UNSUPPORTED, evidence_source=source, detail="tools_disabled")
+        if item.capability is CapabilityName.TOOLS else item for item in primary.capability_snapshot.observations)
+    primary = replace(primary, capability_snapshot=replace(primary.capability_snapshot, observations=observations))
+    transport, client = _transport(tmp_path, lambda _: pytest.fail("Explicit tools refusal must prevent sending"))
+    try:
+        with pytest.raises(ModelTransportError, match="CAPABILITY_REQUIRED: tools"):
+            await transport.complete(primary, InferenceRequest(messages=({"role": "user", "content": "Read"},),
+                max_output_tokens=32, tools=({"type": "function", "function": {"name": "search_sources"}},)))
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [None, "io", "cancel", "retry"])
+async def test_request_local_audit_captures_wire_body_without_headers(tmp_path, failure):
+    import asyncio
+    import hashlib
+    from proxy.services.model_request_audit_service import ModelRequestAudit
+
+    refs = []
+    audit = ModelRequestAudit(directory=tmp_path, purpose="answer", refs=refs)
+    sent = []
+
+    async def handler(request):
+        sent.append(request.content)
+        if failure == "io":
+            raise httpx.ConnectError("private upstream detail", request=request)
+        if failure == "cancel":
+            raise asyncio.CancelledError()
+        if failure == "retry" and len(sent) == 1:
+            return httpx.Response(502, content=b"System message must be at the beginning")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = OpenAICompatibleTransport(client=client, secret_store=EnvironmentSecretStore(tmp_path / "unused.env"),
+                                             peer_verifier=lambda *_: None)
+        transport._headers = lambda _: {"Authorization": "Bearer SECRET_SENTINEL"}
+        request = InferenceRequest(messages=({"role": "system", "content": "SYSTEM"},
+                                             {"role": "user", "content": "FINAL"}),
+                                   tools=({"type": "function", "function": {"name": "search_sources",
+                                          "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}}},),
+                                   max_output_tokens=17, request_audit=audit)
+        if failure == "io":
+            with pytest.raises(ModelTransportError):
+                await transport.complete(_resolved(), request)
+        elif failure == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await transport.complete(_resolved(), request)
+        else:
+            assert (await transport.complete(_resolved(), request)).text == "ok"
+    assert len(refs) == len(sent) == (2 if failure == "retry" else 1)
+    for ref, wire in zip(refs, sent):
+        assert (tmp_path / ref["body_file"]).read_bytes() == wire
+        assert ref["sha256"] == hashlib.sha256(wire).hexdigest()
+        assert ref["tool_choice"] == "omitted"
+        assert ref["revision_id"] == "conn:c1:r1"
+        assert "SECRET_SENTINEL" not in json.dumps(ref)
+        assert "SECRET_SENTINEL" not in "".join(p.read_text() for p in tmp_path.iterdir())
+    assert refs[-1]["status"] == {"io": "transport_error", "cancel": "cancelled"}.get(failure, "response_headers_observed")
+    assert all("send_attempt" in p.read_text() for p in tmp_path.glob("*.send_attempt.json"))
+    if failure == "retry":
+        assert json.loads(sent[1])["messages"] == [{"role": "user", "content": "SYSTEM\n\nFINAL"}]
+
+
+@pytest.mark.asyncio
+async def test_request_audit_write_failure_does_not_retry_or_block_inference(tmp_path):
+    from proxy.services.model_request_audit_service import ModelRequestAudit
+    unavailable = tmp_path / "not-a-directory"
+    unavailable.write_text("occupied")
+    refs, sent = [], []
+    async def handler(request):
+        sent.append(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = OpenAICompatibleTransport(client=client, secret_store=EnvironmentSecretStore(tmp_path / "unused.env"), peer_verifier=lambda *_: None)
+        result = await transport.complete(_resolved(), InferenceRequest(messages=({"role": "user", "content": "FINAL"},),
+            max_output_tokens=17, request_audit=ModelRequestAudit(directory=unavailable, purpose="answer_read", refs=refs)))
+    assert result.text == "ok" and len(sent) == 1
+    assert refs[0]["status"] == "audit_unavailable"
+    assert refs[0]["error_code"] == "MODEL_REQUEST_AUDIT_WRITE_FAILED"
+    assert "sha256" not in refs[0] and "body_file" not in refs[0]
+
+
+@pytest.mark.asyncio
+async def test_request_body_audit_tracks_fallback_connection_and_native_body(tmp_path):
+    from dataclasses import replace
+    from proxy.services.model_request_audit_service import ModelRequestAudit
+    from proxy.services.canonical_route_service import BoundModelChatRunner, CanonicalRouteMode
+    refs, sent = [], []
+    primary = _resolved()
+    fallback = replace(_resolved(chat_protocol="native_chat_v1"), revision_id="conn:fallback:r2", model_id="fallback-model")
+    class Resolver:
+        def resolve(self, _role):
+            return primary
+        def resolve_fallback(self, _revision):
+            return fallback
+    async def handler(request):
+        sent.append(request.content)
+        if len(sent) == 1:
+            raise httpx.ConnectError("upstream", request=request)
+        return httpx.Response(200, content=b'{"message":{"content":"ok"},"done":true,"done_reason":"stop"}\n')
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = OpenAICompatibleTransport(client=client, secret_store=EnvironmentSecretStore(tmp_path / "unused.env"), peer_verifier=lambda *_: None)
+        runner = BoundModelChatRunner(resolver=Resolver(), transport=transport)
+        result = await runner.complete(mode=CanonicalRouteMode.ACTIVE,
+            request=InferenceRequest(messages=({"role": "user", "content": "FINAL"},), max_output_tokens=17,
+                request_audit=ModelRequestAudit(directory=tmp_path, purpose="answer", refs=refs)),
+            legacy_complete=lambda _: pytest.fail("no legacy call"))
+    assert result.response.text == "ok" and result.fallback_used
+    assert [ref["revision_id"] for ref in refs] == ["conn:c1:r1", "conn:fallback:r2"]
+    assert [ref["status"] for ref in refs] == ["transport_error", "response_headers_observed"]
+    assert json.loads(sent[1])["options"]["num_predict"] == 17
+    assert json.loads(sent[1])["model"] == "fallback-model"
+    assert all((tmp_path / ref["body_file"]).read_bytes() == wire for ref, wire in zip(refs, sent))
+
+
+@pytest.mark.asyncio
+async def test_streaming_audit_records_actual_stream_body(tmp_path):
+    from proxy.services.model_request_audit_service import ModelRequestAudit
+    refs, sent = [], []
+    async def handler(request):
+        sent.append(request.content)
+        return httpx.Response(200, content=b'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = OpenAICompatibleTransport(client=client, secret_store=EnvironmentSecretStore(tmp_path / "unused.env"), peer_verifier=lambda *_: None)
+        events = [event async for event in transport.stream(_resolved(max_output_field="max_completion_tokens"),
+            InferenceRequest(messages=({"role": "user", "content": "READ"},), max_output_tokens=17,
+                request_audit=ModelRequestAudit(directory=tmp_path, purpose="answer_read", refs=refs)))]
+    assert events
+    assert json.loads(sent[0])["stream"] is True
+    assert json.loads(sent[0])["max_completion_tokens"] == 17
+    assert (tmp_path / refs[0]["body_file"]).read_bytes() == sent[0]
+
+
+@pytest.mark.parametrize("failed_event", ["prepared", "send_attempt", "response_headers_observed"])
+def test_audit_event_failure_retains_written_body_and_safe_correlation(tmp_path, failed_event, monkeypatch):
+    import hashlib
+    from proxy.services.model_request_audit_service import ModelRequestAudit
+    refs = []
+    audit = ModelRequestAudit(directory=tmp_path, purpose="answer_read", refs=refs)
+    write = audit._write
+    def fail_event(filename, data):
+        if filename.endswith("." + failed_event + ".json"):
+            raise OSError("private disk failure detail")
+        write(filename, data)
+    monkeypatch.setattr(audit, "_write", fail_event)
+    body = b'{"messages":[{"role":"user","content":"FINAL"}]}'
+    ref = audit.prepare(body, revision_id="conn:actual:r2", model_id="actual-model")
+    if failed_event != "prepared":
+        audit.mark(ref, failed_event, http_status=200)
+    assert ref["status"] == "audit_unavailable"
+    assert ref["purpose"] == "answer_read" and ref["attempt"] == 1
+    assert ref["revision_id"] == "conn:actual:r2" and ref["model_id"] == "actual-model"
+    assert (tmp_path / ref["body_file"]).read_bytes() == body
+    assert ref["sha256"] == hashlib.sha256(body).hexdigest()
+    assert "http_status" not in ref
+    assert not (tmp_path / (ref["receipt_id"] + "." + failed_event + ".json")).exists()
+    assert "private disk failure detail" not in json.dumps(ref)
+
+
+def test_audit_uuid_collision_never_overwrites_final_body(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from proxy.services import model_request_audit_service as service
+    monkeypatch.setattr(service, "uuid4", lambda: SimpleNamespace(hex="forcedcollision"))
+    refs = []
+    audit = service.ModelRequestAudit(directory=tmp_path, purpose="answer", refs=refs)
+    original = b'{"messages":[{"role":"user","content":"ORIGINAL"}]}'
+    first = audit.prepare(original, revision_id="conn:r1", model_id="first")
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    second = audit.prepare(b'{"messages":[]}', revision_id="conn:r2", model_id="second")
+    assert (tmp_path / first["body_file"]).read_bytes() == original
+    assert all((tmp_path / name).read_bytes() == data for name, data in before.items())
+    assert second["status"] == "audit_unavailable"
+    assert second["revision_id"] == "conn:r2" and second["attempt"] == 2
+    assert "sha256" not in second and "body_file" not in second
+
+
 def _resolved(
     *,
     display_name: str = "Connection",

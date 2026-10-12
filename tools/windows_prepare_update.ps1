@@ -35,6 +35,20 @@ function Invoke-Checked([string]$Program, [string[]]$Arguments) {
   }
 }
 
+function Get-LesFileSha256([string]$Path) {
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      return ([System.BitConverter]::ToString($hasher.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+      $hasher.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 function Restore-BuildTree {
   try { & git -C $RepoRoot restore -- $GeneratedPaths | Out-Null } catch { }
   Remove-Item -LiteralPath $WindowsSchema -Force -ErrorAction SilentlyContinue
@@ -47,7 +61,7 @@ function Read-PreparedUpdate {
   }
   try {
     $prepared = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-    $sha = (Get-FileHash -LiteralPath $CachedInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sha = Get-LesFileSha256 $CachedInstaller
     if (
       $prepared.schema -eq "les.windows.prepared-package.v1" -and
       $prepared.status -eq "prepared" -and
@@ -92,7 +106,7 @@ try {
     throw "Installer was not built: $Installer"
   }
 
-  $sha = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
+  $sha = Get-LesFileSha256 $Installer
   New-Item -ItemType Directory -Force -Path $CacheRoot | Out-Null
   $temporaryInstaller = "$CachedInstaller.tmp"
   Copy-Item -LiteralPath $Installer -Destination $temporaryInstaller -Force
@@ -107,7 +121,7 @@ try {
     installer = $CachedInstaller
     bytes = (Get-Item -LiteralPath $CachedInstaller).Length
     sha256 = $sha
-    baseline_sha256 = (Get-FileHash -LiteralPath $SmetaBaselineArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+    baseline_sha256 = Get-LesFileSha256 $SmetaBaselineArchive
     prepared_at = [DateTime]::UtcNow.ToString("o")
     cache_hit = $false
   }

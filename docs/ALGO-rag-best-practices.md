@@ -53,6 +53,12 @@ LES не должен быть "чатом над чанками". Для стр
 
 ## Базовая модель
 
+Optional cross-encoder failure must not erase retrieved evidence. Constructor/inference errors
+record `rerank.status=bypassed`, `reason=failed`, `error_code=RERANKER_FAILED` and exception type;
+the existing candidate list continues through context expansion and quality diagnostics. Original
+exception stays in the log. Native retrieval/index-contract failures remain blocking; this does
+not add another retrieval path or let code replace the model's answer.
+
 ```text
 folder/project/dataset
   -> intake plan

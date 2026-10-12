@@ -40,6 +40,7 @@ Set-Location $Root
 $env:LES_RUNTIME_HOME = $Root.Path
 $env:LES_REPO_ROOT = $Root.Path
 . (Join-Path $PSScriptRoot "runtime-process.ps1")
+. (Join-Path $PSScriptRoot "provider-env.ps1")
 
 $StateRoot = if ($env:LES_WINDOWS_STATE_ROOT) { [System.IO.Path]::GetFullPath($env:LES_WINDOWS_STATE_ROOT) } else { "" }
 if ($StateRoot) {
@@ -237,22 +238,15 @@ switch ($Provider) {
     Set-LesOllamaEmbeddings
   }
   "lemonade" {
-    $env:LEMONADE_BASE_URL = if ($env:LEMONADE_BASE_URL) { $env:LEMONADE_BASE_URL } else { "http://127.0.0.1:13305/api/v1" }
     $env:LEMONADE_API_KEY = if ($env:LEMONADE_API_KEY) { $env:LEMONADE_API_KEY } else { "lemonade" }
-    $env:LEMONADE_HOST_PORT = "$LemonadeHostPort"
+    Set-LesProviderEnvironment -Provider $Provider -AdapterPort $LemonadeHostPort
     if ($Model) { $env:LEMONADE_MODEL = $Model }
   }
 }
 
 $lemonadeHost = $null
 if (($Mode -ne "ui") -and ($Provider -eq "lemonade")) {
-  if ($PSBoundParameters.ContainsKey("LemonadeHostPort")) {
-    Stop-LesPortProcess -Port $LemonadeHostPort
-  } elseif (-not (Test-LesPortFree -Port $LemonadeHostPort)) {
-    $LemonadeHostPort = Get-LesFreePort -StartPort ($LemonadeHostPort + 1) -Reserved @($ProxyPort, $UiPort)
-    $env:LEMONADE_HOST_PORT = "$LemonadeHostPort"
-    $env:MLX_URL = "http://127.0.0.1:$LemonadeHostPort"
-  }
+  Assert-LesLemonadeAdapterPort -Port $LemonadeHostPort
   $lemonadeHostArgs = @("lemonade_host.py")
   $lemonadeHostOut = Join-Path $Root "logs\windows-light-lemonade-host.out.log"
   $lemonadeHostErr = Join-Path $Root "logs\windows-light-lemonade-host.err.log"
@@ -262,6 +256,9 @@ if (($Mode -ne "ui") -and ($Provider -eq "lemonade")) {
     Write-Warning "Lemonade adapter did not answer /api/health within startup timeout."
   }
 }
+$lemonadeLifecycle = New-LesLemonadeLifecycleState `
+  -LemonadeHost $lemonadeHost `
+  -LemonadeHostPort $LemonadeHostPort
 
 $proxy = $null
 $proxyErr = $null
@@ -299,15 +296,16 @@ $payload = [pscustomobject]@{
   ui_port = if ($ui) { $UiPort } else { $null }
   qdrant_url = $env:QDRANT_URL
   mlx_url = $env:MLX_URL
-  lemonade_adapter_url = if ($lemonadeHost) { "http://127.0.0.1:$LemonadeHostPort" } else { $null }
+  lemonade_adapter_url = $lemonadeLifecycle.lemonade_adapter_url
   proxy_url = $env:PROXY_URL
   ui_url = if ($ui) { "http://127.0.0.1:$UiPort/les" } else { $null }
   ui_health_url = if ($ui) { "http://127.0.0.1:$UiPort/healthz" } else { $null }
   dynamic_ports = (($Mode -ne "ui") -and (-not $ProxyPortExplicit)) -or (($Mode -ne "backend") -and (-not $UiPortExplicit))
-  lemonade_host_pid = if ($lemonadeHost) { $lemonadeHost.Id } else { $null }
+  lemonade_host_pid = $lemonadeLifecycle.lemonade_host_pid
+  lemonade_host_port = $lemonadeLifecycle.lemonade_host_port
   proxy_pid = if ($proxy) { $proxy.Id } else { $null }
   ui_pid = if ($ui) { $ui.Id } else { $null }
-  lemonade_host_alive = if ($lemonadeHost) { -not $lemonadeHost.HasExited } else { $null }
+  lemonade_host_alive = $lemonadeLifecycle.lemonade_host_alive
   proxy_alive = if ($proxy) { -not $proxy.HasExited } else { $null }
   ui_alive = if ($ui) { -not $ui.HasExited } else { $null }
   lemonade_host_log = if ($lemonadeHost) { $lemonadeHostErr } else { $null }
@@ -315,7 +313,7 @@ $payload = [pscustomobject]@{
   ui_log = if ($ui) { $uiErr } else { $null }
   health = $health
   state_root = if ($StateRoot) { $StateRoot } else { $Root.Path }
-  process_contract = "direct_python_no_console_v1"
+  process_contract = "direct_python_no_console_v2"
   python_executable = $LesPython
 }
 

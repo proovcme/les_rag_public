@@ -61,3 +61,28 @@ def test_hash_drift_is_detected_before_read(tmp_path):
 
     with pytest.raises(ArtifactImmutableError, match="hash"):
         store.read_bytes(revision.revision_id)
+
+
+def test_two_revisions_from_one_parent_do_not_collide(tmp_path: Path) -> None:
+    """Две книги от одного родителя — законная пара, а не ошибка.
+
+    Живой прогон 11.09, 11:07: повторная доставка запроса собрала вторую книгу от
+    того же родителя, и упаковка упала с `UNIQUE constraint failed:
+    artifact_revisions.artifact_id, artifact_revisions.revision_no`. Номер считался
+    как «родитель + 1», поэтому любое ветвление ломало запись. Родословная живёт в
+    parent_revision_id и от нумерации не зависит.
+    """
+    store = ArtifactRevisionStore(tmp_path / "meta.db", tmp_path / "files")
+
+    root = store.create_revision(_request(_workbook(tmp_path, "root.xlsx", b"root")))
+    first = store.create_revision(
+        _request(_workbook(tmp_path, "a.xlsx", b"branch-a"), parent=root.revision_id)
+    )
+    second = store.create_revision(
+        _request(_workbook(tmp_path, "b.xlsx", b"branch-b"), parent=root.revision_id)
+    )
+
+    assert first.revision_no == 2
+    assert second.revision_no == 3, "вторая ветка получает следующий свободный номер"
+    assert second.parent_revision_id == root.revision_id, "родословная сохранена"
+    assert first.revision_id != second.revision_id

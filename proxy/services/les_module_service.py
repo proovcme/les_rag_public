@@ -7,8 +7,31 @@ and contract interpretation remain model/domain responsibilities.
 
 from __future__ import annotations
 
+import copy
+import importlib
+import json
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Iterable
+
+from proxy.services.les_module_contracts import (
+    ModuleContractError,
+    ModuleManifest,
+    is_safe_module_id,
+    validate_manifest,
+)
+
+
+_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_MODULE_CONFIG = _ROOT / "config" / "modules.json"
+_MODULE_CONFIG_SCHEMA = "les.module-registry.v1"
+_SAFE_PACKAGE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+_FEATURE_MODULES: dict[str, Any] = {
+    "schema": "les.feature-modules.v1",
+    "registry": {"status": "ready", "reason_code": None},
+    "modules": {},
+}
 
 
 @dataclass(frozen=True)
@@ -224,8 +247,112 @@ def route_module(
     return MODULE_REGISTRY[best[0]]
 
 
+def _feature_registry(status: str, reason_code: str | None, modules: dict[str, Any]) -> None:
+    global _FEATURE_MODULES
+    _FEATURE_MODULES = {
+        "schema": "les.feature-modules.v1",
+        "registry": {"status": status, "reason_code": reason_code},
+        "modules": modules,
+    }
+
+
+def _load_manifest_factory(entry_point: str, *, package: str) -> Any:
+    prefix = f"{package}."
+    if not entry_point.startswith(prefix) or entry_point.count(":") != 1:
+        raise ModuleContractError("MODULE_ENTRY_POINT_INVALID")
+    module_name, attribute = entry_point.split(":", 1)
+    module = importlib.import_module(module_name)
+    factory = getattr(module, attribute)
+    if not callable(factory):
+        raise ModuleContractError("MODULE_ENTRY_POINT_INVALID")
+    return factory
+
+
+def load_enabled_modules(
+    config_path: Path | None = None,
+    package: str = "modules",
+) -> tuple[ModuleManifest, ...]:
+    """Load only manifests named in the explicit registry, isolating optional failures."""
+    if not _SAFE_PACKAGE_RE.fullmatch(str(package or "")):
+        _feature_registry("disabled", "MODULE_PACKAGE_INVALID", {})
+        return ()
+
+    path = Path(config_path) if config_path is not None else _DEFAULT_MODULE_CONFIG
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("schema") != _MODULE_CONFIG_SCHEMA:
+            raise ValueError("schema")
+        entries = payload.get("modules")
+        if not isinstance(entries, list):
+            raise ValueError("modules")
+        normalized: list[dict[str, Any]] = []
+        module_ids: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {"module_id", "enabled", "manifest"}:
+                raise ValueError("entry")
+            module_id = entry.get("module_id")
+            enabled = entry.get("enabled")
+            manifest_entry = entry.get("manifest")
+            if (
+                not is_safe_module_id(module_id)
+                or not isinstance(enabled, bool)
+                or not isinstance(manifest_entry, str)
+            ):
+                raise ValueError("entry types")
+            module_ids.append(module_id)
+            normalized.append(entry)
+        if len(module_ids) != len(set(module_ids)):
+            _feature_registry("disabled", "MODULE_CONFIG_DUPLICATE_ID", {})
+            return ()
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+        _feature_registry("disabled", "MODULE_CONFIG_INVALID", {})
+        return ()
+
+    reports: dict[str, Any] = {}
+    loaded: list[ModuleManifest] = []
+    for entry in normalized:
+        module_id = entry["module_id"]
+        if not entry["enabled"]:
+            reports[module_id] = {
+                "status": "disabled",
+                "api_version": None,
+                "capabilities": [],
+                "reason_code": "MODULE_DISABLED",
+            }
+            continue
+        try:
+            factory = _load_manifest_factory(entry["manifest"], package=package)
+            manifest = validate_manifest(factory(), module_id)
+        except ModuleContractError as error:
+            reports[module_id] = {
+                "status": "disabled",
+                "api_version": None,
+                "capabilities": [],
+                "reason_code": error.code,
+            }
+            continue
+        except Exception:
+            reports[module_id] = {
+                "status": "disabled",
+                "api_version": None,
+                "capabilities": [],
+                "reason_code": "MODULE_ENTRY_POINT_UNAVAILABLE",
+            }
+            continue
+        loaded.append(manifest)
+        reports[module_id] = {
+            "status": "enabled",
+            "api_version": manifest.api_version,
+            "capabilities": list(manifest.capabilities),
+            "reason_code": None,
+        }
+
+    _feature_registry("ready", None, reports)
+    return tuple(loaded)
+
+
 def module_registry_snapshot() -> dict[str, Any]:
-    return {
+    snapshot = {
         module_id: {
             "title": spec.title,
             "triggers": list(spec.triggers),
@@ -239,6 +366,8 @@ def module_registry_snapshot() -> dict[str, Any]:
         }
         for module_id, spec in MODULE_REGISTRY.items()
     }
+    snapshot["feature_modules"] = copy.deepcopy(_FEATURE_MODULES)
+    return snapshot
 
 
 def allowed_tool(module_id: str, tool_type: str) -> bool:

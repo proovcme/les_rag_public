@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 import json
@@ -11,7 +12,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from proxy.services.llm_transport_profile_service import assistant_delta_text
+from proxy.services.llm_transport_profile_service import (
+    apply_transport_options,
+    assistant_delta_text,
+)
 from proxy.services.model_connection_contracts import CapabilityName, CapabilityState
 from proxy.services.model_connection_resolver_service import ResolvedModelConnection
 from proxy.services.model_connection_security_service import (
@@ -20,6 +24,8 @@ from proxy.services.model_connection_security_service import (
     validate_connected_peer,
 )
 from proxy.services.model_secret_service import EnvironmentSecretStore, ModelSecretError
+from proxy.services.model_request_audit_service import ModelRequestAudit
+from proxy.services.model_capability_service import capability_diagnostic_observation
 
 
 class ModelTransportError(RuntimeError):
@@ -36,6 +42,7 @@ class InferenceRequest:
     temperature: float | None = None
     tools: Sequence[Mapping[str, Any]] = ()
     response_format: Mapping[str, Any] | None = None
+    request_audit: ModelRequestAudit | None = None
 
     def __post_init__(self) -> None:
         if self.max_output_tokens < 1:
@@ -134,6 +141,14 @@ class OpenAICompatibleTransport:
             headers["Authorization"] = f"Bearer {secret.reveal()}"
         return headers
 
+    def _require_optional_tools(self, connection: ResolvedModelConnection) -> None:
+        # UNKNOWN is absence of behavioral proof, not a protocol refusal.
+        # Mandatory CHAT/security checks remain at the normal transport boundary.
+        observation = capability_diagnostic_observation(connection.capability_snapshot.observation(CapabilityName.TOOLS))
+        if observation.state is CapabilityState.UNKNOWN:
+            return
+        self._require(connection, CapabilityName.TOOLS)
+
     @staticmethod
     def _output_field(connection: ResolvedModelConnection) -> str:
         return connection.capability_snapshot.transport_options.get(
@@ -163,14 +178,21 @@ class OpenAICompatibleTransport:
         if request.temperature is not None:
             body["temperature"] = request.temperature
         if request.tools:
-            self._require(connection, CapabilityName.TOOLS)
+            self._require_optional_tools(connection)
             body["tools"] = [dict(item) for item in request.tools]
         if request.response_format is not None:
             self._require(connection, CapabilityName.STRUCTURED_OUTPUT)
             body["response_format"] = dict(request.response_format)
         if stream:
             body["stream"] = True
-        return body
+        return apply_transport_options(
+            body,
+            connection.extension_type,
+            model_id=connection.model_id,
+            backend=connection.capability_snapshot.transport_options.get(
+                "observed_backend"
+            ),
+        )
 
     @staticmethod
     def _native_chat_url(connection: ResolvedModelConnection) -> str:
@@ -220,13 +242,14 @@ class OpenAICompatibleTransport:
         request: InferenceRequest,
     ) -> InferenceResponse:
         if request.tools:
-            self._require(connection, CapabilityName.TOOLS)
+            self._require_optional_tools(connection)
         if request.response_format is not None:
             self._require(connection, CapabilityName.STRUCTURED_OUTPUT)
         response = await self._open(
             connection,
             url=self._native_chat_url(connection),
             body=self._native_chat_body(connection, request),
+            request_audit=request.request_audit,
         )
         try:
             if not 200 <= response.status_code < 300:
@@ -325,6 +348,7 @@ class OpenAICompatibleTransport:
         *,
         url: str,
         body: Mapping[str, Any],
+        request_audit: ModelRequestAudit | None = None,
     ) -> httpx.Response:
         request = self.client.build_request(
             "POST",
@@ -333,10 +357,23 @@ class OpenAICompatibleTransport:
             json=dict(body),
             timeout=self.timeout,
         )
+        audit_ref = None
+        if request_audit is not None:
+            audit_ref = request_audit.prepare(request.content, revision_id=connection.revision_id,
+                                              model_id=connection.model_id)
+            request_audit.mark(audit_ref, "send_attempt")
         try:
             response = await self.client.send(request, stream=True, follow_redirects=False)
+        except asyncio.CancelledError:
+            if audit_ref is not None:
+                request_audit.mark(audit_ref, "cancelled")
+            raise
         except (httpx.HTTPError, OSError) as exc:
+            if audit_ref is not None:
+                request_audit.mark(audit_ref, "transport_error")
             raise ModelTransportError(f"UPSTREAM_REQUEST_FAILED: {type(exc).__name__}") from exc
+        if audit_ref is not None:
+            request_audit.mark(audit_ref, "response_headers_observed", http_status=response.status_code)
         if 300 <= response.status_code < 400:
             await response.aclose()
             raise ModelTransportError("UPSTREAM_REDIRECT_REJECTED")
@@ -373,6 +410,7 @@ class OpenAICompatibleTransport:
             connection,
             url=join_openai_path(connection.endpoint, "/chat/completions"),
             body=body,
+            request_audit=request.request_audit,
         )
         try:
             raw = await self._read_bounded(response)
@@ -386,6 +424,7 @@ class OpenAICompatibleTransport:
                     connection,
                     url=join_openai_path(connection.endpoint, "/chat/completions"),
                     body=self._fold_system_into_user(body),
+                    request_audit=request.request_audit,
                 )
                 raw = await self._read_bounded(response)
             if not 200 <= response.status_code < 300:
@@ -423,6 +462,7 @@ class OpenAICompatibleTransport:
             connection,
             url=join_openai_path(connection.endpoint, "/chat/completions"),
             body=self._chat_body(connection, request, stream=True),
+            request_audit=request.request_audit,
         )
         consumed = 0
         finished = False

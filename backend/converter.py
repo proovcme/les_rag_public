@@ -14,7 +14,58 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from .ocr_parser import OCRProcessingError
+
 logger = logging.getLogger(__name__)
+
+
+_SUBPROCESS_STATUS_UNSUPPORTED_PDF = "unsupported_pdf_source"
+
+
+class UnsupportedPdfSourceError(RuntimeError):
+    """A mislabeled, empty or truncated source cannot be repaired by OCR."""
+
+
+def _pdf_source_is_unreadable(path: Any) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(1024)
+    except OSError:
+        return True
+    return b"%PDF-" not in head
+
+
+def _require_readable_pdf(path: Path) -> None:
+    if _pdf_source_is_unreadable(path):
+        raise UnsupportedPdfSourceError(f"pdf_source_unreadable: {path.name}")
+
+
+def _pdf_has_openable_pages(path: Path) -> bool:
+    try:
+        import fitz
+
+        with fitz.open(str(path)) as document:
+            return int(document.page_count) > 0
+    except Exception:
+        return False
+
+
+def _ocr_has_searchable_text(markdown: Any) -> bool:
+    text = str(markdown or "")
+    evidence = re.sub(
+        r"(?im)^\s*#{1,6}\s*(?:стр\.?|page)\s+\d+\s*$",
+        "",
+        text,
+    )
+    return bool(evidence.strip())
+
+
+class OCRRequiredError(RuntimeError):
+    """A router-mandated OCR conversion did not produce searchable evidence."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
 
 # Лимит текста на файл — защита от огромных документов
 MAX_FILE_CHARS = 500_000  # ~125k токенов
@@ -89,6 +140,8 @@ def convert_to_markdown(file_path: Path, route=None) -> Optional[str]:
 
         return _limit_file_chars(file_path, result)
 
+    except (OCRRequiredError, UnsupportedPdfSourceError):
+        raise
     except Exception as e:
         logger.error(f"[CONVERT] Ошибка {file_path.name}: {e}", exc_info=True)
         return None
@@ -96,10 +149,16 @@ def convert_to_markdown(file_path: Path, route=None) -> Optional[str]:
 
 def convert_to_markdown_for_indexing(file_path: Path, route=None) -> Optional[str]:
     """Indexing entrypoint: risky PDF/Excel converters run in a killable child."""
+    if file_path.suffix.lower() == ".pdf":
+        _require_readable_pdf(file_path)
     if not _isolated_conversion_enabled(file_path):
         return convert_to_markdown(file_path, route=route)
     if _pdf_index_fast_text_first(file_path, route=route):
-        fast = _parse_pdf_fast_text_layer(file_path, reason="pdf_index_text_first")
+        fast = _parse_pdf_fast_text_layer(
+            file_path,
+            reason="pdf_index_text_first",
+            min_chars_per_page=_pdf_fast_text_min_chars_per_page(),
+        )
         if fast and fast.strip():
             return _limit_file_chars(
                 file_path,
@@ -109,9 +168,17 @@ def convert_to_markdown_for_indexing(file_path: Path, route=None) -> Optional[st
             )
     try:
         return convert_to_markdown_isolated(file_path, route=route)
+    except (OCRRequiredError, UnsupportedPdfSourceError):
+        raise
     except RuntimeError as error:
+        if route and getattr(route, "pipeline", None) == "markdown_needs_ocr":
+            raise OCRRequiredError("ocr_required_execution_failed") from error
         if _pdf_fast_text_fallback_enabled(file_path):
-            fast = _parse_pdf_fast_text_layer(file_path, reason=f"isolated_convert_failed: {error}")
+            fast = _parse_pdf_fast_text_layer(
+                file_path,
+                reason=f"isolated_convert_failed: {error}",
+                min_chars_per_page=_pdf_fast_text_min_chars_per_page(),
+            )
             if fast and fast.strip():
                 logger.warning(
                     "[CONVERT] %s: isolated converter failed (%s), indexed fast page-text fallback",
@@ -171,12 +238,20 @@ def convert_to_markdown_isolated(
     status, payload = result
     if status == "ok":
         return payload
+    if status == "ocr_required":
+        raise OCRRequiredError(str(payload))
+    if status == _SUBPROCESS_STATUS_UNSUPPORTED_PDF:
+        raise UnsupportedPdfSourceError(str(payload))
     raise RuntimeError(str(payload))
 
 
 def _convert_to_markdown_worker(file_path: str, route: Any, result_queue: Any) -> None:
     try:
         result_queue.put(("ok", convert_to_markdown(Path(file_path), route=route)))
+    except OCRRequiredError as error:
+        result_queue.put(("ocr_required", error.code))
+    except UnsupportedPdfSourceError as error:
+        result_queue.put((_SUBPROCESS_STATUS_UNSUPPORTED_PDF, str(error)))
     except BaseException as error:  # noqa: BLE001 - cross-process boundary
         result_queue.put(("error", f"{type(error).__name__}: {error}"))
 
@@ -234,7 +309,26 @@ def _pdf_index_fast_text_first(file_path: Path, route=None) -> bool:
     return page_count >= min_pages or size_mb >= min_mb or pipeline == "markdown_pdf_tables"
 
 
-def _parse_pdf_fast_text_layer(path: Path, *, reason: str = "") -> Optional[str]:
+def _pdf_fast_text_min_chars_per_page() -> float:
+    raw = os.getenv("RAG_PDF_FAST_TEXT_MIN_CHARS_PER_PAGE", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+            if value >= 0:
+                return value
+        except ValueError:
+            pass
+    # Public baseline preserves short technical labels; only explicit thresholds
+    # may require more text. Zero actual text is always rejected below.
+    return 0.0
+
+
+def _parse_pdf_fast_text_layer(
+    path: Path,
+    *,
+    reason: str = "",
+    min_chars_per_page: Optional[float] = None,
+) -> Optional[str]:
     try:
         import fitz
 
@@ -247,6 +341,17 @@ def _parse_pdf_fast_text_layer(path: Path, *, reason: str = "") -> Optional[str]
                 text = page.get_text("text", sort=sort_text).strip()
                 chars += len(text)
                 pages.append(f"## Page {idx}\n\n{text or '[no text extracted]'}")
+        if chars == 0:
+            return None
+        if min_chars_per_page is not None and page_count > 0:
+            if chars / page_count < min_chars_per_page:
+                logger.info(
+                    "[CONVERT] %s: fast text is too sparse (%d chars / %d pages); routing to OCR",
+                    path.name,
+                    chars,
+                    page_count,
+                )
+                return None
         header = [
             f"# PDF text projection: {path.name}",
             "",
@@ -267,17 +372,23 @@ def _parse_pdf_fast_text_layer(path: Path, *, reason: str = "") -> Optional[str]
 
 
 def _parse_pdf(path: Path, route=None) -> str:
+    # Reject empty, truncated and mislabeled PDFs before every parser/fallback.
+    # A valid PDF header may be preceded by a bounded amount of transport noise.
+    _require_readable_pdf(path)
+
     # Проверяем настройки OCR из переменных окружения
     ocr_enabled = os.getenv("RAG_OCR_ENABLED", "true").lower() in ("true", "1", "yes", "on")
-    ocr_dpi = int(os.getenv("RAG_OCR_DPI", "150"))
+    ocr_dpi = int(os.getenv("RAG_OCR_DPI", "300"))
 
-    force_ocr = False
-    if route and getattr(route, "pipeline", None) == "markdown_needs_ocr":
-        force_ocr = True
+    explicit_ocr = bool(route and getattr(route, "pipeline", None) == "markdown_needs_ocr")
+    force_ocr = explicit_ocr
+
+    if explicit_ocr and not ocr_enabled:
+        raise OCRRequiredError("ocr_required_disabled")
 
     # Скан без текстового слоя → сразу НАШ OCR (make_ocr_parser, напр. tesseract rus+eng),
     # не пуская встроенный eng-OCR pymupdf4llm (он даёт латинскую кашу на кириллице).
-    if not force_ocr and ocr_enabled:
+    if not force_ocr:
         try:
             import fitz
             with fitz.open(str(path)) as _d:
@@ -289,16 +400,24 @@ def _parse_pdf(path: Path, route=None) -> str:
             pass
 
     # 1. Если роутер явно сказал делать OCR, делаем его сразу
-    if force_ocr and ocr_enabled:
+    if force_ocr and not ocr_enabled:
+        raise OCRRequiredError("ocr_required_disabled")
+
+    if force_ocr:
         logger.info(f"[CONVERT] Запуск OCR конвейера для {path.name} по требованию роутера")
         try:
             from .ocr_parser import make_ocr_parser
             parser = make_ocr_parser()
             md = parser.parse_pdf(path, dpi=ocr_dpi)
-            if md and md.strip():
+            if _ocr_has_searchable_text(md):
                 return normalize_pdf_text(md)
+        except OCRProcessingError as ocr_err:
+            logger.error("[CONVERT] typed OCR failure for %s: %s", path.name, ocr_err.code)
+            raise OCRRequiredError(ocr_err.code) from ocr_err
         except Exception as ocr_err:
             logger.error(f"[CONVERT] Ошибка OCR для {path.name}: {ocr_err}", exc_info=True)
+            raise OCRRequiredError("ocr_required_execution_failed") from ocr_err
+        raise OCRRequiredError("ocr_required_no_searchable_text")
 
     # 1.5 (W1.5, ADR-5): опциональный layout-aware парсер Docling — таблицы через
     # TableFormer. Включается RAG_PDF_PARSER=docling (нужен extra: uv sync --extra parsers).
@@ -358,7 +477,7 @@ def _parse_pdf(path: Path, route=None) -> str:
             md_content = pymupdf4llm.to_markdown(str(path), pages=None, **kwargs)
         if md_content and md_content.strip():
             # Если текст слишком короткий, возможно это скан с парой символов мусора
-            if len(md_content.strip()) < 100 and ocr_enabled:
+            if len(md_content.strip()) < 100:
                 logger.warning(f"[CONVERT] Текст слишком короткий ({len(md_content)} симв.), подозрение на скан. Пробуем OCR.")
                 force_ocr = True
             else:
@@ -390,12 +509,20 @@ def _parse_pdf(path: Path, route=None) -> str:
             from .ocr_parser import make_ocr_parser
             parser = make_ocr_parser()
             md = parser.parse_pdf(path, dpi=ocr_dpi)
-            if md and md.strip():
+            if _ocr_has_searchable_text(md):
                 return normalize_pdf_text(md)
+        except OCRProcessingError as ocr_err:
+            logger.error("[CONVERT] typed OCR failure for %s: %s", path.name, ocr_err.code)
+            raise OCRRequiredError(ocr_err.code) from ocr_err
         except Exception as ocr_err:
             logger.error(f"[CONVERT] Ошибка фонового OCR для {path.name}: {ocr_err}", exc_info=True)
+            raise OCRRequiredError("ocr_required_execution_failed") from ocr_err
 
-    return f"[WARN] {path.name}: текст не извлечён (сканированный PDF?)"
+    if not _pdf_has_openable_pages(path):
+        raise UnsupportedPdfSourceError(f"pdf_source_unreadable: {path.name}")
+    if not ocr_enabled:
+        raise OCRRequiredError("ocr_required_disabled")
+    raise OCRRequiredError("ocr_required_no_searchable_text")
 
 
 # Колонтитулы правовых систем («КонсультантПлюс … Страница N из M») превращаются
@@ -616,6 +743,8 @@ def _parse_p7m(path: Path, route=None) -> Optional[str]:
                     txt = out.read_text(encoding="utf-8", errors="ignore").strip()
                     if txt:
                         return txt
+            except (OCRRequiredError, UnsupportedPdfSourceError):
+                raise
             except Exception:  # noqa: BLE001
                 continue
     if detached:

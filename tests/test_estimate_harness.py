@@ -100,7 +100,9 @@ def test_search_norm_can_defer_reranker_for_big_model_tool_loop(monkeypatch):
 
     assert result["candidates"][0]["norm_code"] == "ГЭСНм10-04-087-05"
     assert result["norm_store"]["backend"] == "typed_sqlite_fts+rerank_deferred"
-    assert seen == {"queries": ["монтаж шкафа"], "limit": 4, "rerank": False}
+    # Пул шире запрошенного top_k: ранжирование по сборнику и практике должно
+    # видеть запас кандидатов, иначе профильной норме неоткуда подняться.
+    assert seen == {"queries": ["монтаж шкафа"], "limit": 40, "rerank": False}
 
 
 def test_collection_identity_preserves_explicit_family():
@@ -372,3 +374,42 @@ def test_resolve_slots_reports_critical_geometry_input():
     assert "slab_thickness_m" in missing
     assert namespace["slab_area_m2"] == namespace["S1"]
     assert any("slab_area_m2" in item for item in assumptions)
+
+
+def test_collection_scope_explains_but_does_not_score(monkeypatch):
+    """Сборник объясняет кандидата, но веса не даёт.
+
+    Замер на отложенной выборке (542 строки готовых смет; корпус применений собран
+    без файлов выборки, эталон — норма, применённая сметчиком) показал: вес сборника
+    роняет точность первой позиции с 74,0 % до 71,0 %, а без штрафа за чужой сборник
+    до 71,8 %. Профильный сборник содержит сотни норм и топит верную из смежного.
+    Практика раздела, наоборот, поднимает точность до 77,9 %.
+    """
+    import proxy.services.estimate_harness_service as h
+    from proxy.smeta_core import norm_browser
+
+    def browse_many(queries, *, limit, rerank):
+        return {
+            queries[0]: {
+                "cards": [
+                    # Первая по тексту — из смежного сборника, и она верна.
+                    {"norm_code": "ГЭСНм08-02-147-10", "title": "Кабель по лоткам",
+                     "measure_unit": "100 м", "source_ref": "fsnb://08-02-147-10"},
+                    # Вторая — из профильного для связи сборника, но не по делу.
+                    {"norm_code": "ГЭСНм10-06-016-01", "title": "Прокладка бестраншейная",
+                     "measure_unit": "100 м", "source_ref": "fsnb://10-06-016-01"},
+                ],
+                "backend": "typed_sqlite_fts",
+                "source_integrity": {"status": "trusted"},
+            },
+        }
+
+    monkeypatch.setattr(norm_browser, "browse_norms_many", browse_many)
+    monkeypatch.setattr(norm_browser, "browse_norms", lambda q, **kw: browse_many([q], limit=kw.get("limit", 40), rerank=True)[q])
+    monkeypatch.setattr("proxy.smeta_core.estimate_usage.usage_evidence", lambda *a, **k: {})
+
+    result = h.search_norm("прокладка кабеля U/UTP в лотке", top_k=2, discipline="communications")
+    first = result["candidates"][0]
+    assert first["norm_code"] == "ГЭСНм08-02-147-10"
+    # Принадлежность к сборнику по-прежнему видна проверяющему.
+    assert result["candidates"][1]["collection_scope"] == "primary"

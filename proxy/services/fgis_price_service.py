@@ -32,13 +32,33 @@
 
 from __future__ import annotations
 
+import bisect
+import heapq
+import math
 import re
 import os
 import json
+import threading
+import hashlib
+from io import BytesIO
+from copy import deepcopy
+from collections import defaultdict, OrderedDict
 from functools import lru_cache
 from pathlib import Path
 from backend.runtime_paths import mutable_path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
+from proxy.smeta_core.norm_revision import revision_fingerprint, NormRevisionConflict
+
+PRICEBOOK_IDENTITY_SCHEMA = 'les.pricebook-revision.v1'
+PRICEBOOK_IDENTITY_FIELDS = ('schema', 'sha256', 'pricebook_id', 'region', 'period', 'version')
+
+
+class PriceBookRevisionConflict(ValueError):
+    def __init__(self, expected: Mapping[str, Any] | None, actual: Mapping[str, Any] | None, reason: str):
+        self.expected = deepcopy(dict(expected or {}))
+        self.actual = deepcopy(dict(actual or {}))
+        self.reason = reason
+        super().__init__(reason)
 
 # Нормализованная схема одной строки ценовой базы.
 PRICE_FIELDS = (
@@ -107,6 +127,50 @@ def _search_text(value: Any) -> str:
 
 def _search_tokens(value: Any) -> list[str]:
     return [token for token in _search_text(value).split() if len(token) >= 2]
+
+
+# Грубая основа слова для поиска карточек цен. Живая проверка 17.09: запрос «ковровая
+# плитка» не совпадал с «Покрытие ковровое», и модель не увидела ковровое покрытие вовсе.
+# Это порядок свидетельств, а не выбор: код ФССЦ по-прежнему выбирает модель.
+_RU_ENDINGS = tuple(sorted(
+    "ами ями ого его ому ему ыми ими ых их ая яя ое ее ые ие ый ий ой ей ую юю ов ев ом ем ах ях "
+    "ам ям ия ии ью ы и а я о е у ю ь й".split(), key=len, reverse=True))
+_CYRILLIC_WORD = re.compile(r"[а-я]+")
+
+
+def _search_stem(token: str) -> str:
+    if not _CYRILLIC_WORD.fullmatch(token):
+        return token
+    for ending in _RU_ENDINGS:
+        if token.endswith(ending) and len(token) - len(ending) >= 4:
+            return token[: -len(ending)]
+    return token
+
+
+def _stem_variants(stem: str, index: Mapping[str, list[int]], keys: list[str]) -> dict[str, float]:
+    """Основы справочника, совпадающие с основой запроса: точно — 1.0, по началу слова — 0.7."""
+    out: dict[str, float] = {}
+    if stem in index:
+        out[stem] = 1.0
+    if len(stem) >= 4 and _CYRILLIC_WORD.fullmatch(stem):
+        start = bisect.bisect_left(keys, stem)
+        while start < len(keys) and keys[start].startswith(stem):
+            if len(keys[start]) - len(stem) <= 3:
+                out.setdefault(keys[start], 0.7)
+            start += 1
+        for size in range(max(4, len(stem) - 3), len(stem)):
+            if stem[:size] in index:
+                out.setdefault(stem[:size], 0.7)
+    return out
+
+
+HEAD_WORD_BOOST = 1.6
+
+
+def _name_family(name: Any) -> str:
+    """Первые два слова наименования: семейство однотипных строк справочника."""
+    words = [_search_stem(token) for token in _search_tokens(name) if _CYRILLIC_WORD.fullmatch(token)]
+    return " ".join(words[:2])
 
 
 def _is_transport_row(rec: dict[str, Any]) -> bool:
@@ -242,31 +306,59 @@ class PriceBook:
     """
 
     def __init__(self, rows: list[dict[str, Any]], *, region: str = "", quarter: str = ""):
-        self.region = region
-        self.quarter = quarter
-        self._rows = rows
+        self._identity = dict(schema=PRICEBOOK_IDENTITY_SCHEMA, sha256=None, pricebook_id=None,
+            region=region, period=quarter, version=None)
+        self._rows = [deepcopy(rec) for rec in rows]
+        self._row_ordinals = {id(rec): number for number, rec in enumerate(self._rows, 1)}
+        self._candidates: dict[str, list[dict[str, Any]]] = {}
         self._by_code: dict[str, dict[str, Any]] = {}
-        for rec in rows:
+        for rec in self._rows:
             key = normalize_code(rec.get("code"))
-            if key and key not in self._by_code:
-                self._by_code[key] = rec
+            if key:
+                candidates = self._candidates.setdefault(key, [])
+                if not any(rec == candidate for candidate in candidates):
+                    candidates.append(rec)
+        self._by_code = {key: candidates[0] for key, candidates in self._candidates.items() if len(candidates) == 1}
+        self._lexicon: tuple[dict[str, list[int]], list[str], dict[str, int], frozenset[int]] | None = None
+        self._lexicon_lock = threading.Lock()
+        self._heads: dict[str, frozenset[int]] = {}
 
     @classmethod
     def from_parquet(cls, parquet_path: str | Path) -> "PriceBook":
-        import pandas as pd
+        return get_pricebook(str(parquet_path))
 
-        df = pd.read_parquet(parquet_path)
-        region = str(df["region"].iloc[0]) if "region" in df and len(df) else ""
-        quarter = str(df["quarter"].iloc[0]) if "quarter" in df and len(df) else ""
-        df = df.astype(object).where(pd.notnull(df), None)
-        return cls(df.to_dict(orient="records"), region=region, quarter=quarter)
+    @property
+    def identity(self) -> dict[str, Any]:
+        return deepcopy(self._identity)
+
+    @property
+    def region(self) -> str:
+        return self._identity['region']
+
+    @property
+    def quarter(self) -> str:
+        return self._identity['period']
+
+    def _record_payload(self, record: dict[str, Any]) -> dict[str, Any]:
+        result = deepcopy(record)
+        ordinal = self._row_ordinals[id(record)]
+        result['price_record_identity'] = dict(schema='les.price-record.v1',
+            pricebook_identity=self.identity, source_row=ordinal, record_id=f'row:{ordinal}')
+        return result
 
     def __len__(self) -> int:
-        return len(self._by_code)
+        return len(self._candidates)
 
     def lookup(self, code: str) -> Optional[dict[str, Any]]:
         """Точная цена по коду (с учётом снятия префикса базы). None если нет."""
-        return self._by_code.get(normalize_code(code))
+        record = self._by_code.get(normalize_code(code))
+        return self._record_payload(record) if record is not None else None
+
+    def lookup_diagnostic(self, code: str) -> dict[str, Any]:
+        key = normalize_code(code)
+        candidates = self._candidates.get(key, [])
+        return dict(status='missing' if not candidates else 'resolved' if len(candidates) == 1 else 'ambiguous',
+            code=key, candidates=[self._record_payload(record) for record in candidates])
 
     def price(self, code: str, *, method: str = "index") -> Optional[float]:
         """Цена по коду: method='index' → текущая (база×индекс/прямая), 'base' → базовая."""
@@ -284,7 +376,7 @@ class PriceBook:
         for rec in self._rows:
             hay = f"{rec.get('code','')} {rec.get('name','')}".casefold()
             if q in hay:
-                out.append(rec)
+                out.append(self._record_payload(rec))
                 if len(out) >= limit:
                     break
         return out
@@ -301,48 +393,115 @@ class PriceBook:
         exact_code = normalize_code(query)
         if not phrase and not exact_code:
             return []
+        limit = max(1, int(limit))
         asks_transport = any(token in {"перевозка", "доставка", "транспорт", "транспортировка"} for token in tokens)
-        ranked: list[tuple[tuple[int, int, int, int, int], str, dict[str, Any]]] = []
-        for rec in self._rows:
-            code = normalize_code(rec.get("code"))
-            name = _search_text(rec.get("name"))
-            hay = f"{code.casefold()} {name}"
-            hay_tokens = set(_search_tokens(hay))
-            matched = [token for token in tokens if token in hay_tokens]
-            code_match = int(bool(exact_code and code == exact_code))
-            phrase_match = int(bool(phrase and phrase in hay))
-            all_tokens = int(bool(tokens) and len(matched) == len(tokens))
-            if not (code_match or phrase_match or matched):
-                continue
-            transport_row = _is_transport_row(rec)
+        index, keys, position_by_code, transport_rows = self._lexical_index()
+        total = max(len(self._rows), 1)
+        stem_tokens: dict[str, str] = {}
+        for token in tokens:
+            stem_tokens.setdefault(_search_stem(token), token)
+        # Вес слова — его редкость в справочнике: «ковровое» или «оповещатель» говорят об
+        # изделии больше, чем «мм», «серая» или «500х500». Ранние слова запроса называют
+        # изделие, поздние — его признаки; размеры и марки весят меньше слов.
+        weight: dict[int, float] = defaultdict(float)
+        matched: dict[int, list[str]] = defaultdict(list)
+        for order, (stem, token) in enumerate(stem_tokens.items()):
+            best: dict[int, float] = {}
+            for key, factor in _stem_variants(stem, index, keys).items():
+                value = math.log(1.0 + total / len(index[key])) * factor / (1.0 + 0.25 * order)
+                if any(char.isdigit() for char in stem):
+                    value *= 0.3
+                heads = self._heads.get(key, frozenset())
+                for position in index[key]:
+                    # В наименовании ФССЦ изделие названо первыми словами: «Покрытие
+                    # ковровое» — это ковровое покрытие, а «Антисептик для ковровых
+                    # покрытий» — нет (живая проверка 17.09, проход 4).
+                    scored = value * HEAD_WORD_BOOST if position in heads else value
+                    if scored > best.get(position, 0.0):
+                        best[position] = scored
+            for position, value in best.items():
+                weight[position] += value
+                matched[position].append(token)
+        exact_position = position_by_code.get(exact_code) if exact_code else None
+        if exact_position is not None:
+            weight.setdefault(exact_position, 0.0)
+        candidates: list[tuple[tuple[int, int, int, float], int]] = []
+        for position, value in weight.items():
+            code_match = int(position == exact_position)
             # A material browser must not rank haulage tariffs as material prices.
             # They stay available for an explicit transport query or exact code.
-            if transport_row and not (asks_transport or code_match):
+            if position in transport_rows and not (asks_transport or code_match):
                 continue
-            resource_code = int(_is_resource_code(code))
-            # Sort keys are evidence only: exact code, resource-code family, full
-            # phrase, complete token coverage, token count. No applicability lives here.
-            payload = dict(rec)
+            rec = self._rows[position]
+            code = normalize_code(rec.get("code"))
+            phrase_match = 0
+            if phrase and len(matched[position]) == len(stem_tokens):
+                phrase_match = int(phrase in f"{code.casefold()} {_search_text(rec.get('name'))}")
+            candidates.append(((code_match, int(_is_resource_code(code)), phrase_match, value), position))
+        pool = heapq.nlargest(max(limit * 8, 64), candidates, key=lambda item: item[0])
+        pool.sort(key=lambda item: (-item[0][0], -item[0][1], -item[0][2], -item[0][3],
+                                    _search_text(self._rows[item[1]].get("name")),
+                                    normalize_code(self._rows[item[1]].get("code"))))
+        # Одно семейство однотипных строк (шесть размеров стеклянной мозаики) не должно
+        # закрывать остальные изделия: каждая следующая строка семейства весит меньше, но не
+        # ниже половины своего веса — иначе хорошо совпавшие варианты (витая пара 1х2, 2х2,
+        # 4х2) уступали бы случайным строкам с одним общим словом.
+        chosen: list[tuple[tuple[int, int, int, float], int]] = []
+        family_of = [_name_family(self._rows[position].get("name")) for _, position in pool]
+        families: dict[str, int] = defaultdict(int)
+        while pool and len(chosen) < limit:
+            best_index = max(range(len(pool)), key=lambda i: (
+                pool[i][0][0], pool[i][0][1], pool[i][0][2],
+                pool[i][0][3] * max(0.7 ** families[family_of[i]], 0.5), -i))
+            families[family_of.pop(best_index)] += 1
+            chosen.append(pool.pop(best_index))
+        out: list[dict[str, Any]] = []
+        for (code_match, resource_code, phrase_match, value), position in chosen:
+            payload = self._record_payload(self._rows[position])
+            # Sort keys are evidence only: exact code, resource-code family, full phrase,
+            # weighted token coverage. No applicability lives here.
             payload["match"] = {
                 "schema": "fgis_price_lexical_match_v1",
                 "query": str(query or ""),
                 "exact_code": bool(code_match),
                 "phrase_match": bool(phrase_match),
-                "all_tokens": bool(all_tokens),
-                "matched_tokens": matched,
+                "all_tokens": bool(stem_tokens) and len(matched[position]) == len(stem_tokens),
+                "matched_tokens": list(matched[position]),
                 "query_tokens": tokens,
+                "score": round(value, 4),
                 "resource_code": bool(resource_code),
-                "transport_row": bool(transport_row),
+                "transport_row": position in transport_rows,
             }
-            key = (code_match, resource_code, phrase_match, all_tokens, len(matched))
-            ranked.append((key, name, payload))
-        ranked.sort(
-            key=lambda item: (
-                -item[0][0], -item[0][1], -item[0][2], -item[0][3], -item[0][4],
-                item[1], normalize_code(item[2].get("code")),
-            )
-        )
-        return [item[2] for item in ranked[: max(1, int(limit))]]
+            out.append(payload)
+        return out
+
+    def _lexical_index(self) -> tuple[dict[str, list[int]], list[str], dict[str, int], frozenset[int]]:
+        """Основы слов → строки справочника; строится один раз на книгу при первом поиске."""
+        if self._lexicon is None:
+            with self._lexicon_lock:
+                if self._lexicon is None:
+                    stems: dict[str, str] = {}
+                    index: dict[str, list[int]] = defaultdict(list)
+                    position_by_code: dict[str, int] = {}
+                    transport: set[int] = set()
+                    heads: dict[str, set[int]] = defaultdict(set)
+                    for position, rec in enumerate(self._rows):
+                        code = normalize_code(rec.get("code"))
+                        position_by_code.setdefault(code, position)
+                        if _is_transport_row(rec):
+                            transport.add(position)
+                        name_words = _search_tokens(rec.get("name"))
+                        words = set(_search_tokens(code)) | set(name_words)
+                        for stem in {stems.get(word) or stems.setdefault(word, _search_stem(word)) for word in words}:
+                            index[stem].append(position)
+                        # Голова наименования — те же два первых русских слова, что и у
+                        # _name_family, без повторного разбора строки.
+                        head = [stems[word] for word in name_words if _CYRILLIC_WORD.fullmatch(word)][:2]
+                        for stem in head:
+                            heads[stem].add(position)
+                    self._heads = {stem: frozenset(positions) for stem, positions in heads.items()}
+                    self._lexicon = (dict(index), sorted(index), position_by_code, frozenset(transport))
+        return self._lexicon
 
     def lookup_many(self, codes: Iterable[str]) -> dict[str, Optional[dict[str, Any]]]:
         return {c: self.lookup(c) for c in codes}
@@ -359,10 +518,135 @@ _DEFAULT_PRICEBOOK_STEMS = (
 )
 
 
+_retained_pricebooks: OrderedDict[tuple[str, str], PriceBook] = OrderedDict()
+_pricebook_cache_lock = threading.RLock()
+
+
+def _price_stamp(path: Path):
+    try:
+        return revision_fingerprint(path)
+    except (OSError, NormRevisionConflict) as error:
+        raise PriceBookRevisionConflict(None, None, 'pricebook_source_unreadable') from error
+
+
+def _file_metadata(rows: list[dict[str, Any]], identity: dict[str, Any]) -> tuple[str, str, Any]:
+    result = []
+    for field, aliases in (('region', ('region',)), ('period', ('quarter', 'period')), ('version', ('version', 'source_version'))):
+        values = set()
+        present = any(any(alias in row for alias in aliases) for row in rows)
+        if present:
+            for row in rows:
+                available = {str(row[alias]).strip() if row.get(alias) not in (None, '') else None for alias in aliases if alias in row}
+                values.update(available)
+        if len(values) > 1:
+            raise PriceBookRevisionConflict(None, dict(identity, metadata_conflict=dict(field=field, values=sorted(values, key=lambda value: str(value)))), 'pricebook_metadata_mixed:' + field)
+        value = next(iter(values)) if values else None
+        result.append(value if field == 'version' else value or '')
+    return tuple(result)
+
+
 @lru_cache(maxsize=8)
-def get_pricebook(parquet_path: str) -> PriceBook:
-    """Кешированная загрузка книги цен по пути к Parquet."""
-    return PriceBook.from_parquet(parquet_path)
+def _load_pricebook_revision(path: str, sha256: str) -> PriceBook:
+    import pandas as pd
+    from pyarrow import ArrowInvalid, ArrowNotImplementedError
+
+    source = Path(path)
+    stamp = _price_stamp(source)
+    try:
+        payload = source.read_bytes()
+    except OSError as error:
+        raise PriceBookRevisionConflict(None, None, 'pricebook_source_unreadable') from error
+    identity = dict(schema=PRICEBOOK_IDENTITY_SCHEMA, sha256=hashlib.sha256(payload).hexdigest(), pricebook_id=source.stem)
+    if identity['sha256'] != sha256:
+        raise PriceBookRevisionConflict(None, identity, 'pricebook_revision_changed_before_decode')
+    try:
+        frame = pd.read_parquet(BytesIO(payload))
+    except (ArrowInvalid, ArrowNotImplementedError) as error:
+        raise PriceBookRevisionConflict(None, identity, 'pricebook_source_invalid') from error
+    except OSError as error:
+        raise PriceBookRevisionConflict(None, identity, 'pricebook_source_unreadable') from error
+    if _price_stamp(source) != stamp:
+        raise PriceBookRevisionConflict(None, identity, 'pricebook_revision_changed_during_read')
+    frame = frame.astype(object).where(pd.notnull(frame), None)
+    rows = frame.to_dict(orient='records')
+    region, period, version = _file_metadata(rows, identity)
+    book = PriceBook(rows, region=region, quarter=period)
+    book._identity = dict(identity, region=region, period=period, version=version)
+    return book
+
+
+def get_pricebook(parquet_path: str, *, expected_identity: Mapping[str, Any] | None = None) -> PriceBook:
+    path = Path(parquet_path).resolve()
+    expected = dict(expected_identity) if expected_identity is not None else None
+    if expected is not None:
+        with _pricebook_cache_lock:
+            retained = _retained_pricebooks.get((str(path), str(expected.get('sha256') or '')))
+        if retained is not None:
+            if retained.identity != expected:
+                raise PriceBookRevisionConflict(expected, retained.identity, 'pricebook_identity_mismatch')
+            return retained
+    try:
+        stamp = _price_stamp(path)
+        # New unpinned boundaries verify actual bytes: filesystem timestamps can collide.
+        # Pinned document reads return the retained book above; row lookups never hash files.
+        try:
+            sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as error:
+            raise PriceBookRevisionConflict(None, None, 'pricebook_source_unreadable') from error
+        if _price_stamp(path) != stamp:
+            raise PriceBookRevisionConflict(expected, {'sha256': sha256}, 'pricebook_revision_changed_during_read')
+        book = _load_pricebook_revision(str(path), sha256)
+        # A same-size rewrite during decoding can retain the same filesystem
+        # fingerprint. Validate bytes again at this unpinned read boundary;
+        # retained pinned snapshots above still avoid repeated file reads.
+        try:
+            after_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as error:
+            raise PriceBookRevisionConflict(expected, None, 'pricebook_source_unreadable') from error
+        if after_sha256 != sha256 or _price_stamp(path) != stamp:
+            raise PriceBookRevisionConflict(expected, {'sha256': after_sha256}, 'pricebook_revision_changed_after_cache_read')
+    except PriceBookRevisionConflict as error:
+        if expected is not None and not error.expected:
+            raise PriceBookRevisionConflict(expected, error.actual, error.reason) from error
+        raise
+    if expected is not None and book.identity != expected:
+        raise PriceBookRevisionConflict(expected, book.identity, 'pricebook_identity_mismatch')
+    key = (str(path), str(book.identity['sha256']))
+    with _pricebook_cache_lock:
+        _retained_pricebooks[key] = book
+        _retained_pricebooks.move_to_end(key)
+        while len(_retained_pricebooks) > 8:
+            _retained_pricebooks.popitem(last=False)
+    return book
+
+
+def _clear_pricebook_cache() -> None:
+    with _pricebook_cache_lock:
+        _load_pricebook_revision.cache_clear()
+        _retained_pricebooks.clear()
+
+
+get_pricebook.cache_clear = _clear_pricebook_cache
+get_pricebook.cache_info = _load_pricebook_revision.cache_info
+
+
+def capture_price_basis(requested_pricebook: str | None = None) -> dict[str, Any]:
+    explicit = Path(requested_pricebook) if requested_pricebook else None
+    path = str(explicit.resolve()) if explicit is not None and explicit.is_absolute() else resolve_pricebook_path(requested_pricebook)
+    if not path:
+        if requested_pricebook:
+            raise PriceBookRevisionConflict(None, None, 'pricebook_requested_unavailable')
+        return dict(schema='les.document-price-basis.v1', status='not_configured', path=None, identity=None)
+    resolved = str(Path(path).resolve())
+    return dict(schema='les.document-price-basis.v1', status='pinned', path=resolved, identity=get_pricebook(resolved).identity)
+
+
+def pricebook_for_basis(basis: Mapping[str, Any]) -> PriceBook | None:
+    if basis.get('status') in {'not_configured', 'legacy_unpinned'}:
+        return None
+    if basis.get('schema') != 'les.document-price-basis.v1' or basis.get('status') != 'pinned' or not basis.get('path') or not isinstance(basis.get('identity'), Mapping):
+        raise PriceBookRevisionConflict(None, None, 'document_price_basis_invalid')
+    return get_pricebook(str(basis['path']), expected_identity=basis['identity'])
 
 
 def _is_scratch_pricebook(path: str | Path) -> bool:

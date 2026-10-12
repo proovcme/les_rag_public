@@ -7,6 +7,7 @@ from proxy.smeta_core.rim_session import (
     RimSessionStore,
     RimSessionValidationError,
 )
+from proxy.smeta_core import rim_session
 
 
 def _vor_rows():
@@ -55,6 +56,56 @@ def _create_with_vor(store: RimSessionStore):
         rows=_vor_rows(),
         expected_parent_revision_id=created.revision_id,
     )
+
+
+def test_revision_audit_follows_parent_chain_when_timestamps_tie(tmp_path, monkeypatch):
+    """UUID lexical order cannot replace append-only workflow order on coarse clocks."""
+    class FakeUuid:
+        def __init__(self, value: int):
+            self.hex = f"{value:032x}"
+
+        def __str__(self) -> str:
+            return self.hex
+
+    sequence = iter(range(999, 900, -1))
+    monkeypatch.setattr(rim_session, "_utcnow", lambda: "2026-09-02T00:00:00+00:00")
+    monkeypatch.setattr(
+        rim_session,
+        "uuid4",
+        lambda: FakeUuid(next(sequence)),
+    )
+    store = RimSessionStore(tmp_path)
+    vor = _create_with_vor(store)
+
+    revisions = store.list_revisions(vor.session["session_id"], owner_id="tester")
+
+    assert [item["revision_kind"] for item in revisions] == [
+        "session_created",
+        "vor_revision",
+    ]
+    assert revisions[1]["parent_revision_id"] == revisions[0]["revision_id"]
+
+
+def test_revision_audit_keeps_chronological_order_before_append_tie_break(tmp_path, monkeypatch):
+    timestamps = iter(
+        [
+            "2026-09-02T00:00:00+00:00",
+            "2026-09-02T00:00:01+00:00",
+            "2026-09-02T00:00:01+00:00",
+            "2026-09-02T00:00:00+00:00",
+            "2026-09-02T00:00:00+00:00",
+        ]
+    )
+    monkeypatch.setattr(rim_session, "_utcnow", lambda: next(timestamps))
+    store = RimSessionStore(tmp_path)
+    vor = _create_with_vor(store)
+
+    revisions = store.list_revisions(vor.session["session_id"], owner_id="tester")
+
+    assert [item["revision_kind"] for item in revisions] == [
+        "vor_revision",
+        "session_created",
+    ]
 
 
 def test_persistent_session_separates_mapping_pricing_and_final_locks(tmp_path):

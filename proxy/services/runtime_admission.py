@@ -181,6 +181,29 @@ def chat_memory_guard_for_provider() -> bool:
     return _env_bool("LES_CHAT_MEMORY_GUARD", False)
 
 
+DEFAULT_LEMONADE_ADAPTER_PORT = 18080
+
+
+def local_model_probe_url() -> str:
+    """Хост локального рантайма моделей для телеметрии, пустая строка для облака.
+
+    Lemonade отвечает через собственный адаптер LES: без него список загруженных
+    моделей оставался пустым, чат не признавал модель резидентной и требовал место
+    под её повторную загрузку.
+    """
+    provider = active_llm_provider()
+    if provider == "mlx":
+        url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+    elif provider == "ollama":
+        url = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"))
+    elif provider == "lemonade":
+        url = os.getenv("MLX_URL", f"http://127.0.0.1:{DEFAULT_LEMONADE_ADAPTER_PORT}")
+    else:
+        return ""
+    url = url.strip().rstrip("/")
+    return url[:-3].rstrip("/") if url.casefold().endswith("/v1") else url
+
+
 def _model_identity(value: Any) -> str:
     identity = str(value or "").strip().casefold()
     return identity.removesuffix(":latest")
@@ -193,6 +216,14 @@ def local_model_resident(metrics_cache: dict[str, Any] | None) -> bool:
         requested = os.getenv("OLLAMA_MODEL", "").strip() or os.getenv("LLM_MODEL", "").strip()
     elif provider in {"mlx", "local-mlx", "local_mlx"}:
         requested = os.getenv("LLM_MODEL", "").strip() or os.getenv("MLX_MODEL", "").strip()
+    elif provider == "lemonade":
+        # Роль ответа выбирается реестром, поэтому телеметрия сообщает её отдельно;
+        # окружение остаётся запасным именем и может отстать от выбранной ревизии.
+        requested = (
+            str((metrics_cache or {}).get("llm_answer_model") or "").strip()
+            or os.getenv("LEMONADE_MODEL", "").strip()
+            or os.getenv("LLM_MODEL", "").strip()
+        )
     else:
         return False
     requested_identity = _model_identity(requested)

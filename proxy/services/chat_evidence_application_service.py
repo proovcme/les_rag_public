@@ -5,6 +5,8 @@ unchanged retrieval -> context/evidence -> model -> sources/trace execution bran
 """
 from __future__ import annotations
 
+from functools import partial
+
 import asyncio
 import hashlib
 import json
@@ -15,6 +17,7 @@ import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from backend.runtime_paths import mutable_path
+from proxy.smeta_core.material_accounting import RESOURCE_FIELDS
 from typing import Any, Callable, Mapping, Sequence
 
 import httpx
@@ -27,7 +30,14 @@ from backend.inference.routing import (
 )
 from backend.inference.validator import rules_pre_verdict
 from proxy.services.answer_form_service import classify_answer_form
-from proxy.services.answer_form_service import apply_response_length
+from proxy.services.answer_form_service import (
+    answer_echoes_prompt,
+    answer_is_degenerate_repetition,
+    apply_response_length,
+    finalize_truncated_answer,
+    is_transient_retrieval_block,
+    strip_unsupported_links,
+)
 from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.canonical_route_service import (
     BoundModelChatRunner,
@@ -51,6 +61,7 @@ from proxy.services.context_governor_service import (
     ContextObject,
     ContextPacket,
     ContextRequiredSectionOverflow,
+    conservative_token_estimate,
 )
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.evidence_packet_service import (
@@ -58,6 +69,7 @@ from proxy.services.evidence_packet_service import (
     render_retrieval_evidence_for_model,
 )
 from proxy.services.lexical_index_service import retrieval_fingerprint
+from proxy.services.smeta_evidence_delivery_service import smeta_evidence_delivery_trace
 from proxy.services.notebook_service import dataset_memory_prompt_excerpt
 from proxy.services.notebook_study_service import (
     build_notebook_study_pack,
@@ -83,6 +95,7 @@ from proxy.services.saferag_service import (
 from proxy.services.table_query_service import maybe_answer_table_query
 from proxy.services.memory_port import get_memory_port
 from proxy.services.llm_transport_profile_service import (
+    is_control_channel_text,
     assistant_delta_text,
     resolve_transport_execution_profile,
 )
@@ -135,7 +148,11 @@ def tool_selector_request_payload(
     return payload
 from proxy.services.model_execution_preset_service import ModelExecutionPreset
 from proxy.services.model_research_tool_service import (
+    FailedToolCallGuard,
     ModelResearchToolService,
+    evidence_limit,
+    model_rag_empty_queries,
+    model_rag_failure_detail,
     retrieve_smeta_norm_cards,
 )
 from proxy.services.source_locator_service import evidence_counts, source_map_item
@@ -374,11 +391,20 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         source = value if isinstance(value, dict) else {}
         return {field: source[field] for field in fields if field in source}
 
-    safe = selected(result, ("schema", "tool", "status", "code"))
+    # `bound_rows` — не идентификатор, а результат расчёта, и он обязан пережить
+    # проекцию: без него измерение успеха подменялось арифметикой (ревью Codex 11.09).
+    safe = selected(result, ("schema", "tool", "status", "code", "bound_rows"))
+    if isinstance(result.get("row_calculation"), list):
+        safe["row_calculation"] = [selected(item, ("source_row", "work_id", "status",
+                                   "calculation_ref", "calculation", "pricebook", "resource_bindings",
+                                   "covered_by_work_id", "parent_normative_source", "reason"))
+                                   for item in result["row_calculation"] if isinstance(item, dict)]
     if safe.get("status") in {"complete", "partial"}:
         for field in ("missing", "blockers"):
             values = result.get(field)
             safe[field] = [str(value)[:500] for value in values[:100]] if isinstance(values, list) else []
+            if isinstance(values, list) and len(values) > 100:
+                safe[field].append(f'Ещё {len(values) - 100} замечаний сохранено в ревизии и книге.')
         if safe.get("status") == "complete" and (safe["missing"] or safe["blockers"]):
             safe["status"] = "partial"
     artifact = selected(
@@ -440,7 +466,7 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         or f"attachment:{attachment_id}" not in source_scope
     ):
         return {}
-    return {
+    harvested = {
         "artifact": dict(artifact),
         "source": {
             key: source[key]
@@ -455,6 +481,27 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         },
         "checkpoint": dict(checkpoint),
     }
+    # Причины, по которым строка не попала в расчёт, доходят до пользователя. Книга со
+    # статусом `partial` внешне неотличима от полной, а расхождение измерителя —
+    # «шт.» против «100 м» — сметчику важнее самой книги: в живом прогоне так потерялись
+    # 18 привязок из 48, и в чате об этом не было ни слова (ревью Codex 11.09).
+    reasons = [str(item) for item in (result.get("missing") or []) if str(item).strip()]
+    blockers = [str(item) for item in (result.get("blockers") or []) if str(item).strip()]
+    status = str(result.get("status") or "")
+    # Число связанных строк нужно и при полном успехе: без него воронка не может
+    # сказать, что расчёт вообще состоялся (ревью Codex 11.09).
+    if reasons or blockers or status == "partial" or result.get("bound_rows") is not None:
+        harvested["workbook_diagnostics"] = {
+            "schema": "les.workbook_diagnostics.v2",
+            "status": status,
+            "unbound_rows": reasons,
+            "blockers": blockers,
+            # Фактический результат расчёта доходит до чата и до воронки: раньше он
+            # терялся при сборке метаданных (ревью Codex 11.09).
+            "bound_rows": result.get("bound_rows"),
+            "row_calculation": result.get("row_calculation"),
+        }
+    return harvested
 
 
 def _context_objects(
@@ -487,9 +534,12 @@ def govern_inference_messages(
     checkpoint: Sequence[ContextObject] = (),
     working_memory: Sequence[ContextObject] = (),
     evidence: Sequence[Any] = (),
+    required_evidence: Sequence[Any] = (),
     source_map: Sequence[Any] = (),
     tool_exchange: Sequence[Any] = (),
+    required_tool_exchange: Sequence[Any] = (),
     dialogue: Sequence[Any] = (),
+    native_tools: Sequence[Any] = (),
 ) -> tuple[list[dict[str, str]], ContextPacket]:
     """Build the sole bounded packet used for one provider inference request."""
     candidates = [
@@ -506,24 +556,90 @@ def govern_inference_messages(
         ),
         ContextCandidate(ContextKind.CHECKPOINT, tuple(checkpoint)),
         ContextCandidate(ContextKind.WORKING_MEMORY, tuple(working_memory)),
+        ContextCandidate(ContextKind.EVIDENCE, _context_objects("required-evidence", required_evidence),
+                         required=True),
         ContextCandidate(ContextKind.EVIDENCE, _context_objects("evidence", evidence)),
         ContextCandidate(ContextKind.SOURCE_MAP, _context_objects("source", source_map)),
         ContextCandidate(ContextKind.TOOL_EXCHANGE, _context_objects("exchange", tool_exchange)),
+        ContextCandidate(ContextKind.TOOL_EXCHANGE, _context_objects("required-exchange", required_tool_exchange),
+                         required=True),
         ContextCandidate(ContextKind.DIALOGUE, _context_objects("dialogue", dialogue)),
     ]
+    # Native schemas travel outside messages. Reserve their serialized size with
+    # the same estimator, without duplicating them in the user evidence.
+    if native_tools:
+        schema_tokens = ContextGovernor(preset).estimate_tokens(
+            json.dumps(list(native_tools), ensure_ascii=False, separators=(",", ":"))
+        )
+        preset = replace(preset, safety_reserve_tokens=preset.safety_reserve_tokens + schema_tokens)
     packet = ContextGovernor(preset).pack(candidates)
     return packet.as_messages(), packet
+
+
+def govern_model_rag_read_messages(
+    *, preset: ModelExecutionPreset, profile_prefix: str, request_payload: Any,
+    fixed_evidence: Sequence[Any], read_evidence: Sequence[Any],
+    prior_evidence: Sequence[Any], exchange: Sequence[Any], native_tools: Sequence[Any],
+) -> tuple[list[dict[str, str]], ContextPacket]:
+    """Reserve the requested read intact; expose every displaced older object."""
+    notice: list[Any] = []
+    # Adding the notice itself can displace another optional object. Repack until
+    # the notice describes the actual packet; required overflow remains explicit.
+    for _ in range(len(prior_evidence) + 2):
+        messages, packet = govern_inference_messages(
+            preset=preset, profile_prefix=profile_prefix, request_payload=request_payload,
+            required_evidence=[*fixed_evidence, *read_evidence], evidence=prior_evidence,
+            required_tool_exchange=[*exchange, *notice], native_tools=native_tools,
+        )
+        updated = ([{"context_omissions": [
+            {"object_ids": list(item.object_ids), "cursor": item.cursor, "reason": item.reason}
+            for item in packet.omissions
+        ], "meaning": "Материалы сохранены, но не доставлены в этом запросе; их отсутствие не закрывает строки."}]
+                   if packet.omissions else [])
+        if updated == notice:
+            return messages, packet
+        notice = updated
+    raise RuntimeError("MODEL_RAG_READ_OMISSION_NOTICE_UNSTABLE")
+
+
+def persist_model_rag_read_receipt(
+    *, trace: Mapping[str, Any], question: str, attachment_context: Any,
+    session_id: str | None, error: Any,
+) -> dict[str, str]:
+    """Keep completed reads and pending calls even when inference cannot finish."""
+    from uuid import uuid4
+
+    receipt_id = uuid4().hex
+    directory = mutable_path("storage/model_read_receipts")
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{receipt_id}.json"
+    temporary = directory / f"{receipt_id}.tmp"
+    data = json.dumps({
+        "schema": "les.model-rag-read-receipt.v1", "receipt_id": receipt_id,
+        "session_id": session_id, "question": question, "attachment_context": attachment_context,
+        "error": str(error) if error is not None else None, "trace": trace,
+    }, ensure_ascii=False, default=str).encode("utf-8")
+    with temporary.open("xb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(target)
+    return {"receipt_id": receipt_id, "path": str(target), "sha256": hashlib.sha256(data).hexdigest()}
 
 
 def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, Any]:
     """Expose exact model-visible evidence while keeping private prompt/memory redacted."""
     visible_kinds = {ContextKind.EVIDENCE, ContextKind.SOURCE_MAP}
 
+    def fingerprint(text: str) -> dict[str, Any]:
+        return {'chars': len(text), 'sha256': hashlib.sha256(text.encode('utf-8')).hexdigest()}
+
     def section_trace(section) -> dict[str, Any]:
         item = {
             "kind": section.kind.value,
             "items": len(section.objects),
             "tokens": section.token_count,
+            "object_fingerprints": [fingerprint(obj.render()) for obj in section.objects],
         }
         if section.kind in visible_kinds:
             item["objects"] = [
@@ -544,6 +660,10 @@ def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, An
         "generation_reserve_tokens": packet.generation_reserve_tokens,
         "safety_reserve_tokens": packet.safety_reserve_tokens,
         "included_tokens": packet.included_tokens,
+        "message_fingerprints": [
+            {'role': message['role'], **fingerprint(message['content'])}
+            for message in packet.as_messages()
+        ],
         "sections": [section_trace(section) for section in packet.sections],
         "omissions": [
             {
@@ -650,6 +770,118 @@ def profile_uses_model_driven_retrieval(
     )
 
 
+def model_rag_query_instruction(
+    profile_snapshot: dict[str, Any] | None, *, rows_in_pass: int = 0,
+) -> str:
+    """Инструкция первого вызова модели: какие поисковые запросы вернуть."""
+    budget = plan_model_rag_queries((), rows_in_pass=rows_in_pass)["budget"]
+    smeta = profile_uses_smeta_norm_retrieval(profile_snapshot)
+    search_scope = (
+        "для работ и материалов исходного документа. Названия разделов сами по себе "
+        "не являются целями поиска; используй их только как контекст позиций. "
+        if smeta else "по всем фактическим строкам исходного материала. "
+    )
+    coverage_order = (
+        "Сначала охвати содержательные позиции работ и материалов порции, "
+        if smeta else "Сначала охвати все строки порции, "
+    )
+    text = (
+        "Прочитай приложенный материал целиком. Сформулируй поисковые "
+        "запросы к выбранным датасетам, необходимые для подбора evidence "
+        f"{search_scope}Число запросов "
+        "определяешь ты. За текущий проход исполнитель выполнит "
+        f"до {budget} первых запросов по твоему порядку; остальные останутся невыполненными. "
+        "Это бюджет одного прохода, а не предел дальнейшего исследования строки. "
+        f"{coverage_order}затем добавляй альтернативные формулировки "
+        "там, где они нужны. Не перебирай гипотетические материалы и способы выполнения, "
+        "которых нет в исходных данных; неизвестные условия сохрани как неизвестные. "
+        "В запросах сохраняй язык "
+        "и профессиональную терминологию исходных строк; не переводи и не "
+        "транслитерируй их. Сейчас не выбирай нормы "
+        "и не отвечай по существу — верни только сами поисковые запросы, "
+        "каждый с новой строки, без нумерации и вводных строк. "
+        "Одинаковый запрос пиши один раз. Если приложена порция ведомости, "
+        "подбирай evidence для её строк; дополнительные сведения из вопроса "
+        "используй там, где они относятся к этим строкам."
+    )
+    if smeta:
+        text += (
+            " Заголовки разделов используй как контекст соседних позиций, а не как "
+            "самостоятельные работы для поиска нормы. Роль каждой строки определяешь ты "
+            "по её смыслу и соседним строкам. Пустое количество само по себе не означает заголовок: "
+            "работа или изделие с неизвестным объёмом тоже требует поиска. "
+            "Перед списком мысленно отдели операцию от изделия и названия раздела; "
+            "сформулируй запросы для конкретных работ и нужных цен по всем содержательным "
+            "позициям порции. Сохрани в запросе указанную в исходнике операцию и признаки "
+            "конструкции или изделия, необходимые для её различения. Не заменяй операцию "
+            "общим названием раздела и не дополняй неизвестную технологию догадкой."
+        )
+        # Карточки цен ищутся отдельным запросом: без него модель не видит кодов ФССЦ
+        # и не может оценить самостоятельный материал (P5, 17.09).
+        text += (
+            " Для цены изделия или материала, который ставится отдельной операцией, добавь "
+            "отдельный запрос, начинающийся с «цена:», и назови в нём изделие с ключевыми "
+            "характеристиками из строки, например: цена: кабель витая пара UTP 4 пары категория 5e."
+            # Живая проверка 17.09: модель писала «смета нормативная база Москва 3 квартал 2026 …»
+            # и «…Atlas 05 темно серая»; в карточках норм и цен этих слов нет, и они вытесняли
+            # из выдачи само изделие.
+            " Изделие называй родовым наименованием, как в справочнике сметных цен; марку, "
+            "артикул, производителя и цвет в запрос не пиши. В запросах норм называй вид работ "
+            "и конструкцию; название базы, регион и квартал в запросы не добавляй — они выбраны "
+            "для сметы заранее и в карточках не встречаются."
+        )
+    return text
+
+
+def smeta_price_browse(query: str, limit: int) -> Any:
+    """Карточки цен того справочника, по которому считается смета; None — справочник не выбран."""
+    from proxy.services import fgis_price_service
+
+    path = fgis_price_service.resolve_pricebook_path(None)
+    if not path:
+        return None
+    return fgis_price_service.get_pricebook(path).browse(query, limit=limit)
+
+
+def bind_document_price_browse(basis: Mapping[str, Any]):
+    """Request-local price search over exactly the persisted document basis."""
+    from proxy.services import fgis_price_service
+    frozen = json.loads(json.dumps(dict(basis)))
+    def browse(query: str, limit: int):
+        book = fgis_price_service.pricebook_for_basis(frozen)
+        return book.browse(query, limit=limit) if book is not None else None
+    return browse
+
+
+def document_price_source_revision(context: str, attachment_sha256: str = '') -> str:
+    """Keep row-based continuation; unparsed files must not all share hash([])."""
+    from proxy.smeta_core.vor_rows import rows_from_attachment_text, source_revision
+    rows = rows_from_attachment_text(context)
+    if rows:
+        return source_revision(rows)
+    if attachment_sha256:
+        return 'attachment-sha256:' + attachment_sha256
+    return 'unparsed-context-sha256:' + hashlib.sha256(context.encode('utf-8')).hexdigest()
+
+
+def document_price_basis_or_error(store, *, session_id, source_revision, capture, http_exception):
+    """Expose a technical capture conflict before any model inference."""
+    from proxy.services import fgis_price_service
+    try:
+        return store.document_price_basis(session_id=session_id,source_revision=source_revision,capture=capture)
+    except fgis_price_service.PriceBookRevisionConflict as error:
+        raise http_exception(status_code=422,detail={'code':'pricebook_revision_conflict',
+            'error_code':'pricebook_revision_conflict','expected':error.expected,
+            'actual':error.actual,'reason':error.reason}) from error
+
+
+def document_price_safe_cache_lookup(cache, question, scope, fingerprint, session_id, *, primary_document):
+    """A generic cached answer cannot precede binding an estimate's document prices."""
+    if primary_document:
+        return None
+    return cache.lookup_session_unvalidated(question, scope, fingerprint, session_id)
+
+
 def profile_uses_smeta_norm_retrieval(
     profile_snapshot: dict[str, Any] | None,
 ) -> bool:
@@ -670,7 +902,7 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
         if source_row in (None, ""):
             continue
         row = {
-            "work_id": str(source_row),
+            "work_id": str(item.get("work_id") or source_row),
             "source_row": source_row,
             "section": str(item.get("section") or "").strip(),
             "title": str(item.get("title") or "").strip(),
@@ -678,11 +910,78 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "unit": str(item.get("unit") or "").strip(),
             "norm_code": str(item.get("norm_code") or "").strip(),
         }
-        for field_name in ("analogue", "coverage", "coefficient", "evidence_refs"):
+        for field_name in ("operation", "not_covered", "analogue", "coverage", "coefficient",
+                           "coefficient_basis", "coefficient_target", "evidence_refs",
+                           "resource_review_ref", "resource_review_status", "nr_sp_rule_id"):
             if field_name in item:
                 row[field_name] = item[field_name]
         compact.append(row)
     return compact
+
+
+# Поиск по каждому запросу стоит секунды, а окно свидетельств вмещает единицы групп.
+# Проходы 3 и 5 (17.09): модель выдала по 87 запросов об одной операции и упёрлась в потолок
+# генерации (1600 токенов) — список оборван, выполнение заняло 20 минут, и строки порции
+# остались без карточек. Код не придумывает запросы и не решает, какие из них по смыслу
+# лучше: он выполняет столько, сколько отведено строкам порции, по порядку самой модели,
+# а остальные показывает ей с номерами, чтобы она сама расставила приоритеты.
+MODEL_RAG_QUERIES_PER_ROW = 4
+MODEL_RAG_QUERIES_MIN = 8
+# Запас токенов на один запрос списка. Замеры: 12–20 токенов на запрос (R13 19.09 —
+# 12 запросов/178; .193 проход 2 — 3 запроса/61). Исполнитель всё равно выполнит только
+# бюджет прохода, поэтому списку незачем расти до общего потолка: в контроле .199 модель
+# 1600 токенов повторяла одни и те же 20 строк и не дошла до цены кабеля.
+MODEL_RAG_QUERY_TOKENS_PER_QUERY = 48
+MODEL_RAG_QUERY_MIN_TOKENS = 256
+
+
+def model_rag_query_rows(portion_state: Mapping[str, Any] | None) -> int:
+    """Сколько строк порции получают бюджет запросов.
+
+    Заголовок раздела без единицы и количества остаётся в порции и виден модели, но
+    нормы не требует. Если измеримых строк нет, действует прежний счёт по всем строкам.
+    """
+    state = portion_state or {}
+    return int(state.get("query_rows_in_pass") or state.get("rows_in_pass") or 0)
+
+
+def model_rag_query_max_tokens(*, query_budget: int, ceiling: int) -> int:
+    """Предел генерации списка запросов: по бюджету прохода, не выше настроенного потолка."""
+    wanted = MODEL_RAG_QUERY_TOKENS_PER_QUERY * max(int(query_budget or 0), 0)
+    return max(MODEL_RAG_QUERY_MIN_TOKENS, min(int(ceiling), wanted))
+
+
+def plan_model_rag_queries(
+    queries: Sequence[str], *, rows_in_pass: int = 0, truncated: bool = False,
+) -> dict[str, Any]:
+    """Какие запросы выполнить сейчас и какие остались невыполненными."""
+    items = [str(query or "").strip() for query in queries or () if str(query or "").strip()]
+    budget = max(MODEL_RAG_QUERIES_MIN, MODEL_RAG_QUERIES_PER_ROW * max(int(rows_in_pass or 0), 0))
+    return {
+        "total": len(items),
+        "budget": budget,
+        "executed": items[:budget],
+        "skipped": [{"index": index, "query": query}
+                    for index, query in enumerate(items[budget:], budget + 1)],
+        "truncated": bool(truncated),
+    }
+
+
+def model_rag_query_plan_note(plan: Mapping[str, Any]) -> str:
+    """Сообщение модели о невыполненных запросах; пусто — выполнено всё."""
+    skipped = list(plan.get("skipped") or ())
+    if not skipped and not plan.get('truncated'):
+        return ""
+    shown = "; ".join(f"{item['index']}. {item['query']}" for item in skipped[:5])
+    note = (f"\n\n[ЗАПРОСЫ] Выполнено {len(plan.get('executed') or ())} из {plan.get('total')} "
+            f"твоих поисковых запросов по порядку."
+            + (f" Не выполнены {len(skipped)}, начиная с: {shown}"
+               + (" и другие." if len(skipped) > 5 else ".") if skipped else ""))
+    if plan.get("truncated"):
+        note += (" Твой список запросов был оборван по пределу генерации: он не закончен. ")
+    note += (" Невыполненный запрос не означает отсутствия нормы или цены. В следующем проходе "
+             "назови меньше запросов и охвати ими все строки порции, а не одну операцию.")
+    return note
 
 
 def parse_model_rag_queries(raw: str) -> list[str]:
@@ -699,6 +998,20 @@ def parse_model_rag_queries(raw: str) -> list[str]:
     ]
     if any(line.startswith(("{", "[")) or line.endswith(("}", "]")) for line in visible_lines):
         return []
+    numbered = any(re.match(r"^\d+[.)]\s+", line) for line in visible_lines)
+    visible_lines = [
+        re.sub(r"^(?:\d+[.)]\s+|запрос\s+\d+\s*:\s+)", "", line, flags=re.IGNORECASE)
+        for index, line in enumerate(visible_lines)
+        if not (
+            (numbered or (index == 0 and len(visible_lines) > 1))
+            and re.fullmatch(
+                r"(?:вот\s+)?(?:поисковые\s+)?запросы(?:\s+к\s+выбранным\s+датасетам)?"
+                r"(?:\s+для\s+подбора\s+evidence)?"
+                r"(?:\s+по\s+строкам\s+\d[\d\s,–—-]*)?\s*:",
+                line, flags=re.IGNORECASE,
+            )
+        )
+    ]
     explicitly_wrapped: list[str] = []
     for line in visible_lines:
         if len(line) >= 2 and line[0] == line[-1] and line[0] in {'"', "'"}:
@@ -723,9 +1036,55 @@ def parse_model_rag_queries(raw: str) -> list[str]:
         if not isinstance(item, str):
             continue
         query = item.strip()
-        if query:
+        if query and query not in queries:
             queries.append(query)
     return queries
+
+
+_RESOURCE_CODE_SHAPE = re.compile(
+    r"(?:[0-9]+(?:\.[0-9]+)+|[0-9A-Za-zА-Яа-яЁё.]+(?:-[0-9A-Za-zА-Яа-яЁё.]+)+)"
+)
+_NR_SP_RULE_SHAPE = re.compile(r"nrsp-[0-9A-Za-z.\-]+", re.IGNORECASE)
+_MATERIAL_REVIEW_STATUS_VALUES = frozenset({'confirmed', 'not_present', 'unresolved', 'rejected'})
+
+
+def shifted_decision_fields(raw_row: Mapping[str, str], absence_marker: Callable[[str], bool]) -> list[str]:
+    """Fields contradicting their column grammar; no missing-cell position inferred."""
+    shifted: list[str] = []
+    for name, value in raw_row.items():
+        text = str(value or "").strip()
+        if not text or absence_marker(text):
+            continue
+        if name in {"resource_code", "target_resource_code"} and not _RESOURCE_CODE_SHAPE.fullmatch(text):
+            shifted.append(name)
+        elif name == "nr_sp_rule_id" and not _NR_SP_RULE_SHAPE.fullmatch(text):
+            shifted.append(name)
+        elif name == 'material_review_status' and text not in _MATERIAL_REVIEW_STATUS_VALUES:
+            shifted.append(name)
+        elif name in {"resource_quantity", "conversion_factor"}:
+            try:
+                float(text.replace(",", ".").replace(" ", ""))
+            except ValueError:
+                shifted.append(name)
+    return shifted
+
+
+# Названия компонентов и число — непересекающиеся словари, поэтому «labor,machines» в
+# coefficient читается однозначно: это область действия, а не коэффициент. Живой проход 4 на
+# 0.30.142: строка уходила в coefficient_basis_required, хотя коэффициента модель не давала.
+_COEFFICIENT_COMPONENTS = frozenset({
+    "labor", "machines", "materials", "machinists",
+    "труд", "машины", "материалы", "машинисты",
+})
+
+
+def coefficient_components_only(value: Any) -> str:
+    """Область действия, ошибочно записанная в coefficient; пусто — это не она."""
+    text = str(value or "").replace(";", ",").strip()
+    parts = [part.strip().casefold() for part in text.split(",") if part.strip()]
+    if parts and all(part in _COEFFICIENT_COMPONENTS for part in parts):
+        return text
+    return ""
 
 
 def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
@@ -733,6 +1092,16 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
 
     required_fields = {"title", "unit", "norm_code"}
     header_fields = {
+        "coefficient_basis": "coefficient_basis",
+        "resource_review_ref": "resource_review_ref",
+        "nr_sp_rule_id": "nr_sp_rule_id",
+        "material_review_status": "material_review_status",
+        "material_review_reason": "material_review_reason",
+        "resource_review_status": "resource_review_status",
+        "coefficient_target": "coefficient_target",
+        "operation": "operation",
+        "not_covered": "not_covered",
+        "work_id": "work_id",
         "source_row": "source_row",
         "№": "source_row",
         "№ п/п": "source_row",
@@ -755,6 +1124,12 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "norm_code (возможная норма монтажа)": "norm_code",
         "norm_code (шифр)": "norm_code",
         "нормативная база (шифр нормы)": "norm_code",
+        "вид решения": "decision_kind",
+        "вид": "decision_kind",
+        "decision_kind": "decision_kind",
+        "входит в работу": "included_in",
+        "входит в": "included_in",
+        "included_in": "included_in",
         "нормативная база (norm code)": "norm_code",
         "нормативный код (гэсн/ер)": "norm_code",
         "analogue": "analogue",
@@ -778,6 +1153,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
 
     def field_name(value: str) -> str:
         normalized = " ".join(value.replace("**", "").strip().split()).casefold()
+        if normalized in RESOURCE_FIELDS:
+            return normalized
         return header_fields.get(normalized, "")
 
     def cells(line: str) -> list[str]:
@@ -863,9 +1240,16 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 fallback_name if item == "coverage_fallback" else item
                 for item in mapped_header
             ]
+        mapped_set = set(mapped_header)
+        # Таблица материалов не содержит norm_code, и её шапка не распознавалась: строки
+        # исчезали молча (проход 18, 18.09). Узкие таблицы работ и материалов позволяют
+        # модели не считать пустые ячейки широкой общей таблицы.
+        material_header = {"title", "unit"}.issubset(mapped_set) and bool(
+            mapped_set & {"decision_kind", "resource_code"}
+        )
         if (
             not header
-            or not required_fields.issubset(set(mapped_header))
+            or not (required_fields.issubset(mapped_set) or material_header)
             or len([item for item in mapped_header if item])
             != len(set(item for item in mapped_header if item))
         ):
@@ -874,7 +1258,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         if header_index + 1 >= len(lines):
             break
         divider = cells(lines[header_index + 1])
-        if len(divider) != len(header) or not all(divider_cell(item) for item in divider):
+        # Delimiter cells carry no authored data; their width need not prevent
+        # reading an explicit header and aligned data cells.
+        if not divider or not all(divider_cell(item) for item in divider):
             header_index += 1
             continue
         table_section = current_section
@@ -883,10 +1269,24 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             values = cells(lines[row_index])
             if not values:
                 break
-            if len(values) < len(header):
+            authored_values = list(values)
+            while len(values) > len(header) and not values[-1].strip():
+                values.pop()
+            padded = len(values) < len(header)
+            if padded:
                 values = values + [""] * (len(header) - len(values))
             elif len(values) > len(header):
-                return None
+                # Only a leading source identity is safe after a column-count
+                # mismatch. Keep the authored cells; never guess shifted fields.
+                source = source_row_identity(values[0]) if mapped_header[0] == "source_row" else None
+                if source is None:
+                    return None
+                table_rows.append({
+                    "source_row": source, "parse_error": "column_count_mismatch",
+                    "raw_cells": authored_values, "raw_header": list(header),
+                })
+                row_index += 1
+                continue
             visible_values = [value.replace("**", "").strip() for value in values]
             if visible_values[0].casefold().startswith("раздел") and not any(
                 visible_values[1:]
@@ -899,6 +1299,35 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 for name, value in zip(mapped_header, visible_values, strict=True)
                 if name
             }
+            # Форма поля проверяется в любой строке: в проходе 17 длина строки была верной,
+            # а в resource_code попал обрывок хэша чека (18.09).
+            invalid_fields = shifted_decision_fields(raw_row, absence_marker)
+            if invalid_fields:
+                # Field grammar is contradicted. Width alone cannot establish a
+                # middle omission, and neither the values nor their order are repaired.
+                source = source_row_identity(values[0]) if mapped_header[0] == "source_row" else None
+                if source is None:
+                    return None
+                table_rows.append({
+                    "source_row": source,
+                    "parse_error": ('invalid_decision_field' if 'material_review_status' in invalid_fields
+                                    else 'column_count_mismatch'),
+                    "raw_cells": authored_values, "raw_header": list(header),
+                    "raw_cells_sha256": hashlib.sha256(json.dumps(authored_values, ensure_ascii=False,
+                        separators=(',', ':')).encode('utf-8')).hexdigest(),
+                    "raw_model_row": lines[row_index],
+                    "raw_model_row_sha256": hashlib.sha256(lines[row_index].encode('utf-8')).hexdigest(),
+                    "raw_table_header": lines[header_index],
+                    "raw_header_sha256": hashlib.sha256(lines[header_index].encode('utf-8')).hexdigest(),
+                    "row_format_diagnostic": {
+                        "reason": "invalid_decision_field", "invalid_fields": invalid_fields,
+                        "invalid_values": {name: raw_row[name] for name in invalid_fields},
+                        "observed_width": len(authored_values), "expected_width": len(header),
+                        "trailing_padding_count": max(0, len(header) - len(authored_values)),
+                    },
+                })
+                row_index += 1
+                continue
             row: dict[str, Any] = {}
             for name, value in raw_row.items():
                 if not value:
@@ -936,6 +1365,10 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                         row[name] = refs
                 elif name:
                     row[name] = value
+            misplaced_target = coefficient_components_only(row.get("coefficient"))
+            if misplaced_target:
+                row.pop("coefficient", None)
+                row.setdefault("coefficient_target", misplaced_target)
             embedded_refs = evidence_refs(" ".join(visible_values))
             if embedded_refs and not row.get("evidence_refs"):
                 row["evidence_refs"] = embedded_refs
@@ -949,6 +1382,14 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         return str(raw or ""), table_rows
 
     block_fields = {
+        "coefficient_basis": "coefficient_basis",
+        "resource_review_ref": "resource_review_ref",
+        "nr_sp_rule_id": "nr_sp_rule_id",
+        "resource_review_status": "resource_review_status",
+        "coefficient_target": "coefficient_target",
+        "operation": "operation",
+        "not_covered": "not_covered",
+        "work_id": "work_id",
         "source_row": "source_row",
         "section": "section",
         "title": "title",
@@ -1021,7 +1462,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         label, delimiter, value = labelled.partition(":")
         if not delimiter:
             continue
-        key = block_fields.get(label.strip().strip("*_` ").casefold())
+        key = field_name(label.strip().strip("*_` ")) or block_fields.get(label.strip().strip("*_` ").casefold())
         clean = value.strip().lstrip("*_` ").strip()
         if not key or not clean:
             continue
@@ -1065,6 +1506,12 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "quantity": "quantity",
         "norm_code": "norm_code",
         "шифр нормы": "norm_code",
+        "вид решения": "decision_kind",
+        "вид": "decision_kind",
+        "decision_kind": "decision_kind",
+        "входит в работу": "included_in",
+        "входит в": "included_in",
+        "included_in": "included_in",
         "аналог": "analogue",
         "обоснование": "coverage",
         "coverage": "coverage",
@@ -1102,7 +1549,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             label, delimiter, value = segment.partition(":")
             if not delimiter:
                 continue
-            key = labelled_fields.get(" ".join(label.strip().split()).casefold())
+            key = field_name(label) or labelled_fields.get(" ".join(label.strip().split()).casefold())
             clean = value.strip()
             if not key or not clean:
                 continue
@@ -1136,47 +1583,392 @@ class _ModelRagEvidenceChunk:
     meta: dict[str, Any]
 
 
+# Общий ориентир для тел источников. Для нормативных карточек отдельный обязательный
+# минимум сохраняет весь заголовок, включая фактический раздел источника.
+MIN_EVIDENCE_BODY_CHARS = 240
+EVIDENCE_TRUNCATION_SUFFIX = "… [карточка сокращена]"
+ARCHIVE_CONTEXT_OMITTED_HEADER = " | архивный контекст не показан"
+
+
+def _required_evidence_body_chars(hit: Any, body: str) -> int:
+    """Reserve the normative header and a truthful truncation marker together."""
+    if (getattr(hit, "meta", {}) or {}).get("smeta_full_read") is True:
+        # A full exact read cannot retain its completeness claim after cutting
+        # operations/resources. Existing coverage handling reports omitted groups.
+        return len(body)
+    required = (getattr(hit, "meta", {}) or {}).get("smeta_required_header_chars", 0)
+    if type(required) is not int or required <= 0:
+        return 0
+    return min(len(body), required + len(EVIDENCE_TRUNCATION_SUFFIX))
+
+# Пол ширины выбора. Три живых прогона 10.09 на одной ведомости показали, что выбор
+# важнее охвата: при шести карточках модель подобрала 69 разных норм, при трёх — четыре
+# на семьдесят строк, поставив «Стойку, полустойку, каркас шкафа» и организатору, и шине
+# заземления, и патч-панели. Строки, не вошедшие в проход, помечаются честно
+# (`_evidence_coverage_note`) и достаются следующему проходу — это лучше, чем ответ по
+# всем строкам одной нормой.
+MIN_EVIDENCE_HITS_PER_QUERY = 5
+
+# Сколько карточек практики остаётся в самом тесном бюджете. Ниже опускаться незачем:
+# группа перестаёт быть источником выбора, а место, которое она освободит, всё равно
+# не спасёт поисковый запрос целиком.
+PRACTICE_MIN_HITS = 2
+
+
+def _evidence_aliases(prepared: Sequence[Any]) -> dict[tuple[int, int], tuple[int, int]]:
+    """Only identical content AND provenance may share a visible body.
+
+    Recomputed from the surviving groups on every budget pass, so a removed
+    practice group cannot remain the target of an alias. Scores and query/hit
+    coordinates stay in their own headers; they are not source identity.
+    """
+    first: dict[str, tuple[int, int]] = {}
+    aliases: dict[tuple[int, int], tuple[int, int]] = {}
+    for qi, _header, hits, _query in prepared:
+        for hi, hit, _source_header, body in hits:
+            try:
+                identity = json.dumps({
+                    "content": body,
+                    "doc_id": getattr(hit, "doc_id", "") or "",
+                    "doc_name": getattr(hit, "doc_name", "") or "",
+                    "meta": getattr(hit, "meta", {}) or {},
+                }, ensure_ascii=False, sort_keys=True, allow_nan=False)
+            except (TypeError, ValueError):
+                continue  # Unknown metadata cannot establish exact equality.
+            ref = (qi, hi)
+            if identity in first:
+                aliases[ref] = first[identity]
+            else:
+                first[identity] = ref
+    return aliases
+
+
+def _evidence_alias_text(ref: tuple[int, int]) -> str:
+    return f"См. Q{ref[0]}.H{ref[1]}: тот же текст и источник."
+
+
+def _is_optional_practice_hit(hit: Any) -> bool:
+    meta = getattr(hit, "meta", {}) or {}
+    return bool(meta.get("practice_candidate") or meta.get("material_candidate"))
+
+
+def _fit_evidence_into_budget(
+    prepared: list[tuple[int, str, list[tuple[int, Any, str, str]], str]],
+    *,
+    max_chars: int,
+) -> tuple[list[tuple[int, str, list[tuple[int, Any, str, str]], str]], int]:
+    """Ужать набор свидетельств до бюджета, отбрасывая поздние запросы целиком.
+
+    Источники у оставшихся запросов сохраняются. Обратный порядок — срезать хиты у всех
+    запросов — проверен на живой сборке ЛСР 10.09 и оказался вреден: выдача стала вдвое
+    многочисленнее и вчетверо хуже по профильности (18 % норм связи против 49 %), а
+    модель, не найдя подходящих, сочинила несуществующий шифр. Лучше меньше строк за
+    проход, но с полной выдачей по каждой.
+    """
+
+    def measure(
+        groups: list[tuple[int, str, list[tuple[int, Any, str, str]], str]],
+        *,
+        with_bodies: bool,
+        preserve_query_bodies: bool = False,
+        oversized_by_floor: bool = False,
+    ) -> int:
+        """Заголовки, а по запросу — и место под тела: карточка без текста бесполезна."""
+        segments = 0
+        total = 0
+        aliases = _evidence_aliases(groups)
+        for group in groups:
+            query_index, header, hits, _query = group
+            total += len(header)
+            segments += 1
+            for hit_index, hit, source_header, body in hits:
+                total += len(source_header) + 2
+                alias = aliases.get((query_index, hit_index))
+                if alias:
+                    total += len(_evidence_alias_text(alias))
+                elif with_bodies:
+                    floor = max(min(len(body), MIN_EVIDENCE_BODY_CHARS),
+                                _required_evidence_body_chars(hit, body))
+                    # Карточка, которая одна больше доли бюджета на запрос, целой не дойдёт
+                    # никогда. Она сокращается открыто и не вытесняет чужие запросы.
+                    whole = (preserve_query_bodies and not _is_practice(group)
+                             and not (oversized_by_floor and len(body) > whole_limit))
+                    total += len(body) if whole else floor
+                segments += 1
+        return total + max(0, segments - 1) * 2
+
+    groups = [(index, header, list(hits), query) for index, header, hits, query in prepared]
+    whole_limit = max_chars // MIN_EVIDENCE_HITS_PER_QUERY
+
+    def _is_practice(group: tuple[int, str, list[Any], str]) -> bool:
+        """Группа-подсказка: практика раздела или нормы по наименованию изделия.
+
+        Обе — дополнительный источник кандидатов, и место в окне обе отдают раньше
+        поисковых запросов, которые модель сформулировала под конкретные строки. Пока
+        проверялся только признак практики раздела, вторая группа вытесняла выдачу
+        поиска вместо того, чтобы ужиматься самой (ревью Codex 11.09).
+        """
+        hits = group[2]
+        return bool(hits) and all(_is_optional_practice_hit(hit[1]) for hit in hits)
+
+    # Практика ужимается первой. Она — дополнительный источник кандидатов, и место в
+    # окне не должна отбирать у запросов, которые модель сформулировала под конкретные
+    # строки ведомости: при равном бюджете добавление её группы выбрасывало целиком
+    # второй поисковый запрос (ревью Codex 11.09).
+    # Optional exact cards must not consume the resource tails of query previews.
+    # Reserve query bodies while fitting optional groups. Their floor is also
+    # enforced by the renderer; long optional archive prose may still be omitted.
+    # If queries alone are too large,
+    # remove optional groups and retain the ordinary query-only budgeting below.
+    while measure(groups, with_bodies=True, preserve_query_bodies=True) > max_chars and any(
+        _is_practice(group) and len(group[2]) > PRACTICE_MIN_HITS for group in groups
+    ):
+        for group in groups:
+            if _is_practice(group) and len(group[2]) > PRACTICE_MIN_HITS:
+                group[2].pop()
+                break
+    # Если и ужатой практики много — она уходит целиком. Запрос, сформулированный под
+    # конкретную строку ведомости, ценнее справки о разделе: при тесном бюджете две
+    # оставленные карточки практики всё равно выталкивали поисковую группу
+    # (ревью Codex 11.09, второй заход).
+    if (
+        measure(groups, with_bodies=True, preserve_query_bodies=True) > max_chars
+        and any(_is_practice(group) for group in groups)
+        and sum(1 for group in groups if not _is_practice(group)) >= 1
+    ):
+        groups = [group for group in groups if not _is_practice(group)]
+    # Сначала сужаем выбор по каждой строке: три карточки на все строки полезнее шести
+    # на треть из них. 10.09 при шести источниках в бюджет влезали 17 строк из 55, и
+    # остальные 38 модель закрывала вслепую.
+    #
+    # Место запросу считается по целым телам его карточек. Пока мерили по полу в 240
+    # символов, «помещались» почти все запросы, а тела потом резались поровну: в контроле
+    # .199 (10.10) из 102 нормативных карточек целой не дошла ни одна — ни состава работ,
+    # ни ресурсов. Запрос, которому не хватило места, уходит целиком и объявляется в
+    # предупреждении об охвате: его строку закроет следующий проход.
+    def overflows() -> bool:
+        return measure(groups, with_bodies=True, preserve_query_bodies=True,
+                       oversized_by_floor=True) > max_chars
+
+    while overflows() and any(
+        len(hits) > MIN_EVIDENCE_HITS_PER_QUERY for _index, _header, hits, _q in groups
+    ):
+        widest = max(len(hits) for _index, _header, hits, _q in groups)
+        for _index, _header, hits, _q in groups:
+            if len(hits) == widest:
+                hits.pop()
+    while len(groups) > 1 and overflows():
+        groups.pop()
+    # Единственный оставшийся запрос обязан влезть хотя бы одним источником. Если целой
+    # не помещается и одна карточка, остаётся прежнее открытое сокращение с пометкой.
+    while groups and measure(groups, with_bodies=True) > max_chars and len(groups[0][2]) > 1:
+        groups[0][2].pop()
+    if groups and measure(groups, with_bodies=False) > max_chars:
+        groups = []
+    if groups:
+        aliases = _evidence_aliases(groups)
+        mandatory = sum(_required_evidence_body_chars(hit, body)
+                        for qi, _header, hits, _query in groups
+                        for hi, hit, _sh, body in hits if (qi, hi) not in aliases)
+        if measure(groups, with_bodies=False) + mandatory > max_chars:
+            groups = []
+    # Наружу отдаётся только место под заголовки: остаток бюджета делят тела.
+    return groups, measure(groups, with_bodies=False)
+
+
+# Признак предупреждения об охвате в готовом пакете: по нему проверяется, что модель
+# его действительно увидела, а не что мы его добавили в список блоков.
+COVERAGE_NOTICE_MARKER = "[ОХВАТ]"
+
+
+def coverage_note_reserve_tokens() -> int:
+    """Сколько токенов держать свободными под предупреждение об охвате.
+
+    Свидетельства — необязательная секция governor'а, и лишний блок он отбрасывает с
+    хвоста. Предупреждение добавляется последним, поэтому при полном бюджете отбрасывали
+    именно его: флаг `coverage_notice_sent` стоял `True`, а в конечных messages текста
+    не было. Место резервируется до набора групп; шестизначные числа — запас на любую
+    длину ведомости.
+    """
+    sample = _evidence_coverage_note({"queries_covered": 999999, "queries_total": 999999})
+    # Плюс разделитель между объектами секции: его governor тоже считает.
+    return conservative_token_estimate(sample.strip()) + 1
+
+
+def model_rag_group_char_budget(
+    *,
+    input_budget_tokens: int,
+    included_tokens: int,
+    query_count: int,
+    context_chars_limit: int,
+) -> int:
+    """Сколько символов отдаётся группам свидетельств в финальном пакете.
+
+    Общая с горячим путём формула: иначе тест повторял бы арифметику и молчал бы при
+    её изменении. Вычитаются разделители между группами и место под предупреждение
+    об охвате — без последнего governor отбрасывал именно предупреждение.
+    """
+    remaining = max(
+        0,
+        int(input_budget_tokens)
+        - int(included_tokens)
+        - int(query_count)
+        - 2
+        - coverage_note_reserve_tokens(),
+    )
+    return min(int(context_chars_limit), remaining * 2)
+
+
+def coverage_notice_in_packet(packet: Any) -> bool:
+    """Дошло ли предупреждение до модели — по объектам собранного пакета."""
+    for section in getattr(packet, "sections", ()) or ():
+        for item in getattr(section, "objects", ()) or ():
+            try:
+                text = item.render()
+            except Exception:  # noqa: BLE001 — трасса не должна ронять ответ
+                continue
+            if COVERAGE_NOTICE_MARKER in str(text):
+                return True
+    return False
+
+
+def _evidence_coverage_note(coverage: Mapping[str, Any]) -> str:
+    """Сообщение модели о том, что ведомость обработана не целиком."""
+    covered = coverage.get("queries_covered")
+    total = coverage.get("queries_total")
+    # Формулировка требует работы по вошедшим строкам, а не воздержания. Прогон 14:11:
+    # прежний текст вместе с прочими предупреждениями прочитался как «лучше не
+    # подбирать вовсе» — модель вернула все 70 строк с пустым norm_code.
+    return (
+        f"{chr(10)}{chr(10)}[ОХВАТ] В пакет вошли свидетельства по {covered} из {total} "
+        "твоих поисковых запросов. Подбирай нормы только из показанных карточек. "
+        "Если для строки ведомости подходящих карточек в пакете нет, оставь norm_code "
+        "пустым — её закроет следующий проход."
+    )
+
+
+def model_rag_evidence_coverage(
+    query_hits: Sequence[tuple[str, Sequence[Any]]],
+    blocks: Sequence[str],
+) -> dict[str, Any]:
+    """Сколько запросов модели уместилось в бюджет свидетельств.
+
+    Длинная ведомость за один проход не помещается, и молчать об этом нельзя: по
+    непрошедшим строкам модель иначе примет решение вслепую. Пошаговая сборка сметы
+    опирается ровно на это число.
+    """
+    total = len(list(query_hits))
+    covered = sum(1 for block in blocks if str(block).startswith("[Поисковый запрос "))
+    return {
+        "queries_total": total,
+        "queries_covered": covered,
+        "queries_dropped": max(0, total - covered),
+        "complete": covered >= total,
+    }
+
+
+def answer_evidence_blocks(
+    *,
+    fixed_blocks: Sequence[str],
+    group_blocks: Sequence[str],
+    coverage: Mapping[str, Any] | None,
+    trace: dict[str, Any] | None = None,
+) -> list[str]:
+    """Свидетельства для финального вызова модели вместе с предупреждением об охвате.
+
+    Предупреждение обязано лежать здесь, а не в отдельной переменной контекста: финальный
+    вызов собирает пакет именно из этих блоков. Два ревью Codex подряд показали, что
+    иначе модель получает неполный набор строк, не зная об этом, — 6 запросов из 51 и
+    ни слова о потере.
+    """
+    blocks = [*(str(item) for item in fixed_blocks), *(str(item) for item in group_blocks)]
+    data = coverage if isinstance(coverage, Mapping) else {}
+    sent = bool(data) and not data.get("complete", True)
+    if sent:
+        blocks.append(_evidence_coverage_note(data).strip())
+    if trace is not None:
+        # Факт доставки виден в трассе: ответ модели не содержит отправленный промпт,
+        # и после живого прогона 16:02 подтвердить доставку было нечем.
+        trace["coverage_notice_sent"] = sent
+        trace["evidence_blocks_sent"] = len(blocks)
+    return blocks
+
+
 def build_model_rag_evidence_groups(
     query_hits: Sequence[tuple[str, Sequence[Any]]],
     *,
     max_chars: int,
     hits_per_query: int,
+    query_offset: int = 0,
 ) -> tuple[list[str], list[_ModelRagEvidenceChunk]]:
     """Render the profile-owned hit count without letting early queries crowd out later ones."""
 
+    if not query_hits:
+        return [], []
     prepared: list[tuple[int, str, list[tuple[int, Any, str, str]]]] = []
     source_index = 0
     fixed_chars = 0
     segment_count = 0
-    for query_index, (raw_query, raw_hits) in enumerate(query_hits, 1):
+    for query_index, (raw_query, raw_hits) in enumerate(query_hits, 1 + query_offset):
         query = str(raw_query or "").strip()
         query_header = f"[Поисковый запрос Q{query_index}] {query}"
+        if not list(raw_hits):
+            # Голый заголовок неотличим от обрезанных карточек. Пустую выдачу называем
+            # явно и без вывода за модель: один поиск не доказывает отсутствия нормы.
+            query_header += (f"\n[Q{query_index}: поиск выполнен, совпадений нет. Это не доказывает "
+                             "отсутствие нормы во всей базе — переформулируй запрос по операции и изделию.]")
         hits: list[tuple[int, Any, str, str]] = []
         fixed_chars += len(query_header)
         segment_count += 1
-        for hit_index, hit in enumerate(list(raw_hits)[: max(1, int(hits_per_query))], 1):
+        # Живая проверка 17.09, проход 4: выдача цен резалась до лимита карточек норм,
+        # и модель видела пять карточек цен вместо десяти.
+        limit = max(1, evidence_limit(raw_hits, int(hits_per_query)))
+        for hit_index, hit in enumerate(list(raw_hits)[:limit], 1):
             source_index += 1
             doc_name = str(getattr(hit, "doc_name", "") or "")
             score = float(getattr(hit, "score", 0.0) or 0.0)
-            source_header = (
-                f"[Q{query_index}.H{hit_index} | {doc_name} | score={score:.4f}]"
+            meta = getattr(hit, "meta", {}) or {}
+            # PracticeChunk.score is an application count, not retrieval quality.
+            # Its number belongs only in the complete archive context/provenance.
+            score_label = "" if meta.get("practice_candidate") else f" | score={score:.4f}"
+            archive_header = (
+                ARCHIVE_CONTEXT_OMITTED_HEADER
+                if 0 < int(meta.get("smeta_required_header_chars") or 0)
+                < int(meta.get("smeta_archive_context_end") or 0) else ""
             )
+            # Reserve the warning before fitting groups; remove it only when the
+            # full archive context survives. Omitted context must be model-visible.
+            source_header = f"[Q{query_index}.H{hit_index} | {doc_name}{score_label}{archive_header}]"
             body = str(getattr(hit, "content", "") or "").strip()
             hits.append((hit_index, hit, source_header, body))
             fixed_chars += len(source_header) + 2
             segment_count += 1
-        prepared.append((query_index, query_header, hits))
+        prepared.append((query_index, query_header, hits, query))
 
     fixed_chars += max(0, segment_count - 1) * 2
-    if fixed_chars > max_chars:
+    # Порог считается с запасом под тела: заголовки могут влезть, а карточке достанется
+    # по несколько десятков символов — шифр без наименования и практики.
+    prepared, fixed_chars = _fit_evidence_into_budget(prepared, max_chars=max_chars)
+    if not prepared:
         raise ValueError("MODEL_RAG_EVIDENCE_BUDGET_TOO_SMALL_FOR_ALL_QUERY_HEADERS")
 
-    bodies = [body for _qi, _qh, hits in prepared for _hi, _hit, _sh, body in hits]
+    aliases = _evidence_aliases(prepared)
+    optional_groups = {qi for qi, _qh, hits, _qt in prepared
+                       if hits and all(_is_optional_practice_hit(hit) for _hi, hit, _sh, _body in hits)}
+
+    def body_floor(query_index: int, hit: Any, body: str) -> int:
+        if optional_groups and query_index not in optional_groups:
+            return len(body)
+        return _required_evidence_body_chars(hit, body)
+
+    bodies = [(body, body_floor(qi, hit, body))
+              for qi, _qh, hits, _qt in prepared for hi, hit, _sh, body in hits
+              if (qi, hi) not in aliases]
     body_budget = max_chars - fixed_chars
-    low, high = 0, max((len(body) for body in bodies), default=0)
+    low, high = 0, max((len(body) for body, _floor in bodies), default=0)
     while low < high:
         cap = (low + high + 1) // 2
-        if sum(min(len(body), cap) for body in bodies) <= body_budget:
+        if sum(max(floor, min(len(body), cap)) for body, floor in bodies) <= body_budget:
             low = cap
         else:
             high = cap - 1
@@ -1185,25 +1977,55 @@ def build_model_rag_evidence_groups(
     groups: list[str] = []
     chunks: list[_ModelRagEvidenceChunk] = []
     source_index = 0
-    for query_index, query_header, hits in prepared:
+    for query_index, query_header, hits, query_text in prepared:
         group_parts = [query_header]
         for hit_index, hit, source_header, body in hits:
             source_index += 1
             visible_body = body
-            if len(visible_body) > body_cap:
+            meta = dict(getattr(hit, "meta", {}) or {})
+            hit_cap = max(body_cap, body_floor(query_index, hit, body))
+            header_end = int(meta.get("smeta_required_header_chars") or 0)
+            archive_end = int(meta.get("smeta_archive_context_end") or 0)
+            archive_omitted = False
+            if 0 < header_end < archive_end <= len(body):
+                available = hit_cap - len(EVIDENCE_TRUNCATION_SUFFIX) if len(body) > hit_cap else hit_cap
+                archive_omitted = archive_end > available
+                if archive_omitted:
+                    # A frequency or example without its provenance/unknowns is
+                    # misleading. Omit the entire optional block, keeping the
+                    # canonical norm header and using space for normative content.
+                    visible_body = body[:header_end] + body[archive_end:]
+                meta["model_archive_evidence_delivered"] = not archive_omitted
+            if len(visible_body) > hit_cap or archive_omitted:
+                suffix = EVIDENCE_TRUNCATION_SUFFIX if hit_cap >= 22 else "…"
                 visible_body = (
-                    visible_body[: max(0, body_cap - 1)].rstrip() + "…"
-                    if body_cap
+                    visible_body[: max(0, hit_cap - len(suffix))].rstrip() + suffix
+                    if hit_cap
                     else ""
                 )
-            group_parts.append(f"{source_header}:\n{visible_body}")
-            meta = dict(getattr(hit, "meta", {}) or {})
+            alias = aliases.get((query_index, hit_index))
+            rendered_body = _evidence_alias_text(alias) if alias else visible_body
+            if not archive_omitted:
+                source_header = source_header.replace(ARCHIVE_CONTEXT_OMITTED_HEADER, "")
+            group_parts.append(f"{source_header}:\n{rendered_body}")
+            meta["model_evidence_truncated"] = visible_body != body
+            if alias:
+                meta["model_evidence_alias_of"] = f"Q{alias[0]}.H{alias[1]}"
             meta.update(
                 {
                     "model_query_index": query_index,
                     "model_hit_index": hit_index,
                     "model_evidence_ref": f"Q{query_index}.H{hit_index}",
                     "model_source_index": source_index,
+                    # Сам запрос, а не только его номер: «Q1.H1» живёт ровно один
+                    # проход, и по сохранённому решению нельзя было бы восстановить,
+                    # что именно модель видела (ревью Codex 11.09).
+                    #
+                    # Берётся из `prepared`, а не из переменной внешнего цикла: к этому
+                    # месту она давно держит последний запрос прохода, и все карточки
+                    # получали его один на всех — диагностика происхождения врала
+                    # (ревью Codex 11.09, второй заход).
+                    "model_query": query_text,
                 }
             )
             chunks.append(
@@ -1233,6 +2055,8 @@ def validate_model_rag_result_structure(
 
     errors: list[str] = []
     observed_keys: set[tuple[str, str]] = set()
+    work_ids: set[str] = set()
+    source_operations: dict[tuple[str, str], list[str]] = {}
     for row in rows:
         source_row = row.get("source_row")
         is_positive_int = (
@@ -1244,9 +2068,23 @@ def validate_model_rag_result_structure(
         if not is_positive_int and not is_authored_label:
             errors.append("invalid_source_row")
             continue
+        if row.get("parse_error"):
+            # Неразобранная строка не считается и возвращается модели со своими ячейками;
+            # её work_id неизвестен, и сравнивать с ним соседние операции той же позиции
+            # нельзя: иначе неблокирующая ошибка формата отвергала порцию целиком
+            # (живая проверка 17.09, проход 3).
+            errors.append(f"model_row_format_error:{source_row}")
+            continue
         source_key = (type(source_row).__name__, str(source_row))
-        if source_key in observed_keys:
+        work_id = str(row.get("work_id") or "").strip()
+        prior_ids = source_operations.setdefault(source_key, [])
+        if source_key in observed_keys and (not work_id or any(not value for value in prior_ids)):
             errors.append(f"duplicate_source_row:{source_row}")
+        if work_id and work_id in work_ids:
+            errors.append(f"duplicate_work_id:{work_id}")
+        if work_id:
+            work_ids.add(work_id)
+        prior_ids.append(work_id)
         observed_keys.add(source_key)
 
     evidence_by_ref: dict[str, dict[str, Any]] = {}
@@ -1263,24 +2101,7 @@ def validate_model_rag_result_structure(
             if not character.isspace() and character != ":"
         )
 
-    def explicit_absence(value: Any) -> bool:
-        marker = str(value or "").strip().strip("*_` ").strip()
-        if len(marker) >= 2 and (marker[0], marker[-1]) in {
-            ("(", ")"),
-            ("[", "]"),
-        }:
-            marker = marker[1:-1].strip()
-        return marker.casefold() in {
-            "",
-            "—",
-            "-",
-            "–",
-            "−",
-            "нет",
-            "н/д",
-            "n/a",
-            "na",
-        }
+    from proxy.smeta_core.vor_rows import explicit_norm_absence
 
     for row in rows:
         source_row = row.get("source_row")
@@ -1289,16 +2110,21 @@ def validate_model_rag_result_structure(
             for item in (row.get("evidence_refs") or [])
             if str(item or "").strip()
         ]
+        selected_code = (
+            ""
+            if explicit_norm_absence(row.get("norm_code"))
+            else code_identity(row.get("norm_code"))
+        )
         if not refs:
-            errors.append(f"missing_evidence_ref:{source_row}")
+            # Ссылка требуется только там, где норма выбрана. Пустой norm_code — прямо
+            # предусмотренный ответ «подходящих карточек в пакете нет», и ссылаться в
+            # нём не на что: живой прогон 22:31 забраковал весь проход из-за шести
+            # таких строк, хотя по девятнадцати другим нормы были подобраны.
+            if selected_code:
+                errors.append(f"missing_evidence_ref:{source_row}")
             continue
         unknown_refs = [ref for ref in refs if ref not in evidence_by_ref]
         errors.extend(f"unknown_evidence_ref:{ref}" for ref in unknown_refs)
-        selected_code = (
-            ""
-            if explicit_absence(row.get("norm_code"))
-            else code_identity(row.get("norm_code"))
-        )
         if selected_code and not any(
             (
                 (evidence_code := code_identity(evidence_by_ref[ref].get("norm_code")))
@@ -1311,14 +2137,300 @@ def validate_model_rag_result_structure(
     return list(dict.fromkeys(errors))
 
 
+def model_rows_must_belong_to_sheet(portion_state):
+    """Строки ответа сверяются с ведомостью, пока она распознана как ведомость.
+
+    Проход 32 (18.09): на пройденной ведомости проверка не применялась, и модель,
+    которой нечего было решать, сочинила три позиции с выдуманными calculation_ref —
+    они попали в книгу и в реестр источников.
+    """
+    return str((portion_state or {}).get("state") or "") in {"portion", "complete"}
+
+
+def portion_structure_errors(rows: Sequence[Mapping[str, Any]], portion_state: Mapping[str, Any]) -> list[str]:
+    """Строки ответа, которые не принадлежат порции или сливают операции позиции."""
+    from proxy.smeta_core.vor_rows import decision_anchor
+
+    errors: list[str] = []
+    seen_operations: dict[str, list[tuple[str, str]]] = {}
+    for row in rows:
+        anchor = decision_anchor(row, portion_state.get("source_anchors") or [])
+        label = str(row.get("source_row") or "").strip()
+        work_id = str(row.get("work_id") or "").strip()
+        if not anchor or anchor not in (portion_state.get("shown") or []):
+            errors.append(f"invalid_portion_source_row:{row.get('source_row')}")
+            continue
+        if row.get("parse_error"):
+            # Идентичность неразобранной строки неизвестна: она не сливается с соседями.
+            continue
+        previous = seen_operations.setdefault(anchor, [])
+        if previous and (not work_id or any(not identity for _, identity in previous)):
+            errors.append(f"invalid_portion_source_row:{row.get('source_row')}")
+        elif any(prior_label != label for prior_label, _ in previous):
+            # Downstream receipts/evidence retain the authored source label.
+            # Do not merge aliases and silently lose an operation's history.
+            errors.append(f"inconsistent_portion_source_label:{label}")
+        previous.append((label, work_id))
+    return errors
+
+
 def blocking_model_rag_result_errors(errors: Sequence[str]) -> list[str]:
     """Keep evidence-code disagreement visible without withholding the model draft."""
 
     return [
         error
         for error in errors
-        if not str(error).startswith("norm_code_not_in_referenced_evidence:")
+        # Норма без ссылки на карточку не считается, но отказ адресуется её строке
+        # (withhold_unreferenced_norms), а не всей порции (живая проверка 17.09, проход 5).
+        if not str(error).startswith(("norm_code_not_in_referenced_evidence:", "model_row_format_error:",
+                                      "missing_evidence_ref:", "unknown_evidence_ref:"))
     ]
+
+
+def evidence_code_identity(value: Any) -> str:
+    """Шифр нормы без пробелов и двоеточий: сравнение идентификаторов, а не текста."""
+    return "".join(
+        character
+        for character in str(value or "").strip().casefold()
+        if not character.isspace() and character != ":"
+    )
+
+
+_EVIDENCE_CARD_BODY = re.compile(r"\[(Q\d+\.H\d+) \|[^\]]*\]:?[ \t]*(.*?)(?=\n\[Q\d+\.H\d+ \||\n\[Поисковый запрос|\Z)",
+                                 re.DOTALL)
+_EVIDENCE_ALIAS_BODY = re.compile(r"^\s*См\. (Q\d+\.H\d+)")
+
+
+def delivered_evidence_cards(packet_text: str, chunks: Sequence[Any]) -> dict[str, str]:
+    """Ссылка -> шифр присутствующей карточки; это не проверка полноты её содержимого.
+
+    Набор найденных карточек шире доставленного: упаковщик и governor отбрасывают хвост
+    (аудит Codex 17.09). Повтор карточки упаковщик заменяет на «См. Q1.H1», и доставленная
+    ссылка без своего оригинала ничего не подтверждает: её содержание модель не видела.
+    """
+    bodies: dict[str, str] = {}
+    for match in _EVIDENCE_CARD_BODY.finditer(str(packet_text or "")):
+        bodies.setdefault(match.group(1).upper(), match.group(2))
+    complete = {ref for ref, body in bodies.items() if not _EVIDENCE_ALIAS_BODY.match(body)}
+    for ref, body in bodies.items():
+        alias = _EVIDENCE_ALIAS_BODY.match(body)
+        if alias and alias.group(1).upper() in complete:
+            complete.add(ref)
+    out: dict[str, str] = {}
+    for chunk in chunks or ():
+        meta = getattr(chunk, "meta", {}) or {}
+        ref = str(meta.get("model_evidence_ref") or "").strip().upper()
+        if ref and ref in complete:
+            out[ref] = str(meta.get("norm_code") or "")
+    return out
+
+
+def evidence_group_ids(groups: Sequence[str]) -> list[str]:
+    """Идентификаторы групп так, как их видит модель в доставленном тексте.
+
+    Нумерация по порядку списка лгала: в проходе 3 трасса писала Q1-Q14, а модель получила
+    Q3-Q16, и по трассе нельзя было сказать, какая карточка доставлена (аудит Codex 17.09).
+    """
+    identifiers: list[str] = []
+    for block in groups or ():
+        match = re.match(r"\[Поисковый запрос (Q\d+)\]", str(block or ""))
+        if match:
+            identifiers.append(match.group(1))
+    return identifiers
+
+
+def delivered_group_ids(packet_text: str) -> list[str]:
+    """Группы запросов, дошедшие до модели: заголовки в тексте доставленного пакета."""
+    return list(dict.fromkeys(re.findall(r"\[Поисковый запрос (Q\d+)\]", str(packet_text or ""))))
+
+
+def saved_norm_evidence(decisions):
+    """Reuse delivered evidence for the same operation, never infer it from a receipt."""
+    from proxy.smeta_core.row_decision import operation_rows
+    from proxy.services.rim_lsr_trace_service import selected_norm_code
+
+    proofs = []
+    for decision in (decisions or {}).values():
+        for row in operation_rows(decision):
+            code = evidence_code_identity(selected_norm_code(row))
+            cards = [dict(card) for card in row.get('evidence_snapshot') or []
+                     if card.get('delivered') is True and card.get('sent_text')
+                     and card.get('sent_sha256')
+                     and evidence_code_identity(selected_norm_code({'norm_code': card.get('norm_code')})) == code]
+            if code and cards:
+                proofs.append(dict(source_row=str(row.get('source_row') or ''),
+                                   work_id=str(row.get('work_id') or row.get('source_row') or ''),
+                                   norm_code=code, cards=cards))
+    return proofs
+
+
+def withhold_unreferenced_norms(
+    rows: Sequence[Mapping[str, Any]], *, delivered_cards: Mapping[str, str] | None = None,
+    prior_evidence: Sequence[Mapping[str, Any]] = (),
+    observed_refs: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    """Копии строк, где норма не подкреплена доставленной карточкой, помечены к отказу.
+
+    Шифр выбран, ссылок нет — missing_evidence_ref. Ссылки есть, но ни одна не указывает на
+    карточку этого прохода — unknown_evidence_ref (проход 3 на IQ2_M: Q7.2.H1 вместо Q7.H2).
+    Ссылка доставлена, а её карточка описывает другую норму — norm_code_not_in_referenced_evidence:
+    подтверждает выбор совпадение шифра, а не наличие ссылки (аудит Codex 17.09). Помеченная
+    строка не рассчитывается и возвращается модели со своей причиной; соседние операции остаются.
+
+    При повторе операции принимается её сохранённое доказательство доставки карточки,
+    только если новые локальные ссылки не переопределили источник этого прохода.
+    Старый расчёт сам по себе не доказывает источник. Проверки формата действуют всегда.
+    """
+    from proxy.smeta_core.vor_rows import explicit_norm_absence
+
+    out: list[dict[str, Any]] = []
+    current_refs = set(delivered_cards or ()) | {
+        str(ref).strip().upper() for ref in observed_refs if str(ref).strip()
+    }
+    for row in rows:
+        item = dict(row)
+        refs = [str(ref or "").strip().upper() for ref in (row.get("evidence_refs") or []) if str(ref or "").strip()]
+        code = str(row.get("norm_code") or "").strip()
+        if not row.get("parse_error") and code and not explicit_norm_absence(code):
+            from proxy.services.rim_lsr_trace_service import norm_codes_in_value, selected_norm_code
+
+            # Сравнивается ровно тот шифр, который возьмёт расчёт; несколько шифров в поле —
+            # конфликт формата: подтверждать один, а считать другой нельзя (аудит Codex 17.09).
+            selected = evidence_code_identity(selected_norm_code(row))
+            if len(norm_codes_in_value(row.get("norm_code"))) > 1:
+                item["evidence_error"] = "ambiguous_norm_code"
+                out.append(item)
+                continue
+            proof = next((entry for entry in prior_evidence
+                          if entry.get('source_row') == str(row.get('source_row') or '')
+                          and entry.get('work_id') == str(row.get('work_id') or row.get('source_row') or '')
+                          and entry.get('norm_code') == selected and entry.get('cards')), None)
+            prior_refs = {str(card.get('ref') or '').strip().upper()
+                          for card in (proof or {}).get('cards', [])}
+            if (proof and not any(ref in current_refs for ref in refs)
+                    and (not refs or set(refs).issubset(prior_refs))):
+                item['evidence_snapshot'] = [dict(card) for card in proof['cards']]
+                out.append(item)
+                continue
+            if not refs:
+                item["evidence_error"] = "missing_evidence_ref"
+            elif delivered_cards is not None:
+                delivered = [delivered_cards[ref] for ref in refs if ref in delivered_cards]
+                if not delivered:
+                    item["evidence_error"] = "unknown_evidence_ref"
+                elif not any(
+                    selected and evidence_code_identity(selected_norm_code({"norm_code": value})) == selected
+                    for value in delivered
+                ):
+                    item["evidence_error"] = "norm_code_not_in_referenced_evidence"
+        out.append(item)
+    return out
+
+
+async def post_with_delivery_messages(post, runtime, model, headers, body, *, allow_stream):
+    """Return the successful request's messages alongside its unchanged response."""
+    answer, usage = await post(runtime, model, headers, body, allow_stream=allow_stream)
+    return answer, usage, body['messages']
+
+
+def bind_normative_identity(
+    rows: Sequence[Mapping[str, Any]], *, chunks: Sequence[Any] = (),
+    delivered_cards: Mapping[str, str] | None = None,
+    prior_evidence: Sequence[Mapping[str, Any]] = (),
+    packet_text: str | None = None,
+) -> list[dict[str, Any]]:
+    """Bind source revision mechanically; never trust provenance authored by a model.
+
+    Current delivered refs take precedence over persisted operation-specific proof.
+    An unavailable new ref must not silently inherit an old local Q coordinate.
+    """
+    from proxy.services.rim_lsr_trace_service import selected_norm_code
+    from proxy.smeta_core.vor_rows import explicit_norm_absence
+
+    delivered = dict(delivered_cards or {})
+    by_ref = {str((getattr(c, 'meta', {}) or {}).get('model_evidence_ref') or '').upper(): c
+              for c in chunks}
+    fields = ('normative_identity', 'normative_identity_status', 'normative_identity_refs', 'normative_identity_conflicts',
+              'evidence_snapshot', 'resource_delivery_proof', 'source_resource_id', 'source_resource_ids', 'source_resource_group_id',
+              'delivered_resource_ids', 'delivered_resource_groups')
+    from proxy.services.smeta_evidence_delivery_service import resource_delivery_proofs
+    resource_proofs = resource_delivery_proofs(packet_text, chunks) if packet_text is not None else {}
+
+    def identity(card):
+        value = (card.get('source_meta') or {}).get('normative_identity')
+        if not isinstance(value, Mapping) or value.get('schema') != 'les.norm-revision.v1':
+            return None
+        if not re.fullmatch(r'[0-9a-fA-F]{64}', str(value.get('base_sha256') or '')):
+            return None
+        keys = ('schema', 'base_sha256', 'norm_id', 'norm_key', 'edition', 'base_type')
+        if any(not str(value.get(k) or '').strip() for k in keys):
+            return None
+        return {k: str(value[k]) for k in keys}
+
+    out = []
+    for authored in rows:
+        item = {k: v for k, v in authored.items() if k not in fields}
+        if isinstance(authored.get('operations'), list):
+            item['operations'] = bind_normative_identity(authored['operations'], chunks=chunks,
+                delivered_cards=delivered, prior_evidence=prior_evidence, packet_text=packet_text)
+            out.append(item)
+            continue
+        selected = evidence_code_identity(selected_norm_code(item))
+        if not selected or explicit_norm_absence(item.get('norm_code')):
+            out.append(item)
+            continue
+        refs = list(dict.fromkeys(str(r).strip().upper() for r in item.get('evidence_refs') or [] if str(r).strip()))
+        cards = []
+        for ref in refs:
+            c = by_ref.get(ref)
+            if c is None or ref not in delivered:
+                continue
+            meta = dict(getattr(c, 'meta', {}) or {})
+            if evidence_code_identity(selected_norm_code({'norm_code': delivered[ref]})) != selected:
+                continue
+            if evidence_code_identity(selected_norm_code({'norm_code': meta.get('norm_code')})) != selected:
+                continue
+            body = str(getattr(c, 'content', '') or '')
+            cards.append(dict(ref=ref, norm_code=meta.get('norm_code'), delivered=True,
+                sent_text=body, sent_sha256=hashlib.sha256(body.encode('utf-8')).hexdigest()[:16],
+                source_meta=meta, query=str(meta.get('model_query') or ''),
+                doc_name=str(getattr(c, 'doc_name', '') or ''), doc_id=str(getattr(c, 'doc_id', '') or '')))
+            if ref in resource_proofs:
+                cards[-1]['resource_delivery_proof'] = resource_proofs[ref]
+        # A coordinate observed in this turn belongs to this turn even when
+        # Governor omitted its body. Never reinterpret it using an old local Q ID.
+        if not any(ref in by_ref or ref in delivered for ref in refs):
+            for proof in prior_evidence:
+                if (str(proof.get('source_row') or '') != str(item.get('source_row') or '')
+                    or str(proof.get('work_id') or '') != str(item.get('work_id') or item.get('source_row') or '')
+                    or proof.get('norm_code') != selected):
+                    continue
+                prior_cards = [dict(c) for c in proof.get('cards') or []
+                    if c.get('delivered') is True and c.get('sent_text') and c.get('sent_sha256')
+                    and evidence_code_identity(selected_norm_code({'norm_code': c.get('norm_code')})) == selected]
+                if refs and not set(refs).issubset({str(c.get('ref') or '').upper() for c in prior_cards}):
+                    continue
+                cards = [c for c in prior_cards if not refs or str(c.get('ref') or '').upper() in refs]
+                break
+        values = [identity(c) for c in cards]
+        unique = {json.dumps(v, sort_keys=True): v for v in values if v is not None}
+        status = 'conflict' if len(unique) > 1 else 'pinned' if len(unique) == 1 and all(v is not None for v in values) else 'unpinned'
+        item.update(normative_identity=next(iter(unique.values())) if status == 'pinned' else None,
+                    normative_identity_status=status, normative_identity_refs=[str(c.get('ref')) for c in cards])
+        if status == 'conflict':
+            item['normative_identity_conflicts'] = list(unique.values())
+        if cards:
+            item['evidence_snapshot'] = cards
+        if status == 'pinned':
+            proofs = [c['resource_delivery_proof'] for c in cards
+                      if isinstance(c.get('resource_delivery_proof'), Mapping)
+                      and c['resource_delivery_proof'].get('normative_identity') == item['normative_identity']]
+            if proofs:
+                item['resource_delivery_proof'] = dict(normative_identity=item['normative_identity'],
+                    rows=[r for p in proofs for r in p.get('rows') or []],
+                    groups=[g for p in proofs for g in p.get('groups') or []])
+        out.append(item)
+    return out
 
 
 def model_rag_search_tool_schema() -> list[dict[str, Any]]:
@@ -1328,7 +2440,11 @@ def model_rag_search_tool_schema() -> list[dict[str, Any]]:
         [
             {
                 "name": "search_sources",
-                "summary": "Искать evidence в явно выбранных датасетах",
+                "summary": (
+                    "Искать evidence в явно выбранных датасетах. Для полного чтения нормы "
+                    "(операции и все ресурсы) передай её полный шифр в q. "
+                    "Дополнительный поиск необязателен: если данных достаточно, дай обычный ответ."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"q": {"type": "string"}},
@@ -1369,8 +2485,1565 @@ def _bounded_source_blocks(text: str, *, max_chars: int = 700) -> list[str]:
     return blocks
 
 
+def _portion_row_line(row: Mapping[str, Any]) -> str:
+    """Строка порции в том виде, в каком она стоит в ведомости.
+
+    Отдаётся исходная строка целиком: артикул и производитель различают похожие позиции
+    («Шкаф TTR-4281 Hyperline» и «Шкаф ШТК-М Цмо» — разные нормы и разные аналоги), а
+    проекция «номер, наименование, единица, количество» их теряла (ревью Codex, R2).
+    Для строк без исходных ячеек собирается та же проекция, но с точным количеством.
+    """
+    raw = str(row.get("raw") or "").strip()
+    if raw:
+        return raw
+    quantity = row.get("quantity_text")
+    if quantity in (None, ""):
+        value = row.get("quantity")
+        quantity = "" if value is None else str(value)
+    unit = str(row.get("unit") or "")
+    return " | ".join(
+        part for part in (str(row.get("source_row") or ""), str(row.get("title") or ""), unit, str(quantity))
+        if part
+    )
+
+
+def attachment_portion_text(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    limit: int,
+    name: str,
+    after: str = "",
+    completed: Sequence[str] = (),
+    rejected: Mapping[str, str] | None = None,
+    selected: Sequence[Mapping[str, Any]] | None = None,
+) -> str:
+    """Порция ведомости для одного прохода — в том виде, в каком её увидит модель.
+
+    Ведомость целиком не помещается в окно и вытесняет карточки норм: замер 10.09
+    показал, что она вместе с профилем занимает 8 444 токена из 22 528, оставляя на
+    свидетельства 14 031. Поэтому в контекст уходит порция строк, а не весь файл.
+
+    Режется набор строк, а не сами строки: каждая уходит целиком, вместе с шапкой таблицы
+    и разделом, к которому относится. Обеднённая строка меняет свидетельство ещё до
+    модели и мешает выбрать между похожими нормами.
+
+    Границы названы прямо: модель должна знать, что видит часть, иначе примет её за всю
+    ведомость и закроет отсутствующие строки вслепую.
+    """
+    from proxy.smeta_core.vor_rows import row_anchor, slice_rows
+
+    ordered = [dict(row) for row in rows]
+    if not ordered:
+        return ""
+    if selected is not None:
+        portion = [dict(row) for row in selected]
+        done = set(completed) | {row_anchor(row) for row in portion}
+        rest = [row for row in ordered if row_anchor(row) not in done]
+    elif completed:
+        done = set(completed)
+        portion, rest = slice_rows([row for row in ordered if row_anchor(row) not in done], limit=limit)
+    else:
+        portion, rest = slice_rows(ordered, limit=limit, after=after)
+    if not portion:
+        return ""
+    lines = [
+        f"Ведомость «{name}», позиции {portion[0].get('source_row')}–"
+        f"{portion[-1].get('source_row')} из {len(ordered)}:",
+        # Без этого указания у строки остаётся один исход помимо нормы — «нет
+        # подходящей нормы», и крепёж, который в готовых сметах идёт ресурсом работы,
+        # закрывался именно так: в прогоне 11.09 семь строк подряд (анкеры, гайки,
+        # шпильки, винты) получили этот ответ, хотя в архиве они стоят под нормой на
+        # лоток. Разбор ответа понимает вид решения, а модель о нём не знала.
+        "Вид решения описывает способ расчёта строки, а не тип изделия в ведомости. "
+        "«Работа» (decision_kind=работа) — ты выбрал норму или аналог на операцию; "
+        "укажи norm_code и evidence_refs этой карточки. Оборудование или материал "
+        "в исходной ведомости может требовать такой работы по монтажу. "
+        "Самостоятельная стоимость изделия и работа по его монтажу — разные решения.",
+        "Если по твоему решению исходная строка является только заголовком раздела, "
+        "сохрани её source_row и укажи decision_kind=раздел с объяснением в analogue или coverage. "
+        "Это не рассчитанная работа: не добавляй ей норму, поставку или ресурсные действия. "
+        "Пустое количество само по себе не доказывает заголовок; неоднозначность оставляй уточнением.",
+        "Если своей нормы у позиции нет, скажи прямо, как она попадает в смету:",
+        "  «входит в работу <work_id>» — материал учтён конкретным ресурсом этой операции; "
+        "назови included_in — идентификатор операции, resource_action=included (или excluded, чтобы снять материал нормы, заменяемый изделием строки, с replaced_by=work_id поставки либо replaced_by=not_required и обоснованием в coverage), "
+        "target_resource_code — код конкретного материала из состава нормы и количество. "
+        "Один шифр работы без ресурса не подтверждает учёт;",
+        "  «самостоятельный материал» — позиция идёт в смету отдельной строкой "
+        "по прайсу, нормой не считается. resource_code — только известный код ресурса прайса; "
+        "без цены материал остаётся в книге с явным запросом цены;",
+        "Дополнительные поля ответа можно дать колонками: decision_kind, resource_code, "
+        "resource_quantity, resource_unit, included_in, resource_action, target_resource_code, target_resource_id. "
+        "Optional target_resource_id: row:<SQL id> for a displayed source row, or group:<displayed digest> "
+        "for an explicitly displayed group; included_in remains the parent work_id. "
+        "Не объявляй материал включённым по соседству в архивной смете: нужны конкретный "
+        "ресурс и количество. Для самостоятельного материала не заполняй norm_code.",
+        "При доказанном пересчёте фасовки или массы сохраняй исходные quantity/unit и укажи "
+        "conversion_factor (физических единиц на исходную), conversion_unit, conversion_source. "
+        "Код умножит исходное количество один раз и затем переведёт в измеритель нормы. "
+        "coefficient для этого не используется. Без документированного множителя назови пробел.",
+        "  «нет подходящей нормы» — только когда ни одно из двух не подходит, "
+        "и скажи, чего не хватает для решения.",
+    ]
+    previous_header = None
+    previous_sheet = None
+    multisheet = len({str(row.get("sheet") or "") for row in ordered}) > 1
+    if multisheet:
+        # Пометка мало чего стоит, если не сказать, что с ней делать: номер позиции на
+        # каждом листе свой, и голая «1» неоднозначна. Такой ответ блокирует упаковку,
+        # а без указания модель повторяла бы его проход за проходом — строка бы никогда
+        # не закрылась. Поэтому требование названо прямо.
+        lines.append(
+            "В книге несколько листов, и номера позиций на них повторяются. "
+            "В поле source_row копируй идентификатор из пометки [Строка ВОР] целиком, "
+            "вместе с именем листа."
+        )
+    section = ""
+    for row in portion:
+        sheet = str(row.get("sheet") or "")
+        header = row.get("header")
+        if sheet != previous_sheet:
+            if sheet:
+                lines.append(f"[Лист] {sheet}")
+            section = ""
+        if header != previous_header or sheet != previous_sheet:
+            if isinstance(header, (list, tuple)) and any(str(cell).strip() for cell in header):
+                # Не «Колонки», а прямое пояснение: короткая шапка со списком имён
+                # читается моделью как образец таблицы, и она копирует его в ответ.
+                lines.append(
+                    "Ячейки строк ниже означают: "
+                    + " | ".join(str(cell).strip() for cell in header)
+                )
+        previous_header, previous_sheet = header, sheet
+        current = str(row.get("section") or "")
+        if current and current != section:
+            section = current
+            lines.append(f"[Раздел] {section}")
+        if multisheet:
+            lines.append(f"[Строка ВОР: source_row={row_anchor(row)}]")
+        lines.append(_portion_row_line(row))
+        previous = (rejected or {}).get(row_anchor(row))
+        if previous:
+            # Прошлый выбор не прошёл расчёт — модель должна знать причину, иначе
+            # предложит ту же норму снова. Самый частый случай — измеритель нормы не
+            # сходится с единицей строки: «шт.» против «100 м» (ревью Codex 11.09).
+            lines.append(f"    [Прошлый выбор отклонён] {previous}")
+    if rest:
+        lines.append(
+            f"Это часть ведомости. Оставшиеся {len(rest)} позиций "
+            f"(с {rest[0].get('source_row')}) закроет следующий проход — "
+            "не придумывай для них нормы."
+        )
+    return chr(10).join(lines)
+
+
+def smeta_portion_rows(attachment_context: str = "") -> int:
+    """Offer source rows to the budget fitter; explicit zero/negative disables portions.
+
+    A row count is not a context budget. By default the existing fitter admits
+    complete rows and receipts while reserving room for retrieval. An explicit
+    positive setting remains an upper bound, not a completion/attempt limit.
+    """
+    raw = os.getenv("LES_SMETA_PORTION_ROWS", "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass  # An invalid legacy setting uses the same automatic default.
+    from proxy.smeta_core.vor_rows import rows_from_attachment_text
+
+    return max(1, len(rows_from_attachment_text(attachment_context)))
+
+
+def portion_cursor_store() -> Any:
+    """Хранилище прогресса порций; None, если его не удалось открыть.
+
+    Без хранилища каждый проход начинается сначала — это хуже продолжения, но лучше
+    отказа отвечать: ведомость всё равно будет разобрана, пусть и по первой её части.
+    """
+    from proxy.services.portion_cursor_service import PortionCursorService
+
+    try:
+        return PortionCursorService(mutable_path("storage/smeta_portions.db"))
+    except Exception:  # noqa: BLE001 — сборка сметы не должна падать из-за хранилища
+        logging.getLogger(__name__).warning(
+            "[SMETA_PORTION] хранилище прогресса недоступно, проход начнётся сначала",
+            exc_info=True,
+        )
+        return None
+
+
+def closed_row_anchors(
+    rows: Sequence[Mapping[str, Any]], shown: Sequence[str]
+) -> list[str]:
+    """Якоря строк, которые модель действительно закрыла нормой.
+
+    Закрытой считается строка с непустым шифром: пустой `norm_code` — прямо
+    предусмотренный ответ «в этом пакете карточек для неё нет», и такая строка обязана
+    вернуться в следующий проход, а не исчезнуть (ревью Codex 10.09, R4).
+
+    Модель называет строку номером позиции, а якорь несёт ещё и лист. Сопоставление
+    идёт по показанным строкам: номер, которого в порции не было, не засчитывается —
+    иначе решение по чужой строке двигало бы курсор.
+    """
+    from proxy.smeta_core.vor_rows import decision_anchor, explicit_norm_absence
+
+    closed: list[str] = []
+    for row in rows:
+        if explicit_norm_absence(row.get("norm_code")):
+            continue
+        anchor = decision_anchor(row, shown)
+        if anchor:
+            closed.append(anchor)
+    return list(dict.fromkeys(closed))
+
+
+def declined_row_anchors(
+    rows: Sequence[Mapping[str, Any]], shown: Sequence[str]
+) -> list[str]:
+    """Якоря строк, по которым модель прямо сказала, что нормы нет.
+
+    Это ответ, а не молчание: строка показана, карточки прочитаны, вывод сделан. Но
+    первый отказ ещё может объясняться неполным пакетом свидетельств, поэтому строке
+    даётся вторая попытка — предел живёт в хранилище прогресса.
+
+    Без такого счёта живой прогон 23:15 зациклился бы: все 25 позиций порции вернулись
+    с «Нет подходящей нормы» — это чистые материалы (заглушки, накладки, суппорты), у
+    которых своей нормы монтажа не бывает, и следующий проход показал бы их снова.
+    """
+    from proxy.smeta_core.vor_rows import decision_anchor, explicit_norm_absence
+
+    declined: list[str] = []
+    for row in rows:
+        if not explicit_norm_absence(row.get("norm_code")):
+            continue
+        anchor = decision_anchor(row, shown)
+        if anchor:
+            declined.append(anchor)
+    return declined
+
+
+def _workbook_revision_id(workbook_chat_meta: Any) -> str | None:
+    """Ревизия собранной книги, если этот проход её собрал."""
+    meta = workbook_chat_meta if isinstance(workbook_chat_meta, Mapping) else {}
+    artifact = meta.get("artifact") if isinstance(meta.get("artifact"), Mapping) else {}
+    return str(artifact.get("revision_id") or "").strip() or None
+
+
+def _portion_decisions_revision(decisions: Any, *, document_price_basis=None) -> str:
+    """Отпечаток решений одной нормализацией — и для книги, и для проверки свежести."""
+    from proxy.services.portion_cursor_service import decisions_revision
+
+    return decisions_revision(decisions, document_price_basis=document_price_basis)
+
+
+class _PracticeChunk:
+    """Карточка нормы из практики раздела в том же виде, что и поисковая."""
+
+    def __init__(self, card: Mapping[str, Any]) -> None:
+        from proxy.services.model_research_tool_service import smeta_card_header, smeta_card_text, smeta_card_context, smeta_card_delivery_metadata
+
+        self.content = smeta_card_text(card)
+        self.doc_id = str(card.get("norm_id") or "")
+        self.doc_name = "smeta_practice_cards.v1"
+        self.score = float(card.get("usage_evidence", {}).get("applications") or 0)
+        self.meta = {
+            **{key: str(card.get(key) or "") for key in ("norm_id", "edition", "base_type")},
+            "norm_code": str(card.get("norm_code") or ""),
+            "measure_unit": str(card.get("measure_unit") or ""),
+            "source_ref": str(card.get("source_ref") or ""),
+            "smeta_required_header_chars": len(smeta_card_header(card)),
+            "smeta_archive_context_end": len(smeta_card_context(card)),
+            **smeta_card_delivery_metadata(card, self.content),
+            "practice_candidate": True,
+            "archive_provenance": card.get("archive_provenance") or {},
+        }
+
+
+def material_application_note(item: Mapping[str, Any]) -> str:
+    """Чем норма подтверждена: изделие из чужой сметы, число применений, вид работы.
+
+    Без наименования изделия модель не отличит дословное совпадение от совпадения по
+    слову «кабель». Демонтаж называется прямо — иначе «Кабель BC5E-4-LSHF» тянул бы за
+    собой «Демонтаж кабеля» молча.
+    """
+    note = (
+        f"в архиве после этой работы указано «{item.get('material')}»"
+        f" — применений {item.get('applications')}, {item.get('confidence')}"
+    )
+    similar = int(item.get("similar_applications") or 0)
+    if similar > int(item.get("applications") or 0):
+        note += f"; с близкими по названию изделиями — {similar} применений"
+    if item.get("demolition"):
+        note += "; это демонтажная норма"
+    return note
+
+
+def material_candidate_card(item: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Карточка нормы из активной базы с пояснением о подтвердившем её изделии.
+
+    Измеритель и состав работы берутся из базы, а не из строки архивной сметы: в смете
+    рядом с нормой стоит её измеритель на момент того расчёта, и подставить его вместо
+    базового значило бы считать по чужой единице. Ненайденная норма пропускается —
+    модель сошлётся на карточку, которой нет, и расчёт её отвергнет.
+    """
+    from proxy.smeta_core.norm_browser import browse_norms
+
+    code = str(item.get("norm_code") or "").strip()
+    if not code:
+        return None
+    try:
+        found = (browse_norms(code, limit=1) or {}).get("cards") or []
+    except Exception:  # noqa: BLE001 — подсказка не должна ронять ответ
+        return None
+    card = next(
+        (dict(row) for row in found if str(row.get("norm_code") or "").strip() == code),
+        None,
+    )
+    if card is None:
+        return None
+    card["application_note"] = material_application_note(item)
+    from proxy.smeta_core.estimate_usage import archive_provenance
+    card["archive_provenance"] = archive_provenance(item, card)
+    return card
+
+
+class _MaterialChunk:
+    """Карточка нормы, подобранной по наименованию изделия."""
+
+    def __init__(self, card: Mapping[str, Any], item: Mapping[str, Any], render: Any) -> None:
+        from proxy.services.model_research_tool_service import smeta_card_header, smeta_card_context, smeta_card_delivery_metadata
+        code = str(card.get("norm_code") or "")
+        self.content = render(card)
+        self.doc_id = str(card.get("norm_id") or code)
+        self.doc_name = "smeta_material_cards.v1"
+        self.score = float(item.get("score") or 0.0)
+        self.meta = {
+            **{key: str(card.get(key) or "") for key in ("norm_id", "edition", "base_type")},
+            "norm_code": code,
+            "measure_unit": str(card.get("measure_unit") or ""),
+            "source_ref": str(card.get("source_ref") or ""),
+            "smeta_required_header_chars": len(smeta_card_header(card)),
+            "smeta_archive_context_end": len(smeta_card_context(card)),
+            **smeta_card_delivery_metadata(card, self.content),
+            "application_note": str(card.get("application_note") or ""),
+            "material_candidate": True,
+            "archive_provenance": card.get("archive_provenance") or {},
+            "demolition": bool(item.get("demolition")),
+        }
+
+
+from proxy.smeta_core.row_decision import ACCOUNTED_STATUSES as _CALCULATED_ROW_STATUSES
+from proxy.smeta_core.row_decision import source_resolved
+
+
+def smeta_selection_funnel(
+    *,
+    query_hits: Sequence[tuple[str, Sequence[Any]]],
+    shown_chunks: Sequence[Any],
+    rows: Sequence[Mapping[str, Any]],
+    rejected: Mapping[str, str] | None = None,
+    bound_rows: int | None = None,
+    includes_prior_rows: bool = False,
+    row_statuses: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Где именно теряется норма: найдена → показана → выбрана → рассчитана.
+
+    Одно число «решено 9 из 70» не отвечает на вопрос, что чинить. Нужная норма может
+    не найтись поиском, найтись и не влезть в окно, влезть и не быть выбранной, быть
+    выбранной и не пройти расчёт — это четыре разные задачи (ревью Codex 11.09).
+
+    Строки и нормы считаются раздельно: одна норма закрывает несколько строк, и
+    вычитать «отвергнуто строк» из «выбрано шифров» бессмысленно — так получалось
+    `calculated=-1`. Успех берётся из фактического результата расчётчика
+    (`bound_rows`), а не выводится арифметикой; без него поле остаётся пустым, потому
+    что отсутствие данных — не успех (ревью Codex 11.09, второй заход).
+    """
+    from proxy.smeta_core.vor_rows import explicit_norm_absence
+
+    def code_of(chunk: Any) -> str:
+        return str((getattr(chunk, "meta", {}) or {}).get("norm_code") or "").strip().upper()
+
+    found = {code_of(hit) for _query, hits in query_hits for hit in hits} - {""}
+    shown = {code_of(chunk) for chunk in shown_chunks} - {""}
+    practice = {
+        code_of(hit)
+        for _query, hits in query_hits
+        for hit in hits
+        if (getattr(hit, "meta", {}) or {}).get("practice_candidate")
+    } - {""}
+
+    rows_with_norm: list[str] = []
+    selected_codes: set[str] = set()
+    for row in rows:
+        code = str(row.get("norm_code") or "").strip().upper()
+        if not code or explicit_norm_absence(row.get("norm_code")):
+            continue
+        rows_with_norm.append(str(row.get("source_row") or ""))
+        selected_codes.add(code)
+    current_rows = {str(row.get("source_row") or "").strip() for row in rows}
+    diagnostics = {
+        str(key): reason for key, reason in (rejected or {}).items()
+        if str(key) in current_rows
+    }
+    # A missing coefficient basis is a warning: the calculator keeps the work
+    # at its unadjusted quantity. It is not a rejected binding.
+    refused = {
+        key: reason for key, reason in diagnostics.items()
+        if reason != "coefficient_needs_basis"
+    }
+    calculated = None if includes_prior_rows else bound_rows
+    if row_statuses is not None:
+        calculated = (
+            sum(row_statuses[key] in _CALCULATED_ROW_STATUSES for key in current_rows)
+            if current_rows <= row_statuses.keys() else None
+        )
+        refused = {key: value for key, value in row_statuses.items()
+                   if key in current_rows and not source_resolved(value)}
+    practice_rows = [
+        str(row.get("source_row") or "")
+        for row in rows
+        if str(row.get("norm_code") or "").strip().upper() in practice
+        and not explicit_norm_absence(row.get("norm_code"))
+    ]
+    return {
+        "schema": "les.smeta.selection-funnel.v3",
+        # Строки ведомости
+        "rows": len(current_rows),
+        "operations": len(rows),
+        "rows_with_norm": len(set(rows_with_norm)),
+        "rows_without_norm": len(current_rows - set(rows_with_norm)),
+        "rows_rejected_by_calc": len(refused),
+        # The tool count covers the merged workbook. Without per-row calculation
+        # results we cannot assign that count to the current model portion.
+        "rows_calculated": calculated,
+        "workbook_rows_calculated": bound_rows,
+        "rows_with_calc_diagnostics": len(diagnostics),
+        "rows_from_practice": len(set(practice_rows)),
+        # Нормы
+        "norms_found": len(found),
+        "norms_shown": len(shown),
+        "norms_lost_to_budget": len(found - shown),
+        "norms_selected": len(selected_codes),
+        "norms_selected_outside_shown": sorted(selected_codes - shown)[:10],
+        "practice_offered": len(practice),
+        "practice_shown": len(practice & shown),
+        "practice_selected": len(practice & selected_codes),
+        "reject_reasons": sorted(set(refused.values())),
+    }
+
+
+def smeta_practice_group(
+    *,
+    attachment_context: str,
+    question: str,
+    already_shown: Sequence[tuple[str, Sequence[Any]]],
+    trace: dict[str, Any] | None = None,
+) -> tuple[str, tuple[Any, ...]] | None:
+    """Группа карточек из практики раздела; None, если раздел неизвестен или пуст.
+
+    Добавление к поиску, а не замена: порядок поисковой выдачи не трогается, редкая
+    норма вне архива остаётся доступной. Уже показанные шифры не дублируются.
+    """
+    from proxy.services.practice_candidates_service import (
+        practice_candidate_cards,
+        practice_query_label,
+    )
+    from proxy.smeta_core.collection_scope import discipline_for_text
+
+    head = " ".join(str(attachment_context or "").split())[:2000]
+    discipline = discipline_for_text(head) or discipline_for_text(str(question or ""))
+    if not discipline:
+        return None
+    shown = {
+        str(getattr(hit, "meta", {}).get("norm_code") or "").strip().upper()
+        for _query, hits in already_shown
+        for hit in hits
+    }
+    try:
+        cards = practice_candidate_cards(discipline, exclude=tuple(shown))
+    except Exception:  # noqa: BLE001 — подсказка не должна ронять ответ
+        logging.getLogger(__name__).warning(
+            "[SMETA_PRACTICE] кандидаты раздела не собраны", exc_info=True
+        )
+        return None
+    if not cards:
+        return None
+    if trace is not None:
+        trace["smeta_practice_candidates"] = {
+            "schema": "les.smeta.practice-candidates.v1",
+            "discipline": discipline,
+            "offered": [str(card.get("norm_code") or "") for card in cards],
+        }
+    logging.getLogger(__name__).warning(
+        "[SMETA_PRACTICE] раздел %s: предложено %s норм из практики",
+        discipline, len(cards),
+    )
+    return (
+        practice_query_label(discipline, len(cards)),
+        tuple(_PracticeChunk(card) for card in cards),
+    )
+
+
+# Bounded alternatives; first candidate for every row precedes second candidates.
+MATERIAL_PER_ROW = 2
+
+# Запас кандидатов на строку сверх нужного числа: норма может быть уже показана другой
+# строкой или отсутствовать в активной базе.
+MATERIAL_LOOKUP_SPARE = 4
+
+
+def evidence_sources_revision(*, document_price_basis=None) -> str:
+    """Отпечаток источников подсказок: индекс применений и корпус раздела.
+
+    По нему решается, дать ли исчерпавшим попытки строкам ещё один шанс. Отказ модели
+    относится к тому набору свидетельств, который ей показали: пока набор тот же,
+    повтор ничего не добавит, а собранный индекс или пересобранный корпус — новые
+    сведения (ревью Codex 11.09, шаг 5).
+    """
+    from proxy.smeta_core.estimate_usage import corpus_revision
+    from proxy.smeta_core.material_practice import index_revision
+
+    parts: list[str] = []
+    if document_price_basis is not None:
+        from proxy.services.portion_cursor_service import document_price_basis_identity
+        parts.append('price:' + hashlib.sha256(json.dumps(document_price_basis_identity(document_price_basis),
+                          sort_keys=True).encode('utf-8')).hexdigest())
+    for name, reader in (("index", index_revision), ("corpus", corpus_revision)):
+        try:
+            parts.append(f"{name}:{reader()}")
+        except Exception:  # noqa: BLE001 — неопознанный источник не должен ронять проход
+            parts.append(f"{name}:unknown")
+    # «Не опознано» и «отсутствует» не должны выглядеть как новая ревизия: иначе строки
+    # возвращались бы в оборот на каждом проходе по недоступности файла.
+    if all(part.endswith(("unknown", "absent")) for part in parts):
+        return ""
+    return "|".join(parts)
+
+
+def smeta_material_group(
+    *,
+    titles: Sequence[str],
+    already_shown: Sequence[tuple[str, Sequence[Any]]],
+    limit_per_row: int = MATERIAL_PER_ROW,
+    limit_total: int | None = None,
+    trace: dict[str, Any] | None = None,
+) -> tuple[str, tuple[Any, ...]] | None:
+    """Нормы, которыми считали такие же изделия; None, если подсказок нет.
+
+    Отличие от группы раздела: та берёт частые нормы раздела и одинакова для всей
+    ведомости, а эта отвечает на каждую строку отдельно. Для розеток список раздела
+    ещё годился, для шпилек и ответвителей лотка — нет.
+
+    По умолчанию доступны два разных примера на строку; первые кандидаты всех
+    строк предшествуют вторым. Место в окне она отдаёт первой — это делает упаковщик свидетельств,
+    которому она помечена как подсказка.
+    """
+    from proxy.services.model_research_tool_service import smeta_card_text
+    from proxy.smeta_core.material_practice import similar_applications
+
+    rows = [" ".join(str(title or "").split()) for title in titles]
+    rows = [text for text in rows if text]
+    per_row_limit = max(1, int(limit_per_row))
+    ceiling = len(rows) * per_row_limit if limit_total is None else max(1, int(limit_total))
+    shown = {str(getattr(hit, "content", "")) for _query, hits in already_shown for hit in hits}
+    picked: list[dict[str, Any]] = []
+    cards_built: list[Any] = []
+    per_row: list[dict[str, Any]] = []
+    candidates: list[list[tuple[dict[str, Any], Any]]] = []
+    for text in rows:
+        try:
+            found = similar_applications(
+                text, limit=per_row_limit + MATERIAL_LOOKUP_SPARE
+            )
+        except Exception:  # noqa: BLE001 — optional archive lookup
+            logging.getLogger(__name__).warning(
+                "[SMETA_MATERIAL] подбор по наименованию не удался", exc_info=True
+            )
+            return None
+        row_candidates = []
+        for item in found:
+            if not str(item.get("norm_code") or "").strip():
+                continue
+            card = material_candidate_card(item)
+            if card is None:
+                continue
+            chunk = _MaterialChunk(card, item, smeta_card_text)
+            row_candidates.append(({**item, "row_title": text}, chunk))
+        candidates.append(row_candidates)
+        per_row.append({"row": text[:80], "found": len(found), "offered": 0})
+    # Fair allocation even under an explicit smaller total ceiling. Deduplication
+    # compares complete rendered archive evidence, never just canonical norm code.
+    for _round in range(per_row_limit):
+        for index, row_candidates in enumerate(candidates):
+            while row_candidates and len(picked) < ceiling:
+                item, chunk = row_candidates.pop(0)
+                if chunk.content in shown:
+                    continue
+                shown.add(chunk.content)
+                picked.append(item)
+                cards_built.append(chunk)
+                per_row[index]["offered"] += 1
+                break
+    if not picked:
+        return None
+
+    cards = tuple(cards_built)
+    if trace is not None:
+        trace["smeta_material_candidates"] = {
+            "schema": "les.smeta.material-norm-index.v1",
+            "rows": per_row,
+            "offered": [item["norm_code"] for item in picked],
+        }
+    logging.getLogger(__name__).warning(
+        "[SMETA_MATERIAL] по %s строкам предложено %s норм из применений",
+        len(per_row), len(picked),
+    )
+    return (
+        f"нормы, которыми считали такие же изделия ({len(picked)})",
+        cards,
+    )
+
+
+def evidence_snapshot(
+    rows: Sequence[Mapping[str, Any]], chunks: Sequence[Any], *,
+    delivered_cards: Mapping[str, str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Чем подкреплено каждое решение — в виде, переживающем проход.
+
+    Ссылка `Q1.H1` локальна: на следующем проходе тот же номер указывает на другую
+    карточку, и по сохранённому решению нельзя проверить, на что модель опиралась.
+    Поэтому рядом с решением остаётся разрешённая ссылка: запрос, шифр карточки,
+    её источник и отпечаток ровно того текста, который ушёл модели (ревью Codex 11.09).
+
+    Текст и provenance сохраняются вместе с отпечатком. Alias разрешён до снимка:
+    одной ссылки на другую группу недостаточно для проверки после завершения чата.
+    """
+    by_ref: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        meta = dict(getattr(chunk, "meta", {}) or {})
+        ref = str(meta.get("model_evidence_ref") or "").strip().upper()
+        if not ref:
+            continue
+        body = str(getattr(chunk, "content", "") or "")
+        by_ref[ref] = {
+            "ref": ref,
+            "query": str(meta.get("model_query") or ""),
+            "norm_code": str(meta.get("norm_code") or ""),
+            "doc_name": str(getattr(chunk, "doc_name", "") or ""),
+            "doc_id": str(getattr(chunk, "doc_id", "") or ""),
+            "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
+            "sent_chars": len(body),
+            "sent_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest()[:16],
+            "sent_text": body,
+            "source_meta": dict(meta),
+        }
+        if delivered_cards is not None:
+            by_ref[ref]['delivered'] = ref in delivered_cards
+    snapshot: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        source_row = str(row.get("source_row") or "").strip()
+        if not source_row:
+            continue
+        # Reused proof retains its original query/ref/source, even when current Q IDs changed.
+        reused = [dict(card) for card in row.get('evidence_snapshot') or [] if card.get('delivered') is True]
+        seen = reused or [
+            by_ref[str(ref or "").strip().upper()]
+            for ref in (row.get("evidence_refs") or [])
+            if str(ref or "").strip().upper() in by_ref
+        ]
+        if seen:
+            snapshot[source_row] = list({item['ref']: item for item in [*snapshot.get(source_row, []), *seen]}.values())
+    return snapshot
+
+
+# Отметки упаковщика, которые означают отсутствие выбора, а не его отклонение.
+NOT_A_REJECTED_CHOICE = frozenset({"norm_selection_required"})
+
+
+def workbook_bound_rows(workbook_meta: Any) -> int | None:
+    """Сколько строк расчётчик действительно связал; None — если он не отчитался.
+
+    Считать успехом всё, что не помечено отказом, нельзя: книга могла не собраться
+    вовсе (ревью Codex 11.09).
+    """
+    meta = workbook_meta if isinstance(workbook_meta, Mapping) else {}
+    diagnostics = meta.get("workbook_diagnostics")
+    rows = (diagnostics or {}).get("bound_rows") if isinstance(diagnostics, Mapping) else None
+    if rows is None:
+        artifact = meta.get("artifact") if isinstance(meta.get("artifact"), Mapping) else {}
+        rows = artifact.get("bound_rows")
+    try:
+        return int(rows) if rows is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def workbook_row_statuses(workbook_meta: Any) -> dict[str, str] | None:
+    diagnostics = (workbook_meta or {}).get("workbook_diagnostics") if isinstance(workbook_meta, Mapping) else None
+    items = diagnostics.get("row_calculation") if isinstance(diagnostics, Mapping) else None
+    if not isinstance(items, list):
+        return None
+    from proxy.smeta_core.row_decision import aggregate_operation_statuses
+    return aggregate_operation_statuses(items)
+
+
+def rejected_row_reasons(workbook_meta: Any) -> dict[str, str]:
+    """Строки, чью привязку упаковщик отверг, и причина по каждой.
+
+    Формат упаковщика — «row:987:unit_conflict». Такая строка в расчёт не попала, и
+    считать её решённой нельзя: в живом прогоне 11.09 так «решёнными» числились 18
+    позиций из 48, которых в книге нет вовсе. Причина возвращается модели, чтобы она
+    пересмотрела выбор, а не гадала (ревью Codex 11.09).
+    """
+    meta = workbook_meta if isinstance(workbook_meta, Mapping) else {}
+    diagnostics = meta.get("workbook_diagnostics")
+    rows = (diagnostics or {}).get("unbound_rows") if isinstance(diagnostics, Mapping) else None
+    reasons: dict[str, str] = {}
+    for item in rows or ():
+        parts = str(item).split(":")
+        if len(parts) < 3 or parts[0] != "row":
+            continue
+        reason = ":".join(parts[2:]).strip()
+        if reason in NOT_A_REJECTED_CHOICE:
+            # «Норма не выбрана» — не отвергнутый выбор, а его отсутствие. Такая строка
+            # и так возвращается как незакрытая; называть это отказом расчёта значит
+            # сказать модели «твой выбор отклонён» там, где она ничего не выбирала
+            # (живой прогон 11.09, 08:06 — 21 строка из 25).
+            continue
+        reasons[parts[1].strip()] = reason
+    return reasons
+
+
+def portion_result_digest(
+    portion_state: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]
+) -> str:
+    """Полный отпечаток результата прохода: что показали и что модель ответила.
+
+    Служит не ключом идемпотентности, а проверкой: если тот же ключ хода приносит
+    другой результат, это противоречие, а не повтор доставки. Раньше отпечаток брал
+    лишь номер строки, шифр и ссылку — смена количества проходила незамеченной
+    (ревью Codex 11.09).
+    """
+    from proxy.services.portion_cursor_service import canonical_decision
+
+    digest = hashlib.sha256()
+    digest.update(str(portion_state.get("source_revision") or "").encode("utf-8"))
+    for anchor in portion_state.get("shown") or ():
+        digest.update(b"|")
+        digest.update(str(anchor).encode("utf-8"))
+    for row in rows:
+        digest.update(b"~")
+        digest.update(
+            json.dumps(
+                {**canonical_decision(row), "evidence_refs": row.get("evidence_refs")},
+                ensure_ascii=False, sort_keys=True, default=str,
+            ).encode("utf-8")
+        )
+    return digest.hexdigest()[:32]
+
+
+def record_portion_pass(
+    cursors: Any,
+    *,
+    session_id: str,
+    portion_state: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    closed: Sequence[str],
+    artifact_revision_id: str | None,
+    artifact_decisions_revision: str | None = None,
+    rejected: Mapping[str, str] | None = None,
+    row_statuses: Mapping[str, str] | None = None,
+    evidence: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    calculation_receipts: Sequence[Mapping[str, Any]] = (),
+    pass_id: str = "",
+    trace: dict[str, Any] | None = None,
+) -> int:
+    """Записать проход: закрытые строки с их решениями и ревизию книги.
+
+    Возвращает число закрытых строк. Сбой хранилища не должен ронять уже готовый
+    ответ — следующий проход просто начнётся заново, что хуже продолжения, но лучше
+    потерянного ответа.
+
+    `pass_id` приходит от клиента вместе с ходом. Без него запись идёт всегда: два
+    «Продолжай» подряд текстуально неотличимы, и вывести идентичность из содержимого
+    нельзя — одинаковый пустой ответ трёх настоящих проходов засчитался бы за один
+    (ревью Codex 11.09). Полный отпечаток результата идёт рядом и ловит противоречие:
+    тот же ключ с другим ответом — не повтор.
+    """
+    from proxy.smeta_core.vor_rows import decision_anchor
+
+    shown = portion_state.get("shown") or list(closed)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        anchor = decision_anchor(row, shown)
+        if anchor:
+            grouped.setdefault(anchor, []).append(dict(row))
+    decisions = {anchor: values[0] if len(values) == 1 else {
+        "source_row": values[0].get("source_row"), "operations": values,
+    } for anchor, values in grouped.items()}
+    # Привязку, отвергнутую упаковщиком, решением считать нельзя: этой строки в книге
+    # нет. Она возвращается модели вместе с причиной, а попытка засчитывается.
+    refused = dict(rejected or {})
+    seen_evidence = dict(evidence or {})
+    turned_down: list[str] = []
+    for anchor, decision in decisions.items():
+        source_row = str(decision.get("source_row") or "").strip()
+        receipts = [dict(item) for item in calculation_receipts if item.get('source_row') == source_row]
+        if receipts:
+            decision['calculation_receipts'] = receipts
+        if source_row in seen_evidence:
+            # Снимок ложится в само решение: проход сменится, номера ссылок поедут,
+            # а проверить, на что опирался выбор, будет по чему.
+            decision["evidence_snapshot"] = [dict(item) for item in seen_evidence[source_row]]
+            for op in decision.get("operations") or []:
+                if op.get('evidence_snapshot'):
+                    continue
+                refs = {str(ref).upper() for ref in op.get("evidence_refs") or []}
+                op["evidence_snapshot"] = [dict(item) for item in seen_evidence[source_row] if item.get("ref") in refs]
+        reason = refused.get(source_row)
+        if row_statuses is not None and source_row in row_statuses:
+            status = row_statuses[source_row]
+            reason = None if source_resolved(status) else status
+        if reason:
+            decision["rejected_reason"] = reason
+            turned_down.append(anchor)
+    kept = [anchor for anchor in closed if anchor not in turned_down]
+    if row_statuses is not None:
+        kept = [anchor for anchor, decision in decisions.items()
+                if source_resolved(row_statuses.get(str(decision.get("source_row") or "").strip()))]
+    completed = {anchor: decisions[anchor] for anchor in kept if anchor in decisions}
+    try:
+        progress = cursors.record_pass(
+            session_id=str(session_id or ""),
+            source_revision=str(portion_state.get("source_revision") or ""),
+            completed=completed,
+            decisions=decisions,
+            declined=declined_row_anchors(rows, shown),
+            rejected={
+                anchor: str(decisions[anchor].get("rejected_reason") or "")
+                for anchor in turned_down
+            },
+            artifact_revision_id=artifact_revision_id,
+            artifact_decisions_revision=artifact_decisions_revision,
+            pass_id=str(pass_id or ""),
+            result_digest=portion_result_digest(portion_state, rows),
+        )
+        # A workbook contains all accumulated operations. Recalculation can invalidate
+        # an old receipt even when that row was not part of this model turn.
+        if artifact_revision_id and row_statuses is not None and callable(getattr(cursors, 'record_calculation', None)):
+            all_decisions = {**(portion_state.get('prior_decisions') or {}), **decisions}
+            cursors.record_calculation(
+                session_id=str(session_id or ''), source_revision=str(portion_state.get('source_revision') or ''),
+                statuses={anchor: row_statuses[str(decision.get('source_row') or '')]
+                          for anchor, decision in all_decisions.items()
+                          if str(decision.get('source_row') or '') in row_statuses},
+                receipts=calculation_receipts,
+            )
+            progress = cursors.progress(session_id=str(session_id or ''),
+                                        source_revision=str(portion_state.get('source_revision') or ''))
+    except Exception:  # noqa: BLE001 — ответ уже готов, терять его из-за записи нельзя
+        logging.getLogger(__name__).warning(
+            "[SMETA_PORTION] прогресс не записан, следующий проход начнётся сначала",
+            exc_info=True,
+        )
+        if trace is not None:
+            trace["smeta_portion_recorded"] = False
+        return 0
+    if trace is not None:
+        trace["smeta_portion_recorded"] = True
+        trace["smeta_portion_rejected"] = len(turned_down)
+        trace["smeta_portion_closed"] = len(completed)
+        trace["smeta_portion_total_closed"] = len(progress.completed)
+        # Счётчики после записи, а не до: ход, исчерпавший последнюю попытку, обязан
+        # отчитаться о ней в своём же ответе (ревью Codex 11.09).
+        trace["smeta_portion_decided"] = len(progress.completed)
+        trace["smeta_portion_unresolved"] = len(progress.exhausted)
+    return len(completed)
+
+
+# Потолок на пересборку книги. Она — удобство: экономит модели проход по уже
+# разобранным строкам. Держать ради неё ответ нельзя ни по какой причине — ни из-за
+# холодного кеша книги цен, ни из-за уснувшей машины.
+REBUILD_TIMEOUT_SECONDS = 90.0
+
+
+async def rebuild_workbook_from_stored_decisions(
+    *,
+    executor: Any,
+    portion_state: Mapping[str, Any],
+    attachment_id: str,
+    question: str,
+    context: Mapping[str, Any],
+    progress: Any,
+    trace: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Пересобрать книгу из уже сохранённых решений, не обращаясь к модели.
+
+    Решения приняты, записаны и неизменны — значит книгу можно построить заново
+    детерминированно. Просить модель пройти те же строки второй раз и дорого, и
+    неверно: её ответ мог бы отличаться, и книга перестала бы соответствовать
+    записанному решению (ревью Codex 11.09).
+
+    Возвращает результат упаковки или пустой словарь, если пересобирать нечего или
+    не получилось. Исключение сюда не выходит: без книги ответ хуже, но он есть.
+    """
+    stored = portion_state.get("prior_decisions")
+    if not isinstance(stored, Mapping) or not stored or not str(attachment_id or "").strip():
+        return {}
+    order = {anchor: index for index, anchor in enumerate(portion_state.get("source_anchors") or ())}
+    decisions = [
+        dict(stored[anchor])
+        for anchor in sorted(stored, key=lambda item: order.get(item, len(order)))
+        if isinstance(stored.get(anchor), Mapping) and stored[anchor]
+    ]
+    if not decisions:
+        return {}
+    from proxy.smeta_core.row_decision import operation_rows
+    decisions = [op for row in decisions for op in operation_rows(row)]
+    decisions = bind_normative_identity(decisions, prior_evidence=saved_norm_evidence(stored))
+    try:
+        payload = await asyncio.wait_for(_run_rebuild(executor, attachment_id, question, decisions, portion_state, context, progress), timeout=REBUILD_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logging.getLogger(__name__).warning(
+            "[SMETA_PORTION] пересборка книги не уложилась в %s с — идём обычным путём",
+            REBUILD_TIMEOUT_SECONDS,
+        )
+        if trace is not None:
+            trace["smeta_portion_rebuild"] = "timeout"
+        return {}
+    except Exception:  # noqa: BLE001 — без книги ответ хуже, но он есть
+        logging.getLogger(__name__).warning(
+            "[SMETA_PORTION] пересборка книги из сохранённых решений не удалась",
+            exc_info=True,
+        )
+        if trace is not None:
+            trace["smeta_portion_rebuild"] = "failed"
+        return {}
+    harvested = harvest_workbook_tool_result(safe_workbook_history_projection(payload))
+    logging.getLogger(__name__).warning(
+        "[SMETA_PORTION] пересборка завершена: %s",
+        "книга собрана" if harvested else "книги нет",
+    )
+    if trace is not None:
+        trace["smeta_portion_rebuild"] = "rebuilt" if harvested else "empty"
+        trace["smeta_portion_rebuild_rows"] = len(decisions)
+    return harvested
+
+
+async def _run_rebuild(executor, attachment_id, question, decisions, portion_state, context, progress):
+    """Один вызов упаковщика по сохранённым решениям."""
+    return await executor(
+            {
+                "tool": "build_lsr_workbook",
+                "args": {
+                    "attachment_id": str(attachment_id),
+                    "question": str(question or ""),
+                    "decisions": decisions,
+                    "review_calculation": True,
+                    "parent_revision_id": (
+                        str(portion_state.get("artifact_revision_id") or "") or None
+                    ),
+                },
+            },
+            dict(context),
+            progress,
+        )
+
+
+def stored_decisions_need_a_workbook(portion_state: Mapping[str, Any], *, artifact_available=None) -> bool:
+    """Устарела ли книга относительно сохранённых решений.
+
+    Раньше здесь проверялось «книги нет вовсе», и это покрывало не тот случай. Штатный
+    отказ упаковщика выглядит иначе: решения записаны, книга прошлой порции существует,
+    а текущим решениям она уже не соответствует. Проверка «любая ревизия есть» принимала
+    старую книгу за актуальную (ревью Codex 11.09).
+
+    Сравниваются отпечатки: из чего книга собрана и что лежит в решениях сейчас.
+    """
+    from proxy.services.portion_cursor_service import decisions_revision
+
+    stored = portion_state.get("prior_decisions")
+    if not isinstance(stored, Mapping) or not stored:
+        return False
+    built_from = str(portion_state.get("artifact_decisions_revision") or "").strip()
+    if built_from != decisions_revision(stored, document_price_basis=portion_state.get('document_price_basis')):
+        return True
+    revision_id = str(portion_state.get('artifact_revision_id') or '')
+    return bool(artifact_available is not None and (not revision_id or not artifact_available(revision_id)))
+
+
+def merged_pass_decisions(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    closed: Sequence[str],
+    portion_state: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Решения для книги: прошлые проходы плюс текущий, в порядке ведомости.
+
+    Книга собирается из решений, а не из файла, поэтому последний проход, отдав только
+    свои двадцать строк, потерял бы пятьдесят прежних. Решения накапливаются в
+    хранилище прогресса и подмешиваются сюда (ревью Codex 10.09).
+
+    Порядок сохраняется естественный: проходы идут вперёд по ведомости, значит прежние
+    строки стоят выше текущих. Строка, решённая заново, вытесняет прежнее решение —
+    свежее ближе к правде.
+    """
+    current = [dict(row) for row in rows]
+    prior = portion_state.get("prior_decisions")
+    if not isinstance(prior, Mapping) or not prior:
+        return current
+    from proxy.smeta_core.vor_rows import decision_anchor
+
+    anchors = portion_state.get("source_anchors") or list(dict.fromkeys([
+        *prior, *(portion_state.get("shown") or []), *closed,
+    ]))
+    shown = portion_state.get("shown") or anchors
+    keyed_current = [(decision_anchor(row, shown), row) for row in current]
+    replaced = {anchor for anchor, _ in keyed_current if anchor}
+    entries = [(anchor, bind_normative_identity([row], prior_evidence=saved_norm_evidence(prior))[0]) for anchor, row in prior.items()
+               if anchor not in replaced and isinstance(row, Mapping) and row]
+    entries.extend(keyed_current)
+    order = {anchor: index for index, anchor in enumerate(anchors)}
+    # Keep unresolvable model rows visible; never guess their sheet or discard them.
+    entries.sort(key=lambda entry: order.get(entry[0], len(order)))
+    from proxy.smeta_core.row_decision import operation_rows
+    return [op for _, row in entries for op in operation_rows(row)]
+
+
+def _previous_rejections(decisions: Mapping[str, Any] | None) -> dict[str, str]:
+    """Причины, по которым прошлый выбор модели не прошёл расчёт, — по якорям строк."""
+    notes: dict[str, str] = {}
+    for anchor, decision in (decisions or {}).items():
+        if not isinstance(decision, Mapping):
+            continue
+        reason = str(decision.get("rejected_reason") or "").strip()
+        # Отметку об отсутствии выбора отсеиваем и здесь: она могла попасть в базу
+        # прежней версией, а показывать «твой выбор отклонён» там, где выбора не было,
+        # нельзя (живой прогон 11.09, 08:06).
+        if not reason or reason in NOT_A_REJECTED_CHOICE:
+            continue
+        code = str(decision.get("norm_code") or "").strip()
+        notes[str(anchor)] = (
+            f"{code}: {_rejection_wording(reason)}" if code else _rejection_wording(reason)
+        )
+        diagnostic = decision.get('row_format_diagnostic')
+        if isinstance(diagnostic, Mapping) and diagnostic.get('reason') == 'invalid_decision_field':
+            notes[str(anchor)] = (
+                'Недопустимое значение управляющего поля: '
+                + '; '.join(f'{name}={value}' for name, value in (diagnostic.get('invalid_values') or {}).items())
+                + '. Поля не были угаданы или переставлены; верни исправленную исходную строку.'
+            )
+        if decision.get("parse_error") and isinstance(decision.get("raw_cells"), list):
+            notes[str(anchor)] += (
+                "\nИсходная разметка твоего ответа (данные для исправления, не источник норм):"
+                "\nЗаголовок: " + json.dumps(decision.get("raw_header") or [], ensure_ascii=False)
+                + "\nЯчейки: " + json.dumps(decision["raw_cells"], ensure_ascii=False)
+            )
+    return notes
+
+
+def _rejection_wording(reason: str) -> str:
+    """Причина отказа человеческими словами; незнакомый код — как есть."""
+    return {
+        "unit_conflict": (
+            "измеритель нормы не сходится с единицей строки. Нужен подтверждённый "
+            "пересчёт (фасовка, масса или другая характеристика). Не придумывай множитель "
+            "и не меняй подходящую технологию только ради единицы; назови недостающие данные"
+        ),
+        "norm_not_found": "такого шифра нет в базе",
+        "model_row_format_error": (
+            "число ячеек твоей строки не совпало с заголовком таблицы; поля не были "
+            "угаданы и строка не рассчитана. Верни строку с теми же колонками, что в "
+            "заголовке; параметры conversion_* укажи в отдельных подписанных полях"
+        ),
+        "resource_quantity_mismatch": "связанное количество ресурса не равно исходной потребности строки",
+        "norm_code_ambiguous": (
+            "в norm_code несколько шифров, строка не рассчитана: подтверждается один шифр, а "
+            "считается другой. Оставь в norm_code ровно один выбранный шифр, а сравнение с другой "
+            "нормой напиши в analogue"
+        ),
+        "evidence_card_mismatch": (
+            "показанная карточка относится к другой норме, строка не рассчитана. Сверь шифр с "
+            "карточкой, на которую ссылаешься: выбор подтверждает совпадение шифра, а не наличие "
+            "ссылки; если подходящей карточки нет, оставь norm_code пустым"
+        ),
+        "evidence_ref_unknown": (
+            "ссылка строки не указывает ни на одну карточку этого прохода, строка не рассчитана. "
+            "Ссылка пишется как Qx.Hy — номер поискового запроса и номер карточки в его выдаче, "
+            "а не номер строки ведомости; укажи карточку, из которой взят шифр"
+        ),
+        "evidence_ref_required": (
+            "норма выбрана без ссылки на карточку этого прохода, строка не рассчитана. Укажи в "
+            "evidence_refs карточку, из которой взят шифр, и проверь шифр по ней; если подходящей "
+            "карточки нет, оставь norm_code пустым"
+        ),
+        "coefficient_basis_required": "коэффициент не применён: нужны точный нормативный источник, пункт и область действия labor/machines/materials; исходный выбор сохранён",
+    }.get(reason, reason)
+
+
+def _portion_feedback_store(cursors: Any) -> Any:
+    """Feedback uses separate tables, never the packagable decisions projection."""
+    import sqlite3
+    from proxy.services.portion_feedback_service import PortionFeedbackService
+
+    path = getattr(cursors, "db_path", None)
+    if path is None:
+        return None
+    try:
+        return PortionFeedbackService(path)
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        logger.warning("[SMETA_FEEDBACK] хранилище недоступно", exc_info=True)
+        return None
+
+
+def _structural_feedback_text(feedback: Mapping[str, Any] | None) -> str:
+    if not feedback or not feedback.get("errors"):
+        return ""
+    lines = [
+        "Диагностика предыдущего ответа (не источник норм): книга не была собрана.",
+        "Ошибки проверки: " + "; ".join(str(error) for error in feedback["errors"]),
+    ]
+    for row in feedback.get("rows") or []:
+        lines.append(
+            f"Предыдущая строка {row.get('source_row')}: norm_code={row.get('norm_code') or ''}; "
+            f"evidence_refs={row.get('evidence_refs') or []}."
+        )
+    lines.append(
+        "Подтверди или измени своё решение по карточкам текущего прохода. Для выбранной нормы "
+        "укажи её актуальную ссылку Qx.Hy; старые номера ссылок не являются источниками. "
+        "Отклонённый тобой вариант опиши в analogue, не записывай его как выбранный norm_code. "
+        "Соблюдай одинаковые колонки заголовка и строк."
+    )
+    return "\n".join(lines)
+
+
+def _record_structural_feedback(
+    cursors: Any, *, session_id: str, revision: str, turn_id: str,
+    answer: str, rows: list[dict[str, Any]], errors: list[str],
+    evidence: Mapping[str, Any],
+) -> bool:
+    import sqlite3
+
+    store = _portion_feedback_store(cursors)
+    if store is None or not turn_id:
+        return False
+    try:
+        inserted = store.record(
+            session_id=session_id, source_revision=revision, turn_id=turn_id,
+            raw_answer=answer, rows=rows, errors=errors, evidence=evidence,
+        )
+        latest = store.last(session_id=session_id, source_revision=revision)
+        return bool(inserted or (latest and latest["turn_id"] == turn_id
+                                and latest["raw_answer"] == answer and latest["errors"] == errors))
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        logger.warning("[SMETA_FEEDBACK] отказ не записан", exc_info=True)
+        return False
+
+
+def _model_result_notice(errors: Sequence[str], *, saved: bool) -> dict[str, Any]:
+    labels = {
+        "missing_evidence_ref": "нет ссылки на карточку выбранной нормы",
+        "unknown_evidence_ref": "ссылка отсутствует в карточках этого прохода",
+        "invalid_source_row": "не указан однозначный номер исходной позиции",
+        "duplicate_source_row": "номер исходной позиции повторён",
+        "duplicate_work_id": "идентификатор операции повторён",
+        "invalid_portion_source_row": "строка не соответствует текущей порции",
+        "inconsistent_portion_source_label": "операции одной позиции должны повторять одинаковый source_row",
+        "source_row_count_mismatch": "число строк не соответствует ведомости",
+        "unstructured_model_result": "ответ не удалось прочитать как таблицу",
+    }
+    reasons = []
+    for error in errors:
+        kind, _, detail = str(error).partition(":")
+        reasons.append((f"{detail}: " if detail else "") + labels.get(kind, "нарушена структура ответа"))
+    return {
+        "status": "unstructured" if "unstructured_model_result" in errors else "structural_error",
+        "message": "Книга не собрана. " + "; ".join(reasons) + ". "
+        + ("Исходный ответ сохранён для исправления в следующем проходе." if saved else
+           "Нужен исправленный ответ со ссылками на полученные карточки."),
+        "errors": list(errors), "saved": saved,
+    }
+
+
+# Работ прошлых проходов в контексте: столько, сколько нужно материалу текущей порции
+# сослаться на свою работу. Весь список ведомости сюда не помещается и не должен:
+# живой прогон 14.09 — 91 работа, 14 602 символа, 7 301 токен, и порция схлопнулась
+# с 7 строк до 2 при неизменном лимите, потому что бюджет источника съедал этот блок.
+# Предел считан по замеру прохода 39: бюджет источника 8 663 токена, чек одной
+# проверяемой строки — 3 242, и место обязано остаться самой порции. Одна работа
+# стоит около 105 токенов, поэтому список ссылок держим примерно в 1 200.
+MAX_PRIOR_WORKS = 12
+
+
+def prior_works_context(
+    decisions: Mapping[str, Any] | None, *, portion: Sequence[Mapping[str, Any]],
+) -> str:
+    """Работы прошлых проходов, на которые может сослаться материал текущей порции.
+
+    Отбираются работы листов текущей порции: `included_in` адресует работу той же
+    дисциплины, а чужой лист только занимает окно. Из них остаются ближайшие —
+    материал следует за своей работой рядом, а не через всю ведомость.
+    """
+    from proxy.smeta_core.row_decision import WORK, decision_kind, operation_rows
+    from proxy.smeta_core.vor_rows import row_anchor
+
+    sheets = {row_anchor(row).split("!")[0] for row in portion or ()}
+    sheets.discard("")
+    lines: list[str] = []
+    for anchor, stored in (decisions or {}).items():
+        # Лист берём из якоря: work_id пишет модель, и он бывает голым номером позиции.
+        # Неопределённый лист не повод выбрасывать работу — ссылка нужнее экономии окна.
+        sheet = str(anchor or "").split("!")[0] if "!" in str(anchor or "") else ""
+        if sheets and sheet and sheet not in sheets:
+            continue
+        for decision in operation_rows(stored):
+            if decision_kind(decision) != WORK or not decision.get("norm_code"):
+                continue
+            work_id = decision.get("work_id") or decision.get("source_row")
+            lines.append(
+                f"included_in={work_id}: {decision.get('norm_code')}; "
+                f"{decision.get('title')}; {decision.get('quantity')} {decision.get('unit')}"
+            )
+    return "\n".join(lines[-MAX_PRIOR_WORKS:])
+
+
+def smeta_portion_context(
+    attachment_context: str,
+    *,
+    session_id: str,
+    limit: int,
+    cursors: Any = None,
+) -> tuple[str, dict[str, Any]]:
+    """Контекст одного прохода по ведомости и описание того, что в него вошло.
+
+    Ведомость целиком вытесняет из окна карточки норм: замер 10.09 — вместе с профилем
+    она занимает 8 444 токена из 22 528, и на свидетельства остаётся 14 031. Поэтому
+    модель видит порцию строк, а не весь файл.
+
+    Не всякое вложение — ведомость: письмо или договор возвращаются как есть, с пустым
+    планом. Разбор идёт из текста скрепки, потому что именно текст сюда и приходит.
+
+    Три состояния различаются явно, и смешивать их нельзя (ревью Codex, R5):
+    ведомость не распознана — отдаём текст как есть; есть строки для прохода — отдаём
+    порцию; всё закрыто — отдаём короткое сообщение о завершении, а не ведомость
+    заново.
+    """
+    from proxy.smeta_core.vor_rows import (
+        row_anchor,
+        rows_from_attachment_text,
+        source_revision,
+    )
+    from proxy.services.portion_plan_service import portion_plan
+
+    text = str(attachment_context or "")
+    rows = rows_from_attachment_text(text)
+    if not rows:
+        return text, {
+            "state": "not-a-vor", "total": 0, "rows_in_pass": 0, "remaining": 0,
+            "pass_no": 1, "complete": False, "last_row": "", "after": "",
+            "source_revision": "",
+        }
+
+    revision = source_revision(rows)
+    plan = portion_plan(
+        rows=rows,
+        limit=limit,
+        session_id=str(session_id or ""),
+        source_revision=revision,
+        cursors=cursors,
+    )
+    portion = plan["rows"]
+    name = _attachment_name(text)
+    described = {
+        "total": plan["total"],
+        "rows_in_pass": len(portion),
+        # Строки с единицей или количеством: только им отводится бюджет запросов.
+        "query_rows_in_pass": sum(
+            1 for row in portion
+            if str(row.get("unit") or "").strip() or str(row.get("quantity_text") or "").strip()
+        ),
+        "remaining": plan["remaining"],
+        "completed": plan["completed"],
+        "pending": max(0, plan["total"] - plan["completed"]),
+        # Решения прошлых проходов: книга собирается из них вместе с новыми.
+        "prior_decisions": plan["decisions"],
+        "source_anchors": [row_anchor(row) for row in rows],
+        "pass_no": plan["pass_no"],
+        "complete": plan["complete"],
+        "final_portion": plan["final_portion"],
+        "after": plan["after"],
+        # Якоря показанных строк. Закрытыми они становятся не здесь, а после решений
+        # модели: показать — не значит закрыть.
+        "shown": [row_anchor(row) for row in portion],
+        # Наименования показанных строк: по ним подбираются нормы, которыми считали
+        # такое же изделие. Якоря для этого не годятся — в них нет наименования.
+        "shown_titles": [str(row.get("title") or "") for row in portion],
+        "last_row": (row_anchor(portion[-1]) if portion else plan["after"]),
+        "source_revision": revision,
+        "artifact_revision_id": plan["artifact_revision_id"],
+        "artifact_decisions_revision": plan["artifact_decisions_revision"],
+        "exhausted": plan["exhausted"],
+        "unresolved": plan["unresolved"],
+    }
+    if not portion:
+        described["state"] = "complete"
+        unresolved = int(plan["exhausted"] or 0)
+        tail = (
+            f" По {unresolved} позициям норма так и не найдена — они остались нерешёнными."
+            if unresolved else ""
+        )
+        return (
+            f"Ведомость «{name}»: решение принято по {plan['completed']} позициям из "
+            f"{plan['total']}.{tail} Новых строк для разбора нет.",
+            described,
+        )
+    described["state"] = "portion"
+    portion_text = attachment_portion_text(
+        rows, limit=limit, name=name, after=plan["after"], completed=plan["completed_anchors"],
+        rejected=_previous_rejections(plan["decisions"]),
+        selected=portion,
+    )
+    prior_works = prior_works_context(plan.get('decisions'), portion=portion)
+    if prior_works:
+        portion_text += ('\nРаботы из сохранённых решений предыдущих проходов '
+                         '(для ссылки на конкретную работу, не повторяй их как новые строки):\n'
+                         + prior_works)
+    from proxy.smeta_core.calculation_receipt import receipt_context
+    shown_sources = {value for row in portion for value in (str(row.get('source_row')), row_anchor(row))}
+    receipts = [receipt for stored in (plan.get('decisions') or {}).values()
+                if str(stored.get('source_row')) in shown_sources
+                for receipt in stored.get('calculation_receipts') or []]
+    if receipts:
+        portion_text += '\n' + receipt_context(receipts)
+    # Номер карточки живёт один проход; повтор использует сохранённую доставку
+    # карточки той же операции, а не наличие расчётного чека.
+    described['prior_evidence'] = saved_norm_evidence(plan.get('decisions'))
+    feedback_store = _portion_feedback_store(cursors)
+    if feedback_store is not None:
+        import sqlite3
+
+        try:
+            feedback_text = _structural_feedback_text(feedback_store.for_anchors(
+                session_id=str(session_id or ""), source_revision=revision,
+                anchors=described['shown'],source_anchors=described['source_anchors'],
+            ))
+        except (OSError, sqlite3.Error):
+            logger.warning("[SMETA_FEEDBACK] отказ не прочитан", exc_info=True)
+            feedback_text = ""
+        if feedback_text:
+            portion_text = feedback_text + "\n\n" + portion_text
+    return portion_text, described
+
+
+def query_attachment_context(source: str, portion_state: Mapping[str, Any]) -> str:
+    """Give query generation the selected source rows, before answer-format enrichment."""
+    if portion_state.get('state') == 'complete':
+        return 'Текущая порция ведомости пуста.'
+    if portion_state.get('state') != 'portion':
+        return source
+    from proxy.smeta_core.vor_rows import row_anchor, rows_from_attachment_text
+
+    shown = list(portion_state.get('shown') or [])
+    by_anchor = {row_anchor(row): row for row in rows_from_attachment_text(source)}
+    if not shown or any(anchor not in by_anchor for anchor in shown):
+        raise ValueError('QUERY_PORTION_SOURCE_MISMATCH')
+    rows = [by_anchor[anchor] for anchor in shown]
+    lines = ['Текущая порция ведомости: ' + ', '.join(shown)]
+    headers = set()
+    for row in rows:
+        header = tuple(row.get('header') or [])
+        if header and header not in headers:
+            lines.append('Колонки исходника: ' + ' | '.join(header))
+            headers.add(header)
+        lines.append(f"{row_anchor(row)}; раздел: {row.get('section') or ''}\n{row['raw']}")
+    rejected = _previous_rejections({anchor: value for anchor, value in
+        (portion_state.get('prior_decisions') or {}).items() if anchor in shown})
+    if rejected:
+        lines.append('Предыдущие результаты модели для этих строк: ' + json.dumps(rejected, ensure_ascii=False))
+    return '\n'.join(lines)
+
+
+def model_answer_prefix(normal: str, *, instruction: str, output_directive: str | None, target_doc_filter: Any) -> str:
+    sys_msg = normal + (f" {instruction}" if instruction else "")
+    # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
+    # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-директиву).
+    if output_directive and output_directive.strip():
+        sys_msg += " " + output_directive.strip()
+    if target_doc_filter:
+        sys_msg += (
+            " Оператор явно выбрал документы. Отвечай только по их содержимому, "
+            "явно называй использованные файлы и не расширяй область на остальной датасет."
+        )
+    return sys_msg
+
+
+def model_answer_request(question: str, *, model_driven: bool,
+                         active_estimator_answer: bool = False, native_tools_enabled: bool = True) -> str:
+    source_refs = 'идентификаторы Qn.Hm показанных карточек' if active_estimator_answer else 'номера [Источник N]'
+    question_tail = (
+        f"Вопрос: {question}\n\n"
+        "/no_think\n"
+        "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
+        f"{source_refs}. Если материалов недостаточно, отдели это от подтверждённых выводов."
+    )
+    if model_driven:
+        question_tail += (
+            "\nТребования к Markdown, первой строке и запрет вывода JSON относятся только "
+            "к итоговому пользовательскому ответу. "
+            + ("До него при необходимости можешь использовать native search_sources, если этот инструмент доступен; "
+               "решение о дополнительном чтении принимаешь ты."
+               if not active_estimator_answer or native_tools_enabled else
+               "В этом вызове native-инструменты не предоставлены; явно назови недостающие данные.")
+            # Формат назван буквально, вместе с шапкой. «Обычным текстом» и
+            # перечислением полей его не задать: живой прогон 21:24 вернул
+            # строки в разметке порции — «984 | … | Q10.H2», без ведущей
+            # черты и без шапки, — и разбор законно счёл ответ
+            # неструктурированным. Модель повторяет тот вид, что видит.
+            + "\nДай итоговый ответ таблицами в разметке Markdown по всем "
+            "строкам исходного ВОР. Первой строкой — базовая шапка:\n"
+            # work_id входит в базовую шапку: модель копирует шапку, и без этой колонки две
+            # операции одной строки отвергались целиком (живая проверка 17.09).
+            # Проход 19: на широкой шапке модель промахивается по ячейкам, а пустых колонок
+            # в строке тем больше, чем шире шапка. Обязательных колонок семь; остальные —
+            # по необходимости строки (18.09).
+            "| source_row | work_id | title | unit | quantity | norm_code | evidence_refs |\n"
+            "второй строкой — разделитель |---|---|---|---|---|---|---|, "
+            "Для каждой операции добавь work_id и operation; у нескольких операций одной позиции "
+            "source_row одинаковый, work_id разные и уникальны во всей смете. В каждой новой ревизии "
+            "позиции верни полный набор её операций. Для каждой строки прими явное решение по самому "
+            "изделию: если работа по норме его не содержит (монтажные нормы оборудования и кабеля "
+            "обычно не содержат), поставь изделие отдельной операцией как самостоятельный материал "
+            "в дополнение к работе по монтажу, а не вместо неё, "
+            "с количеством и resource_code из показанной карточки цены ФССЦ, если она описывает "
+            "это изделие; чужой товар ради цены не подставляй — без подходящей карточки оставь "
+            "resource_code пустым, цена останется неизвестной; если изделие уже есть в составе нормы — укажи included_in и "
+            "resource_action=included; если вместо изделия в составе нормы другой материал — сними "
+            "его отдельной операцией (resource_action=excluded, target_resource_code, replaced_by=work_id "
+            "поставки изделия); если изделие не требуется, например при демонтаже, объясни "
+            "это в coverage и не добавляй изделие. Сначала сравни вид операции и условия, затем "
+            "состав работ/ресурсов и физическое количество. coverage — что учтено; not_covered — "
+            "что не учтено или неизвестно; analogue — краткое основание выбора. Архивный пример "
+            "обосновывает кандидата, но не подтверждает учёт строки. included_in адресует work_id "
+            "конкретной работы. evidence_refs — только идентификаторы показанных карточек вида Qn.Hm "
+            "(номер поискового запроса и номер карточки в его выдаче, например Q3.H1); номер строки "
+            "ведомости ссылкой не является. К базовой шапке добавь отдельные колонки для используемых дополнительных "
+            # Частые колонки первыми, редкие — в конце: пустые ячейки уходят в хвост строки,
+            # который разбор отбрасывает без потерь. Когда nr_sp_rule_id стоял после девяти
+            # редких колонок, все проверенные модели сбивались со счёта (сравнение 17.09).
+            # Колонки подтверждения — в перечне: без них «лишних не добавляй» читалось как
+            # запрет, и модель не подтверждала чеки (проход 2 на IQ2_M, 17.09).
+            "полей строго в этом порядке: decision_kind, nr_sp_rule_id, resource_review_status, "
+            "resource_review_ref, resource_code, resource_quantity, resource_unit, included_in, "
+            "resource_action, target_resource_code, target_resource_id, replaced_by, material_review_status, "
+            "material_review_reason, conversion_factor, conversion_unit, conversion_source, "
+            # Проход 25: по демонтажу модель написала «нормы на демонтаж нет, эта — про монтаж»,
+            # хотя расчёт принимает коэффициент к норме. Контракт просил coefficient_basis, но
+            # самих колонок в перечне не было, а вне перечня — запрещено (18.09).
+            "coefficient, coefficient_basis, coefficient_target, section, operation, analogue, "
+            "coverage, not_covered. Колонку, которая "
+            "не нужна ни одной строке, не добавляй; пустые ячейки в конце строки можно не писать. "
+            # Проход 18: на 27 колонках модель промахивается по ячейкам. Узкие таблицы
+            # снимают счёт пустых ячеек, а разбор читает их обе.
+            "Работы и материалы можно дать отдельными таблицами: в каждой повтори базовую шапку "
+            "и добавь только нужные её строкам колонки. "
+            # Живая проверка 17.09: у монтажных норм НР/СП неоднозначны по сборнику, а выбрать
+            # норматив модели было нечем — работа оставалась без полной суммы.
+            "Если в расчёте nr_sp.status не resolved, выбери для работы норматив НР/СП из "
+            "nr_sp.candidates по виду работ и укажи его rule_id в колонке nr_sp_rule_id. "
+            "Если получен расчётный receipt, проверь его состав/влияние и добавь "
+            "resource_review_status=keep_all_confirmed, а в resource_review_ref — значение calculation_ref "
+            "этой операции из полученного расчёта, скопированное целиком (длинная строка), а не само слово; "
+            "только для подтверждённого тобой результата, иначе измени собственное решение. Это делается для "
+            "каждой операции со своим чеком, включая самостоятельный материал: у каждой свой calculation_ref. "
+            "Для coefficient не 1 укажи coefficient_basis — точный нормативный источник и пункт, "
+            "и coefficient_target: labor, machines (включая машинистов), materials или явный список "
+            "этих компонентов через запятую. Проверь, что источник подтверждает значение и область "
+            "действия; без этого коэффициент останется неприменённым. Физический пересчёт — только conversion_*. "
+            "В разделителе и каждой строке должно быть столько же ячеек, сколько колонок в шапке. "
+            "Не помещай дополнительные поля внутрь coefficient или coverage. Символ вертикальной "
+            "черты внутри значения замени точкой с запятой. "
+            "Каждая строка начинается и заканчивается вертикальной чертой. Для каждой "
+            "строки явно укажи source_row, section, title, unit, quantity, выбранный тобой "
+            "norm_code, analogue, coverage, coefficient и evidence_refs Qx.Hy. Не добавляй "
+            "status и не ограничивай количество строк. Если выбираешь карточку как норму "
+            "или инженерный аналог, укажи её точный шифр в norm_code; оставляй его пустым "
+            "только если не выбрана ни одна карточка. Для строки с выбранной карточкой укажи "
+            "точную evidence_refs Qx.Hy; не сокращай её до Qx. "
+            "Если карточка не выбрана, оставь evidence_refs пустым и объясни пробел. Не выводи "
+            "JSON. Код не подтверждает и не меняет твой выбор. Ответ должен вместить все "
+            "операции: без вводного обзора и итоговых рекомендаций, кратко по одной операции в строке таблицы."
+        )
+    return question_tail
+
+
+def fit_smeta_portion_context(attachment_context: str, *, session_id: str, limit: int,
+                             cursors: Any, preset: ModelExecutionPreset,
+                             profile_prefix: str, request_payload: Any):
+    """Plan whole rows/receipts against the actual inference budget, without writes.
+
+    Half the remaining input window is reserved for retrieval. This is a context
+    allocation, never a decision/attempt limit; all deferred rows remain pending.
+    """
+    from dataclasses import replace
+
+    answer_preset = replace(preset, generation_reserve_tokens=max(
+        preset.generation_reserve_tokens, 8192 if preset.input_token_limit >= 32768 else 0))
+    _, base = govern_inference_messages(preset=answer_preset, profile_prefix=profile_prefix,
+                                       request_payload=request_payload)
+    source_budget = max(1, (base.input_budget_tokens - base.included_tokens) // 2)
+    candidate_limit = max(1, limit)
+    while True:
+        context, state = smeta_portion_context(attachment_context, session_id=session_id,
+                                               limit=candidate_limit, cursors=cursors)
+        if state.get('state') != 'portion':
+            return context, state
+        source_tokens = conservative_token_estimate('\n'.join(selector_evidence_payload(
+            attachment_context=context, rendered_context='')))
+        if source_tokens <= source_budget or state['rows_in_pass'] <= 1:
+            state['context_budget'] = dict(source_tokens=source_tokens, source_budget_tokens=source_budget,
+                                           input_budget_tokens=base.input_budget_tokens,
+                                           fits=source_tokens <= source_budget,
+                                           requested_rows=limit, selected_rows=state['rows_in_pass'])
+            if source_tokens > source_budget:
+                state['context_budget_exceeded'] = True
+                context = ('[ОХВАТ РАСЧЁТА] Полный контекст одной строки превышает бюджет. '
+                           'Не подтверждай расчёт по неполным ресурсам; строка остаётся незавершённой.\n'
+                           + context)
+            return context, state
+        candidate_limit = state['rows_in_pass'] - 1
+
+
+def _attachment_name(text: str) -> str:
+    """Имя файла из первой строки скрепки «Файл: …»."""
+    first = str(text or "").splitlines()[0] if text else ""
+    return first.split(":", 1)[1].strip() if first.lower().startswith("файл:") else "ведомость"
+
+
+def portioned_attachment_context(
+    attachment_context: str,
+    *,
+    rows: Sequence[Mapping[str, Any]],
+    limit: int,
+    name: str,
+    after: str = "",
+) -> str:
+    """Текст вложения для одного прохода: порция строк вместо всего файла.
+
+    Ведомость целиком вытесняет из окна карточки норм — замер 10.09: вместе с профилем
+    она занимает 8 444 токена из 22 528. Порция короче в три с половиной раза и оставляет
+    место тому, ради чего запрос делается.
+
+    Если ведомость не разобралась в строки, отдаём исходный текст: работать с неудобным
+    вложением лучше, чем остаться без него.
+    """
+    if not rows:
+        return str(attachment_context or "")
+    portion = attachment_portion_text(rows, limit=limit, name=name, after=after)
+    return portion or str(attachment_context or "")
+
+
 def selector_evidence_payload(
-    *, attachment_context: str, rendered_context: str,
+    *, attachment_context: str, rendered_context: str, query_plan: Mapping[str, Any] | None = None,
 ) -> list[Any]:
     """Return model evidence as independently packable, ordered source blocks."""
 
@@ -1379,6 +4052,10 @@ def selector_evidence_payload(
         payload.append("Текст явно прикреплённого пользователем файла:")
         payload.extend(_bounded_source_blocks(attachment_context))
     payload.append("Материалы из найденных документов:")
+    if query_plan:
+        note = model_rag_query_plan_note(query_plan).strip()
+        if note:
+            payload.append(note)
     payload.extend(
         item.payload
         for item in _text_context_objects("selector-evidence", rendered_context)
@@ -1402,7 +4079,8 @@ def initial_selector_context(
     return "" if model_authored_initial_query else rendered_context
 
 
-def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bool) -> str:
+def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bool,
+                          model_rag_refs: bool = False) -> str:
     """Compile the exact per-chat prompt/skill snapshot for grounded generation."""
 
     snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
@@ -1419,12 +4097,48 @@ def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bo
             "проектные факты к [Источник N]. Не найденное обозначь как ограничение."
         )
     else:
+        citations = ('Ссылки на карточки оформляй идентификаторами Qn.Hm; навигационные карты помогают '
+                     if model_rag_refs else
+                     'Ссылки оформляй номерами из заголовков [Источник N]; навигационные карты помогают ')
         parts.append(
             "Для проверяемых утверждений используй только реальные материалы текущего запроса. "
-            "Ссылки оформляй номерами из заголовков [Источник N]; навигационные карты помогают "
+            + citations +
             "выбрать файл, но сами по себе не подтверждают факт."
         )
     return "\n\n".join(parts)
+
+
+def prepare_estimator_answer_contract(
+    snapshot, *, canonical_mode, model_driven: bool, tools_enabled: bool,
+    original_prefix: str, original_request: str, question: str, instruction: str = '',
+    output_directive=None, target_doc_filter=None,
+):
+    """Adapt only ACTIVE estimator answer; all other stage contracts stay literal."""
+    if (getattr(canonical_mode, 'value', canonical_mode) != 'active' or not model_driven
+            or (snapshot or {}).get('mode') != 'estimator'):
+        return original_prefix, original_request, None
+    from proxy.services.chat_profile_service import render_factory_estimator_answer
+    rendered, trace = render_factory_estimator_answer(snapshot, tools_enabled=tools_enabled)
+    prefix = model_answer_prefix(profile_system_prompt(rendered, strict=False, model_rag_refs=True),
+        instruction=instruction, output_directive=output_directive, target_doc_filter=target_doc_filter)
+    request = model_answer_request(question, model_driven=True,
+        active_estimator_answer=True, native_tools_enabled=tools_enabled)
+    trace.update(original_system_sha256=hashlib.sha256(original_prefix.encode('utf-8')).hexdigest(),
+                 rendered_system_sha256=hashlib.sha256(prefix.encode('utf-8')).hexdigest(),
+                 original_request_sha256=hashlib.sha256(original_request.encode('utf-8')).hexdigest(),
+                 rendered_request_sha256=hashlib.sha256(request.encode('utf-8')).hexdigest())
+    return prefix, request, trace
+
+
+def profile_query_prompt(profile_snapshot: dict[str, Any] | None) -> str:
+    """Use the bound role/skill for research; the full answer prompt belongs to generation."""
+    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
+    mode = str(snapshot.get('mode') or 'agent').strip() or 'agent'
+    skill = str(snapshot.get('skill_text') or '').strip()
+    prompt = f'Ты — Л.Е.С., профиль {mode}. Этот вызов формулирует поисковые запросы к источникам.'
+    if skill:
+        prompt += '\nАктивный skill профиля (правила поиска):\n' + skill
+    return prompt
 
 
 def profile_tool_selector_prompt(profile_snapshot: dict[str, Any] | None) -> str:
@@ -1509,6 +4223,7 @@ class EvidenceRuntimeDeps:
     model_connection_resolver: Callable | None = None
     model_connection_transport: Callable | None = None
     workbook_tool_executor: Callable | None = None
+    workbook_artifact_available: Callable | None = None
 
 
 @dataclass(frozen=True)
@@ -1583,6 +4298,7 @@ async def run_chat_evidence_application(
         model_connection_resolver=runtime.model_connection_resolver,
         model_connection_transport=runtime.model_connection_transport,
         workbook_tool_executor=runtime.workbook_tool_executor,
+        workbook_artifact_available=runtime.workbook_artifact_available,
         save_chat_history=response.save_chat_history,
         token_sink=response.token_sink,
         _version_stamp=response.version_stamp,
@@ -1619,6 +4335,64 @@ async def run_chat_evidence_application(
         source_names=source_names,
         time=time,
     )
+
+
+def _bind_smeta_discipline(retrieve, *, question: str, attachment_context: str,
+                           practice_mode: str = "both"):
+    """Bind section and explicit archive experiment without changing retrieval order."""
+    import inspect
+
+    if practice_mode not in {"none", "frequency", "similar", "both"}:
+        raise ValueError("unknown smeta_practice_mode")
+    section = smeta_discipline_for_request(
+        question=question, attachment_context=attachment_context
+    )
+    try:
+        parameters = inspect.signature(retrieve).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    accepts = "discipline" in parameters or any(
+        value.kind is inspect.Parameter.VAR_KEYWORD for value in parameters.values()
+    )
+    bound = partial(retrieve, discipline=section) if section and accepts else retrieve
+    if practice_mode in {"frequency", "both"}:
+        return bound
+
+    def without_frequency(*args, **kwargs):
+        payload = bound(*args, **kwargs)
+        result = {k: v for k, v in payload.items() if k != "usage_discipline"}
+        result["cards"] = [
+            {k: v for k, v in card.items() if k != "usage_evidence"}
+            if isinstance(card, Mapping) else card
+            for card in payload.get("cards", [])
+        ]
+        return result
+
+    return without_frequency
+
+
+def smeta_discipline_for_request(*, question: str, attachment_context: str) -> str:
+    """Раздел сметы по запросу и вложению — один раз на весь разбор ведомости.
+
+    Модель спрашивает нормы построчно, и отдельная строка дисциплины не содержит:
+    «Монтаж шпильки М8» её не выдаёт, хотя раздел ведомости назван прямо. Заголовок
+    раздела живёт во вложении, поэтому он и читается здесь.
+    """
+    from proxy.smeta_core.collection_scope import discipline_for_text
+    from proxy.smeta_core.section_taxonomy import section_for_title
+
+    # Во вложении раздел назван словами проекта («Монтаж системы структурированной
+    # кабельной сети»), поэтому сперва спрашиваем таксономию разделов.
+    head = " ".join(str(attachment_context or "").split())[:2000]
+    for text in (head, str(question or "")):
+        section = section_for_title(text)
+        if section:
+            return section
+    for text in (str(question or ""), head):
+        discipline = discipline_for_text(text)
+        if discipline:
+            return discipline
+    return ""
 
 
 async def _execute_chat_evidence_application(
@@ -1684,6 +4458,7 @@ async def _execute_chat_evidence_application(
     model_connection_resolver,
     model_connection_transport,
     workbook_tool_executor,
+    workbook_artifact_available,
     notebook_study_prompt_block,
     os,
     query_route_payload,
@@ -1840,8 +4615,13 @@ async def _execute_chat_evidence_application(
         for key_name in ("latency_search", "latency_gen", "tokens"):
             state.chat_metrics[key_name] = state.chat_metrics[key_name][-100:]
         history_id = None
+        # Неготовность контура (native RRF, реранкер) проходит при повторе и ответом
+        # диалога не является: сохранённая заглушка попадает в контекст следующих
+        # запросов сессии, и модель начинает её копировать вместо ответа.
+        transient_block = is_transient_retrieval_block(error_code)
+        retrieval_trace["blocker"]["transient"] = transient_block
         try:
-            history_id = save_chat_history(
+            history_id = None if transient_block else save_chat_history(
                 question=req.question,
                 answer=blocked_answer,
                 sources=[],
@@ -2087,13 +4867,20 @@ async def _execute_chat_evidence_application(
         len(set(c.doc_name for c in chunks)),
     )
     focused_fingerprint = retrieval_fingerprint(chunks)
+    primary_document_pricing = (profile_uses_smeta_norm_retrieval(profile_snapshot)
+                                and bool(str(getattr(req, 'attachment_id', '') or '').strip()))
+    if primary_document_pricing:
+        retrieval_trace['semantic_answer_cache'] = {
+            'status': 'bypassed', 'reason': 'document_price_basis_not_yet_bound'}
 
     if use_semantic_cache and cache_scope and not use_validation:
-        session_hit = cache.lookup_session_unvalidated(
+        session_hit = document_price_safe_cache_lookup(
+            cache,
             req.question,
             cache_scope,
             focused_fingerprint,
             req.session_id,
+            primary_document=primary_document_pricing,
         )
         if session_hit:
             state.chat_metrics["cache_hit"] = state.chat_metrics.get("cache_hit", 0) + 1
@@ -2376,8 +5163,11 @@ async def _execute_chat_evidence_application(
     sys_normal = profile_system_prompt(profile_snapshot, strict=False)
     sys_strict = profile_system_prompt(profile_snapshot, strict=True)
 
-    # ADR-12 слой 2: форму ответа диктует интент вопроса (детерминированно, до генерации).
-    answer_form = apply_response_length(classify_answer_form(req.question), req.response_length)
+    # ADR-15 structured estimates own their output contract. Prose intent hints
+    # (e.g. "сколько" inside "несколько") must not impose a one-line/256-token
+    # answer on a multi-row mapping. Explicit operator length still applies.
+    form_question = "" if profile_uses_smeta_norm_retrieval(profile_snapshot) else req.question
+    answer_form = apply_response_length(classify_answer_form(form_question), req.response_length)
     retrieval_trace["answer_form"] = {"intent": answer_form.intent, "max_tokens": answer_form.max_tokens}
     if class_suggestions:
         retrieval_trace["class_suggestions"] = [s["class"] for s in class_suggestions]
@@ -2467,6 +5257,229 @@ async def _execute_chat_evidence_application(
     )
     attachment_context = str(getattr(req, "attachment_context", "") or "").strip()
     model_driven_retrieval = profile_uses_model_driven_retrieval(profile_snapshot)
+    source_attachment_id = str(getattr(req, 'attachment_id', '') or '').strip()
+    document_source_attachment_sha256 = ''
+    if profile_uses_smeta_norm_retrieval(profile_snapshot) and source_attachment_id.lower().startswith('read_'):
+        from proxy.services.tabular_attachment_service import load_full_tabular_attachment_context
+        from proxy.smeta_core.vor_rows import rows_from_attachment_text
+
+        try:
+            full_source = await asyncio.to_thread(load_full_tabular_attachment_context, source_attachment_id)
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=422, detail={
+                'code': 'SMETA_ATTACHMENT_SOURCE_UNAVAILABLE',
+                'message': 'Не удалось проверить исходное вложение для сметы. Прикрепи файл заново.',
+            }) from error
+        if full_source is not None:
+            full_text, source_metadata = full_source
+            document_source_attachment_sha256 = source_metadata['sha256']
+            retrieval_trace['smeta_attachment_source'] = {
+                'status': 'verified_full_tabular', 'attachment_id': source_attachment_id,
+                'sha256': source_metadata['sha256'], 'preview_chars': len(attachment_context),
+                'source_chars': len(full_text), 'source_rows': len(rows_from_attachment_text(full_text)),
+            }
+            attachment_context = full_text
+    source_attachment_context = attachment_context
+
+    # Let the actual source/receipt budget determine a complete-row portion.
+    # Explicit row caps remain available; unseen rows never become completed.
+    portion_rows = smeta_portion_rows(attachment_context)
+    portion_cursors = None
+    portion_state: dict[str, Any] = {}
+    document_price_basis = None
+    document_source_revision = ''
+    if profile_uses_smeta_norm_retrieval(profile_snapshot) and source_attachment_context:
+        from proxy.smeta_core.vor_rows import rows_from_attachment_text, source_revision
+        from proxy.services import fgis_price_service
+        portion_cursors = portion_cursor_store()
+        if source_attachment_id and not document_source_attachment_sha256:
+            from proxy.services.chat_attachment_service import resolve_read_attachment
+            _, attachment_metadata = await asyncio.to_thread(resolve_read_attachment, source_attachment_id)
+            document_source_attachment_sha256 = attachment_metadata['sha256']
+        document_source_revision = document_price_source_revision(
+            source_attachment_context, document_source_attachment_sha256)
+        document_price_basis = await asyncio.to_thread(document_price_basis_or_error, portion_cursors,
+            session_id=str(getattr(req, 'session_id', '') or ''), source_revision=document_source_revision,
+            capture=fgis_price_service.capture_price_basis, http_exception=HTTPException)
+        retrieval_trace['document_price_basis'] = document_price_basis
+    document_price_browse = bind_document_price_browse(document_price_basis) if document_price_basis is not None else smeta_price_browse
+    if profile_uses_smeta_norm_retrieval(profile_snapshot) and attachment_context and portion_rows > 0:
+        portion_cursors = portion_cursor_store()
+        # Строки, исчерпавшие попытки, возвращаются в оборот, если источники подсказок
+        # обновились: отказ модели относился к прежнему набору свидетельств. Делается
+        # до планирования порции, иначе вернувшиеся строки попали бы только в следующий
+        # проход (ревью Codex 11.09, шаг 5).
+        if portion_cursors is not None:
+            try:
+                from proxy.smeta_core.vor_rows import (
+                    rows_from_attachment_text,
+                    source_revision,
+                )
+
+                reopened = portion_cursors.reopen_exhausted(
+                    session_id=str(getattr(req, "session_id", "") or ""),
+                    source_revision=source_revision(
+                        rows_from_attachment_text(attachment_context)
+                    ),
+                    evidence_revision=evidence_sources_revision(document_price_basis=document_price_basis),
+                )
+                if reopened:
+                    retrieval_trace["smeta_rows_reopened"] = reopened
+            except Exception:  # noqa: BLE001 — возврат строк не должен ронять проход
+                logger.warning("[SMETA_PORTION] возврат строк не удался", exc_info=True)
+        def plan_context(text):
+            return fit_smeta_portion_context(
+                text, session_id=str(getattr(req, "session_id", "") or ""),
+                limit=portion_rows, cursors=portion_cursors, preset=execution_preset,
+                profile_prefix=model_answer_prefix(sys_normal, instruction=answer_form.instruction,
+                    output_directive=req.output_directive, target_doc_filter=target_doc_filter),
+                request_payload=model_answer_request(req.question, model_driven=True),
+            )
+        attachment_context, portion_state = plan_context(attachment_context)
+        portion_state['document_price_basis'] = document_price_basis
+        retrieval_trace["smeta_portion"] = portion_state
+        # Книга устарела относительно решений — пересобираем её здесь, до исследования
+        # и до ответа модели. Решения приняты и неизменны, повторять их незачем: штатный
+        # отказ упаковщика чинится нулём вызовов транспорта (ревью Codex 11.09).
+        if (
+            portion_cursors is not None
+            and stored_decisions_need_a_workbook(portion_state, artifact_available=workbook_artifact_available)
+            and workbook_tool_executor is not None
+            and canonical_execution_mode is CanonicalRouteMode.ACTIVE
+            and str(getattr(req, "attachment_id", "") or "").strip()
+        ):
+            logger.warning(
+                "[SMETA_PORTION] пересборка книги по %s сохранённым решениям",
+                len(portion_state.get("prior_decisions") or {}),
+            )
+            rebuilt_meta = await rebuild_workbook_from_stored_decisions(
+                executor=workbook_tool_executor,
+                portion_state=portion_state,
+                attachment_id=str(getattr(req, "attachment_id", "") or ""),
+                question=str(req.question or ""),
+                context={
+                    "session_id": str(req.session_id or ""),
+                    "question": str(req.question or ""),
+                    "dataset_ids": [str(item) for item in _dataset_ids],
+                    "project_id": getattr(req, "project_id", None),
+                    "attachment_id": str(getattr(req, "attachment_id", "") or ""),
+                    "profile_revision_id": str(
+                        (profile_snapshot or {}).get("revision_id") or ""
+                    ),
+                    "model_identity": "stored-decisions-rebuild",
+                    "model_preset": execution_preset.preset_id,
+                    "document_price_basis": document_price_basis,
+                    "source_revision": document_source_revision,
+                    "source_attachment_sha256": document_source_attachment_sha256,
+                },
+                progress=(lambda _event: asyncio.sleep(0)),
+                trace=retrieval_trace,
+            )
+            rebuilt_revision = _workbook_revision_id(rebuilt_meta)
+            if rebuilt_revision:
+                try:
+                    rebuilt_statuses = workbook_row_statuses(rebuilt_meta)
+                    if rebuilt_statuses is not None:
+                        portion_cursors.record_calculation(
+                            session_id=str(req.session_id or ""),
+                            source_revision=str(portion_state.get("source_revision") or ""),
+                            statuses={anchor: rebuilt_statuses[str(row.get("source_row"))]
+                                      for anchor, row in (portion_state.get("prior_decisions") or {}).items()
+                                      if str(row.get("source_row")) in rebuilt_statuses},
+                            receipts=(rebuilt_meta.get('workbook_diagnostics') or {}).get('row_calculation') or [],
+                        )
+                    portion_cursors.record_pass(
+                        session_id=str(getattr(req, "session_id", "") or ""),
+                        source_revision=str(portion_state.get("source_revision") or ""),
+                        completed={},
+                        artifact_revision_id=rebuilt_revision,
+                        artifact_decisions_revision=_portion_decisions_revision(
+                            portion_state.get("prior_decisions") or {}, document_price_basis=document_price_basis
+                        ),
+                        pass_id=f"rebuild:{rebuilt_revision}",
+                    )
+                except Exception:  # noqa: BLE001 — книга уже собрана
+                    logger.warning(
+                        "[SMETA_PORTION] ревизия пересобранной книги не записана",
+                        exc_info=True,
+                    )
+                # Re-plan from actual calculation: a persisted choice can fail units
+                # when the previously failed packaging finally runs.
+                attachment_context, portion_state = plan_context(source_attachment_context)
+                retrieval_trace["smeta_portion"] = portion_state
+                portion_state["rebuilt_workbook"] = rebuilt_meta
+                if portion_state.get("state") == "complete":
+                    # Показывать нечего, книга пересобрана — ход закончен здесь.
+                    # Продолжать до исследования и генерации значило бы звать модель
+                    # ради нечего: она и так получила бы сообщение «новых строк нет»
+                    # (ревью Codex 11.09). Ноль обращений к транспорту.
+                    rebuilt_answer = (
+                        f"Книга пересобрана по сохранённым решениям: решение принято по "
+                        f"{portion_state.get('completed')} позициям из "
+                        f"{portion_state.get('total')}."
+                    )
+                    unresolved_rows = int(portion_state.get("exhausted") or 0)
+                    if unresolved_rows:
+                        rebuilt_answer += (
+                            f" По {unresolved_rows} позициям норма не найдена — они"
+                            " остались нерешёнными."
+                        )
+                    retrieval_trace["smeta_portion_rebuild_terminal"] = True
+                    rebuilt_response: dict[str, Any] = {
+                        "answer": rebuilt_answer,
+                        "crag_status": "MODEL_OUTPUT",
+                        "sources": [],
+                        "effective_dataset_filter": effective_dataset_filter,
+                        "query_route": query_route_payload,
+                        "retrieval_trace": retrieval_trace,
+                        "cache": cache_marker,
+                        "validation": {"enabled": False},
+                        "versions": _version_stamp(),
+                        "smeta_portion": {
+                            "schema": "les.smeta.portion-progress.v2",
+                            "pass_no": portion_state.get("pass_no"),
+                            "rows_in_pass": 0,
+                            "remaining": 0,
+                            "total": portion_state.get("total"),
+                            "decided": portion_state.get("completed"),
+                            "unresolved": portion_state.get("exhausted"),
+                        },
+                    }
+                    rebuilt_response.update(rebuilt_meta)
+                    try:
+                        rebuilt_response["history_id"] = save_chat_history(
+                            question=req.question,
+                            answer=rebuilt_answer,
+                            sources=[],
+                            crag_status="MODEL_OUTPUT",
+                            latency_sec=0.0,
+                            tokens=0,
+                            session_id=req.session_id,
+                            requested_dataset_filter=req.dataset_filter,
+                            effective_dataset_filter=effective_dataset_filter,
+                            resolved_dataset_ids=_dataset_ids,
+                            resolved_dataset_names=resolved_dataset_names,
+                            query_route=query_route_payload,
+                            retrieval_trace=retrieval_trace,
+                            cache_type=cache_marker,
+                            validation_enabled=False,
+                            success=1,
+                        )
+                    except Exception as history_error:  # noqa: BLE001 — книга уже собрана
+                        logger.warning("[CHAT] History save error: %s", history_error)
+                        rebuilt_response["history_id"] = None
+                    return rebuilt_response
+        if portion_state.get("state") != "not-a-vor":
+            logger.warning(
+                "[SMETA_PORTION] проход %s: строк %s из %s, решено ранее %s, "
+                "без нормы %s, остаток %s",
+                portion_state.get("pass_no"),
+                portion_state.get("rows_in_pass"),
+                portion_state.get("total"),
+                portion_state.get("completed"),
+                portion_state.get("exhausted"),
+                portion_state.get("remaining"),
+            )
 
     selector_evidence = selector_evidence_payload(
         attachment_context=attachment_context,
@@ -2478,7 +5491,12 @@ async def _execute_chat_evidence_application(
     selector_source_map = answer_source_map
     async with acquire_generation_slot(gen_semaphore, timeout_seconds=45.0):
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            # trust_env=False обязателен: системный SOCKS от VPN перехватывает и
+            # localhost, а httpx на схеме socks4 падает ещё при создании клиента —
+            # «Unknown scheme for proxy URL socks4://127.0.0.1:10808». Весь сметный
+            # путь идёт по петле, внешнему прокси в нём делать нечего (живой прогон
+            # 11.09, 10:34; тот же дефект уже чинили по всему проекту 07.06).
+            async with httpx.AsyncClient(timeout=300.0, trust_env=False) as client:
                 answer = ""
                 crag_status = "UNKNOWN"
                 tokens = 0
@@ -2493,12 +5511,24 @@ async def _execute_chat_evidence_application(
                         transport=model_connection_transport(client, connection_secret_store),
                     )
 
-                async def _post_llm(runtime, model, hdrs, body, *, allow_stream: bool = True):
+                async def _post_llm(runtime, model, hdrs, body, *, allow_stream: bool = True,
+                                    audit_purpose: str | None = None):
                     """Один вызов LLM. token_sink задан → стрим (токены клиенту по
                     мере генерации), иначе — обычный POST (поведение неизменно).
                     Возвращает (answer_text, usage_dict)."""
                     nonlocal active_model_result, active_pending_tool_calls
                     if bound_runner is not None:
+                        request_audit = None
+                        if (audit_purpose in {"answer", "answer_read"}
+                                and canonical_execution_mode is CanonicalRouteMode.ACTIVE
+                                and model_driven_retrieval
+                                and profile_uses_smeta_norm_retrieval(profile_snapshot)):
+                            from proxy.services.model_request_audit_service import ModelRequestAudit
+                            request_audit = ModelRequestAudit(
+                                directory=mutable_path("storage/model_request_receipts"),
+                                purpose=audit_purpose,
+                                refs=retrieval_trace.setdefault("model_request_audit", []),
+                            )
                         inference_request = InferenceRequest(
                             messages=tuple(body.get("messages") or ()),
                             max_output_tokens=max(
@@ -2512,6 +5542,7 @@ async def _execute_chat_evidence_application(
                             temperature=body.get("temperature"),
                             tools=tuple(body.get("tools") or ()),
                             response_format=body.get("response_format"),
+                            request_audit=request_audit,
                         )
 
                         async def no_legacy_call(_request):
@@ -2565,10 +5596,14 @@ async def _execute_chat_evidence_application(
                                 ensure_ascii=False,
                                 separators=(",", ":"),
                             )
-                        return (
-                            model_text,
-                            dict(active_model_result.response.usage),
+                        usage = dict(active_model_result.response.usage)
+                        # Причина остановки отличает законченный список запросов от
+                        # оборванного по пределу генерации (проходы 3 и 5, 17.09).
+                        usage.setdefault(
+                            "finish_reason",
+                            str(getattr(active_model_result.response, "finish_reason", "") or ""),
                         )
+                        return (model_text, usage)
                     if getattr(runtime, "uses_native_chat", False):
                         # #1b: нативный /api/chat think:false → чистый ответ без CoT-дампа
                         # (OpenAI-compat ollama игнорирует reasoning-контроль). Облачного
@@ -2728,15 +5763,11 @@ async def _execute_chat_evidence_application(
                     query_messages, query_packet = govern_inference_messages(
                         preset=execution_preset,
                         profile_prefix=(
-                            profile_system_prompt(profile_snapshot, strict=False)
-                            + "\n\nПрочитай приложенный материал целиком. Сформулируй поисковые "
-                            "запросы к выбранным датасетам, необходимые для подбора evidence "
-                            "по всем фактическим строкам исходного материала. Число запросов "
-                            "определяешь ты; фиксированного лимита нет. В запросах сохраняй язык "
-                            "и профессиональную терминологию исходных строк; не переводи и не "
-                            "транслитерируй их. Сейчас не выбирай нормы "
-                            "и не отвечай по существу — верни только сами поисковые запросы, "
-                            "каждый с новой строки."
+                            profile_query_prompt(profile_snapshot)
+                            + "\n\n" + model_rag_query_instruction(
+                                profile_snapshot,
+                                rows_in_pass=model_rag_query_rows(portion_state),
+                            )
                         ),
                         request_payload={
                             "question": str(req.question or ""),
@@ -2744,7 +5775,10 @@ async def _execute_chat_evidence_application(
                         },
                         checkpoint=(),
                         working_memory=(),
-                        evidence=selector_evidence,
+                        evidence=selector_evidence_payload(
+                            attachment_context=query_attachment_context(source_attachment_context, portion_state),
+                            rendered_context=initial_selector_context(context, model_authored_initial_query=True),
+                        ),
                         source_map=selector_source_map,
                         tool_exchange=(),
                     )
@@ -2755,9 +5789,11 @@ async def _execute_chat_evidence_application(
                         "messages": query_messages,
                         "stream": False,
                         "temperature": 0,
-                        "max_tokens": max(
-                            256,
-                            _env_int("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", 1600),
+                        "max_tokens": model_rag_query_max_tokens(
+                            query_budget=plan_model_rag_queries(
+                                (), rows_in_pass=model_rag_query_rows(portion_state),
+                            )["budget"],
+                            ceiling=_env_int("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", 1600),
                         ),
                     }
                     t_query_model = time.time()
@@ -2769,7 +5805,17 @@ async def _execute_chat_evidence_application(
                         allow_stream=False,
                     )
                     t_llm += time.time() - t_query_model
-                    model_queries = parse_model_rag_queries(query_text)
+                    model_queries_all = parse_model_rag_queries(query_text)
+                    query_plan = plan_model_rag_queries(
+                        model_queries_all,
+                        rows_in_pass=model_rag_query_rows(portion_state),
+                        truncated=(
+                            str((query_usage or {}).get("finish_reason") or "") == "length"
+                            or int((query_usage or {}).get("completion_tokens") or 0)
+                            >= int(query_body["max_tokens"])
+                        ),
+                    )
+                    model_queries = list(query_plan["executed"])
                     if not model_queries:
                         raise HTTPException(
                             status_code=503,
@@ -2779,6 +5825,13 @@ async def _execute_chat_evidence_application(
                     async def _no_model_rag_fallback(_tool_name: str, _args: dict[str, Any]):
                         raise RuntimeError("MODEL_RAG_ONLY_SUPPORTS_SEARCH_SOURCES")
 
+                    practice_mode = str(getattr(req, "smeta_practice_mode", "both") or "both")
+                    retrieval_trace["smeta_practice_experiment"] = {
+                        "mode": practice_mode,
+                        "frequency": practice_mode in {"frequency", "both"},
+                        "similar": practice_mode in {"similar", "both"},
+                        "sources_revision": evidence_sources_revision(document_price_basis=document_price_basis),
+                    }
                     model_research_tools = ModelResearchToolService(
                         retrieve=retrieve_chat_chunks,
                         frozen_dataset_ids=tuple(
@@ -2803,7 +5856,17 @@ async def _execute_chat_evidence_application(
                         },
                         fallback=_no_model_rag_fallback,
                         smeta_norm_retrieve=(
-                            retrieve_smeta_norm_cards
+                            _bind_smeta_discipline(
+                                retrieve_smeta_norm_cards,
+                                practice_mode=practice_mode,
+                                question=str(req.question or ""),
+                                attachment_context=attachment_context,
+                            )
+                            if profile_uses_smeta_norm_retrieval(profile_snapshot)
+                            else None
+                        ),
+                        price_browse=(
+                            document_price_browse
                             if profile_uses_smeta_norm_retrieval(profile_snapshot)
                             else None
                         ),
@@ -2818,22 +5881,41 @@ async def _execute_chat_evidence_application(
                             (
                                 query,
                                 tuple(research_result.chunks)[
-                                    : retrieval_limits["model_evidence_k"]
+                                    : evidence_limit(research_result.chunks,
+                                                     retrieval_limits["model_evidence_k"])
                                 ],
                             )
                         )
-                    blocked_queries = [
-                        index
-                        for index, payload in enumerate(tool_results_for_model, 1)
-                        if str(payload.get("status") or "") != "ok"
-                    ]
-                    if blocked_queries:
+                    # Optional archive examples share the production governor.
+                    # Frequency is also removed from search cards in none/similar.
+                    if practice_mode in {"frequency", "both"}:
+                        practice_group = smeta_practice_group(
+                            attachment_context=attachment_context,
+                            question=str(req.question or ""),
+                            already_shown=model_rag_query_hits,
+                            trace=retrieval_trace,
+                        )
+                        if practice_group is not None:
+                            model_rag_query_hits.insert(0, practice_group)
+                    if practice_mode in {"similar", "both"}:
+                        material_group = smeta_material_group(
+                            titles=list(portion_state.get("shown_titles") or ()),
+                            already_shown=model_rag_query_hits,
+                            trace=retrieval_trace,
+                        )
+                        if material_group is not None:
+                            model_rag_query_hits.insert(0, material_group)
+                    # Выполненный поиск без совпадений доходит до модели как пустая выдача:
+                    # решать, что с ней делать, должна та же модель (аудит Codex 17.09, P2).
+                    empty_queries = model_rag_empty_queries(tool_results_for_model)
+                    if empty_queries:
+                        retrieval_trace["model_rag_empty_queries"] = empty_queries
+                    search_failure = model_rag_failure_detail(tool_results_for_model)
+                    if search_failure:
+                        logger.warning("[MODEL_RAG_SEARCH_INCOMPLETE] %s", search_failure)
                         raise HTTPException(
                             status_code=503,
-                            detail={
-                                "error": "MODEL_RAG_SEARCH_INCOMPLETE",
-                                "blocked_queries": blocked_queries,
-                            },
+                            detail=search_failure,
                         )
                     (
                         model_rag_evidence_groups,
@@ -2844,6 +5926,15 @@ async def _execute_chat_evidence_application(
                         hits_per_query=retrieval_limits["model_evidence_k"],
                     )
                     context = "\n\n".join(model_rag_evidence_groups)
+                    # Длинная ведомость за проход не помещается. Сообщаем это и модели, и трассе:
+                    # молча потерянные строки модель закроет вслепую.
+                    evidence_coverage = model_rag_evidence_coverage(
+                        model_rag_query_hits, model_rag_evidence_groups
+                    )
+                    retrieval_trace["model_evidence_coverage"] = evidence_coverage
+                    if not evidence_coverage["complete"]:
+                        context += _evidence_coverage_note(evidence_coverage)
+                    context += model_rag_query_plan_note(query_plan)
                     model_rag_evidence_packet = build_retrieval_evidence_packet(
                         question=req.question,
                         chunks=model_evidence_chunks,
@@ -2867,12 +5958,15 @@ async def _execute_chat_evidence_application(
                         "schema": "les_model_rag_batch_v1",
                         "enabled": True,
                         "model_owns_queries": True,
+                        "model_queries_raw": query_text,
                         "model_queries": model_queries,
+                        "model_queries_total": query_plan["total"],
+                        "model_queries_budget": query_plan["budget"],
+                        "model_queries_skipped": query_plan["skipped"],
+                        "model_queries_truncated": query_plan["truncated"],
                         "query_usage": query_usage,
                         "results": tool_results_for_model,
-                        "evidence_groups": [
-                            f"Q{index}" for index in range(1, len(model_rag_evidence_groups) + 1)
-                        ],
+                        "evidence_groups": evidence_group_ids(model_rag_evidence_groups),
                         "hits_per_query": [
                             len(hits) for _query, hits in model_rag_query_hits
                         ],
@@ -2909,6 +6003,7 @@ async def _execute_chat_evidence_application(
                                 ),
                             },
                             fallback=_fallback_model_tool,
+                            price_browse=(document_price_browse if profile_uses_smeta_norm_retrieval(profile_snapshot) else None),
                             **retrieval_limits,
                         )
                         shortlist_limit = (
@@ -2981,6 +6076,7 @@ async def _execute_chat_evidence_application(
                         selected_calls: list[dict[str, Any]] = []
                         selector_usage: list[dict[str, Any]] = []
                         research_rounds: list[dict[str, Any]] = []
+                        failed_tool_calls = FailedToolCallGuard()
                         research_deadline_seconds = max(
                             1.0,
                             _env_float("LES_CHAT_RESEARCH_DEADLINE_SECONDS", 120.0),
@@ -3000,6 +6096,16 @@ async def _execute_chat_evidence_application(
                                 if canonical_execution_mode is CanonicalRouteMode.ACTIVE
                                 else "Верни только JSON {\"calls\":[{\"tool\":\"...\",\"args\":{...}}]}. "
                             )
+                            # Одного статуса в результатах мало: модель повторяла упавший
+                            # вызов в следующем раунде, и вызов селектора уходил впустую.
+                            _failed_calls = failed_tool_calls.failed_summary()
+                            if _failed_calls:
+                                tool_call_instruction += (
+                                    "Эти вызовы уже неуспешны, не повторяй их и не меняй в них "
+                                    "только форматирование аргументов: "
+                                    + json.dumps(list(_failed_calls), ensure_ascii=False)
+                                    + ". Если других полезных вызовов нет — верни пустой список. "
+                                )
                             selector_profile = "".join(
                                 (
                                     profile_tool_selector_prompt(profile_snapshot),
@@ -3007,7 +6113,7 @@ async def _execute_chat_evidence_application(
                                     "Явно прикреплённый текст ниже уже доступен тебе как evidence и не требует индексации. "
                                     "Сначала прочитай его и используй read-only инструменты, чтобы закрыть конкретные пробелы. "
                                     "Если оператор просит артефакт, после получения достаточного evidence вызови "
-                                    "подходящий draft-инструмент; предметные решения и поисковые запросы выбираешь ты. "
+                                    "подходящий draft-инструмент; предметные решения и поисковые запросы выбираешь ты. ",
                                     "Не объявляй вложение отсутствующим, когда его текст присутствует в пакете. ",
                                     "Если оператор явно просит посмотреть глазами страницу или лист PDF, ",
                                     "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; ",
@@ -3114,14 +6220,21 @@ async def _execute_chat_evidence_application(
                                 )
                                 retrieval_trace["canonical_shadow"] = shadow_trace
                                 canonical_shadow_recorded = True
-                            calls = list(proposed_calls[:calls_remaining])
+                            calls = [
+                                call for call in proposed_calls
+                                if not failed_tool_calls.repeated(call)
+                            ][:calls_remaining]
                             research_rounds.append(
                                 {"round": research_round, "proposed": len(proposed_calls), "executed": len(calls)}
                             )
                             if not calls:
                                 stop_reason = "model_stop"
+                                if proposed_calls:
+                                    stop_reason = "repeated_failed_call"
                                 break
                             for call in calls:
+                                if failed_tool_calls.repeated(call):
+                                    continue
                                 tool_loop_stage = "tool_execution"
                                 tool_name = str(call.get("tool") or "")
                                 if (
@@ -3133,6 +6246,16 @@ async def _execute_chat_evidence_application(
                                         if token_sink is not None:
                                             await token_sink({"event": "tool_progress", "data": event})
 
+                                    if tool_name == 'build_lsr_workbook':
+                                        call = {**call, 'args': {**(call.get('args') or {}),
+                                            'decisions': bind_normative_identity(
+                                                (call.get('args') or {}).get('decisions') or [],
+                                                chunks=model_evidence_chunks,
+                                                delivered_cards=delivered_evidence_cards(
+                                                    '\n'.join(str(m.get('content') or '') for m in messages),
+                                                    model_evidence_chunks),
+                                                packet_text='\n'.join(str(m.get('content') or '') for m in messages),
+                                                prior_evidence=(portion_state or {}).get('prior_evidence') or ())}}
                                     payload = await workbook_tool_executor(
                                         call,
                                         {
@@ -3151,6 +6274,9 @@ async def _execute_chat_evidence_application(
                                                 or llm_model
                                             ),
                                             "model_preset": execution_preset.preset_id,
+                                            "document_price_basis": document_price_basis,
+                                            "source_revision": document_source_revision,
+                                            "source_attachment_sha256": document_source_attachment_sha256,
                                         },
                                         workbook_progress,
                                     )
@@ -3208,6 +6334,7 @@ async def _execute_chat_evidence_application(
                                             rendered_context=context,
                                         )
                                         selector_source_map = answer_source_map
+                                failed_tool_calls.record(call, payload)
                                 selected_calls.append(call)
                                 calls_remaining -= 1
                                 safe_payload = safe_workbook_history_projection(payload)
@@ -3409,37 +6536,28 @@ async def _execute_chat_evidence_application(
                                 },
                             })
                         # ADR-12 §2: каркас формы под интент добавляем к нормальному промпту.
-                        sys_msg = sys_normal + (f" {answer_form.instruction}" if answer_form.instruction else "")
-                        # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
-                        # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-директиву).
-                        if req.output_directive and req.output_directive.strip():
-                            sys_msg += " " + req.output_directive.strip()
-                        if target_doc_filter:
-                            sys_msg += (
-                                " Оператор явно выбрал документы. Отвечай только по их содержимому, "
-                                "явно называй использованные файлы и не расширяй область на остальной датасет."
-                            )
-                    question_tail = (
-                        f"Вопрос: {req.question}\n\n"
-                        "/no_think\n"
-                        "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
-                        "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
+                        sys_msg = model_answer_prefix(sys_normal, instruction=answer_form.instruction,
+                                                      output_directive=req.output_directive, target_doc_filter=target_doc_filter)
+                    question_tail = model_answer_request(req.question, model_driven=model_driven_retrieval)
+                    answer_read_tools = (
+                        model_rag_search_tool_schema()
+                        if model_driven_retrieval and tool_loop_enabled
+                        and canonical_execution_mode is CanonicalRouteMode.ACTIVE else []
                     )
+                    sys_msg, question_tail, answer_contract_trace = prepare_estimator_answer_contract(
+                        profile_snapshot, canonical_mode=canonical_execution_mode,
+                        model_driven=model_driven_retrieval, tools_enabled=bool(answer_read_tools),
+                        original_prefix=sys_msg, original_request=question_tail, question=req.question,
+                        instruction=answer_form.instruction, output_directive=req.output_directive,
+                        target_doc_filter=target_doc_filter,
+                    )
+                    if answer_contract_trace is not None:
+                        retrieval_trace['answer_contract_availability'] = answer_contract_trace
                     if model_driven_retrieval:
-                        question_tail += (
-                            "\nДай итоговый ответ обычным текстом по всем строкам исходного ВОР. Для каждой "
-                            "строки явно укажи source_row, section, title, unit, quantity, выбранный тобой "
-                            "norm_code, analogue, coverage, coefficient и evidence_refs Qx.Hy. Не добавляй "
-                            "status и не ограничивай количество строк. Если выбираешь карточку как норму "
-                            "или инженерный аналог, укажи её точный шифр в norm_code; оставляй его пустым "
-                            "только если не выбрана ни одна карточка. Для каждой строки обязательно укажи "
-                            "точную evidence_refs Qx.Hy выбранной карточки; не сокращай её до Qx. Не выводи "
-                            "JSON. Код не подтверждает и не меняет твой выбор. Ответ должен вместить все "
-                            "строки: без вводного обзора и итоговых рекомендаций, кратко по одной строке ВОР."
-                        )
                         fixed_model_rag_evidence = selector_evidence_payload(
                             attachment_context=attachment_context,
                             rendered_context="",
+                            query_plan=query_plan,
                         )
                         _, fixed_packet = govern_inference_messages(
                             preset=answer_execution_preset,
@@ -3447,26 +6565,28 @@ async def _execute_chat_evidence_application(
                             request_payload=question_tail,
                             checkpoint=(),
                             working_memory=(),
-                            evidence=fixed_model_rag_evidence,
+                            required_evidence=fixed_model_rag_evidence,
+                            native_tools=answer_read_tools,
                             source_map=(),
                             tool_exchange=(),
                             dialogue=(),
                         )
-                        remaining_group_tokens = max(
-                            0,
-                            fixed_packet.input_budget_tokens
-                            - fixed_packet.included_tokens
-                            - len(model_rag_query_hits)
-                            - 2,
+                        group_char_budget = model_rag_group_char_budget(
+                            input_budget_tokens=fixed_packet.input_budget_tokens,
+                            included_tokens=fixed_packet.included_tokens,
+                            query_count=len(model_rag_query_hits),
+                            context_chars_limit=context_chars_limit,
                         )
                         logger.warning(
                             "[MODEL_RAG_BUDGET] queries=%s hits=%s input_budget=%s "
-                            "included=%s remaining_group_tokens=%s context_chars_limit=%s",
+                            "included=%s group_chars=%s notice_reserve=%s "
+                            "context_chars_limit=%s",
                             len(model_rag_query_hits),
                             sum(len(hits) for _query, hits in model_rag_query_hits),
                             fixed_packet.input_budget_tokens,
                             fixed_packet.included_tokens,
-                            remaining_group_tokens,
+                            group_char_budget,
+                            coverage_note_reserve_tokens(),
                             context_chars_limit,
                         )
                         (
@@ -3474,13 +6594,19 @@ async def _execute_chat_evidence_application(
                             model_evidence_chunks,
                         ) = build_model_rag_evidence_groups(
                             model_rag_query_hits,
-                            max_chars=min(
-                                context_chars_limit,
-                                remaining_group_tokens * 2,
-                            ),
+                            max_chars=group_char_budget,
                             hits_per_query=retrieval_limits["model_evidence_k"],
                         )
-                        context = "\n\n".join(model_rag_evidence_groups)
+                        context = (chr(10) * 2).join(model_rag_evidence_groups)
+                        # Охват пересчитывается здесь же: пакет пересобран под остаток
+                        # токенов, и модель получила бы меньше строк, чем обещает трасса,
+                        # причём без предупреждения (ревью Codex 10.09).
+                        evidence_coverage = model_rag_evidence_coverage(
+                            model_rag_query_hits, model_rag_evidence_groups
+                        )
+                        retrieval_trace["model_evidence_coverage"] = evidence_coverage
+                        if not evidence_coverage["complete"]:
+                            context += _evidence_coverage_note(evidence_coverage)
                         answer_source_map = _model_rag_source_map(model_evidence_chunks)
                         model_rag_evidence_packet = build_retrieval_evidence_packet(
                             question=req.question,
@@ -3497,10 +6623,7 @@ async def _execute_chat_evidence_application(
                             "schema": "les.model-rag-grouped-evidence.v1",
                             "query_count": len(model_rag_evidence_groups),
                             "hit_count": len(model_evidence_chunks),
-                            "group_ids": [
-                                f"Q{index}"
-                                for index in range(1, len(model_rag_evidence_groups) + 1)
-                            ],
+                            "group_ids": evidence_group_ids(model_rag_evidence_groups),
                             "rendered_chars": len(context),
                         }
                     answer_checkpoint = tuple(
@@ -3545,7 +6668,12 @@ async def _execute_chat_evidence_application(
                         ]
                     )
                     answer_evidence = (
-                        [*fixed_model_rag_evidence, *model_rag_evidence_groups]
+                        answer_evidence_blocks(
+                            fixed_blocks=fixed_model_rag_evidence,
+                            group_blocks=model_rag_evidence_groups,
+                            coverage=retrieval_trace.get("model_evidence_coverage"),
+                            trace=retrieval_trace,
+                        )
                         if model_driven_retrieval
                         else [
                             "Материалы из найденных документов:",
@@ -3556,17 +6684,26 @@ async def _execute_chat_evidence_application(
                         ]
                     )
                     try:
-                        messages, answer_packet = govern_inference_messages(
-                            preset=answer_execution_preset,
-                            profile_prefix=sys_msg,
-                            request_payload=question_tail,
-                            checkpoint=answer_checkpoint,
-                            working_memory=answer_working_memory,
-                            evidence=answer_evidence,
-                            source_map=(() if model_driven_retrieval else answer_source_map),
-                            tool_exchange=answer_tool_exchange,
-                            dialogue=[session_block] if session_block else [],
-                        )
+                        if answer_read_tools:
+                            messages, answer_packet = govern_model_rag_read_messages(
+                                preset=answer_execution_preset, profile_prefix=sys_msg,
+                                request_payload=question_tail, fixed_evidence=fixed_model_rag_evidence,
+                                read_evidence=(),
+                                prior_evidence=answer_evidence[len(fixed_model_rag_evidence):],
+                                exchange=(), native_tools=answer_read_tools,
+                            )
+                        else:
+                            messages, answer_packet = govern_inference_messages(
+                                preset=answer_execution_preset,
+                                profile_prefix=sys_msg,
+                                request_payload=question_tail,
+                                checkpoint=answer_checkpoint,
+                                working_memory=answer_working_memory,
+                                evidence=answer_evidence,
+                                source_map=(() if model_driven_retrieval else answer_source_map),
+                                tool_exchange=answer_tool_exchange,
+                                dialogue=[session_block] if session_block else [],
+                            )
                     except ContextRequiredSectionOverflow as context_error:
                         retrieval_trace["context_governor"]["error"] = {
                             "code": context_error.code,
@@ -3584,6 +6721,13 @@ async def _execute_chat_evidence_application(
                     retrieval_trace["context_governor"]["calls"].append(
                         context_packet_trace(answer_packet, purpose="answer")
                     )
+                    if retrieval_trace.get("coverage_notice_sent"):
+                        # Добавление в список блоков — ещё не доставка: свидетельства
+                        # необязательны для governor'а, и хвост он отбрасывает первым.
+                        # Проверяем по собранному пакету, а не по нашему намерению.
+                        retrieval_trace["coverage_notice_delivered"] = (
+                            coverage_notice_in_packet(answer_packet)
+                        )
                     user_prompt = next(
                         (message["content"] for message in messages if message["role"] == "user"),
                         "",
@@ -3604,6 +6748,18 @@ async def _execute_chat_evidence_application(
                         "messages_total": sum(len(str(message.get("content") or "")) for message in messages),
                     }
                     retrieval_trace["prompt_layers"] = prompt_layers
+                    if model_driven_retrieval:
+                        retrieval_trace['query_notice_delivered'] = '[ЗАПРОСЫ]' in user_prompt
+                        retrieval_trace['smeta_evidence_delivery'] = smeta_evidence_delivery_trace(
+                            model_rag_query_hits, model_evidence_chunks, user_prompt,
+                        )
+                    if isinstance(retrieval_trace.get("grouped_model_evidence"), dict):
+                        # Собрано и доставлено — разные множества: governor отбрасывает
+                        # начало пакета, и по номерам групп нельзя судить о доставке
+                        # (аудит Codex 17.09).
+                        retrieval_trace["grouped_model_evidence"]["delivered_group_ids"] = (
+                            delivered_group_ids(user_prompt)
+                        )
                     logger.info(
                         "[PROMPT] provider=%s model=%s attempt=%s chars=%s layers=%s",
                         llm_runtime.provider,
@@ -3637,7 +6793,13 @@ async def _execute_chat_evidence_application(
                         answer_execution_preset.generation_reserve_tokens,
                     )
                     if model_driven_retrieval:
-                        generation_budget = answer_execution_preset.generation_reserve_tokens
+                        # Model-driven ответы не режем эвристиками intent/attempt, но явный
+                        # выбор оператора (response_length) и потолок пресета обязательны:
+                        # безусловная выдача полного резерва игнорировала «короткий ответ».
+                        generation_budget = min(
+                            answer_form.max_tokens,
+                            answer_execution_preset.generation_reserve_tokens,
+                        )
 
                     chat_body = {
                         "messages": messages,
@@ -3648,6 +6810,8 @@ async def _execute_chat_evidence_application(
                         ),
                         "max_tokens": generation_budget,
                     }
+                    if answer_read_tools:
+                        chat_body["tools"] = answer_read_tools
                     # При стриминге ретрай (строгий промпт) шлёт уже новый текст —
                     # просим клиент очистить накопленное от прошлой попытки.
                     if token_sink is not None and attempt > 1:
@@ -3660,17 +6824,158 @@ async def _execute_chat_evidence_application(
                                 llm_model,
                                 headers,
                                 chat_body,
-                                allow_stream=not model_driven_retrieval,
+                                allow_stream=False,
+                                audit_purpose="answer",
                             )
                             if active_model_result is not None:
                                 llm_model = active_model_result.connection.model_id
+                            read_count = 0
+                            read_limit = max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48))
+                            previous_reads: list[str] = []
+                            read_guard = FailedToolCallGuard()
+                            read_connection = active_model_result.public_connection_payload()
+                            try:
+                                while answer_read_tools and active_model_result.response.tool_calls:
+                                    raw_calls = list(active_model_result.response.tool_calls)
+                                    read_round = {
+                                        "calls": raw_calls, "text": active_model_result.response.text,
+                                        "usage": dict(usage), "results": [],
+                                        "connection": active_model_result.public_connection_payload(),
+                                        "unexecuted_call_ids": [str(c.get("id") or "") for c in raw_calls],
+                                    }
+                                    retrieval_trace.setdefault("model_rag_reads", []).append(read_round)
+                                    if read_count + len(raw_calls) > read_limit:
+                                        read_round["stop_reason"] = "read_call_budget_exhausted"
+                                        raise HTTPException(422, detail={
+                                            "code": "MODEL_RAG_READ_INCOMPLETE",
+                                            "message": "Лимит чтений исчерпан; вызовы и остаток сохранены в trace. Строки не закрыты.",
+                                        })
+                                    read_groups: list[str] = []
+                                    exchanges: list[dict[str, Any]] = []
+                                    for raw_call in raw_calls:
+                                        function = raw_call.get("function") or {}
+                                        try:
+                                            arguments = function.get("arguments") or "{}"
+                                            arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+                                            valid = (function.get("name") == "search_sources"
+                                                     and isinstance(arguments, dict) and set(arguments) == {"q"}
+                                                     and isinstance(arguments["q"], str) and bool(arguments["q"].strip()))
+                                        except (ValueError, TypeError):
+                                            arguments, valid = {}, False
+                                        call = {"tool": str(function.get("name") or ""), "args": arguments}
+                                        if not valid or read_guard.repeated(call):
+                                            payload = {"status": "blocked", "code": (
+                                                "INVALID_READ_CALL" if not valid else "REPEATED_FAILED_READ"),
+                                                "missing": ["A valid, non-repeated search_sources(q) call is required."]}
+                                            read_chunks = ()
+                                        else:
+                                            research_result = await model_research_tools.execute(call)
+                                            payload, read_chunks = research_result.payload, research_result.chunks
+                                        read_guard.record(call, payload)
+                                        read_count += 1
+                                        read_round["results"].append({"call_id": raw_call.get("id"), "payload": payload})
+                                        read_round["unexecuted_call_ids"].pop(0)
+                                        tool_results_for_model.append(payload)
+                                        groups: list[str] = []
+                                        if valid:
+                                            query = arguments["q"]
+                                            groups, read_evidence_chunks = build_model_rag_evidence_groups(
+                                                [(query, read_chunks)], query_offset=len(model_rag_query_hits),
+                                                # Formatting only: reserve the complete returned bodies.
+                                                # Governor is the sole authority on actual model capacity.
+                                                max_chars=len(query) + 4096 + sum(
+                                                    len(str(c.content)) + len(str(c.doc_name)) + 4096 for c in read_chunks),
+                                                hits_per_query=max(1, len(read_chunks)),
+                                            )
+                                            model_rag_query_hits.append((query, tuple(read_chunks)))
+                                            model_evidence_chunks.extend(read_evidence_chunks)
+                                            read_groups.extend(groups)
+                                        exchanges.append({"model_call": raw_call, "status": payload.get("status"),
+                                                          "code": payload.get("code"), "missing": payload.get("missing"),
+                                                          "warnings": payload.get("warnings"),
+                                                          "evidence_groups": evidence_group_ids(groups)})
+                                    messages, answer_packet = govern_model_rag_read_messages(
+                                        preset=answer_execution_preset, profile_prefix=sys_msg,
+                                        request_payload=question_tail, fixed_evidence=fixed_model_rag_evidence,
+                                        read_evidence=read_groups,
+                                        prior_evidence=[*previous_reads, *answer_evidence[len(fixed_model_rag_evidence):]],
+                                        exchange=exchanges, native_tools=answer_read_tools,
+                                    )
+                                    previous_reads.extend(read_groups)
+                                    read_round["context"] = context_packet_trace(answer_packet, purpose="answer_read")
+                                    retrieval_trace["context_governor"]["calls"].append(read_round["context"])
+                                    user_prompt = next((m["content"] for m in messages if m["role"] == "user"), "")
+                                    retrieval_trace["smeta_evidence_delivery"] = smeta_evidence_delivery_trace(
+                                        model_rag_query_hits, model_evidence_chunks, user_prompt,
+                                    )
+                                    retrieval_trace["grouped_model_evidence"]["delivered_group_ids"] = delivered_group_ids(user_prompt)
+                                    retrieval_trace["coverage_notice_delivered"] = coverage_notice_in_packet(answer_packet)
+                                    chat_body = {**chat_body, "messages": messages}
+                                    answer, usage = await _post_llm(
+                                        llm_runtime, llm_model, headers, chat_body, allow_stream=False,
+                                        audit_purpose="answer_read",
+                                    )
+                                    llm_model = active_model_result.connection.model_id
+                                    read_round["continuation_response"] = {
+                                        "text": active_model_result.response.text,
+                                        "tool_calls": list(active_model_result.response.tool_calls),
+                                        "usage": dict(usage),
+                                    }
+                                    continued_connection = active_model_result.public_connection_payload()
+                                    if any(continued_connection.get(key) != read_connection.get(key)
+                                           for key in ("revision_id", "model_id")):
+                                        read_round["connection_changed"] = continued_connection
+                                        raise HTTPException(409, detail={
+                                            "code": "MODEL_RAG_READ_CONNECTION_CHANGED",
+                                            "message": "Подключение модели изменилось во время чтения; результат не принят.",
+                                        })
+                                if previous_reads:
+                                    answer_source_map = _model_rag_source_map(model_evidence_chunks)
+                                    delivered_refs = delivered_evidence_cards(user_prompt, model_evidence_chunks)
+                                    for source in answer_source_map:
+                                        source["delivered_to_model"] = source.get("evidence_ref") in delivered_refs
+                                    delivered_chunks = [c for c in model_evidence_chunks
+                                                        if c.meta.get("model_evidence_ref") in delivered_refs]
+                                    model_rag_evidence_packet = build_retrieval_evidence_packet(
+                                        question=req.question, chunks=delivered_chunks,
+                                        retrieval_trace=retrieval_trace, navigation=evidence_navigation,
+                                        deterministic_evidence=deterministic_evidence,
+                                    )
+                                    final_evidence_packet = model_rag_evidence_packet.to_dict(
+                                        # This is a UI source inventory, not another inference packet.
+                                        # Include every source already proved present in actual messages.
+                                        max_chars=sum(len(c.content) + len(c.doc_name) + 4096 for c in delivered_chunks),
+                                        include_metadata=True,
+                                    )
+                                    retrieval_trace["prompt_layers"].update(
+                                        user_total=len(user_prompt),
+                                        messages_total=sum(len(str(m.get("content") or "")) for m in messages),
+                                    )
+                                    retrieval_trace["model_rag_read_complete"] = True
+                            except BaseException as read_error:
+                                if retrieval_trace.get("model_rag_reads"):
+                                    receipt = persist_model_rag_read_receipt(
+                                        trace=retrieval_trace, question=req.question,
+                                        attachment_context=attachment_context,
+                                        session_id=req.session_id, error=read_error,
+                                    )
+                                    logger.error("[MODEL_RAG_READ_INCOMPLETE] receipt=%s path=%s", receipt["receipt_id"], receipt["path"])
+                                    if isinstance(read_error, ContextRequiredSectionOverflow):
+                                        raise HTTPException(422, detail={
+                                            "code": "MODEL_RAG_READ_CONTEXT_OVERFLOW",
+                                            "message": "Полная карточка не помещается в контекст; чтение сохранено: " + receipt["receipt_id"],
+                                        }) from read_error
+                                    if isinstance(read_error, HTTPException) and isinstance(read_error.detail, dict):
+                                        read_error.detail = {**read_error.detail, "message":
+                                            str(read_error.detail.get("message") or "") + " receipt=" + receipt["receipt_id"]}
+                                raise
                         elif is_cloud_provider(llm_runtime.provider):
                             # Облако: цепочка моделей с таймаутом на модель (зависла → следующая).
                             answer, usage, llm_model = await _post_cloud_fallback(
                                 llm_runtime,
                                 headers,
                                 chat_body,
-                                allow_stream=not model_driven_retrieval,
+                                allow_stream=False,
                             )
                         else:
                             answer, usage = await _post_llm(
@@ -3678,12 +6983,12 @@ async def _execute_chat_evidence_application(
                                 llm_model,
                                 headers,
                                 chat_body,
-                                allow_stream=not model_driven_retrieval,
+                                allow_stream=False,
                             )
                     except (httpx.TransportError, httpx.TimeoutException, asyncio.TimeoutError, httpx.HTTPStatusError) as net_err:
                         # W3.3/ADR-9: все облачные модели не ответили → деградация на
                         # локальный MLX. Для не-облака (MLX) ошибку прокидываем как раньше.
-                        if not is_cloud_provider(llm_runtime.provider):
+                        if answer_read_tools or not is_cloud_provider(llm_runtime.provider):
                             raise
                         logger.warning(
                             "[ROUTE] облако %s исчерпало модели (%s) — fallback на локальный MLX",
@@ -3761,20 +7066,97 @@ async def _execute_chat_evidence_application(
                                 fallback_preset.generation_reserve_tokens,
                             ),
                         }
-                        answer, usage = await _post_llm(
+                        if model_driven_retrieval:
+                            retrieval_trace['smeta_evidence_delivery'] = smeta_evidence_delivery_trace(
+                                model_rag_query_hits, model_evidence_chunks,
+                                next((m['content'] for m in fallback_messages if m['role'] == 'user'), ''),
+                            )
+                        answer, usage, messages = await post_with_delivery_messages(
+                            _post_llm,
                             llm_runtime,
                             llm_model,
                             headers,
                             fallback_body,
-                            allow_stream=not model_driven_retrieval,
+                            allow_stream=False,
                         )
                     t_llm += time.time() - t_llm_call
+                    # Keep actual answer metadata separate from query generation,
+                    # including rejected attempts. Missing provider fields stay unknown.
+                    retrieval_trace.setdefault("answer_generations", []).append({
+                        "attempt": attempt, "model": llm_model,
+                        "output_budget": generation_budget,
+                        "finish_reason": usage.get("finish_reason") or None,
+                        "usage": {key: usage[key] for key in (
+                            "prompt_tokens", "completion_tokens", "total_tokens",
+                            "completion_tokens_details", "prompt_tokens_details",
+                        ) if key in usage},
+                    })
+                    # Inspect the complete response before any visible token/history write.
+                    # Per-delta checks cannot detect a control marker split across chunks.
+                    if is_control_channel_text(answer):
+                        retrieval_trace["answer_control_echo"] = {"attempt": attempt}
+                        answer = ""
                     if not answer:
                         if attempt < max_attempts:
                             logger.warning("[CHAT] empty LLM answer on attempt=%s — retrying strict", attempt)
                             continue
                         raise ValueError(f"Пустой ответ LLM (stream={token_sink is not None})")
+                    # Вырождение малой модели: вместо ответа дословно пересказан системный
+                    # промпт. Это не ответ — обрабатываем как пустой, с той же попыткой.
+                    _system_text = "\n".join(
+                        str(item.get("content") or "")
+                        for item in messages
+                        if isinstance(item, dict) and item.get("role") == "system"
+                    )
+                    if answer_echoes_prompt(answer, _system_text):
+                        retrieval_trace["answer_echoed_prompt"] = {"attempt": attempt}
+                        if attempt < max_attempts:
+                            logger.warning(
+                                "[CHAT] answer echoed the system prompt on attempt=%s — retrying strict",
+                                attempt,
+                            )
+                            continue
+                        raise ValueError("Модель вернула пересказ инструкции вместо ответа")
+                    # Зацикливание: модель повторяет один фрагмент (часто — свой прошлый
+                    # ответ из истории сессии) до упора в лимит. Усекать такое бессмысленно.
+                    if answer_is_degenerate_repetition(answer):
+                        retrieval_trace["answer_degenerate_repetition"] = {"attempt": attempt}
+                        if attempt < max_attempts:
+                            logger.warning(
+                                "[CHAT] degenerate repetition on attempt=%s — retrying strict",
+                                attempt,
+                            )
+                            continue
+                        raise ValueError("Модель зациклилась и не дала ответ на вопрос")
                     tokens = usage.get("completion_tokens", 0)
+                    # Модель выдумывает адреса источников (chat_history 193:
+                    # `[Раздел ПД №8 ... .pdf](https://example.com/source1)`). Фальшивая
+                    # ссылка в инженерном ответе хуже её отсутствия — снимаем разметку,
+                    # сохраняя имя документа.
+                    if not model_driven_retrieval or not answer.lstrip().startswith(("{", "[")):
+                        _known_targets = [
+                            str(value)
+                            for item in (answer_source_map or ())
+                            if isinstance(item, Mapping)
+                            for value in item.values()
+                            if isinstance(value, str)
+                        ]
+                        answer, _stripped_links = strip_unsupported_links(answer, _known_targets)
+                        if _stripped_links:
+                            retrieval_trace["answer_unsupported_links"] = _stripped_links
+                            logger.warning(
+                                "[CHAT] stripped %s fabricated link(s) from the answer",
+                                _stripped_links,
+                            )
+                    # Модель не знает о потолке и обрывается на полуслове: упор в бюджет
+                    # закрываем по границе предложения и помечаем усечение.
+                    if generation_budget and int(tokens or 0) >= int(generation_budget):
+                        if not model_driven_retrieval:
+                            answer = finalize_truncated_answer(answer)
+                        retrieval_trace["answer_truncated"] = {
+                            "completion_tokens": int(tokens or 0),
+                            "generation_budget": int(generation_budget),
+                        }
                     # W3.3: учёт расходов облака (токены → $). Локальные вызовы не считаем.
                     if is_cloud_provider(llm_runtime.provider):
                         _record_cloud_cost(state, llm_model, usage)
@@ -3787,6 +7169,8 @@ async def _execute_chat_evidence_application(
                     )
 
                     crag_status = "MODEL_OUTPUT"
+                    if token_sink is not None and not model_driven_retrieval:
+                        await token_sink({"event": "token", "data": answer})
                     logger.info("[CHAT] model answer accepted unchanged; citation check is trace-only")
                     break
 
@@ -3797,6 +7181,18 @@ async def _execute_chat_evidence_application(
                     model_result_blocking_errors: list[str] = []
                     if parsed_model_result is not None:
                         answer, model_result_rows = parsed_model_result
+                        model_result_rows = withhold_unreferenced_norms(
+                            model_result_rows,
+                            # Только доставленные карточки: найденное, но не показанное
+                            # ничего не подтверждает (аудит Codex 17.09).
+                            delivered_cards=delivered_evidence_cards(
+                                "\n".join(str(message.get("content") or "") for message in messages),
+                                model_evidence_chunks,
+                            ),
+                            prior_evidence=(portion_state or {}).get('prior_evidence') or (),
+                            observed_refs=[str((getattr(chunk, 'meta', {}) or {}).get('model_evidence_ref') or '')
+                                           for chunk in model_evidence_chunks],
+                        )
                         from proxy.services.smeta_chat_adapter_service import (
                             _smeta_source_row_count,
                         )
@@ -3804,13 +7200,23 @@ async def _execute_chat_evidence_application(
                         model_result_errors = validate_model_rag_result_structure(
                             model_result_rows,
                             model_evidence_chunks,
-                            expected_source_rows=_smeta_source_row_count(
-                                attachment_context
+                            # Порция знает своё число строк точно. Счёт по тексту нужен
+                            # только там, где порционности нет: на боевой раскладке СКС
+                            # он и так возвращает ноль — между наименованием и единицей
+                            # у неё стоят артикул и производитель.
+                            expected_source_rows=(
+                                int(portion_state.get("rows_in_pass") or 0)
+                                if portion_state.get("state") == "portion"
+                                else _smeta_source_row_count(attachment_context)
                             ),
                         )
                         model_result_blocking_errors = blocking_model_rag_result_errors(
                             model_result_errors
                         )
+                        if model_rows_must_belong_to_sheet(portion_state):
+                            portion_errors = portion_structure_errors(model_result_rows, portion_state)
+                            model_result_errors.extend(portion_errors)
+                            model_result_blocking_errors.extend(portion_errors)
                         if model_result_blocking_errors:
                             retrieval_trace["model_result"] = {
                                 "schema": "les_model_rag_result_v1",
@@ -3833,126 +7239,242 @@ async def _execute_chat_evidence_application(
                             "status": "unstructured",
                             "packaged": False,
                         }
-                    if token_sink is not None:
-                        await token_sink({"event": "reset", "data": ""})
-                        if answer:
-                            await token_sink({"event": "token", "data": answer})
+                    feedback_errors = (
+                        list(model_result_blocking_errors) if parsed_model_result is not None
+                        else ["unstructured_model_result"]
+                    )
+                    feedback_saved = False
+                    if portion_state.get("state") == "portion" and portion_cursors is not None:
+                        feedback_saved = _record_structural_feedback(
+                            portion_cursors,
+                            session_id=str(getattr(req, "session_id", "") or ""),
+                            revision=str(portion_state.get("source_revision") or ""),
+                            turn_id=str(getattr(req, "turn_id", "") or ""),
+                            answer=answer, rows=model_result_rows, errors=feedback_errors,
+                            evidence={"source_map": _model_rag_source_map(model_evidence_chunks),
+                                      "portion_shown": list(portion_state.get('shown') or [])},
+                        )
+                    if feedback_errors:
+                        retrieval_trace["model_result_notice"] = _model_result_notice(
+                            feedback_errors, saved=feedback_saved,
+                        )
                     attachment_id = str(getattr(req, "attachment_id", None) or "").strip()
                     packaging_tools = (
                         ["build_lsr_workbook"]
                         if "build_lsr_workbook" in profile_tools
                         else []
                     )
-                    if (
-                        parsed_model_result is not None
-                        and model_result_rows
-                        and not model_result_blocking_errors
-                        and attachment_id
-                        and packaging_tools
-                        and workbook_tool_executor is not None
-                        and canonical_execution_mode is CanonicalRouteMode.ACTIVE
-                    ):
-                        async def workbook_progress(event: dict[str, Any]) -> None:
-                            if token_sink is not None:
-                                await token_sink({"event": "tool_progress", "data": event})
+                    closed_anchors = (
+                        closed_row_anchors(
+                            model_result_rows, portion_state.get("shown") or []
+                        )
+                        if portion_state.get("state") == "portion"
+                        else []
+                    )
+                    model_result_rows = bind_normative_identity(
+                        model_result_rows, chunks=model_evidence_chunks,
+                        delivered_cards=delivered_evidence_cards(
+                            '\n'.join(str(m.get('content') or '') for m in messages), model_evidence_chunks),
+                        packet_text='\n'.join(str(m.get('content') or '') for m in messages),
+                        prior_evidence=(portion_state or {}).get('prior_evidence') or ())
+                    merged_decisions = merged_pass_decisions(
+                        model_result_rows,
+                        closed=closed_anchors,
+                        portion_state=portion_state,
+                    )
+                    # Preserve the accepted model result even if delivery or packaging
+                    # is cancelled. Binding occurs before the first await; only
+                    # the completed model answer is recorded, never a partial token stream.
+                    packaging_attempted = False
+                    try:
+                        if token_sink is not None:
+                            await token_sink({"event": "reset", "data": ""})
+                            if answer:
+                                await token_sink({"event": "token", "data": answer})
+                        if (
+                            parsed_model_result is not None
+                            and model_result_rows
+                            and not model_result_blocking_errors
+                            and attachment_id
+                            and packaging_tools
+                            and workbook_tool_executor is not None
+                            and canonical_execution_mode is CanonicalRouteMode.ACTIVE
+                        ):
+                            packaging_attempted = True
+                            async def workbook_progress(event: dict[str, Any]) -> None:
+                                if token_sink is not None:
+                                    await token_sink({"event": "tool_progress", "data": event})
 
-                        packaging_trace: list[dict[str, Any]] = []
-                        workbook_files: list[dict[str, str]] = []
-                        for packaging_tool in packaging_tools:
-                            workbook_call = {
-                                "tool": packaging_tool,
-                                "args": {
-                                    "attachment_id": attachment_id,
-                                    "question": str(req.question or ""),
-                                    "decisions": model_result_rows,
-                                },
-                            }
-                            try:
-                                workbook_payload = await workbook_tool_executor(
-                                    workbook_call,
-                                    {
-                                        "session_id": str(req.session_id or ""),
-                                        "question": str(req.question or ""),
-                                        "dataset_ids": [str(item) for item in _dataset_ids],
-                                        "project_id": getattr(req, "project_id", None),
+                            packaging_trace: list[dict[str, Any]] = []
+                            workbook_files: list[dict[str, str]] = []
+                            for packaging_tool in packaging_tools:
+                                workbook_call = {
+                                    "tool": packaging_tool,
+                                    "args": {
                                         "attachment_id": attachment_id,
-                                        "profile_revision_id": str(
-                                            (profile_snapshot or {}).get("revision_id") or ""
+                                        "question": str(req.question or ""),
+                                        # Книга собирается из решений всех проходов, а не
+                                        # только последнего: иначе третий проход выдал бы
+                                        # книгу на свои двадцать строк, потеряв пятьдесят
+                                        # прежних (ревью Codex 10.09).
+                                        "decisions": merged_decisions,
+                                        **({'review_calculation': True} if packaging_tool == 'build_lsr_workbook' else {}),
+                                        # Родословная книги: следующая ревизия знает, чья
+                                        # она продолжательница.
+                                        "parent_revision_id": (
+                                            portion_state.get("artifact_revision_id") or None
                                         ),
-                                        "model_identity": str(
-                                            getattr(
-                                                getattr(active_model_result, "connection", None),
-                                                "model_id",
-                                                "",
-                                            )
-                                            or llm_model
-                                        ),
-                                        "model_preset": execution_preset.preset_id,
                                     },
-                                    workbook_progress,
-                                )
-                                safe_payload = safe_workbook_history_projection(workbook_payload)
-                                harvested = harvest_workbook_tool_result(safe_payload)
-                                packaging_trace.append({
-                                    "tool": packaging_tool,
-                                    "status": str(safe_payload.get("status") or "empty"),
-                                    "code": str(safe_payload.get("code") or ""),
-                                })
-                                if not harvested:
-                                    continue
-                                artifact = (
-                                    harvested.get("artifact")
-                                    if isinstance(harvested.get("artifact"), dict)
-                                    else {}
-                                )
-                                if artifact.get("download_url"):
-                                    kind = str(artifact.get("artifact_kind") or "").strip()
-                                    if kind not in {"lsr_workbook", "vor_workbook"}:
-                                        kind = (
-                                            "vor_workbook"
-                                            if packaging_tool == "build_vor_workbook"
-                                            else "lsr_workbook"
-                                        )
-                                    workbook_files.append({
-                                        "filename": _chat_workbook_filename(
-                                            artifact.get("filename"),
-                                            artifact_kind=kind,
-                                            tool=packaging_tool,
-                                        ),
-                                        "download_url": str(artifact["download_url"]),
-                                        "artifact_kind": kind,
-                                    })
-                                if packaging_tool == "build_lsr_workbook" or not workbook_chat_meta:
-                                    workbook_chat_meta = harvested
-                            except Exception as packaging_error:  # noqa: BLE001 - keep model answer visible
-                                logger.exception(
-                                    "[WORKBOOK] post-model packaging failed: %s",
-                                    type(packaging_error).__name__,
-                                )
-                                packaging_trace.append({
-                                    "tool": packaging_tool,
-                                    "status": "error",
-                                    "error_type": type(packaging_error).__name__,
-                                })
-                        if workbook_chat_meta:
-                            artifact_meta = workbook_chat_meta.get("artifact")
-                            if isinstance(artifact_meta, dict):
-                                artifact_meta["draft_rows"] = compact_estimator_draft_rows(
-                                    model_result_rows
-                                )
-                                if workbook_files:
-                                    artifact_meta["files"] = workbook_files
-                                    artifact_meta.setdefault(
-                                        "filename", workbook_files[0]["filename"]
+                                }
+                                try:
+                                    workbook_payload = await workbook_tool_executor(
+                                        workbook_call,
+                                        {
+                                            "session_id": str(req.session_id or ""),
+                                            "question": str(req.question or ""),
+                                            "dataset_ids": [str(item) for item in _dataset_ids],
+                                            "project_id": getattr(req, "project_id", None),
+                                            "attachment_id": attachment_id,
+                                            "profile_revision_id": str(
+                                                (profile_snapshot or {}).get("revision_id") or ""
+                                            ),
+                                            "model_identity": str(
+                                                getattr(
+                                                    getattr(active_model_result, "connection", None),
+                                                    "model_id",
+                                                    "",
+                                                )
+                                                or llm_model
+                                            ),
+                                            "model_preset": execution_preset.preset_id,
+                                            "document_price_basis": document_price_basis,
+                                            "source_revision": document_source_revision,
+                                            "source_attachment_sha256": document_source_attachment_sha256,
+                                        },
+                                        workbook_progress,
                                     )
-                        retrieval_trace["model_result"] = {
-                            "schema": "les_model_rag_result_v1",
-                            "status": "accepted_unchanged",
-                            "row_count": len(model_result_rows),
-                            "packaging": packaging_trace,
-                            "warnings": model_result_errors,
-                        }
+                                    safe_payload = safe_workbook_history_projection(workbook_payload)
+                                    harvested = harvest_workbook_tool_result(safe_payload)
+                                    packaging_trace.append({
+                                        "tool": packaging_tool,
+                                        "status": str(safe_payload.get("status") or "empty"),
+                                        "code": str(safe_payload.get("code") or ""),
+                                    })
+                                    if not harvested:
+                                        continue
+                                    artifact = (
+                                        harvested.get("artifact")
+                                        if isinstance(harvested.get("artifact"), dict)
+                                        else {}
+                                    )
+                                    if artifact.get("download_url"):
+                                        kind = str(artifact.get("artifact_kind") or "").strip()
+                                        if kind not in {"lsr_workbook", "vor_workbook"}:
+                                            kind = (
+                                                "vor_workbook"
+                                                if packaging_tool == "build_vor_workbook"
+                                                else "lsr_workbook"
+                                            )
+                                        workbook_files.append({
+                                            "filename": _chat_workbook_filename(
+                                                artifact.get("filename"),
+                                                artifact_kind=kind,
+                                                tool=packaging_tool,
+                                            ),
+                                            "download_url": str(artifact["download_url"]),
+                                            "artifact_kind": kind,
+                                        })
+                                    if packaging_tool == "build_lsr_workbook" or not workbook_chat_meta:
+                                        workbook_chat_meta = harvested
+                                except Exception as packaging_error:  # noqa: BLE001 - keep model answer visible
+                                    logger.exception(
+                                        "[WORKBOOK] post-model packaging failed: %s",
+                                        type(packaging_error).__name__,
+                                    )
+                                    packaging_trace.append({
+                                        "tool": packaging_tool,
+                                        "status": "error",
+                                        "error_type": type(packaging_error).__name__,
+                                    })
+                            if workbook_chat_meta:
+                                artifact_meta = workbook_chat_meta.get("artifact")
+                                if isinstance(artifact_meta, dict):
+                                    artifact_meta["draft_rows"] = compact_estimator_draft_rows(
+                                        model_result_rows
+                                    )
+                                    if workbook_files:
+                                        artifact_meta["files"] = workbook_files
+                                        artifact_meta.setdefault(
+                                            "filename", workbook_files[0]["filename"]
+                                        )
+                            retrieval_trace["model_result"] = {
+                                "schema": "les_model_rag_result_v1",
+                                "status": "accepted_unchanged",
+                                "row_count": len(model_result_rows),
+                                "packaging": packaging_trace,
+                                "warnings": model_result_errors,
+                            }
 
+                        if model_driven_retrieval and parsed_model_result is not None:
+                            retrieval_trace["smeta_funnel"] = smeta_selection_funnel(
+                                query_hits=model_rag_query_hits,
+                                shown_chunks=model_evidence_chunks,
+                                rows=model_result_rows,
+                                rejected=rejected_row_reasons(workbook_chat_meta),
+                                bound_rows=workbook_bound_rows(workbook_chat_meta),
+                                includes_prior_rows=bool(portion_state.get("prior_decisions")),
+                                row_statuses=workbook_row_statuses(workbook_chat_meta),
+                            )
+                    finally:
+                        if (portion_state.get("state") == "portion" and portion_cursors is not None
+                                and parsed_model_result is not None and not model_result_blocking_errors):
+                            # Решение модели и состояние упаковки — разные вещи. Строка,
+                            # для которой норма выбрана, остаётся решённой, даже если книга
+                            # не собралась: иначе модель гоняли бы по уже разобранным
+                            # строкам из-за занятого диска (ревью Codex 11.09). Несобранная
+                            # книга видна по расхождению отпечатков решений и артефакта —
+                            # её пересоберёт следующий запрос, ещё до обращения к модели.
+                            packaging_failed = packaging_attempted and not workbook_chat_meta
+                            if packaging_failed:
+                                retrieval_trace["smeta_portion_packaging_failed"] = True
+                            # Проход засчитывается по решениям, а не по показанным строкам:
+                            # позиция без карточек вернётся в следующий проход.
+                            built_revision = _workbook_revision_id(workbook_chat_meta)
+                            record_portion_pass(
+                                portion_cursors,
+                                session_id=str(getattr(req, "session_id", "") or ""),
+                                portion_state=portion_state,
+                                rows=model_result_rows,
+                                closed=closed_anchors,
+                                artifact_revision_id=built_revision,
+                                artifact_decisions_revision=(
+                                    _portion_decisions_revision(merged_decisions, document_price_basis=document_price_basis)
+                                    if built_revision else None
+                                ),
+                                rejected=rejected_row_reasons(workbook_chat_meta),
+                                row_statuses=workbook_row_statuses(workbook_chat_meta),
+                                evidence=evidence_snapshot(
+                                    model_result_rows, model_evidence_chunks,
+                                    delivered_cards=delivered_evidence_cards(
+                                        "\n".join(str(message.get('content') or '') for message in messages),
+                                        model_evidence_chunks,
+                                    ),
+                                ),
+                                calculation_receipts=(workbook_chat_meta.get('workbook_diagnostics') or {}).get('row_calculation') or [],
+                                pass_id=str(getattr(req, "turn_id", "") or "").strip(),
+                                trace=retrieval_trace,
+                            )
+                            if retrieval_trace.get("smeta_portion_recorded"):
+                                portion_state["completed"] = int(
+                                    retrieval_trace.get("smeta_portion_decided") or 0
+                                )
+                                portion_state["exhausted"] = int(
+                                    retrieval_trace.get("smeta_portion_unresolved") or 0
+                                )
+                                portion_state["pending"] = max(
+                                    0, int(portion_state.get("total") or 0)
+                                    - portion_state["completed"],
+                                )
                 try:
                     from proxy.services.evidence_packet_service import verify_answer_source_labels
 
@@ -4096,7 +7618,7 @@ async def _execute_chat_evidence_application(
                 except Exception as db_err:
                     logger.warning("[CHAT] History save error: %s", db_err)
 
-                if use_semantic_cache and cache_embedding and cache_scope and crag_status == "VERIFIED":
+                if use_semantic_cache and not primary_document_pricing and cache_embedding and cache_scope and crag_status == "VERIFIED":
                     try:
                         cache.store(
                             req.question,
@@ -4108,7 +7630,7 @@ async def _execute_chat_evidence_application(
                         )
                     except Exception as cache_err:
                         logger.warning("[SEM_CACHE] store skipped: %s", cache_err)
-                elif use_semantic_cache and cache_scope and crag_status == "UNVALIDATED":
+                elif use_semantic_cache and not primary_document_pricing and cache_scope and crag_status == "UNVALIDATED":
                     try:
                         cache.store_session_unvalidated(
                             req.question,
@@ -4153,8 +7675,40 @@ async def _execute_chat_evidence_application(
                 if active_model_result is not None:
                     response["model_connection"] = active_model_result.public_connection_payload()
                     response["model_connection"]["pending_tool_calls"] = active_pending_tool_calls
+                if not workbook_chat_meta and portion_state.get("rebuilt_workbook"):
+                    # Книгу пересобрали до обращения к модели — она и уходит в ответ.
+                    workbook_chat_meta = dict(portion_state["rebuilt_workbook"])
                 if workbook_chat_meta:
                     response.update(workbook_chat_meta)
+                if retrieval_trace.get("model_result_notice"):
+                    response["model_result_notice"] = dict(retrieval_trace["model_result_notice"])
+                if portion_state.get("state") == "portion" and portion_state.get("pending"):
+                    # Ведомость не закрыта — скрепку надо сохранить, иначе следующее
+                    # «продолжай» придёт без вложения и продолжать будет нечего:
+                    # интерфейс держит файл ровно столько, сколько просит сервер.
+                    response.setdefault("attachment_retry", {})
+                    attachment_id_for_retry = str(
+                        getattr(req, "attachment_id", "") or ""
+                    ).strip()
+                    if attachment_id_for_retry:
+                        response["attachment_retry"] = {
+                            **response["attachment_retry"],
+                            "attachment_id": attachment_id_for_retry,
+                            "id": attachment_id_for_retry,
+                            "preserved": True,
+                        }
+                    response["smeta_portion"] = {
+                        "schema": "les.smeta.portion-progress.v2",
+                        "pass_no": portion_state.get("pass_no"),
+                        "rows_in_pass": portion_state.get("rows_in_pass"),
+                        "remaining": portion_state.get("pending"),
+                        "total": portion_state.get("total"),
+                        # Решено и «больше не спрашиваем» — разные числа, и смешивать их
+                        # в отчёте нельзя: исчерпанный лимит попыток остаётся нерешённой
+                        # позицией (ревью Codex 11.09).
+                        "decided": portion_state.get("completed"),
+                        "unresolved": portion_state.get("exhausted"),
+                    }
                 if notebook_study_pack is not None:
                     response["notebook_context"] = notebook_study_pack.payload()
                     if notebook_study_artifact:

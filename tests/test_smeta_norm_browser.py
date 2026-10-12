@@ -2,6 +2,9 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 
 def _base(path):
@@ -16,7 +19,7 @@ def _base(path):
         );
         CREATE TABLE resources(
             parent_norm_id TEXT, norm_key TEXT, kind TEXT, resource_code TEXT,
-            resource_name TEXT, resource_unit TEXT
+            resource_name TEXT, resource_unit TEXT, per_unit REAL
         );
         CREATE VIRTUAL TABLE norms_fts USING fts5(
             norm_key UNINDEXED, norm_name, work_steps, tokenize='unicode61'
@@ -64,6 +67,53 @@ def test_unrelated_query_is_not_expanded():
     from proxy.smeta_core.norm_browser import _query_variants
 
     assert _query_variants("Кладка кирпичной стены") == ["Кладка кирпичной стены"]
+
+
+@pytest.mark.parametrize("query", [
+    "Монтаж БАП светильника",
+    "Монтаж гофра ПВХ",
+    "Прокладка кабеля категории 5",
+    "Кладка кирпичной стены",
+])
+def test_active_chat_retrieval_executes_only_model_query(tmp_path, monkeypatch, query):
+    """Exercise the real chat callback and browser, not a mocked callback boundary."""
+    from proxy.smeta_core import norm_browser as browser
+    from proxy.services import model_research_tool_service as research
+
+    path = tmp_path / "literal.sqlite"
+    conn = _base(path)
+    _insert_norm(conn, name=query)
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(browser, "_base_path", lambda: path)
+    monkeypatch.setattr(browser, "normative_base_integrity", lambda **kw: {
+        "status": "trusted", "trusted_for_pricing": True})
+    monkeypatch.setattr(research, "_with_usage_evidence", lambda payload, *a, **kw: payload)
+    seen_rag, seen_lexical, seen_rerank = [], [], []
+    typed = browser._typed_cards
+
+    def lexical(value, **kwargs):
+        seen_lexical.append(value)
+        return typed(value, **kwargs)
+
+    def rag(values, **kwargs):
+        seen_rag.extend(values)
+        return {value: [] for value in values}
+
+    def rerank(value, cards, **kwargs):
+        seen_rerank.append(value)
+        return cards, True, "ok"
+
+    monkeypatch.setattr(browser, "_typed_cards", lexical)
+    monkeypatch.setattr(browser, "_rag_cards_many", rag)
+    monkeypatch.setattr(browser, "_rerank_cards", rerank)
+    result = research.retrieve_smeta_norm_cards(query, limit=6)
+    assert seen_rag == [query]
+    assert seen_lexical == [query]
+    assert seen_rerank == [query]
+    assert result["cards"][0]["title"] == query
+    assert result["retrieval_trace"]["query_variants"] == [query]
+    assert result["retrieval_trace"]["query_expansion"] is False
 
 
 def test_collection_catalog_fuses_official_lexical_signal_with_rerank(
@@ -148,6 +198,266 @@ def _insert_norm(conn, *, key="ГЭСНм:08-02-001-01", name="Проклады�
         "INSERT INTO norms_fts VALUES(?,?,?)",
         (key, name, json.dumps(steps, ensure_ascii=False)),
     )
+
+
+@pytest.mark.parametrize('kwargs', [dict(base_types=['ГЭСН']), dict(collections=['17'])])
+def test_exact_code_intersects_explicit_scope_without_vector_substitution(tmp_path, monkeypatch, kwargs):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'scope.sqlite'
+    conn=_base(path)
+    for key in ('ГЭСНм:08-02-001-01','ГЭСН:08-02-001-01','ГЭСНм:17-02-001-01'):
+        _insert_norm(conn,key=key)
+    conn.commit(); conn.close()
+    monkeypatch.setattr(browser,'normative_base_integrity',lambda **k:{'trusted_for_pricing':True})
+    monkeypatch.setattr(browser,'_rag_cards_many',lambda *a,**k:pytest.fail('Exact code never uses vector substitutes'))
+    query='ГЭСНм08-02-001-01'
+    result=browser.browse_norms_many([query],base_path=path,rerank=False,**kwargs)[query]
+    assert result['cards']==[]
+    assert result['query']==query
+    assert result['retrieval_trace']['filters']['collections']==kwargs.get('collections',[])
+
+
+def test_explicit_table_intersects_collection_scope(tmp_path,monkeypatch):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'scope.sqlite'; conn=_base(path)
+    for key in ('ГЭСНм:08-02-001-01','ГЭСН:08-02-001-01','ГЭСНм:17-02-001-01'):
+        _insert_norm(conn,key=key)
+    conn.commit(); conn.close()
+    monkeypatch.setattr(browser,'normative_base_integrity',lambda **k:{'trusted_for_pricing':True})
+    result=browser.browse_norms_many(['literal query'],base_path=path,base_types=['ГЭСНм'],
+        table_codes=['08-02-001'],collections=['17'])['literal query']
+    assert result['cards']==[]
+    assert result['retrieval_trace']['filters']['collections']==['17']
+
+
+def test_native_rrf_prefetch_scope_prevents_outside_topk_starvation(tmp_path,monkeypatch):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'scope.sqlite'; conn=_base(path)
+    wanted='ГЭСНм:08-02-001-01'
+    _insert_norm(conn,key=wanted,name='Scoped evidence')
+    _insert_norm(conn,key='ГЭСН:08-02-001-01',name='Other family')
+    wrong=[f'ГЭСНм:17-02-001-{n:02d}' for n in range(1,26)]
+    for key in wrong:
+        _insert_norm(conn,key=key,name='Unrelated higher score')
+    conn.commit(); conn.close()
+    manifest=path.with_name('les_smeta_norm_rag_manifest.json')
+    manifest.write_text(json.dumps(dict(status='passed',collection='fixture',embedding_model='fixture',
+        base_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),index_mode='hybrid')),encoding='utf-8')
+    monkeypatch.setenv('LES_SMETA_NORM_RAG_MANIFEST',str(manifest))
+    monkeypatch.setattr(browser,'_rag_collection',lambda:'fixture')
+    monkeypatch.setattr(browser,'_rag_embedding_model',lambda:'fixture')
+    monkeypatch.setattr(browser,'_rag_dense_contract',lambda p:(True,'','fixture','fixture'))
+    monkeypatch.setattr(browser,'normative_base_integrity',lambda **k:{'trusted_for_pricing':True})
+    seen=[]
+    class Embedding:
+        def __init__(self,*a,**k): pass
+        def encode_sync(self,values):
+            seen.append(('queries',values)); return [[1.0] for _ in values]
+    class Client:
+        def __init__(self,*a,**k): pass
+        def collection_exists(self,*a): return True
+        def close(self): pass
+        def query_points(self,**kw):
+            seen.append(('query',kw))
+            filtering=kw.get('query_filter')
+            conditions={c.key:c.match for c in filtering.must} if filtering else {}
+            keys=conditions.get('norm_key')
+            selected=list(keys.any) if keys else [*wrong,wanted]
+            return SimpleNamespace(points=[SimpleNamespace(payload={'norm_key':key}) for key in selected[:kw['limit']]])
+    monkeypatch.setattr(browser,'EmbedClient',Embedding)
+    monkeypatch.setattr(browser,'QdrantClient',Client)
+    monkeypatch.setattr(browser,'encode_bm25',lambda q:{1:1.0})
+    result=browser.browse_norms_many(['literal query'],base_path=path,base_types=['ГЭСНм'],
+        collections=['08'],rerank=False,expand_queries=False)['literal query']
+    assert [c['norm_key'] for c in result['cards']]==[wanted]
+    sent=next(value for kind,value in seen if kind=='query')
+    assert sent['query'].fusion==browser.models.Fusion.RRF
+    assert len(sent['prefetch'])==2
+    assert all(p.filter==sent['query_filter'] for p in sent['prefetch'])
+    assert all(c.key in {'norm_key','base_type','base_sha256'} for c in sent['query_filter'].must)
+    assert next(value for kind,value in seen if kind=='queries')==['literal query']
+    assert result['retrieval_trace']['rag']['scope']['norm_key_count']==1
+
+
+def test_empty_scope_never_turns_into_unfiltered_native_query(tmp_path,monkeypatch):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'scope.sqlite'; conn=_base(path); _insert_norm(conn); conn.commit(); conn.close()
+    monkeypatch.setattr(browser,'_rag_manifest_status',lambda **k:(True,''))
+    monkeypatch.setattr(browser,'QdrantClient',lambda **k:pytest.fail('Empty scope must not access Qdrant'))
+    trace={}
+    assert browser._rag_cards_many(['literal query'],limit=24,base_path=path,trace=trace,
+        base_types=('ГЭСНм',),collections=('99',))=={'literal query':[]}
+    assert trace['reason']=='scope_empty' and trace['scope']['norm_key_count']==0
+
+
+def test_scoped_revision_conflict_is_not_swallowed_as_generic_dense_failure(tmp_path,monkeypatch):
+    from proxy.smeta_core import norm_browser as browser
+    from proxy.smeta_core.norm_revision import NormRevisionConflict
+    path=tmp_path/'exists.sqlite'; path.write_bytes(b'fixture')
+    monkeypatch.setattr(browser,'_rag_manifest_status',lambda **k:(True,''))
+    def changed(p):
+        raise NormRevisionConflict({'base_sha256':'a'*64},{'base_sha256':'b'*64},'fixture_revision_changed')
+    monkeypatch.setattr(browser,'_connect_base_readonly',changed)
+    trace={}
+    assert browser._rag_cards_many(['literal'],limit=24,base_path=path,base_types=('ГЭСНм',),trace=trace)=={'literal':[]}
+    assert trace['status']=='blocked' and trace['reason']=='fixture_revision_changed'
+    assert trace['normative_revision']['expected']['base_sha256']=='a'*64
+
+
+@pytest.mark.parametrize('reason',['normative_wal_pending','normative_metadata_query_failed','normative_revision_changed_during_hash'])
+def test_manifest_revision_conflict_is_explicit_before_client_or_embedding(tmp_path,monkeypatch,reason):
+    from proxy.smeta_core import norm_browser as browser
+    from proxy.smeta_core.norm_revision import NormRevisionConflict
+    path=tmp_path/'source.sqlite'
+    conn=_base(path); _insert_norm(conn); conn.commit(); conn.close()
+    expected={'base_sha256':'a'*64}
+    actual={'base_sha256':'b'*64}
+    def changed(**kwargs):
+        raise NormRevisionConflict(expected,actual,reason)
+    monkeypatch.setattr(browser,'_rag_manifest_status',changed)
+    monkeypatch.setattr(browser,'QdrantClient',lambda **kwargs:pytest.fail('A manifest conflict must not contact Qdrant'))
+    monkeypatch.setattr(browser,'EmbedClient',lambda *args,**kwargs:pytest.fail('A manifest conflict must not call embedding'))
+    trace={}
+    assert browser._rag_cards_many(['literal model query'],limit=24,base_path=path,
+        base_types=('ГЭСНм',),collections=('08',),trace=trace)=={'literal model query':[]}
+    assert trace['status']=='blocked' and trace['reason']==reason
+    assert trace['normative_revision']=={'expected':expected,'actual':actual}
+
+
+def test_scope_snapshot_closes_when_client_construction_fails(tmp_path,monkeypatch):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'scope.sqlite'; conn=_base(path); _insert_norm(conn); conn.commit(); conn.close()
+    manifest=path.with_name('les_smeta_norm_rag_manifest.json')
+    manifest.write_text(json.dumps({'base_sha256':hashlib.sha256(path.read_bytes()).hexdigest()}),encoding='utf-8')
+    monkeypatch.setenv('LES_SMETA_NORM_RAG_MANIFEST',str(manifest))
+    monkeypatch.setattr(browser,'_rag_manifest_status',lambda **k:(True,''))
+    original=browser._connect_base_readonly
+    closes=[]
+    class Snapshot:
+        def __init__(self):
+            self.conn=original(path); self.base_sha256=self.conn.base_sha256
+        @property
+        def row_factory(self): return self.conn.row_factory
+        @row_factory.setter
+        def row_factory(self,value): self.conn.row_factory=value
+        def execute(self,*a): return self.conn.execute(*a)
+        def close(self): closes.append(True); self.conn.close()
+    monkeypatch.setattr(browser,'_connect_base_readonly',lambda p:Snapshot())
+    def broken(**k): raise ValueError('synthetic constructor failure')
+    monkeypatch.setattr(browser,'QdrantClient',broken)
+    trace={}
+    assert browser._rag_cards_many(['literal'],limit=24,base_path=path,base_types=('ГЭСНм',),trace=trace)=={'literal':[]}
+    assert closes==[True] and trace['reason']=='ValueError'
+
+
+def test_unavailable_exact_reader_does_not_fall_back_to_vectors(tmp_path,monkeypatch):
+    from proxy.smeta_core import norm_browser as browser
+    monkeypatch.setattr(browser,'normative_base_integrity',lambda **k:{'trusted_for_pricing':False})
+    monkeypatch.setattr(browser,'_rag_cards_many',lambda *a,**k:pytest.fail('Exact query must not use vectors'))
+    query='ГЭСНм08-02-001-01'
+    result=browser.browse_norms_many([query],base_path=tmp_path/'missing.sqlite')[query]
+    assert result['cards']==[] and result['backend']=='structured_base_unavailable'
+    assert result['retrieval_trace']['rag']['status']=='blocked'
+
+
+@pytest.mark.parametrize('table_heading', ['Таблица 08-02-001. Literal source heading', ''])
+def test_sql_table_heading_reaches_common_reranker_without_invention(tmp_path,monkeypatch,table_heading):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'heading.sqlite'; conn=_base(path)
+    for n in range(1,5):
+        _insert_norm(conn,key=f'ГЭСНм:08-02-001-{n:02d}',name=f'Source operation {n}',steps=['Literal work step'])
+    conn.execute('UPDATE norms SET source_doc=?',('Source document<br/>Раздел source'+('<br/>'+table_heading if table_heading else ''),))
+    conn.commit(); conn.close()
+    cards=browser._code_listing('ГЭСНм','08-02-001',base_path=path)
+    assert all(card.get('table_heading')==table_heading for card in cards)
+    seen=[]
+    class Reranker:
+        def __init__(self,**kwargs): pass
+        async def rerank(self,query,chunks,**kwargs):
+            seen.extend(chunks); return []
+    monkeypatch.setattr(browser,'select_reranker_cls',lambda:Reranker)
+    browser._rerank_cards('literal model query',cards,limit=4)
+    assert len(seen)==4
+    assert all('Literal work step' in c['text'] for c in seen)
+    if table_heading:
+        assert all(table_heading in c['text'] for c in seen)
+    else:
+        assert all('Таблица' not in c['text'] for c in seen)
+
+
+@pytest.mark.parametrize('query,mode,count', [('cable absent','prefix_or',1),
+    ('cable installation','strict_and',1),('unknown absent',None,0)])
+def test_actual_fts_trace_discloses_executed_relaxation(tmp_path,query,mode,count):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'lexical.sqlite'; conn=_base(path)
+    _insert_norm(conn,name='cable installation'); conn.commit(); conn.close()
+    trace={}
+    cards=browser._typed_cards(query,limit=24,base_path=path,trace=trace)
+    assert len(cards)==count
+    assert trace['query']==query and trace['selected_mode']==mode
+    attempts=trace['attempts']
+    if mode=='prefix_or':
+        assert [item['mode'] for item in attempts]==['strict_and','prefix_and','prefix_or']
+        assert [item['count'] for item in attempts]==[0,0,1]
+        assert ' AND ' in attempts[0]['fts_query'] and ' OR ' in attempts[-1]['fts_query']
+    elif mode=='strict_and':
+        assert len(attempts)==1 and attempts[0]['count']==1
+    else:
+        assert all(item['count']==0 for item in attempts)
+
+
+def test_fts_all_terms_and_exact_key_trace_are_literal(tmp_path):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'lexical.sqlite'; conn=_base(path); _insert_norm(conn,name='cable'); conn.commit(); conn.close()
+    words=['cable',*[f'absent{n}' for n in range(12)]]
+    trace={}
+    browser._typed_cards(' '.join(words),limit=24,base_path=path,trace=trace)
+    assert trace['term_limit'] is None and trace['terms_used']==words and trace['terms_omitted']==[]
+    assert all('absent11' in item['fts_query'] for item in trace['attempts'])
+    exact={}
+    browser._typed_cards('ГЭСНм08-02-001-01',limit=24,base_path=path,trace=exact)
+    assert exact['selected_mode']=='exact_key'
+    assert exact['attempts']==[{'mode':'exact_key','norm_key':'ГЭСНм:08-02-001-01','count':1}]
+
+
+@pytest.mark.parametrize('literal,source_value,other_value', [
+    ('0,8', '0.8', '0.5'),
+    ('0.8', '0,8', '0,5'),
+    ('3,5', '3,5', '3,0'),
+    ('4', '4', '40'),
+])
+def test_fts_keeps_numeric_conditions_in_actual_match(tmp_path,literal,source_value,other_value):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'numeric.sqlite'; conn=_base(path)
+    _insert_norm(conn,key='ГЭСНм:08-02-001-01',name=f'Панель толщина {other_value} мм')
+    _insert_norm(conn,key='ГЭСНм:08-02-001-02',name=f'Панель толщина {source_value} мм')
+    conn.commit();conn.close();trace={}
+    cards=browser._typed_cards(f'Панель толщина {literal} мм',limit=6,base_path=path,trace=trace)
+    assert [c['norm_code'] for c in cards]==['ГЭСНм08-02-001-02']
+    assert trace['selected_mode']=='strict_and'
+    assert literal in trace['terms_used'] and trace['terms_omitted']==[]
+
+
+def test_fts_term_after_twelfth_word_changes_the_selected_candidates(tmp_path):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'tail.sqlite';conn=_base(path)
+    common='панель стальная внутренняя готовая отдельная специальная заводская сборная малая типовая полая квадратная'
+    _insert_norm(conn,key='ГЭСНм:08-02-001-01',name=common+' монтаж')
+    _insert_norm(conn,key='ГЭСНм:08-02-001-02',name=common+' демонтаж')
+    conn.commit();conn.close();trace={}
+    cards=browser._typed_cards(common+' демонтаж',limit=1,base_path=path,trace=trace)
+    assert [c['norm_code'] for c in cards]==['ГЭСНм08-02-001-02']
+    assert trace['terms_used'][-1]=='демонтаж' and trace['selected_mode']=='strict_and'
+
+
+def test_literal_variant_fts_traces_survive_browse_without_query_changes(tmp_path,monkeypatch):
+    from proxy.smeta_core import norm_browser as browser
+    path=tmp_path/'lexical.sqlite'; conn=_base(path); _insert_norm(conn,name='cable installation'); conn.commit(); conn.close()
+    monkeypatch.setattr(browser,'_rag_cards_many',lambda queries,**kwargs:{query:[] for query in queries})
+    result=browser.browse_norms_many(['cable absent'],limit=6,base_path=path,rerank=False,expand_queries=False)['cable absent']
+    assert result['query']=='cable absent' and result['retrieval_trace']['query_variants']==['cable absent']
+    traces=result['retrieval_trace']['lexical_variants']
+    assert len(traces)==1 and traces[0]['query']=='cable absent' and traces[0]['selected_mode']=='prefix_or'
 
 
 def test_typed_fts_uses_russian_prefix_fallback(tmp_path):
@@ -382,11 +692,11 @@ def test_norm_card_exposes_resource_names_for_technology_audit(tmp_path):
     conn = _base(path)
     _insert_norm(conn, name="Монтаж коробки")
     conn.execute(
-        "INSERT INTO resources VALUES(?,?,?,?,?,?)",
+        "INSERT INTO resources(parent_norm_id,norm_key,kind,resource_code,resource_name,resource_unit) VALUES(?,?,?,?,?,?)",
         ("n1", "ГЭСНм:08-02-001-01", "machine", "91.01.01", "Кран башенный", "маш.-ч"),
     )
     conn.execute(
-        "INSERT INTO resources VALUES(?,?,?,?,?,?)",
+        "INSERT INTO resources(parent_norm_id,norm_key,kind,resource_code,resource_name,resource_unit) VALUES(?,?,?,?,?,?)",
         ("n1", "ГЭСНм:08-02-001-01", "material", "01.01", "Электроды сварочные", "кг"),
     )
     conn.execute("UPDATE norms SET resource_count=2")
@@ -399,6 +709,27 @@ def test_norm_card_exposes_resource_names_for_technology_audit(tmp_path):
     assert [item["name"] for item in card["resource_preview"]] == [
         "Кран башенный", "Электроды сварочные",
     ]
+
+
+def test_norm_card_delivers_resource_consumption_per_norm_measure(tmp_path, monkeypatch):
+    from proxy.smeta_core.norm_browser import _typed_cards
+    from proxy.services import model_research_tool_service as research
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(conn, name="Устройство покрытия")
+    conn.execute("UPDATE norms SET norm_unit='100 м2', resource_count=1")
+    conn.execute("INSERT INTO resources VALUES(?,?,?,?,?,?,?)",
+                 ("n1", "ГЭСНм:08-02-001-01", "material", "R1", "Клей", "кг", 66.0))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(research, "norm_table_variants", lambda _: ())
+
+    card = _typed_cards("устройство покрытия", limit=1, base_path=path)[0]
+    assert card["resource_preview"][0]["per_unit"] == 66.0
+    text = research.smeta_card_text(card)
+    assert "расход на 100 м2" in text
+    assert "Клей [кг; 66.0]" in text
 
 
 def test_browse_keeps_wide_pool_until_reranker(monkeypatch, tmp_path):
@@ -431,10 +762,37 @@ def test_browse_keeps_wide_pool_until_reranker(monkeypatch, tmp_path):
 
     result = norm_browser.browse_norms("обычная работа", limit=5, base_path=tmp_path / "base.sqlite")
 
-    assert seen["input"] == 24
+    assert seen["input"] == 40
     assert len(result["cards"]) == 5
-    assert result["retrieval_trace"]["fusion_candidates"] == 24
+    assert result["retrieval_trace"]["fusion_candidates"] == 40
     assert result["retrieval_trace"]["reranked"] is True
+
+
+def test_browse_does_not_drop_disjoint_channel_tail_before_reranking(monkeypatch, tmp_path):
+    from proxy.smeta_core import norm_browser as browser
+
+    lexical = [{"norm_key": f"L:{i}", "norm_code": f"L-{i}", "title": f"left {i}"} for i in range(24)]
+    native = [{"norm_key": f"N:{i}", "norm_code": f"N-{i}", "title": f"right {i}"} for i in range(24)]
+    query = "literal model query"
+    wanted = lexical[-1]
+    seen = {}
+    monkeypatch.setattr(browser, "normative_base_integrity", lambda **_: {"status": "trusted"})
+    monkeypatch.setattr(browser, "_typed_cards", lambda *_, **__: lexical)
+    monkeypatch.setattr(browser, "_rag_cards_many", lambda queries, **_: {q: native for q in queries})
+
+    def rerank(actual_query, cards, *, limit):
+        assert actual_query == query
+        seen["keys"] = [c["norm_key"] for c in cards]
+        # A relevance model can only promote a candidate that actually reached it.
+        ordered = sorted(cards, key=lambda c: c["norm_key"] != wanted["norm_key"])
+        return ordered[:limit], True, "ok"
+
+    monkeypatch.setattr(browser, "_rerank_cards", rerank)
+    result = browser.browse_norms_many([query], limit=6, base_path=tmp_path / "base.sqlite", expand_queries=False)[query]
+    assert set(seen["keys"]) == {c["norm_key"] for c in lexical + native}
+    assert len(seen["keys"]) == 48
+    assert result["cards"][0] == wanted
+    assert len(result["cards"]) == 6
 
 
 def test_mass_triage_runs_reranker_for_every_document_row(monkeypatch, tmp_path):
@@ -603,7 +961,33 @@ def test_reranker_exception_returns_fallback_input_order(monkeypatch):
     assert [item["norm_code"] for item in ranked] == ["N-0", "N-1", "N-2", "N-3"]
 
 
-def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
+def test_reranker_requests_full_pool_and_never_fabricates_vendor_tail(monkeypatch):
+    from proxy.smeta_core import norm_browser as browser
+    cards=[dict(norm_code=f'N-{index:02}',title=str(index)) for index in range(24)]
+    vendor_order=[23,21,*[index for index in reversed(range(24)) if index not in {23,21}]]
+    seen={}
+    class Vendor:
+        def __init__(self,**kwargs):
+            pass
+        async def rerank(self,query,chunks,top_k):
+            seen.update(query=query,requested=top_k,input_count=len(chunks))
+            return [SimpleNamespace(metadata={'index':index}) for index in vendor_order[:top_k]]
+    original=browser._rrf_cards
+    def captured(*rankings,limit):
+        seen['vendor_fusion_order']=[row['norm_code'] for row in rankings[1]]
+        seen['native_union']=[row['norm_code'] for row in rankings[0]]
+        return original(*rankings,limit=limit)
+    monkeypatch.setattr(browser,'select_reranker_cls',lambda:Vendor)
+    monkeypatch.setattr(browser,'_rrf_cards',captured)
+    ranked,used,status=browser._rerank_cards('literal model query',cards,limit=6)
+    assert seen['requested']==seen['input_count']==24
+    assert seen['query']=='literal model query'
+    assert seen['vendor_fusion_order']==[cards[index]['norm_code'] for index in vendor_order]
+    assert seen['native_union']==[row['norm_code'] for row in cards]
+    assert len(ranked)==6 and used and status=='ok'
+
+
+def test_reranker_partial_response_uses_only_actual_order_with_native_union(monkeypatch):
     from proxy.smeta_core import norm_browser
 
     cards = [{"norm_code": f"N-{i}", "title": str(i)} for i in range(6)]
@@ -624,8 +1008,8 @@ def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
     ranked, used, status = norm_browser._rerank_cards("query", cards, limit=4)
 
     assert used is True
-    assert status == "ok"
-    assert [item["norm_code"] for item in ranked] == ["N-0", "N-1", "N-4", "N-2"]
+    assert status == "partial_response"
+    assert [item["norm_code"] for item in ranked] == ["N-4", "N-0", "N-1", "N-2"]
 
 
 def test_reranker_is_fused_with_original_rrf_instead_of_erasing_it(monkeypatch):
@@ -859,7 +1243,7 @@ def test_norm_rag_projection_does_not_embed_incidental_resources(tmp_path):
     conn = _base(path)
     _insert_norm(conn, name="Установка небольшого устройства")
     conn.execute(
-        "INSERT INTO resources VALUES(?,?,?,?,?,?)",
+        "INSERT INTO resources(parent_norm_id,norm_key,kind,resource_code,resource_name,resource_unit) VALUES(?,?,?,?,?,?)",
         ("n1", "ГЭСНм:08-02-001-01", "machine", "91.01", "Башенный кран", "маш.-ч"),
     )
     conn.commit()

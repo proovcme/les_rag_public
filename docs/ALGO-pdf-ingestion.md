@@ -11,7 +11,8 @@ text layer can be extracted.
 Tier 0: manifest / file card
 Tier 1: fast page text baseline        required, local, bounded
 Tier 2: structured markdown/layout     optional enrichment
-Tier 3: tables/OCR/images              optional enrichment
+Tier 3: tables/images/extra OCR        optional enrichment when baseline exists
+Required scan OCR                     must produce text, otherwise explicit file error
 ```
 
 The baseline is evidence enough for search/navigation, not for exact table
@@ -34,6 +35,32 @@ for real PDF files. This path keeps page anchors in markdown:
 Heavy converters (`pymupdf4llm`, Docling, OCR/table extraction) are not allowed
 to be the gate for searchable RAG. If an isolated converter times out, indexing
 falls back to the fast page-text layer instead of marking the document `ERROR`.
+This applies to optional enrichment, not an explicit `markdown_needs_ocr` route.
+
+Since0.30.83/build723, zero extracted characters never form a searchable fast projection.
+The optional `RAG_PDF_FAST_TEXT_MIN_CHARS_PER_PAGE` defaults to0, preserving short technical
+labels; an operator may explicitly request a positive threshold. Required OCR failures,
+including subprocess timeout, propagate as `OCRRequiredError` with a stable reason code.
+Empty/page-heading-only OCR is not evidence. A mislabeled/unreadable PDF is explicitly skipped,
+not indexed as warning text. Tesseract uses one page image at a time and a closed temporary PNG
+on Windows; provider errors are typed, never model-facing OCR text.
+
+Before required OCR can replace a file, every evidence page must identify its positive integer
+page and original PDF/P7M SHA-256. Public's non-admissible hierarchy navigation nodes are not
+evidence pages and do not fail that check; navigation alone cannot satisfy it. Failed required
+OCR is terminal for the file attempt and leaves its previous Qdrant/lexical evidence untouched.
+
+Since0.30.84/build724, all file replacement windows hold a bounded per-file OS lock under the
+actual MetaDB parent. The window captures exact old point IDs, prepares embeddings/rules, writes
+new Qdrant points and lexical rows, atomically replaces that dataset/file's structured rules,
+then retires only captured IDs in bounded batches. Conversion/embedding/upsert/lexical/rule
+failures never trigger whole-file cleanup. Empty replacements are explicit errors. Other datasets'
+same-named files and structured rules are untouched. Locks release on errors and process exit.
+Structured-rule extraction excludes non-admissible navigation nodes; only source evidence
+can produce rules, while navigation remains available to hierarchy retrieval.
+This is not a distributed transaction: an interrupted late write can leave old+new duplicates;
+the next successful locked replacement captures and retires those IDs. Qdrant and SQLite remain
+distinct stores, with paired backup/restore still required for recovery.
 
 `backend/qdrant_adapter.py` then indexes real PDF/P7M files as bounded page
 nodes instead of sending the whole markdown projection into generic markdown
@@ -68,8 +95,9 @@ machine routing/evidence metadata; it does not select an engineering answer.
 Passport enrichment is fail-soft. If one malformed PDF defeats geometry/table
 inspection, existing page text still enters RAG and the failure is logged as an
 enrichment warning. The original PDF is opened read-only. The GUI audit hashes
-the source for visible identity; the RAG pass reads only pages that produced
-page nodes and does not hash the file a second time.
+the source for visible identity; the RAG page-passport pass reads only pages that produced
+page nodes. The ingestion boundary separately hashes the original PDF/P7M once per conversion
+and attaches `source_format`, `content_format=pdf` and `source_sha256` to its nodes.
 
 This prevents hundreds of tiny structural chunks per ordinary project PDF and
 keeps page anchors stable for source-map/read tools. The bound is deliberately

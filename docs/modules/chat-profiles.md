@@ -1,5 +1,50 @@
 # Chat profiles
 
+## .203 — диагностика таймаута (11.10.2026)
+
+GUI runtime registry не сканирует старую staging-копию Tauri resources/runtime.
+Для LES_MODEL_CONNECTION_TIMEOUT_SEC показывает фактический default 1800s local /
+300s external по runtime_admission, либо валидный process override. Пустой или
+нечисловой override показывает fallback/source=default. Незагруженный dotenv
+не считается effective. Chat transport и настройки Lemonade не изменены.
+
+
+P9.15 .199/build839 установлена: exact frozen9affdc415e35,4replace/0delete,
+install→rollback198→reinstall, nativeRRF3/3,33runtimefiles exact.
+Canonical2641PASS19SKIP/verify2660/architecture0. Same-input none/r10 контроль
+ACTIVE16770 в p9/candidate-0199-none-available-tools; результата ещё нет.
+Последний .198 pass2: полные receipts8/8+1/1, но0/3; новый mismatch и31/32cells.
+P9.16 source-only диагностика format status начата отдельно, в runtime199 её нет.
+
+Исторические точки:
+
+## ACTIVE estimator answer contract (.199 source candidate)
+
+`factory_estimator_texts` содержит прежние registered factory prompt/skill без изменения
+текста. `render_factory_estimator_answer` делает временную answer-only копию лишь при
+совпадении factory IDs/is_factory, текущих exact texts и их SHA. Неизвестные исторические
+и пользовательские тексты не заменяются текущим Base. Registry/seed/bindings не меняются.
+
+Перед ContextGovernor `prepare_estimator_answer_contract` действует только на ACTIVE
+model-driven estimator answer. Code-owned ссылка на filesystem skill заменяется на
+inline правила; недоступный read_source — на фактически переданный search_sources(q).
+Если tools не переданы, prompt прямо это сообщает. Code-added citation fragments
+используют Qn.Hm. Профессиональные инструкции и свободный выбор чтения сохраняются;
+обязательных вызовов, нового каталога/worker или старого phase-workflow нет.
+
+Тот же rendered prefix используется для native read continuations. Query stage, обычный
+RAG и legacy/shadow не изменены. Пользовательские prompt/skill bytes сохраняются, даже
+если содержат недоступные ссылки: trace показывает их как unavailable_references.
+`answer_contract_availability` различает original/rendered prompt, skill, system и
+request fingerprints, provenance IDs и actual available tools. Это диагностическое
+свидетельство rendering, не подтверждение чтения или пригодности нормы.
+
+19 focused PASS, 51 neighboring PASS (пересекаются); root full three-file177PASS.
+Canonical и exact installed candidate ещё pending. Исторические build описания ниже
+не заменяют активную границу ADR-15: модель → её literal queries → RAG → та же модель
+→ терминальные строки → расчёт/XLSX.
+
+
 ## Workbook tools in installed factory profiles (0.30.28 / build 668)
 
 Factory Base профиля `estimator` хранит два канонических workbook tool contract,

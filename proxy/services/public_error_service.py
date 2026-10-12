@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 
 _SERVER_ERRORS: dict[int, tuple[str, str]] = {
@@ -25,10 +26,29 @@ _SERVER_ERRORS: dict[int, tuple[str, str]] = {
 }
 
 
-def public_error_payload(*, status_code: int, detail: Any) -> dict[str, str]:
+def public_error_payload(*, status_code: int, detail: Any) -> dict[str, Any]:
     """Return the only error fields allowed across the chat/UI boundary."""
 
     if isinstance(detail, dict):
+        if (detail.get("code") or detail.get("error")) == "MODEL_RAG_SEARCH_INCOMPLETE":
+            indices = [value for value in detail.get("blocked_queries", [])
+                       if type(value) is int and value > 0]
+            failures = []
+            for item in detail.get("query_failures", []):
+                if not isinstance(item, dict) or item.get("query_index") not in indices:
+                    continue
+                failure = {"query_index": item["query_index"]}
+                for key in ("status", "operation", "collection", "error_code", "reason"):
+                    value = str(item.get(key) or "")
+                    failure[key] = value if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,159}", value) else ""
+                failures.append(failure)
+            return {
+                "code": "MODEL_RAG_SEARCH_INCOMPLETE",
+                "detail": "Не завершён поиск по запросам модели: " + ", ".join(map(str, indices))
+                          + ". Причины приведены в диагностике поиска.",
+                "blocked_queries": indices,
+                "query_failures": failures,
+            }
         code = str(detail.get("code") or "").strip()
         message = str(detail.get("detail") or detail.get("message") or "").strip()
         if code and message:

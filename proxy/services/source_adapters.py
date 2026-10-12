@@ -52,6 +52,9 @@ class AdapterMatch:
     score: float | None = None
     matched_term: str = ""
     fields: dict = field(default_factory=dict)   # mail: from/to/date/subject
+    bbox: list[float] | None = None
+    extraction_method: str = ""
+    extraction_version: str = ""
 
 
 @dataclass
@@ -103,12 +106,26 @@ def search_lexical_chunks(query_terms: list[str], *, dataset_ids: list[str] | No
         hit = next((qt for qt in terms_norm if qt and qt in tnorm), None)
         if not hit:
             continue
-        ds = str(getattr(c, "dataset_id", "") or "")
-        ord_ = getattr(c, "chunk_ord", None)
-        ref = f"{ds}/{doc}#chunk{ord_}" if ord_ is not None else f"{ds}/{doc}#chunk"
+        meta = getattr(c, "meta", {}) or {}
+        ds = str(meta.get("dataset_id") or getattr(c, "dataset_id", "") or "")
+        ord_ = meta.get("chunk_ord", getattr(c, "chunk_ord", None))
+        page = meta.get("source_page")
+        bbox = meta.get("bbox")
+        ref = str(meta.get("source_ref") or "")
+        if not ref:
+            ref = f"{ds}/{doc}#chunk{ord_}" if ord_ is not None else f"{ds}/{doc}#chunk"
+        typed_fields = {
+            key: str(meta[key]).strip()
+            for key in ("document_relation", "target_document_identity", "document_role", "discipline", "engineering_system")
+            if meta.get(key) is not None and str(meta[key]).strip()
+        }
         matches.append(AdapterMatch(KIND_LEXICAL, ref, file_name=doc, dataset_id=ds,
                                     snippet=text[:200], chunk_id=str(ord_), matched_term=hit,
-                                    score=getattr(c, "score", None)))
+                                    page=int(page) if isinstance(page, int) and page > 0 else None,
+                                    score=getattr(c, "score", None), fields=typed_fields,
+                                    bbox=bbox if isinstance(bbox, list) and len(bbox) == 4 else None,
+                                    extraction_method=str(meta.get("extraction_method") or ""),
+                                    extraction_version=str(meta.get("extraction_version") or "")))
         if len(matches) >= top_k:
             break
     status = FOUND if matches else NOT_FOUND

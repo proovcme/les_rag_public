@@ -158,10 +158,28 @@ async def test_active_missing_fallback_preserves_primary_transport_error() -> No
 
 def test_assigned_model_timeout_matches_full_chat_window(monkeypatch) -> None:
     monkeypatch.delenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", raising=False)
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openrouter")
     assert chat.model_connection_timeout() == 300.0
 
     monkeypatch.setenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "420")
     assert chat.model_connection_timeout() == 420.0
+
+
+def test_local_provider_gets_a_longer_window_than_the_cloud(monkeypatch) -> None:
+    """Смета на встроенной графике не укладывается в облачные пять минут.
+
+    Реальный отказ 09.09: запрос со слоем инструментов в 47 301 символ оборвался
+    ровно на 301-й секунде с `UPSTREAM_REQUEST_FAILED: ReadTimeout`, хотя модель
+    продолжала считать.
+    """
+    monkeypatch.delenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", raising=False)
+    for provider in ("lemonade", "mlx", "ollama"):
+        monkeypatch.setenv("LES_LLM_PROVIDER", provider)
+        assert chat.model_connection_timeout() == 1800.0, provider
+
+    # Явная настройка оператора сильнее умолчания для любого провайдера.
+    monkeypatch.setenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "600")
+    assert chat.model_connection_timeout() == 600.0
 
 
 @pytest.mark.asyncio

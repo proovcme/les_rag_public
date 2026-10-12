@@ -36,7 +36,6 @@ from proxy.routers.files import router as files_router
 from proxy.routers.notebooks import router as notebooks_router
 from proxy.routers.profiles import router as profiles_router
 from proxy.routers.model_connections import router as model_connections_router
-from proxy.routers.checklist_review import router as checklist_review_router
 from proxy.routers.documents import router as documents_router
 from proxy.routers.tools import router as tools_router
 from proxy.routers.chat import ChatRouterState, ensure_chat_history_schema, router as chat_router, set_chat_state
@@ -73,6 +72,9 @@ from proxy.routers.service_sources import router as service_sources_router
 from proxy.routers.speckle import cad_bim_router
 from proxy.routers.memory import router as memory_router
 from proxy.services.job_service import JobService
+from proxy.routers.checklist_review import router as checklist_review_router
+from proxy.services.les_module_mount_service import module_routers, validate_route_collisions
+from proxy.services.runtime_admission import local_model_probe_url
 from proxy.services.resource_governor import CHAT_MODE, PROFILE_CHAT
 from proxy.services.memory_runtime_service import initialize_memory_runtime, shutdown_memory_runtime
 
@@ -255,6 +257,23 @@ async def mail_imap_autosync_loop():
         await asyncio.sleep(max(60, interval))
 
 
+def _active_answer_model_id() -> str:
+    """Идентификатор модели, привязанной к роли «Ответы», или пустая строка.
+
+    Реестр — единственный источник истины о выбранной модели; окружение отстаёт
+    от смены ревизии и называет прежнюю.
+    """
+    from proxy.services.model_connection_registry_service import ModelConnectionRegistry
+    from proxy.services.model_connection_contracts import ConnectionRole
+
+    registry = ModelConnectionRegistry()
+    binding = registry.get_role_binding(ConnectionRole.ANSWER)
+    if binding is None:
+        return ""
+    revision = registry.get_revision(binding.connection_revision_id)
+    return str(getattr(revision, "model_id", "") or "")
+
+
 async def metrics_collector_loop():
     while True:
         try:
@@ -266,17 +285,7 @@ async def metrics_collector_loop():
             loaded_model_names: list[str] = []
             try:
                 provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
-                local_model_url = ""
-                if provider == "mlx":
-                    local_model_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-                elif provider == "ollama":
-                    local_model_url = os.getenv(
-                        "OLLAMA_BASE_URL",
-                        os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
-                    )
-                local_model_url = local_model_url.rstrip("/")
-                if local_model_url.casefold().endswith("/v1"):
-                    local_model_url = local_model_url[:-3]
+                local_model_url = local_model_probe_url()
                 if local_model_url:
                     async with httpx.AsyncClient(
                         trust_env=trust_env_for_url(local_model_url),
@@ -312,6 +321,14 @@ async def metrics_collector_loop():
                 except Exception:
                     pass
 
+            # Роль ответа выбирается реестром: без её имени проверка резидентности
+            # не может отличить загруженную модель ответа от эмбеддера.
+            answer_model = ""
+            try:
+                answer_model = await asyncio.to_thread(_active_answer_model_id)
+            except Exception:
+                answer_model = ""
+
             metrics_cache.update(
                 {
                     "cpu": cpu,
@@ -322,6 +339,7 @@ async def metrics_collector_loop():
                     "swap_total_gb": host_mem.get("swap_total_gb", 0),
                     "swap_pct": host_mem.get("swap_pct", 0),
                     "llm_loaded_models": loaded_model_names,
+                    "llm_answer_model": answer_model,
                     "datasets": ds_count,
                     "files_processed": files,
                     "chunks_indexed": chunks,
@@ -743,7 +761,6 @@ def create_app():
     fastapi_app.include_router(notebooks_router)
     fastapi_app.include_router(profiles_router)
     fastapi_app.include_router(model_connections_router)
-    fastapi_app.include_router(checklist_review_router)
     fastapi_app.include_router(documents_router)
     fastapi_app.include_router(tools_router)
     fastapi_app.include_router(service_sources_router)
@@ -762,6 +779,11 @@ def create_app():
     fastapi_app.include_router(rerank_router)
     fastapi_app.include_router(chat_router)
     fastapi_app.include_router(memory_router)
+    fastapi_app.include_router(checklist_review_router)
+    mounted_module_routers = module_routers()
+    validate_route_collisions(fastapi_app.routes, mounted_module_routers)
+    for mounted in mounted_module_routers:
+        fastapi_app.include_router(mounted.router)
     fastapi_app.on_event("startup")(startup)
     fastapi_app.on_event("shutdown")(shutdown_memory_runtime)
     fastapi_app.middleware("http")(track_errors)

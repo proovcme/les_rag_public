@@ -140,6 +140,19 @@ class EngineExtensionRegistry:
                 peer_verifier=peer_verifier,
             ),
         )
+        # Imported lazily so the vendor extension remains outside inference and
+        # can receive the shared registry's exact error type without a cycle.
+        from extensions.lemonade.extension import LemonadeEngineExtension
+
+        registry.register(
+            "lemonade",
+            LemonadeEngineExtension(
+                client=client,
+                address_resolver=address_resolver,
+                peer_verifier=peer_verifier,
+                error_factory=EngineExtensionError,
+            ),
+        )
         return registry
 
     def register(self, extension_type: str, extension: EngineExtension) -> None:

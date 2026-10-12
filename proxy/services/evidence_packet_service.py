@@ -156,6 +156,8 @@ class RetrievalEvidencePacket:
                 )
                 if meta.get(key) not in (None, "")
             }
+            if meta.get("model_evidence_ref"):
+                item["evidence_ref"] = str(meta["model_evidence_ref"])
             if retrieval_features:
                 item["retrieval_features"] = retrieval_features
             if isinstance(score, (int, float)):

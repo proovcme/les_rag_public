@@ -100,6 +100,25 @@ class _Client:
         return self.response
 
 
+@pytest.mark.parametrize("check", [check_chat_glossary, check_chat_project_noscope])
+@pytest.mark.parametrize("detail, expected, marker", [
+    ({"code": "RAG_NOT_READY", "message": "index unavailable"}, "fail", "RAG_NOT_READY"),
+    ({"error_code": "MODEL_UNAVAILABLE"}, "fail", "MODEL_UNAVAILABLE"),
+    ("MODEL_RAG_QUERY_LIST_EMPTY", "fail", "MODEL_RAG_QUERY_LIST_EMPTY"),
+    ("ram_free_gb=0.5 < 2.0", "warn", "ram_free_gb"),
+    ("swap_pct=95.0 > 80.0 (swap_used_gb=5.0)", "warn", "swap_pct"),
+    ({"code": "MODEL_QUEUE_TIMEOUT", "message": "queue busy"}, "warn", "MODEL_QUEUE_TIMEOUT"),
+    ({"code": "MODEL_UNAVAILABLE", "message": "ram_free_gb=0.5 < 2.0"}, "fail", "MODEL_UNAVAILABLE"),
+    (None, "fail", "503"),
+])
+def test_chat_503_preserves_reason_and_only_warns_for_known_admission(check, detail, expected, marker):
+    result = check(_Client(_Response(503, {"detail": detail})), "http://example.test", timeout=1)
+    assert result["status"] == expected
+    assert marker in result["reason"]
+    assert result["evidence"]["http"] == 503
+    assert "KeyError" not in result["reason"]
+
+
 def test_health_error_is_a_p0_failure_not_a_reachable_pass():
     result = check_health(_Client(_Response(200, {"status": "error"})), "http://example.test")
 

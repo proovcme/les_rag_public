@@ -1,8 +1,21 @@
 from proxy.services.llm_transport_profile_service import (
+    assistant_delta_text,
     effective_model_execution_diagnostics,
     fit_prompt_sections,
     resolve_transport_execution_profile,
 )
+
+
+def test_visible_delta_never_substitutes_echoed_control_items():
+    assert assistant_delta_text({"content": "Ответ [1]", "reasoning_content": "private"}) == "Ответ [1]"
+    # Эхо advisory-контекста и конвертов инструментов ответом не становится.
+    assert assistant_delta_text({"content": "", "reasoning_content": '{"item_id":"chat-checkpoint:x"}'}) == ""
+    assert assistant_delta_text({"reasoning": '{"context_role":"advisory_state","kind":"blocker"}'}) == ""
+    assert assistant_delta_text({"reasoning": '{"result":{"reference":"tool-result:x:1"}}'}) == ""
+    # Провайдеры, доставляющие финальный текст в reasoning, продолжают работать.
+    assert assistant_delta_text({"content": "", "reasoning_content": "Готово"}) == "Готово"
+    # Аргументы tool_calls не являются потоковым текстом ответа.
+    assert assistant_delta_text({"tool_calls": [{"function": {"arguments": "{}"}}]}) == ""
 
 
 def test_transport_uses_observed_capacity_for_35b():

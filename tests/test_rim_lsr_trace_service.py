@@ -136,12 +136,14 @@ def test_rim_trace_preserves_fgis_current_vs_base_index_columns():
         def lookup(self, code):
             return {
                 "91.05.05-015": {
+                    "unit": "маш.-ч",
                     "price_current": 1663.18,
                     "price_base": 1167.7,
                     "index": None,
                     "price_current_eff": 1663.18,
                 },
                 "01.7.15.06-0111": {
+                    "unit": "т",
                     "price_current": None,
                     "price_base": 70296.2,
                     "index": 1.3,
@@ -407,3 +409,110 @@ def test_lsr_trace_from_visible_rows_does_not_bind_unknown_norm_code():
     assert lsr["summary"]["bound_rows"] == 0
     assert lsr["summary"]["unbound_rows"] == 1
     assert lsr["row_bindings"][0]["status"] == "norm_not_found"
+
+
+def test_pieces_become_metres_when_the_row_states_the_length():
+    """Бухта кабеля в штуках и норма в метрах — пересчёт по длине из самой строки.
+
+    Живой прогон 11.09, строки 995 и 996 ведомости СКС: «Кабель UUTP4-C5E… (305 м)»,
+    «шт. × 120», норма прокладки ГЭСНм10-01-055 с измерителем «100 м». Расчёт
+    законно отказывал: перевести штуки в метры без длины бухты нельзя. Но длина
+    написана в наименовании — ровно как площадь в уже принятом пересчёте «шт → м2».
+
+    Это не ослабление проверки: недостающий множитель берётся из строки, а формула
+    остаётся в трассе для сверки человеком.
+    """
+    from proxy.services.rim_lsr_trace_service import _piece_length_m_from_visible_row
+
+    assert _piece_length_m_from_visible_row(
+        {"title": "Hyperline UUTP4-C5E-S24-IN-LSZH-GY-305 (305 м) Кабель витая пара"}
+    ) == 305.0
+    assert _piece_length_m_from_visible_row(
+        {"title": "Патч-корд U/UTP, Cat.5e, LSZH, 2 м, серый"}
+    ) == 2.0
+
+
+def test_a_dimension_chain_is_not_a_length():
+    """Габариты изделия длиной не являются — иначе шкаф «прокладывали» бы метрами."""
+    from proxy.services.rim_lsr_trace_service import _piece_length_m_from_visible_row
+
+    assert _piece_length_m_from_visible_row(
+        {"title": "Шкаф напольный 19-дюймовый, 42U, 2055x800х1000 мм (ВхШхГ)"}
+    ) is None
+    assert _piece_length_m_from_visible_row(
+        {"title": "Кабель-канал LAN 100x60"}
+    ) is None
+    assert _piece_length_m_from_visible_row(
+        {"title": "Блок розеток для 19\" шкафов, горизонтальный"}
+    ) is None
+
+
+def test_a_cable_coil_row_binds_to_a_per_metre_norm():
+    """Сквозная проверка: строка в бухтах связывается с нормой в метрах.
+
+    Без пересчёта расчёт возвращал unit_conflict, строка в смету не попадала, и это
+    выглядело ошибкой подбора нормы — хотя норма верна, а не хватало множителя,
+    написанного в самой строке (живой прогон 11.09, строки 995 и 996 ведомости СКС).
+    """
+    trace = build_lsr_trace_from_visible_rows([
+        {
+            "source_row": "995",
+            "basis": "ГЭСНм10-01-055-02",
+            "title": "Hyperline UUTP4-C5E-S24-IN-LSZH-GY-305 (305 м) Кабель витая пара U/UTP",
+            "unit": "шт.",
+            "quantity": 120,
+        },
+    ])
+    binding = trace["row_bindings"][0]
+    assert binding["status"] == "bound", "норма верна — строка обязана связаться"
+    quantity = binding["quantity_trace"]
+    assert quantity["status"] == "piece_length_conversion"
+    assert "305 м/шт" in quantity["formula"], "формула остаётся для сверки человеком"
+    assert "366" in quantity["formula"], "120 бухт по 305 м — это 366 сотен метров"
+
+
+def test_a_characteristic_is_not_a_length():
+    """Число после слова-характеристики длиной изделия не является.
+
+    Ревью Codex 11.09: диаметр муфты 50 мм превращался в 0,05 м/шт, а у патч-корда
+    длиной 2 м верх забирала «дальность передачи 100 м» — бралось наибольшее число.
+    Ошибка здесь тихо портит смету, поэтому правило узкое.
+    """
+    from proxy.services.rim_lsr_trace_service import _piece_length_m_from_visible_row as length
+
+    assert length({"title": "Муфта соединительная, диаметр 50 мм"}) is None
+    assert length({"title": "Патч-корд 2 м, дальность передачи 100 м"}) == 2.0
+    assert length({"title": "Кабель-канал 2 м, сечение 100х60 мм"}) == 2.0
+    assert length({"title": "Кабель 100 м и удлинитель 50 м"}) is None, (
+        "два разных кандидата без скобок — угадывать нельзя"
+    )
+    assert length({"title": "Кабель, бухта 1 км"}) == 1000.0
+    assert length({"title": "Hyperline UUTP4-C5E-305 (305 м) Кабель"}) == 305.0
+
+
+def test_a_proposed_coefficient_is_neither_applied_nor_lost():
+    """Коэффициент модели не меняет деньги молча и не исчезает.
+
+    Ревью Codex 11.09: значения 1 и 2 давали одинаковые расчётные позиции — код
+    коэффициент игнорировал. Повышающий коэффициент в смете берётся из МДС или
+    приложения к сборнику и требует основания, поэтому применить предложенное число
+    нельзя; но и потерять его нельзя — человек должен увидеть предложение.
+    """
+    plain = build_lsr_trace_from_visible_rows([{
+        "source_row": "1", "basis": "ГЭСНм08-02-409-09",
+        "title": "Труба гофрированная ПВХ 25 мм", "unit": "м", "quantity": 1200,
+        "coefficient": 1,
+    }])["row_bindings"][0]
+    assert "proposed_coefficient" not in plain, "единица — не предложение"
+
+    raised = build_lsr_trace_from_visible_rows([{
+        "source_row": "1", "basis": "ГЭСНм08-02-409-09",
+        "title": "Труба гофрированная ПВХ 25 мм", "unit": "м", "quantity": 1200,
+        "coefficient": 2,
+    }])["row_bindings"][0]
+    assert raised["proposed_coefficient"] == 2.0
+    assert raised["coefficient_status"] == "needs_basis"
+    assert "не принят без основания" in raised["quantity_trace"]["coefficient_note"]
+    assert raised["quantity_trace"]["formula"] == plain["quantity_trace"]["formula"], (
+        "количество не меняется догадкой"
+    )

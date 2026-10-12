@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 991 |
-| Строк Python | 313068 |
-| PRODUCT_REACHABLE | 349 |
+| Python-файлов под git | 1122 |
+| Строк Python | 349176 |
+| PRODUCT_REACHABLE | 378 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 630 |
+| TEST_OR_TOOL_ONLY | 732 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 332 |
 | Ошибок разбора | 0 |
@@ -33,35 +33,35 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| sovushka/pages/chat.py | 5046 | 5 |
-| backend/qdrant_adapter.py | 4552 | 29 |
-| proxy/services/chat_evidence_application_service.py | 4260 | 7 |
+| proxy/services/chat_evidence_application_service.py | 7814 | 54 |
+| sovushka/pages/chat.py | 5072 | 7 |
+| backend/qdrant_adapter.py | 4777 | 34 |
+| proxy/routers/chat.py | 4350 | 42 |
 | sovushka/uikit/tokens.py | 4205 | 2 |
-| proxy/routers/chat.py | 4204 | 40 |
 | sovushka/pages/documents.py | 3927 | 3 |
-| proxy/routers/datasets.py | 3775 | 16 |
+| proxy/routers/datasets.py | 3692 | 16 |
 | sovushka/styles.py | 3264 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2450 | 15 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
 | mlx_host.py | 2216 | 2 |
-| proxy/services/estimate_harness_service.py | 2044 | 4 |
-| proxy/smeta_core/norm_browser.py | 1659 | 13 |
+| proxy/services/estimate_harness_service.py | 2092 | 7 |
+| proxy/smeta_core/norm_browser.py | 1969 | 26 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
-| proxy/smeta_core/rim_session.py | 1645 | 6 |
+| proxy/smeta_core/rim_session.py | 1647 | 6 |
 | sovushka/pages/diag.py | 1602 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
+| proxy/services/tool_harness_service.py | 1449 | 12 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
-| proxy/services/tool_harness_service.py | 1408 | 12 |
-| proxy/services/retrieval_service.py | 1380 | 10 |
+| proxy/services/retrieval_service.py | 1383 | 11 |
+| proxy/services/rim_lsr_trace_service.py | 1289 | 35 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |
+| proxy/services/update_service.py | 1131 | 9 |
 | backend/document_router.py | 1124 | 6 |
 | proxy/routers/rim.py | 1122 | 2 |
-| tools/build_rag_contract_sibling.py | 1114 | 4 |
-| proxy/services/update_service.py | 1082 | 8 |
 
 ## Сметный монолит: фактические потребители
 

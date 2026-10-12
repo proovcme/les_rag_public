@@ -38,8 +38,26 @@ VPS_PATCH_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 # Backward-compatible symbols for callers; discovery no longer uses the VPS.
 VPS_PATCH_MANIFEST_URL = GITHUB_PATCH_MANIFEST_URL
 VPS_PATCH_FEED_SCHEMA = "les.vps-patch-feed.v1"
+FORBIDDEN_RUNTIME_PARTS = {
+    ".env", "data", "qdrant", "storage", "RAG_Content",
+    "__pycache__", ".cache", "plugins",
+}
+TRUSTED_APPLICATION_CODE_FILES = {
+    "proxy/storage/__init__.py",
+    "proxy/storage/file_storage.py",
+}
+DETACHED_UPDATER_EXTENSION_FILES = (
+    "extensions/__init__.py",
+    "extensions/lemonade/__init__.py",
+    "extensions/lemonade/contracts.py",
+    "extensions/lemonade/transport.py",
+    "extensions/lemonade/vendor_status.py",
+    "extensions/lemonade/runtime_env.py",
+)
 VPS_PATCH_ALLOWED_ROOTS = (
     "backend/",
+    "extensions/",
+    "modules/",
     "proxy/",
     "qdrant_visualizer/",
     "sovushka/",
@@ -65,6 +83,8 @@ MAC_UPDATE_DENIED_PARTS = {
 MAC_UPDATE_ALLOWED_ROOTS = (
     "proxy/",
     "backend/",
+    "extensions/",
+    "modules/",
     "sovushka/",
     "tools/",
     "config/",
@@ -87,6 +107,7 @@ VPS_PATCH_ALLOWED_FILES = {
     "env.example",
     "sovushka_ng.py",
     "proxy_server.py",
+    *TRUSTED_APPLICATION_CODE_FILES,
     "installers/windows/runtime-entrypoints.json",
     "tools/activate_smeta_rag_generation.py",
     "tools/build_smeta_norm_rag.py",
@@ -119,6 +140,14 @@ _SHA256 = re.compile(r"\b([0-9a-fA-F]{64})\b")
 
 class UpdateError(RuntimeError):
     pass
+
+
+def _contains_forbidden_runtime_part(parts: tuple[str, ...]) -> bool:
+    normalized = PurePosixPath(*parts).as_posix()
+    if normalized in TRUSTED_APPLICATION_CODE_FILES:
+        return False
+    forbidden = {part.casefold() for part in FORBIDDEN_RUNTIME_PARTS}
+    return any(part.casefold() in forbidden for part in parts)
 
 
 def patch_entry_operation(entry: dict) -> str:
@@ -284,6 +313,20 @@ async def _download(
         raise
 
 
+def _stage_hard_update_helpers(root: Path) -> Path:
+    """Stage one self-contained lifecycle transaction beside the update job."""
+    runtime = runtime_root()
+    root.mkdir(parents=True, exist_ok=True)
+    helper = root / "windows_update_engine.py"
+    shutil.copy2(runtime / "tools" / "windows_update_engine.py", helper)
+    shutil.copy2(runtime / "tools" / "windows_runtime.py", root / "windows_runtime.py")
+    for relative in DETACHED_UPDATER_EXTENSION_FILES:
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(runtime / relative, target)
+    return helper
+
+
 async def download_and_launch_update() -> dict:
     if not sys.platform.startswith("win"):
         raise UpdateError("Установка обновления этой кнопкой поддерживается только в Windows-сборке")
@@ -311,9 +354,7 @@ async def download_and_launch_update() -> dict:
 
     application = application_root()
     state_root = update_root().parents[1]
-    helper = root / "windows_update_engine.py"
-    shutil.copy2(runtime_root() / "tools" / "windows_update_engine.py", helper)
-    shutil.copy2(runtime_root() / "tools" / "windows_runtime.py", root / "windows_runtime.py")
+    helper = _stage_hard_update_helpers(root)
     status = hard_update_status_path()
     job = root / "hard-update-job.json"
     update_id = f"release-{info['latest_version']}-{info['build_number']}"
@@ -535,7 +576,10 @@ def _validate_patch_feed(payload: dict) -> dict:
                 raise UpdateError("Обновление пытается заменить неизвестный файл оболочки")
             target = root.parent / "les-desktop.exe"
         elif scope == "runtime":
-            if any(part in VPS_PATCH_DENIED_PARTS for part in rel.parts):
+            if (
+                _contains_forbidden_runtime_part(rel.parts)
+                or any(part in VPS_PATCH_DENIED_PARTS for part in rel.parts)
+            ):
                 raise UpdateError("Обновление пытается изменить запрещённую часть приложения")
             if not (normalized in VPS_PATCH_ALLOWED_FILES or normalized.startswith(VPS_PATCH_ALLOWED_ROOTS)):
                 raise UpdateError("Обновление пытается выйти за список заменяемых файлов")
@@ -770,8 +814,10 @@ def _stage_vps_patch_launcher(
         "tools/vps_patch_apply.py",
         "tools/windows_update_engine.py",
         "tools/windows_runtime.py",
+        *DETACHED_UPDATER_EXTENSION_FILES,
     ):
-        target = root / Path(relative).name
+        target = root / (relative if relative.startswith("extensions/") else Path(relative).name)
+        target.parent.mkdir(parents=True, exist_ok=True)
         entry = entries.get(relative)
         if entry is None:
             shutil.copy2(runtime / relative, target)
@@ -929,7 +975,10 @@ def _validate_mac_update_feed(payload: dict) -> dict:
         rel = PurePosixPath(str(entry.get("path") or "").replace("\\", "/"))
         if rel.is_absolute() or ".." in rel.parts or not rel.parts:
             raise UpdateError("Mac-обновление содержит небезопасный путь")
-        if any(part in MAC_UPDATE_DENIED_PARTS for part in rel.parts):
+        if (
+            _contains_forbidden_runtime_part(rel.parts)
+            or any(part in MAC_UPDATE_DENIED_PARTS for part in rel.parts)
+        ):
             raise UpdateError("Mac-обновление пытается изменить пользовательские данные")
         normalized = rel.as_posix()
         if not (

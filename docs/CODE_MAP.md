@@ -1,5 +1,33 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.79 deterministic audit/release:** `RimSessionStore.list_revisions` reads `rim_revisions`
+> in chronological SQLite `created_at, rowid` order; `release_orchestrator._parser` gives `prepare` the
+> same local install/runtime/state defaults as acceptance; and
+> `windows_prepare_update.ps1::Get-LesFileSha256` uses `.NET SHA256.Create()` without
+> `Get-FileHash` or module autoload.
+
+> **0.30.78 observed transport facts:** `model_capability_service.py` bounded-read разбирает exact
+> Lemonade model record и сохраняет `observed_backend/observed_context_tokens`;
+> `model_connection_resolver_service.py` уже проецирует context в effective preset;
+> `openai_compatible_transport_service.py` передаёт immutable extension/model/backend в общий
+> `apply_transport_options`. Сетевой путь остаётся один для всех OpenAI-compatible providers.
+
+> **0.30.77 Lemonade lifecycle:** `provider-env.ps1` обслуживает PowerShell bootstrap,
+> `extensions/lemonade/runtime_env.py` — Python lifecycle, а `windows_runtime.py` владеет
+> adapter→proxy→UI process chain. `windows_update_engine.py` проверяет тот же PID/port и factual
+> embedding contract; update service staging копирует self-contained lifecycle bundle рядом с job.
+> `backend/qdrant_adapter.py::_resolve_embedding_runtime` сохраняет явно настроенный
+> `llama_cpp` и применяет legacy Ollama fallback только при отсутствии backend.
+
+
+> **0.30.75 Lemonade provider extension:** `extensions/lemonade/{contracts,transport,
+> vendor_status,model_policy,extension,runtime_env}.py` отделяет provider policy от общего
+> inference. `lemonade_host.py` показывает configured/loaded/backend как разные факты и сохраняет
+> exact embedding identity; `llm_transport_profile_service.py` делегирует только bounded Qwen 3.6
+> transport option; `model_engine_extension_service.py` регистрирует loopback-only Flash Attention
+> workflow. Vendor binaries, runtime и индексы не управляются этим атомом. Канон:
+> [ALGO-model-connections.md](ALGO-model-connections.md).
+
 > **0.30.64 model-result packaging continuity:** the model-result reader keeps
 > the full model-authored `norm_code`, including adjacent explanation. An exact
 > referenced card code may occur inside that field without being rewritten.
@@ -361,6 +389,64 @@
 > `routers/chat.py` use the same parser, preventing false `Пустой ответ LLM
 > (stream=True)` failures while preserving the provider's emitted text.
 
+> **Lemonade capability snapshot 0.30.86:** `model_capability_service`
+> reads the vendor catalogue **only when the probe requests `CapabilityName.MODELS`**.
+> Without it a snapshot carries no `observed_backend`/`observed_context_tokens`, so
+> `resolve_execution_preset` falls back to `qwen-9b-restrictive` (6000-token input) and,
+> more importantly, `extensions/lemonade/transport.py` cannot apply
+> `enable_thinking=false` — that guard requires `backend == llama_cpp`. Always include
+> `models` in `POST /api/model-connections/{id}/revisions`+`/test` for Lemonade
+> connections. Per-model launch flags live outside the repo in
+> `~/.cache/lemonade/recipe_options.json`; a model absent there starts without `ctx_size`
+> and the snapshot stays empty. Lemonade appends
+> `--chat-template-kwargs {"preserve_thinking":true}` on its own, so thinking is disabled
+> only by the request-side flag.
+
+> **Lemonade model options are an API, not a file (v11.7.0+):** `GET/POST
+> /api/v1/models/{id}/options` reads and writes `ctx_size`, `llamacpp_args`,
+> `evict_idle_timeout` and friends **without restarting the server**. Editing
+> `~/.cache/lemonade/recipe_options.json` by hand works only after a restart, and a restart
+> aborts any download the server is running — that is how a model download was interrupted
+> on 2026-09-07. The response separates `defaults`, `saved` and `effective`; with
+> `merge_args: true` the vendor still merges its own `--temp 1.0` and
+> `preserve_thinking: true` into `effective`, which is why the no-thinking flag must also
+> travel in the request body.
+>
+> **`--parallel` does not reduce memory (measured 2026-09-08):** `/slots` reporting four
+> slots of 32768 is the shared window, not a fourfold reserve. Forcing `--parallel 1`
+> changed the footprint from 12,38 GB to 12,34 GB — nothing. For a 35B IQ2 model at 32K
+> context, ~10 GB is the file and ~2,3 GB the KV cache; the only lever left is a smaller
+> context, which the operator needs at 28-32K. Memory here is a hardware limit, not a
+> configuration mistake.
+
+> **Memory ceiling — one request at a time (operator decision 2026-09-07):** on this
+> host the model is memory-bound and the runtime is used sequentially, with pauses
+> between requests. A 10.9 GB GGUF is mmap'd and the 32768 context adds KV cache, so a
+> single answer can leave under 1 GB free of 31 GB; the next requests then fail with
+> `MODEL_SERVICE_UNAVAILABLE` / `ErrorOutOfDeviceMemory`. Batch runs and parallel chat
+> sessions are therefore not supported here. Before blaming code for
+> `MODEL_UPSTREAM_ERROR`, count `llama-server.exe` processes and free RAM. Reducing
+> `ctx_size` was considered and rejected: real requests carry 17-20k input tokens and
+> the extended preset needs at least 16384.
+
+> **Carnice launch options 0.30.86:** `extensions/lemonade/model_policy.py:recommended_recipe_options`
+> owns the verified Windows/Vulkan launch options (ctx 32768, `--temp 0.2`, `--flash-attn on`,
+> no `preserve_thinking`). Lemonade itself stores them in `~/.cache/lemonade/recipe_options.json`,
+> outside the repo: a model missing there starts without `ctx_size`, the capability snapshot
+> loses `observed_context_tokens`, and the preset drops to `qwen-9b-restrictive` (6000-token
+> input). On integrated graphics the 32768 context costs ~12.4 GB of system RAM, so orphaned
+> `llama-server.exe` processes exhaust it and Vulkan fails with
+> `allocateMemory: ErrorOutOfDeviceMemory` — neither `Start-LES.ps1` nor
+> `tools/windows_runtime.py` reaps them.
+
+> **Control-item echo 0.30.86:** the same module's `is_control_channel_text`
+> keeps that reasoning fallback but refuses text that is the model echoing its
+> own context — advisory-state projections (`chat-checkpoint`/`chat-blocker`
+> from `typed_memory_projection_service`), tool envelopes and `tool-result:`
+> references. `routers/chat.py:_assistant_text` applies the same guard, so a
+> stalled turn yields an empty answer (retry, then explicit error) instead of
+> the служебный JSON dump users received in `chat_history` 178/179.
+
 > **General RAG 0.27.74:** `proxy/services/retrieval_service.py` treats named
 > dense+sparse Qdrant native RRF as the production ranking contract. A disabled
 > or unavailable cross-encoder records `rerank.status=bypassed` and preserves
@@ -469,7 +555,7 @@
 - **[ALGO-electrical-schematics.md](ALGO-electrical-schematics.md)** — чтение ЭОМ/ИОС.ЭС: графические однолинейные схемы + таблицы расчёта нагрузок + ВОР/СО материалы + model-facing сводка. Сервисы `proxy/services/electrical_schematic_service.py`, `proxy/services/electrical_materials_service.py`, `proxy/services/electrical_evidence_summary_service.py`; CLI `tools/electrical_schematic.py`, `tools/electrical_materials.py`, `tools/electrical_evidence_summary.py`; словарь `config/domain/electrical_schema_terms.yaml`. Контракты `electrical_schematic_manifest_v1`, `electrical_material_manifest_v1`, `electrical_evidence_summary_v1` отдают text nodes, vector line primitives, candidate circuits, normalized load rows, material rows, кабельные марки/сечения, `quantity_m`, `doc_role`, action/technical fields (`IP`, ток, напряжение/список напряжений, мощность, высота, dкаб, габариты, масса), product code/supplier/type mark, source navigation, агрегаты нагрузок по щитам, cable/equipment inventory, SO→draft-VOR seeds и coverage gap counts + capped examples; `Руст/Pуст` → `p_installed_kw`, `Рр/Pр` → `p_calc_kw`, `Iр` → `i_calc_a`, `L/длина` → `cable_length_m`. Это read-only evidence/navigation layer: gap counts не являются кодовым отказом, дефектом проекта или доказательством отсутствия ЭС; ВОР и СО сверяются/трансформируются, но не суммируются.
 - **`config/service_sources.yaml` + `proxy/services/service_source_registry.py`** — видимый реестр служебных источников для смет и нормоконтроля. API `GET /api/service-sources`, `POST /api/service-sources/{id}/process`, `POST /api/service-sources/fgis/update`, GUI «Инструменты → Источники данных» и кнопка «Служебные источники» в чате. Показывает, какие папки нужны ЛЕСу: ГЭСН, ФГИС ЦС, `SMETA_SERVICE`, коэффициенты/правила, СПДС rulepack, нормативный RAG, layout-reference. Общий FGIS updater скачивает все публично доступные метаданные и последние Сплит-формы всех ценовых зон, затем обновляет ГЭСН; captcha/Bearer-защиту не обходит. `fgis_update_service.status()` нормализует job-state, heartbeat, этап, completed/total/remaining, текущую книгу/сборник, скачанные байты, среднюю скорость и ETA; UI показывает отдельную шкалу и не смешивает это скачивание с общей кнопкой refresh. `proxy/services/process_status.py` проверяет фоновые PID без `os.kill` на Windows, поэтому status polling ФГИС/ГЭСН не завершает задачу. Для canonical ГЭСН наличие файлов недостаточно: `proxy/smeta_core/integrity.py` требует semantic integrity report, иначе источник получает `quarantined_blocking`. Для `SMETA_SERVICE` Play отдаёт `required_documents` manifest; это readiness/navigation layer, не evidence конкретного объекта.
 - **`proxy/services/prompt_registry_service.py` + `proxy/routers/profiles.py`** — внутренний prompt registry содержит подтверждённые runtime call-sites: `rag` вызывается evidence application service, `smeta_harness` — estimate harness, `smeta_direct` — видимым сметным ответом, `review` — чтением вложения, `free` — свободным ответом. Общий prompt и tone добавляются каждым `build_mode_system_prompt`. UI-маршруты `auto`, `smeta`, `normcontrol`, `kp` не создают параллельные промпты: они используют перечисленные генераторы или детерминированный workflow. Единственная пользовательская настройка prompt/skill — immutable-ревизии `/api/profiles`; переходный `/api/prompts` удалён.
-- **Версия и публичный выпуск:** `config/version.json` разделяет пользовательский SemVer, номер сборки и внутреннюю Tauri/NSIS-версию; `proxy/services/version_service.py` отдаёт их в `/api/version`, а `tools/deploy_to_runtime.py` записывает в stamp полный source commit для fail-closed живой приёмки. Единственная операторская граница — `tools/release_orchestrator.py` / `make release`: exact commit gates сохраняются один раз, `release_classification.py` выбирает lightweight/full, а `release_receipt.py` независимо фиксирует immutable artifact, append-only acceptance attempts и publication checkpoints. `windows_runtime_entrypoints.py` сверяет динамические staged entrypoints до Tauri/NSIS; `windows_prepare_update.ps1` заканчивает работу на package boundary без install/smoke. Runtime manifest и lightweight allowlist никогда не принимают persistent roots `data/storage/RAG_Content/logs/artifacts`; hard updater дополнительно требует непересекающиеся application/state roots и проверяет state-preservation marker. `accept`/`retry` доказывают на Legion install→smoke→rollback→reinstall по одному SHA и никогда не строят пакет. Только после accepted attempt `publish --artifact` fail-closed синхронизирует public main, передаёт bytes внутренним `github_patch_release.py`/`patch_release.py` и выполняет postflight. Канон — [RELEASE_PROCEDURE.md](RELEASE_PROCEDURE.md); паспорт зависимостей — [SOFTWARE_VERSIONS.md](SOFTWARE_VERSIONS.md).
+- **Версия и публичный выпуск:** `config/version.json` разделяет пользовательский SemVer, номер сборки и внутреннюю Tauri/NSIS-версию; `proxy/services/version_service.py` отдаёт их в `/api/version`, а `tools/deploy_to_runtime.py` записывает в stamp полный source commit для fail-closed живой приёмки. Единственная операторская граница — `tools/release_orchestrator.py` / `make release`: exact commit gates сохраняются один раз, `release_classification.py` выбирает lightweight/full, а `release_receipt.py` независимо фиксирует immutable artifact, append-only acceptance attempts и publication checkpoints. `windows_runtime_entrypoints.py` сверяет динамические staged entrypoints до Tauri/NSIS; `windows_prepare_update.ps1` заканчивает работу на package boundary без install/smoke. Runtime manifest и lightweight allowlist никогда не принимают persistent roots `data/storage/RAG_Content/logs/artifacts`, кроме ровно двух tracked Python-модулей `proxy/storage/{__init__,file_storage}.py`; это не является subtree exemption. Hard updater дополнительно требует непересекающиеся application/state roots и проверяет state-preservation marker. `accept`/`retry` доказывают на Legion install→smoke→rollback→reinstall по одному SHA и никогда не строят пакет. Только после accepted attempt `publish --artifact` fail-closed синхронизирует public main, передаёт bytes внутренним `github_patch_release.py`/`patch_release.py` и выполняет postflight. Канон — [RELEASE_PROCEDURE.md](RELEASE_PROCEDURE.md); паспорт зависимостей — [SOFTWARE_VERSIONS.md](SOFTWARE_VERSIONS.md).
 - **Ручное обновление приложения:** Mac dev/reference использует локальный content-addressed контур `tools/mac_update.py` → `/api/update/mac/check|install|status` → detached `tools/mac_update_apply.py`: только diff runtime-кода и разрешённой статики `qdrant_visualizer/`, archive/helper SHA-256, base/target file hashes, backup→atomic replace→restart→version/health/index-contract smoke→rollback. Тесты, app build, baseline и пользовательские данные по кнопке не запускаются и не передаются. Windows updater v2 принят на Legion последним bootstrap-installer и дальше доставляет bounded runtime + exact shell package через `/api/update/patch/*`; изменённый updater core self-hostится из checksum-declared target payload, поэтому новый smoke/rollback проверяет тот же устанавливаемый выпуск. Канон: [VPS_PATCH_CHANNEL.md](VPS_PATCH_CHANNEL.md). Mac-контур: [INTERNAL_MAC_UPDATE.md](INTERNAL_MAC_UPDATE.md).
 
 - **`proxy/smeta_core/` (0.24.0.383+)** — единая публичная application-граница смет находится в `application.py`: model-first workflow, расчёт уже принятых решений, immutable revision и finality. Typed contracts, fail-closed integrity и `smeta_norm_browse_v1` не выбирают норму кодом. `estimate_harness_service` остаётся private implementation adapter за facade; legacy construction/unified harness feature-off и не являются входами сметного продукта. Миграционный долг — [TODO_SMETA_CORE.md](TODO_SMETA_CORE.md).
@@ -712,7 +798,7 @@ projection под тем же alias; при rollback старый FTS восст
 
 - **Гейт:** `make verify` → `compileall` + `pytest --collect-only` канонической LES-сюиты (**2680 тестов** на 2026-07-17), офлайн. Полный продуктовый прогон: `make test`; архивный Unified запускается только `make test-legacy`.
 - **Тесты:** [tests/](../tests/) — 315 файлов / 3057 физических тестов; default [pytest.ini](../pytest.ini) и Make-гейты собирают 2680 текущих LES-тестов, исключая 11 legacy-файлов и `test_artel*`. Архивный opt-in — `make test-legacy`, границы профилей — [Makefile](../Makefile).
-- **Сборка/деплой:** hatchling (wheel: backend/proxy/sovushka/tools), [docker-compose.yml](../docker-compose.yml) (Qdrant+Proxy), [Dockerfile.proxy](../Dockerfile.proxy), `desktop/tauri/`, `tools/build_tauri_app.py`, `installers/{macos,linux,windows}/`, `deploy/pauk/`, `standalone/cad_bim_viewer/`. Канонический Mac/Windows desktop shell — Tauri 2: он запускает platform bootstrap, ждёт UI health, открывает NiceGUI и управляет lifecycle из tray; предметной логики в Rust нет. Windows release использует GUI subsystem, named single-instance mutex и один in-flight lifecycle guard; все Rust child-команды получают `CREATE_NO_WINDOW`. Wizard показывает availability Ollama/FreeToken/Lemonade/OpenAI-compatible, embeddings и Qdrant, но не устанавливает и не выбирает их; старт зависит только от LES core. `tools/build_tauri_app.stage_runtime` формирует платформенный ресурсный набор и Windows offline payload: SHA-256-проверенные Python/uv, exact `uv.lock` и dependency cache. Windows EXE не содержит macOS bootstrap, Mac не получает Windows bootstrap. NSIS сохраняет видимое имя «ЛЕС», но ставит приложение в `%LOCALAPPDATA%\Programs\LES`; mutable `.env`/venv/MetaDB/storage/sources/artifacts/logs живут в `%LOCALAPPDATA%\LES`. Bootstrap не использует system Python/uv, winget или network package fallback. Windows light запускает proxy/UI и только явно настроенные adapters прямыми Python PID без `cmd.exe`/`uv` wrappers; process contract — `direct_python_no_console_v1`. Qdrant может быть локальным или удалённым и не является условием запуска core. Updater повторно использует проверенный runtime при desktop handoff; acceptance требует один desktop, прямые Python PID и ноль LES-owned `cmd.exe`. Mac остаётся dev/reference, Linux — отдельный server profile.
+- **Сборка/деплой:** hatchling (wheel: backend/proxy/sovushka/tools/modules/extensions), [docker-compose.yml](../docker-compose.yml) (Qdrant+Proxy), [Dockerfile.proxy](../Dockerfile.proxy), `desktop/tauri/`, `tools/build_tauri_app.py`, `installers/{macos,linux,windows}/`, `deploy/pauk/`, `standalone/cad_bim_viewer/`. Канонический Mac/Windows desktop shell — Tauri 2: он запускает platform bootstrap, ждёт UI health, открывает NiceGUI и управляет lifecycle из tray; предметной логики в Rust нет. Windows release использует GUI subsystem, named single-instance mutex и один in-flight lifecycle guard; все Rust child-команды получают `CREATE_NO_WINDOW`. Wizard показывает availability Ollama/FreeToken/Lemonade/OpenAI-compatible, embeddings и Qdrant, но не устанавливает и не выбирает их; старт зависит только от LES core. `tools/build_tauri_app.stage_runtime` формирует платформенный ресурсный набор и Windows offline payload: SHA-256-проверенные Python/uv, exact `uv.lock` и dependency cache. Its fixed runtime manifest stages tracked `modules/` and `extensions/` only, rejecting persistent/cache/plugin segments. Windows EXE не содержит macOS bootstrap, Mac не получает Windows bootstrap. NSIS сохраняет видимое имя «ЛЕС», но ставит приложение в `%LOCALAPPDATA%\Programs\LES`; mutable `.env`/venv/MetaDB/storage/sources/artifacts/logs живут в `%LOCALAPPDATA%\LES`. Bootstrap не использует system Python/uv, winget или network package fallback. Windows light запускает proxy/UI и только явно настроенные adapters прямыми Python PID без `cmd.exe`/`uv` wrappers; process contract — `direct_python_no_console_v1`. Qdrant может быть локальным или удалённым и не является условием запуска core. Updater повторно использует проверенный runtime при desktop handoff; acceptance требует один desktop, прямые Python PID и ноль LES-owned `cmd.exe`. Mac остаётся dev/reference, Linux — отдельный server profile.
 - **CI:** нет (намеренно — локальная система).
 
 > Windows payload update 0.28.1: `tools/build_tauri_app.stage_runtime` embeds SHA-256-verified
@@ -748,7 +834,7 @@ projection под тем же alias; при rollback старый FTS восст
 | Версию/деплой/что запущено | `proxy/services/version_service.py`, `GET /api/version`, бейдж в `header.py` |
 | Детерминированную маршрутизацию | `proxy/services/deterministic_policy_service.py`, `glossary_chat_service.py`, `project_registry_chat_service.py` |
 | Подготовку документов (sidecar) | `proxy/services/sidecar_ops_service.py` + `doc_extract_service.py` |
-| Поток чата/ответа | `proxy/routers/chat.py` (request/scope/route/tools) → `proxy/services/chat_evidence_application_service.py` (retrieval/evidence/model/sources/trace) → `answer_contract_service` |
+| Поток чата/ответа | `proxy/routers/chat.py` (request/scope/route/tools; optional module context only) → `proxy/services/chat_evidence_application_service.py` (retrieval/evidence/model/sources/trace) → `answer_contract_service` |
 | Индексацию/эмбеддинги | `backend/qdrant_adapter.py` + `backend/rag_config.py` (профили) |
 | Операторские заметки/память чата/датасета | `proxy/services/context_memory_service.py`, `proxy/services/notebook_service.py`, `proxy/services/prompt_registry_service.py`, `proxy/services/memory_service.py` |
 | Project Memory Core (advisory, не evidence) | `proxy/memory_core/*` → `memory_port.py` → post-success hook в `chat_evidence_application_service.py`; smeta observer в `smeta_chat_application_service.py`; root-admin `/api/memory/*`; GUI `sovushka/pages/diag.py` |

@@ -7,6 +7,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from backend.http_client_policy import environment_without_unsupported_proxies
 from backend.runtime_paths import mutable_path
 from typing import Any
 
@@ -276,7 +277,16 @@ def start(*, include_gesn: bool = True, all_periods: bool = False) -> dict[str, 
         cmd.append("--all-periods")
     try:
         with _LOG.open("ab") as log:
-            proc = subprocess.Popen(cmd, cwd=str(_ROOT), stdout=log, stderr=subprocess.STDOUT)
+            # Задание живёт часами и наследует окружение прокси. Схема прокси, которую
+            # httpx не понимает (например ALL_PROXY=socks4:// от десктопного VPN),
+            # роняет сборку сметной базы уже при создании клиента.
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(_ROOT),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=environment_without_unsupported_proxies(),
+            )
     except Exception as exc:
         DEFAULT_STATUS.write_text(
             json.dumps(

@@ -10,6 +10,13 @@ from tools.code_runtime_map import _tracked_python_files, build_inventory, rende
 ROOT = Path(__file__).resolve().parents[1]
 
 
+STAGED_DORMANT_CANDIDATES = frozenset(
+    {
+        "sovushka/pages/mail.py",
+    }
+)
+
+
 def test_tracked_python_files_ignore_worktree_deletions(tmp_path: Path):
     subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
     keep = tmp_path / "keep.py"
@@ -73,7 +80,7 @@ def test_runtime_map_is_conservative_and_deterministically_sorted(inventory: dic
     ) == inventory
 
 
-def test_proven_cleanup_leaves_only_the_intentionally_dormant_mail_surface(
+def test_proven_cleanup_allows_only_exact_staged_dormant_surfaces(
     inventory: dict,
 ):
     modules = _modules_by_path(inventory)
@@ -83,7 +90,9 @@ def test_proven_cleanup_leaves_only_the_intentionally_dormant_mail_surface(
         if item["status"] == "DORMANT_CANDIDATE"
     )
 
-    assert dormant == ["sovushka/pages/mail.py"]
+    assert dormant == sorted(STAGED_DORMANT_CANDIDATES), (
+        "Unexpected dormant runtime surface. Only the intentional mail surface may remain staged."
+    )
     for retired in (
         "proxy/legacy_app.py",
         "test_auth.py",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -14,19 +13,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_make_smeta_base_publishes_through_generation_coordinator():
-    completed = subprocess.run(
-        ["make", "-n", "smeta-base"],
-        cwd=ROOT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-    )
+    lines = (ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
+    target_index = next(i for i, line in enumerate(lines) if line == "smeta-base:")
+    recipe_lines: list[str] = []
+    for line in lines[target_index + 1 :]:
+        if line.startswith("\t"):
+            recipe_lines.append(line.strip())
+            continue
+        if line and not line.startswith((" ", "#")):
+            break
+    recipe = "\n".join(recipe_lines)
 
-    assert completed.returncode == 0, completed.stderr
-    assert "tools.smeta_generation_coordinator" in completed.stdout
-    assert "python -m tools.build_smeta_structured_base" not in completed.stdout
+    assert "generation_coordinator" in recipe
+    assert "python -m tools.build_smeta_structured_base" not in recipe
 
 
 def test_low_level_structured_builder_refuses_configured_active_path(

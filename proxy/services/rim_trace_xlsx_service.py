@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from pathlib import Path
 from typing import Any, Optional
 
@@ -80,7 +82,7 @@ def _make_put(ws, S: dict[str, Any]):
         cell = ws.cell(row=r, column=c, value=v)
         cell.font = font or S["small"]
         if num and isinstance(v, (int, float)):
-            cell.number_format = "#,##0.00"
+            cell.number_format = "#,##0.#########" if c in {5, 6, 7, 9, 11} else "#,##0.00"
             cell.alignment = Alignment(horizontal="right")
         else:
             cell.alignment = Alignment(horizontal=align, vertical="top", wrap_text=(c == 3))
@@ -122,6 +124,7 @@ def _header_block(ws, put, S: dict[str, Any], *, name: str, summary: dict[str, A
     put(r, 1, "Составлен(а) в текущем уровне цен: " + str(meta.get("price_level", "—")), font=S["dim"]); r += 1
     put(r, 1, "Наименование субъекта РФ: " + str(meta.get("subject", "—")), font=S["dim"]); r += 2
     result_status = str(summary.get("result_status") or "").strip()
+    review_required = int(summary.get("resource_review_required_operations") or 0)
     if result_status and result_status != "priced_final":
         put(
             r,
@@ -132,24 +135,32 @@ def _header_block(ws, put, S: dict[str, Any], *, name: str, summary: dict[str, A
         for c in range(1, 13):
             ws.cell(row=r, column=c).fill = S["fill_warning"]
         r += 1
+    if review_required:
+        put(r, 1, f"Требуют проверки модели: {review_required} операций. Их суммы включены в предварительный расчёт.", font=S["warning"])
+        r += 1
     input_rows = int(summary.get("input_rows") or 0)
+    non_work_rows = int(summary.get('non_work_rows') or 0)
+    calculation_rows = max(0, input_rows - non_work_rows)
+    if non_work_rows:
+        put(r, 1, f"Исходных строк: {input_rows}. Строк-разделов по решению модели: {non_work_rows}. Расчётных строк: {calculation_rows}.", font=S['dim'])
+        r += 1
     bound_rows = int(summary.get("bound_rows") or 0)
     open_rows = int(summary.get("open_rows", summary.get("unbound_rows")) or 0)
     covered_rows = int(summary.get("covered_rows") or 0)
     closed_rows = bound_rows + covered_rows
     low_coverage = (
-        input_rows > 0
+        calculation_rows > 0
         and open_rows > 0
-        and (open_rows / input_rows >= 0.30 or closed_rows / input_rows < 0.70)
+        and (open_rows / calculation_rows >= 0.30 or closed_rows / calculation_rows < 0.70)
     )
     if low_coverage:
         put(
             r,
             1,
             (
-                f"ПОКРЫТИЕ НИЗКОЕ: привязано {bound_rows} из {input_rows} строк"
+                f"ПОКРЫТИЕ НИЗКОЕ: привязано {bound_rows} из {calculation_rows} строк"
                 f"{', ещё ' + str(covered_rows) + ' покрыто соседними' if covered_rows else ''}. "
-                "Сумма в шапке — только по привязанным, не итог ведомости."
+                "Сумма относится к рассчитанным позициям и не является итогом ведомости."
             ),
             font=S["warning"],
         )
@@ -160,8 +171,8 @@ def _header_block(ws, put, S: dict[str, Any], *, name: str, summary: dict[str, A
         r += 1
     amount_complete = summary.get("full_amount") is not None
     cost_label = (
-        f"Стоимость только привязанной части ({bound_rows}/{input_rows})"
-        if low_coverage
+        "Предварительная стоимость рассчитанной части"
+        if result_status and result_status != "priced_final"
         else ("Сметная стоимость" if amount_complete else "Стоимость рассчитанной части")
     )
     put(r, 1, cost_label, font=S["bold"])
@@ -169,8 +180,8 @@ def _header_block(ws, put, S: dict[str, Any], *, name: str, summary: dict[str, A
     put(r, 6, "руб.", font=S["dim"]); r += 1
     put(r, 1, "  средства на оплату труда рабочих", font=S["dim"]); put(r, 4, _f(summary.get("ozp", 0)), font=S["dim"], num=True); r += 1
     put(r, 1, "  средства на оплату труда машинистов", font=S["dim"]); put(r, 4, _f(summary.get("zpm", 0)), font=S["dim"], num=True); r += 1
-    put(r, 1, "  нормативные затраты труда рабочих, чел.-ч", font=S["dim"]); put(r, 4, _f(summary.get("labor_qty", 0)), font=S["dim"], num=True); r += 1
-    put(r, 1, "  нормативные затраты труда машинистов, чел.-ч", font=S["dim"]); put(r, 4, _f(summary.get("machinist_qty", 0)), font=S["dim"], num=True); r += 2
+    put(r, 1, "  нормативные затраты труда рабочих, чел.-ч", font=S["dim"]); put(r, 4, summary.get("labor_qty", 0), font=S["dim"], num=True); r += 1
+    put(r, 1, "  нормативные затраты труда машинистов, чел.-ч", font=S["dim"]); put(r, 4, summary.get("machinist_qty", 0), font=S["dim"], num=True); r += 2
     return r
 
 
@@ -196,6 +207,41 @@ def _xlsx_work_name(row: dict[str, Any], value: Any) -> Any:
     return official or value
 
 
+def _mark_unapplied_coefficient(ws, S: dict[str, Any], row_no: int, row: dict[str, Any]) -> None:
+    """Пометить в книге коэффициент, который модель предложила, а расчёт не принял.
+
+    Коэффициент берётся из МДС или приложения к сборнику и требует основания: применить
+    предложенное число без него значит поменять деньги догадкой. Но и молчать нельзя —
+    строка уходит в смету по норме, а человек не узнаёт, что её считали нужным поднять.
+    До 11.09 отметка жила только в `missing` разбора и до самой книги не доходила, то
+    есть до проверяющего не доходила вовсе (ревью Codex 11.09, шаг 3).
+
+    Значение ячейки не подменяется: в графе остаётся принятый расчётом коэффициент,
+    а предложенный стоит рядом как примечание — иначе формулы считали бы по числу,
+    которое никто не обосновал.
+    """
+    meta = row.get("meta") or {}
+    if str(meta.get("coefficient_status") or "") != "needs_basis":
+        return
+    proposed = meta.get("proposed_coefficient")
+    note = str(meta.get("coefficient_note") or "").strip() or (
+        f"модель предложила коэффициент {proposed}; в расчёт не принят без основания"
+        " (МДС или приложение к сборнику)"
+    )
+    try:
+        from openpyxl.comments import Comment
+
+        cell = ws.cell(row=row_no, column=6)
+        cell.comment = Comment(note, "Л.Е.С.")
+        # Заливкой строка видна и без наведения курсора: примечание в закрытой книге
+        # ничем себя не выдаёт, а пропущенная проверка стоит денег.
+        cell.fill = S["fill_head"]
+    except Exception:  # noqa: BLE001 — пометка не должна ронять сборку книги
+        logging.getLogger(__name__).warning(
+            "[LSR_XLSX] пометка коэффициента не проставлена", exc_info=True
+        )
+
+
 def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start_r: int,
                    pp_start: int) -> tuple[int, int, dict[str, list[int]]]:
     """Строки одной позиции (работа → ОТ/ЭМ/ОТм/М → прямые/ФОТ/НР/СП/Всего) из готовой трассы.
@@ -203,21 +249,75 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     r = start_r
     pp = pp_start
     by_type: dict[str, list[int]] = {}
+    price_precision: dict[int, int] = {}
+    excluded_rows: set[int] = set()
     for row in rows:
         cols = row.get("columns", {}) or {}
         rtype = row.get("type", "")
+        price_precision[r] = int((row.get("meta") or {}).get("unit_price_precision", 2))
+        if (row.get('meta') or {}).get('excluded'):
+            excluded_rows.add(r)
         by_type.setdefault(str(rtype), []).append(r)
         is_group = rtype in _GROUP_TYPES
         is_total = rtype in _TOTAL_TYPES
         if rtype == "work":
             pp += 1
             put(r, 1, pp, font=S["bold"], align="center")
+            _mark_unapplied_coefficient(ws, S, r, row)
+            from openpyxl.comments import Comment
+
+            metadata = row.get('meta') or {}
+            source_notes = []
+            if metadata.get('source_row') is not None:
+                source_notes.append('source_row: ' + str(metadata['source_row']))
+            if metadata.get('work_id') is not None:
+                source_notes.append('work_id: ' + str(metadata['work_id']))
+            source_notes.extend(f'{key}: {metadata[key]}' for key in
+                                ('operation', 'coverage', 'not_covered', 'coefficient_basis', 'coefficient_target') if metadata.get(key))
+            normative_source = metadata.get('normative_source') or {}
+            if metadata.get('document_price_basis'):
+                source_notes.append('document_price_basis: ' + str(metadata['document_price_basis']))
+            source_notes.extend(
+                f'{key}: {normative_source[key]}'
+                for key in ('norm_id', 'edition', 'base_type', 'key', 'source_ref')
+                if normative_source.get(key)
+            )
+            for key in ('identity', 'identity_status', 'expected_identity', 'revision_conflict'):
+                if normative_source.get(key):
+                    source_notes.append(f'{key}: {normative_source[key]}')
+            if source_notes:
+                ws.cell(r, 2).comment = Comment('\n'.join(source_notes), 'Л.Е.С.')
+            quantity_trace = metadata.get('quantity_trace') or {}
+            if quantity_trace:
+                note = str(quantity_trace.get('formula') or '')
+                if quantity_trace.get('conversion_source'):
+                    note += '\nИсточник: ' + str(quantity_trace['conversion_source'])
+                ws.cell(r, 5).comment = Comment(note, 'Л.Е.С.')
         for key, xc in _COL.items():
             if key in cols:
                 val = _LABEL_FIX.get(str(cols[key]), cols[key]) if key == "3" else cols[key]
                 if rtype == "work" and key == "3":
                     val = _xlsx_work_name(row, val)
+                if rtype == "resource_material" and key == "3":
+                    catalog_name = str((row.get("meta") or {}).get("price_card_name") or "").strip()
+                    if catalog_name:
+                        val = f"По справочнику: {catalog_name}\nПо решению модели: {val}"
                 put(r, xc, val, font=(S["bold"] if is_group else S["small"]), num=(xc in _NUM_COLS))
+        if rtype.startswith('resource_') and (row.get('meta') or {}).get('source_resource_ids'):
+            from openpyxl.comments import Comment
+            import json
+            metadata = row['meta']
+            ids = metadata['source_resource_ids']
+            selector = 'row:' + str(ids[0]) if len(ids) == 1 else metadata.get('source_resource_group_id')
+            ws.cell(r, 2).comment = Comment(json.dumps(dict(target_resource_id=selector,
+                **{key: metadata[key] for key in ('source_resource_ids', 'source_resource_group_id',
+                   'normative_identity', 'excluded', 'excluded_per_unit') if key in metadata}),
+                ensure_ascii=False, sort_keys=True), 'Л.Е.С.')
+        if rtype.startswith('resource_') and (row.get('meta') or {}).get('price_record_identity'):
+            from openpyxl.comments import Comment
+            import json
+            ws.cell(r, 10).comment = Comment(json.dumps(row['meta']['price_record_identity'],
+                ensure_ascii=False, sort_keys=True), 'Л.Е.С.')
         # наименование группы/итога, если в columns нет "3"
         if "3" not in cols:
             label = row.get("label", "")
@@ -230,11 +330,11 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     for rtype in ("resource_labor", "resource_machine", "resource_machinist", "resource_material"):
         for row_no in by_type.get(rtype, []):
             if ws.cell(row=row_no, column=8).value not in (None, "") and ws.cell(row=row_no, column=9).value not in (None, ""):
-                ws.cell(row=row_no, column=10, value=f"=ROUND(H{row_no}*I{row_no},2)")
-            if ws.cell(row=row_no, column=10).value not in (None, "") and ws.cell(row=row_no, column=11).value not in (None, ""):
+                ws.cell(row=row_no, column=10, value=f"=ROUND(H{row_no}*I{row_no},{price_precision[row_no]})")
+            if all(ws.cell(row=row_no, column=column).value not in (None, "") for column in (7, 10, 11)):
                 ws.cell(row=row_no, column=12, value=f"=ROUND(G{row_no}*J{row_no}*K{row_no},2)")
             else:
-                ws.cell(row=row_no, column=12).value = None
+                ws.cell(row=row_no, column=12).value = 0 if row_no in excluded_rows else None
     group_rows = {
         "labor": (by_type.get("group_labor") or [None])[0],
         "machine": (by_type.get("group_machine") or [None])[0],
@@ -250,7 +350,8 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     for kind, row_no in group_rows.items():
         if row_no is None:
             continue
-        ws.cell(row=row_no, column=7, value=_sum_formula(detail_rows[kind], "G"))
+        if all(ws.cell(row=detail_row, column=7).value is not None for detail_row in detail_rows[kind]):
+            ws.cell(row=row_no, column=7, value=_sum_formula(detail_rows[kind], "G"))
         cost_rows = detail_rows[kind]
         if kind == "machine":
             cost_rows = cost_rows + detail_rows["machinist"]
@@ -374,7 +475,7 @@ def _set_header_total_formula(ws, total_row: int | None) -> None:
         return
     for row_no in range(1, min(ws.max_row, 40) + 1):
         label = str(ws.cell(row=row_no, column=1).value or "")
-        if label in {"Сметная стоимость", "Стоимость рассчитанной части"} or label.startswith(
+        if label in {"Сметная стоимость", "Стоимость рассчитанной части", "Предварительная стоимость рассчитанной части"} or label.startswith(
             "Стоимость только привязанной части"
         ):
             ws.cell(row=row_no, column=4, value=f"=L{total_row}")
@@ -398,14 +499,18 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
     for item in lsr.get("row_bindings") or []:
         resource_text = "\n".join(
             f"{entry.get('action')}: {entry.get('resource_code') or entry.get('resource_name')} "
+            + (f"[{entry['target_resource_id']}] " if entry.get('target_resource_id') else '')
+            +
             f"{entry.get('quantity') if entry.get('quantity') is not None else ''} {entry.get('unit') or ''}; "
             f"{entry.get('reason') or ''}; основание: {entry.get('basis_ref') or '—'}"
+            + (f"; исходное количество снятия: {entry['excluded_quantity'] if entry.get('excluded_quantity') is not None else 'неизвестно'} {entry.get('excluded_unit') or ''}"
+               if entry.get('action') == 'excluded' else '')
             for entry in (item.get("resource_bindings") or [])
         )
         ws.append([
             item.get("row"), item.get("work_id"), item.get("status"), item.get("code"),
             item.get("selection_kind") or ("covered_by " + str(item.get("covered_by_work_id") or "") if item.get("covered_by_work_id") else ""),
-            item.get("reason") or item.get("coverage_reason"),
+            item.get("reason") or item.get("coverage_reason") or item.get("message"),
             "\n".join(str(value) for value in (item.get("analog_limitations") or [])),
             " — ".join(filter(None, [
                 str(item.get("resource_review_status") or ""),
@@ -466,7 +571,43 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
     for row in ws.iter_rows():
         for cell in row:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
+            # Review content is authored text, never an executable Excel formula.
+            if cell.data_type == 'f':
+                cell.data_type = 's'
     ws.freeze_panes = "A2"
+
+
+def _source_registry_sheet(wb, lsr: dict[str, Any]) -> None:
+    """Source inventory is distinct from the model's authored operations."""
+    registry = lsr.get('source_registry')
+    if registry is None:
+        return
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    ws = wb.create_sheet('Исходные строки')
+    ws.append(['Якорь позиции', 'Адрес в исходном файле', 'Раздел', 'Наименование',
+               'Единица исходная', 'Количество исходное', 'Статус расчёта',
+               'work_id операций', 'Исходная строка'])
+    if registry.get('status') != 'parsed':
+        ws.append(['Реестр исходных строк не прочитан. Полнота ведомости не подтверждена.'])
+    for row in registry.get('rows') or []:
+        ws.append([row.get('anchor'), f"{row.get('sheet')}!R{row.get('sheet_row')}",
+                   row.get('section'), row.get('title'), row.get('unit'), row.get('quantity'),
+                   row.get('status'), '\n'.join(row.get('work_ids') or []), row.get('raw')])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill('solid', fgColor='D9EAF7')
+    for index, width in enumerate([25, 25, 35, 65, 18, 22, 30, 30, 80], 1):
+        ws.column_dimensions[get_column_letter(index)].width = width
+    for row in ws:
+        for cell in row:
+            cell.alignment = Alignment(vertical='top', wrap_text=True)
+            # Source text is data, including any leading equals sign.
+            if cell.data_type == 'f':
+                cell.data_type = 's'
+    ws.freeze_panes = 'A2'
+    ws.auto_filter.ref = ws.dimensions
 
 
 def render_trace_xlsx(trace: dict[str, Any], out_path: str | Path, *,
@@ -499,6 +640,13 @@ def render_lsr_xlsx(lsr: dict[str, Any], out_path: str | Path, *,
     sections = lsr.get("sections", []) or []
     wb, ws, S, put = _new_sheet()
     head_r = _header_block(ws, put, S, name=lsr.get("name", ""), summary=summary, meta=meta)
+    if lsr.get('document_price_basis') is not None:
+        from openpyxl.comments import Comment
+        import json
+        ws.cell(1, 1).comment = Comment(json.dumps({
+            'document_price_basis': lsr['document_price_basis'],
+            'price_basis_conflict': lsr.get('price_basis_conflict')},
+            ensure_ascii=False, sort_keys=True), 'Л.Е.С.')
     _table_header(ws, put, S, head_r)
 
     r = head_r + 1
@@ -527,6 +675,7 @@ def render_lsr_xlsx(lsr: dict[str, Any], out_path: str | Path, *,
     )
     _finalize(ws, head_r)
     _review_sheet(wb, lsr)
+    _source_registry_sheet(wb, lsr)
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.forceFullCalc = True
     wb.calculation.calcMode = "auto"

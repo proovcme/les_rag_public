@@ -403,6 +403,19 @@ def build_factory_mode_system_prompt(mode: str, *, extra: str = "") -> str:
     )
 
 
+def render_inline_factory_answer_prompt(prompt: str) -> str:
+    """Adapt only the known code-owned filesystem instruction for an inline skill."""
+    filesystem_instruction = (
+        "Для специальных областей читай соответствующий skill: сметы/ЛСР/ГЭСН/ФГИС/КАЦ — "
+        "`skills/smeta/SKILL.md`; RAG/датасеты — профиль RAG и карту корпуса; нормоконтроль — "
+        "normcontrol skill/rulepack."
+    )
+    if not prompt.startswith(LES_SYSTEM_PROMPT) or prompt.count(filesystem_instruction) != 1:
+        raise ValueError("FACTORY_ANSWER_PROMPT_PROVENANCE_MISMATCH")
+    return prompt.replace(filesystem_instruction,
+        "Активные правила профиля приведены в этом запросе; используй только явно предоставленные инструменты.", 1)
+
+
 def build_smeta_batch_system_prompt(tool_contract: str, *, notebook_context: str | None = None) -> str:
     nb = notebook_context if notebook_context is not None else gesn_notebook_prompt_excerpt()
     contract = tool_contract.replace("/no_think", "", 1).lstrip()

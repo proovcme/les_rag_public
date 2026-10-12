@@ -432,3 +432,94 @@ def test_memory_guard_cloud_can_be_forced_on(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "key")
     monkeypatch.setenv("LES_CHAT_MEMORY_GUARD", "true")
     assert ra.chat_memory_guard_for_provider() is True
+
+
+def test_chat_admission_recognizes_resident_lemonade_answer_model(monkeypatch):
+    """Провайдер lemonade тоже обязан признавать уже загруженную модель ответа.
+
+    Реальный отказ 09.09: модель ответа держала 11 ГБ, свободной RAM оставалось 0,5 ГБ,
+    и чат отклонялся с 503 — порог требовал 4 ГБ «на загрузку» модели, которая уже
+    загружена. Ветки для lemonade в проверке резидентности просто не было.
+    """
+    monkeypatch.setenv("LES_LLM_PROVIDER", "lemonade")
+    monkeypatch.delenv("LES_CHAT_RESIDENT_MIN_FREE_GB", raising=False)
+    metrics = {
+        "ram_free_gb": 0.5,
+        "swap_used_gb": 3.0,
+        "swap_pct": 8.0,
+        "llm_answer_model": "Qwen3.6-35B-A3B-GGUF-UD-IQ2_XXS-unsloth",
+        "llm_loaded_models": [
+            "Qwen3-Embedding-0.6B-GGUF",
+            "Qwen3.6-35B-A3B-GGUF-UD-IQ2_XXS-unsloth",
+        ],
+    }
+
+    assert local_model_resident(metrics) is True
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"}, metrics_cache=metrics, active_jobs=0
+    )
+    assert result.allowed is True
+    assert result.indexing_chat_policy["hard_min_free_gb"] == 0.0
+
+
+def test_lemonade_embedding_alone_is_not_a_resident_answer_model(monkeypatch):
+    """Загруженный эмбеддер не даёт права на генерацию: модель ответа ещё нужно поднять."""
+    monkeypatch.setenv("LES_LLM_PROVIDER", "lemonade")
+    metrics = {
+        "ram_free_gb": 3.2,
+        "swap_used_gb": 0.0,
+        "swap_pct": 0.0,
+        "llm_answer_model": "Qwen3.6-35B-A3B-GGUF-UD-IQ2_XXS-unsloth",
+        "llm_loaded_models": ["Qwen3-Embedding-0.6B-GGUF"],
+    }
+
+    assert local_model_resident(metrics) is False
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"}, metrics_cache=metrics, active_jobs=0
+    )
+    assert result.allowed is False
+
+
+def test_lemonade_residency_falls_back_to_configured_model_name(monkeypatch):
+    """Без телеметрии роли имя берётся из окружения — но выдумывать его нельзя."""
+    monkeypatch.setenv("LES_LLM_PROVIDER", "lemonade")
+    monkeypatch.setenv("LEMONADE_MODEL", "Qwen3.6-35B-A3B-GGUF-UD-IQ2_XXS-unsloth")
+    assert local_model_resident(
+        {"llm_loaded_models": ["Qwen3.6-35B-A3B-GGUF-UD-IQ2_XXS-unsloth"]}
+    ) is True
+
+    monkeypatch.delenv("LEMONADE_MODEL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    assert local_model_resident({"llm_loaded_models": ["что-угодно"]}) is False
+
+
+@pytest.mark.parametrize(
+    ("provider", "env", "expected"),
+    [
+        ("mlx", {"MLX_URL": "http://127.0.0.1:8080"}, "http://127.0.0.1:8080"),
+        ("ollama", {"OLLAMA_BASE_URL": "http://127.0.0.1:11434"}, "http://127.0.0.1:11434"),
+        # Адаптер Lemonade держит совместимый /api/ps: без этой ветки телеметрия
+        # загруженных моделей оставалась пустой, и чат считал модель незагруженной.
+        ("lemonade", {"MLX_URL": "http://127.0.0.1:18080"}, "http://127.0.0.1:18080"),
+        ("openai", {"MLX_URL": "http://127.0.0.1:8080"}, ""),
+    ],
+)
+def test_local_model_probe_url_covers_every_local_provider(monkeypatch, provider, env, expected):
+    from proxy.services.runtime_admission import local_model_probe_url
+
+    monkeypatch.setenv("LES_LLM_PROVIDER", provider)
+    for key in ("MLX_URL", "OLLAMA_BASE_URL", "OLLAMA_URL"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    assert local_model_probe_url() == expected
+
+
+def test_local_model_probe_url_strips_openai_suffix(monkeypatch):
+    """Базовый URL может быть записан с /v1 — пробы идут на корень хоста."""
+    from proxy.services.runtime_admission import local_model_probe_url
+
+    monkeypatch.setenv("LES_LLM_PROVIDER", "lemonade")
+    monkeypatch.setenv("MLX_URL", "http://127.0.0.1:18080/v1/")
+    assert local_model_probe_url() == "http://127.0.0.1:18080"

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
@@ -38,8 +39,11 @@ def _text(value: Any) -> str:
 def _optional_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
-    parsed = _f(value)
-    return parsed if parsed or str(value).strip() in {"0", "0.0", "0,0"} else None
+    try:
+        parsed = float(str(value).replace("\xa0", "").replace(" ", "").replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _number_key(value: Any) -> str:
@@ -122,7 +126,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             resource_code TEXT NOT NULL DEFAULT '',
             resource_name TEXT NOT NULL,
             resource_unit TEXT NOT NULL DEFAULT '',
-            per_unit REAL NOT NULL,
+            per_unit REAL,
             price REAL,
             source_doc TEXT,
             source_guid TEXT,
@@ -241,7 +245,7 @@ def build_structured_base(
             "resource_code": _text(rec.get("resource_code")),
             "resource_name": name,
             "resource_unit": _text(rec.get("resource_unit")),
-            "per_unit": _f(rec.get("per_unit")),
+            "per_unit": _optional_float(rec.get("per_unit")),
             "price": _optional_float(rec.get("price")),
             "source_doc": _text(rec.get("source_doc")),
             "source_guid": _text(rec.get("source_guid")),

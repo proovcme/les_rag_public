@@ -1,11 +1,70 @@
 from __future__ import annotations
 
 import hashlib
+import io
+from pathlib import Path
+import subprocess
+import sys
+import zipfile
 
 import httpx
+import psutil
 import pytest
 
 from proxy.services import update_service
+
+
+@pytest.mark.parametrize("kind,entrypoint", [
+    ("hard", "windows_update_engine.py"), ("hard", "windows_runtime.py"),
+    ("soft", "windows_update_engine.py"), ("soft", "windows_runtime.py"),
+    ("soft", "vps_patch_apply.py"),
+])
+def test_detached_update_helpers_start_without_source_checkout(tmp_path, monkeypatch, kind, entrypoint):
+    """Missing package dependencies must fail before a real installed update is attempted."""
+    source = Path(__file__).resolve().parents[1]
+    monkeypatch.setattr(update_service, "runtime_root", lambda: source)
+    transaction = tmp_path / "transaction"
+    if kind == "hard":
+        update_service._stage_hard_update_helpers(transaction)
+    else:
+        transaction.mkdir()
+        with zipfile.ZipFile(io.BytesIO(), "w") as bundle:
+            update_service._stage_vps_patch_launcher(bundle, {"files": []}, runtime=source, root=transaction)
+    # -I -S excludes checkout/PYTHONPATH/editable-install hooks. Only the staged
+    # transaction and installed third-party packages supplement the stdlib.
+    runner = (
+        "import runpy,sys; "
+        "sys.path.insert(0,sys.argv[1]); sys.path.append(sys.argv[2]); "
+        "sys.argv=[sys.argv[3],'--help']; "
+        "runpy.run_path(sys.argv[0],run_name='__main__')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", runner, str(transaction),
+         str(Path(psutil.__file__).resolve().parents[1]), str(transaction / entrypoint)],
+        cwd=tmp_path, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "usage:" in result.stdout.lower()
+
+
+@pytest.mark.parametrize("valid_checksum", [True, False])
+def test_soft_update_stages_checksum_declared_target_lemonade_dependency(tmp_path, valid_checksum):
+    relative = "extensions/lemonade/vendor_status.py"
+    target_bytes = b'# target dependency revision\n'
+    entry = {"path": relative, "bytes": len(target_bytes),
+             "sha256": hashlib.sha256(target_bytes).hexdigest() if valid_checksum else "0" * 64}
+    with zipfile.ZipFile(io.BytesIO(), "w") as bundle:
+        bundle.writestr("payload/" + relative, target_bytes)
+        if not valid_checksum:
+            with pytest.raises(update_service.UpdateError, match="payload"):
+                update_service._stage_vps_patch_launcher(
+                    bundle, {"files": [entry]}, runtime=Path(__file__).resolve().parents[1], root=tmp_path,
+                )
+        else:
+            update_service._stage_vps_patch_launcher(
+                bundle, {"files": [entry]}, runtime=Path(__file__).resolve().parents[1], root=tmp_path,
+            )
+            assert (tmp_path / relative).read_bytes() == target_bytes
 
 
 def _release(version: str = "0.24.0.405") -> dict:

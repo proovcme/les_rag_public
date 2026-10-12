@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import hashlib
 import inspect
+import logging
 import json
 from pathlib import Path
 import sqlite3
@@ -468,10 +469,21 @@ class TrustedExecutor:
             return self._envelope(request, "timeout", "TOOL_DEADLINE_EXCEEDED")
         except Exception as exc:  # noqa: BLE001 - boundary converts handler failures
             self._mark_ambiguous(request, fingerprint, durable_claimed)
+            # Тип и текст исключения — единственный ключ к причине отказа. Без них
+            # сборка книги возвращала голый TOOL_HANDLER_ERROR, и выяснять, что
+            # случилось, приходилось ручным воспроизведением обработчика.
+            reason = f"{type(exc).__name__}: {exc}"
+            logging.getLogger(__name__).warning(
+                "[TOOL] handler failed tool=%s call=%s reason=%s",
+                request.tool_name,
+                request.call_id,
+                reason,
+            )
             return self._envelope(
                 request,
                 "error",
                 "TOOL_HANDLER_ERROR",
+                {"failure_reason": reason[:500]},
             )
         if not isinstance(raw, Mapping):
             self._mark_ambiguous(request, fingerprint, durable_claimed)

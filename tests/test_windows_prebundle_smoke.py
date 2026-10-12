@@ -55,7 +55,9 @@ def health_servers():
             thread.join(timeout=5)
 
 
-def _fake_runtime(root: Path, *, failed: bool = False) -> Path:
+def _fake_runtime(
+    root: Path, *, failed: bool = False, contract: str = "direct_python_no_console_v2"
+) -> Path:
     app = root / "installers/windows/app"
     app.mkdir(parents=True)
     if failed:
@@ -80,13 +82,15 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
   ui_port=[int]$env:LES_PREBUNDLE_TEST_UI_PORT
   proxy_pid=[int]$env:LES_PREBUNDLE_TEST_PYTHON_PID
   ui_pid=[int]$env:LES_PREBUNDLE_TEST_PYTHON_PID
-  process_contract="direct_python_no_console_v1"
+  process_contract="__PROCESS_CONTRACT__"
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $logDir "windows-light-state.json") -Encoding utf8
 @{state="ready"; phase="ready"; code="bootstrap_degraded"; message="ready"} |
   ConvertTo-Json | Set-Content -LiteralPath (Join-Path $logDir "bootstrap-status.json") -Encoding utf8
 exit 0
 """
-    (app / "bootstrap.ps1").write_text(bootstrap, encoding="utf-8")
+    (app / "bootstrap.ps1").write_text(
+        bootstrap.replace("__PROCESS_CONTRACT__", contract), encoding="utf-8"
+    )
     (root / "installers/windows/stop-light.ps1").write_text(
         "param([int]$ProxyPort, [int]$UiPort)\nexit 0\n", encoding="utf-8"
     )
@@ -116,6 +120,13 @@ def test_prebundle_smoke_surfaces_bootstrap_failure(tmp_path):
     runtime = _fake_runtime(tmp_path / "runtime", failed=True)
 
     with pytest.raises(PrebundleSmokeError, match="real proxy startup error"):
+        run_prebundle_smoke(runtime, timeout_seconds=20)
+
+
+@pytest.mark.parametrize("contract", ["direct_python_no_console_v1", "unknown", ""])
+def test_prebundle_smoke_rejects_stale_or_unknown_new_build_contract(tmp_path, contract):
+    runtime = _fake_runtime(tmp_path / "runtime", contract=contract)
+    with pytest.raises(PrebundleSmokeError, match="process contract"):
         run_prebundle_smoke(runtime, timeout_seconds=20)
 
 

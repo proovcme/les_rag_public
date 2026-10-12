@@ -235,3 +235,56 @@ def test_release_baseline_rejects_self_consistent_manifest_with_false_counts(tmp
 
     with pytest.raises(baseline.BaselineError, match="counts do not match payload"):
         baseline.verify_archive(rewritten)
+
+
+def _link_directory(link: Path, target: Path) -> bool:
+    """Создать junction (Windows) или симлинк (POSIX); False, если нельзя."""
+    import os
+    import subprocess
+
+    target.mkdir(parents=True, exist_ok=True)
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                check=True,
+                capture_output=True,
+            )
+        else:
+            os.symlink(target, link, target_is_directory=True)
+    except Exception:
+        return False
+    return link.exists()
+
+
+def test_release_baseline_repair_survives_linked_state_directories(tmp_path: Path):
+    """Рантайм держит storage/data как junction на постоянное состояние.
+
+    Реальный отказ 08.09: обновление ФГИС пять раз подряд падало с
+    `FileExistsError: [WinError 183]` при создании резервного каталога через junction,
+    хотя каталог был новым и `exist_ok=True` стоял.
+    """
+    source_root = _fixture_root(tmp_path / "source")
+    archive = tmp_path / "baseline.zip"
+    baseline.create_archive(
+        source_root, archive, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )
+
+    state = tmp_path / "state"
+    state.mkdir()
+    if not _link_directory(state / "storage", tmp_path / "persistent_storage"):
+        pytest.skip("окружение не позволяет создать junction/симлинк")
+    if not _link_directory(state / "data", tmp_path / "persistent_data"):
+        pytest.skip("окружение не позволяет создать junction/симлинк")
+
+    partial = state / "data/smeta_base/les_smeta_base.sqlite"
+    partial.parent.mkdir(parents=True, exist_ok=True)
+    partial.write_bytes(b"broken-user-state")
+
+    repaired = baseline.repair_archive(archive, state)
+
+    assert repaired["action"] == "repaired"
+    backup = Path(repaired["backup"]) / "data/smeta_base/les_smeta_base.sqlite"
+    assert backup.read_bytes() == b"broken-user-state"
+    # Резерв обязан лежать в цели ссылки, а не внутри самой ссылки.
+    assert (tmp_path / "persistent_storage") in Path(repaired["backup"]).parents

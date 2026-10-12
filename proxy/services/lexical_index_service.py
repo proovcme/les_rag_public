@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -26,6 +27,14 @@ CONTEXT_COLUMNS = {
     "context_before": "context_before TEXT DEFAULT ''",
     "context_after": "context_after TEXT DEFAULT ''",
     "context_kind": "context_kind TEXT DEFAULT ''",
+}
+
+PROVENANCE_COLUMNS = {
+    "source_page": "source_page INTEGER",
+    "source_ref": "source_ref TEXT DEFAULT ''",
+    "bbox_json": "bbox_json TEXT DEFAULT ''",
+    "extraction_method": "extraction_method TEXT DEFAULT ''",
+    "extraction_version": "extraction_version TEXT DEFAULT ''",
 }
 
 
@@ -121,6 +130,28 @@ def _connect(db_path: str | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _provenance_meta(row: sqlite3.Row) -> dict[str, Any]:
+    """Read optional fields; absence remains absent rather than becoming evidence."""
+    keys = set(row.keys())
+    meta: dict[str, Any] = {}
+    page = row["source_page"] if "source_page" in keys else None
+    if isinstance(page, int) and page > 0:
+        meta["source_page"] = page
+    for column in ("source_ref", "extraction_method", "extraction_version"):
+        value = row[column] if column in keys else ""
+        if value:
+            meta[column] = str(value)
+    bbox_json = row["bbox_json"] if "bbox_json" in keys else ""
+    if bbox_json:
+        try:
+            bbox = json.loads(bbox_json)
+            if isinstance(bbox, list) and len(bbox) == 4:
+                meta["bbox"] = [float(value) for value in bbox]
+        except (TypeError, ValueError):
+            pass
+    return meta
+
+
 def _row_to_chunk(row: sqlite3.Row, *, score: float = 0.0, extra_meta: dict[str, Any] | None = None) -> Chunk:
     meta = {
         "point_id": row["point_id"],
@@ -135,6 +166,7 @@ def _row_to_chunk(row: sqlite3.Row, *, score: float = 0.0, extra_meta: dict[str,
         "context_before": row["context_before"],
         "context_after": row["context_after"],
         "context_kind": row["context_kind"],
+        **_provenance_meta(row),
     }
     if extra_meta:
         meta.update(extra_meta)
@@ -292,7 +324,7 @@ class LexicalIndex:
             row["name"]
             for row in conn.execute("PRAGMA table_info(lexical_chunks)").fetchall()
         }
-        for name, ddl in CONTEXT_COLUMNS.items():
+        for name, ddl in {**CONTEXT_COLUMNS, **PROVENANCE_COLUMNS}.items():
             if name not in existing:
                 conn.execute(f"ALTER TABLE lexical_chunks ADD COLUMN {ddl}")
 
@@ -325,11 +357,13 @@ class LexicalIndex:
                 INSERT INTO lexical_chunks (
                     collection, point_id, dataset_id, doc_id, doc_name, text, content_hash,
                     chunk_ord, section_heading, parent_id, parent_ord, child_ord,
-                    parent_heading, context_before, context_after, context_kind, updated_at
+                    parent_heading, context_before, context_after, context_kind, updated_at,
+                    source_page, source_ref, bbox_json, extraction_method, extraction_version
                 )
                 SELECT ?, point_id, dataset_id, doc_id, doc_name, text, content_hash,
                        chunk_ord, section_heading, parent_id, parent_ord, child_ord,
-                       parent_heading, context_before, context_after, context_kind, ?
+                       parent_heading, context_before, context_after, context_kind, ?,
+                       source_page, source_ref, bbox_json, extraction_method, extraction_version
                 FROM lexical_chunks WHERE collection=?
                 """,
                 (target, time.time(), source),
@@ -369,6 +403,22 @@ class LexicalIndex:
             )
             return int(cur.rowcount or 0)
 
+    def delete_point_ids(self, collection: str, point_ids: list[str]) -> int:
+        """Retire captured IDs within one collection and one SQLite transaction."""
+        if not collection or not point_ids:
+            return 0
+        deleted = 0
+        with self.connect() as conn:
+            for start in range(0, len(point_ids), 256):
+                batch = point_ids[start:start + 256]
+                placeholders = ",".join("?" for _ in batch)
+                cur = conn.execute(
+                    f"DELETE FROM lexical_chunks WHERE collection=? AND point_id IN ({placeholders})",
+                    [collection, *batch],
+                )
+                deleted += int(cur.rowcount or 0)
+        return deleted
+
     def delete_dataset(self, collection: str, *, dataset_id: str) -> int:
         """Remove every lexical row for a deleted dataset."""
         if not collection or not dataset_id:
@@ -395,9 +445,10 @@ class LexicalIndex:
                     (
                         collection, point_id, dataset_id, doc_id, doc_name, text, content_hash,
                         chunk_ord, section_heading, parent_id, parent_ord, child_ord,
-                        parent_heading, context_before, context_after, context_kind, updated_at
+                        parent_heading, context_before, context_after, context_kind, updated_at,
+                        source_page, source_ref, bbox_json, extraction_method, extraction_version
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(collection, point_id) DO UPDATE SET
                         dataset_id=excluded.dataset_id,
                         doc_id=excluded.doc_id,
@@ -413,7 +464,12 @@ class LexicalIndex:
                         context_before=excluded.context_before,
                         context_after=excluded.context_after,
                         context_kind=excluded.context_kind,
-                        updated_at=excluded.updated_at
+                        updated_at=excluded.updated_at,
+                        source_page=excluded.source_page,
+                        source_ref=excluded.source_ref,
+                        bbox_json=excluded.bbox_json,
+                        extraction_method=excluded.extraction_method,
+                        extraction_version=excluded.extraction_version
                     """,
                     (
                         collection,
@@ -433,6 +489,11 @@ class LexicalIndex:
                         str(row.get("context_after") or ""),
                         str(row.get("context_kind") or ""),
                         now,
+                        row.get("source_page"),
+                        str(row.get("source_ref") or ""),
+                        str(row.get("bbox_json") or ""),
+                        str(row.get("extraction_method") or ""),
+                        str(row.get("extraction_version") or ""),
                     ),
                 )
                 count += 1
@@ -504,6 +565,8 @@ class LexicalIndex:
                         c.point_id, c.dataset_id, c.doc_id, c.doc_name, c.text, c.content_hash,
                         c.chunk_ord, c.section_heading, c.parent_id, c.parent_ord, c.child_ord,
                         c.parent_heading, c.context_before, c.context_after, c.context_kind,
+                        c.source_page, c.source_ref, c.bbox_json,
+                        c.extraction_method, c.extraction_version,
                         bm25(lexical_chunks_fts) AS bm25_score
                     FROM lexical_chunks_fts
                     JOIN lexical_chunks c ON c.id = lexical_chunks_fts.rowid
@@ -561,7 +624,8 @@ class LexicalIndex:
                 SELECT
                     point_id, dataset_id, doc_id, doc_name, text, content_hash,
                     chunk_ord, section_heading, parent_id, parent_ord, child_ord,
-                    parent_heading, context_before, context_after, context_kind
+                    parent_heading, context_before, context_after, context_kind,
+                    source_page, source_ref, bbox_json, extraction_method, extraction_version
                 FROM lexical_chunks
                 WHERE {where}
                 ORDER BY {order}

@@ -3,7 +3,9 @@
   "include_prefixes": [
     "backend/",
     "config/",
+    "extensions/",
     "installers/windows/",
+    "modules/",
     "proxy/",
     "qdrant_visualizer/",
     "skills/smeta/",

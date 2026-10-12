@@ -16,6 +16,7 @@ from proxy.services.model_capability_service import (
     CapabilityProbeError,
     CapabilityRequirementError,
     require_capabilities,
+    capability_diagnostic_observation,
 )
 from proxy.services.model_connection_contracts import (
     CapabilityName,
@@ -246,7 +247,7 @@ def _capabilities(snapshot: CapabilitySnapshot | None) -> list[CapabilityPublic]
             observed_at=item.observed_at.isoformat(),
             detail=item.detail,
         )
-        for item in snapshot.observations
+        for item in map(capability_diagnostic_observation, snapshot.observations)
     ]
 
 

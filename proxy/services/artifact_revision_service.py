@@ -24,6 +24,10 @@ class ArtifactImmutableError(ArtifactRevisionError):
     pass
 
 
+class ArtifactUnavailableError(ArtifactImmutableError):
+    """Registered bytes are missing or corrupt; metadata remains immutable."""
+
+
 @dataclass(frozen=True)
 class ArtifactRevisionRequest:
     artifact_kind: Literal["lsr_workbook", "vor_workbook"]
@@ -115,7 +119,16 @@ class ArtifactRevisionStore:
                 if parent["artifact_kind"] != request.artifact_kind:
                     raise ArtifactRevisionError("parent artifact kind mismatch")
                 artifact_id = str(parent["artifact_id"])
-                revision_no = int(parent["revision_no"]) + 1
+                # Номер — следующий свободный у артефакта, а не «родитель + 1». Две
+                # ревизии от одного родителя законны: повторная доставка запроса или
+                # ветвление дают именно такую пару, и прежняя формула роняла вторую
+                # на UNIQUE-ограничении (живой прогон 11.09, 11:07). Родословная при
+                # этом не теряется — она в parent_revision_id.
+                highest = conn.execute(
+                    "SELECT MAX(revision_no) FROM artifact_revisions WHERE artifact_id=?",
+                    (artifact_id,),
+                ).fetchone()[0]
+                revision_no = int(highest or parent["revision_no"]) + 1
             else:
                 artifact_id = f"art_{uuid4().hex}"
                 revision_no = 1
@@ -196,6 +209,18 @@ class ArtifactRevisionStore:
             raise ArtifactNotFoundError("artifact not found")
         return [self.get_revision(revision_id) for revision_id in ids]
 
+    def revisions_for_checkpoint(self, checkpoint_id: str) -> list[ArtifactRevision]:
+        """Find committed bytes whose subsequent checkpoint commit was interrupted."""
+        if not checkpoint_id:
+            raise ArtifactRevisionError('checkpoint identity is required')
+        with self._connect() as conn:
+            ids = [row[0] for row in conn.execute(
+                "SELECT revision_id FROM artifact_revisions "
+                "WHERE json_extract(metadata_json, '$.decision_checkpoint_id')=? ORDER BY rowid",
+                (checkpoint_id,),
+            )]
+        return [self.get_revision(revision_id) for revision_id in ids]
+
     def resolve_path(self, revision_id: str) -> Path:
         row = self._row(revision_id)
         target = (self.root / row["relative_path"]).resolve()
@@ -209,11 +234,18 @@ class ArtifactRevisionStore:
         try:
             payload = target.read_bytes()
         except FileNotFoundError as exc:
-            raise ArtifactImmutableError("artifact file is missing") from exc
+            raise ArtifactUnavailableError("artifact file is missing") from exc
         if self._sha(payload) != revision.sha256 or len(payload) != revision.byte_size:
-            raise ArtifactImmutableError("artifact hash drift detected")
+            raise ArtifactUnavailableError("artifact hash drift detected")
         return payload
 
     def replace_bytes(self, revision_id: str, payload: bytes) -> None:
         self._row(revision_id)
         raise ArtifactImmutableError("artifact revisions are immutable")
+
+    def available(self, revision_id: str) -> bool:
+        try:
+            self.read_bytes(revision_id)
+        except (ArtifactRevisionError, OSError):
+            return False
+        return True

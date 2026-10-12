@@ -39,6 +39,14 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 
 ## 2. Единственный dependency-контур
 
+Detached update transaction contains both lifecycle scripts and the exact import closure under
+`extensions/lemonade`: package initializers, `contracts.py`, `transport.py`, `vendor_status.py`
+and `runtime_env.py`. It must start without a source checkout or editable-install hooks. Hard
+update copies these trusted installed files; soft update stages SHA/size-checked target bytes
+when declared by the patch and installed bytes otherwise. No vendor binaries, models, credentials
+or mutable state enter this helper bundle. Tests run the real helper `--help` entrypoints under
+`python -I -S`; this is an import/start gate, not proof of the full installed transaction.
+
 До запуска proxy/UI supervisor обязан подготовить **core**, а внешние capabilities проверить
 независимо:
 
@@ -110,6 +118,14 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 `/healthz`: stop завершает только exact UI PID из `windows-light-state.json`.
 `backend` проверяет identity через `/api/version` и не касается UI-порта.
 Чужой listener во всех режимах остаётся `foreign_port_owner`.
+При provider `lemonade` режимы `full` и `backend` дополнительно владеют exact PID
+adapter на фиксированном `18080`: state публикует PID и port вместе. Другой port или
+занятый `18080` — явная ошибка startup; adapter не переезжает на `18081+` и чужой
+владелец не завершается.
+До перехода на текущий v2 state PowerShell записывал v1 и мог сохранить legacy adapter port
+только в loopback `lemonade_adapter_url`. Update может освободить такой port лишь при exact
+port→PID mapping и фактическом image path каждого PID, равном persistent LES Python; malformed,
+non-loopback URL или recycled/foreign PID остаются `foreign_port_owner` и не завершаются.
 
 ## 5. Soft update
 
@@ -125,7 +141,8 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 5. Поднять полный dependency-контур. Если live baseline проходит mechanical base + RRF + exact
    ГЭСН expand, не изменять данные. Если не проходит — soft update прекращается; provisioning
    выполняется hard recovery/clean install, но не скрытой файловой починкой.
-6. Идентифицировать и остановить LES-процессы; дождаться освобождения портов.
+6. Идентифицировать и остановить LES-процессы, включая state-recorded Lemonade adapter
+   PID/`18080`; дождаться освобождения портов.
 7. Если подтверждённый PID невозможно остановить из-за integrity level, записать терминальное
    `reboot_required` и подготовить одноразовое продолжение после входа. Не повторять попытки и не
    запрашивать UAC.
@@ -140,7 +157,7 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 Используется, когда меняются native shell, зависимости, baseline или повреждён app tree.
 
 1. Проверить полный installer и recovery space.
-2. Остановить подтверждённый LES.
+2. Остановить подтверждённый LES, включая state-recorded Lemonade adapter PID/`18080`.
 3. Атомарно переименовать app tree в sibling recovery point.
 4. Установить новый app tree в canonical per-user path.
 5. Состояние сохранять только в обычном hard update. При явном clean reset применить раздел 3.
@@ -160,6 +177,8 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 - `GET /api/lsr/gesn/10-01-001-01/expand?qty=1` возвращает непустые ресурсы;
 - configured reranker выполняет реальный двухкандидатный probe;
 - runtime PID принадлежат direct Python, нет LES-owned `cmd.exe`/PowerShell wrappers;
+- для Lemonade adapter `:18080` отвечает с provider-owned model/backend/vector identity;
+  совместимость named index contract является единственным источником chunk settings;
 - две последовательные стабильные пробы проходят после окна прогрева.
 
 ## 8. Ошибки и автоматическое решение
@@ -181,7 +200,9 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 
 ## 9. Проверка самой автоматики
 
-До применения обязательны hermetic tests всех переходов, затем два живых Legion-сценария:
+До применения обязательны hermetic tests всех переходов, включая PowerShell-produced Lemonade
+state через stop/candidate/rollback, foreign port owner и compatible non-default chunk contract;
+затем два живых Legion-сценария:
 
 1. clean install на пустом app/state: первый bootstrap намеренно проходит без Docker и доказывает
    core API/UI + warning codes; после stop второй bootstrap того же state обязан вернуть

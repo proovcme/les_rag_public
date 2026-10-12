@@ -11,11 +11,78 @@ from types import SimpleNamespace
 import openpyxl
 import pytest
 
+from proxy.smeta_core.calculation_receipt import receipt_context
+
 from proxy.routers import chat
 from proxy.services import chat_evidence_application_service as service
 from proxy.services.chat_attachment_service import preserve_read_attachment
 from proxy.services.tool_harness_service import ToolHarness
 from proxy.services.web_research_config_service import WebResearchConfig
+
+
+def test_model_answer_format_applies_only_to_terminal_content_and_reads_remain_optional():
+    clarification = (
+        'Требования к Markdown, первой строке и запрет вывода JSON относятся только '
+        'к итоговому пользовательскому ответу. До него при необходимости можешь использовать '
+        'native search_sources, если этот инструмент доступен; решение о дополнительном чтении принимаешь ты.'
+    )
+    driven = service.model_answer_request('Fixture question', model_driven=True)
+    ordinary = service.model_answer_request('Fixture question', model_driven=False)
+    assert clarification in driven
+    assert clarification not in ordinary
+    assert driven.index(clarification) < driven.index('Первой строкой — базовая шапка')
+    assert '| source_row | work_id | title | unit | quantity | norm_code | evidence_refs |' in driven
+    assert 'Не выводи JSON.' in driven
+
+
+@pytest.mark.parametrize('mode,model_driven,estimator',[
+    ('legacy',True,True), ('shadow',True,True), ('active',False,True), ('active',True,False),
+])
+def test_p915_answer_adapter_leaves_other_paths_byte_identical(mode,model_driven,estimator):
+    from tests.test_chat_profile_service import _p915_factory_snapshot
+    snapshot = _p915_factory_snapshot()
+    if not estimator:
+        snapshot['mode'] = 'agent'
+    prefix, request, trace = service.prepare_estimator_answer_contract(
+        snapshot, canonical_mode=mode, model_driven=model_driven, tools_enabled=True,
+        original_prefix='original-prefix', original_request='original-request', question='Fixture')
+    assert (prefix,request,trace) == ('original-prefix','original-request',None)
+
+
+@pytest.mark.parametrize('tools_enabled',[True,False])
+def test_p915_active_answer_has_available_tools_and_qrefs_only_in_owned_contract(tools_enabled):
+    from tests.test_chat_profile_service import _p915_factory_snapshot
+    snapshot = _p915_factory_snapshot()
+    query_before = service.profile_query_prompt(snapshot)
+    prefix, request, trace = service.prepare_estimator_answer_contract(
+        snapshot, canonical_mode='active', model_driven=True, tools_enabled=tools_enabled,
+        original_prefix='unused',original_request='unused',question='Fixture',
+        instruction='Preserved output style',output_directive='Preserved GUI directive')
+    assert '[Источник N]' not in prefix+request
+    assert 'skills/smeta/SKILL.md' not in prefix
+    assert 'read_source' not in prefix
+    assert ('native search_sources' in request) is tools_enabled
+    assert 'Qn.Hm' in prefix and 'Qn.Hm' in request
+    assert 'Preserved output style' in prefix and 'Preserved GUI directive' in prefix
+    assert service.profile_query_prompt(snapshot) == query_before
+    assert trace['original_prompt_sha256'] == snapshot['prompt_sha256']
+
+
+def test_p915_custom_authored_instructions_are_preserved_and_mismatch_visible():
+    snapshot = {'mode':'estimator','is_factory':False,'prompt_text':'Custom read_source [Источник N]',
+                'skill_text':'Custom skills/smeta/SKILL.md'}
+    prefix, _, trace = service.prepare_estimator_answer_contract(
+        snapshot,canonical_mode='active',model_driven=True,tools_enabled=True,
+        original_prefix='unused',original_request='unused',question='Fixture')
+    assert snapshot['prompt_text'] in prefix and snapshot['skill_text'] in prefix
+    assert trace['factory_verified'] is False
+    assert trace['unavailable_references'] == ['read_source','skills/smeta/SKILL.md']
+
+
+@pytest.fixture(autouse=True)
+def isolated_chat_state(tmp_path, monkeypatch):
+    """A repeated run must not reuse another test's attachment idempotency keys."""
+    monkeypatch.setenv("LES_WINDOWS_STATE_ROOT", str(tmp_path / "state"))
 
 
 def test_web_reader_is_visible_only_in_explicit_extended_request_snapshot():
@@ -234,10 +301,14 @@ def test_only_estimator_model_rag_uses_the_dedicated_smeta_catalog():
     ) is False
 
 
-def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
-    query_hits = []
-    for query_index in range(1, 31):
-        hits = [
+def test_model_rag_evidence_keeps_configured_candidates_whole_for_the_queries_that_fit():
+    """Каждый вошедший запрос несёт свои карточки целиком; остальные объявлены, а не обрезаны.
+
+    До 10.10 тест закреплял обратное: все 30 запросов в пакете, тела урезаны поровну.
+    Живой контроль .199 показал цену — 0 целых карточек из 102, выбор нормы по заголовку.
+    """
+    def hits_for(query_index):
+        return [
             SimpleNamespace(
                 content=(
                     f"Шифр: ГЭСН{query_index:02d}-00-000-{hit_index:02d} "
@@ -250,7 +321,8 @@ def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
             )
             for hit_index in range(1, 9)
         ]
-        query_hits.append((f"работа {query_index}", hits))
+
+    query_hits = [(f"работа {query_index}", hits_for(query_index)) for query_index in range(1, 31)]
 
     groups, chunks = service.build_model_rag_evidence_groups(
         query_hits,
@@ -259,13 +331,27 @@ def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
     )
 
     rendered = "\n\n".join(groups)
-    assert len(groups) == 30
-    assert len(chunks) == 120
-    assert "[Поисковый запрос Q30] работа 30" in rendered
-    assert "[Q30.H4 | smeta_norm_cards.v1" in rendered
-    assert "ГЭСН30-00-000-04" in rendered
-    assert "ГЭСН30-00-000-05" not in rendered
     assert len(rendered) <= 70_000
+    # Вошли первые запросы по порядку модели, у каждого ровно настроенные четыре кандидата.
+    assert 1 < len(groups) < 30
+    assert len(chunks) == 4 * len(groups)
+    assert [group.split("]", 1)[0] for group in groups] == [
+        f"[Поисковый запрос Q{index}" for index in range(1, len(groups) + 1)
+    ]
+    assert "ГЭСН01-00-000-04" in rendered and "ГЭСН01-00-000-05" not in rendered
+    assert not any(chunk.meta.get("model_evidence_truncated") for chunk in chunks)
+    coverage = service.model_rag_evidence_coverage(query_hits, groups)
+    assert coverage["queries_dropped"] == 30 - len(groups) and coverage["complete"] is False
+
+    # Когда целые карточки помещаются, до модели доходят все запросы.
+    groups, chunks = service.build_model_rag_evidence_groups(
+        query_hits,
+        max_chars=160_000,
+        hits_per_query=4,
+    )
+    assert len(groups) == 30 and len(chunks) == 120
+    assert "[Q30.H4 | smeta_norm_cards.v1" in "\n\n".join(groups)
+    assert not any(chunk.meta.get("model_evidence_truncated") for chunk in chunks)
 
 
 def test_model_rag_source_map_preserves_typed_locator_and_evidence_handle():
@@ -474,9 +560,11 @@ def test_model_rag_packaging_keeps_model_wording_and_treats_code_link_mismatch_a
 
     assert advisory == ["norm_code_not_in_referenced_evidence:ВОР!R5"]
     assert service.blocking_model_rag_result_errors(advisory) == []
+    # С 17.09 (проход 3 на IQ2_M) ссылка на несуществующую карточку отказывает строке, а не
+    # порции: норму без показанной карточки не считает withhold_unreferenced_norms.
     assert service.blocking_model_rag_result_errors(
         advisory + ["unknown_evidence_ref:Q9.H9"]
-    ) == ["unknown_evidence_ref:Q9.H9"]
+    ) == []
 
 
 def test_model_rag_packaging_accepts_unique_string_source_rows_without_count_gate():
@@ -993,6 +1081,12 @@ async def _tracked_workbook_execution(call, context, progress, events, calls):
     return await _fake_workbook_execution(call, context, progress, events)
 
 
+async def _failing_workbook_execution(call, calls):
+    """Сборка книги упала — так ведёт себя занятый диск или битый шаблон."""
+    calls.append(call)
+    raise RuntimeError("workbook packaging failed")
+
+
 async def _rejected_workbook_execution(call, calls):
     calls.append(call)
     return {
@@ -1104,6 +1198,7 @@ def test_workbook_history_projection_redacts_failures_paths_and_unbounded_result
 @pytest.mark.asyncio
 async def test_chat_workbook_executor_builds_revision_and_streams_checkpoint(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LES_WINDOWS_STATE_ROOT", raising=False)
     attachment_root = tmp_path / "attachments"
     monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attachment_root))
     source = tmp_path / "source.xlsx"
@@ -1150,6 +1245,36 @@ async def test_chat_workbook_executor_builds_revision_and_streams_checkpoint(tmp
     assert progress[-1]["checkpoint_id"] == result["checkpoint"]["checkpoint_id"]
     assert progress[-1]["label"] == "Собираю строки ВОР"
     assert Path("storage/artifacts/meta.db").is_file()
+
+
+@pytest.mark.asyncio
+async def test_chat_workbook_resolves_overflow_before_projecting_calculation(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    rows = [{"source_row": str(i), "status": "bound"} for i in range(70)]
+    payload = {
+        "schema": "les.workbook_tool_result.v1", "tool": "build_lsr_workbook",
+        "status": "complete", "bound_rows": 70, "row_calculation": rows,
+        "artifact": {"revision_id": "rev-full", "download_url": "/api/artifacts/rev-full/download",
+                     "source_scope": ["attachment:read_123456abcdef"], "decision_checkpoint_id": "cp-full",
+                     "tool_calls": [{"row_calculation": rows}]},
+        "source": {"attachment_id": "read_123456abcdef"},
+        "checkpoint": {"checkpoint_id": "cp-full", "status": "complete"},
+        "missing": [f"row:{i}:coefficient_needs_basis" for i in range(70)], "blockers": [],
+    }
+
+    async def build(_args, _context):
+        return payload
+
+    monkeypatch.setattr("proxy.services.workbook_tool_service.build_lsr_workbook", build)
+    result = await chat._execute_chat_workbook_tool(
+        {"tool": "build_lsr_workbook", "args": {"attachment_id": "read_123456abcdef", "decisions": [{"source_row": 1}]}},
+        {"session_id": "overflow-owner", "attachment_id": "read_123456abcdef", "dataset_ids": []},
+        lambda _event: asyncio.sleep(0),
+    )
+    assert result["execution"]["status"] == "overflow"
+    projected = service.harvest_workbook_tool_result(service.safe_workbook_history_projection(result))
+    assert projected["artifact"]["revision_id"] == "rev-full"
+    assert service.workbook_row_statuses(projected) == {str(i): "bound" for i in range(70)}
 
 
 @pytest.mark.asyncio
@@ -1461,6 +1586,22 @@ def test_context_trace_records_exact_omitted_evidence_ids_and_cursor() -> None:
 
     assert omitted["object_ids"] == ["evidence:0"]
     assert omitted["cursor"].startswith("ctx:evidence:")
+
+
+def test_context_trace_fingerprints_private_request_and_complete_messages():
+    import hashlib
+    messages, packet = service.govern_inference_messages(
+        preset=_governor_preset(), profile_prefix='private profile',
+        request_payload='original user request', evidence=['source'],
+    )
+    trace = service.context_packet_trace(packet, purpose='answer')
+    request = next(s for s in trace['sections'] if s['kind'] == 'request')
+    assert request['object_fingerprints'][0]['sha256'] == hashlib.sha256(b'original user request').hexdigest()
+    assert trace['message_fingerprints'] == [dict(
+        role=m['role'], chars=len(m['content']),
+        sha256=hashlib.sha256(m['content'].encode('utf-8')).hexdigest()) for m in messages]
+    assert 'original user request' not in json.dumps(trace)
+    assert 'private profile' not in json.dumps(trace)
 
 
 def test_governed_inference_rejects_required_overflow_before_provider_call() -> None:
@@ -1810,10 +1951,38 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
         "active_workbook_private_arg",
         "active_workbook_rejected",
         "active_model_rag_result",
+        "active_model_rag_full_read",
+        "active_model_rag_full_read_fail",
+        "active_model_rag_p915_factory_answer",
+        "active_model_rag_p915_factory_read",
+        "active_model_rag_labelled_queries",
+        "active_model_rag_work_steps",
+        "active_model_rag_full_attachment",
+        "practice_none",
+        "practice_frequency",
+        "practice_similar",
+        "practice_both",
+        "practice_frequency_header",
+        "smeta_budget_default",
+        "smeta_budget_short",
         "active_model_rag_recovery",
+        "active_model_rag_portion_pending",
+        "active_model_rag_portion_invalid",
+        "active_model_rag_portion_ambiguous",
+        "active_model_rag_portion_packaging_error",
+        "active_model_rag_portion_packaging_cancel",
+        "active_model_rag_portion_delivery_cancel",
+        "active_model_rag_portion_repackage",
+        "active_model_rag_portion_operations_qualified",
+        "active_model_rag_portion_operations_numeric",
+        "active_model_rag_portion_named_aliases",
+        "active_model_rag_portion_unnamed_aliases",
         "candidate_workbook",
         "shadow_workbook",
         "legacy_workbook",
+        "repeat_failed",
+        "active_output_control",
+        "active_output_truncated",
     ],
 )
 async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_model_count(
@@ -1821,7 +1990,36 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     tmp_path,
     scenario,
 ) -> None:
+    p915_factory = scenario in {'active_model_rag_p915_factory_answer','active_model_rag_p915_factory_read'}
+    if p915_factory:
+        scenario = 'active_model_rag_full_read' if scenario.endswith('_read') else 'active_model_rag_result'
+    model_full_read_fail = scenario == "active_model_rag_full_read_fail"
+    model_full_read = scenario in {"active_model_rag_full_read", "active_model_rag_full_read_fail"}
+    if model_full_read:
+        scenario = "active_model_rag_result"
+    work_steps_delivery = scenario == 'active_model_rag_work_steps'
+    if work_steps_delivery:
+        scenario = 'active_model_rag_result'
+    archive_header = scenario == 'practice_frequency_header'
+    if archive_header:
+        scenario = 'practice_frequency'
+    labelled_queries = scenario == 'active_model_rag_labelled_queries'
+    if labelled_queries:
+        scenario = 'active_model_rag_result'
+    full_attachment = scenario == 'active_model_rag_full_attachment'
+    if full_attachment:
+        scenario = 'active_model_rag_result'
+    smeta_budget = scenario.removeprefix("smeta_budget_") if scenario.startswith("smeta_budget_") else None
+    if smeta_budget:
+        scenario = "active_model_rag_result"
+    experiment = scenario.removeprefix("practice_") if scenario.startswith("practice_") else None
+    if experiment:
+        scenario = "active_model_rag_result"
+    portion_case = scenario if scenario.startswith("active_model_rag_portion_") else ""
+    if portion_case:
+        scenario = "active_model_rag_result"
     selector_overflow = scenario == "selector_overflow"
+    output_boundary = scenario.startswith("active_output_")
     cloud_retry = scenario == "cloud_retry"
     workbook_profile = scenario in {
         "active_workbook",
@@ -1859,6 +2057,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "active_model_rag_recovery",
         "candidate_workbook",
     }
+    active = active or output_boundary
     inactive_workbook = workbook_profile and not active
     model_calls = []
     shortlist_policies = []
@@ -1870,6 +2069,21 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     workbook_executor_calls = []
     captured_web_configs = []
     rag_queries = []
+    research_executions = []
+    full_read_code = "ГЭСНм08-02-401-01"
+    full_resources = [
+        {"row_id": 901, "kind": "labor", "code": "FULL-LABOR", "name": "FULL_LABOR_PROOF", "unit": "чел.-ч", "per_unit": 3.25},
+        {"row_id": 902, "kind": "machine", "code": "FULL-MACHINE", "name": "FULL_MACHINE_PROOF", "unit": "маш.-ч", "per_unit": 0.5},
+        {"row_id": 903, "kind": "material", "code": "FULL-MATERIAL", "name": "FULL_MATERIAL_PROOF", "unit": "кг", "per_unit": 7.125},
+    ]
+    from proxy.services.model_research_tool_service import ModelResearchToolService
+    original_research_execute = ModelResearchToolService.execute
+
+    async def track_research_execute(reader, call):
+        research_executions.append((dict(call), reader._dataset_ids))
+        return await original_research_execute(reader, call)
+
+    monkeypatch.setattr(ModelResearchToolService, "execute", track_research_execute)
     exact_decisions = [
         {
             "source_row": 1,
@@ -1925,7 +2139,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             system_text = str(json["messages"][0]["content"])
             if "исследовательским чтением LES" in system_text:
                 model_calls.append("selector")
-                if model_calls.count("selector") > 1:
+                if model_calls.count("selector") > 1 and scenario != "repeat_failed":
                     return FakeResponse('{"calls":[]}')
                 return FakeResponse(
                     '{"calls":['
@@ -1964,7 +2178,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "tool": "read_source",
             "operation": "read",
             "inputs": [dict(args)],
-            "status": "ok",
+            "status": "error" if scenario == "repeat_failed" else "ok",
             "result": {},
             "sources": [],
             "missing": [],
@@ -2287,10 +2501,16 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             base_url="http://127.0.0.1:1919/v1",
             secret_ref=None,
             effective_preset=_governor_preset(
-                input_tokens=6000,
+                input_tokens=18000 if model_full_read or p915_factory else 6000,
                 preset_id="active-preset",
             ),
         )
+        if smeta_budget:
+            from dataclasses import replace
+            active_connection.effective_preset = replace(
+                active_connection.effective_preset,
+                input_token_limit=32768, generation_reserve_tokens=8192,
+            )
 
         class ActiveResolver:
             def resolve(self, role, **_kwargs):
@@ -2355,6 +2575,10 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                             text=(
                                 "монтаж шкафа управления\n"
                                 "прокладка контрольного кабеля"
+                            ) if not labelled_queries else (
+                                "Запрос 1: монтаж шкафа управления\n"
+                                "Запрос 2: прокладка контрольного кабеля\n"
+                                "Запрос 3: монтаж шкафа управления"
                             ),
                             tool_calls=(),
                             finish_reason="stop",
@@ -2412,9 +2636,28 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             async def complete(self, connection, _request):
                 self.revisions.append(connection.revision_id)
                 self.requests.append(_request)
+                if model_full_read_fail and len(self.requests) == 3:
+                    raise RuntimeError("continuation transport failure fixture")
                 return self.responses.pop(0)
 
         active_transport = ActiveTransport()
+        if model_full_read:
+            active_transport.responses.insert(1, InferenceResponse(
+                text="",
+                tool_calls=({"id": "full-norm-read-1", "type": "function",
+                             "function": {"name": "search_sources", "arguments": json.dumps({"q": full_read_code}, ensure_ascii=False)}},),
+                finish_reason="tool_calls", usage={},
+            ))
+        if output_boundary:
+            active_transport.responses[2] = InferenceResponse(
+                text=('{"context_role":"advisory_state","item_id":"chat-checkpoint:x"}'
+                      if scenario == "active_output_control" else "Расход 12.5 м3/ч [Источник 1]"),
+                tool_calls=(), finish_reason="length" if scenario == "active_output_truncated" else "stop",
+                usage={"completion_tokens": 128},
+            )
+            active_transport.responses.append(InferenceResponse(
+                text="Чистый ответ [Источник 1]", tool_calls=(), finish_reason="stop", usage={"completion_tokens": 5},
+            ))
         monkeypatch.setattr(
             service,
             "resolve_canonical_route",
@@ -2504,7 +2747,11 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 project_id=0,
                 attachment_id="read_123456abcdef" if workbook_profile else None,
                 attachment_context=(
-                    "Строка 1: монтаж шкафа управления — 2 шт."
+                    "Строка 1: монтаж шкафа управления — 2 шт.\n"
+                    + receipt_context([
+                        {'source_row':'1','calculation_ref':'transport-receipt-fixture',
+                         'calculation':{'resources':[{'code':'fixture-resource','quantity':6,'unit':'шт'}]}}
+                    ])
                     if model_rag_result
                     else ""
                 ),
@@ -2554,6 +2801,118 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         },
     )
 
+    if p915_factory:
+        from tests.test_chat_profile_service import _p915_factory_snapshot
+        request.profile_snapshot.clear()
+        request.profile_snapshot.update(_p915_factory_snapshot())
+
+    if full_attachment:
+        import openpyxl
+        from proxy.services.chat_attachment_service import preserve_read_attachment
+        from proxy.services.portion_cursor_service import PortionCursorService
+        attachment_root = tmp_path/'read-attachments'
+        monkeypatch.setenv('LES_CHAT_ATTACHMENT_ROOT', str(attachment_root))
+        monkeypatch.setenv('LES_SMETA_PORTION_ROWS', '25')
+        source = tmp_path/'full.xlsx'
+        wb = openpyxl.Workbook()
+        wb.active.title = 'S'
+        wb.active.append(['№', 'Наименование', 'Ед. изм', 'Количество'])
+        wb.active.append([1, 'монтаж шкафа управления ' + 'условия ' * 50 + 'FULL_TRAIT', 'шт.', 2])
+        wb.active.append([2, 'LAST_SECTION_ITEM', 'м', 12.5])
+        wb.save(source)
+        wb.close()
+        source_meta = preserve_read_attachment(source, attachment_id='read_123456abcdef', original_name='full.xlsx')
+        request.req.attachment_id = source_meta['attachment_id']
+        preview = 'Файл: full.xlsx\nS!R1: № | Наименование | Ед. изм | Количество\nS!R2: 1 | монтаж шкафа управления | шт. | 2'
+        request.req.attachment_context = preview
+        source_store = PortionCursorService(tmp_path/'full-source-portion.db')
+        monkeypatch.setattr(service, 'portion_cursor_store', lambda: source_store)
+
+    if portion_case:
+        from proxy.services.portion_cursor_service import PortionCursorService
+
+        portion_store = PortionCursorService(tmp_path / "portion-regression.db")
+        monkeypatch.setattr(service, "portion_cursor_store", lambda: portion_store)
+        request.req.turn_id = f"{scenario}-turn-1"
+        request.req.attachment_context = (
+            "Файл: fixture.xlsx\n"
+            "S!R1: № | Наименование | Артикул | Ед. изм | Количество\n"
+            "S!R2: 1 | монтаж шкафа управления | ART-KEEP | шт. | 2\n"
+        )
+        from dataclasses import replace
+
+        reply = active_transport.responses[1]
+        active_transport.responses[1] = replace(
+            reply,
+            text=("Ведомость уже разобрана, новых строк нет."
+                  if portion_case.endswith("repackage") else reply.text.replace("ГЭСНм08-02-401-01", "—")
+                  # Структурный отказ всей порции вызывает строка чужой позиции; ссылка на
+                  # несуществующую карточку с 17.09 отказывает только своей строке.
+                  if portion_case.endswith("pending") else reply.text.replace("| 1 | ЭОМ |", "| 7 | ЭОМ |")
+                  if portion_case.endswith("invalid") else reply.text),
+        )
+        if portion_case.endswith("repackage"):
+            # Ведомость уже закрыта прошлым проходом, а книги нет: упаковка тогда не
+            # состоялась. Решения обязаны собраться в книгу без нового прохода модели.
+            portion_store.record_pass(
+                session_id="session-1",
+                source_revision=service.smeta_portion_context(
+                    request.req.attachment_context, session_id="session-1", limit=1, cursors=None,
+                )[1]["source_revision"],
+                completed={"S!1": {
+                    "source_row": "1", "section": "ЭОМ", "title": "монтаж шкафа управления",
+                    "unit": "шт.", "quantity": 2.0, "norm_code": "ГЭСНм08-02-401-01",
+                }},
+            )
+        if portion_case.endswith("ambiguous"):
+            request.req.attachment_context += (
+                "T!R1: № | Наименование | Ед. изм | Количество\n"
+                "T!R2: 1 | Another work | м | 12\n"
+            )
+            monkeypatch.setenv("LES_SMETA_PORTION_ROWS", "1")
+        if portion_case.endswith(('operations_qualified', 'operations_numeric', 'unnamed_aliases', 'named_aliases')):
+            label = '1' if portion_case.endswith('operations_numeric') else 'S!1'
+            identifiers = ['mount', 'terminate']
+            labels = [label, label]
+            if portion_case.endswith('unnamed_aliases'):
+                identifiers = ['', '']
+            if portion_case.endswith('named_aliases'):
+                labels = ['S!1', '1']
+            operations_answer = '| source_row | work_id | title | unit | quantity | norm_code | evidence_refs |\n|---|---|---|---|---|---|---|\n'
+            for number, (identity, source_label) in enumerate(zip(identifiers, labels), 1):
+                operations_answer += f'| {source_label} | {identity} | operation {number} | шт. | {number * 2} | ГЭСНм08-02-401-01 | Q{number}.H1 |\n'
+            active_transport.responses[1] = replace(reply, text=operations_answer)
+
+    if model_rag_result and not full_attachment:
+        # Existing transport scenarios use a textual attachment. Preserve those
+        # exact fixture bytes; the XLSX source boundary has its own scenario above.
+        from proxy.services.chat_attachment_service import preserve_read_attachment
+        monkeypatch.setenv('LES_CHAT_ATTACHMENT_ROOT', str(tmp_path/'read-attachments'))
+        text_source = tmp_path/'source.txt'
+        text_source.write_text(request.req.attachment_context or 'fixture', encoding='utf-8')
+        preserve_read_attachment(text_source, attachment_id='read_123456abcdef', original_name='source.txt')
+
+    if smeta_budget:
+        # Actual live failure: "сколько" inside "несколько" selected the value
+        # form and cut a multi-row result at 256 tokens despite the 8192 reserve.
+        request.req.question = "Составь смету. Несколько операций одной позиции требуют явных идентификаторов и количеств."
+        request.req.response_length = None if smeta_budget == "default" else "short"
+
+    if experiment:
+        request.req.smeta_practice_mode = experiment
+        practice_calls = []
+        def frequency_group(**kwargs):
+            practice_calls.append("frequency")
+            if archive_header:
+                card = {'norm_code': 'ГЭСНм08-02-401-01', 'norm_id': 'fixture-norm',
+                        'title': 'Archive candidate', 'measure_unit': 'шт.', 'source_ref': 'fixture-source',
+                        'usage_evidence': {'applications': 186, 'note': 'unmatched-source-proof ' * 10000}}
+                return 'Archive candidates; applicability unconfirmed', (service._PracticeChunk(card),)
+        def similar_group(**kwargs):
+            practice_calls.append("similar")
+        monkeypatch.setattr(service, "smeta_practice_group", frequency_group)
+        monkeypatch.setattr(service, "smeta_material_group", similar_group)
+
     def retrieve_fixture(**kwargs):
         if not model_rag_result:
             return _async_value(FakeRetrieval())
@@ -2568,8 +2927,17 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 {
                     "norm_code": "ГЭСНм08-02-401-01",
                     "title": f"Карточка нормы для {query}",
+                    **({"usage_evidence": {"note": "frequency-transport-proof"}} if experiment else {}),
                     "measure_unit": "шт.",
                     "work_steps": ["Монтаж оборудования"],
+                    **({"resources": full_resources, "resources_complete": True,
+                        "resource_count": len(full_resources),
+                        "work_steps": ["FULL_OPERATION_PROOF"],
+                        "norm_id": "full-norm-fixture", "edition": "2022"}
+                       if model_full_read and query == full_read_code else {}),
+                    **({'resource_preview': [{'kind': 'material', 'code': 'fixture-resource',
+                         'name': 'Long resource description ' * 1000, 'unit': 'кг'}]}
+                       if work_steps_delivery else {}),
                     "source_ref": f"fsnb#query={len(rag_queries)}",
                 }
             ],
@@ -2639,7 +3007,9 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             (lambda _client, _secret_store: active_transport) if active else None
         ),
         workbook_tool_executor=(
-            (lambda call, context, progress: _rejected_workbook_execution(call, workbook_executor_calls))
+            (lambda call, context, progress: _failing_workbook_execution(call, workbook_executor_calls))
+            if portion_case.endswith("packaging_error")
+            else (lambda call, context, progress: _rejected_workbook_execution(call, workbook_executor_calls))
             if rejected_workbook
             else (
                 (
@@ -2657,9 +3027,47 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     )
     boundary = service.ResponseBoundary(
         save_chat_history=save_history,
-        token_sink=(lambda event: _async_append(progress_events, event)) if active_workbook else None,
+        token_sink=(lambda event: _async_append(progress_events, event)) if active_workbook or output_boundary else None,
         version_stamp=lambda: {},
     )
+
+    if portion_case.endswith(('packaging_cancel', 'delivery_cancel')):
+        from dataclasses import replace
+        original_executor = runtime.workbook_tool_executor
+
+        async def cancel_packaging(call, context, progress):
+            workbook_executor_calls.append(call)
+            raise asyncio.CancelledError()
+
+        async def cancel_delivery(event):
+            if event.get('event') == 'reset':
+                raise asyncio.CancelledError()
+
+        interrupted_runtime = (replace(runtime, workbook_tool_executor=cancel_packaging)
+            if portion_case.endswith('packaging_cancel') else runtime)
+        interrupted_boundary = (replace(boundary, token_sink=cancel_delivery)
+            if portion_case.endswith('delivery_cancel') else boundary)
+        with pytest.raises(asyncio.CancelledError):
+            await service.run_chat_evidence_application(request, interrupted_runtime, interrupted_boundary)
+        calls_before = len(active_transport.requests)
+        assert calls_before == 2
+        restarted = PortionCursorService(tmp_path / 'portion-regression.db')
+        _, saved = service.smeta_portion_context(request.req.attachment_context,
+            session_id='session-1', limit=1, cursors=restarted)
+        assert saved['prior_decisions']['S!1']['norm_code'] == 'ГЭСНм08-02-401-01'
+        assert saved['prior_decisions']['S!1']['quantity'] == 2
+        assert saved['prior_decisions']['S!1']['evidence_snapshot']
+        progress = restarted.progress(session_id='session-1', source_revision=saved['source_revision'])
+        assert progress.passes == 1 and not progress.artifact_revision_id
+        basis = restarted.document_price_basis(session_id='session-1',
+            source_revision=saved['source_revision'], capture=lambda: pytest.fail('basis lost'))
+        assert basis
+        monkeypatch.setattr(service, 'portion_cursor_store', lambda: restarted)
+        recovered = await service.run_chat_evidence_application(request,
+            replace(runtime, workbook_tool_executor=original_executor), boundary)
+        assert len(active_transport.requests) == calls_before, 'Recovery must not ask the model to choose again'
+        assert recovered['artifact']['revision_id']
+        return
 
     if selector_overflow:
         with pytest.raises(service.HTTPException) as error:
@@ -2671,9 +3079,185 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert protected_hash() == before_protected
         return
 
+    if model_full_read_fail:
+        monkeypatch.setattr(service, "mutable_path", lambda *parts: tmp_path.joinpath(*parts))
+        with pytest.raises(Exception):
+            await service.run_chat_evidence_application(request, runtime, boundary)
+        receipts = list((tmp_path / "storage/model_read_receipts").glob("*.json"))
+        assert len(receipts) == 1, "A successful read followed by transport failure must persist its full receipt"
+        saved_bytes = receipts[0].read_bytes()
+        saved = json.loads(saved_bytes.decode("utf-8"))
+        assert saved["question"] == request.req.question
+        assert saved["attachment_context"] == request.req.attachment_context
+        assert saved["session_id"] == request.req.session_id
+        assert "continuation transport failure fixture" in saved["error"]
+        read_round = saved["trace"]["model_rag_reads"][0]
+        assert read_round["text"] == ""
+        assert read_round["calls"] == [{"id": "full-norm-read-1", "type": "function",
+            "function": {"name": "search_sources", "arguments": json.dumps({"q": full_read_code}, ensure_ascii=False)}}]
+        assert read_round["unexecuted_call_ids"] == []
+        assert read_round["results"][0]["call_id"] == "full-norm-read-1"
+        assert read_round["results"][0]["payload"]["status"] == "ok"
+        assert "FULL_OPERATION_PROOF" in saved_bytes.decode("utf-8")
+        for resource in full_resources:
+            assert resource["name"] in saved_bytes.decode("utf-8")
+            assert resource["code"] in saved_bytes.decode("utf-8")
+            assert str(resource["per_unit"]) in saved_bytes.decode("utf-8")
+        assert rag_queries == ["монтаж шкафа управления", "прокладка контрольного кабеля", full_read_code]
+        assert len(active_transport.requests) == 3
+        assert workbook_executor_calls == []
+        assert history_rows == []
+        assert not any(event.get("event") == "token" for event in progress_events)
+        return
+
     result = await service.run_chat_evidence_application(request, runtime, boundary)
 
+    if portion_case.endswith(('operations_qualified', 'operations_numeric', 'unnamed_aliases', 'named_aliases')):
+        assert len(active_transport.requests) == 2
+        query_messages = str(active_transport.requests[0].messages)
+        final_messages = str(active_transport.requests[1].messages)
+        assert 'decision_kind' not in query_messages and 'resource_review_status' not in query_messages
+        assert 'Заголовки разделов используй как контекст' in query_messages
+        assert 'Пустое количество само по себе не означает заголовок' in query_messages
+        assert 'decision_kind' in final_messages and 'resource_review_status' in final_messages
+        assert result['answer'].strip() == operations_answer.strip()
+        if portion_case.endswith('named_aliases'):
+            assert not workbook_executor_calls
+            assert result['retrieval_trace']['model_result']['status'] == 'structural_error'
+            errors = result['retrieval_trace']['model_result']['errors']
+            expected = 'invalid_portion_source_row' if portion_case.endswith('unnamed_aliases') else 'inconsistent_portion_source_label'
+            assert any(error.startswith(expected + ':') for error in errors)
+            return
+        assert len(workbook_executor_calls) == 1, result['retrieval_trace'].get('model_result')
+        authored = workbook_executor_calls[0]['args']['decisions']
+        assert [row['work_id'] for row in authored] == ['mount', 'terminate']
+        assert [row['quantity'] for row in authored] == [2, 4]
+        assert [row['evidence_refs'] for row in authored] == [['Q1.H1'], ['Q2.H1']]
+        _, saved = service.smeta_portion_context(request.req.attachment_context, session_id='session-1', limit=1, cursors=portion_store)
+        ops = saved['prior_decisions']['S!1']['operations']
+        assert [op['work_id'] for op in ops] == ['mount', 'terminate']
+        assert [[e['ref'] for e in op['evidence_snapshot']] for op in ops] == [['Q1.H1'], ['Q2.H1']]
+        return
+
+    if full_attachment:
+        assert len(active_transport.requests) == 2
+        for call in active_transport.requests:
+            messages = str(call.messages)
+            assert 'FULL_TRAIT' in messages, 'A cell cut in upload preview must reach actual model transport in full'
+            assert 'LAST_SECTION_ITEM' in messages, 'Rows after the upload preview cap must be available to the portion'
+        assert request.req.attachment_context == preview
+        source_trace = result['retrieval_trace']['smeta_attachment_source']
+        assert source_trace['sha256'] == source_meta['sha256']
+        assert source_trace['source_rows'] == result['smeta_portion']['total'] == 2
+        assert source_trace['preview_chars'] < source_trace['source_chars']
+        return
+
+    if portion_case.endswith("repackage"):
+        # Ход заканчивается на пересборке: показывать нечего, значит и звать модель
+        # незачем. Ревью Codex 11.09 замерило здесь два вызова транспорта — ранняя
+        # ветка собирала книгу, а обработчик продолжал обычный маршрут.
+        assert model_calls == [], "повтор упаковки обязан обойтись без модели"
+        assert len(workbook_executor_calls) == 1, "книга обязана собраться из сохранённых решений"
+        decisions = workbook_executor_calls[0]["args"]["decisions"]
+        assert [row["source_row"] for row in decisions] == ["1"]
+        assert decisions[0]["norm_code"] == "ГЭСНм08-02-401-01"
+        assert result["artifact"]["revision_id"], "книга уходит в ответ"
+        assert result["smeta_portion"]["decided"] == 1
+        assert result["smeta_portion"]["unresolved"] == 0
+        assert result["smeta_portion"]["remaining"] == 0
+        assert result["history_id"] is not None, "ход обязан попасть в историю"
+        assert "пересобрана" in result["answer"]
+
+        _, after = service.smeta_portion_context(
+            request.req.attachment_context, session_id="session-1", limit=1, cursors=portion_store,
+        )
+        assert after["state"] == "complete"
+        assert after["artifact_revision_id"], "ревизия книги записана"
+        # Production adds the independently persisted document basis after
+        # portion planning; the freshness digest must use that same basis.
+        after['document_price_basis'] = result['retrieval_trace']['document_price_basis']
+        persisted = portion_store.document_price_basis(session_id='session-1',
+            source_revision=after['source_revision'],
+            capture=lambda: pytest.fail('A completed document must already have its basis'))
+        assert after['document_price_basis'] == persisted
+        assert service.stored_decisions_need_a_workbook(after) is False, (
+            "только что собранная книга не должна числиться устаревшей"
+        )
+        return
+
+    if portion_case:
+        _, next_state = service.smeta_portion_context(
+            request.req.attachment_context, session_id="session-1", limit=1, cursors=portion_store,
+        )
+        if portion_case.endswith("packaging_error"):
+            # Решение модели и состояние упаковки разделены (ревью Codex 11.09): норма
+            # выбрана — значит строка решена, даже если книга не собралась. Гонять модель
+            # по уже разобранной строке из-за занятого диска не нужно; несобранная книга
+            # видна по расхождению отпечатков и пересобирается детерминированно.
+            from proxy.services.portion_cursor_service import decisions_revision
+
+            assert workbook_executor_calls, "упаковка обязана была быть предпринята"
+            assert next_state["prior_decisions"]["S!1"]["norm_code"] == "ГЭСНм08-02-401-01"
+            progress = portion_store.progress(
+                session_id="session-1", source_revision=next_state["source_revision"],
+            )
+            assert "S!1" in progress.completed, "норма выбрана — строка решена"
+            assert progress.exhausted == frozenset()
+            assert not progress.artifact_revision_id, "книги нет"
+            assert progress.artifact_decisions_revision != decisions_revision(progress.decisions)
+            assert service.stored_decisions_need_a_workbook(next_state) is True, (
+                "книга обязана числиться устаревшей — её пересоберёт следующий запрос"
+            )
+            return
+        assert next_state["shown"] == (["T!1"] if portion_case.endswith("ambiguous") else ["S!1"]), "Other source rows get a turn; rejected rows remain open"
+        assert not portion_store.progress(session_id='session-1',source_revision=next_state['source_revision']).completed
+        assert result["attachment_retry"]["preserved"] is True
+        assert result["smeta_portion"]["remaining"] == (2 if portion_case.endswith("ambiguous") else 1)
+        assert "ART-KEEP" in str(active_transport.requests[1].messages)
+        if not portion_case.endswith("pending"):
+            assert workbook_executor_calls == []
+            assert next_state["prior_decisions"] == {}
+        if portion_case.endswith("invalid"):
+            from proxy.services.portion_feedback_service import PortionFeedbackService
+
+            notice = result['model_result_notice']
+            assert notice['status'] == 'structural_error'
+            assert notice['saved'] is True
+            assert 'Книга не собрана' in notice['message']
+            stored = PortionFeedbackService(portion_store.db_path).last(
+                session_id='session-1', source_revision=next_state['source_revision'],
+            )
+            assert stored['raw_answer'] == result['answer']
+            assert stored['rows'][0]['source_row'] == 7
+            assert stored['evidence'].get('portion_shown') == ['S!1'], 'A rejected final must preserve server-owned observed anchors for the next portion'
+            assert service.stored_decisions_need_a_workbook(next_state) is False
+            progress = portion_store.progress(session_id='session-1', source_revision=next_state['source_revision'])
+            assert not progress.completed and not progress.exhausted and not progress.attempts
+            request.req.turn_id = f"{scenario}-turn-2"
+            active_transport.responses = [
+                replace(reply, text='монтаж шкафа управления\nпрокладка контрольного кабеля'),
+                reply,
+            ]
+            await service.run_chat_evidence_application(request, runtime, boundary)
+            assert 'invalid_portion_source_row:7' in str(active_transport.requests[-1].messages)
+        return
+
     after_protected = protected_hash()
+    if output_boundary:
+        visible = "".join(event["data"] for event in progress_events if event.get("event") == "token")
+        assert "chat-checkpoint:" not in visible
+        assert visible == result["answer"] == history_rows[0]["answer"]
+        if scenario == "active_output_control":
+            assert result["answer"] == "Чистый ответ [Источник 1]"
+        else:
+            assert result["answer"].startswith("Расход 12.5 м3/ч [Источник 1]")
+            assert "усечён" in result["answer"]
+        return
+    if scenario == "repeat_failed":
+        assert model_calls == ["selector", "selector", "final"]
+        assert len(legacy_calls) == 2
+        assert history_rows[0]["retrieval_trace"]["tool_loop"]["stop_reason"] == "repeated_failed_call"
+        return
     if active_web_research:
         expected_answer = "Цемент — 650 руб.; арматура — 72 000 руб./т."
         assert result["answer"].encode("utf-8") == expected_answer.encode("utf-8")
@@ -2695,21 +3279,125 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert "Цемент — 650" in str(active_transport.requests[3].messages)
         return
     if model_rag_result:
+        if p915_factory:
+            query_messages = str(active_transport.requests[0].messages)
+            assert 'read_source' in query_messages, 'Query-stage bound skill remains unchanged'
+            for answer_request in active_transport.requests[1:]:
+                text = '\n'.join(m['content'] for m in answer_request.messages)
+                assert 'read_source' not in text and 'skills/smeta/SKILL.md' not in text
+                assert '[Источник N]' not in text and 'Qn.Hm' in text
+                assert answer_request.tools == tuple(service.model_rag_search_tool_schema())
+            adaptation = result['retrieval_trace']['answer_contract_availability']
+            assert adaptation['factory_verified'] is True
+            assert adaptation['unavailable_references'] == []
+            assert adaptation['original_prompt_sha256'] == request.profile_snapshot['prompt_sha256']
+        if model_full_read:
+            assert active_transport.requests[0].request_audit is None, "Query authoring is outside body audit"
+            assert active_transport.requests[1].request_audit.purpose == "answer"
+            assert active_transport.requests[2].request_audit.purpose == "answer_read"
+            assert active_transport.requests[1].request_audit.refs is result["retrieval_trace"]["model_request_audit"]
+            assert any(source.get("evidence_ref") == "Q3.H1" for source in result["source_map"])
+            assert "Q3.H1" in json.dumps(result["evidence_packet"], ensure_ascii=False)
+            assert result["retrieval_trace"]["model_rag_read_complete"] is True
+            read_round = result["retrieval_trace"]["model_rag_reads"][0]
+            assert read_round["unexecuted_call_ids"] == []
+            assert read_round["results"][0]["payload"]["status"] == "ok"
+            assert read_round["continuation_response"]["tool_calls"] == []
+            assert rag_queries == [
+                "монтаж шкафа управления", "прокладка контрольного кабеля", full_read_code,
+            ], "The answer-stage native call must execute its exact norm query"
+            assert research_executions[-1] == (
+                {"tool": "search_sources", "args": {"q": full_read_code}}, ("selected",),
+            ), "Addressed reading must retain the frozen dataset scope"
+            assert active_transport.revisions == ["conn:active:r3"] * 3
+            assert len(active_transport.requests) == 3
+            assert result["answer"].startswith("active visible answer\n\n| source_row |")
+            assert '"calls"' not in result["answer"]
+            assert history_rows[0]["answer"] == result["answer"]
+            final_messages = str(active_transport.requests[-1].messages)
+            for model_request in active_transport.requests[1:]:
+                messages = str(model_request.messages)
+                assert request.req.question in messages
+                assert "Строка 1: монтаж шкафа управления — 2 шт." in messages
+                for index, query in enumerate(rag_queries[:2], 1):
+                    assert query in messages
+                    assert f"Карточка нормы для {query}" in messages
+                    assert f"Q{index}.H1" in messages
+            assert "FULL_OPERATION_PROOF" in final_messages
+            for resource in full_resources:
+                assert resource["name"] in final_messages
+                assert resource["code"] in final_messages
+                assert str(resource["per_unit"]) in final_messages
+            assert workbook_executor_calls[-1]["tool"] == "build_lsr_workbook"
+            assert workbook_executor_calls[-1]["args"]["decisions"][0]["norm_code"] == full_read_code
+            tool_loop = history_rows[0]["retrieval_trace"]["tool_loop"]
+            assert tool_loop["model_queries"] == rag_queries[:2]
+            assert tool_loop["evidence_groups"] == ["Q1", "Q2"]
+            return
+        assert all(query != full_read_code for query in rag_queries), "No automatic norm reads"
         assert result["answer"].startswith("active visible answer\n\n| source_row |")
         assert rag_queries == [
             "монтаж шкафа управления",
             "прокладка контрольного кабеля",
         ]
         assert "Собери ЛСР" not in rag_queries
-        assert workbook_executor_calls[-1]["args"]["decisions"] == exact_decisions
+        calculated_decisions = workbook_executor_calls[-1]["args"]["decisions"]
+        provenance_fields = {"normative_identity", "normative_identity_status",
+                             "normative_identity_refs", "evidence_snapshot"}
+        assert [{k: v for k, v in row.items() if k not in provenance_fields}
+                for row in calculated_decisions] == exact_decisions
+        # These older fixture cards have no database revision. Preserve every
+        # authored field while explicitly refusing to manufacture a source SHA.
+        for row, original in zip(calculated_decisions, exact_decisions, strict=True):
+            assert row["normative_identity"] is None
+            assert row["normative_identity_status"] == "unpinned"
+            assert row["normative_identity_refs"] == original["evidence_refs"]
+            assert all(card["delivered"] is True and card["sent_sha256"]
+                       for card in row["evidence_snapshot"])
         assert workbook_executor_calls[-1]["tool"] == "build_lsr_workbook"
+        assert workbook_executor_calls[-1]['args']['review_calculation'] is True
         assert active_transport.revisions == ["conn:active:r3"] * 2
         assert active_transport.requests[0].tools == ()
-        assert active_transport.requests[1].tools == ()
+        assert active_transport.requests[1].tools == tuple(service.model_rag_search_tool_schema())
         assert "Строка 1: монтаж шкафа управления — 2 шт." in str(
             active_transport.requests[0].messages
         )
         final_messages = str(active_transport.requests[1].messages)
+        if smeta_budget:
+            assert active_transport.requests[1].max_output_tokens == (8192 if smeta_budget == "default" else 1024)
+            assert "Форма ответа: ОДНА строка" not in final_messages
+            assert ("Пользователь выбрал короткий ответ" in final_messages) == (smeta_budget == "short")
+        if work_steps_delivery:
+            assert 'Состав работы: Монтаж оборудования' in final_messages
+        if archive_header:
+            assert 'Archive candidate' in final_messages
+            assert 'score=186.0000' not in final_messages
+            assert 'архивный контекст не показан' in final_messages
+            assert 'unmatched-source-proof' not in final_messages
+            assert len(active_transport.requests) == 2
+            assert history_rows[0]['retrieval_trace']['tool_loop']['model_queries'] == rag_queries
+            assert all(query in final_messages for query in rag_queries)
+            return
+        assert 'transport-receipt-fixture' in final_messages
+        if experiment:
+            assert ("frequency-transport-proof" in final_messages) == (experiment in {"frequency", "both"})
+            assert practice_calls == (["frequency"] if experiment == "frequency" else
+                                      ["similar"] if experiment == "similar" else
+                                      ["frequency", "similar"] if experiment == "both" else [])
+            assert history_rows[0]["retrieval_trace"]["smeta_practice_experiment"]["mode"] == experiment
+        assert 'fixture-resource' in final_messages
+        assert 'resource_review_status=keep_all_confirmed' in final_messages
+        # Проход 4 на 0.30.142: модель копировала в ссылку само слово из инструкции.
+        assert 'в resource_review_ref — значение calculation_ref' in final_messages
+        assert "К базовой шапке добавь отдельные колонки" in final_messages
+        assert "conversion_factor, conversion_unit, conversion_source" in final_messages
+        assert "resource_quantity, resource_unit" in final_messages
+        assert "work_id и operation" in final_messages
+        assert "полный набор её операций" in final_messages
+        assert "not_covered" in final_messages
+        assert "coefficient_basis" in final_messages
+        assert "coefficient_target" in final_messages
+        assert "ровно эта шапка" not in final_messages
         assert "Строка 1: монтаж шкафа управления — 2 шт." in final_messages
         assert "Карточка нормы для монтаж шкафа управления" in final_messages
         assert "Карточка нормы для прокладка контрольного кабеля" in final_messages
@@ -2721,8 +3409,12 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert "Строка 1: монтаж шкафа управления — 2 шт." in first_messages
         assert '"queries"' not in first_messages
         assert "верни только сами поисковые запросы" in first_messages
-        assert "фиксированного лимита нет" in first_messages
-        assert "по всем фактическим строкам" in first_messages
+        query_budget = history_rows[0]['retrieval_trace']['tool_loop']['model_queries_budget']
+        assert f"до {query_budget} первых запросов" in first_messages
+        assert "фиксированного лимита нет" not in first_messages
+        assert "для работ и материалов" in first_messages
+        assert "Сначала охвати содержательные позиции работ и материалов порции" in first_messages
+        assert "по всем фактическим строкам" not in first_messages
         assert "сохраняй язык и профессиональную терминологию исходных строк" in first_messages
         assert "не переводи и не транслитерируй" in first_messages
         assert "Код не подтверждает и не меняет твой выбор" in final_messages
@@ -2733,6 +3425,9 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         tool_loop = history_rows[0]["retrieval_trace"]["tool_loop"]
         assert tool_loop["schema"] == "les_model_rag_batch_v1"
         assert tool_loop["model_queries"] == rag_queries
+        expected_raw = ("Запрос 1: монтаж шкафа управления\nЗапрос 2: прокладка контрольного кабеля\nЗапрос 3: монтаж шкафа управления"
+                        if labelled_queries else "монтаж шкафа управления\nпрокладка контрольного кабеля")
+        assert tool_loop["model_queries_raw"] == expected_raw
         assert tool_loop["evidence_groups"] == ["Q1", "Q2"]
         assert history_rows[0]["sources"] == ["smeta_norm_cards.v1"]
         manifest = history_rows[0]["retrieval_trace"]["evidence_manifest"]
@@ -2741,8 +3436,10 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert manifest["cited_ids"] == ["Q1.H1"]
         assert history_rows[0]["retrieval_trace"]["source_map"] == result["source_map"]
         assert "rounds" not in tool_loop
-        assert "review" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
-        assert "confirm" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
+        # Review field names are now legitimate model input (T119.6); the
+        # invariant is no hidden reviewer/generation call, measured at transport.
+        assert len(active_transport.requests) == 2
+        assert 'review' not in tool_loop and 'confirm' not in tool_loop
         return
     if inactive_workbook:
         assert result["answer"] == "legacy visible answer"
@@ -2915,3 +3612,185 @@ def test_workbook_projection_keeps_bounded_conflict_diagnostics():
 
 async def _async_value(value):
     return value
+
+
+def test_answer_contract_names_a_header_the_parser_accepts() -> None:
+    """Промпт и разборщик обязаны сходиться на одном формате таблицы.
+
+    Живой прогон 10.09, 21:24: контракт просил «обычным текстом» и перечислял поля,
+    а разборщик принимает только Markdown-таблицу с шапкой и вертикальными чертами по
+    краям. Модель повторила вид показанной ей порции — «984 | … | Q10.H2» — и ответ
+    был законно отброшен как неструктурированный: ни строк, ни книги, ни прогресса.
+
+    Проверяется не текст промпта, а его следствие: шапку, названную в контракте,
+    разборщик должен принять.
+    """
+    source = service.model_answer_request('Fixture question', model_driven=True)
+    marker = "| source_row |"
+    assert marker in source, "контракт обязан называть шапку таблицы буквально"
+    raw = source[source.index(marker):]
+    raw = raw[: raw.index("evidence_refs |") + len("evidence_refs |")]
+    header_line = " ".join(
+        raw.replace(chr(34), "").replace(chr(92) + "n", " ").split()
+    )
+    assert header_line.startswith("|") and header_line.endswith("|")
+
+    columns = [cell.strip() for cell in header_line.strip("|").split("|")]
+    assert "norm_code" in columns and "evidence_refs" in columns
+    separator = source.split("второй строкой — разделитель ", 1)[1].split(",", 1)[0]
+    assert len(separator.strip("|").split("|")) == len(columns)
+    table = chr(10).join([
+        header_line,
+        separator,
+        # С 0.30.133 work_id входит в базовую шапку; с 0.30.152 она сузилась до семи
+        # обязательных колонок (проходы 18–19, 18.09).
+        "| 984 | install | Шкаф напольный | шт. | 2 | ГЭСНм10-01-055-01 | Q1.H1 |",
+    ])
+    parsed = service.parse_model_rag_result(table)
+    assert parsed is not None, "разборщик не принимает шапку, которую требует контракт"
+    _answer, rows = parsed
+    assert len(rows) == 1
+    assert rows[0]["source_row"] == 984
+    assert rows[0]["work_id"] == "install"
+    assert rows[0]["norm_code"] == "ГЭСНм10-01-055-01"
+    assert rows[0]["evidence_refs"] == ["Q1.H1"]
+
+
+def test_a_row_left_without_a_norm_needs_no_evidence_ref() -> None:
+    """Пустой norm_code — предусмотренный ответ, ссылаться в нём не на что.
+
+    Живой прогон 10.09, 22:31: модель вернула 25 строк, по девятнадцати подобрала
+    нормы, а шесть честно оставила пустыми — именно так, как просит инструкция «если
+    подходящих карточек в пакете нет, оставь norm_code пустым». Проверка потребовала
+    evidence_refs и от них тоже, ошибка оказалась блокирующей, и весь проход был
+    отброшен: ни книги, ни записанного прогресса.
+
+    Ссылка обязательна ровно там, где норма выбрана.
+    """
+    class _Chunk:
+        def __init__(self, ref: str, code: str) -> None:
+            self.meta = {"model_evidence_ref": ref, "norm_code": code}
+
+    chunks = [_Chunk("Q5.H5", "ГЭСНм10-06-037-01")]
+    rows = [
+        {"source_row": 984, "title": "Шкаф", "unit": "шт.",
+         "norm_code": "ГЭСНм10-06-037-01", "evidence_refs": ["Q5.H5"]},
+        {"source_row": 987, "title": "Блок розеток", "unit": "шт.",
+         "norm_code": "", "evidence_refs": []},
+        {"source_row": 991, "title": "Патч-корд", "unit": "шт.",
+         "norm_code": "—", "evidence_refs": []},
+    ]
+    errors = service.validate_model_rag_result_structure(
+        rows, chunks, expected_source_rows=3
+    )
+    assert errors == [], f"строки без нормы не должны блокировать проход: {errors}"
+
+    with_norm_without_ref = [
+        {"source_row": 988, "title": "Патч-панель", "unit": "шт.",
+         "norm_code": "ГЭСНм10-01-001-01", "evidence_refs": []},
+    ]
+    errors = service.validate_model_rag_result_structure(
+        with_norm_without_ref, chunks, expected_source_rows=1
+    )
+    assert "missing_evidence_ref:988" in errors, "выбранная норма обязана на что-то опираться"
+
+
+def test_no_http_client_in_the_chat_path_trusts_the_system_proxy() -> None:
+    """Клиенты сметного пути обязаны игнорировать системный прокси.
+
+    Живой прогон 11.09, 10:34: оператор включил VPN, и запрос упал ещё до модели —
+    `ValueError: Unknown scheme for proxy URL socks4://127.0.0.1:10808`. Системный
+    SOCKS перехватывает и localhost, а весь сметный путь идёт по петле: внешнему
+    прокси в нём делать нечего. Тот же дефект уже чинили по всему проекту 07.06,
+    и один клиент остался незакрытым.
+    """
+    import re
+    from pathlib import Path
+
+    source = Path(service.__file__).read_text(encoding="utf-8")
+    clients = [
+        line.strip()
+        for line in source.splitlines()
+        if re.search(r"httpx\.(Async)?Client\(", line)
+    ]
+    assert clients, "клиенты в модуле должны быть — иначе тест бессмысленен"
+    unguarded = [line for line in clients if "trust_env=False" not in line]
+    assert unguarded == [], (
+        "эти клиенты доверяют системному прокси и упадут при включённом VPN: "
+        + "; ".join(unguarded)
+    )
+
+
+def test_contract_lists_the_coefficient_columns_it_asks_for() -> None:
+    """Перечень колонок обязан содержать те, о которых контракт же и просит.
+
+    Проход 25 (18.09): по строке демонтажа модель написала, что нормы на демонтаж нет,
+    а ГЭСНм10-04-101-07 — про монтаж. Демонтаж по монтажной норме считают коэффициентом,
+    расчёт его принимает (coefficient_basis/coefficient_target), и контракт про него
+    говорит — но в перечне добавляемых колонок этих полей не было, а всё, чего нет в
+    перечне, запрещено. Применять коэффициент или нет, решает модель.
+    """
+    source = service.model_answer_request('Fixture question', model_driven=True)
+    listed = source.split("полей строго в этом порядке: ", 1)[1].split(". Колонку", 1)[0]
+    columns = [item.strip() for item in listed.replace(chr(34), "").replace(chr(92) + "n", " ").split(",")]
+    for name in ("coefficient", "coefficient_basis", "coefficient_target"):
+        assert name in columns, name
+
+
+def test_a_norm_proved_by_saved_delivered_evidence_needs_no_fresh_reference() -> None:
+    """Номера карточек живут один проход, а решение — до конца ведомости.
+
+    Проход 26 (18.09): строка демонтажа была подтверждена в 24-м проходе по
+    ГЭСНм10-04-101-07, а в 26-м та же норма отвергнута как
+    norm_code_not_in_referenced_evidence — модель сослалась на Q3.H1, потому что в
+    прошлый раз эта карточка была Q6.H1. Ссылка проверяется в тот проход, когда
+    решение принимается; сохранённый чек и есть след той проверки.
+    """
+    row = {'source_row': 'СОУЭ!7.2', 'norm_code': 'ГЭСНм10-04-101-07', 'evidence_refs': []}
+
+    without = service.withhold_unreferenced_norms([row], delivered_cards={})[0]
+    assert without['evidence_error'] == 'missing_evidence_ref'
+
+    proof = service.saved_norm_evidence({'СОУЭ!7.2': {**row, 'evidence_snapshot': [
+        {'norm_code': row['norm_code'], 'delivered': True, 'sent_text': 'card', 'sent_sha256': 'hash'}]}})
+    with_receipt = service.withhold_unreferenced_norms(
+        [row], delivered_cards={}, prior_evidence=proof,
+    )[0]
+    assert 'evidence_error' not in with_receipt
+
+    # Чужая строка своей нормы не подтверждает.
+    other = service.withhold_unreferenced_norms(
+        [{**row, 'source_row': 'АР!1.31'}], delivered_cards={}, prior_evidence=proof,
+    )[0]
+    assert other['evidence_error'] == 'missing_evidence_ref'
+
+
+def test_receipt_without_delivery_evidence_does_not_prove_a_norm(tmp_path) -> None:
+    """Сам факт расчёта не подтверждает источник; старые advisory-решения тоже имели чеки."""
+    receipts = [{'source_row': 'СОУЭ!7.2', 'work_id': 'w1', 'calculation': {'norm_code': 'ГЭСНм10-04-101-07'}},
+                {'source_row': 'СОУЭ!7.2', 'work_id': 'w2', 'calculation': {'norm_code': ''}}]
+
+    assert service.saved_norm_evidence({'СОУЭ!7.2': {'source_row': 'СОУЭ!7.2',
+        'norm_code': receipts[0]['calculation']['norm_code'], 'calculation_receipts': receipts}}) == []
+    assert service.saved_norm_evidence({}) == []
+
+
+def test_rows_are_checked_against_the_sheet_after_it_is_finished_too() -> None:
+    """Проход 32: ведомость пройдена, и модель сочинила три позиции.
+
+    На завершённой ведомости строки ответа не проверялись на принадлежность ей, и
+    выдуманные «1/1.1», «2/2.1», «3/3.1» с ссылками вида calc_10_04_101_01 попали в
+    книгу — лист «Проверка» получил их со статусом evidence_ref_unknown, а реестр
+    источников — предупреждения source_binding_unresolved.
+    """
+    assert service.model_rows_must_belong_to_sheet({'state': 'portion'})
+    assert service.model_rows_must_belong_to_sheet({'state': 'complete'})
+    # Вложение, которое ведомостью не является, этой проверке не подлежит.
+    assert not service.model_rows_must_belong_to_sheet({'state': 'raw'})
+    assert not service.model_rows_must_belong_to_sheet({})
+
+    errors = service.portion_structure_errors(
+        [{'source_row': '1', 'work_id': '1.1', 'norm_code': 'ГЭСНм10-04-101-01'}],
+        {'state': 'complete', 'source_anchors': ['АР!1.31'], 'shown': []},
+    )
+    assert errors == ['invalid_portion_source_row:1']

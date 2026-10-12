@@ -173,7 +173,7 @@ def run_prebundle_smoke(
         runtime_state = _read_json(runtime_state_path)
         if not runtime_state:
             raise PrebundleSmokeError("bootstrap ready without windows-light-state.json")
-        if runtime_state.get("process_contract") != "direct_python_no_console_v1":
+        if runtime_state.get("process_contract") != "direct_python_no_console_v2":
             raise PrebundleSmokeError("runtime process contract is not console-clean")
         proxy_port = int(runtime_state["proxy_port"])
         ui_port = int(runtime_state["ui_port"])

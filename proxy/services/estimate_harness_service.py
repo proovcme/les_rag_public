@@ -353,39 +353,87 @@ def _work_item_intent_hints(item: dict[str, Any]) -> list[str]:
 
 def search_norm(work_description: str, *, work_family: str = "", element_type: str = "",
                 action: str = "", unit_hint: str = "", top_k: int = 6,
-                rerank: bool = True) -> dict[str, Any]:
+                rerank: bool = True, discipline: str = "") -> dict[str, Any]:
     """Universal norm retrieval. It returns cards; model/user owns applicability and choice."""
     if not str(work_description or "").strip():
         return {"status": "not_found", "candidates": [], "missing_inputs": ["work_description"]}
     from proxy.smeta_core.norm_browser import browse_norms, browse_norms_many
 
     uh = _canon_unit(unit_hint)
+    # Пул шире запрошенного: профильная норма нередко стоит не в первой шестёрке, и
+    # без запаса ранжировать нечего — замер 09.09 по спецификации СКС показал
+    # профильные нормы в топ-40 у десяти позиций из одиннадцати.
+    pool = max(top_k * 5, 40)
     browse = (
-        browse_norms(work_description, limit=max(top_k, 1))
+        browse_norms(work_description, limit=pool)
         if rerank
         else browse_norms_many(
-            [work_description], limit=max(top_k, 1), rerank=False,
+            [work_description], limit=pool, rerank=False,
         )[work_description]
     )
     cards = list(browse.get("cards") or [])
     if not cards:
         return {"status": "not_found", "candidates": [], "hint": "переформулируй work_description"}
+    # Сборник нормы — независимый от текста признак применимости, и он объясняет
+    # кандидата в листе проверки. В счёт он не входит: замер показал, что как вес он
+    # вредит (см. score_total ниже).
+    from proxy.smeta_core.collection_scope import (
+        collection_affinity,
+        collection_reason,
+        discipline_for_text,
+    )
+    # Практика раздела прикладывается как свидетельство и порядок не меняет: ревью
+    # 10.09 показало, что весом она вытесняла верные нормы из выдачи — кандидат с
+    # 40-го места при 13 применениях обгонял первого по тексту.
+    from proxy.smeta_core.estimate_usage import usage_evidence, usage_reason
+
+    # Дисциплину знает раздел документа: строка «Монтаж шпильки М8» её не содержит,
+    # хотя раздел спецификации назван «Монтаж системы структурированной кабельной сети».
+    # Явное указание сильнее догадки по тексту; неизвестное имя игнорируется.
+    from proxy.smeta_core.collection_scope import load_scope
+
+    requested = str(discipline or "").strip()
+    known = set((load_scope().get("disciplines") or {}).keys())
+    discipline = requested if requested in known else discipline_for_text(
+        f"{work_description} {work_family} {element_type}"
+    )
     candidates: list[dict[str, Any]] = []
-    for rank, card in enumerate(cards[:top_k], 1):
+    for rank, card in enumerate(cards, 1):
         c = str(card.get("norm_code") or "")
         nm = str(card.get("title") or "")
         u = str(card.get("measure_unit") or "")
         factor, base = _norm_unit_factor(u)
+        affinity = collection_affinity(c, discipline)
+        practice = usage_evidence(c, discipline)
+        scope_label = "primary" if affinity > 0.5 else ("related" if affinity > 0 else
+                                                        ("foreign" if affinity < 0 else ""))
+        # В разборе оценки только то, что в неё вошло. Ни сборник, ни практика весом
+        # не являются: они лежат рядом как основания для решения человека и модели.
+        parts: dict[str, Any] = {"retrieval_rank": rank}
         candidates.append({"norm_code": c, "title": nm, "collection": _collection_of(c),
+                           "collection_scope": scope_label,
+                           "collection_reason": collection_reason(c, discipline),
+                           "usage_reason": usage_reason(c, discipline),
+                           "usage_evidence": practice,
                            "measure_unit": u, "base_unit": base,
                            "unit_compatible": (not uh) or _units_compatible(uh, base),
                            "applicability_status": "model_review_required", "rejection_reasons": [],
-                           "score_total": float(max(top_k - rank + 1, 1)),
-                           "score_parts": {"retrieval_rank": rank},
+                           # Порядок задаёт только текстовое сходство. Замер на
+                           # отложенной выборке показал, что сборник как вес роняет
+                           # точность первой позиции (74,0 % → 71,0 %), а вес практики
+                           # хоть и поднимал её, но вытеснял из выдачи редкие верные
+                           # нормы: обе подсказки остались основаниями, не весами.
+                           "score_total": 1.0 / rank,
+                           "score_parts": parts,
                            "norm_profile": card})
+    # Порядок поиска сохраняется внутри равных весов: без распознанной дисциплины
+    # сортировка не меняет ничего.
+    candidates.sort(key=lambda item: -float(item["score_total"]))
+    candidates = candidates[:top_k]
     selection = _candidate_selection(candidates)
     navigation = _search_norm_navigation(candidates, work_family=work_family, element_type=element_type, unit_hint=uh)
     return {"status": "ambiguous", "work_family": work_family, "element_type": element_type,
+            "discipline": discipline,
             "norm_store": {"backend": browse.get("backend"), "source_integrity": browse.get("source_integrity")},
             "candidate_pool": {"searched": len(cards), "scored": len(candidates)},
             "norm_navigation": navigation,

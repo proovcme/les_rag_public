@@ -33,5 +33,6 @@ def test_low_coverage_total_is_explicitly_partial(tmp_path):
         if cell.value is not None
     )
     assert "ПОКРЫТИЕ НИЗКОЕ" in blob
-    assert "Стоимость только привязанной части (6/19)" in blob
-    assert "не итог ведомости" in blob
+    assert "Предварительная стоимость рассчитанной части" in blob
+    assert "привязано 6 из 19 строк" in blob
+    assert "не является итогом ведомости" in blob

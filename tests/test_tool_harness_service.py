@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import sqlite3
 import time
@@ -19,6 +20,31 @@ def test_harness_factory_preserves_request_scoped_web_config():
     result = tool_harness_service.harness(web_config=config)
 
     assert result._web_config is config
+
+
+@pytest.mark.asyncio
+async def test_large_dataset_map_returns_bounded_navigation_not_overflow(monkeypatch):
+    # Notebook construction reads the external corpus; keep executor/budget real.
+    monkeypatch.setattr(tool_harness_service, "build_dataset_notebook", lambda *a, **k: {
+        "schema": "notebook_v1",
+        "notebook_summary": {"purpose": "navigation", "key_terms": ["term" * 100] * 50},
+        "typed_memory": {
+            "topic_map": {"topics": [{"name": "topic" * 100}] * 1000},
+            "section_map": {"sections": [{"name": "section" * 100}] * 1000},
+            "source_layers": ["text"] * 100,
+            "retrieval_routes": ["route"] * 100,
+            "known_gaps": ["gap"] * 100,
+        },
+    })
+    result = await ToolHarness().call_async("dataset_map", {"dataset_id": "large"},
+                                           allowed_dataset_ids=("large",))
+    assert result["status"] == "ok"
+    assert result["execution"]["code"] == "TOOL_OK"
+    assert result["result"]["dataset_id"] == "large"
+    assert result["result"]["navigation_truncated"] is True
+    assert result["result"]["summary"]["purpose"] == "navigation"
+    assert result["evidence"][0]["is_evidence"] is False
+    assert len(json.dumps(result["result"], ensure_ascii=False)) < 5500
 
 
 def _seed_db(path):

@@ -82,6 +82,42 @@ def _attachment(tmp_path: Path, *, ident: str = "read_123456abcdef") -> dict:
 
 
 @pytest.mark.asyncio
+async def test_row_calculation_survives_adapter_revision_resume_and_cursor(tmp_path, monkeypatch):
+    from proxy.services import chat_evidence_application_service as chat
+    from proxy.services import lsr_workbook_adapter_service as adapter
+    from proxy.services.portion_cursor_service import PortionCursorService
+
+    statuses = {"1": "material_bound", "2": "resource_bound", "3": "material_price_missing"}
+    decisions = [{"source_row": int(key), "title": "Material", "quantity": 1,
+                  "unit": "шт", "norm_code": ""} for key in statuses]
+    monkeypatch.setattr(adapter.fgis_price_service, "resolve_pricebook_path", lambda _: None)
+    monkeypatch.setattr(adapter, "build_lsr_trace_from_visible_rows", lambda *a, **k: {
+        "row_bindings": [{"row": key, "status": status} for key, status in statuses.items()],
+        "summary": {"bound_rows": 2, "result_status": "priced_partial"},
+    })
+    monkeypatch.setattr(adapter, "render_lsr_xlsx", lambda trace, path, **kwargs: _source_workbook(path))
+    attachment = _attachment(tmp_path)
+    ctx = _context(tmp_path, lsr_adapter=build_lsr_workbook_from_decisions)
+    args = {"attachment_id": attachment["attachment_id"], "decisions": decisions}
+    first = await build_lsr_workbook(args, ctx)
+    resumed = await build_lsr_workbook(args, ctx)
+    assert first["artifact"]["revision_id"] == resumed["artifact"]["revision_id"]
+    for result in (first, resumed):
+        meta = chat.harvest_workbook_tool_result(chat.safe_workbook_history_projection(result))
+        assert chat.workbook_row_statuses(meta) == statuses
+        assert chat.workbook_bound_rows(meta) == 2
+    store = PortionCursorService(tmp_path / "cursor.db")
+    chat.record_portion_pass(
+        store, session_id="s", portion_state={"shown": list(statuses), "source_revision": "r"},
+        rows=decisions, closed=[], artifact_revision_id=resumed["artifact"]["revision_id"],
+        row_statuses=chat.workbook_row_statuses(meta), rejected=chat.rejected_row_reasons(meta),
+    )
+    progress = store.progress(session_id="s", source_revision="r")
+    assert progress.completed == {"1", "2"}
+    assert progress.decisions["3"]["rejected_reason"] == "material_price_missing"
+
+
+@pytest.mark.asyncio
 async def test_vor_handler_preserves_source_rows_and_creates_revision(tmp_path):
     meta = _attachment(tmp_path)
     ctx = _context(tmp_path)
@@ -130,6 +166,12 @@ async def test_lsr_handler_requires_an_explicit_application_adapter(tmp_path):
 
 @pytest.mark.asyncio
 async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monkeypatch):
+    source = tmp_path / "source.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["№", "Наименование", "Ед. изм.", "Количество"])
+    workbook.active.append([1, "Монтаж воздуховода", "м", 12.5])
+    workbook.save(source)
+    workbook.close()
     decisions = [{
         "source_row": 1,
         "section": "ОВ",
@@ -181,7 +223,7 @@ async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monk
     )
 
     assert captured["rows"] == decisions
-    assert captured["kwargs"]["name"] == "Собери ЛСР"
+    assert captured["kwargs"]["name"] == "Локальный сметный расчёт"
     assert captured["kwargs"]["pricebook"] is system_pricebook
     assert result["source_rows"] == 1
     assert result["pricebook"] == "sankt-peterburg_2kv2026"
@@ -218,6 +260,35 @@ async def test_retry_returns_completed_revision_without_running_adapter_twice(tm
     assert second["artifact"]["revision_id"] == first["artifact"]["revision_id"]
     assert second["source"]["rows"] == first["source"]["rows"] == 2
     assert second["checkpoint"]["resumed"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('damage',['missing','corrupt'])
+async def test_unavailable_cached_artifact_gets_one_new_child_revision(tmp_path,damage):
+    meta=_attachment(tmp_path)
+    calls=[]
+    async def adapter(_path,args,output_path,_progress):
+        calls.append(dict(args))
+        _source_workbook(output_path)
+        return dict(file_path=output_path,source_rows=2,missing=[],blockers=[])
+    ctx=_context(tmp_path,lsr_adapter=adapter)
+    args=dict(attachment_id=meta['attachment_id'],decisions=[dict(source_row='1',norm_code='MODEL')])
+    first=await build_lsr_workbook(args,ctx)
+    first_id=first['artifact']['revision_id']
+    original=ctx.artifacts.get_revision(first_id)
+    path=ctx.artifacts.resolve_path(first_id)
+    if damage=='missing':
+        path.unlink()
+    else:
+        path.write_bytes(b'corrupt fixture')
+    repaired=await build_lsr_workbook(args,ctx)
+    assert repaired['artifact']['revision_id']!=first_id
+    assert repaired['artifact']['parent_revision_id']==first_id
+    assert ctx.artifacts.read_bytes(repaired['artifact']['revision_id'])
+    assert ctx.artifacts.get_revision(first_id)==original
+    again=await build_lsr_workbook(args,ctx)
+    assert again['artifact']['revision_id']==repaired['artifact']['revision_id']
+    assert len(calls)==2 and calls[0]['decisions']==calls[1]['decisions']
 
 
 @pytest.mark.asyncio

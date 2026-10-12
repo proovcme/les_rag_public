@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from pathlib import Path
+import shutil
 import subprocess
 import zipfile
 import httpx
@@ -1105,6 +1107,14 @@ def test_patch_launcher_uses_checksum_declared_target_engine(tmp_path):
     runtime = tmp_path / "runtime"
     root = tmp_path / "update"
     root.mkdir()
+    for relative in (
+        "extensions/__init__.py", "extensions/lemonade/__init__.py",
+        "extensions/lemonade/contracts.py", "extensions/lemonade/transport.py",
+        "extensions/lemonade/vendor_status.py", "extensions/lemonade/runtime_env.py",
+    ):
+        dependency = runtime / relative
+        dependency.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(__file__).resolve().parents[1] / relative, dependency)
     for name in ("vps_patch_apply.py", "windows_update_engine.py", "windows_runtime.py"):
         path = runtime / "tools" / name
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+from typing import Sequence
 
 # Порядок проверки — от самого специфичного интента к общему.
 # «Значение/да-нет» (самый узкий ответ).
@@ -125,3 +127,115 @@ def classify_answer_form(question: str) -> AnswerForm:
     if _has(_BRIEF_TOKENS):
         return _BRIEF
     return _DEFAULT
+
+
+TRUNCATION_NOTE = "\n\n_Ответ усечён по лимиту длины. Уточните вопрос или запросите подробный формат._"
+
+
+def finalize_truncated_answer(text: str) -> str:
+    """Mark the provider's length limit without deleting model-authored text.
+
+    A dot may belong to a quantity, norm, table or source reference. Code must
+    not invent a sentence boundary or silently discard the last decision.
+    Structured model results are handled separately by the caller.
+    """
+    body = (text or "").rstrip()
+    if not body:
+        return body
+    if body.lstrip().startswith(("{", "[", "```")):
+        # Keep machine-readable model results intact, including incomplete JSON.
+        # The caller records the length limit separately in retrieval_trace.
+        return text
+    return body + TRUNCATION_NOTE
+
+
+_ECHO_MIN_RUN_CHARS = 200
+
+
+def answer_echoes_prompt(answer: str, system_prompt: str) -> bool:
+    """True, когда ответ пересказывает собственную инструкцию, а не отвечает.
+
+    Малые модели при 2-битном квантовании иногда вырождаются и дословно повторяют
+    системный промпт (наблюдалось на Carnice IQ2_M: ответ начинался с «Ты — Л.Е.С.»
+    и зацикливался на блоке «# Правила»). Отдельные совпавшие формулировки — норма,
+    поэтому эхом считается только длинный непрерывный кусок инструкции.
+    """
+    text = " ".join((answer or "").split())
+    source = " ".join((system_prompt or "").split())
+    if len(text) < _ECHO_MIN_RUN_CHARS or len(source) < _ECHO_MIN_RUN_CHARS:
+        return False
+    step = _ECHO_MIN_RUN_CHARS // 2
+    for start in range(0, len(source) - _ECHO_MIN_RUN_CHARS + 1, step):
+        if source[start:start + _ECHO_MIN_RUN_CHARS] in text:
+            return True
+    return False
+
+
+_REPEAT_PROBE_CHARS = 160
+_REPEAT_MAX_OCCURRENCES = 3
+
+
+def answer_is_degenerate_repetition(answer: str) -> bool:
+    """True, когда ответ зациклился на одном и том же фрагменте.
+
+    Наблюдалось на Carnice IQ2_M: на новый вопрос модель повторила предыдущий ответ
+    десятки раз подряд, пока не упёрлась в лимит. Отдельные совпадения (пункты списка,
+    шапки разделов) короткие, поэтому проба берётся длинной — 160 символов подряд.
+    """
+    text = " ".join((answer or "").split())
+    if len(text) < _REPEAT_PROBE_CHARS * _REPEAT_MAX_OCCURRENCES:
+        return False
+    probe = text[:_REPEAT_PROBE_CHARS]
+    if text.count(probe) >= _REPEAT_MAX_OCCURRENCES:
+        return True
+    middle = text[len(text) // 2: len(text) // 2 + _REPEAT_PROBE_CHARS]
+    return len(middle) == _REPEAT_PROBE_CHARS and text.count(middle) >= _REPEAT_MAX_OCCURRENCES
+
+
+_CORPUS_STATE_BLOCKS = frozenset({
+    "dataset_scope_not_found",
+    "no_datasets",
+    "corpus_empty",
+})
+
+
+def is_transient_retrieval_block(error_code: str) -> bool:
+    """True для блокировок, вызванных неготовностью контура, а не состоянием корпуса.
+
+    Сбой native RRF или реранкера проходит при повторе — это состояние сервиса, а не
+    содержательный ответ. Сохранённая в историю заглушка попадает в контекст следующих
+    запросов сессии, и модель начинает её копировать (наблюдалось: chat_history 185 → 186).
+    Отсутствие датасета или пустой корпус, наоборот, ответ пользователю и в истории нужны.
+    """
+    code = str(error_code or "").strip()
+    if not code:
+        return False
+    return code not in _CORPUS_STATE_BLOCKS
+
+
+_MARKDOWN_LINK = re.compile(r"\[([^\]\n]{1,300})\]\(([^)\s]{1,2000})\)")
+
+
+def strip_unsupported_links(answer: str, known_sources: Sequence[str]) -> tuple[str, int]:
+    """Снять разметку ссылок, ведущих не на реальные источники ответа.
+
+    Модель выдумывает адреса: в chat_history 193 источники были оформлены как
+    `[Раздел ПД №8 ... .pdf](https://example.com/source1)`. Фальшивая ссылка в
+    инженерном ответе хуже её отсутствия — по ней могут перейти. Текст ссылки
+    сохраняем: он несёт имя документа и получен из выдачи.
+    """
+    text = answer or ""
+    if "](" not in text:
+        return text, 0
+    haystack = "\n".join(str(item or "") for item in (known_sources or ()))
+    removed = 0
+
+    def replace(match: "re.Match[str]") -> str:
+        nonlocal removed
+        label, target = match.group(1), match.group(2)
+        if target and target in haystack:
+            return match.group(0)
+        removed += 1
+        return label
+
+    return _MARKDOWN_LINK.sub(replace, text), removed

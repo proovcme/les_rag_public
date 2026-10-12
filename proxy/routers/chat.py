@@ -13,7 +13,7 @@ import json
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Callable, Iterable, List, Optional
+from typing import Annotated, Any, Callable, Iterable, List, Literal, Optional
 from uuid import uuid4
 
 import httpx
@@ -51,6 +51,9 @@ from proxy.services.model_connection_resolver_service import (
     ModelConnectionResolutionError,
     ModelConnectionResolver,
 )
+from proxy.services.les_module_contracts import ChatContext, ChatRequestContext
+from proxy.services.les_module_mount_service import run_module_chat_handlers
+from proxy.services.les_module_service import route_module
 from proxy.services.model_secret_service import EnvironmentSecretStore
 from proxy.services.openai_compatible_transport_service import (
     InferenceRequest,
@@ -102,13 +105,16 @@ from proxy.services.prompt_registry_service import build_mode_system_prompt
 from proxy.services.llm_transport_profile_service import (
     apply_transport_options,
     assistant_delta_text,
+    is_control_channel_text,
     provider_prompt_max_chars,
     provider_is_local,
 )
 from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import (
+    LOCAL_LLM_PROVIDERS,
     GenerationSlotTimeout,
+    active_llm_provider,
     count_active_jobs,
     evaluate_chat_admission,
 )
@@ -262,9 +268,15 @@ class ChatRequest(BaseModel):
     output_directive: Optional[str] = None  # формат/стиль ответа — ТОЛЬКО в генерацию (не в роутинг/заметки/ретрив)
     response_length: Optional[str] = None  # short|standard|detailed|maximum; только бюджет/форма генерации
     mode: Optional[str] = None  # явный РЕЖИМ из UI («smeta» → форс сметного пути минуя роутер/RAG)
+    smeta_practice_mode: Literal["none", "frequency", "similar", "both"] = "both"
     profile_revision_id: Optional[str] = None
     apply_profile_revision: bool = False
     candidate_acceptance: bool = False  # root-admin only; isolated pre-promotion execution
+    # Идентификатор хода от клиента. Повторная доставка одного ответа обязана нести тот
+    # же идентификатор, следующий ход — новый. Сервер различить их сам не может: два
+    # «Продолжай» подряд текстуально неотличимы (ревью Codex 11.09). Поле необязательно;
+    # без него запись прохода идёт как раньше — потерять проход хуже, чем задвоить.
+    turn_id: Optional[str] = None
     attachment_context: Optional[str] = None  # текст файла из скрепки (read-mode), без индексации
     attachment_id: Optional[str] = None  # server-owned read_<id>; клиентский путь не принимается
     target_file: Optional[str] = None  # точный file_name из MetaDB documents (для клика по реестру/узкого RAG)
@@ -341,6 +353,49 @@ class ChatRequest(BaseModel):
                 raise ValueError("Имя выбранного документа слишком длинное")
             result.append(value)
         return result or None
+
+
+async def _apply_module_chat_context(req: ChatRequest, user: Any) -> ChatRequest:
+    """Add bounded optional-module instructions only to the model-generation field."""
+    module = route_module(req.question, mode=req.mode or "auto")
+    request_context = ChatRequestContext(
+        request_id=uuid4().hex,
+        user_id=str(getattr(user, "holder", "") or getattr(user, "role", "") or "anonymous"),
+        message=req.question,
+        mode=str(req.mode or "auto"),
+        dataset_id=str((req.dataset_ids or [""])[0] or "") or None,
+        metadata={
+            "session_id": str(req.session_id or ""),
+            "project_id": req.project_id,
+        },
+    )
+    response = await run_module_chat_handlers(
+        request_context,
+        ChatContext(
+            active_state={},
+            allowed_tools=tuple(module.allowed_tools),
+            module_id=module.module_id,
+        ),
+    )
+    for diagnostic in response.diagnostics:
+        logger.warning("[MODULE/CHAT] %s", diagnostic)
+
+    additions: list[str] = []
+    system_instructions = response.context_delta.get("system_instructions")
+    if isinstance(system_instructions, str) and system_instructions.strip():
+        additions.append(f"Контекст подключенного модуля: {system_instructions.strip()}")
+    tool_instructions = response.context_delta.get("tool_instructions")
+    if isinstance(tool_instructions, str) and tool_instructions.strip():
+        additions.append(
+            "Инструкции подключенного модуля по инструментам: "
+            f"{tool_instructions.strip()}"
+        )
+    if not additions:
+        return req
+    directive = "\n".join(
+        part for part in (str(req.output_directive or "").strip(), *additions) if part
+    )
+    return req.model_copy(update={"output_directive": directive})
 
 
 def _require_candidate_acceptance(req: ChatRequest, user: Any) -> None:
@@ -661,11 +716,20 @@ def cloud_model_timeout() -> float:
 
 
 def model_connection_timeout() -> float:
-    """One end-to-end window for an explicitly assigned answer connection."""
-    try:
-        return float(os.getenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", 300.0))
-    except (TypeError, ValueError):
-        return 300.0
+    """One end-to-end window for an explicitly assigned answer connection.
+
+    Локальная генерация идёт на встроенной графике и объективно медленнее облачной:
+    сметный запрос со слоем инструментов в 47 тыс. символов обрывался ровно на 301-й
+    секунде, хотя модель продолжала считать. Поэтому у локальных провайдеров окно шире;
+    явная настройка оператора сильнее любого умолчания.
+    """
+    raw = os.getenv("LES_MODEL_CONNECTION_TIMEOUT_SEC")
+    if raw is not None and str(raw).strip():
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    return 1800.0 if active_llm_provider() in LOCAL_LLM_PROVIDERS else 300.0
 
 
 def _effective_model_connection_mode() -> CanonicalRouteMode:
@@ -873,6 +937,12 @@ def _augment_model_tool_args(
     return augmented
 
 
+def _chat_workbook_artifact_available(revision_id: str) -> bool:
+    from proxy.services.artifact_revision_service import ArtifactRevisionStore
+    return ArtifactRevisionStore(mutable_path('storage/artifacts/meta.db'),
+                                 mutable_path('storage/artifacts/files')).available(revision_id)
+
+
 async def _execute_chat_workbook_tool(
     call: dict[str, Any],
     request_context: dict[str, Any],
@@ -958,10 +1028,14 @@ async def _execute_chat_workbook_tool(
     # Dataset ordering is not semantic, but artifact provenance is server-owned.
     args["dataset_ids"] = bound_dataset_ids
 
+    from proxy.services.portion_cursor_service import document_price_basis_identity
     identity_payload = {
         "session_id": str(request_context.get("session_id") or ""),
         "tool": tool_name,
         "args": args,
+        "document_price_basis": document_price_basis_identity(request_context.get('document_price_basis')),
+        "source_revision": str(request_context.get('source_revision') or ''),
+        "source_attachment_sha256": str(request_context.get('source_attachment_sha256') or ''),
         "profile_revision_id": str(request_context.get("profile_revision_id") or ""),
     }
     identity = hashlib.sha256(
@@ -1008,6 +1082,9 @@ async def _execute_chat_workbook_tool(
             mutable_path("storage/artifacts/meta.db"),
             mutable_path("storage/artifacts/files"),
         ),
+        document_price_basis=request_context.get('document_price_basis'),
+        source_revision=str(request_context.get('source_revision') or ''),
+        source_attachment_sha256=str(request_context.get('source_attachment_sha256') or ''),
         lsr_adapter=workbook_adapters.get("build_lsr_workbook"),
         vor_adapter=workbook_adapters.get("build_vor_workbook"),
         progress_sink=emit_progress,
@@ -1037,6 +1114,19 @@ async def _execute_chat_workbook_tool(
     if pending_progress:
         await asyncio.gather(*pending_progress, return_exceptions=True)
     result = envelope.to_dict()["result"]
+    if envelope.status == "overflow":
+        # The server needs the full calculation to attach the workbook and update
+        # row progress. A prompt-budget reference is not a workbook result.
+        result = executor.resolve_cursor(
+            str(envelope.cursor or ""),
+            actor_id=str(request_context.get("session_id") or "ordinary-chat"),
+        )
+        if result is None:
+            result = {
+                "schema": "les.workbook_tool_result.v1", "tool": tool_name,
+                "status": "failed", "code": "WORKBOOK_RESULT_UNAVAILABLE",
+                "missing": [], "blockers": ["WORKBOOK_RESULT_UNAVAILABLE"],
+            }
     if envelope.status not in {"ok", "overflow"}:
         result = {
             "schema": "les.workbook_tool_result.v1",
@@ -1304,9 +1394,20 @@ def _names_for_dataset_ids(dataset_ids: list[str] | None, name_by_id: dict[str, 
     return [name_by_id.get(str(dataset_id), str(dataset_id)) for dataset_id in (dataset_ids or [])]
 
 
-def _history_success(crag_status: str, answer: str) -> int:
+def _history_success(crag_status: str, answer: str, *, retrieval_trace: dict | None = None) -> int:
     if not answer or answer == SAFE_FALLBACK:
         return 0
+    if crag_status == "MODEL_OUTPUT":
+        trace = retrieval_trace or {}
+        # Delivery success is not semantic verification. Preserve MODEL_OUTPUT
+        # and validation_enabled, and never upgrade incomplete/uncited replies.
+        citation = trace.get("citation_check") or {}
+        return int(
+            citation.get("status") in {"supported_labels", "not_applicable"}
+            and not trace.get("answer_truncated")
+            and not trace.get("blocker")
+            and not is_control_channel_text(answer)
+        )
     return 1 if crag_status in {"VERIFIED", "UNVALIDATED"} else 0
 
 
@@ -1353,11 +1454,20 @@ def _strip_think(text: str) -> str:
 def _assistant_text(message: dict) -> str:
     """Текст ответа из chat-completion `message` с поддержкой reasoning-моделей.
 
-    Reasoning-модели (Qwen3.5, o-серия и др.) держат ФИНАЛЬНЫЙ ответ в ``content``, а
+    Reasoning-модели (Qwen3.5/3.6, o-серия и др.) держат ФИНАЛЬНЫЙ ответ в ``content``, а
     размышления — в ``reasoning``/``reasoning_content`` и/или в ``<think>…</think>`` внутри
-    content. Берём content без think-блоков; если он пуст (модель «думала» и упёрлась в лимит
-    токенов — ровно случай ollama qwen3.5 на Windows) — fallback на reasoning, чтобы не отдать
-    пустой ответ. Не-reasoning модели не затронуты (content присутствует → возвращается как был)."""
+    content. Берём content без think-блоков.
+
+    Аргументы ``tool_calls``/``function_call`` остаются запасным источником: структурированные
+    пути (``submit_json`` в сметном и notebook-контурах) возвращают ответ именно так, а не
+    текстом.
+
+    Fallback на ``reasoning``/``reasoning_content`` сохранён (ровно случай ollama qwen3.5 и
+    FreeToken: провайдер кладёт финальный текст туда), но НЕ применяется, когда модель вернула
+    туда собственный контекст — проекции advisory_state (``chat-checkpoint``/``chat-blocker``),
+    конверты и ссылки на результаты инструментов. Раньше такой дамп уходил пользователю вместо
+    ответа; теперь это пустой результат, который вызывающий код обрабатывает как отсутствие
+    ответа (повтор попытки, затем явная ошибка)."""
     if not isinstance(message, dict):
         return ""
     content = _strip_think(str(message.get("content") or ""))
@@ -1375,8 +1485,8 @@ def _assistant_text(message: dict) -> str:
     legacy_call = message.get("function_call") or {}
     if isinstance(legacy_call, dict) and str(legacy_call.get("arguments") or "").strip():
         return str(legacy_call["arguments"]).strip()
-    reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
-    return _strip_think(str(reasoning))
+    reasoning = _strip_think(str(message.get("reasoning") or message.get("reasoning_content") or ""))
+    return "" if is_control_channel_text(reasoning) else reasoning
 
 
 def _mlx_prefill_no_think_messages(messages: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
@@ -1500,7 +1610,7 @@ def save_chat_history(
     if isinstance(trace.get("quality"), dict):
         quality = str(trace["quality"].get("status") or "")
     quality = quality or str(trace.get("quality_status") or "")
-    success_value = _history_success(crag_status, answer) if success is None else int(bool(success))
+    success_value = _history_success(crag_status, answer, retrieval_trace=trace) if success is None else int(bool(success))
     with sqlite3.connect(rag_meta_db_path()) as conn:
         ensure_chat_history_schema(conn)
         cur = conn.execute(
@@ -1892,6 +2002,21 @@ def _persist_recovered_stream_history(
     return payload
 
 
+async def _settle_idempotency_operation(task, *, cancelled=False):
+    """Finish a SQLite worker before acting on cancellation or claim ownership."""
+    while True:
+        try:
+            return await asyncio.shield(task), cancelled
+        except asyncio.CancelledError:
+            cancelled = True
+            if task.cancelled():
+                raise
+        except Exception as error:
+            if cancelled:
+                raise asyncio.CancelledError from error
+            raise
+
+
 @router.post("/chat")
 async def chat(
     req: ChatRequest,
@@ -1907,7 +2032,8 @@ async def chat(
     """
     _require_candidate_acceptance(req, _user)
     if not idempotency_key:
-        return decorate_payload(await _run_chat_public(req))
+        prepared_req = await _apply_module_chat_context(req, _user)
+        return decorate_payload(await _run_chat_public(prepared_req))
 
     from proxy.services.request_idempotency_service import (
         IdempotencyConflict,
@@ -1921,15 +2047,22 @@ async def chat(
     caller = caller_scope(_user)
     fingerprint = request_fingerprint(_idempotency_payload(req))
     try:
-        idem_state, cached = await asyncio.to_thread(
+        (idem_state, cached), cancelled = await _settle_idempotency_operation(asyncio.create_task(asyncio.to_thread(
             begin,
             operation="chat",
             caller=caller,
             idempotency_key=idempotency_key,
             request_hash=fingerprint,
-        )
+        )))
     except (ValueError, IdempotencyConflict) as error:
         raise HTTPException(409, str(error)) from error
+    if cancelled:
+        if idem_state == "started":
+            await _settle_idempotency_operation(asyncio.create_task(asyncio.to_thread(
+                release, operation="chat", caller=caller,
+                idempotency_key=idempotency_key, request_hash=fingerprint,
+            )), cancelled=True)
+        raise asyncio.CancelledError
     if idem_state == "completed" and cached is not None:
         return cached
     if idem_state == "in_progress":
@@ -1940,27 +2073,34 @@ async def chat(
         )
 
     try:
-        result = decorate_payload(await _run_chat_public(req))
-    except Exception:
-        await asyncio.to_thread(
-            release,
-            operation="chat",
-            caller=caller,
-            idempotency_key=idempotency_key,
-            request_hash=fingerprint,
-        )
+        prepared_req = await _apply_module_chat_context(req, _user)
+        result = decorate_payload(await _run_chat_public(prepared_req))
+    except (Exception, asyncio.CancelledError) as workflow_error:
+        try:
+            await _settle_idempotency_operation(asyncio.create_task(asyncio.to_thread(
+                release,
+                operation="chat",
+                caller=caller,
+                idempotency_key=idempotency_key,
+                request_hash=fingerprint,
+            )), cancelled=isinstance(workflow_error, asyncio.CancelledError))
+        except Exception as cleanup_error:
+            raise workflow_error from cleanup_error
         raise
     try:
-        await asyncio.to_thread(
+        _, cancelled = await _settle_idempotency_operation(asyncio.create_task(asyncio.to_thread(
             complete,
             operation="chat",
             caller=caller,
             idempotency_key=idempotency_key,
             request_hash=fingerprint,
             response=result,
-        )
+        )))
     except Exception as error:  # noqa: BLE001 - first caller still receives paid result
         logger.error("[IDEMPOTENCY] chat response persistence failed: %s", error)
+    else:
+        if cancelled:
+            raise asyncio.CancelledError
     return result
 
 
@@ -1980,6 +2120,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
     if not req.question.strip():
         raise HTTPException(400, "Empty question")
     _require_candidate_acceptance(req, _user)
+    req = await _apply_module_chat_context(req, _user)
     queue: asyncio.Queue = asyncio.Queue()
     stream_state: dict[str, Any] = {
         "tokens": 0,
@@ -2114,7 +2255,7 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
     try:
         if token_sink is not None:
             await token_sink({"event": "token", "data": disclaimer})
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=300.0, trust_env=False) as client:
             await _refresh_stale_bound_model_capabilities(client)
             connection_mode = _effective_model_connection_mode()
             async def legacy_complete(_request: InferenceRequest) -> InferenceResponse:
@@ -2255,7 +2396,7 @@ async def _run_attachment_mode(req: "ChatRequest", token_sink=None) -> str:
     body = _cloud_body_for_model(body, runtime.model, runtime.provider)
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=300.0, trust_env=False) as client:
             if runtime.provider == "ollama":
                 text, _ = await _ollama_native_complete(
                     client, runtime, body["messages"], max_tokens=1400, temperature=0.2,
@@ -4020,6 +4161,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     )
     if grounding_enabled:
         use_semantic_cache = False
+    from proxy.services.chat_evidence_application_service import profile_uses_smeta_norm_retrieval
+    if profile_uses_smeta_norm_retrieval(_profile_snapshot) and str(req.attachment_id or '').strip():
+        # The generic answer cache precedes trusted document price binding.
+        use_semantic_cache = False
     if study_requested or inventory_requested or target_doc_filter or topic_doc_filter:
         # Broad project/object questions must re-read the selected area. A cached short RAG table
         # turns "расскажи про объект" into a stale narrow answer and hides the broad reading layer.
@@ -4189,13 +4334,14 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             timeout=model_connection_timeout(),
         ),
         workbook_tool_executor=_execute_chat_workbook_tool,
+        workbook_artifact_available=_chat_workbook_artifact_available,
     )
     response_boundary = ResponseBoundary(
         save_chat_history=save_chat_history,
         token_sink=token_sink,
         version_stamp=_version_stamp,
     )
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as capability_client:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False, trust_env=False) as capability_client:
         await _refresh_stale_bound_model_capabilities(capability_client)
     return await run_chat_evidence_application(
         evidence_request,

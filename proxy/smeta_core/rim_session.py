@@ -783,11 +783,13 @@ class RimSessionStore:
             self._session_row(
                 conn, safe_id, owner_id=_owner_id(owner_id), allow_admin=allow_admin
             )
+            # Preserve chronological audit order. Windows clocks can emit identical ISO timestamps;
+            # random UUID order is not workflow order, while SQLite rowid is append order.
             rows = conn.execute(
                 """
                 SELECT revision_id, parent_revision_id, revision_kind, created_by,
                        created_at, payload_json, payload_sha256
-                FROM rim_revisions WHERE session_id=? ORDER BY created_at, revision_id
+                FROM rim_revisions WHERE session_id=? ORDER BY created_at, rowid
                 """,
                 (safe_id,),
             ).fetchall()

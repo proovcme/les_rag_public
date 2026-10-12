@@ -15,6 +15,8 @@ from pathlib import Path
 from backend.runtime_paths import mutable_path
 from typing import Any, Mapping
 
+from proxy.services.runtime_admission import LOCAL_LLM_PROVIDERS, active_llm_provider
+
 from proxy.services.llm_transport_profile_service import (
     effective_model_execution_diagnostics,
 )
@@ -183,6 +185,11 @@ def declared_env_defaults() -> dict[str, str]:
         directories[:] = [
             name for name in directories
             if name not in _SKIP_PARTS and not name.startswith(".")
+            and not (
+                name == "runtime"
+                and Path(root).relative_to(_ROOT).parts
+                == ("desktop", "tauri", "src-tauri", "resources")
+            )
         ]
         source_paths.extend(Path(root) / name for name in files if name.endswith(".py"))
     for path in source_paths:
@@ -243,6 +250,23 @@ def _factor(key: str, dotenv: dict[str, str]) -> dict[str, Any]:
     in_dotenv = key in dotenv
     declared_default = declared_env_defaults().get(key, "")
     value = os.environ.get(key, dotenv.get(key, declared_default))
+    if key == "LES_MODEL_CONNECTION_TIMEOUT_SEC":
+        # Chat computes this default after getenv; AST literals cannot describe
+        # it. Read the current process only: an unloaded dotenv edit takes
+        # effect after restart, just as it does for the chat transport.
+        declared_default = str(
+            1800.0 if active_llm_provider() in LOCAL_LLM_PROVIDERS else 300.0
+        )
+        raw = os.environ.get(key)
+        value = declared_default
+        in_dotenv = False
+        in_process = False
+        if raw is not None and str(raw).strip():
+            try:
+                value = str(float(raw))
+                in_process = True
+            except (TypeError, ValueError):
+                pass
     source = "process" if in_process else ("dotenv" if in_dotenv else "default")
     read_only = key in _READ_ONLY_KEYS
     danger = _is_danger(key)

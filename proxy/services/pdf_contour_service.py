@@ -389,42 +389,85 @@ def render_page_preview(
     highlight_bbox: tuple[float, float, float, float] | None = None,
 ) -> bytes:
     """Render a full page or evidence rectangle to PNG, without creating a sidecar file."""
+    path = _source_path(source_path)
+    return render_page_preview_bytes(
+        path.read_bytes(),
+        page_number=page_number,
+        max_width=max_width,
+        bbox=bbox,
+        highlight_bbox=highlight_bbox,
+    )
+
+
+def render_page_preview_bytes(
+    pdf_bytes: bytes,
+    *,
+    page_number: int,
+    max_width: int = 1200,
+    bbox: tuple[float, float, float, float] | None = None,
+    highlight_bbox: tuple[float, float, float, float] | None = None,
+) -> bytes:
+    """Render already verified PDF bytes through the canonical page renderer."""
     import fitz
 
-    path = _source_path(source_path)
+    if not isinstance(pdf_bytes, bytes) or not pdf_bytes:
+        raise ValueError("PDF не содержит данных")
+    try:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
+            return _render_page_preview_document(
+                document,
+                page_number=page_number,
+                max_width=max_width,
+                bbox=bbox,
+                highlight_bbox=highlight_bbox,
+            )
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("PDF не удалось открыть") from exc
+
+
+def _render_page_preview_document(
+    document: Any,
+    *,
+    page_number: int,
+    max_width: int,
+    bbox: tuple[float, float, float, float] | None,
+    highlight_bbox: tuple[float, float, float, float] | None,
+) -> bytes:
+    import fitz
+
     width_limit = max(320, min(int(max_width or 1200), 1800))
-    with fitz.open(str(path)) as document:
-        if page_number < 1 or page_number > document.page_count:
-            raise ValueError("Страница PDF вне диапазона")
-        page = document[page_number - 1]
-        clip = None
-        if bbox is not None:
-            if len(bbox) != 4 or not all(math.isfinite(float(value)) for value in bbox):
-                raise ValueError("Некорректная область evidence")
-            clip = fitz.Rect(*(float(value) for value in bbox)) & page.rect
-            if clip.is_empty or clip.width < 1 or clip.height < 1:
-                raise ValueError("Область evidence не пересекает страницу")
-        target_width = float(clip.width if clip is not None else page.rect.width)
-        scale = min(3.0, max(0.5, width_limit / max(1.0, target_width)))
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False)
-        content = pixmap.tobytes("png")
-        if highlight_bbox is None or clip is not None:
-            return content
-        if len(highlight_bbox) != 4 or not all(math.isfinite(float(value)) for value in highlight_bbox):
-            raise ValueError("Некорректная подсветка evidence")
-        highlight = fitz.Rect(*(float(value) for value in highlight_bbox)) & page.rect
-        if highlight.is_empty or highlight.width < 1 or highlight.height < 1:
-            raise ValueError("Подсветка evidence не пересекает страницу")
+    if page_number < 1 or page_number > document.page_count:
+        raise ValueError("Страница PDF вне диапазона")
+    page = document[page_number - 1]
+    clip = None
+    if bbox is not None:
+        if len(bbox) != 4 or not all(math.isfinite(float(value)) for value in bbox):
+            raise ValueError("Некорректная область evidence")
+        clip = fitz.Rect(*(float(value) for value in bbox)) & page.rect
+        if clip.is_empty or clip.width < 1 or clip.height < 1:
+            raise ValueError("Область evidence не пересекает страницу")
+    target_width = float(clip.width if clip is not None else page.rect.width)
+    scale = min(3.0, max(0.5, width_limit / max(1.0, target_width)))
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False)
+    content = pixmap.tobytes("png")
+    if highlight_bbox is None or clip is not None:
+        return content
+    if len(highlight_bbox) != 4 or not all(math.isfinite(float(value)) for value in highlight_bbox):
+        raise ValueError("Некорректная подсветка evidence")
+    highlight = fitz.Rect(*(float(value) for value in highlight_bbox)) & page.rect
+    if highlight.is_empty or highlight.width < 1 or highlight.height < 1:
+        raise ValueError("Подсветка evidence не пересекает страницу")
 
-        from io import BytesIO
+    from io import BytesIO
+    from PIL import Image, ImageDraw
 
-        from PIL import Image, ImageDraw
-
-        image = Image.open(BytesIO(content)).convert("RGB")
-        draw = ImageDraw.Draw(image, "RGBA")
-        coords = tuple(int(round(value * scale)) for value in (highlight.x0, highlight.y0, highlight.x1, highlight.y1))
-        line_width = max(3, int(round(scale * 2)))
-        draw.rectangle(coords, fill=(15, 139, 104, 38), outline=(15, 139, 104, 235), width=line_width)
-        output = BytesIO()
-        image.save(output, format="PNG", optimize=True)
-        return output.getvalue()
+    image = Image.open(BytesIO(content)).convert("RGB")
+    draw = ImageDraw.Draw(image, "RGBA")
+    coords = tuple(int(round(value * scale)) for value in (highlight.x0, highlight.y0, highlight.x1, highlight.y1))
+    line_width = max(3, int(round(scale * 2)))
+    draw.rectangle(coords, fill=(15, 139, 104, 38), outline=(15, 139, 104, 235), width=line_width)
+    output = BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    return output.getvalue()

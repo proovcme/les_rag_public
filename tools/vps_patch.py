@@ -31,8 +31,18 @@ PATCH_OPERATION_REPLACE = "replace"
 PATCH_OPERATION_DELETE = "delete"
 DELETE_BRIDGE_HELPER = "tools/vps_patch_apply.py"
 DELETE_MARKER = b""
+FORBIDDEN_RUNTIME_PARTS = {
+    ".env", "data", "qdrant", "storage", "RAG_Content",
+    "__pycache__", ".cache", "plugins",
+}
+TRUSTED_APPLICATION_CODE_FILES = {
+    "proxy/storage/__init__.py",
+    "proxy/storage/file_storage.py",
+}
 ALLOWED_ROOTS = (
     "backend/",
+    "extensions/",
+    "modules/",
     "proxy/",
     "qdrant_visualizer/",
     "sovushka/",
@@ -44,6 +54,7 @@ ALLOWED_FILES = {
     "env.example",
     "sovushka_ng.py",
     "proxy_server.py",
+    *TRUSTED_APPLICATION_CODE_FILES,
     "installers/windows/runtime-entrypoints.json",
     "tools/activate_smeta_rag_generation.py",
     "tools/build_smeta_norm_rag.py",
@@ -95,8 +106,13 @@ def normalize_path(value: str) -> str:
     if path.is_absolute() or ".." in path.parts or not path.parts:
         raise ValueError(f"unsafe patch path: {value}")
     normalized = path.as_posix()
-    if any(part in DENIED_PARTS for part in path.parts):
-        raise ValueError(f"denied patch path: {value}")
+    forbidden = {part.casefold() for part in FORBIDDEN_RUNTIME_PARTS}
+    if (normalized not in TRUSTED_APPLICATION_CODE_FILES and any(
+        part.casefold() in forbidden for part in path.parts
+    )) or any(
+        part in DENIED_PARTS for part in path.parts
+    ):
+        raise ValueError(f"path is outside patch allowlist: {value}")
     if not (normalized in ALLOWED_FILES or normalized.startswith(ALLOWED_ROOTS)):
         raise ValueError(f"path is outside patch allowlist: {value}")
     if normalized != "env.example" and Path(normalized).suffix.lower() not in {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html", ".ps1"}:

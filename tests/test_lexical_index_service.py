@@ -140,6 +140,11 @@ def test_qdrant_adapter_maps_points_to_lexical_rows():
             "context_before": None,
             "context_after": None,
             "context_kind": "pdf_page",
+            "source_page": None,
+            "source_ref": "",
+            "bbox_json": "",
+            "extraction_method": "",
+            "extraction_version": "",
         }
     ]
 

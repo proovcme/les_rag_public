@@ -251,6 +251,25 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def factory_estimator_texts() -> tuple[str, str]:
+    """Current code-owned text identity, independent of tool registry availability."""
+    from proxy.services.prompt_registry_service import build_factory_mode_system_prompt
+    return build_factory_mode_system_prompt('rag', extra=(
+        "Работай как опытный инженер-сметчик. Подбирай нормы и аналоги только "
+        "по найденным карточкам выбранных датасетов. Сверяй измеритель и состав "
+        "работ, отделяй подтверждённое от допущений и не выдумывай шифры."
+    )), (
+        "# Сметчик по обычному RAG\n\n"
+        "1. Разложи запрос на самостоятельные работы и объёмы.\n"
+        "2. Через общий native RRF найди карточки норм в выбранной сметной базе.\n"
+        "3. При необходимости используй `search_sources` и `read_source` повторно, "
+        "пока не проверены шифр, измеритель и состав работ.\n"
+        "4. Для каждой позиции покажи норму, обоснование, ограничения и пробелы.\n"
+        "5. Не подменяй неподтверждённую норму похожим кодом и не рассчитывай цену "
+        "без ценовых evidence."
+    )
+
+
 def _factory_contracts() -> dict[str, dict[str, Any]]:
     from proxy.services.prompt_registry_service import (
         build_factory_mode_system_prompt,
@@ -299,6 +318,7 @@ def _factory_contracts() -> dict[str, dict[str, Any]]:
         )
         if name in registered
     ]
+    estimator_prompt, estimator_skill = factory_estimator_texts()
     return {
         "search": {
             "prompt": build_factory_mode_system_prompt("rag"),
@@ -329,24 +349,8 @@ def _factory_contracts() -> dict[str, dict[str, Any]]:
             "rag_policy": {"grounded": True, "iterative": True},
         },
         "estimator": {
-            "prompt": build_factory_mode_system_prompt(
-                "rag",
-                extra=(
-                    "Работай как опытный инженер-сметчик. Подбирай нормы и аналоги только "
-                    "по найденным карточкам выбранных датасетов. Сверяй измеритель и состав "
-                    "работ, отделяй подтверждённое от допущений и не выдумывай шифры."
-                ),
-            ),
-            "skill": (
-                "# Сметчик по обычному RAG\n\n"
-                "1. Разложи запрос на самостоятельные работы и объёмы.\n"
-                "2. Через общий native RRF найди карточки норм в выбранной сметной базе.\n"
-                "3. При необходимости используй `search_sources` и `read_source` повторно, "
-                "пока не проверены шифр, измеритель и состав работ.\n"
-                "4. Для каждой позиции покажи норму, обоснование, ограничения и пробелы.\n"
-                "5. Не подменяй неподтверждённую норму похожим кодом и не рассчитывай цену "
-                "без ценовых evidence."
-            ),
+            "prompt": estimator_prompt,
+            "skill": estimator_skill,
             "tools": estimator_tools,
             "model_policy": {"temperature": 0.0},
             "rag_policy": {
@@ -511,6 +515,52 @@ def _make_snapshot(
         "rag_policy": rag_policy,
         "is_factory": bool(is_factory),
         "created_at": created_at,
+    }
+
+
+def render_factory_estimator_answer(snapshot: Mapping[str, Any], *, tools_enabled: bool) -> tuple[dict, dict]:
+    """Compile an answer-only variant without mutating an authored/bound snapshot."""
+    rendered = dict(snapshot)
+    prompt = str(snapshot.get('prompt_text') or '')
+    skill = str(snapshot.get('skill_text') or '')
+    verified = False
+    if (snapshot.get('is_factory') is True and snapshot.get('mode') == 'estimator'
+            and snapshot.get('revision_id') == 'factory:profile:estimator:base'
+            and snapshot.get('prompt_revision_id') == 'factory:prompt:estimator:base'
+            and snapshot.get('skill_revision_id') == 'factory:skill:estimator:base'):
+        current_prompt, current_skill = factory_estimator_texts()
+        verified = (prompt == current_prompt and skill == current_skill
+                    and snapshot.get('prompt_sha256') == _sha(prompt)
+                    and snapshot.get('skill_sha256') == _sha(skill))
+    if verified:
+        from proxy.services.prompt_registry_service import render_inline_factory_answer_prompt
+        rendered['prompt_text'] = render_inline_factory_answer_prompt(prompt)
+        read_step = (
+            "3. При необходимости используй `search_sources` и `read_source` повторно, "
+            "пока не проверены шифр, измеритель и состав работ."
+        )
+        available_step = (
+            read_step.replace('`search_sources` и `read_source`', 'native `search_sources(q)`')
+            if tools_enabled else
+            "3. Текущий answer-вызов не предоставляет native-инструменты; проверяй шифр, "
+            "измеритель и состав работ по показанным материалам, явно назови недостающие данные."
+        )
+        if skill.count(read_step) != 1:
+            raise ValueError('FACTORY_ANSWER_SKILL_PROVENANCE_MISMATCH')
+        rendered['skill_text'] = skill.replace(read_step, available_step, 1)
+        rendered['prompt_sha256'] = _sha(rendered['prompt_text'])
+        rendered['skill_sha256'] = _sha(rendered['skill_text'])
+    text = str(rendered.get('prompt_text') or '') + '\n' + str(rendered.get('skill_text') or '')
+    return rendered, {
+        'schema': 'les.estimator-answer-availability.v1', 'factory_verified': verified,
+        'available_tools': ['search_sources'] if tools_enabled else [],
+        'unavailable_references': [item for item in ('read_source', 'skills/smeta/SKILL.md') if item in text],
+        'original_prompt_sha256': _sha(prompt), 'original_skill_sha256': _sha(skill),
+        'rendered_prompt_sha256': _sha(str(rendered.get('prompt_text') or '')),
+        'rendered_skill_sha256': _sha(str(rendered.get('skill_text') or '')),
+        'profile_revision_id': snapshot.get('revision_id'),
+        'prompt_revision_id': snapshot.get('prompt_revision_id'),
+        'skill_revision_id': snapshot.get('skill_revision_id'),
     }
 
 

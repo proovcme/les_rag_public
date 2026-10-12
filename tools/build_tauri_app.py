@@ -15,7 +15,7 @@ import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from tools.build_release_artifacts import ROOT, iter_files
@@ -27,6 +27,29 @@ RESOURCES = SRC_TAURI / "resources"
 WINDOWS_UV_CONTRACT_PATH = ROOT / "config" / "windows_uv.json"
 WINDOWS_PYTHON_CONTRACT_PATH = ROOT / "config" / "windows_python.json"
 WINDOWS_RUNTIME_MANIFEST_PATH = ROOT / "config" / "windows_runtime_manifest.json"
+WINDOWS_RUNTIME_APPROVED_PREFIXES = frozenset(
+    {
+        "backend/",
+        "config/",
+        "extensions/",
+        "installers/windows/",
+        "modules/",
+        "proxy/",
+        "qdrant_visualizer/",
+        "skills/smeta/",
+        "sovushka/",
+    }
+)
+FORBIDDEN_RUNTIME_PARTS = {
+    ".env", "data", "qdrant", "storage", "RAG_Content",
+    "__pycache__", ".cache", "plugins",
+}
+TRUSTED_APPLICATION_CODE_FILES = frozenset(
+    {
+        "proxy/storage/__init__.py",
+        "proxy/storage/file_storage.py",
+    }
+)
 DESKTOP_VERSION_MAJOR = 5
 DESKTOP_VERSION_MINOR = 1
 WINDOWS_DEPENDENCY_FINGERPRINT_SCHEMA = "les.windows-dependency-fingerprint.v2"
@@ -38,6 +61,12 @@ PERSISTENT_RUNTIME_ROOTS = frozenset(
 def _is_persistent_runtime_path(value: str) -> bool:
     normalized = str(value).replace("\\", "/").strip("/")
     return bool(normalized) and normalized.split("/", 1)[0].casefold() in PERSISTENT_RUNTIME_ROOTS
+
+
+def _contains_forbidden_runtime_part(value: str) -> bool:
+    parts = PurePosixPath(str(value).replace("\\", "/")).parts
+    forbidden = {part.casefold() for part in FORBIDDEN_RUNTIME_PARTS}
+    return any(part.casefold() in forbidden for part in parts)
 
 
 @lru_cache(maxsize=1)
@@ -56,13 +85,17 @@ def windows_runtime_manifest() -> tuple[frozenset[str], tuple[str, ...]]:
     ]
     if invalid or any(not prefix.endswith("/") for prefix in prefixes):
         raise RuntimeError(f"invalid Windows runtime manifest paths: {invalid}")
-    persistent = [
-        item for item in (*files, *prefixes) if _is_persistent_runtime_path(item)
+    forbidden = [
+        item
+        for item in (*files, *prefixes)
+        if _is_persistent_runtime_path(item) or _contains_forbidden_runtime_part(item)
     ]
-    if persistent:
+    if forbidden:
         raise RuntimeError(
-            f"Windows runtime manifest cannot include persistent state: {persistent}"
+            f"Windows runtime manifest cannot include persistent state: {forbidden}"
         )
+    if set(prefixes) != WINDOWS_RUNTIME_APPROVED_PREFIXES:
+        raise RuntimeError("Windows runtime manifest prefixes differ from approved roots")
     return frozenset(files), prefixes
 
 
@@ -70,7 +103,12 @@ def windows_runtime_manifest_allows(path: Path) -> bool:
     """Return whether a tracked repository file belongs in installed Windows LES."""
     relative = path.relative_to(ROOT).as_posix()
     files, prefixes = windows_runtime_manifest()
-    return relative in files or relative.startswith(prefixes)
+    return (
+        relative in TRUSTED_APPLICATION_CODE_FILES
+        or not _contains_forbidden_runtime_part(relative)
+    ) and (
+        relative in files or relative.startswith(prefixes)
+    )
 
 
 def release_contract() -> dict[str, object]:

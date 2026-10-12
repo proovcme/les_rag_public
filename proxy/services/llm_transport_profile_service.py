@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Mapping
 
+from extensions.lemonade.transport import lemonade_transport_options
 from proxy.services.model_execution_preset_service import (
     BackendCapacity,
     ModelExecutionPreset,
@@ -117,16 +119,92 @@ def effective_model_execution_diagnostics() -> dict[str, Any]:
     return diagnostics
 
 
+_CONTROL_ITEM_MARKERS = (
+    '"context_role":"advisory_state"',
+    '"context_role": "advisory_state"',
+    "chat-checkpoint:",
+    "chat-blocker:",
+    "tool-result:",
+    '"les_tool_result_v1"',
+    '"schema":"les_tool_execution_v1"',
+)
+
+# Элементы карты источников: модель пересказывает показанный ей контекст выдачи.
+# Одного поля мало — `snippet` или `label` может встретиться в структурированном
+# результате, поэтому требуем совпадения пары полей, специфичных для source_map.
+_SOURCE_MAP_FIELDS = (
+    '"original_chunk_index"',
+    '"doc_id"',
+    '"doc_name"',
+    '"snippet"',
+    '"dataset_id"',
+    '"header"',
+)
+_SOURCE_MAP_MIN_FIELDS = 3
+
+
+# Заголовки служебных секций, которые кладутся в промпт. Модель их пересказывает:
+# на вопрос о разделе МОПБ пришёл «Индекс evidence предыдущих реплик» вместо ответа.
+_CONTEXT_SECTION_HEADERS = (
+    "индекс evidence предыдущих реплик",
+    "паспорт области для модели",
+    "материалы из найденных документов:",
+)
+
+
+# Заголовок карты источников: `[Источник 1 | файл.pdf | score=0.500 | стр. 17]`.
+# Модель выводит их перечнем вместо ответа (chat_history 202). Признак служебной
+# строки — именно связка score= и разделителей, обычная ссылка [Источник 1] их не имеет.
+_SOURCE_HEADER_LINE = re.compile(
+    r"^\s*\[\s*(?:Источник|SOURCE)\s*\d+\s*\|.*\|\s*score\s*=", re.IGNORECASE)
+
+
+def _is_source_header_listing(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False
+    headers = sum(1 for line in lines if _SOURCE_HEADER_LINE.match(line))
+    # Ответ, начинающийся с такого перечня, служебный: половина строк и более — заголовки.
+    return headers >= 2 and headers >= len(lines) / 2
+
+
+def is_control_channel_text(value: str) -> bool:
+    """True when text is a projected control item rather than an answer.
+
+    Advisory-state projections (``chat-checkpoint``/``chat-blocker``), tool envelopes and
+    tool-result references are context the model was shown. When such a payload comes back
+    through ``reasoning``/``reasoning_content``, the model is echoing its own context, not
+    answering — surfacing it produced the служебный JSON users saw instead of an answer.
+    """
+    text = value.strip()
+    lowered = text.casefold()
+    if any(lowered.startswith(header) for header in _CONTEXT_SECTION_HEADERS):
+        return True
+    if _is_source_header_listing(text):
+        return True
+    if not text.startswith(("{", "[")):
+        return False
+    compact = "".join(text.split())
+    if any(marker.replace(" ", "") in compact for marker in _CONTROL_ITEM_MARKERS):
+        return True
+    matched = sum(1 for field in _SOURCE_MAP_FIELDS if field in compact)
+    return matched >= _SOURCE_MAP_MIN_FIELDS
+
+
 def assistant_delta_text(delta: Mapping[str, Any] | None) -> str:
-    """Normalize text fields used by OpenAI-compatible streaming providers."""
+    """Normalize text fields used by OpenAI-compatible streaming providers.
+
+    ``content`` is the visible answer. Providers that carry the answer in
+    ``reasoning``/``reasoning_content`` (FreeToken, ollama qwen3.5) keep working, but an
+    echoed control item is never promoted to an answer.
+    """
     if not isinstance(delta, Mapping):
         return ""
-    return str(
-        delta.get("content")
-        or delta.get("reasoning")
-        or delta.get("reasoning_content")
-        or ""
-    )
+    content = delta.get("content")
+    if isinstance(content, str) and content:
+        return content
+    reasoning = str(delta.get("reasoning") or delta.get("reasoning_content") or "")
+    return "" if is_control_channel_text(reasoning) else reasoning
 
 
 def provider_is_local(provider: str | None) -> bool:
@@ -136,8 +214,18 @@ def provider_is_local(provider: str | None) -> bool:
 def apply_transport_options(
     body: Mapping[str, Any],
     provider: str | None,
+    *,
+    model_id: str | None = None,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     normalized = dict(body)
+    if (provider or "").strip().lower() == "lemonade":
+        return lemonade_transport_options(
+            normalized,
+            provider=provider,
+            model_id=model_id or str(normalized.get("model") or ""),
+            backend=backend,
+        )
     if not provider_is_local(provider):
         return normalized
     template_options = dict(normalized.get("chat_template_kwargs") or {})

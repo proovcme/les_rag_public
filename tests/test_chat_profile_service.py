@@ -5,6 +5,66 @@ import sqlite3
 
 import pytest
 
+
+def _p915_factory_snapshot():
+    from proxy.services import chat_profile_service as profiles
+    prompt, skill = profiles.factory_estimator_texts()
+    return profiles._make_snapshot(
+        revision_id='factory:profile:estimator:base', mode='estimator', name='Factory', revision_no=1,
+        prompt_revision_id='factory:prompt:estimator:base', prompt_text=prompt,
+        skill_revision_id='factory:skill:estimator:base', skill_text=skill,
+        tools=['search_sources','build_lsr_workbook','build_vor_workbook'], model_policy={'temperature':0.0},
+        rag_policy={'grounded':True,'system_datasets':['smeta'],'model_authored_initial_query':True},
+        is_factory=True, created_at='fixture')
+
+
+def test_p915_factory_answer_render_preserves_authored_snapshot_and_professional_text():
+    from proxy.services import chat_profile_service as profiles
+    original = _p915_factory_snapshot()
+    before = json.dumps(original, sort_keys=True)
+    rendered, trace = profiles.render_factory_estimator_answer(original, tools_enabled=True)
+    assert json.dumps(original, sort_keys=True) == before
+    assert 'skills/smeta/SKILL.md' not in rendered['prompt_text']
+    assert 'read_source' not in rendered['skill_text']
+    assert 'search_sources' in rendered['skill_text']
+    assert 'повторно, пока не проверены шифр, измеритель и состав работ.' in rendered['skill_text']
+    assert 'Сверяй измеритель и состав работ' in rendered['prompt_text']
+    assert '4. Для каждой позиции покажи норму, обоснование, ограничения и пробелы.' in rendered['skill_text']
+    assert trace['factory_verified'] is True
+    assert trace['original_prompt_sha256'] == original['prompt_sha256']
+    assert trace['rendered_prompt_sha256'] != trace['original_prompt_sha256']
+
+
+@pytest.mark.parametrize('change',[
+    {'is_factory':False}, {'revision_id':'user:profile:clone'},
+    {'prompt_revision_id':'user:prompt:clone'}, {'skill_revision_id':'user:skill:clone'},
+    {'prompt_text':'Historical factory prompt'}, {'skill_text':'Historical factory skill'},
+    {'prompt_sha256':'fake'}, {'skill_sha256':'fake'},
+])
+def test_p915_unverified_or_custom_factory_clone_is_not_replaced(change):
+    from proxy.services import chat_profile_service as profiles
+    original = {**_p915_factory_snapshot(), **change}
+    # An internally valid historical hash still cannot prove current factory origin.
+    if 'prompt_text' in change:
+        original['prompt_sha256'] = profiles._sha(original['prompt_text'])
+    if 'skill_text' in change:
+        original['skill_sha256'] = profiles._sha(original['skill_text'])
+    rendered, trace = profiles.render_factory_estimator_answer(original, tools_enabled=True)
+    assert rendered == original
+    assert trace['factory_verified'] is False
+    expected = [item for item in ('read_source','skills/smeta/SKILL.md')
+                if item in original['prompt_text']+'\n'+original['skill_text']]
+    assert trace['unavailable_references'] == expected
+
+
+def test_p915_disabled_tools_factory_render_does_not_offer_native_call():
+    from proxy.services import chat_profile_service as profiles
+    rendered, trace = profiles.render_factory_estimator_answer(_p915_factory_snapshot(), tools_enabled=False)
+    assert 'read_source' not in rendered['skill_text']
+    assert 'search_sources' not in rendered['skill_text']
+    assert 'не предоставляет native-инструменты' in rendered['skill_text']
+    assert trace['available_tools'] == []
+
 from proxy.services.chat_profile_service import (
     PROFILE_PROMPT_MAX_CHARS,
     PROFILE_SKILL_MAX_CHARS,

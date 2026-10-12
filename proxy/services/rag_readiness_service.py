@@ -1,6 +1,7 @@
 """Honest operator status for general and smeta RRF indexes."""
 
 from __future__ import annotations
+from backend.http_client_policy import trust_env_for_url
 
 import hashlib
 import json
@@ -467,7 +468,7 @@ def rag_readiness(*, dataset_id: str | None = None, force: bool = False) -> dict
         cached = _CACHE.get(key)
         if cached and not force and now - cached[0] < _CACHE_TTL_SEC:
             return dict(cached[1])
-    client = QdrantClient(
+    client = QdrantClient(trust_env=trust_env_for_url(os.getenv("QDRANT_URL", "http://127.0.0.1:6333")), 
         url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
         timeout=60.0,
         check_compatibility=False,

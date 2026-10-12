@@ -144,6 +144,30 @@ async def test_chat_stream_emits_error_event_on_http_exception(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_preserves_model_rag_query_failure_diagnostics(monkeypatch):
+    from fastapi import HTTPException
+    from proxy.services.model_research_tool_service import model_rag_failure_detail
+
+    async def boom(req, token_sink=None):
+        raise HTTPException(503, model_rag_failure_detail([
+            {'status': 'ok'},
+            # Технический отказ, а не пустая выдача: с 17.09 выполненный поиск без
+            # совпадений проход не останавливает (аудит Codex P2).
+            {'status': 'blocked', 'operation': 'smeta_norm_native_rrf',
+             'missing': ['dedicated smeta native RRF is not ready'],
+             'trace': {'rag': {'status': 'not_ready', 'collection': 'les_smeta_norm_cards'}}},
+        ]))
+
+    monkeypatch.setattr(chat_router, '_run_chat', boom)
+    body = await _drain(await chat_stream(ChatRequest(question='Смета'), _user=None))
+    error = json.loads(body.split('event: error\ndata: ', 1)[1].split('\n\n', 1)[0])
+    assert error['code'] == 'MODEL_RAG_SEARCH_INCOMPLETE'
+    assert error['blocked_queries'] == [2]
+    assert error['query_failures'][0]['reason'] == 'retrieval_not_ready'
+    assert 'event: final' not in body
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_never_exposes_unexpected_exception_text(monkeypatch):
     async def boom(req, token_sink=None):
         raise ValueError("password=do-not-leak")

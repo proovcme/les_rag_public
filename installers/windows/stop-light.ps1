@@ -27,6 +27,9 @@ if ($StatePath -and (Test-Path -LiteralPath $StatePath)) {
     $runtimeState = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
     if (-not $ProxyPortExplicit -and $runtimeState.proxy_port) { $ProxyPort = [int]$runtimeState.proxy_port }
     if (-not $UiPortExplicit -and $runtimeState.ui_port) { $UiPort = [int]$runtimeState.ui_port }
+    if ($runtimeState.provider -eq "lemonade" -and $runtimeState.lemonade_host_port) {
+      $LemonadeHostPort = [int]$runtimeState.lemonade_host_port
+    }
     if (-not $Mode -and $runtimeState.mode) { $Mode = [string]$runtimeState.mode }
   } catch { }
 }

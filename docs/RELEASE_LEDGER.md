@@ -1,23 +1,1062 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 11.10.2026 — .204, шаг 4: однозначная область поисковых запросов
+
+В model_rag_query_instruction сметная инструкция начинает с работ и материалов,
+заголовки оставляет контекстом. Убрано противоречивое требование охватить «все
+строки»; generic RAG сохраняет прежний текст. Парсер и исполнение literal queries
+не менялись. Доставка проверена интеграционным тестом (focused136 PASS).
+Живой .203 не улучшил запросы: заголовки2→3, цены0; новая .204 ещё не принята.
+Полные факты и следующий шаг — audits/lsr-pr21-integration-20261008/p9/query-step4-20261011/REPORT.md.
+
+Source .204/build844/desktop5.1.844; installed .203/a896ec22. Canonical и live .204 pending.
+
+
+## 11.10.2026 — .203, подготовка
+
+Source .203/build843/desktop5.1.843: уточнение smeta query instruction; диагностика provider-dependent timeout очищается от staging. Installed пока .201/fc606ba1. Из .202 `lemonade_host.py` не входит в bounded patch allowlist и остаётся pending full build; фактический BGE задан настройкой и не меняется. Canonical и live pending.
+
+
+11.10.2026: оба коммита Claude fc606ba1 (.201) и 61b2e2c1 (.202) перенесены
+fast-forward в codex/public-03064-modular-uplift. Установлено .201/build841/fc606ba13d47;
+.202 находится в исходниках, не выложена. Локальные документы и исходный индекс
+сохранены в .test-tmp/claude-integration-20261011; предыдущий HEAD защищён веткой
+codex/backup-before-claude-integration-20261011. Код до переноса совпадал с frozen .200.
+Модели/настройки не менялись: answer r11 IQ3_XXS-text/Vulkan, bge CPU, timeout1800.
+Следующий шаг: формирование запросов, сохранённый v2-контроль; практика none, STOP318.
+Новые контрольные прогоны: только p9-run-control-vulkan-text.py, probe-vor-v2.xlsx,
+--expected-rows 9, абсолютный --out, без --question-file. Это 9 исходных строк,
+из которых 3 содержательные работы, не расширенный набор из 9 работ.
+Поправка: срез v1 и дополнение к вопросу ошибочно связывали АР1.31 с демонтажом.
+Оценка «укладка вместо демонтажа» отозвана как оценка полной ВОР; прежнее0/3
+нельзя использовать как сопоставимую метрику. Неверный стеклянный материал,
+несовпадение ссылок и неполнота доставки сохраняют собственные доказательства.
+Текущий источник истины: CLAUDE-SMETA-HANDOFF-2026-10-11.md и план10.10;
+сведения о прошлых установках ниже исторические. D1 на v1/r10 не запускать.
+
+
+P9.19 .202/build842 (Claude, 11.10): reranker по умолчанию — bge-reranker-v2-m3.
+Адаптер `lemonade_host.py` читает `LEMONADE_RERANK_MODEL`, затем общий `RERANK_MODEL`, умолчание
+`bge-reranker-v2-m3-GGUF` (было зашито `Qwen3-Reranker-0.6B-Q8_0-GGUF`). Замер на 48 реальных
+карточках норм, один запрос, два повтора: Qwen3-Reranker CPU 54 с / Vulkan 10,6 с; bge CPU 17,6 с /
+Vulkan 4,0 с; топ-5 почти совпадает. bge на Vulkan рядом с 35B IQ3_XXS-text даёт
+ErrorOutOfDeviceMemory на генерации, поэтому в Lemonade ему сохранён backend cpu; с ним
+реальный запрос ответа .199 прошёл (157 ток/с промпт, 15,7 ток/с ответ).
+Качество на трёх запросах не хуже Qwen; это замер скорости, не приёмка подбора норм.
+
+P9.18 .201/build841 (Claude, 11.10): доставка нормативных карточек целиком.
+`_fit_evidence_into_budget` мерит запрос по полным телам карточек: поздние запросы, которым
+не хватило места, уходят целиком и объявляются в [ОХВАТ]; карточка больше доли бюджета на
+запрос (max_chars // 5) сокращается открыто и чужие запросы не вытесняет. Replay сохранённой
+выдачи .199 (28137 символов, без модели): было 15 запросов / 0 целых из 60 нормативных
+карточек; стало 8 запросов / 19 целых + 6 ссылок / 0 обрезанных.
+Бюджет запросов считается по строкам порции с единицей или количеством
+(`query_rows_in_pass`): на входе .199 12 вместо 40; предел генерации списка запросов —
+48 токенов на запрос бюджета, не выше LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS (576 вместо 1600).
+Это ограничивает повтор запросов, но не устраняет его.
+Контракт теста `test_model_rag_evidence_keeps_configured_candidates_*` изменён осознанно:
+прежний закреплял «все запросы, тела урезаны поровну».
+Installed остаётся .200; живого контроля .201 нет; профессиональная приёмка 0/3 не закрыта.
+Известно: `test_assigned_model_timeout_is_named_and_restart_bound` падает на чистом checkout
+и до этих правок — умолчание 300.0 он находит только в неотслеживаемых копиях сборки
+`desktop/tauri/src-tauri/{resources,target}/runtime`.
+
+P9.16 .200/build840: focused root47PASS; canonical2655PASS/19SKIP/5warnings
+201.26s, verify2674collected/all4commands0, architecture0. Installed still199.
+Closed material-status grammar reports exact raw invalid row, no guessed cells.
+Installed199 saved-row replay reproduces accepted invalid prose; candidate200
+installed replay and official rollback acceptance next. Professional0/3 not closed.
+
+Release accounting repair: main index enumerates1160Pythonfiles, frozen1991167,
+candidate2001168. Candidate map generated/checked with isolated index; main index
+and HEAD preserved. All frozen199 Python bytes equal workspace except intended
+chat_evidence parser; the new test is explicit. Full behavior suite ran before
+generated-map-only refresh; fresh verify uses candidate-index ONLY for map command,
+never for pytest (Git fixture subprocesses must keep their own indexes).
+Candidate builder asserts frozen tree1168 matches generatedmap. After immutable
+freeze regenerate workspace map for original main-index inventory; this does not
+change tested runtime code or frozen artifact. Proof: table-width-20261010/candidate-index-proof.json.
+
+.199 control finished2012.7s/all3restored, actualr10/IQ3 nofallback, nativecalls0,
+fullpreviews0/102.84XLSXformulasPASS, same20queries/source/question197; wire verified
+factoryadapter, system5491→5393,40remainingevidencechanges. Content audit pending.
+35B officiallyidle-unloaded, noactiveinference. Practice none,STOP318,nopublic.
+
+Historical installed .200 checkpoint:
+P9.16 .200/build840 установлена: frozen5544c8e66e59,2replace/0delete,
+install→rollback199→reinstall, nativeRRF3/3,33runtimefiles exact.
+Canonical2655PASS19SKIP/verify2674/architecture0. Installed saved-row replay
+199→200: invalid prose status now diagnosed, original31/32cells preserved.
+Это подтверждает decoder boundary, не новую модельную/сметную приёмку.
+.199 same-input control completed2012.7s/all3restored;0/102fullpreviews,reads0,
+84формулыPASS. Content audit и direct thin baseline preparation следующий шаг.
+Practice none,STOP318,nopublic. Подробности: p9/table-width-20261010 и handoff.
+
+Исторические точки:
+
+P9.15 .199/build839 установлена: exact frozen9affdc415e35,4replace/0delete,
+install→rollback198→reinstall, nativeRRF3/3,33runtimefiles exact.
+Canonical2641PASS19SKIP/verify2660/architecture0. Same-input none/r10 контроль
+ACTIVE16770 в p9/candidate-0199-none-available-tools; результата ещё нет.
+Последний .198 pass2: полные receipts8/8+1/1, но0/3; новый mismatch и31/32cells.
+P9.16 source-only диагностика format status начата отдельно, в runtime199 её нет.
+
+Исторические точки:
+
+P9.15 source-кандидат .199/build839: ACTIVE model-driven estimator answer использует
+только фактически доступный search_sources и Qn.Hm citations. Исправляются лишь
+code-owned fragments проверенного factory prompt/skill (IDs + exact texts + hashes).
+Custom/unknown historical тексты, query stage и nonestimate/legacy/shadow сохранены.
+Registered factory texts/seed не менялись; original/rendered fingerprints разделены.
+Root independently177PASS9.69s; live влияние на чтение и профессиональный выбор не доказано.
+Runtime .198, последний pass2 завершён: полные receipts8/8+1/1, но профессионально0/3.
+Canonical/installed .199 ещё pending. Модуль: docs/modules/chat-profiles.md.
+
+P9.14 .198/build838 установлена и принята: frozen7efee9e69f26,
+install→rollback197→reinstall, nativeRRF3/3,31runtimefiles exact.
+GET-проверка показала честный tools UNKNOWN/legacy_http_accepted_no_native_proof;
+выбранная r10/IQ3_XXS/32768 сохраняется без fallback. Snapshots/reprobe не менялись.
+Canonical2632PASS/19SKIP,verify2651,architecture0. Это исправление диагностики.
+Сейчас обычный pass2 той же сессии .197 идёт на .198 (exec59456): модель получает
+настоящие расчётные чеки и сама решает, что исправить. Это не новый свежий baseline.
+Последняя профессиональная приёмка pass1:0/3; текущий pass2 ещё не завершён.
+
+Исторические срезы ниже:
+
+P9.14 source-кандидат .198/build838: capability TOOLS требует наблюдаемого native
+вызова вместо одного HTTP200. Старое HTTP2xx и advertised SUPPORTED показываются
+как UNKNOWN без изменения immutable snapshots. Optional UNKNOWN сохраняет выбранный
+primary и schema; explicit UNSUPPORTED и обязательные CHAT/security gates остаются.
+Root review обнаружил и закрыл две границы через RED/GREEN; independently92PASS.
+Canonical:2632PASS/19SKIP/5warnings156.46s; verify2651/all0; architecture0.
+Installed .198 acceptance pending. Runtime .197/build837: контроль завершён,
+native reads0, full previews0/102, частичный XLSX79формулPASS; профессионально0/3.
+Модульный док: docs/ALGO-model-connections.md; evidence p9/capability-boundary-20261010.
+
+Final .197 r1 canonical:2595PASS/19SKIP/5warnings, verify2614/all0,
+architecture0. Wall11824.72s includes Windows Modern Standby observed in System:
+506 at05:19:58 (SC_MONITORPOWER),507 at08:33:44 (Power Button),10.10.2026.
+No caller identity is established. Initial pre-review gate199.22s is preserved
+but is not the final release gate. Review availability P2 closed by conditional
+wording with RED1→GREEN1; independent static review closed. Installed .197 accepted:
+install→rollback196→reinstall/nativeRRF3/3, 30runtimefiles exact, 3HTTP norm reads
+with14resources each. Same-input none/r10 control ACTIVE53086; professional result pending.
+
+## Source-кандидат 0.30.197/build837 — P9.13 terminal scope
+
+P9.13 source-кандидат .197/build837: `model_answer_request` явно ограничивает
+Markdown/первую строку/noJSON итоговым пользовательским ответом; до него доступен
+необязательный native search_sources по решению модели. Профессиональные правила,
+schema, profile, queries и обычный ответный путь неизменны. RED1 → GREEN1;
+diff-proof подтверждает старый contract после удаления одного уточнения.
+Гипотеза требует installed same-input проверки, улучшение нормы не доказано.
+Предыдущий .196 final: exact wire schema присутствует/HTTP200, reads0, книги нет
+из-за6duplicateworkIDs; все3temporarysettings восстановлены, профессионально0/3.
+
+Installed пока .196/frozen12ba1362af7621ec76fe9c2797f9047ff6488726.
+Канонические гейты и локальная установка .197 pending.
+
+## Source-кандидат 0.30.196/build836 — P9.11/P9.12, видимость неполноты и wire evidence
+
+Пустой preview с известными ресурсами явно показывает неполноту. ACTIVE сметные
+final/read сохраняют точные сериализованные тела фактического запроса локально,
+в public trace только ссылки/SHA/lifecycle. Headers и секретная конфигурация не
+записываются. Audit не меняет вызовы, retrieval, модель или её решения.
+Writer failure не вызывает inference retry; сохраняет доказательство ранее
+записанного тела. Immutable publication не заменяет существующий receipt.
+P9.11 focused11/review PASS; P9.12 focused146 до review, review RED4→27 transport
+PASS, independent11 PASS. Canonical2594PASS/19SKIP/5warnings за204.22s,
+verify2613/all0, architecture0. Installed .196 install→rollback.195→reinstall,
+RRF3/3,30runtimefiles exact; frozen12ba1362af7621ec76fe9c2797f9047ff6488726,
+packageSHA8d9c713ab28a2d6600738813f4faf76f3cfb608c387192d21839880d24a3f967.
+Actual same-input model/wire контроль запущен, приёмка pending.
+
+Предыдущий installed .195/build835, frozen6af81a7ae978:
+install→rollback.194→reinstall, nativeRRF3/3,28files exact. Fresh same-input контроль
+на 35B, none завершён за2120.88s:15авторских строк,79формулPASS, все3настройки
+восстановлены. Полные карточки0/102/native reads0, правильность работ0/3.
+Семь явных разделов оставлены pending из-за отсутствия авторского explanation;
+АР/СОУЭ выбирают установку при исходном демонтаже, СКС имеет конфликт code/ref.
+
+## Source-кандидат 0.30.195/build835 — P9.10, групповые коды ресурсов
+
+Исправлен ложный model_row_format_error для числовых групповых кодов без дефиса
+в resource_code/target_resource_code. Минимальный структурный фикс, без изменения
+модельных решений и дальнейших identity/price/duplicate проверок. Буквальный
+fixture из .193 pass2 с provenance: RED6/11 → focused67PASS. Canonical2572PASS/19SKIP,
+verify2591/all exit0,architecture0,review без P1/P2. Installed .195 pending.
+Отдельная .194 приёмка сначала откатилась на .193: parse memory guard429 при1,1ГБ
+свободной RAM. После проверенного idle unload только35B свободно15ГБ; тот же
+immutable .194 пакет прошёл отдельный retry:install→rollback.193→reinstall,
+nativeRRF3/3,28files exact,HTTPnorm3/3. Не считать первый сбой дефектом
+section outcome. Модельная приёмка всё ещё pending.
+
+## Source-кандидат 0.30.194/build834 — P9.9, модельный исход раздела
+
+Явный `decision_kind=раздел/section` с объяснением сохраняет исходную строку в
+реестре, истории и XLSX; не создаёт работу, стоимость или обязанность resource review.
+Separate resolved/non_work counters и cursor recalculation/reopen не смешивают
+заголовки с рассчитанными работами. Противоречащие расчётные указания и смешанные
+операции/повторённые work_id сохраняются как conflicts, без переписывания решений.
+RED4 →8focusedPASS;4соседнихPASS; добавленная ранее receipt-boundary2PASS.
+Review найденный P2 с неполным перечнем conflict fields исправлен по RED.
+Полные гейты: 2555 PASS/19 SKIP (199.81s), verify2574/all exit0, architecture exit0.
+Installed .194 acceptance pending. Установленный .193/build833 неизменён; первый
+live дал duplicate work_id без книги, причём вход отличался от .192 пропущенным
+source supplement. Сравнение повторяется с точным полным входом. Практикаnone,
+STOP318, no public. [Срез12шагов](audits/lsr-pr21-integration-20261008/p9/PROGRESS-2026-10-10.md).
+[Алгоритм](ALGO-lsr-assembly.md), [исходник и причины](audits/lsr-pr21-integration-20261008/p9/heading-boundary-20261010/REPORT.md).
+
+## Кандидат 0.30.193/build833 — P9.8a, адресное чтение модели
+
+После первоначальной batch-выдачи Canonical ACTIVE предоставляет той же модели
+необязательный `search_sources(q)`. Полный шифр использует существующий full reader,
+возвращая операции и ресурсы; новые шифры код не выбирает. Обычный ответ без вызовов
+сразу идёт в прежний расчёт/XLSX. JSON-планировщик и отдельный worker не добавлены.
+
+Continuation — новый пакет штатного ContextGovernor: исходное вложение/вопрос,
+текущий literal call/status и целая карточка обязательны; предыдущие результаты
+сохраняются и по возможности включаются. Вытесненные объекты имеют видимые IDs/cursor.
+Native schema имеет отдельный резерв, не дублируется в user text. Q-номера продолжают
+batch без переименования. Нет post-pack добавлений. При required overflow или
+техническом обрыве полный trace/исходник сохраняются UTF-8 receipt в
+`storage/model_read_receipts`; строки не закрываются. Смена revision/model во время
+чтения — явная ошибка. Конфликты нормативных редакций остаются в карточках и штатном
+identity binding, код редакцию не выбирает.
+
+Reader также сохраняет буквальные `source_doc/source_guid` ресурсов при наличии
+колонок, иначе NULL; родительское происхождение не подставляется. Расходы/цены и
+видимое тело preview не меняются.
+
+Статус: focused153PASS, canonical2545PASS/19SKIP, verify2564/all0, architecture0.
+.193 установлена: install→rollback.192→reinstall.193, nativeRRF3/3,26payloadfiles exact.
+Реальный контроль .193 ACTIVE; профессиональная приёмка pending. Практика none, STOP318. Это исправление
+доступа к evidence, не доказательство профессиональной пригодности сметы.
+
+## Установлен 0.30.192 / build832 — 10.10.2026
+
+Exact commit1b29db2576f696f9e5a5be7e15f6309c8addd6a2; patchSHA
+e51579a5e789baca5c3d063da92d06c5e8e40ac0cc38a6295554f38c60d7de73.
+Canonical2532PASS/19SKIP, verify2551collected, architecture0; focused70PASS.
+Official install→rollback.191→reinstall и три nativeRRF smoke PASS. Все25
+контролируемых runtime-файлов совпадают; пакет3replace/0delete, public не выпускался.
+Live46:24+22,63.875с,46индексов;24общиеоценки без различий. Полный installed27
+поиск завершён: native hybrid и rerank 27/27 OK, полные объединения сохранены.
+Условные reference-коды .189 10/13 → .192 9/13; это не эталон правильных норм.
+Базовые chat90s smoke предыдущего этапа не пройдены. Model/XLSX контроль на трёх
+строках с none завершён за2562.2с: книга partial, решения непригодны, полнота0/102,
+группы15/20 вместо20/20 в.189. 92формулы проверены независимо, SHA совпал,
+временные факторы восстановлены. Точный полный evidence66815токенов при22528бюджете.
+Готовая ЛСР не принята. [Разбор](audits/lsr-pr21-integration-20261008/p9/SEARCH-REPAIR-2026-10-10.md).
+
+Следующий source-only reader сохраняет публикацию каждого ресурса в карточке,
+не подставляя источник родителя:25 focused PASS, canonical2536PASS/19SKIP,
+verify2555collected, architecture0; ещё не installed/не версионирован как релиз. Добавление
+публикаций в видимый текст увеличило preview на 32.24% и ухудшило доставку при
+том же бюджете; renderer отклонён и возвращён к .192, эксперимент сохранён.
+Доказательства: `audits/lsr-pr21-integration-20261008/p9/installed-0192-payload.json`
+и `pool-preservation-20261010/checks/` рядом с installed acceptance.
+
+
+## Кандидат 0.30.192 / build832 — полный пул и порции rerank
+
+Объединение lexical и native-RRF сохраняет всех уникальных кандидатов до rerank
+(до 50 из каждого канала). CrossEncoder отправляет их последовательными порциями
+до 24 документов, переводит локальные индексы в общие и объединяет по исходным
+оценкам сервера без нормализации внутри порции. Итоговый top_k применяется после
+объединения. Запрос, текст карточки, scope и формула последующего RRF прежние.
+Любая ошибка HTTP либо порция без валидных индексов прерывает весь rerank;
+частичный ответ с валидными индексами остаётся допустимым. Browser сохраняет
+явный RRF fallback. Успешный префикс не маскирует пустой/аварийный хвост.
+
+65 секунд — timeout одного HTTP-запроса, не всей операции. Максимальные 100
+кандидатов требуют до 5 запросов (до 325 секунд ожидания без накладных расходов).
+Один вызов с 46 карточками упёрся в host60с (502/60.579с); тот же полный пул
+порциями 24+22 прошёл. Все 46 индексов сохранены; для 24 идентичных текстов оценки
+совпали с прежним опытом точно. Это проверка транспорта, не правильности норм.
+Регрессии client+browser70PASS, включая HTTP-сбой, пустую/невалидную вторую порцию.
+Клиентский файл добавлен в канонический Makefile gate. Общие гейты и installed
+.192 пока pending. Доказательства: docs/audits/lsr-pr21-integration-20261008/p9/pool-preservation-20261010/.
+
+Installed .191 frozen12 replay завершён:12/12 без таймаутов,6 дольше прежних30с,
+максимум39.266с. Наличие условных reference-кандидатов в top6 на13 строках снизилось
+10→9; это не эталон профессионального выбора. Basic smoke:6PASS/1WARN/3FAIL
+(два chat timeout90с, diagnostics err). Готовая ЛСР пока не принята.
+
+
+## Установлен 0.30.191 / build831 — 09.10.2026
+
+CrossEncoderReranker: внешний timeout65с вместо30с, чтобы не прекращать ожидание
+раньше60с host. Frozen installed .189 дал несколько fallback ровно через30с.
+RED1→6PASS клиента, явный deadline сохранён. Запросы, карточки и RRF без изменений.
+Технический runtime-дефект batch512 отдельно устранён сохранёнными options2048
+через официальный Lemonade API; exact500→200→500→200 с unload/load PASS.
+Canonical2521PASS/19SKIP, verify2540, architecture0; отдельно cross-encoder6PASS.
+Exact cfb403f7a12177c239d25f382ccd52cad5057ec5; patchSHA
+4f39570e5bb3e13df3d77422b01700c0943d3331f56c170fc537587b251db4ff.
+Install→rollback .189→reinstall и три nativeRRF smoke PASS,25файлов совпали.
+Дополнительный basic smoke:6PASS/1WARN/3FAIL (два chat timeout90с, diagnostics err).
+Установленное исправление ещё не означает успешный сметный model user journey.
+Frozen12 rerank replay идёт отдельно; .190 frozen1b91a79 отдельно не устанавливался.
+
+## Кандидат 0.30.190 / build830 — 09.10.2026, НЕ установлен
+
+Лексический norm browser сохраняет цифры/дроби и все условия длинного запроса.
+Шесть регрессий воспроизводят прежнюю потерю; полный файл norm_browser:59 PASS.
+Frozen18 read-only typed replay не изменил top6: качество текущей короткой выдачи
+этой правкой не исправлено. Нет новой эвристики профессионального выбора,
+изменений запросов/практики/индекса/служб. Installed .189/build829 сохранён.
+Verify2540, architecture0, canonical2521PASS/19SKIP пройдены; installed live gate pending;
+доказательства и next step в search-repair-20261009/README.md и SESSION_LOG.
+
+
+## Установлен 0.30.189 / build829 — 08.10.2026
+
+Начальная порция предлагается существующему бюджетному fitter по числу всех
+исходных строк, вместо default7. Явные лимиты и полные receipts сохранены.
+Дополнительно `decision_anchor` распознаёт целую показанную метку строки,
+не изменяя авторское решение: .188 pass2 воспроизвёл семь ложных отказов.
+RED3/RED2→73focusedPASS; canonical2516PASS/19SKIP,verify2535,architecture0.
+Exact ea64be3c4b619263302ddcd81576dad25faefdc7, archiveSHA
+11450eb867901455044c1af5f0eece84081e6676a5698856c05937c63e3609ae.
+Install→rollback .188→reinstall .189 и3nativeRRF PASS,24runtimeфайла совпали
+exactgit, patchбайты совпали. HTTPexpand14ресурсов1,328/1,297/1,266с.
+Новая сессия candidate-0189-none активна, exec14443, без старых решений.
+.188 none pass2 завершён без книги; его настройки восстановлены.
+Профессиональная приёмка не пройдена, practice=none, STOP318.
+
+## Установлен 0.30.188 / build828 — 08.10.2026
+
+Согласован список колонок model_answer_request с уже запрошенными section,
+operation, analogue, coverage, not_covered; убран конфликт одной/нескольких
+таблиц. Семь базовых колонок и необязательность ненужных полей сохранены.
+RED6/1PASS →169focusedPASS. Гейты2500PASS/19SKIP,verify2519,architecture0.
+Exact fdd86f49b39c52660218a5e6ae0a2c2b278a5918; официальный install→rollback.187→
+reinstall.188 и3nativeRRF PASS;24runtimeфайла совпалиexactgit,patchбайтысовпали.
+HTTPexpand14ресурсов1,250/1,406/1,266с. Новый live контроль `candidate-0188-none`
+активен, профессиональный эффект ещё не проверен.
+Отдельно от .187 ремонта ссылок; следующая базовая серия practice=none
+по прямому указанию владельца. Практика отложена до стабилизации.
+
+## Установлен 0.30.187 / build827 — 08.10.2026
+
+После live .186 pass2 воспроизведено расхождение validation/binding: прежняя
+карточка разрешала новую чужую/недоставленную Q-ссылку, затем pin терялся.
+`withhold_unreferenced_norms` теперь учитывает текущие `observed_refs` и тот же
+приоритет, что binding; не меняет нормы, refs или ресурсы модели. RED2 →
+focused17PASS. Гейты2493PASS/19SKIP, verify2512, architecture0; сборка/installed
+приёмка .187 пройдена exact744de7196ca4478e7b95275644d76fe3111d0cdd:
+install→rollback.186→reinstall.187,3nativeRRF,24runtimeSHA. Во время pass3
+runtime .186 не менялся. Конфликт инструкции
+табличного ответа исследован отдельно, в этот diff не включён.
+
+## Установлен 0.30.186 / build826 — 08.10.2026
+
+После live .185 подтверждён перекос упаковки: полные optional practice cards
+вытесняли ресурсы поисковых previews. Минимально изменён резерв бюджета при
+сокращении практики и финальном renderer; модельные запросы, выдача и решения
+сохраняются. Сохранён прежний archive-header контракт. Полный гейт выявил также
+race pricebook при совпадении файловых метаданных: добавлена повторная проверка
+байтов unpinned reader. RED→GREEN; focused packing56 и price40 PASS. Первый
+canonical: 2 FAIL/2484 PASS/19 SKIP, verify/architecture0; после исправлений
+2487PASS/19SKIP, verify2506, architecture0. Exact
+f7451fd17522204bb04e669f21d4d99e44cae7a8; третий официальный цикл install→smoke→
+rollback .185→smoke→reinstall .186→smoke прошёл, включая3nativeRRF.
+Пакет3replace;24файла контрольного набора совпали сexactgit.
+Pass1/2 .186: обе книги проверены по87формулам. Pass3 завершён:109формул,
+6итогов без расхождений, все3работы показаны. Пригодных решений0/3:
+отвергнутая в тексте норма светильника осталась в таблице СОУЭ и предварительном
+расчёте. Профессиональная приёмка NOT_ACCEPTED. Настройки восстановлены.
+
+## Установлен 0.30.185 / build825 — 08.10.2026
+
+P9 installed .184 не прошёл smoke: точечный expand нормы материализовал весь
+каталог, endpoint превысил15с. Штатный rollback вернул .171/811, данные сохранены.
+Исправлен узкий SQLite reader `get_norm`, сохранены identity, read lock, SHA и
+отдельный полный каталог. Регрессия RED→GREEN; профильные проверки продолжаются.
+Реальная cold-read профилировка41.48→0.98с, те же14ресурсов и SHA базы.
+Канонические гейты:2468PASS/19SKIP, verify2487/0, architecture0; focused45PASS. Installed техническая приёмка выполнена: install/rollback/reinstall и три native RRF PASS; 24 файла совпали с exact package. Commit d32a2857066a5c59cc493006b677d9a8a069d012. Профессиональная приёмка ещё впереди.
+
+## Кандидат 0.30.184 / build824 — 08.10.2026
+
+Исправлен пропущенный D04 в активном чат-поиске: отключены code-authored vocabulary expansions на callback, сохранены буквальные запросы, native RRF/rerank и модельный выбор. RED 4 → focused 145 PASS; P9 .184/build824: canonical 2467 PASS / 19 SKIP, verify 2486 collected/0, architecture0. .183 exact package сохранён как история, не установлен. Installed .171/811 не менялся. CPU baseline завершился provider HTTP500 во время prefill около300с; final/XLSX отсутствуют, настройки восстановлены. Приёмка не достигнута.
+
+> **0.30.183 / build823 — P8 восстановление после сбоев (кандидат, не установлен).**
+> Завершённое решение сохраняется при отмене доставки/упаковки; зарегистрированный артефакт связывается с checkpoint без повторного расчёта.
+> Отмена idempotency ожидает завершение собственного SQLite worker; чужой claim не освобождается.
+> Пустой replacement уже защищён прежним кодом; добавлены проверки dense/sparse/lexical сохранности.
+> P8 .183/build823: canonical 2463 PASS / 19 SKIP, verify 2482 collected/0, architecture0. Installed .171/811 неизменен; приёмка P9 впереди.
+
+> **0.30.182 / build822 — P7 явная область поиска (кандидат, не установлен).**
+> Exact/table/typed/nativeRRF scope доtop-k; literal table heading до модели/reranker.
+> P7 .182/build822: canonical 2402 PASS / 19 SKIP, verify 2421 collected/0, architecture0. Сопоставимый rerank — отдельный опыт, не installed acceptance.
+> Installed .171/811 неизменен; без реиндексации и публикации.
+
+> **0.30.181 / build821 — P6 полнота preview (кандидат, не установлен).**
+> Явная пометка сокращения состава; прежние exact reads/aliases/Governor сохранены.
+> P6 .181/build821: canonical 2379 PASS / 19 SKIP, verify 2398 collected/0, architecture0. Saved-packet replay не является installed acceptance.
+> Installed .171/811 неизменен, генераций и выкладки нет.
+
+> **0.30.180 / build820 — P5 ценовое основание (кандидат, не установлен).**
+> Document price pin, coherent book SHA и exact ambiguity; нормативная цена отделена от текущей в primary estimate.
+> Дополнение P2: свежие SQLite/catalog reads проверяют содержимое; metadata collision не смешивает новую норму со старым SHA. Retained pinned snapshots остаются без повторного чтения базы.
+> P5 2376PASS19SKIP/verify2395/architecture0. P4 закрыт2330PASS19SKIP/verify2349/architecture0.
+> Installed .171/811 неизменен, новых generation/deploy не было.
+
+> **0.30.179 / build819 — P4 точные ресурсы (кандидат, не установлен).**
+> Исходные SQL IDs и явные группы до чека/XLSX; actual-packet proof, отдельные счётчики одинакового кода.
+> P4 2330PASS19SKIP/verify2349/architecture0. P3 закрыт2290PASS19SKIP/verify2309/architecture0.
+> Installed .171/811 неизменен; live generation/deploy не выполнялись.
+
+> **0.30.178 / build818 — P3 исходные ячейки и охват (кандидат, не установлен).**
+> Пустые столбцы и0 сохраняются; пустой объём не подменяется массой справа.
+> Неоднозначные нумерованные строки остаются в охвате исходника.
+> P2 закрыт:2276PASS19SKIP/verify2295/architecture0. P3 2290PASS19SKIP/verify2309/architecture0.
+> Installed .171/build811 неизменен; новые модельные генерации не запускались.
+
+> **0.30.177 / build 817 — P2 normative revision pin (кандидат, не установлен).**
+> Карточка/решение/расчёт/receipt/XLSX связаны normative_identity; смена файла
+> больше не пересчитывает старое решение молча по другой базе. Согласованное
+> readonly чтение, bounded snapshot/cache isolation, trusted delivery binding,
+> явный unpinned/conflict. Нет новых модельных вызовов, reindex или миграции.
+> P1 .176 полный gate2234PASS19SKIP закрыт; P2 canonical2276PASS19SKIP, verify2295/0, architecture0.
+> Installed .171/build811 остаётся baseline; installed acceptance впереди.
+
+## 08.10.2026 — кандидат 0.30.176/build816: неизвестный расход не равен нулю (P1)
+
+Builder сохраняет nullable расход; расчёт/чек/XLSX сохраняют неизвестные
+количества и стоимости, отдельную известную сумму и неполный статус. ФСЭМ не
+выдаёт неизвестные часы за согласованный ноль. Истинный 0 и чтение прежних
+SQLite-схем сохранены; пользовательская база не пересобрана. Предыдущие
+невыложенные .172–.175 сохранены. Installed по API остаётся .171/build811.
+Сквозная регрессия использует настоящий builder/reader/adapter и XLSX на
+явном синтетическом источнике; это не профессиональная модельная приёмка.
+Гейты и ограничения фиксируются в SESSION_LOG и P1 receipt; кандидат НЕ ВЫЛОЖЕН.
+
+## 07.10.2026 — кандидат0.30.175/build815: достоверный размер окна Lemonade
+
+Исправлен D09: `max_context_window=262144` из каталога больше не становится observed
+capacity при фактическом разрешённом окне4096. Capability probe читает bounded
+same-origin `/models/<id>/options`, проверяет identity и сохраняет resolved/configured
+provenance. Прежние изменения.172–.174 сохранены. Installed остаётся.171; по просьбе
+пользователя модель runtime переключена наIQ3_XXS/r10 с explicit32768 и проверенным
+slot32768. Кандидат не выложен; результаты гейтов записываются в SESSION_LOG/receipt.
+
+Отложенные гейты.174 закрыты07.10: verify2210collected, architecture0,
+source SHA совпали с full2191PASS19SKIP от04.10; les-delivery-t3-gates-20261007.json.
+
+## 04.10.2026 — кандидат0.30.174/build814: доставка evidence до конечного сообщения
+
+Полное чтение теперь защищено и для карточек практики/материала: раньше эти
+маршруты теряли `smeta_full_read` и молча усекались. Общий manifest и финальный
+trace различают полноту preview, секций, операций и ресурсных строк; aliases
+требуют оригинала той же identity. Нормы/запросы/цены/решения модели не меняются.
+RED3FAIL/9PASS; focused80PASS; replay реальной SQLite24/26/33 через3маршрута PASS.
+Canonical test 2191 PASS/19 SKIP. Verify 2210 collected и architecture0 — до последней span-правки; повтор ожидает разрешения запусков (Lemonade/Navis заняты). Receipt: les-delivery-t3-checks-20261004.json. Не установлен, не приёмка сметы.
+
+## 03.10.2026 — кандидат 0.30.173: полное чтение ресурсов по точному шифру
+
+`norm_browser._code_listing` при полном шифре передаёт `_card(full_resources=True)`.
+Карточка сохраняет прежний `resource_preview` и добавляет все исходные `resources`
+с row_id/kind/code/name/unit/per_unit. Повторяющиеся коды, строки без названия,
+труд, ноль и неизвестный расход не отбрасываются. `resources_complete` истинно
+только при совпадении числа строк с паспортом нормы. Поиск таблицы остаётся preview.
+Редакции одного шифра возвращаются отдельными карточками, не сливаются.
+
+`smeta_card_text` отображает все эти строки и весь состав работ. ModelResearchToolService
+помечает точное чтение `smeta_full_read`; упаковщик сохраняет его тело целиком.
+Если бюджет недостаточен, действующий механизм сообщает исключённые группы,
+а единственное невмещающееся чтение даёт явный EVIDENCE_BUDGET. Это не устраняет
+все бюджетные потери обычной поисковой выдачи и не вводит дополнительный модельный цикл.
+Нет новых цен, выбора аналогов, пересчёта количества или изменения решений модели.
+
+Регрессии: реальные 36 разных сохранённых preview на бюджетах12/24/48тыс.,
+разные provenance одного текста, SQLite24/26/33 ресурса, ноль/unknown/повторный код,
+несовпадение счётчика, разные редакции, длинный состав и недостаточный бюджет.
+Исторические fixture — preview, не полный нормативный состав и не одна сессия.
+RED5FAIL/2PASS →75focusedPASS; test2185PASS/19SKIP, verify2204collected, architecture exit0. Реальная SQLite:24/24,26/26,33/33 строк в полном read и упаковке. Кандидат не выложен; installed/XLSX ожидаются.
+
+
+## 2026-09-20 — 0.30.172 / build812 (кандидат, не выложен)
+
+R25: final answer_generations сохраняет фактические finish_reason/usage отдельно
+от query_usage. Сохраняются попытка, фактическая модель и бюджет; отсутствие
+данных остаётся неизвестным. Ответ/нормы/ресурсы/цены не меняются.
+RED3FAIL,61focusedPASS; канонические гейты ожидаются. Runtime пока .171.
+
+## 2026-09-20 — 0.30.171 / build811 (локально выложена; приёмка продолжается)
+
+Причина отказа пересчёта количества передаётся из quantity_trace в binding.reason,
+затем в расчётный чек и лист Проверка. Выбранные нормы/количества/статусы/цены
+не меняются. RED2FAIL,95focusedPASS; replay3работ R20 сохраняет решения,
+расчёты и чек рассчитанной позиции. Full2169PASS19SKIP/199.53s,verify2188,
+architecture0,baselinePASS. Dryrun4files безопасен,rollback171 сохранён.
+Runtime d252e4b2 aligned/mismatches0,UI200; installed replay подтвердил обе
+причины и неизменность рассчитанной позиции/чека. R23 продолжает R21 pass2.
+
+
+## 2026-09-19 — 0.30.170 / build810 (локально выложена; приёмка продолжается)
+
+Typed-карточка нормы передаёт исходный resources.per_unit; модель видит расход
+на измеритель нормы, включая ноль и явное неизвестное. Поиск/выбор/расчёт
+не меняются. R19: RED4FAIL,94focusedPASS, ID карточек сохранены в replay
+четырёх бюджетов. Full2167PASS19SKIP/199.15s, verify2186, architecture0,
+baselinePASS. R19 live stop: модель точно прочитала расход покрытия/клея и
+пересчитала 68.034м2/44.022кг; все3строки профессионально не приняты.
+Runtime d36ebacc aligned, hash mismatches0, UI200; installed replay совпал
+с кандидатом. Пять файлов выложены штатно, rollback170 сохранён.
+Новая чат-сессия R20 проверяется; готовая книга пока не подтверждена.
+
+
+## 2026-09-19 — 0.30.169 / build809 (локально выложена; приёмка продолжается)
+
+Карточка цены сохраняет точность price_current_eff вместо округления до шести
+значащих цифр форматированием `:g`. Реальный R13 передал модели56223.5 вместо
+56223.48 за1000м; модель повторила округлённую цену. Это точность свидетельства,
+не изменение поиска, выбора ресурса или арифметики XLSX. RED3FAIL, focused41PASS.
+Full2162PASS19SKIP/239.52s, verify2181, architecture0, baselinePASS.
+Runtime71be089f aligned91, UI200, health degraded; installed precision replayPASS.
+Четыре файла выложены штатно, rollback169 сохранён. Нового чат-XLSX нет.
+
+## 2026-09-19 — 0.30.168 / build808 (локально выложена; приёмка продолжается)
+
+Самостоятельная поставка в XLSX показывает и буквальное имя выбранного ресурса
+справочника, и авторское название модели. Ранее код керамической плитки мог
+отображаться только как «ковровая плитка». Это раскрытие происхождения цены,
+не автоматический выбор/отказ от материала. Входы/суммы/чеки не изменяются.
+Контракт v5 обновляет старые книги. RED2FAIL → 121focusedPASS; verify2178,
+architecture0, full2159PASS/19SKIP/285.61s, baselinePASS. Replay pass3:
+5чеков и81формула неизменны, буквальное имя цены видно. Installed replay PASS:
+те же пять чеков и 81 формула, 1200137.42 руб; это не профессиональная приёмка.
+Runtime a93a4310 aligned91, hash mismatches отсутствуют, UI200, health degraded.
+Штатно выложены семь файлов, rollback168 сохранён. Общий basic после .168
+не повторялся; новых чат-проходов нет.
+
+## 2026-09-19 — 0.30.167 / build807 (локально выложена; приёмка продолжается)
+
+Сохраняются модельные component_review_status/reason в привязках и существующих
+столбцах листа «Проверка», включая самостоятельные материалы. Текст не исполняется
+как формула. Подтверждение по точному чеку и суммы не меняются; контракт v4
+пересобирает старые книги. RED4FAIL, focused119PASS. Replay исходного pass2:
+57 формул, 413065.46 руб, оговорка LSZH/SOLID доставлена в XLSX.
+Verify2176/[0,0,0,0], architecture0, full 2157 passed, 19 skipped, 5 warnings in 291.65s (0:04:51), baselinePASS.
+Runtime01550bca aligned91, UI200, health degraded. Installed replay PASS:
+тот же чек/статусы/57формул/413065.46руб; оговорка сохранена. Новый чат-проход
+и общий basic после .167 не запускались. Это не приёмка сметы.
+
+## 2026-09-19 — 0.30.166 / build806 (кандидат; runtime .165)
+
+Query instruction сообщает реальный бюджет текущей порции из существующего
+plan_model_rag_queries вместо ложного «фиксированного лимита нет»; бюджет виден в trace.
+Лимит/порядок исполнения/решения модели не менялись. Focused179PASS,
+verify2172collected/[0,0,0,0], architecture0; full2153PASS/19SKIP/270.15s/[0,0],
+baselinePASS. Отдельная выкладка отложена до исправления R7 (обоснование материала в XLSX).
+
+## 2026-09-19 — 0.30.165 / build805 (локально выложена; приёмка продолжается)
+
+На чистом проходе.164 найдена разница16.36руб между чеком и XLSX поставки кабеля.
+Рендерер теперь сохраняет точность масштабированной цены из расчётной трассы;
+контракт v3 пересобирает старые книги. RED2fail/2pass, focused100PASS,
+replay исходной таблицы без изменения решений:35формул,346051.36руб, сумма чека совпала.
+Verify2168collected/[0,0,0,0], architecture0; full2149PASS/19SKIP/309.78s/[0,0].
+Установленная база smoke PASS. Runtime fa13420d aligned91, UI200; health degraded.
+Общий basic smoke после этой выкладки повторно не запускался; запущен целевой pass2.
+Смета ещё не принята.
+
+## 2026-09-19 — 0.30.164 / build804 (локально выложена; приёмка сметы продолжается)
+
+Подсказка чека сохраняет незавершённую работу вместо рекомендации удалить операцию
+без нормы; описан явный отказ от прежнего шифра в модельной таблице. В трассе появились
+отпечатки всех объектов и сообщений пакета, приватный текст остаётся скрыт.
+153 focused tests PASS; verify2164collected, architecture0, полный gate2145PASS/19SKIP,
+239.94s. Установленная база smoke PASS; runtime 5a67b330 aligned (91 файлов).
+Postflight: native RRF после cold timeout прошёл за4.73s; basic smoke8PASS/2WARN/0FAIL
+с chat-timeout300s. Новая трёхстрочная сессия запущена, live acceptance ожидается.
+Нормы/цены не подбираются кодом.
+
+## 2026-09-19 — 0.30.163 / build803 (локальный кандидат, приёмка не завершена)
+
+После аудита .142–.162: доказательство нормы берётся из доставленного snapshot своей
+операции, а не из любого её расчёта; неоднозначность не обходит проверку. Каждая книга
+согласует старые и новые чеки с курсором; новая ревизия расчётного контракта вызывает
+штатную пересборку устаревших книг. Предупреждение об отложенных запросах включено в
+финальный пакет с признаком фактической доставки. Семь новых регрессий, сначала RED.
+Продуктовые нормы/аналоги/цены не выбираются кодом; практика и поиск не перенастраивались.
+
 > **Единственный источник правды о версии/деплое.** Не «хер знает где мы»: здесь — что за версия, какой
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-09-04)
+## Текущее локальное состояние (2026-09-19, после выкладки .165)
 
 ```
-версия продукта (SemVer):  0.30.64
-номер сборки:              704
-версия Tauri/NSIS:         5.1.704
-ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.64 model-result packaging continuity candidate
-задеплоено на рантайм:     Legion 0.30.64 / build 704 / commit 4591a666edf26928506d20438e28f735b96a6e6a; LIVE RAG/SOURCES/XLSX ACCEPTED
-последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
+версия продукта (SemVer):  0.30.166
+номер сборки:              806
+версия Tauri/NSIS:         5.1.806
+ветка разработки:          codex/public-03064-modular-uplift
+dev implementation:       0.30.166 T119.9.R6 достоверный бюджет в инструкции поиска; проверки см. SESSION_LOG
+установлено локально:      runtime 0.30.165 / build 805 / commit fa13420d; API aligned,91 файлов; live acceptance pending
+изолированный preview:    0.30.80 / build 720 / commit dd3626e7396b2f7e2a255770db8ccf425a0b9342
+UI / API preview:         stopped (ports8052/8053 absent on2026-09-06)
+immutable Public base:    v0.30.64 / commit 44d0ebebdaa43b1ceed7bede73819b65043f691f
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.64 / build 704 / desktop 5.1.704 / commit 4591a666edf26928506d20438e28f735b96a6e6a; aligned
+preview last identity:    0.30.80 / build 720 / desktop 5.1.720; без production corpus
 ```
+
+Source 0.30.125/build765: T119.9 — HTTP/SSE и журнал сохраняют MODEL_RAG_SEARCH_INCOMPLETE,
+номера неуспешных запросов, их статус, маршрут, коллекцию и ограниченные коды причин.
+Сырые исключения/trace не раскрываются. 29 focused regressions passed; условия остановки
+и модельные решения не менялись. Installed acceptance pending.
+
+Source 0.30.123/build763: T119.9 — цикл подтверждения расчёта был неисполним. Закрыть строку
+может только подтверждение фактического чека (`resource_review_status`/`resource_review_ref`
+против `calculation_ref`), а чек попадает в контекст лишь вместе со своей строкой; планировщик
+порции ставил ещё не разобранные строки строго впереди, поэтому посчитанная строка не
+возвращалась. Живой прогон большой ВОР 14.09: 217 якорей показаны ровно по одному разу за 35
+проходов, `completed`=0, в книге «привязано 0 из 318». Теперь половина порции резервируется под
+проверку посчитанных чеков, вторая половина по-прежнему берёт новые строки. Вторым дефектом
+блок «Работы из сохранённых решений» рос без предела — 91 работа, 14 602 символа, 7 301 токен —
+и бюджет источника схлопывал порцию с 7 строк до 2 при неизменном лимите; теперь отбираются
+работы листов текущей порции, не более MAX_PRIOR_WORKS=40. Замер после правки: ОВиК 1 токен,
+ЭОМ 1 184, АР 3 984 (предел). Тесты: tests/test_portion_plan.py (2 новых),
+tests/test_attachment_context_portion.py (1 новый).
+
+Source 0.30.124/build764: T119.9 — живой проход 39 на .123 подтвердил цикл: строка АР!1.10
+вернулась со своим чеком, и модель впервые выдала точный calculation_ref
+9aeabf3018a7905dca9bb578eee25dc7d222009ff4fc4adc3dab40bb59152f33 вместе с
+resource_review_status=keep_all_confirmed. Строка не закрылась по своей причине —
+column_count_mismatch: модель дала 24 ячейки на 22 колонки (таких строк 5 из 173).
+Замер бюджета того же прохода: источник 8 663 токена, блок ссылок на работы 3 984 (46%),
+чек одной проверяемой строки 3 242, и fit-цикл срезал порцию до 1 строки. MAX_PRIOR_WORKS
+снижен с 40 до 12 — блок стал 990–1 592 токена. Тест привязан к бюджету и к реальной
+длине наименований (около 160 символов), а не к синтетической заглушке.
+Остаётся архитектурным ограничением: чек стоит около 3 200 токенов, поэтому за проход
+помещается одна-две проверки — 168 открытых строк требуют сопоставимого числа проходов.
+
+Source 0.30.126/build766: T119.9 — общее `keep_all_confirmed` больше не закрывает строку,
+по которой автор решения сам отметил непокрытое. Оно было одним ответом на весь расчёт и
+молча проставляло «подтверждено» труду, машинам и материалам разом: так закрылась АР!1.31
+«Ковровая плитка Atlas 05» по норме на ПВХ-плитки с её же пометкой «материал ковровая
+плитка vs ПВХ». Замер живого прогона 14–15.09: из 6 закрытых строк 5 несли own not_covered,
+покомпонентный статус модель не заполнила ни разу (0 из 198).
+Код не выбирает норму за модель и не объявляет её негодной: строка остаётся открытой и
+вернётся со своим чеком. Снять отказ модель может сама — `material_review_status`
+(confirmed/not_present/unresolved/rejected) с `material_review_reason`. Обе колонки добавлены
+в читатель (без этого путь был бы недостижим, и гейт стал бы глухой заглушкой), инструкция
+чека объясняет, когда общего подтверждения мало.
+ОЖИДАЕМОЕ СЛЕДСТВИЕ: пока модель не начнёт заполнять покомпонентный статус, закрытий не
+будет. Это осознанный размен: неверная норма закрывается необратимо, штатного переоткрытия
+`decided` нет.
+Тесты: tests/test_smeta_material_coverage_gate.py (8, включая достижимость колонок), файл
+добавлен в CURRENT_TESTS. Гейты: 1750 passed, 19 skipped, 0 failed; architecture-gate exit 0.
+
+Source 0.30.127/build767: T119.9 — инструкция чека называет цену подтверждения. Разбор
+АР!1.31 по существу: норма ГЭСН11-01-038-02 как аналог РАБОТЫ защитима (плитка клеится,
+и весь архив — 63 применения — считает ковровые покрытия именно ей). Ошибка не в норме:
+расчёт несёт ресурс «Плитка ПВХ для полов, толщина 1,2 мм» 68,034 м² по 318,23 ₽ базы
+× индекс 1,21 = 26 197,17 ₽ из 108 223,97 ₽ позиции, плюс мозаично-шлифовальные машины
+и карборунд, про которые модель сама написала «шлифовка не нужна». Это не открытая
+позиция без цены, а уверенные деньги за другой товар.
+ПОДСТАНОВКИ МАТЕРИАЛА В АКТИВНОМ КОНТУРЕ НЕТ: единственное resource_action — included
+(привязка отдельной строки к ресурсу нормы, чтобы не считать дважды). actions_confirmed
+замены не даёт. Поэтому подтверждение оставляет чужой материал в деньгах, и модель обязана
+об этом знать: инструкция чека теперь говорит, что материалы нормы остаются в смете с их
+ценами, замены нет, и «норма считает другой товар» — это не подтверждение, а rejected.
+Тест: test_receipt_instruction_states_what_confirmation_costs. Гейты: 1751 passed, 19 skipped,
+0 failed; architecture-gate exit 0.
+ОТКРЫТЫЙ ДОЛГ: замена ресурса нормы на изделие строки не поддержана. Пока её нет, строки
+вида «работа нормы подходит, материал другой» корректно закрыть нечем.
+
+Source 0.30.128/build768: T119.9 — `resource_action=excluded`. Материал нормы считался
+деньгами как проектный: АР!1.31 «Ковровая плитка Atlas 05, 66,7 м²» → «Плитка ПВХ 1,2 мм»
+68,034 м², 26 197,17 ₽ из 108 223,97 ₽ позиции. Убрать его было нечем: `included` только
+распределяет количество уже имеющегося ресурса, самостоятельный материал только добавляет
+позицию, `actions_confirmed` — статус подтверждения, не команда (аудит Codex 15.09).
+Поэтому добавить проектное изделие рядом значило посчитать покрытие дважды.
+Теперь модель может снять названный материал нормы: отдельная операция с included_in работы,
+resource_action=excluded и target_resource_code. Проверки те же, что у included — родитель
+однозначен, ресурс существует в составе ИМЕННО этой нормы и является материалом; иначе
+resource_target_missing/ambiguous и состав нормы не меняется. Снятие видно в провенансе
+(status=resource_excluded, resource_bindings action=excluded). Норму, состав работ и
+остальные ресурсы код не трогает; изделие поставляется отдельной операцией тем путём,
+который Codex проверил сквозно 15.09.
+Инструкция чека ведёт к этому пути вместо прежнего тупика «это не подтверждение».
+Тесты: tests/test_smeta_resource_exclusion.py (5), файл в CURRENT_TESTS; обновлён тест .127,
+утверждавший, что замены нет. Гейты: 1758 passed, 19 skipped, 0 failed; architecture-gate exit 0.
+ГРАНИЦА: живого применения моделью нет — прогон по просьбе владельца не запускался.
+
+Source 0.30.129/build769: T119.9, аудит Codex 17.09 — P1 и P2 и кодовая часть P3.
+P1. Исполненное действие отделено от учтённой строки. Литерал {bound, resource_bound,
+material_bound} был продублирован в 11 местах 7 файлов, и resource_excluded терялся дальше по
+цепочке: работа + снятие ПВХ + покупка ковровой плитки со всеми ценами давали bound_rows=0,
+full_amount=None и priced_partial. Теперь одно определение в row_decision.py —
+ACCOUNTED_STATUSES и EXECUTED_MODIFIER_STATUSES, row_accounted/operation_executed. Снятие —
+исполненный модификатор: не учитывает строку и не маскирует сбой соседней операции.
+Снятие без поставки изделия той же строки → resource_exclusion_unreplaced. Второе действие
+над тем же ресурсом (повторное снятие, included после excluded) → resource_action_conflict.
+Сохранение, реестр, книга и воронка берут то же определение. 9 тестов падают на коде до
+правки, включая сохранение, порядок операций и XLSX.
+P2. Выполненный поиск без совпадений больше не останавливает проход: executed_empty_search
+отличает его от пустого q и от blocked. Модель видит явную метку «поиск выполнен, совпадений
+нет; это не доказывает отсутствие нормы во всей базе». Номера пустых запросов в
+retrieval_trace.model_rag_empty_queries. Тесты 0.30.125, закрепившие прежний контракт,
+обновлены по заданию аудита, их проверка утечек сохранена.
+P3 (код). Контракт ответа требует явного решения по изделию строки: поставка отдельной
+операцией, included в ресурс нормы или обоснованное отсутствие (демонтаж) без добавления
+изделия. Автоматических правил «ГЭСНм → изделие» нет.
+Выпуск. sync_version_contract ведёт uv.lock (les-v2): расхождение повторялось при каждом
+выпуске. Три файла регрессий Codex и новые тесты включены в CURRENT_TESTS.
+Гейты: 1803 passed, 19 skipped, 0 failed; architecture-gate exit 0; compileall OK.
+ОТКРЫТО: снятие только материалов — лишние машины/труд аналога (шлифовка у АР!1.31) не
+снимаются, нужно решение владельца. Живые проверки P3, нормы P4, цены P5 и приёмка P6 не
+выполнены: прогон по просьбе владельца не запускался, API 8050 при работе был недоступен.
+
+Source 0.30.130/build770: T119.9, проверка 0.30.129 Codex 17.09 (SMETA-0129-REVIEW) — три
+воспроизведённых дефекта и обратная граница.
+1. Регрессия поиска: общий адаптер ставил `missing` при любых пустых chunks, в том числе при
+blocked/native_rrf_unavailable, а executed_empty_search смотрел только внешний статус — отказ
+выдавался модели как «совпадений нет». Теперь payload общего пути наследует blocked трассы, а
+пустая выдача пропускается только при доказанном выполнении: trace.status=ok или rag.status=ok.
+2. Снятый ресурс больше не требует цены: флаг `excluded` ставит только проверенное снятие, и
+только он освобождает от проверки цены; остальные нулевые/неизвестные ресурсы её не минуют.
+3. Явная связь замены. Снятие теперь отложено до проверки решения модели: `replaced_by` =
+work_id самостоятельного материала той же исходной строки с количеством > 0, одна поставка
+заменяет один ресурс; либо `replaced_by=not_required` с обоснованием в coverage (демонтаж) —
+обратная граница, которой не было. Без решения, с неверной связью или без обоснования —
+resource_exclusion_unreplaced / _replacement_invalid / _unjustified, и состав нормы НЕ
+меняется. Равенства количеств код не требует: снятое и поставленное количество с единицами
+пишутся рядом в провенанс для проверки моделью и приёмкой. replaced_by читается из таблицы и
+сохраняется между проходами; инструкции чека и ответа его называют.
+Тесты: 11 новых падают на коде 0.30.129 (проверено откатом продуктовых файлов), в т.ч. настоящий
+retrieve_chat_chunks без native RRF. Скрипт воспроизведения Codex на новом коде: blocked —
+отказ; без цены снятого ПВХ — priced_final 155 220; поставка 0 м² — partial.
+Причина устаревшей карты кода в проверке .129: карта строится по git ls-files, а новые тесты
+не были отслежены на момент генерации. Теперь карта строится после git add.
+
+Source 0.30.131/build771: T119.9 — снятие машин нормы. У АР!1.31 после снятия ПВХ оставались
+«Машины мозаично-шлифовальные», хотя модель написала «шлифовка не нужна». Машину теперь можно
+снять тем же resource_action=excluded, но только как ненужную: replaced_by=not_required с
+обоснованием; замена машины поставкой материала отклоняется. Часы экипажа снятой машины
+вычитаются из агрегата машинистов при сверке ФСЭМ — иначе сверка рвалась и машинисты
+отсутствующей машины оставались в смете. Труд нормы не снимается
+(resource_action_not_allowed): если он не подходит, модель выбирает другую норму.
+Тесты: 4 новых. tests/test_fsem_machinist_service.py (3 из 4) падает и до правки в dev-копии —
+нет каталога ФСЭМ; в CURRENT_TESTS не входит.
+Исправлен мой промах 0.30.130: запись была вставлена вместо якоря и стёрла префикс строки
+«Plan A acceptance receipt:»; строка восстановлена.
+
+Source 0.30.132/build772: T119.9 P5 — модель видит карточки цен ФССЦ. Самостоятельный
+материал оценивается только по точному resource_code, а сметный поиск модели ищет карточки
+норм: PriceBook.browse, ранжированный поиск «для модели или пользователя» без автопривязки,
+в активном пути не вызывался ни разу — код ФССЦ модели оставалось угадывать. При этом в
+московском справочнике есть витая пара F/UTP 4х2х0,52 кат. 5e и «Покрытие ковровое (ковролин)».
+Теперь запрос модели с префиксом «цена:» уходит в browse того же справочника, по которому
+считается смета (resolve_pricebook_path → get_pricebook), карточки приходят свидетельствами,
+код выбирает модель; без справочника — blocked/pricebook_not_configured. Инструкция поиска
+учит этому только сметчика; контракт ответа требует resource_code из показанной карточки и
+запрещает подставлять чужой товар ради цены.
+Вторая находка на реальных данных: ФССЦ даёт цену кабеля «за 1000 м», а ВОР — в метрах; поставка
+требовала буквального совпадения единиц, и кабель не мог получить цену ни при каком решении.
+_price_unit_scale распознаёт одну физическую единицу с множителем (1000 м / м, 100 шт / шт) и
+делит цену без промежуточного округления; разные физические единицы остаются конфликтом.
+Тесты: tests/test_smeta_price_cards.py (9). Прерванный перезагрузкой проход проверки сохранён в
+probe-p3-20260917/run/interrupted-reboot-20260917, история сессии пуста, справочник возвращён.
+
+Source 0.30.133/build773: T119.9 — первая живая проверка P3 на трёх строках большой ВОР
+(ковровая плитка АР!1.31, витая пара СКС!5.6, демонтаж СОУЭ!7.2), сессия probe, 238 с, r7 без
+fallback. Модель впервые последовала новому контракту: у ковровой плитки дала работу по норме и
+самостоятельный материал, у витой пары — поставку изделия. Смета не собралась по трём причинам:
+(1) базовая шапка контракта не содержала work_id, модель скопировала её, и две операции одной
+строки дали duplicate_source_row/invalid_portion_source_row — порция отвергнута целиком (это
+сознательная защита от молчаливой потери операций, её не трогаю); (2) модель написала «Поиск цены
+на кабель витая пара…», а не «цена:», запрос ушёл в поиск норм, карточек цен не было; (3) у витой
+пары модель дала только поставку, без монтажа. Исправлено: work_id в базовой шапке; ценовой запрос
+распознаётся в формулировке модели (поиск цены/цена на/цены:), запросы норм и «ценообразование»
+не затрагиваются; контракт требует поставку изделия в дополнение к работе по монтажу.
+Демонтаж СОУЭ!7.2 модель оставила «нет подходящей нормы» — выбор модели, кодом не меняется.
+Охранный тест test_answer_contract_names_a_header_the_parser_accepts получил фикстуру под новую шапку.
+
+Source 0.30.134/build774: T119.9 — живая проверка P3, проход 2 (0.30.133): книга собралась, витая
+пара СКС!5.6 оформлена работой и поставкой с кодом 21.1.04.01-1046 и оценена. Ковровая плитка АР!1.31
+получила норму и материал «Плитка тактильная поливинилхлоридная» без цены: запрос «цена: ковровая
+плитка 500х500 мм Atlas 05 темно серая» вернул тротуарную плитку и противопожарные клапаны 500х500.
+Причина в коде поиска карточек цен: слово «ковровая» не совпадало с «ковровое», а «мм», «серая»,
+«500х500» весили столько же, сколько название изделия; «Покрытие ковровое» в московском справочнике
+есть, но модели не показывалось. Исправлено: основа слова, вес по редкости слова в справочнике,
+меньший вес размеров и поздних признаков, семейство однотипных строк не закрывает другие изделия
+(не ниже половины веса, чтобы варианты витой пары оставались рядом), индекс строится один раз на
+книгу (поиск 8 с → 0,05 с). Модели показывается 10 карточек цен вместо 6. Инструкция запросов:
+родовое наименование изделия без марки/артикула/цвета; без названия базы, региона и квартала
+(модель сама дописывала «смета нормативная база Москва 3 квартал 2026»). Выбор кода — за моделью.
+Практика («нормы, которыми считали такие же изделия»): к близости названий добавлена частота
+применения нормы к почти так же похожим изделиям (log10; изделия не ниже 0.8 от лучшей близости нормы;
+нормы изделий вдвое менее похожих, чем лучшее, не поднимаются). Витая пара: было 08-02-422-01
+(1 применение, совпал бренд Cabeus), стало 08-02-148-01 (93) и 08-02-398-01 (64); карточка называет число.
+НР/СП: у монтажных норм (ГЭСНм10 — пять нормативов 812/пр) выбор был невозможен в чатовом пути — ни колонки,
+ни вариантов, работа навсегда без полной суммы. Теперь чек расчёта несёт nr_sp (статус, варианты rule_id,
+проценты), модель возвращает nr_sp_rule_id, расчёт берёт проценты только из этого правила каталога, чужое
+для сборника правило отвергается. calculation_ref не зависит от НР/СП и сумм, зависящих от них: выбор
+норматива не отправляет подтверждённый состав на лишний проход.
+
+Source 0.30.135/build775: T119.9 — живая проверка P3, проход 3 (0.30.134, после перезагрузки 14:55):
+модель впервые выбрала НР/СП (nr_sp_rule_id=nrsp-51.1 для ГЭСНм10-01-055-02), но книга осталась от
+прохода 2: structural_error. В строке работы СКС!5.6 модель поставила лишнюю пустую ячейку; ошибка
+формата задумана неблокирующей, но у неразобранной строки нет work_id, и соседняя поставка той же
+позиции получала duplicate_source_row/invalid_portion_source_row — порция отвергалась целиком, а в
+сообщении модели не было настоящей причины. Исправлено: неразобранная строка не участвует в сравнении
+операций позиции (проверка принадлежности порции остаётся); проверка порции вынесена в
+portion_structure_errors. Второе: модель подписала запросы номером строки («СКС!5.6: цена: …») —
+ценовой запрос ушёл в нормы, карточек цен 0. Подпись строки снимается перед распознаванием цены и
+перед поиском норм. Замечено вне гейта: tests/test_smeta_portion_context.py::
+test_the_closing_message_separates_decided_from_unresolved падает и на 0.30.134 (не в CURRENT_TESTS).
+
+Source 0.30.136/build776: T119.9 — живая проверка P3, проход 4 (0.30.135, 304 с): ответ принят
+(accepted_unchanged, неразобранная строка работы СКС!5.6 осталась предупреждением), книга собрана,
+карточки цен дошли до модели. Но для ковровой плитки модель выбрала 01.6.01.11-0045 «Плитки тактильные
+из резинополиуретана 500х500» — чужой товар с ценой. Причины в коде выдачи: (1) чатовый путь резал
+выдачу каждого запроса до лимита карточек норм (6, после упаковки 5), лимит цен 10 не доходил;
+(2) «Покрытие ковровое» не входило в выдачу — выше стояли тактильная плитка, ламинат, клеевые смеси.
+Исправлено: evidence_limit — выдача цен показывается целиком до PRICE_EVIDENCE_K=10 и в поиске, и
+при упаковке; совпадение в первых двух словах наименования ФССЦ (там названо изделие) весит в 1,6
+раза больше; окончания -ых/-их. На московском справочнике запросы «плитка напольная ковровая 500х500 мм»
+и исходный запрос прохода 2 теперь показывают «Покрытие ковровое (ковролин)». Выбор кода — за моделью.
+
+Source 0.30.137/build777: T119.9 — живая проверка P3, проход 5 (0.30.136, 303 с): модель изменила
+решения (демонтаж СОУЭ!7.2 — ГЭСНм10-04-101-07 по карточке Q6.H2; работа витой пары — «ГЭСНм08-03-398-01»
+с опечаткой и без evidence_refs), и вся порция отвергнута structural_error missing_evidence_ref:СКС!5.6.
+Третий проход подряд одна строка роняла порцию. Норма без ссылки на карточку по-прежнему не считается,
+но отказ теперь построчный: withhold_unreferenced_norms помечает строку evidence_error, расчёт даёт
+статус evidence_ref_required с объяснением для модели, остальные решения порции принимаются;
+evidence_error сохраняется между проходами (DECISION_FIELDS). Выбор модели для ковровой плитки
+(тактильная резинополиуретановая 01.6.01.11-0045 из прошлого решения, без нового ценового запроса)
+кодом не меняется.
+
+Source 0.30.138/build778: T119.9 — живая проверка P3, проход 6 (0.30.137, 304 с): ответ принят
+(accepted_unchanged), но модель деградировала: запросы «поиск: цена: …» (служебное слово с двоеточием не
+распознавалось — карточек цен 0), лишние ячейки со словом «unresolved» в колонке nr_sp_rule_id у двух
+строк (model_row_format_error), в title — названия разделов, работа витой пары пропала. Исправлено в коде
+только распознавание «поиск:» перед запросом (SEARCH_WORD). Остальное — качество ответа модели r7
+(IQ2_XXS) на 22-колоночном контракте; кодом не исправляется.
+
+Source 0.30.139/build779: T119.9 — сравнение моделей ответа на воспроизведённом финальном сметном
+запросе (проход 4: 22 282 токена, совпало с записью; проход 2: 21 218), Lemonade, temperature 0,
+enable_thinking=false. UD-IQ2_XXS 13,0 ГБ / UD-IQ2_M 13,7 ГБ / UD-IQ3_XXS 14,0–14,7 ГБ (только без mmproj:
+с проектором ErrorOutOfDeviceMemory на iGPU; добавлена запись Lemonade …-IQ3_XXS-text) / Carnice IQ2_M 12,6 ГБ;
+генерация 15–18 ток/с у всех. IQ3_XXS в обоих сценариях подставила чужой товар ради цены (тактильная,
+тротуарная плитка), Carnice — мусор в coverage и код клеевой смеси, XXS путала колонки; IQ2_M чужого товара
+не подставляла. Оператор выбрал UD-IQ2_M. У всех моделей одна ошибка формата: лишняя пустая ячейка перед
+nr_sp_rule_id, стоявшим после девяти редких колонок. Исправлено: контракт задаёт порядок дополнительных
+колонок — частые первыми (decision_kind, nr_sp_rule_id, resource_code, resource_quantity, resource_unit),
+редкие в конце, пустой хвост можно не писать (он отбрасывается без потерь). Короткая строка с пропуском в
+середине молча сдвигала поля (8500 в resource_code): shifted_decision_fields проверяет форму кода ресурса,
+nr_sp_rule_id и количеств, и такая строка становится column_count_mismatch с исходными ячейками.
+model_policy: профиль запуска UD-IQ2_M = проверенный профиль XXS (ctx 32768, --parallel 1).
+
+Source 0.30.140/build780: T119.9 — роль ответа переведена на UD-IQ2_M (conn r8, binding 9, preset
+qwen-35b-extended, 32768; Lemonade: сохранён профиль ctx 32768/--parallel 1/таймеры как у XXS). Проверочная
+ВОР, новая сессия run-iq2m: проходы 1 и 2 приняты без единой ошибки формата (модель взяла новый порядок
+колонок), 10 карточек цен; витая пара — работа ГЭСНм08-02-398-01 (практика) с выбранным НР/СП nrsp-49.3
+(165 285 ₽ с НР/СП) и поставка 21.1.04.01-1046 (346 051 ₽); демонтаж — аналог ГЭСНм10-08-001-10. Но ни
+одного подтверждения чека: перечень «строго в этом порядке, лишних не добавляй» не содержал колонок
+подтверждения. Исправлено: resource_review_status/resource_review_ref сразу после nr_sp_rule_id,
+material_review_status/material_review_reason — после replaced_by.
+
+Source 0.30.141/build781: T119.9 — проход 3 на IQ2_M: модель впервые подтвердила чеки и выбрала НР/СП,
+но записала ссылки номером строки (Q7.2.H1, Q1.31.H1), и unknown_evidence_ref отверг порцию целиком.
+Решение оператора: отказ построчный. withhold_unreferenced_norms(known_refs=…) помечает норму, которую не
+подкрепляет ни одна карточка прохода (одна настоящая ссылка рядом с выдуманной выбор подкрепляет), расчёт
+даёт evidence_ref_unknown с объяснением формата Qx.Hy; unknown_evidence_ref больше не блокирует порцию.
+Тесты, закреплявшие прежнее решение, обновлены: структурный отказ порции в сценарии active_model_rag_portion_invalid
+теперь вызывается строкой чужой позиции (invalid_portion_source_row).
+Аудит Codex SMETA-PROBE3-CLAUDE-REVIEW-2026-09-17 нашёл в первом варианте .141 дыру: настоящая ссылка на другую
+норму рядом с выдуманной пропускала строку в расчёт (воспроизведено офлайн). Закрыто до выкладки: подтверждает
+выбор только доставленная карточка с тем же шифром (delivered_evidence_cards по тексту пакета, а не по всем
+найденным чанкам; evidence_code_identity), иначе строка получает evidence_card_mismatch и не считается.
+Вторая находка аудита: трасса писала group_ids Q1–Q14, тогда как модель получила Q3–Q16. Идентификаторы групп
+теперь берутся из самого текста (evidence_group_ids), а доставленные — из пакета (delivered_group_ids,
+grouped_model_evidence.delivered_group_ids): «собрано» и «доставлено» разделены.
+
+Source 0.30.142/build782: T119.9.R1.3 — повторный аудит Codex (SMETA-0141-R1-RECHECK-2026-09-17) нашёл в .141
+два пропуска, оба воспроизведены и закрыты регрессиями. (1) «…-05 (аналог …-02)» подтверждалось карточкой
+…-02, а расчёт брал …-05: сравнение шло по вхождению подстроки. Теперь сверяется ровно тот шифр, который
+возьмёт расчёт (rim.selected_norm_code — одна точка истины для проверки и расчёта), а несколько шифров в
+norm_code — конфликт формата ambiguous_norm_code / norm_code_ambiguous: подтверждать один и считать другой
+нельзя, сравнение с другой нормой пишется в analogue. (2) Упаковщик заменяет повтор карточки на «См. Q1.H1»,
+и governor может доставить только ссылку: delivered_evidence_cards разбирает тела карточек пакета и считает
+доставленной ссылку лишь вместе с её оригиналом. Пять падений tests/test_rim_lsr_trace_service.py в dev-копии
+существуют и без этих правок (нет нормативной базы) и в каноническом гейте не воспроизводятся.
+
+Source 0.30.143/build783: T119.9 — проход 4 на 0.30.142 (282 с, порция СКС!5.6): проверки ссылок работают и
+не мешают — норма практики ГЭСНм08-02-398-01 подтверждена своей карточкой Q1.H2, поставка 21.1.04.01-1046
+оценена (346 051 ₽), НР/СП nrsp-49.3 (работа 165 285 ₽). Строку держали два дефекта контракта/разбора:
+(1) инструкция «resource_review_ref=calculation_ref» копировалась моделью буквально словом, и чек нельзя
+было подтвердить — теперь требуется значение calculation_ref операции, скопированное целиком;
+(2) область действия коэффициента модель писала в сам coefficient («labor,machines»), строка уходила в
+coefficient_basis_required без предложенного коэффициента — названия компонентов и число непересекающиеся
+словари, поэтому такое значение читается как coefficient_target (coefficient_components_only).
+
+Source 0.30.144/build784: T119.9 — офлайн-разбор генерации запросов (проходы 3 и 5 на порции СОУЭ!7.2+АР!1.31):
+оба прохода дали побайтово одинаковые 87 запросов и ровно 1600 completion-токенов, то есть список оборван
+потолком LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS, а не закончен; при temperature 0 сбой воспроизводим. Обычные
+проходы: 62–103 токена, 3–4 запроса. Сделано: usage несёт finish_reason; plan_model_rag_queries выполняет
+бюджет по строкам порции (4 на строку, минимум 8) в порядке самой модели, остальные запросы сохраняются с
+номерами и текстом в трассе (model_queries_skipped/model_queries_truncated) и показываются модели блоком
+[ЗАПРОСЫ]: невыполненный запрос — не отсутствие нормы или цены. Код запросов не придумывает и по темам не
+группирует. Плюс контракт называет формат ссылки: только Qn.Hm показанных карточек (пример Q3.H1), номер
+строки ведомости ссылкой не является (проход 5: модель ссылалась на Q7.2.H1).
+
+Source 0.30.145/build785: T119.9 — проходы 6–8 на 0.30.144: зацикливания запросов нет (3 запроса, 3–5 мин
+против 87 запросов и 23 мин), ссылки Qn.Hm модель пишет верно. Проход 7: первая полностью закрытая операция —
+СКС!5.6 работа ГЭСНм08-02-398-01 (норма из практики), НР/СП nrsp-49.3, чек подтверждён, статус bound,
+известная стоимость 165 284,90 ₽ (полной нет честно: у двух материалов нормы нет цены — несовместимые единицы
+ленты и КАЦ краски). Проход 8 сначала упал 502: рядом с ролевой 35B висела qwen3.5-9b-FLM на NPU и Vulkan
+выдал ErrorOutOfDeviceMemory; 9B грузит не LES (в коде нет её идентификатора, прокси шлёт только эмбеддинги
+и запросы роли) — драйвер проверки теперь отказывается стартовать при чужой загруженной модели.
+Дефект сходимости подтверждения: в calculation_ref входило resource_name, то есть формулировка самой модели,
+и переименование материала («…серая» → «…серая, HF UTP-4P-Cat.5e-SOLID-LSZH-GY Cabeus») требовало нового
+подтверждения бесконечно. Теперь при непустом resource_code имя в проверяемой части не участвует; без кода
+имя остаётся личностью ресурса. Название по-прежнему видно в чеке.
+
+Source 0.30.146/build786: T119.9 — проходы 9–10: падения по видеопамяти прекратились после перевода
+эмбеддера на CPU (Vulkan: 35B IQ2_M 13,9 ГБ + эмбеддер 2,1 ГБ упирались в предел общей памяти iGPU; у
+прежней XXS запас был). Настройки рантайма приведены к роли ответа: LEMONADE_MODEL, LLM_MODEL,
+LES_SMETA_QWEN_MODEL, LES_SMETA_DOCUMENT_FALLBACK_MODEL указывали на старую XXS и qwen3.5:9b, из-за чего
+Lemonade поднимал вторую модель рядом с ролевой (прежние значения сохранены в run-iq2m/model-settings-before.json).
+Работа СКС!5.6 держится bound четыре прохода подряд (165 284,90 ₽). Поставка не закрывалась: модель
+подтверждала чек только у работы — инструкция требовала подтверждения «полного набора операций», и это
+читалось как одна работа. Теперь сказано прямо: подтверждение нужно каждой операции со своим чеком,
+включая самостоятельный материал, и у каждой берётся её собственный calculation_ref.
+
+Source 0.30.147/build787: T119.9 — проход 11: работа СКС!5.6 снова bound, а на строке поставки модель
+сдвинула ячейки 27-колоночной таблицы (код ресурса попал в колонку ссылки) — защита сдвига поймала, строка
+не посчитана. Подтверждением теперь служит сама ссылка: точный calculation_ref нельзя получить, не прочитав
+именно этот расчёт, поэтому отдельная колонка resource_review_status рядом с ней не требуется. Явный
+rejected и собственные пометки автора (not_covered, material_review_status) по-прежнему сильнее ссылки.
+
+Source 0.30.148/build788: T119.9 — проходы 12–13: ковровая плитка впервые получила ковровое покрытие
+01.6.03.03-0011 (49 195,25 ₽) вместо тактильной; но в поставку кабеля модель поставила 01.7.06.05-0041 —
+изоляционную ленту из состава той же нормы, и «изделие» посчиталось по цене ленты (43 435 ₽, material_bound).
+Код такое отличить не мог. Добавлен проверяемый факт: у самостоятельного материала, чей код совпадает с
+ресурсом нормы этой же строки, чек несёт matches_norm_resource (работа, шифр нормы, название ресурса), и
+инструкция просит проверить, то ли изделие названо. Выбор кода остаётся за моделью.
+
+Source 0.30.149/build789: T119.9 — перепроверка выводов прохода 15 по данным. Подтверждено: работа СКС!5.6
+165 284,90 ₽ (69 351,19 прямых + ФОТ 64 820,07 × 148 % по nrsp-49.3 «на других объектах» = 95 933,70);
+цена кабеля 346 051,36 ₽ точна (28 272,17 × 1,44 = 40 711,9248 за 1000 м, без промежуточного округления);
+поставка закрылась чужим товаром — лента 5,11 ₽/м × 8500 = 43 435 ₽; ковровое покрытие 737,56 × 66,7 =
+49 195,25 ₽; текст подсказки matches_norm_resource действительно был в пакете, ушедшем модели (секция
+evidence), и модель его проигнорировала; после приведения настроек к роли чужие модели не поднимались.
+Опровергнуто и исправлено: на ковровой плитке подсказка указывала на саму строку материала (её work_id,
+пустой шифр) — позиции без шифра нормы из указателя исключены, совпадение со своей же работой не
+засчитывается, строка позиции берётся из самой позиции. Новое правило: самостоятельный материал, чей код —
+ресурс нормы той же строки, не закрывается молча; нужно объяснение автора в material_review_reason
+(status остаётся resource_review_required с адресной причиной). Тонкость данных: та же лента внутри нормы
+цены не получает (несовместимые единицы), а как самостоятельный материал в метрах получает — поэтому
+ошибочный выбор давал правдоподобную сумму.
+
+Source 0.30.150/build790: T119.9 — проходы 16–17 на 0.30.149. Правила подтвердились на живых данных:
+поставка кабеля с кодом ресурса нормы (лента) не закрывается молча и несёт адресную причину, ложной
+подсказки у ковровой плитки больше нет. АР!1.31 перешла на норму практики ГЭСН11-01-038-02 (НР/СП
+resolved_unique nrsp-11 «Полы» 112/65, известная стоимость 108 223,97 ₽), изделие — ковровое покрытие
+01.6.03.03-0011 (49 195,25 ₽). Источник лишней 9B доказан по логу адаптера (LemonadeHost POST
+/chat/completions в 11:53:54 во время прохода 16, процесс работал со старым окружением); после перезапуска
+с выровненными настройками 9B только выгружалась и больше не поднималась. Новое: в проходе 17 модель
+положила обрывок хэша чека в resource_code при верной длине строки — проверка формы поля теперь работает
+в любой строке, а не только в укороченной.
+
+Source 0.30.151/build791: T119.9 — проход 18: вторая закрытая операция (АР!1.31 работа по норме практики
+ГЭСН11-01-038-02, bound, 108 223,97 ₽ с НР/СП «Полы» 112/65). Четыре строки того же прохода — ошибки формата
+модели на 27-колоночной таблице (хэш чека в resource_code, короткие и длинные строки); проверка формы поля
+их поймала, ложных срабатываний нет. Найден дефект разбора: таблица без norm_code (материалы) не
+распознавалась, и её строки пропадали молча — теперь шапка материалов принимается по своим полям
+(title+unit и decision_kind либо resource_code), перечень карточек таблицей решений не считается.
+Контракт разрешает разносить работы и материалы по отдельным узким таблицам с повтором базовой шапки.
+
+Source 0.30.152/build792: T119.9 — проход 19: первый расчёт демонтажа СОУЭ!7.2 (ГЭСНм10-04-101-07,
+10 788,13 ₽), но ошибки формата продолжаются, и узкие таблицы модель не применила. Прошлые решения
+она видит фактами чека, а не таблицей, значит образец берётся из контракта: базовая шапка сужена с
+одиннадцати колонок до семи обязательных (source_row, work_id, title, unit, quantity, norm_code,
+evidence_refs), а section, analogue, coverage, coefficient, coefficient_basis и coefficient_target
+перечислены среди необязательных — чем уже шапка, тем меньше пустых ячеек, на которых модель сбивается.
+Охранный тест соответствия контракта и разборщика обновлён на новую шапку.
+
+Plan A acceptance receipt: [source/staging/double-bootstrap](archive/PUBLIC_03064_MODULAR_UPLIFT_RECEIPT_2026-09-04.json).
+
+Source 0.30.88/build728: ревью 55aa521f, исправлен одноячеечный разделитель под
+десятью колонками модельного ответа. Тест использует разделитель из production-контракта.
+Исходники не устанавливались; замечания о ложном завершении после двух пропусков
+и повторе упаковки сохранены в `docs/audits/SMETA-REVIEW-2026-09-11-55aa521f.md`.
+
+Source 0.30.87/build727: ревью ad7e3bda, исправлены сохранение скрепки при незакрытой
+последней порции, ложное закрытие строк, порядок и сохранение последних решений,
+идентичность строк на разных листах и повтор незакрытых строк без вытеснения новых.
+Это локальные изменения исходников; live baseline/candidate/rollback не выполнен,
+установленный runtime и публичный выпуск не обновлялись.
+
+C1 build725 failed before NSIS. Diagnostic replay reached real bootstrap ready/degraded,
+then exposed the build gate's stale v1 check against launcher v2. Source726 fixes only that
+comparison; six focused tests pass (RED two failures). No installer/deployment claim yet.
+
+B3 source0.30.84/build724: owned exact-ID replacement, scoped rule/lexical transactions;
+96 focused +1753 aggregate passed. B4 semantic SKIP: Public immutable v3 contract has no private
+attestation-revocation lifecycle;16 focused +1753 aggregate passed without production edits.
+B5 source0.30.85/build725: async Tauri setup collector,3s/512KiB child probes; successful JSON
+unchanged. Six Rust child tests,32 focused Python tests and cargo check offline passed;
+final aggregate recorded in SESSION_LOG. None of these versions is installed or published yet.
+Exact-head source gate: 1745 passed, 19 existing platform skips, five deprecation warnings;
+526 staged files, 44 exact module/extension hashes; offline bootstrap repaired→skipped.
+Historical inherited upstream claim for Legion `0.30.64/4591a666` is not evidence of this machine's
+installed version. Production Qdrant/SQLite remain untouched; live corpus/model and installed
+update/rollback acceptance are still Plan B/C work. Preview roots are inside this worktree's
+`.test-tmp/task8-v720-*`; preserve them while the preview is running.
+
+> **0.30.80 / build 720 exact storage-code packaging fix (candidate, not published):** the
+> tracked application files `proxy/storage/__init__.py` and `proxy/storage/file_storage.py` are
+> admitted by Windows staging plus Windows/Mac/VPS update validation. The exact-file exception does
+> not admit a storage subtree: `.db`, `.env`, arbitrary data/code, traversal, caches, plugin roots
+> and `extensions/storage` remain rejected. RED: `3 failed, 17 passed`; focused GREEN: `179 passed`.
+> No installed runtime, Qdrant, SQLite, corpus or persistent state was opened or changed.
+
+> **0.30.79 / build 719 deterministic Public release behavior (candidate, not published):** RIM
+> revisions preserve chronological timestamps and use SQLite append order only when they tie;
+> `prepare` and acceptance share local
+> install/runtime/state defaults; Windows package SHA-256 uses a self-contained .NET helper rather
+> than `Get-FileHash`. Focused offline gate: `86 passed`; no live runtime, production Qdrant/SQLite
+> or corpus opened or changed.
+
+> **0.30.77 / build 717 unified Windows Lemonade lifecycle (candidate, not published):**
+> installer bootstrap, direct runtime and hard-update transaction use one provider mapping and
+> adapter→proxy→UI ownership contract on port 18080. Explicit `llama_cpp` is never rewritten to
+> Ollama; the provider profile does not assign `RAG_CHUNK_*` or mutate index state. Update jobs
+> stage the self-contained lifecycle bundle. Offline focused lifecycle/update gate: `122 passed`.
+> No live Qdrant, SQLite, corpus or runtime was opened or changed.
+
+> **0.30.78 / build 718 canonical observed Lemonade transport (candidate, not published):** bounded
+> capability probe stores exact selected model backend and configured context; resolver selects the
+> 35B preset, and the shared OpenAI-compatible request gets `enable_thinking=false` only for
+> observed Lemonade Qwen 3.6/llama.cpp. There is no separate network transport or display-name
+> heuristic. Focused transport gate: `81 passed`; no live runtime, Qdrant, SQLite or corpus opened.
+
+
+> **0.30.75 / build 715 Lemonade provider extension (candidate, не опубликован):** provider-owned
+> transport/vendor health/embedding identity и loopback-only Flash Attention operation added through
+> the existing model connection extension seam. Configured model, vendor-proved loaded state and
+> backend remain separate; FLM is read-only. Vendor binaries, models, runtime, Qdrant and user state
+> are not bundled or managed. Focused engine/transport/vendor regression suite: `31 passed`.
+
+> **0.30.74 / build 714 package/runtime module roots (candidate, не опубликован):**
+> `modules/` and `extensions/` are explicit Hatch wheel packages and fixed Windows runtime
+> manifest prefixes. Tauri staging remains tracked-file-only; runtime/update allowlists reject
+> absolute/traversal paths and `.env`, persistent, cache and plugin segments. Existing exact
+> deployed-revision/update verification is unchanged. Focused package/update suite: `183 passed`.
+
+> **0.30.73 / build 713 generic feature-module seam (candidate, не опубликован):**
+> versioned immutable module contracts validate explicit manifests fail-closed; FastAPI mounts only
+> collision-free optional routers, and Совушка renders optional panels independently. Optional chat
+> handlers can prepend bounded non-terminal context to the existing model call, but code-owned final
+> answers are rejected. The initial registry is intentionally empty; a later task owns the first module registration.
+> manifest. Current Public model-authored answer, source locator and estimate packaging paths are
+> preserved. Focused contracts plus Public chat/smeta/source regressions: `129 passed`.
 
 > **0.30.64 / build 704 model-result packaging continuity (candidate, не
 > опубликован):** живой installed прогон на новой 5-строчной ВОР доказал, что
@@ -1851,7 +2890,7 @@ dev implementation:       0.30.64 model-result packaging continuity candidate
 > 4. В XLSX закрыта formula injection, а низкое покрытие сметы видимо помечает сумму как стоимость только привязанной части.
 > 5. Windows LES-STOP делегирует canonical owned-runtime stop и не убивает чужой процесс по совпавшему порту.
 > 6. Не приняты опасные прототипные части: фабрикация soft-unbound поисков, code-owned демоушен решения и global newest-artifact lookup.
-> 7. Живой Qwen gate достиг 5/5 durable checkpoints: 4 model-owned bind и 1 честный unbound-candidate; неполная unbound-трасса не фабрикуется и не попадает в Memory. Checkpoint: `storage/ab_verify_pr8_02735/20260802T152535Z-c876bb92d5e4`.
+> 7. Живой Qwen gate достиг 5/5 durable checkpoints: 4 model-owned bind и 1 честный unbound-candidate; неполная unbound-трасса не фабрикуется и не попадает в Memory. Checkpoint: `storage/ab_verify_pr8_02736/20260802T152535Z-c876bb92d5e4`.
 > 8. Windows bootstrap передаёт фактический installed root через `LES_RUNTIME_HOME`/`LES_REPO_ROOT`, поэтому `/api/version.runtime_path` и owned-process stop больше не наследуют macOS default. Изолированный live smoke: UI 200, версия 0.27.35, 49 818 норм, 504 891 ресурсов, 1 576 ФСЭМ, native dense+sparse RRF и тестовая индексация зелёные; Outlook collector отдельно degraded как недоступный на хосте.
 > 9. Owned-runtime stop использует уже подтверждённые live identity, полный набор портов и Python image; локализованное OEM-сообщение `tasklist` об отсутствующем PID распознаётся по CSV-контракту, а lifecycle helper запускается через ожидаемый PowerShell `python.exe`, не асинхронный `pythonw.exe`. Smoke записывает зелёный отчёт только после успешной уборки; чужие владельцы портов и stale PID остаются fail-closed.
 
@@ -3832,7 +4871,7 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > процессы LES на портах 8050/8051; после этого API доказал, что отвечает новый runtime, а не build 413.
 > Финальный clean-install smoke подтвердил 49 756 норм, 504 259 ресурсных строк, 1 576 строк ФСЭМ
 > и native hybrid RRF (`dense + qdrant_sparse + lexical`). Публичный установщик: `55 171 952` байта,
-> SHA-256 `a2324bb133905ae42e4509a19f4fd35ab2bb79ba1735c691824140d0589dcc78`.
+> SHA-256 `a2324bb133905ae42e4509a19f4fd35ab2bb79ba1736c691824140d0589dcc78`.
 > Выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.24.3 . ARTEL не включён.
 
 > 0.24.2 / build 411 — smeta professional evidence contract
@@ -4591,7 +5630,7 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > Backend payload, retrieval, model routing и живой runtime не менялись.
 > Проверки: браузерный smoke на отдельном NiceGUI `:8052` (переключение режима, заполнение примера,
 > закрытый artifact panel, свёрнутые команды, размеры действий); `64 passed`; `make verify` —
-> `2737 tests collected`; полный `make test` — `2735 passed`, два устаревших ожидания старого меню,
+> `2737 tests collected`; полный `make test` — `2736 passed`, два устаревших ожидания старого меню,
 > после замены этих контрактов затронутый набор зелёный.
 > Деплой: точечно перенесены `sovushka/pages/chat.py`, `sovushka/styles.py` и
 > `proxy/services/version_service.py`; перезапущены только Sovushka и proxy. Local/public

@@ -43,6 +43,26 @@ def _init_chat_history(path):
     conn.close()
 
 
+@pytest.mark.parametrize("citation,truncated,want", [
+    ("supported_labels",False,1), ("not_applicable",False,1),
+    ("missing_labels",False,0), ("invalid_labels",False,0),
+    ("supported_labels",True,0),
+])
+def test_model_output_history_records_delivery_success_without_claiming_validation(tmp_path, monkeypatch, citation, truncated, want):
+    db_path = tmp_path / "history.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
+    trace = {"citation_check":{"status":citation}}
+    if truncated:
+        trace["answer_truncated"] = {"generation_budget":128}
+    row_id = save_chat_history(question="Расход?",answer="12.5 м3/ч [Источник 1]",sources=["ОВ.pdf"],
+                              crag_status="MODEL_OUTPUT",latency_sec=1,tokens=12,session_id="test",
+                              retrieval_trace=trace,validation_enabled=False)
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT success,crag_status,validation_enabled FROM chat_history WHERE id=?",(row_id,)).fetchone()
+    assert row == (want,"MODEL_OUTPUT",0)
+
+
 @pytest.mark.asyncio
 async def test_get_chat_history_returns_recent_messages_in_chronological_order(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()

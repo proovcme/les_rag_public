@@ -42,6 +42,16 @@
 
 ## Визуальный контракт
 
+### Сообщение о несобранной книге в чате
+
+`chat._apply_chat_result` переносит API `model_result_notice` в metadata ответа.
+Общий `render_feedback_state("error", detail=message)` показывает русское объяснение
+отдельно после текста модели: и при завершении SSE/HTTP-ответа, и при открытии истории.
+Для сохранённой истории поддерживается `meta.retrieval_trace.model_result_notice`.
+Текст ответа, копирование и профессиональные решения не дополняются сообщением;
+машинные коды остаются в metadata. Проверка: `tests/test_chat_model_result_notice.py`
+исполняет response → meta → финальный bubble → history bubble для обоих статусов.
+
 ### Читаемая типографика desktop (0.30.1 / build 636)
 
 Совушка использует системный sans-serif `Segoe UI Variable Text` / `Segoe UI`

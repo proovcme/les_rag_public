@@ -338,7 +338,9 @@ class CrossEncoderReranker:
         mlx_url: str = "http://127.0.0.1:8080",
         model: str = "",          # модель задаётся на стороне mlx_host (RERANK_MODEL)
         mode: str = "batch",      # совместимость сигнатуры; не используется
-        timeout: float = 30.0,
+        # The host allows 60 s for vendor inference. A shorter outer timeout
+        # discarded valid CPU reranks while the vendor kept processing them.
+        timeout: float = 65.0,
         max_chunk_len: int = 1600,
     ):
         self.mlx_url = mlx_url.rstrip("/")
@@ -365,16 +367,36 @@ class CrossEncoderReranker:
             ]
 
         documents = [str(c.get("text", ""))[: self.max_chunk_len] for c in chunks]
+        # Cross-encoder scores describe independent query/document pairs. Keep
+        # every document, but bound each host request to the live-proven pool
+        # size instead of letting a wider retrieval union exceed its deadline.
+        batch_size = 24
+        batched = len(documents) > batch_size
+        results = []
         async with httpx.AsyncClient(
             trust_env=trust_env_for_url(self.mlx_url),
             timeout=self.timeout,
         ) as client:
-            resp = await client.post(
-                f"{self.mlx_url}/v1/rerank",
-                json={"query": query, "documents": documents, "top_k": top_k},
-            )
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
+            for offset in range(0, len(documents), batch_size):
+                batch = documents[offset:offset + batch_size]
+                requested = min(top_k, len(batch)) if batched else top_k
+                resp = await client.post(
+                    f"{self.mlx_url}/v1/rerank",
+                    json={"query": query, "documents": batch, "top_k": requested},
+                )
+                resp.raise_for_status()
+                before_batch = len(results)
+                for item in resp.json().get("results", [])[:requested]:
+                    local_index = int(item.get("index", -1))
+                    if 0 <= local_index < len(batch):
+                        results.append({**item, "index": offset + local_index})
+                if len(results) == before_batch:
+                    raise RuntimeError("cross-encoder rerank вернул пустой результат")
+        if batched:
+            # Preserve raw vendor scores; do not normalize each batch or use
+            # batch-local rank as a relevance score. Exceptions propagate so a
+            # successful prefix can never masquerade as a complete rerank.
+            results.sort(key=lambda item: -float(item.get("score", 0.0)))
 
         ranked: list[RankedChunk] = []
         for rank, item in enumerate(results[:top_k], start=1):

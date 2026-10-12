@@ -88,6 +88,27 @@ function Test-LesPortFree([int]$Port) {
   return @(Get-LesListeningProcessIds $Port).Count -eq 0
 }
 
+function Assert-LesLemonadeAdapterPort([int]$Port) {
+  if ($Port -ne 18080) {
+    throw "Lemonade adapter port must be 18080, got $Port"
+  }
+  if (-not (Test-LesPortFree -Port $Port)) {
+    throw "Lemonade adapter port 18080 is occupied"
+  }
+}
+
+function New-LesLemonadeLifecycleState(
+  [object]$LemonadeHost,
+  [int]$LemonadeHostPort = 18080
+) {
+  return [ordered]@{
+    lemonade_adapter_url = if ($LemonadeHost) { "http://127.0.0.1:$LemonadeHostPort" } else { $null }
+    lemonade_host_pid = if ($LemonadeHost) { $LemonadeHost.Id } else { $null }
+    lemonade_host_port = if ($LemonadeHost) { $LemonadeHostPort } else { $null }
+    lemonade_host_alive = if ($LemonadeHost) { -not $LemonadeHost.HasExited } else { $null }
+  }
+}
+
 function Get-LesProcessCommandLine([int]$ProcessId) {
   try {
     $row = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop

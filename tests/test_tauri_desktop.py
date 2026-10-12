@@ -101,6 +101,21 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert "save_setup_model" not in source
 
 
+def test_setup_snapshot_moves_bounded_probes_off_the_ui_thread():
+    source = (TAURI / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
+    command = source.split("async fn setup_snapshot(", 1)[1].split("fn collect_setup_snapshot", 1)[0]
+    assert "spawn_blocking(move || collect_setup_snapshot(app))" in command
+    assert ".await" in command
+    collector = source.split("fn collect_setup_snapshot", 1)[1].split("fn open_setup_link", 1)[0]
+    assert collector.count("setup_probe::output(") == 2
+    assert collector.count("Duration::from_secs(3)") == 2
+    assert ".output()" not in collector
+    assert ".status()" not in collector
+    for field in ("platform", "bootstrap", "configured_provider", "providers", "embeddings",
+                  "docker", "qdrant", "models", "core_ready", "ui_ready"):
+        assert f'"{field}":' in collector
+
+
 def test_tauri_bootstrap_does_not_install_or_launch_pywebview():
     mac = (ROOT / "installers/macos/app/bootstrap.sh").read_text(encoding="utf-8")
     windows = (ROOT / "installers/windows/app/bootstrap.ps1").read_text(encoding="utf-8-sig")

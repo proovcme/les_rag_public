@@ -109,6 +109,7 @@ def test_qdrant_url_is_a_named_editable_runtime_connection(monkeypatch):
 
 
 def test_assigned_model_timeout_is_named_and_restart_bound(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openrouter")
     registry.declared_env_defaults.cache_clear()
     monkeypatch.delenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", raising=False)
 
@@ -306,3 +307,56 @@ def test_gui_and_api_expose_registry_and_advanced_rag_controls():
     assert "RAPTOR и ColBERT" in diag
     assert "/api/rag/advanced" in diag
     assert "include_router(rag_advanced_router)" in app
+
+
+@pytest.mark.parametrize("provider,default", [("openrouter", "300.0"), ("ollama", "1800.0"), ("lemonade", "1800.0"), ("mlx", "1800.0"), ("freetoken", "1800.0")])
+@pytest.mark.parametrize("override", [None, "420", "", "invalid"])
+def test_timeout_registry_reports_current_provider_and_override(monkeypatch, tmp_path, provider, default, override):
+    monkeypatch.setattr(registry, "_ROOT", tmp_path)
+    monkeypatch.setenv("LES_LLM_PROVIDER", provider)
+    key = "LES_MODEL_CONNECTION_TIMEOUT_SEC"
+    if override is None:
+        monkeypatch.delenv(key, raising=False)
+    else:
+        monkeypatch.setenv(key, override)
+    registry.declared_env_defaults.cache_clear()
+    try:
+        factor = registry._factor(key, {})
+        assert factor["effective_value"] == ("420.0" if override == "420" else default)
+        assert factor["declared_default"] == default
+        assert factor["source"] == ("process" if override == "420" else "default")
+    finally:
+        registry.declared_env_defaults.cache_clear()
+
+
+def test_staged_runtime_cannot_supply_registry_defaults(monkeypatch, tmp_path):
+    source = tmp_path / "proxy" / "routers" / "chat.py"
+    source.parent.mkdir(parents=True)
+    source.write_text('import os\nos.getenv("LES_MODEL_CONNECTION_TIMEOUT_SEC")\nos.getenv("LES_AUDIT_FACTOR", "current")\n', encoding="utf-8")
+    staging = tmp_path / "desktop" / "tauri" / "src-tauri" / "resources" / "runtime" / "proxy" / "routers" / "chat.py"
+    staging.parent.mkdir(parents=True)
+    staging.write_text('import os\nos.getenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", 17.0)\nos.getenv("LES_STALE_ONLY_FACTOR", "stale")\nos.getenv("LES_AUDIT_FACTOR", "stale")\n', encoding="utf-8")
+    monkeypatch.setattr(registry, "_ROOT", tmp_path)
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openrouter")
+    monkeypatch.delenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", raising=False)
+    registry.declared_env_defaults.cache_clear()
+    try:
+        defaults = registry.declared_env_defaults()
+        assert "LES_STALE_ONLY_FACTOR" not in defaults
+        assert defaults["LES_AUDIT_FACTOR"] == "current"
+        assert registry._factor("LES_MODEL_CONNECTION_TIMEOUT_SEC", {})["effective_value"] == "300.0"
+    finally:
+        registry.declared_env_defaults.cache_clear()
+
+
+def test_timeout_registry_does_not_report_unloaded_dotenv_as_effective(monkeypatch, tmp_path):
+    monkeypatch.setattr(registry, "_ROOT", tmp_path)
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openrouter")
+    monkeypatch.delenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", raising=False)
+    registry.declared_env_defaults.cache_clear()
+    try:
+        factor = registry._factor("LES_MODEL_CONNECTION_TIMEOUT_SEC", {"LES_MODEL_CONNECTION_TIMEOUT_SEC": "420"})
+        assert factor["effective_value"] == "300.0"
+        assert factor["source"] == "default"
+    finally:
+        registry.declared_env_defaults.cache_clear()
