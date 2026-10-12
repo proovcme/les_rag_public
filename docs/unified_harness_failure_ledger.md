@@ -1,5 +1,40 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+<!-- installed-929-live-closeout:v1 -->
+## Установлен929: результаты живого сравнительного контроля
+
+Установлен runtime **0.31.201 / 929**, commit `c2624773f6b7dcf7856efb38d0012a971c6aa45b`; receipt `artifacts/live_929/installed.json`, 23 доставленных файлов. Это runtime-патч: native EXE не переустанавливался, приёмка нового установщика не заявляется. **customer-ready=false**.
+
+Frozen r3: **4683 passed, 20 skipped, 5 warnings in 693.80s (0:11:33)**; 16 exit receipts успешны. Smoke929: **8 PASS / 2 FAIL / 0 WARN**. Отрицательные результаты сохранены: diagnostics_endpoint: diagnostics overall='err', 1484.0 мс; chat_project_noscope: ReadTimeout: timed out, 90016.0 мс. Увеличением тайм-аута они не заменены.
+
+- **B0_DIRECT**: 143.19 с; `measurement_complete`; решений модели 19 (work=19), адресов источника в решениях 19/20. Исходник: 19 рабочих строк + 1 PDF_TEXT-контекст; norm_selected=true у 7/19 строк проекции; XLSX 1. confirmed=0.0, preliminary=510742.89, вычисленных позиций=0. `priced_partial`. Ценовая книга `sankt-peterburg_3kv2026`, match=`exact`.
+  Доставка по тексту, допущенному governor: полные ресурсы 6 карточек; показанный состав 1, literal composition lines 1; declared complete 1. Это наблюдение доставки, не применимости. Native calls=0; исполненных запросов 19, search_hits=114. Grouped trace агрегирован по 1 страницам; это page observations с возможными повторами, его исходные completeness counters не заменяют governor delivery. Model result=`accepted_unchanged`, packaged=True; ошибки receipt: нет.
+
+- **B1_CANDIDATE**: 315.38 с; `measurement_complete`; решений модели 20 (unresolved=1, work=18, header=1), адресов источника в решениях 20/20. Исходник: 19 рабочих строк + 1 PDF_TEXT-контекст; norm_selected=true у 11/20 строк проекции; XLSX 1. confirmed=0.0, preliminary=35877.1, вычисленных позиций=0. `priced_partial`. Ценовая книга `sankt-peterburg_3kv2026`, match=`exact`.
+  Доставка по тексту, допущенному governor: полные ресурсы 18 карточек; показанный состав 12, literal composition lines 12; declared complete 12. Это наблюдение доставки, не применимости. Native calls=0; исполненных запросов 30, search_hits=180. Grouped trace агрегирован по 3 страницам; это page observations с возможными повторами, его исходные completeness counters не заменяют governor delivery. Model result=`accepted_unchanged`, packaged=True; ошибки receipt: нет.
+
+**Отрицательный предметный результат B0_DIRECT929:**
+
+- PDF!R4: исходное «Защитное укрытие», 116 м², превращено моделью в «Разработка проема в ГКЛ потолке для монтажа ревизионного лючка» с ГЭСН 08-04-001-26. В скачанном XLSX у этой позиции 443 229,75 руб. известной стоимости («ЛСР РИМ»!B25/C25/E25 и L44, связь с PDF!R4 — «Проверка»!A2/B2/G2); это не подтверждённая итоговая сумма. Прочитано сохранённое значение ячейки без пересчёта и сохранения файла.
+- PDF!R6: для демонтажа кабельных линий выбрана ГЭСНм 08-02-409-09; row_projection сохраняет action_conflict:демонтаж->монтаж.
+- Все 7 выборов нормы в строках имеют _evidence_check.card_body_shown=false (только inventory); native tool calls=0. Полные ресурсы других показанных карточек не подтверждают применимость выбранных норм.
+
+Источник: `artifacts/live_929/installed929_bap_b0/source_audit.json` (source_line/source_quantity), `final.json` (model_result.decision_rows, _evidence_check, row_projection). Эти наблюдения относятся только к B0.
+
+**B1 также не прошёл независимую предметную проверку.** Его XLSX имеет SHA `ee41aa640b284d13565726a1f9bd36c0782c0a0df5ba1a466d136deaa939887c`; `ЛСР РИМ!A15` содержит PRICED_PARTIAL, D18/L198 — 35 877,10 руб. предварительно. Локаторы и исходные количества сохранены, но подбор норм не подтверждён:
+
+- R12/R15: полимерная/финишная шпатлёвка заменена силикатными нормами 13-03-005-01/-02 (C63/C103).
+- R21: для БАП выбран 10-10-007-01, хотя сама модель пишет «БАП — не домофон»; evidence отсутствует, строка исключена из расчёта с нормативным конфликтом.
+- R22/R23: кабель и гофротруба получили одну 08-02-409-09 и одинаковые 14 285,47 руб. (L181/L193), без прочитанного состава и обоснования разделения операций.
+
+Все шесть процитированных refs выбранных норм отсутствуют среди показанных полных ресурсных тел; native calls=0. Доставка полного ресурса другой карточки не подтверждает выбранную норму. Проверка сохранённых ячеек не выполняла пересчёт и не меняла XLSX. Источники — final/source_audit и скачанный файл в `artifacts/live_929/installed929_bap_b1/`.
+
+Это outcome измерения установленной929, а не автоматическое закрытие профессиональных дефектов928. Предметный вывод требует независимого построчного сопоставления нормы, операции, объёма и цены.
+
+Числа получены из завершённых receipt/final/source_audit и calculation_snapshot; SHA и размеры скачанных файлов проверяются. norm_selected, суммы и наличие XLSX не доказывают профессиональную применимость норм или качество всех документов. Сравнение относится к одному БАП; разные разделы, большой ВОР, multi-input/ZIP, реальная котировка ЭТМ и точный установщик остаются отдельными незакрытыми проверками.
+
+Источники: `artifacts/live_929/installed929_bap_b0/`, `artifacts/live_929/installed929_bap_b1/`, `artifacts/live_929/basic_function_smoke.json`. Прежние negative gates и записи этапов ниже сохранены как история; их pending-статусы не описывают текущую установленную сборку.
+
 ## Кандидат929: независимые воспроизводители после сравнения PR23
 
 На нашем коде подтверждены: None→0 и NaN при priced_final; Windows PNG

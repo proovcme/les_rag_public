@@ -1,5 +1,24 @@
 # Версии программного контура ЛЕС
 
+<!-- installed-929-live-closeout:v1 -->
+## Установлен929: результаты живого сравнительного контроля
+
+Установлен runtime **0.31.201 / 929**, commit `c2624773f6b7dcf7856efb38d0012a971c6aa45b`; receipt `artifacts/live_929/installed.json`, 23 доставленных файлов. Это runtime-патч: native EXE не переустанавливался, приёмка нового установщика не заявляется. **customer-ready=false**.
+
+Frozen r3: **4683 passed, 20 skipped, 5 warnings in 693.80s (0:11:33)**; 16 exit receipts успешны. Smoke929: **8 PASS / 2 FAIL / 0 WARN**. Отрицательные результаты сохранены: diagnostics_endpoint: diagnostics overall='err', 1484.0 мс; chat_project_noscope: ReadTimeout: timed out, 90016.0 мс. Увеличением тайм-аута они не заменены.
+
+Оба контроля: `Qwen3.6-35B-A3B-NVFP4`; источник, вопрос, профиль, назначенное подключение и область B0/B1 сверены по comparative_identity. Профили и модель не изменяются этим закрывающим документом.
+
+- **B0_DIRECT**: 143.19 с; `measurement_complete`; решений модели 19 (work=19), адресов источника в решениях 19/20. Исходник: 19 рабочих строк + 1 PDF_TEXT-контекст; norm_selected=true у 7/19 строк проекции; XLSX 1. confirmed=0.0, preliminary=510742.89, вычисленных позиций=0. `priced_partial`. Ценовая книга `sankt-peterburg_3kv2026`, match=`exact`.
+  Доставка по тексту, допущенному governor: полные ресурсы 6 карточек; показанный состав 1, literal composition lines 1; declared complete 1. Это наблюдение доставки, не применимости. Native calls=0; исполненных запросов 19, search_hits=114. Grouped trace агрегирован по 1 страницам; это page observations с возможными повторами, его исходные completeness counters не заменяют governor delivery. Model result=`accepted_unchanged`, packaged=True; ошибки receipt: нет.
+
+- **B1_CANDIDATE**: 315.38 с; `measurement_complete`; решений модели 20 (unresolved=1, work=18, header=1), адресов источника в решениях 20/20. Исходник: 19 рабочих строк + 1 PDF_TEXT-контекст; norm_selected=true у 11/20 строк проекции; XLSX 1. confirmed=0.0, preliminary=35877.1, вычисленных позиций=0. `priced_partial`. Ценовая книга `sankt-peterburg_3kv2026`, match=`exact`.
+  Доставка по тексту, допущенному governor: полные ресурсы 18 карточек; показанный состав 12, literal composition lines 12; declared complete 12. Это наблюдение доставки, не применимости. Native calls=0; исполненных запросов 30, search_hits=180. Grouped trace агрегирован по 3 страницам; это page observations с возможными повторами, его исходные completeness counters не заменяют governor delivery. Model result=`accepted_unchanged`, packaged=True; ошибки receipt: нет.
+
+Числа получены из завершённых receipt/final/source_audit и calculation_snapshot; SHA и размеры скачанных файлов проверяются. norm_selected, суммы и наличие XLSX не доказывают профессиональную применимость норм или качество всех документов. Сравнение относится к одному БАП; разные разделы, большой ВОР, multi-input/ZIP, реальная котировка ЭТМ и точный установщик остаются отдельными незакрытыми проверками.
+
+Источники: `artifacts/live_929/installed929_bap_b0/`, `artifacts/live_929/installed929_bap_b1/`, `artifacts/live_929/basic_function_smoke.json`. Прежние negative gates и записи этапов ниже сохранены как история; их pending-статусы не описывают текущую установленную сборку.
+
 ## Кандидат 0.31.201 / 929
 
 Frozen r3 завершён: **4683 passed, 20 historical skipped, 5 warnings**;
