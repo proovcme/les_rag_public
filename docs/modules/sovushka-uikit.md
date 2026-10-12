@@ -9,7 +9,9 @@
 пустые результаты, пропуски цены и инструкция добавления в «Прайсы» на русском.
 Логин и пароль вводятся в существующих маскированных GUI-факторах, не в чате.
 Новых компонентов, цветов или CSS нет. Регрессии —
-`tests/test_etm_source_workflow.py`; live desktop/mobile и WCAG audit pending.
+`tests/test_etm_source_workflow.py`. Установленные GUI-поля сохранения и
+карточка поиска/выгрузки проверены в in-app browser; API-авторизация не
+подтверждена. Полный desktop/mobile и WCAG audit pending.
 Контракт источника — [etm-supplier](etm-supplier.md).
 
 ## 905: восстановление файлов после обрыва соединения
