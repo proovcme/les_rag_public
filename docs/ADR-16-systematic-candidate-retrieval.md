@@ -628,6 +628,23 @@ model HTTP callsites вне ContextGovernor, запрет фиктивной ж�
   документ прирос четырьмя строками за 42 минуты
   (`stage_b/live_824/b1_lineage_824_continuation_final.json`).
 
+- `NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF` — названный шифр не может быть посчитан без
+  показанной карточки (живая 929: 7 и 11 выбранных норм, 0 показанных тел карточек,
+  `read_norm_card` предлагался в каждом answer-ходе и ни разу не был вызван моделью, а деньги
+  в XLSX ушли по 6 и 9 позициям). Проверяются три звена одного шва: в
+  `proxy/services/chat_evidence_application_service.py` любая функция, которая биндит
+  доказательства строк (`bind_row_evidence_ids`) и принимает решение модели
+  (`admit_model_result_packet`), обязана вызвать `norm_card_proof_reads_needed`,
+  `norm_card_proof_request_message` и `record_norm_card_proof_request` — иначе пакет с
+  недоказанным выбором принимается молча; в `proxy/services/norm_card_proof_service.py`
+  сообщение обязано называть `read_norm_card` (иначе ответить можно только новым угадыванием)
+  и читать `card_body_shown` (иначе долг меряется присутствием в выдаче); в
+  `proxy/services/model_rag_grouped_evidence_service.py` `card_delivery_facts` обязана
+  выводить факт из показанного текста (`_pointer_body`, блок `Состав работы:`), а не повторять
+  булеву аргумент вызывающего. Приложения чтения не подделывает: оборванное доказательство
+  возвращается модели, решение и вызов инструмента остаются за моделью.
+
+
 ## Приёмка
 
 Минимальное доказательство — живой пользовательский путь на установленной

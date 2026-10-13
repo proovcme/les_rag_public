@@ -22,6 +22,7 @@ from proxy.services.openai_compatible_transport_service import InferenceResponse
 
 
 NORM_CODE = "ГЭСН99-01-001-01"
+NORM_CODE_B = "ГЭСН99-01-002-01"
 RESOURCE_A = "20.4.01.01-0001"
 RESOURCE_B = "20.4.01.01-0002"
 BOOK = "sankt-peterburg_3kv2026"
@@ -249,7 +250,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      native_discovery_queries=(), native_discovery_padding=0, json_final=False,
                      exact_resource_padding=0, query_declaration=None, budget_stop_at=None,
                      wire_budget_bytes=None, norm_ref_read=None, native_repeats=0,
-                     native_reasoning=None, temperature=None):
+                     native_reasoning=None, temperature=None, final_answer=None,
+                     proof_replies=(), distinct_norms=False):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -302,6 +304,17 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
     def norm_search(query, *, limit):
         search_queries.append(query)
         assert limit == 6
+        if distinct_norms and "Cable B" in query:
+            # A second, different card identity: the 929 case where the chosen шифр was
+            # delivered only as a pointer and no other shown card proves it was read.
+            return {"cards": [{"norm_key": "immutable-norm-b", "norm_code": NORM_CODE_B,
+                              "title": "Synthetic second norm", "measure_unit": "m",
+                              "source_ref": "fixture#immutable-norm-b",
+                              "work_steps": ["Lay" + (("x" * 4000) + query)],
+                              "resource_count": 24,
+                              "resource_preview": [{"code": RESOURCE_A, "name": "Cable A", "unit": "m"},
+                                                   {"code": RESOURCE_B, "name": "Cable B", "unit": "m"}]}],
+                    "retrieval_trace": {"rag": {"status": "ok", "fusion": "native_rrf"}}}
         if query in native_discovery_queries:
             return {"cards": [{"norm_key": f"new-discovery-{index}", "norm_code": f"DISCOVERY-{index}",
                               "title": f"Literal discovered candidate {index}", "measure_unit": "m",
@@ -331,6 +344,15 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
 
     def exact_card(**pointer):
         exact_reads.append(pointer)
+        if distinct_norms and pointer.get("norm_code") == NORM_CODE_B:
+            assert pointer == {"norm_key": "immutable-norm-b", "norm_code": NORM_CODE_B}
+            return {"status": "ok", "schema": "smeta_exact_norm_card.v1", "missing": [], "warnings": [],
+                    "card": {"norm_key": "immutable-norm-b", "norm_code": NORM_CODE_B,
+                             "title": "Synthetic second norm", "measure_unit": "m",
+                             "work_steps": ["Lay"], "source_ref": "fixture#immutable-norm-b",
+                             "resource_count": 24, "resources": full_resources,
+                             "resources_returned": 24, "resources_complete": True,
+                             "resource_consumption_known": True}}
         assert pointer == {"norm_key": "immutable-norm", "norm_code": NORM_CODE}
         return {"status": "ok", "schema": "smeta_exact_norm_card.v1", "missing": [], "warnings": [],
                 "card": {"norm_key": "immutable-norm", "norm_code": NORM_CODE,
@@ -424,7 +446,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                             if item.get("doc_name") == "fgis_pricebook_resources.v1":
                                 shown_prices[item["resource_code"]] = item["evidence_ref"]
             refs = shown_prices[RESOURCE_A], shown_prices[RESOURCE_B]
-        answer = _answer(refs=refs)
+        answer = (_answer(refs=refs) if final_answer is None else
+                  (final_answer(requests) if callable(final_answer) else str(final_answer)))
         if json_final:
             answer = json.dumps({"artifact_kind": "lsr", "rows": [
                 {"source_row": "S!R2", "row_role": "material", "title": "Cable A", "unit": "m",
@@ -460,6 +483,10 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
 
     if not unknown_tool:
         responses.append(final_response)
+        # Replies the model gives after the application sends an answer back for
+        # proof (unread chosen norm card). Empty by default: an answer that already
+        # reads its cards must not be able to buy extra inference cycles here.
+        responses.extend(proof_replies)
     for packet_index in range(1, packet_count):
         responses.extend([
             InferenceResponse(text="\n".join(packet_queries[packet_index]), tool_calls=(), finish_reason="stop", usage={}),

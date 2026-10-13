@@ -132,6 +132,13 @@ from proxy.services.model_evidence_read_contract import (
     read_result_receipt,
 )
 from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
+from proxy.services.norm_card_proof_service import (
+    PROOF_PURPOSE as NORM_CARD_PROOF_PURPOSE,
+    proof_budget as norm_card_proof_budget,
+    proof_request_message as norm_card_proof_request_message,
+    record_proof_request as record_norm_card_proof_request,
+    unread_chosen_norm_refs as norm_card_proof_reads_needed,
+)
 from proxy.services.model_rag_grouped_evidence_service import (
     EvidenceCard,
     EvidenceGroup,
@@ -3960,6 +3967,29 @@ _HEADING_LINE_RE = re.compile(r"^#{1,6}\s+")
 _BOLD_WRAPPER_RE = re.compile(r"^(?:\*\*|__)(?P<body>.+?)(?:\*\*|__)$")
 _TABLE_RULE_RE = re.compile(r"^\|?[\s:|-]{2,}\|?$")
 _LABEL_ONLY_RE = re.compile(r"^[^\n]{1,80}:\s*$")
+#: A line that reads as the answer about the stage rather than a question to the index: it
+#: carries a second sentence.  Measured over 1 117 declared lines of live builds 901-929: 28
+#: have this shape and every one of them is the accompanying answer («Коротко по текущему
+#: пакету: … БАП»). Таблицы с операциями, изделиями и объёмами в этом фрагменте отсутствуют.»).
+#: The shape is recorded and never used to drop or demote a line, and this is the measured
+#: reason: the customer's own row title «Тип 2. Открытый потолок. Обеспыливающая покраска
+#: открытого потолка…» (live 829, pinned in tests/test_model_rag_query_declaration.py as a
+#: query that must still run) has the same shape, and 1 013 of the 1 089 genuine search lines
+#: carry neither a locator nor literal row text, so no line-shape rule separates the two
+#: populations.  Separating search actions from accompanying text needs the explicit technical
+#: boundary of the declared envelope, not a filter that breaks a real query when the comment is
+#: reworded (§ 3 of the closeout task); recorded as an open blocker with this evidence.
+_NARRATION_SHAPED_QUERY_RE = re.compile(r"[.!?]\s+[А-ЯА-ЯЁA-Z][^.*|]{4,}")
+
+
+def narration_shaped_query(text: object) -> bool:
+    """True when a declared line is shaped like an answer about the work, not a search.
+
+    Diagnostic only: the sheet pass records how many executed lines have this shape without
+    changing what gets searched, so the cost of the missing technical boundary stays visible.
+    """
+
+    return bool(_NARRATION_SHAPED_QUERY_RE.search(" ".join(str(text or "").split())))
 _LOCATOR_TOKEN_RE = re.compile(
     r"[А-Яа-яA-Za-z][А-Яа-яA-Za-z0-9_.-]{0,24}!R\d+", re.IGNORECASE
 )
@@ -10301,6 +10331,10 @@ async def _execute_chat_evidence_application(
                         # be starved by a leading row that keeps a quality gap.
                         offered_locators: set[str] = set()
                         packet_attempts: dict[tuple[str, ...], int] = {}
+                        # One proof-read repair per packet attempt: a chosen-but-unread card
+                        # is read once and the model is asked again, and a packet that still
+                        # comes back unread keeps its honest gap instead of looping.
+                        proof_read_attempts: dict[tuple[str, ...], int] = {}
                         offer_counts: dict[str, int] = {}
                         if (
                             research_job_service is not None
@@ -11155,6 +11189,23 @@ async def _execute_chat_evidence_application(
                                     page_trace["exact_inventory_fit"] = inventory_fit
                                     if inventory_fit["status"] == "expanded":
                                         page_trace.update(inventory_hit_count=len(model_evidence_chunks), unshown_refs=[])
+                                        # 929 measured the divergence this closes: the page was
+                                        # re-planned after these numbers were written, so the
+                                        # trace kept counting bodies that were never rendered.
+                                        # Every delivery number is now taken from the chunks the
+                                        # expanded page actually holds.
+                                        page_trace.update(
+                                            full_body_hit_count=sum(
+                                                c.meta.get("body_status") == "full"
+                                                for c in model_evidence_chunks),
+                                            normative_complete_card_count=sum(
+                                                c.meta.get("normative_card_complete") is True
+                                                for c in model_evidence_chunks),
+                                            normative_preview_card_count=sum(
+                                                c.meta.get("normative_resources_status") == "preview"
+                                                for c in model_evidence_chunks),
+                                            deferred_body_refs=list(page_body_deferred),
+                                        )
                                         resumed_inventory_refs = {str(c.meta.get("model_evidence_ref") or "")
                                             for c in model_evidence_chunks}
                                         resumed_body_refs = {str(c.meta.get("model_evidence_ref") or "")
@@ -11420,6 +11471,111 @@ async def _execute_chat_evidence_application(
                                 pass_rows, [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                 binding_phase="first",
                             )
+                            # Blocker 929 § 3 (measured in
+                            # `artifacts/live_929/card_read_repro_930/repro.json`): the run
+                            # delivered 125 norm pointers and 3 complete cards, `read_norm_card`
+                            # was offered on every answer call and never called, and 9 шифры
+                            # chosen from a pointer line still put money in the XLSX (БАП: «Защитное
+                            # укрытие», 116 м² → ГЭСН 08-04-001-26, 151 446,11 руб. as «известная
+                            # стоимость»).  A named шифр is a claim about a card the model must have
+                            # seen, so the answer is sent back once with that fact stated.  The
+                            # application does not read on the model's behalf
+                            # (`run_model_evidence_read_turn` finishes a turn only when the same
+                            # model requests the operation): it refuses an unproven choice, names
+                            # the refs, and leaves the professional decision — and the tool call —
+                            # with the model.  Bounded to one proof round per packet attempt; a
+                            # second unread answer keeps its `norm_card_body_unread` gap instead of
+                            # looping or being promoted.
+                            proof_refs = norm_card_proof_reads_needed(
+                                pass_rows,
+                                chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                            )
+                            if (proof_refs and sheet_read_tools
+                                    and proof_read_attempts.get(fingerprint, 0) < 1):
+                                proof_read_attempts[fingerprint] = 1
+                                proof_receipts: list[dict[str, Any]] = []
+                                answered = ""
+                                answer_usage: dict[str, Any] = {}
+                                try:
+                                    answered, answer_usage = await _sheet_pass_llm(
+                                        {**chat_body, "messages": [
+                                            *chat_body["messages"],
+                                            {"role": "assistant", "content": pass_answer},
+                                            {"role": "user", "content": norm_card_proof_request_message(
+                                                proof_refs, pass_rows,
+                                                max_refs=norm_card_proof_budget(configured=_env_int(
+                                                    "LES_LSR_NORM_CARD_PROOF_READS", 6)))},
+                                        ]},
+                                        purpose=NORM_CARD_PROOF_PURPOSE,
+                                        expected_connection_revision_id=measured_connection_revision(
+                                            answer_packet),
+                                    )
+                                except CloudBudgetStop:
+                                    if research_job_service is not None and research_job is not None:
+                                        research_job = research_job_service.pause(
+                                            research_job["job_id"],
+                                            remaining=list(dict.fromkeys([*remaining, *packet])),
+                                            phase="cloud_token_budget",
+                                            held_packet={**model_rag_evidence_page_state(
+                                                sheet=sheet_name, packet=packet,
+                                                leftover_query_hits=pass_hits,
+                                                query_offset=evidence_query_offset,
+                                                query_provenance=pass_query_provenance,
+                                                query_addresses=pass_query_addresses,
+                                                pending_result_packets=pending_result_packets),
+                                                "norm_proof_pending": True},
+                                        )
+                                    raise
+                                if answered:
+                                    pass_answer, usage = answered, dict(answer_usage or {})
+                                    tokens = int(tokens or 0) + int(
+                                        usage.get("completion_tokens") or 0)
+                                    last_finish = llm_usage_finish_reason(usage)
+                                    try:
+                                        proof_turn = await run_model_evidence_read_turn(
+                                            text=pass_answer, usage=usage,
+                                            parse_calls=_parse_model_tool_calls,
+                                            execute=model_research_tools.execute,
+                                            allowed_tools={item["function"]["name"]
+                                                           for item in sheet_read_tools},
+                                            max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
+                                            on_read_results=_accept_sheet_reads,
+                                            continue_native_turn=_continue_sheet_reads,
+                                            on_read_replays=_accept_sheet_read_replays,
+                                        )
+                                        pass_answer, usage = proof_turn.text, proof_turn.usage
+                                        tokens = int(tokens or 0) + proof_turn.extra_completion_tokens
+                                        proof_receipts = list(proof_turn.receipts)
+                                        if proof_turn.stop_reason:
+                                            retrieval_trace["tool_loop"]["evidence_read_stop"] = (
+                                                proof_turn.stop_reason)
+                                    except ContextRequiredSectionOverflow as context_error:
+                                        retrieval_trace["context_governor"]["error"] = (
+                                            model_read_capacity_trace(
+                                                context_error, purpose=NORM_CARD_PROOF_PURPOSE))
+                                    proved_pass = parse_model_rag_result(
+                                        pass_answer, diagnostics=pass_transport_diagnostics,
+                                    )
+                                    proved_rows: list[dict[str, Any]] = []
+                                    if proved_pass is not None:
+                                        _proved_visible, proved_rows = proved_pass
+                                    pass_rows = bind_row_evidence_ids(
+                                        proved_rows,
+                                        [*prior_page_chunks, *saved_read_chunks,
+                                         *model_evidence_chunks],
+                                        binding_phase="first",
+                                    )
+                                record_norm_card_proof_request(
+                                    retrieval_trace, sheet=sheet_name, packet=packet,
+                                    refs=proof_refs, receipts=proof_receipts,
+                                    attempt=proof_read_attempts[fingerprint],
+                                )
+                                logger.warning(
+                                    "[NORM_PROOF] sheet=%s packet=%s unread_refs=%s "
+                                    "model_reads_after_request=%s answered=%s",
+                                    sheet_name, len(packet), len(proof_refs),
+                                    len(proof_receipts), bool(answered),
+                                )
                             pass_errors = validate_model_rag_result_structure(
                                 pass_rows,
                                 [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
@@ -11515,6 +11671,14 @@ async def _execute_chat_evidence_application(
                                     "packet_locators": list(packet),
                                     "packet_attempt": packet_attempts[fingerprint],
                                     "queries": model_queries,
+                                    # § 3, visible cost of the missing technical boundary:
+                                    # how many executed lines were the answer about the stage.
+                                    # Counting only — dropping or demoting them by line shape
+                                    # would break a real query whose row title carries periods.
+                                    "narration_shaped_executed_lines": sum(
+                                        1 for query in model_queries
+                                        if narration_shaped_query(query)
+                                    ),
                                     "declared_queries": declared_queries,
                                     "query_calls": query_calls,
                                     "query_answer_cut": query_answer_cut,

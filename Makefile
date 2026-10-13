@@ -78,6 +78,7 @@ INTEGRATION_TESTS += tests/test_model_query_checkpoint_draft.py
 UNIT_TESTS += tests/test_model_norm_snapshot_binding.py tests/test_model_query_generation_limit_boundary.py tests/test_model_resource_literal_capacity.py tests/test_norm_card_completeness_facts.py tests/test_norm_price_identity_928.py tests/test_vor_audit_metadata_admission_928.py tests/test_vor_intake_integrity_928.py tests/test_workbook_document_scope_integrity_928.py tests/test_public_error_service.py
 UNIT_TESTS += tests/test_workbook_provider_binding_928.py tests/test_smeta_conflict_visible_identity_928.py
 UNIT_TESTS += tests/test_model_initial_schema_reserve_928.py
+UNIT_TESTS += tests/test_norm_card_proof_request_930.py tests/test_architecture_norm_card_proof_gate.py
 CURRENT_TESTS ?= $(sort $(UNIT_TESTS) $(INTEGRATION_TESTS) $(RAG_CORE_TESTS) $(FOCUS_TESTS) $(MEMORY_TESTS) $(SMETA_DOCUMENT_TESTS) $(MODEL_CONNECTION_TESTS) tests/test_code_runtime_map.py tests/test_documentation_contract.py tests/test_test_profiles.py tests/test_software_versions.py)
 LEGACY_ARCHITECTURE_TESTS ?= tests/test_construction_harness.py tests/test_resource_cost_v05.py tests/test_resource_cost_v06.py tests/test_unified_adapters_v09.py tests/test_unified_async_v10.py tests/test_unified_construction_harness.py tests/test_unified_construction_v04.py tests/test_unified_filebody_v12.py tests/test_unified_live_v07.py tests/test_unified_operational_v08.py tests/test_unified_real_v11.py
 ARTEL_TESTS := $(wildcard tests/test_artel*.py)

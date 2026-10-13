@@ -2215,3 +2215,61 @@ unchanged unsupported-counter fallback, and refusal to spend native-read reserve
 The existing initial-admission tests retain their explicit lower-ceiling contract.
 These checks establish the budget correction, not installed or professional
 acceptance of candidate 928.
+
+
+## Candidate 930 — a chosen шифр is priced only after its own card was delivered
+
+Measured on installed 929 (`.test-tmp/repro_929_card_read_blocker.py` →
+`artifacts/live_929/card_read_repro_930/repro.json`, both БАП cells): B0_DIRECT named 7 norms,
+B1_CANDIDATE 11, and **0** of those chosen cards had `_evidence_check.card_body_shown` true.
+B1 was delivered 125 norm pointers, 18 body entries and 3 complete cards over three packets;
+`read_norm_card` was offered on every answer call (`canonical_native_tools.count = 5`) and
+`native_tool_call_identities` stayed empty. 6 (B0) and 9 (B1) of those unread choices still
+carried numbers in the delivered XLSX — for PDF!R4 «Защитное укрытие», 116 м² that was
+151 446,11 руб. under a «Разработка проема…» шифр.
+
+The rule candidate 930 enforces is the delivery half of § 3/§ 4 of
+`QWEN_MVP_CLOSEOUT_2026-09-30.md`, and it stays inside the existing stage:
+
+* `proxy/services/norm_card_proof_service.py` reads the fact the application owns — a work row
+  naming a шифр whose cited ref has `card_body_shown is False` — and composes one bounded,
+  visible proof request naming those refs and шифры. It names no norm, rejects none and reads
+  nothing itself: `run_model_evidence_read_turn` ends a turn only when the model requests an
+  evidence operation, so the read stays the model's action and its answer stays its decision.
+* The sheet pass sends that request once per packet attempt
+  (`LES_LSR_NORM_CARD_PROOF_READS`, refs capped at 6) and takes the answer again on the same
+  governed messages. A model-issued `read_norm_card` executes through the existing path:
+  receipts, `bind_model_requested_read_evidence`, durable `record_evidence_read`, then the
+  native continuation. A second unread answer keeps its `norm_card_body_unread` gap and buys
+  no further inference.
+* `retrieval_trace.norm_card_proof_requests` records refs, reason, and how many reads the model
+  actually made after the request, so the cost and the effect are both auditable.
+
+Two counter fixes come with it, because § 3 asks for the difference between *found*,
+*described* and *delivered*: `card_delivery_facts` no longer echoes the caller's boolean —
+`card_body_shown` is derived from the rendered text, and a caller that claimed a body while
+passing a pointer line is reported by `body_claim_disagrees_with_delivery` — and the
+`grouped_model_evidence_pages` entry is recomputed from the chunks the expanded page actually
+holds instead of keeping the pre-refit `full_body_hit_count`. In the 929 records the two views
+of one packet disagreed in 6 of 24 `source_map` rows (delivered/body_visible true while the
+same ref is listed in `deferred_body_refs`).
+
+What this does not claim: it does not prove professional applicability of any chosen norm, and
+it does not by itself produce money — a position needs resources and prices read as well. The
+measured requirement it serves is that a шифр nobody showed cannot be presented as a calculated
+position. The narration/search boundary of § 3 is **not** solved here: measured over 1 117
+declared lines from builds 901-929, 28 lines carry a second sentence and all 28 are
+accompanying answer, but the customer's own row title «Тип 2. Открытый потолок. Обеспыливающая
+покраска…» has the same shape and 1 013 of the 1 089 genuine search lines carry neither a
+locator nor literal row text — no line-shape or attribution rule separates the two
+populations, so such a filter would drop real queries. The executed count of narration-shaped
+lines is recorded per packet (`tool_loop.passes[].narration_shaped_executed_lines`) and the
+boundary remains an open blocker.
+
+`tests/test_norm_card_proof_request_930.py` runs the real sheet pass offline: a pointer-only
+choice is sent back exactly once with the ref and шифр named in a user turn (never a fabricated
+tool call); a model read after the request makes the chosen card `card_body_shown: true` and
+clears `norm_card_body_unread`; a second unread answer leaves the gap and costs no third call;
+an answer that already read its cards buys no extra inference at all.
+`tests/test_architecture_norm_card_proof_gate.py` pins the three links of the seam with the
+mutation each would need to silently return 929.

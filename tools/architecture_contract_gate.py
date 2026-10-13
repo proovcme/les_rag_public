@@ -240,6 +240,29 @@ ACCRUAL_GAP_FUNCTION = "_nr_sp_gap"
 ACCRUAL_GAP_COLLECTION_FUNCTION = "collect_lsr_price_gaps"
 ACCRUAL_LABELS = frozenset({"nr_sp_without_basis", "nr_sp_unresolved"})
 
+# Task 2026-09-30 § 3 (installed 929): a шифр was chosen from an inventory pointer, its card
+# was never delivered, and the position was still priced.  One seam, three links: the sheet
+# pass must ask the model to prove the choice (`norm_card_proof_reads_needed` + the message +
+# the visible record), the proof module must state the missing fact without proposing a norm
+# (`read_norm_card` named, шифр not chosen for the model), and the delivery facts must be read
+# out of the text that was actually rendered (`_pointer_body`, the composition block) instead
+# of echoed from the caller.  Breaking any link silently returns 929: pointer, guess, money.
+NORM_PROOF_CHAT_MODULE = "proxy/services/chat_evidence_application_service.py"
+NORM_PROOF_PACKET_FUNCTION = "run_chat_evidence_application"
+NORM_PROOF_ASK_NEIGHBOURS = ("bind_row_evidence_ids", "admit_model_result_packet")
+NORM_PROOF_REQUIRED_CALLS = (
+    "norm_card_proof_reads_needed",
+    "norm_card_proof_request_message",
+    "record_norm_card_proof_request",
+)
+NORM_PROOF_SERVICE_MODULE = "proxy/services/norm_card_proof_service.py"
+NORM_PROOF_MESSAGE_FUNCTION = "proof_request_message"
+NORM_PROOF_READ_TOOL = "read_norm_card"
+NORM_PROOF_UNREAD_FUNCTION = "unread_chosen_norm_refs"
+DELIVERY_FACTS_MODULE = "proxy/services/model_rag_grouped_evidence_service.py"
+DELIVERY_FACTS_FUNCTION = "card_delivery_facts"
+DELIVERY_FACTS_REQUIRED_REFS = ("_pointer_body", "Состав работы:")
+
 # Existing direct transports are migration debt, pinned by exact path + function.
 # New callsites must use ContextGovernor instead of expanding this baseline.
 INFERENCE_CALLSITE_BASELINE: frozenset[tuple[str, str]] = frozenset(
@@ -1453,6 +1476,86 @@ def _price_ownership_violations(relative: str, tree: ast.AST) -> Iterable[Archit
         )
 
 
+def _norm_card_proof_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Task 2026-09-30 § 3: a chosen шифр cannot be priced without its own card being shown.
+
+    Three links of one seam.  The sheet pass asks; the proof module states the missing fact
+    without choosing a norm; the delivery facts are read out of the rendered text.  Dropping
+    any of them silently returns build 929, where 125 pointers, 3 complete cards and 0 native
+    reads produced money for 15 norms nobody had read (B0: 6 of 7, B1: 9 of 11).
+    """
+
+    if relative == NORM_PROOF_CHAT_MODULE:
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            called = {_call_name(item).split(".")[-1] for item in ast.walk(node)
+                      if isinstance(item, ast.Call)}
+            if not all(name in called for name in NORM_PROOF_ASK_NEIGHBOURS):
+                continue
+            missing = [name for name in NORM_PROOF_REQUIRED_CALLS if name not in called]
+            if missing:
+                yield ArchitectureViolation(
+                    "NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF",
+                    relative,
+                    node.lineno,
+                    f"{node.name}() admits model decisions without asking for the proof of the "
+                    f"chosen norm cards ({', '.join(missing)} is not called), so a шифр taken "
+                    "from an inventory pointer would be priced as if its card had been read",
+                )
+        return
+    if relative == NORM_PROOF_SERVICE_MODULE:
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name == NORM_PROOF_MESSAGE_FUNCTION:
+                literals = {item.value for item in ast.walk(node)
+                            if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+                if not any(NORM_PROOF_READ_TOOL in text for text in literals):
+                    yield ArchitectureViolation(
+                        "NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF",
+                        relative,
+                        node.lineno,
+                        f"{NORM_PROOF_MESSAGE_FUNCTION}() no longer names the {NORM_PROOF_READ_TOOL} "
+                        "operation, so the proof request could only be answered by guessing "
+                        "another norm instead of reading the cited one",
+                    )
+            if node.name == NORM_PROOF_UNREAD_FUNCTION:
+                literals = {item.value for item in ast.walk(node)
+                            if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+                if "card_body_shown" not in literals:
+                    yield ArchitectureViolation(
+                        "NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF",
+                        relative,
+                        node.lineno,
+                        f"{NORM_PROOF_UNREAD_FUNCTION}() stopped reading `card_body_shown`, so "
+                        "the debt would be judged by presence in the retrieval list rather than "
+                        "by the body that was delivered",
+                    )
+        return
+    if relative == DELIVERY_FACTS_MODULE:
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name != DELIVERY_FACTS_FUNCTION:
+                continue
+            names = {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
+            literals = {item.value for item in ast.walk(node)
+                        if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+            missing = [token for token in DELIVERY_FACTS_REQUIRED_REFS
+                       if token not in names and not any(token in text for text in literals)]
+            if missing:
+                yield ArchitectureViolation(
+                    "NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF",
+                    relative,
+                    node.lineno,
+                    f"{DELIVERY_FACTS_FUNCTION}() no longer derives delivery from the rendered "
+                    f"text ({', '.join(missing)}), so a pointer line could be reported as a "
+                    "shown card and an unread norm could reach the calculator with a green fact",
+                )
+        return
+
+
 def _python_violations(root: Path, path: Path, text: str) -> Iterable[ArchitectureViolation]:
     relative = _relative(root, path)
     try:
@@ -1468,6 +1571,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     yield from _lsr_basis_notice_violations(relative, tree)
     yield from _basis_refusal_violations(relative, tree)
     yield from _accrual_label_violations(relative, tree)
+    yield from _norm_card_proof_violations(relative, tree)
     yield from _book_price_unit_violations(relative, tree)
     yield from _price_ownership_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}

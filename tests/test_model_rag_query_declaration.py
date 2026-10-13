@@ -765,3 +765,50 @@ def test_separated_answer_lines_keep_their_reason_counts() -> None:
         "narrative_answer_line",
     }
     assert [item.text for item in declared["queries"]] == ["Монтаж шкафа управления"]
+
+#: Two lines build 929 executed as search queries on the customer БАП packet
+#: (`artifacts/live_929/installed929_bap_b1/final.json`, `tool_loop.passes[2].queries`,
+#: query_offset 19): the model telling the engineer what the sheet contains, searched as if
+#: it were a question to the index.
+_LIVE_929_PROSE_HEAD = (
+    "Коротко по текущему пакету: в листе PDF_TEXT!R1 содержится только заголовок и "
+    "реквизиты ВОР (заказчик, объект, подрядчик, название «Ведомость объемов работ №8, "
+    "Обеспечение аварийных светильников БАП»). Таблицы с операциями, изделиями и объёмами "
+    "в этом фрагменте отсутствуют."
+)
+_LIVE_929_PROSE_TAIL = (
+    "Чтобы собрать ЛСР, мне нужны строки с перечнем работ и материалов. Они находятся на "
+    "других листах манифеста. Я готов собрать ЛСР, как только получу таблицы."
+)
+
+
+def test_narration_is_counted_and_nothing_is_dropped_by_a_line_shape_rule() -> None:
+    """§ 3, measured state of the art: the shape is recognized, and it is not a filter.
+
+    Across 1 117 declared lines of live builds 901-929 the 28 lines carrying a second
+    sentence are all accompanying answer — but the customer's own row title
+    «Тип 2. Открытый потолок. Обеспыливающая покраска открытого потолка…» has the same
+    shape and must stay a query (pinned above), and 1 013 of the 1 089 genuine search
+    lines carry neither a locator nor literal row text.  So no line-shape or attribution
+    rule separates the two populations: dropping by shape would destroy real queries and
+    rephrasing a comment would keep breaking the decision it belongs to.  The separation
+    therefore needs the explicit technical boundary of the declared envelope, recorded as
+    an open blocker, and until it exists the cost stays visible per packet instead of
+    hidden.
+    """
+
+    assert service.narration_shaped_query(_LIVE_929_PROSE_HEAD) is True
+    assert service.narration_shaped_query(_LIVE_929_PROSE_TAIL) is True
+    # the same shape appears in a query that must survive, so the rule cannot reject
+    assert service.narration_shaped_query(
+        "Тип 2. Открытый потолок. Обеспыливающая покраска открытого потолка "
+        "(в том числе и инженерных систем)") is True
+    declared = service.read_declared_query_list(
+        chr(10).join([_LIVE_929_PROSE_HEAD, _LIVE_929_PROSE_TAIL, "Прокладка троса стального"]),
+        packet_locators=["PDF_TEXT!R1"],
+    )
+    assert [item.text for item in declared["queries"]] == [
+        _LIVE_929_PROSE_HEAD, _LIVE_929_PROSE_TAIL, "Прокладка троса стального",
+    ]
+    assert service.narration_shaped_query("ГЭСНм Санкт-Петербург 2026 монтаж ревизионного лючка") is False
+

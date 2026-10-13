@@ -41,6 +41,28 @@ def normative_card_identity(meta: Mapping[str, Any]) -> str:
     return "norm_card_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _pointer_body(displayed_body: str) -> bool:
+    """True when the shown text is an inventory pointer, not a card body.
+
+    `card_body_shown` used to be the caller's own boolean echoed back, so nothing in the
+    delivery facts could contradict a caller that passed the pointer line
+    `[ref, "deferred_capacity", …]` while claiming the body was shown.  Measured on the 929
+    БАП records the two views of the same packet disagree the other way too: 6 of 24
+    `source_map` rows say `model_delivery_status=delivered, body_visible=true` while the same
+    refs are listed in `grouped_model_evidence_pages[*].deferred_body_refs`.  Deciding the
+    fact from the delivered text is what makes such a pair impossible to report.
+    """
+    text = str(displayed_body or "").lstrip()
+    if not text.startswith('["'):
+        return False
+    try:
+        fields = json.loads(text.splitlines()[0])
+    except (ValueError, IndexError):
+        return False
+    return (isinstance(fields, list) and len(fields) >= 3
+            and fields[1] in ("full", "deferred_capacity"))
+
+
 def card_delivery_facts(meta: Mapping[str, Any], *, raw_body_shown: bool,
                         displayed_body: str) -> dict[str, Any]:
     """A whole RAG preview is distinct from a complete typed normative card."""
@@ -48,10 +70,12 @@ def card_delivery_facts(meta: Mapping[str, Any], *, raw_body_shown: bool,
     if not is_norm:
         return {"raw_hit_body_shown": raw_body_shown, "card_body_shown": raw_body_shown,
                 "evidence_body_kind": "document"}
+    pointer_only = _pointer_body(displayed_body)
+    body_shown = bool(raw_body_shown) and not pointer_only
     resources = meta.get("resources")
     returned = meta.get("resources_returned")
     count = meta.get("resource_count")
-    resources_complete = (raw_body_shown and meta.get("resources_complete") is True
+    resources_complete = (body_shown and meta.get("resources_complete") is True
                 and isinstance(resources, (list, tuple))
                 and isinstance(returned, int) and not isinstance(returned, bool)
                 and returned == len(resources)
@@ -62,17 +86,24 @@ def card_delivery_facts(meta: Mapping[str, Any], *, raw_body_shown: bool,
     composition = "Состав работы: " + "; ".join(literal_steps)
     # Verify the exact producer block with its line boundaries. Metadata and
     # scattered matching words cannot prove that this composition was shown.
-    steps_shown = (raw_body_shown and bool(literal_steps)
+    steps_shown = (body_shown and bool(literal_steps)
                    and "\n" + composition + "\n" in "\n" + displayed_body + "\n")
-    steps_status = ("not_read" if not raw_body_shown else "complete" if steps_shown else
+    steps_status = ("not_read" if not body_shown else "complete" if steps_shown else
                     "not_shown" if literal_steps else "missing_in_source" if steps_known else "unknown")
-    status = ("not_read" if not raw_body_shown else "complete" if resources_complete else
+    status = ("not_read" if not body_shown else "complete" if resources_complete else
               "preview" if "resource_preview" in meta or meta.get("resources_complete") is False
               or isinstance(count, int) else "unknown")
-    return {"raw_hit_body_shown": raw_body_shown, "card_body_shown": raw_body_shown,
+    return {"raw_hit_body_shown": raw_body_shown, "card_body_shown": body_shown,
+            # Kept apart on purpose: the caller's claim about the hit and what the rendered
+            # page actually delivered.  A disagreement is the 929 diagnostic bug, so it is
+            # reported instead of silently normalised.
+            "body_claim_disagrees_with_delivery": bool(raw_body_shown) and pointer_only,
             "normative_card_complete": bool(resources_complete and steps_shown),
             "normative_resources_status": status, "normative_work_steps_status": steps_status,
             "normative_composition_shown": bool(steps_shown),
+            "shown_body_carries_this_cipher": bool(
+                str(meta.get("norm_code") or "")
+                and f"Шифр: {meta.get('norm_code')}" in str(displayed_body or "")),
             # Work composition is not the technical-part conditions. Current
             # typed cards contain no separate proved delivery of those parts.
             "normative_conditions_shown": False, "evidence_body_kind": "norm_card"}

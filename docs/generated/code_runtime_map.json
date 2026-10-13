@@ -1170,6 +1170,7 @@
         "proxy/services/model_source_frame_service.py",
         "proxy/services/model_wire_token_count_service.py",
         "proxy/services/native_open_service.py",
+        "proxy/services/norm_card_proof_service.py",
         "proxy/services/normcontrol_review_map_service.py",
         "proxy/services/normcontrol_service.py",
         "proxy/services/notebook_service.py",
@@ -2657,6 +2658,7 @@
         "proxy/services/model_source_frame_service.py",
         "proxy/services/model_wire_token_count_service.py",
         "proxy/services/native_open_service.py",
+        "proxy/services/norm_card_proof_service.py",
         "proxy/services/normcontrol_review_map_service.py",
         "proxy/services/normcontrol_service.py",
         "proxy/services/notebook_service.py",
@@ -3301,7 +3303,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 14482,
+      "lines": 14646,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3345,6 +3347,7 @@
         "proxy/services/model_resource_reference_service.py",
         "proxy/services/model_result_packet_service.py",
         "proxy/services/model_source_frame_service.py",
+        "proxy/services/norm_card_proof_service.py",
         "proxy/services/notebook_service.py",
         "proxy/services/notebook_study_service.py",
         "proxy/services/openai_compatible_transport_service.py",
@@ -5776,9 +5779,10 @@
         "tests/test_model_result_resource_actions.py",
         "tests/test_model_retained_norm_delivery.py",
         "tests/test_norm_card_completeness_facts.py",
+        "tests/test_norm_card_proof_request_930.py",
         "tools/measure_model_resource_literal_capacity.py"
       ],
-      "lines": 826,
+      "lines": 857,
       "module": "proxy.services.model_rag_grouped_evidence_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5995,6 +5999,21 @@
     },
     {
       "inbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "tests/test_norm_card_proof_request_930.py"
+      ],
+      "lines": 201,
+      "module": "proxy.services.norm_card_proof_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/norm_card_proof_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
         "proxy/services/doc_review_service.py",
         "proxy/services/service_source_registry.py",
         "tests/test_doc_review_chat_tool.py",
@@ -6166,6 +6185,7 @@
         "tests/test_model_reasoning_control.py",
         "tests/test_model_wire_token_count.py",
         "tests/test_native_ollama_tool_exchange.py",
+        "tests/test_norm_card_proof_request_930.py",
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_workbook_chat_refinement.py",
         "tools/model_connection_live_acceptance.py"
@@ -9828,6 +9848,17 @@
     },
     {
       "inbound": [],
+      "lines": 103,
+      "module": "tests.test_architecture_norm_card_proof_gate",
+      "outbound": [
+        "tools/architecture_contract_gate.py"
+      ],
+      "path": "tests/test_architecture_norm_card_proof_gate.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 105,
       "module": "tests.test_artel_archetype_classifier",
       "outbound": [
@@ -13438,7 +13469,7 @@
     },
     {
       "inbound": [],
-      "lines": 767,
+      "lines": 814,
       "module": "tests.test_model_rag_query_declaration",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -13469,11 +13500,12 @@
         "tests/test_model_token_usage_trace.py",
         "tests/test_model_vor_quantity_preservation.py",
         "tests/test_native_tool_call_diagnostics.py",
+        "tests/test_norm_card_proof_request_930.py",
         "tests/test_vor_no_research_query_scope.py",
         "tests/test_workbook_artifact_target.py",
         "tests/test_workbook_provider_binding_928.py"
       ],
-      "lines": 1381,
+      "lines": 1408,
       "module": "tests.test_model_rag_sheet_evidence_reads",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13850,6 +13882,20 @@
         "proxy/services/model_research_tool_service.py"
       ],
       "path": "tests/test_norm_card_completeness_facts.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 180,
+      "module": "tests.test_norm_card_proof_request_930",
+      "outbound": [
+        "proxy/services/model_rag_grouped_evidence_service.py",
+        "proxy/services/norm_card_proof_service.py",
+        "proxy/services/openai_compatible_transport_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
+      ],
+      "path": "tests/test_norm_card_proof_request_930.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -17457,9 +17503,10 @@
     },
     {
       "inbound": [
-        "tests/test_architecture_contract_gate.py"
+        "tests/test_architecture_contract_gate.py",
+        "tests/test_architecture_norm_card_proof_gate.py"
       ],
-      "lines": 1606,
+      "lines": 1710,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -21897,12 +21944,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 378,
+    "product_reachable": 379,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 770,
-    "tracked_python_files": 1160,
-    "tracked_python_lines": 402013
+    "test_or_tool_only": 772,
+    "tracked_python_files": 1163,
+    "tracked_python_lines": 402870
   },
   "warnings": []
 }

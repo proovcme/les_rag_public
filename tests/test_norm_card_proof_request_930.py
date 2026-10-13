@@ -1,0 +1,180 @@
+"""Regression: a шифр chosen from a pointer-only card is sent back for proof (build 930).
+
+Reproduced from the installed-929 evidence (`artifacts/live_929/card_read_repro_930/repro.json`,
+script `.test-tmp/repro_929_card_read_blocker.py`): B0_DIRECT named 7 norms with 0 shown card
+bodies and 6 of them still carried money in the delivered XLSX; B1_CANDIDATE delivered 125 norm
+pointers, 18 body entries and 3 complete cards, offered `read_norm_card` on every answer call
+(`canonical_native_tools.count = 5`) and received `native_tool_call_identities = []`.
+
+These tests fix the mechanism, not the example:
+
+* an answer that names a norm whose cited card was never shown is refused once, in the same
+  research stage, with the refs and the шифры named in the reason;
+* the read remains the model's own action — the application never fabricates a tool call, and
+  the durable decision still comes from the model's answer;
+* when the model does read, the chosen card counts as shown and the row is no longer an unread
+  guess; when it does not, the row keeps `norm_card_body_unread` and no second proof round is
+  bought with another inference call.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from proxy.services import norm_card_proof_service as proof
+from proxy.services.openai_compatible_transport_service import InferenceResponse
+from tests.test_model_rag_sheet_evidence_reads import (
+    NORM_CODE, NORM_CODE_B, _native, _run_sheet,
+)
+
+
+SECOND_NORM_ANSWER = (
+    "artifact_kind: lsr\n\n"
+    "| source_row | row_role | title | unit | quantity | norm_code | resource_code | evidence_refs |\n"
+    "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+    f"| S!R2 | work | Cable A | m | 12 | {NORM_CODE_B} | — | Q2.H1 |\n"
+    f"| S!R3 | work | Cable B | m | 3 | {NORM_CODE_B} | — | Q2.H1 |"
+)
+
+
+def _chunk(ref: str, *, body_status: str, delivery: str = "delivered"):
+    from types import SimpleNamespace
+    return SimpleNamespace(meta={"model_evidence_ref": ref, "body_status": body_status,
+                                 "model_delivery_status": delivery}, content="Шифр: X")
+
+
+def test_unread_detection_uses_the_chosen_rows_own_citation_only():
+    rows = [
+        # a work row naming a шифр against a deferred pointer: this one owes a proof
+        {"row_role": "work", "source_row": "S!R2", "norm_code": NORM_CODE_B,
+         "evidence_refs": ["Q2.H1"],
+         "_evidence_check": {"card_body_shown": False, "deferred_card_refs": ["Q2.H1"]}},
+        # the same card shown in full under another alias discharges the identity
+        {"row_role": "work", "source_row": "S!R3", "norm_code": NORM_CODE_B,
+         "evidence_refs": ["Q9.H1"],
+         "_evidence_check": {"card_body_shown": True, "deferred_card_refs": []}},
+        # a header row names nothing and must not consume the proof budget
+        {"row_role": "header", "source_row": "S!R4", "norm_code": "",
+         "evidence_refs": ["Q2.H1"],
+         "_evidence_check": {"card_body_shown": False, "deferred_card_refs": ["Q2.H1"]}},
+        # no evidence check at all is the reader's problem, not a proof debt
+        {"row_role": "work", "source_row": "S!R5", "norm_code": NORM_CODE,
+         "evidence_refs": ["Q2.H1"]},
+    ]
+    assert proof.unread_chosen_norm_refs(rows) == ["Q2.H1"]
+    # a ref whose full body is already in the delivered context is not unread
+    assert proof.unread_chosen_norm_refs(
+        rows, chunks=[_chunk("Q2.H1", body_status="full")]) == []
+    assert proof.delivered_refs_from_chunks(
+        [_chunk("Q2.H1", body_status="deferred_capacity")]) == set()
+
+
+def test_proof_budget_is_bounded_and_the_message_names_facts_only():
+    assert proof.proof_budget() == proof.MAX_PROOF_REFS_PER_PACKET
+    assert proof.proof_budget(configured=99) == proof.MAX_PROOF_REFS_PER_PACKET
+    assert proof.proof_budget(configured=2) == 2
+    rows = [{"row_role": "work", "source_row": "S!R2", "norm_code": NORM_CODE_B,
+             "evidence_refs": ["Q2.H1"],
+             "_evidence_check": {"card_body_shown": False, "deferred_card_refs": ["Q2.H1"]}}]
+    message = proof.proof_request_message(["Q2.H1"], rows)
+    assert "Q2.H1" in message and NORM_CODE_B in message and "read_norm_card" in message
+    # the application states the missing proof; it never proposes or rejects a norm itself
+    assert "подтверждаю" not in message and "ЭТА норма подходит" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B1_CANDIDATE"])
+async def test_pointer_only_norm_choice_is_sent_back_once_without_a_second_guess(tmp_path, monkeypatch, variant):
+    # The model answers again with the same unread шифр and no read: one proof round only.
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant=variant,
+                           group_char_budget=7000, distinct_norms=True,
+                           final_answer=SECOND_NORM_ANSWER,
+                           proof_replies=[InferenceResponse(text=SECOND_NORM_ANSWER, tool_calls=(),
+                                                            finish_reason="stop",
+                                                            usage={"completion_tokens": 120})])
+    trace = run.result["retrieval_trace"]
+    requests = trace["norm_card_proof_requests"]
+    assert [entry["refs"] for entry in requests] == [["Q2.H1"]]
+    assert requests[0]["reason"] == "norm_card_body_unread"
+    assert requests[0]["model_reads_after_request"] == 0
+    # queries + first answer + one proof request: a second unread answer buys no third call
+    assert len(run.requests) == 3 and not run.responses and not run.exact_reads
+    rows = (trace.get("model_result") or {}).get("decision_rows") or []
+    assert [row["_evidence_check"]["card_body_shown"] for row in rows] == [False, False]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B1_CANDIDATE"])
+async def test_the_read_that_proves_the_chosen_card_is_the_models_own(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant=variant,
+                           group_char_budget=7000, distinct_norms=True,
+                           final_answer=SECOND_NORM_ANSWER,
+                           proof_replies=[
+                               InferenceResponse(
+                                   text="", tool_calls=(_native("read_norm_card",
+                                                                evidence_ref="Q2.H1"),),
+                                   finish_reason="tool_calls", usage={}),
+                               InferenceResponse(text=SECOND_NORM_ANSWER, tool_calls=(),
+                                                 finish_reason="stop",
+                                                 usage={"completion_tokens": 120}),
+                           ])
+    trace = run.result["retrieval_trace"]
+    entry = trace["norm_card_proof_requests"][0]
+    assert entry["model_reads_after_request"] == 1 and entry["read_statuses"] == ["ok"]
+    # the card was read by exact identity, by the model, not fabricated by the application
+    assert run.exact_reads == [{"norm_key": "immutable-norm-b", "norm_code": NORM_CODE_B}]
+    proof_turn = run.requests[2]
+    roles = [message["role"] for message in proof_turn.messages[-2:]]
+    assert roles == ["assistant", "user"], "the proof request is a message, not a tool call"
+    assert NORM_CODE_B in str(proof_turn.messages[-1]["content"])
+    rows = (trace.get("model_result") or {}).get("decision_rows") or []
+    assert [row["_evidence_check"]["card_body_shown"] for row in rows] == [True, True]
+    assert not [gap for gap in (trace.get("result_readiness") or {}).get("row_projection") or []
+                if "norm_card_body_unread" in json.dumps(gap, ensure_ascii=False)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B1_CANDIDATE"])
+async def test_an_answer_that_already_read_its_card_buys_no_extra_inference(tmp_path, monkeypatch, variant):
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant)
+    assert "norm_card_proof_requests" not in run.result["retrieval_trace"]
+    assert len(run.requests) == 4 and not run.responses
+    # the cost of the missing search/narration boundary is counted per packet, visibly, and
+    # a clean declaration measures zero
+    passes = run.result["retrieval_trace"]["tool_loop"]["passes"]
+    assert [row["narration_shaped_executed_lines"] for row in passes] == [0]
+
+
+def test_delivery_facts_are_read_from_the_delivered_text_not_from_the_claim():
+    """The 929 counter bug in one line: `card_body_shown` echoed the caller.
+
+    A page that rendered only the inventory pointer could still be reported as a shown card,
+    which is exactly how an unread шифр reached the XLSX with money on it.
+    """
+    from proxy.services.model_rag_grouped_evidence_service import card_delivery_facts
+
+    meta = {"norm_key": "immutable-norm", "norm_code": NORM_CODE, "work_steps": ["Install"],
+            "resource_count": 1, "resources": [{"code": "x"}], "resources_returned": 1,
+            "resources_complete": True}
+    pointer = json.dumps([f"Q1.H1", "deferred_capacity", "immutable-norm", NORM_CODE,
+                          "Synthetic exact norm", "m", "source_x"], ensure_ascii=False)
+    claimed = card_delivery_facts(meta, raw_body_shown=True, displayed_body=pointer)
+    assert claimed["card_body_shown"] is False
+    assert claimed["body_claim_disagrees_with_delivery"] is True
+    # a pointer marked "full" is still only a pointer until the body text is delivered
+    assert card_delivery_facts(meta, raw_body_shown=True,
+                               displayed_body=pointer.replace("deferred_capacity", "full")
+                               )["card_body_shown"] is False
+    body = f"Шифр: {NORM_CODE}\nНаименование: Synthetic exact norm\nСостав работы: Install\n"
+    shown = card_delivery_facts(meta, raw_body_shown=True, displayed_body=body)
+    assert shown["card_body_shown"] is True and shown["body_claim_disagrees_with_delivery"] is False
+    assert shown["normative_composition_shown"] is True
+    assert shown["shown_body_carries_this_cipher"] is True
+    other = card_delivery_facts(meta, raw_body_shown=True,
+                                 displayed_body="Шифр: ДРУГАЯ-НОРМА\nСостав работы: Install\n")
+    assert other["card_body_shown"] is True
+    # card А never discharges card Б: the cipher carried by the shown body is a separate fact
+    assert other["shown_body_carries_this_cipher"] is False
+
