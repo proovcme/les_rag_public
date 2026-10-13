@@ -37,8 +37,48 @@ prompt 61 066, ревизия связи `…:r10`). То есть модель 
 49 passed (в том числе 3 новых теста: основание вердикта для цитированного указателя,
 счёт исполненных вызовов модели, мутационная пара гейта); `tools/architecture_contract_gate.py`
 чистый; `tools/code_runtime_map.py --check` и `tools/sync_version_contract.py --check` — rc=0.
-Значение `calculated_positions` на живом прогоне после 935 ещё не замерялось — блокer #81
-считается закрытым только после живого подтверждения.
+
+Gates 935 (frozen профиль, `artifacts/gates_935_group_turn_final/`): **4741 passed, 20 skipped,
+5 warnings за 713,42 с**; architecture rc=0 (11,42 с), map_check rc=0, docs rc=0, mail 66 passed,
+metadata 31 passed, provision/version/compile/collect/import_location/map_generate rc=0.
+Деплой: candidate `144b576f863c49ed938cbe20852cfa779ecde3ee`, в runtime скопированы
+`config/version.json`, `proxy/services/chat_evidence_application_service.py`,
+`proxy/services/lsr_resource_group_proof_service.py` (байты сверены по SHA-256), план отката
+`artifacts/rollback_934_to_935/`. Штатный рестарт сохранил роль `answer`
+(`conn:9458be3549ad449985f9eb10dba3c9e1:r10`, `Qwen3.6-35B-A3B-NVFP4`, лимит 8214, fallback пуст).
+
+Живая клетка БАП B1_CANDIDATE на 935 (`artifacts/live_935/installed935_bap_b1/`, job
+`wrj_6e89a07009e44f7ebad6058f86cb2bb3`, `status = measurement_complete`, 1 артефакт, 616,53 с):
+
+- доставлен `01_draft_LSR_ВОР_монтаж_БАП_П1_13_05_2_2026-10-13_1356.xlsx` (37 553 байта,
+  SHA-256 `24584e069d7e42fb25cf4df8…`);
+- **раунд группы теперь читается**: `resource_group_proof_requests` = 1 запись
+  (`ГЭСН26-01-055-01`, группа `01.7.07.12`, строка `PDF!R4`, 6 предложенных членов),
+  `model_answered = true` и **`answer_parsed = true`** (на 934 было `false`),
+  `sheet_pass_evidence_read` = 2 (на 934 — 1). То есть вызов модели за ценом исполняется внутри
+  этого же исследования, и модель после него вернула таблицу — причина «текстового ответа»
+  на 934 подтверждена и устранена;
+- **основание вердикта закрыто (#82)**: из 13 work-строк с вердиктом 0 остались без основания;
+  распределение — `cipher_card_body_delivered` 2, `cited_card_body_not_delivered` 11,
+  `no_delivered_card_names_this_cipher` 1; расхождений «заявлено vs доставлено» 0;
+- proof-раунды карточки: 2, оба `answer_parsed = true` (7 непрочитанных строк / 1 чтение; 3 строки
+  / 2 refs / 0 чтений);
+- readiness: works 15, `norms_selected` 14, уникальных шифров 12,
+  `norms_applicability_substantiated` 2, `calculated_positions` **0**, `confirmed_amount` 0,00,
+  `preliminary_amount` 313 340,99; пробелы `norm_unsubstantiated` 12, `price_missing` 23,
+  `calculation_incomplete` 15, `norm_missing` 0.
+
+Где теперь застрял #81 — измерено на `PDF!R4` того же прогона, а не по догадке: модель **выбрала
+конкретный член группы** (строка материала несёт `resource_code = 01.7.07.12-0024`), но выбор
+пришёл в другую строку, чем то поле, которое читает калькулятор: у самой строки работы
+`resource_bindings[0].target_resource_code` остался групповой код `01.7.07.12`. Отсюда
+`open_reasons` строки работы — `resource_binding_conflict`, `separate_supply_possible_overlap`,
+`price_missing:01.7.06.03-0022`, `price_missing:01.7.07.12`, а у строки материала —
+`resource_selection_unsubstantiated`. Приложение не переписывает binding за модель (это и было бы
+подменой решения), но запрос группы до сих пор не называет **именно это поле**. Следующий
+конкретный шаг — в `lsr_resource_group_proof_service.proof_request_message` добавить адрес поля
+(`resource_bindings[].target_resource_code` строки работы, а не отдельная строка материала) и
+мутационную пару к его формулировке; правило «приложение не выбирает ресурс» при этом не меняется.
 
 <!-- installed-933-934-authored-json-row-salvage:v1 -->
 ## Установлен933 и живой замер: читатель JSON терял весь пакет из-за одного значения в строке
