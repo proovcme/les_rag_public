@@ -179,3 +179,69 @@ def card_delivery_facts(meta, *, raw_body_shown, displayed_body):
             "normative_composition_shown": bool(steps_shown)}
 ''')
     assert CODE not in codes
+
+
+GROUP_CODE = "GROUP_RESOURCE_PRICED_WITHOUT_A_MEMBER_CHOICE"
+GROUP_CHAT_MODULE = CHAT_MODULE
+GROUP_SERVICE_MODULE = "proxy/services/lsr_resource_group_proof_service.py"
+
+
+def _group_seam(answer: str) -> str:
+    return f'''
+async def _execute_chat_evidence_application(request, runtime, boundary):
+    pass_rows = bind_row_evidence_ids(rows, chunks, binding_phase="first")
+    groups = resource_group_proof_reads_needed(pass_rows, chunks, pricebook=book)
+    if groups:
+        message = resource_group_proof_request_message(groups)
+        record_resource_group_proof_request(trace, sheet=sheet, packet=packet,
+                                           groups=groups, answered=True, attempt=1)
+    admission = admit_model_result_packet(pass_rows, packet_locators=packet)
+    return admission
+{answer}'''
+
+
+def test_admitting_a_family_priced_row_without_asking_for_a_member_is_a_violation(tmp_path):
+    codes = _codes(tmp_path, GROUP_CHAT_MODULE, '''
+async def _execute_chat_evidence_application(request, runtime, boundary):
+    pass_rows = bind_row_evidence_ids(rows, chunks, binding_phase="first")
+    admission = admit_model_result_packet(pass_rows, packet_locators=packet)
+    return admission
+''')
+    assert GROUP_CODE in codes
+
+
+def test_the_same_seam_with_the_group_ask_is_clean(tmp_path):
+    assert GROUP_CODE not in _codes(tmp_path, GROUP_CHAT_MODULE, _group_seam(""))
+
+
+def test_a_group_message_without_the_price_operations_is_a_violation(tmp_path):
+    codes = _codes(tmp_path, GROUP_SERVICE_MODULE, '''
+def proof_request_message(groups):
+    return "Перезполни строку ресурса. первая строка группы не является ценой группы"
+''')
+    assert GROUP_CODE in codes
+
+
+def test_a_group_message_that_priced_the_family_itself_is_a_violation(tmp_path):
+    codes = _codes(tmp_path, GROUP_SERVICE_MODULE, '''
+SEARCH_TOOL = "search_pricebook_resources"
+PRICE_TOOL = "read_resource_price"
+
+
+def proof_request_message(groups):
+    return "нужна цена" + SEARCH_TOOL + PRICE_TOOL
+''')
+    assert GROUP_CODE in codes
+
+
+def test_a_group_message_that_names_the_tools_and_denies_a_family_price_is_clean(tmp_path):
+    codes = _codes(tmp_path, GROUP_SERVICE_MODULE, '''
+SEARCH_TOOL = "search_pricebook_resources"
+PRICE_TOOL = "read_resource_price"
+
+
+def proof_request_message(groups):
+    return ("выбери конкретный ресурс: " + SEARCH_TOOL + " / " + PRICE_TOOL
+            + "; первая строка группы не является ценой группы")
+''')
+    assert GROUP_CODE not in codes

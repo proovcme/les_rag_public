@@ -140,6 +140,12 @@ from proxy.services.norm_card_proof_service import (
     unread_chosen_norm_refs as norm_card_proof_reads_needed,
     unread_chosen_norm_rows as norm_card_unread_rows,
 )
+from proxy.services.lsr_resource_group_proof_service import (
+    PROOF_PURPOSE as RESOURCE_GROUP_PROOF_PURPOSE,
+    proof_request_message as resource_group_proof_request_message,
+    record_proof_request as record_resource_group_proof_request,
+    unresolved_groups as resource_group_proof_reads_needed,
+)
 from proxy.services.model_rag_grouped_evidence_service import (
     EvidenceCard,
     EvidenceGroup,
@@ -350,6 +356,37 @@ def document_price_basis_arguments(basis: object) -> dict[str, Any]:
         "revision_id": str(basis.get("revision_id") or "").strip(),
         **({"pricebook_sha256": str(basis["pricebook_sha256"]).strip()} if basis.get("pricebook_sha256") else {}),
     }
+
+
+def model_pricebook(basis: object):
+    """The chosen price book as a read-only ``PriceBook``, or nothing.
+
+    Only a basis the run already resolved is opened, and when it carries a source hash the bytes
+    must still match it: a group ask computed against a book that no longer has those bytes would
+    show the model members of a price basis the document does not use.
+    """
+
+    if not isinstance(basis, Mapping):
+        return None
+    book = str(basis.get("pricebook") or basis.get("actual_book") or "").strip()
+    if not book:
+        return None
+    from proxy.services import fgis_price_service as fps
+
+    # ADR-16 § 7: a price basis is operator data, so this resolves only the explicitly
+    # chosen book; an unnamed basis must not borrow another region or quarter.
+    path = fps.resolve_pricebook_path(book, explicit_only=True)
+    if not path:
+        return None
+    expected = str(basis.get("pricebook_sha256") or "").strip()
+    if expected:
+        try:
+            actual, _size = fps.pricebook_source_identity(path)
+        except OSError:
+            return None
+        if actual != expected:
+            return None
+    return fps.get_pricebook(path)
 
 
 def task_document_price_basis(job: object, previous_basis: object = None) -> dict[str, Any]:
@@ -10359,6 +10396,9 @@ async def _execute_chat_evidence_application(
                         # is read once and the model is asked again, and a packet that still
                         # comes back unread keeps its honest gap instead of looping.
                         proof_read_attempts: dict[tuple[str, ...], int] = {}
+                        # Same bound for the resource-group ask: the members are shown once, the
+                        # choice stays the model's, and an unresolved group keeps its gap.
+                        group_proof_attempts: dict[tuple[str, ...], int] = {}
                         offer_counts: dict[str, int] = {}
                         if (
                             research_job_service is not None
@@ -11609,6 +11649,71 @@ async def _execute_chat_evidence_application(
                                     sheet_name, len(packet), len(proof_unread_rows),
                                     len(proof_refs),
                                     len(proof_receipts), bool(answered),
+                                )
+                            # A read card can still leave a family resource behind: measured on
+                            # the installed 931, every priced block of the customer's big ВОР
+                            # cited a group code that the chosen book prices only per member
+                            # (`open_reasons = price_missing:…`, `price_action =
+                            # unresolved_resource_group`), which is why none of them became a
+                            # calculated position.  One bounded round names the members and asks
+                            # the model to choose; the application never chooses for it, and what
+                            # stays unresolved keeps its existing gap and no confirmed money.
+                            proof_groups = resource_group_proof_reads_needed(
+                                pass_rows,
+                                [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                pricebook=model_pricebook(model_requested_price_basis),
+                            )
+                            if (proof_groups and sheet_read_tools
+                                    and group_proof_attempts.get(fingerprint, 0) < 1):
+                                group_proof_attempts[fingerprint] = 1
+                                group_answered = False
+                                group_answer = ""
+                                group_usage: dict[str, Any] = {}
+                                try:
+                                    group_answer, group_usage = await _sheet_pass_llm(
+                                        {**chat_body, "messages": [
+                                            *chat_body["messages"],
+                                            {"role": "assistant", "content": pass_answer},
+                                            {"role": "user", "content":
+                                                resource_group_proof_request_message(
+                                                    proof_groups)},
+                                        ]},
+                                        purpose=RESOURCE_GROUP_PROOF_PURPOSE,
+                                        expected_connection_revision_id=measured_connection_revision(
+                                            answer_packet),
+                                    )
+                                except CloudBudgetStop:
+                                    raise
+                                except ContextRequiredSectionOverflow as context_error:
+                                    group_answer = ""
+                                    retrieval_trace["context_governor"]["error"] = (
+                                        model_read_capacity_trace(
+                                            context_error, purpose=RESOURCE_GROUP_PROOF_PURPOSE))
+                                if group_answer:
+                                    group_answered = True
+                                    pass_answer, usage = group_answer, dict(group_usage or {})
+                                    tokens = int(tokens or 0) + int(
+                                        usage.get("completion_tokens") or 0)
+                                    last_finish = llm_usage_finish_reason(usage)
+                                    group_pass = parse_model_rag_result(
+                                        pass_answer, diagnostics=pass_transport_diagnostics)
+                                    group_rows: list[dict[str, Any]] = []
+                                    if group_pass is not None:
+                                        _group_visible, group_rows = group_pass
+                                    pass_rows = bind_row_evidence_ids(
+                                        group_rows,
+                                        [*prior_page_chunks, *saved_read_chunks,
+                                         *model_evidence_chunks],
+                                        binding_phase="first",
+                                    )
+                                record_resource_group_proof_request(
+                                    retrieval_trace, sheet=sheet_name, packet=packet,
+                                    groups=proof_groups, answered=group_answered,
+                                    attempt=group_proof_attempts[fingerprint],
+                                )
+                                logger.warning(
+                                    "[GROUP_PROOF] sheet=%s packet=%s groups=%s answered=%s",
+                                    sheet_name, len(packet), len(proof_groups), group_answered,
                                 )
                             pass_errors = validate_model_rag_result_structure(
                                 pass_rows,

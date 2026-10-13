@@ -270,6 +270,23 @@ DELIVERY_FACTS_MODULE = "proxy/services/model_rag_grouped_evidence_service.py"
 DELIVERY_FACTS_FUNCTION = "card_delivery_facts"
 DELIVERY_FACTS_REQUIRED_REFS = ("_pointer_body", "Состав работы:")
 
+# Build 931 measured the next layer of the same hole: every priced block of the customer's big
+# ВОР had its card read, yet no position closed, because the card cited a resource *family*
+# (`11.2.11.01`, `04.3.01.12`) while the chosen book prices concrete members.  The sheet pass has
+# to ask the model to name a member, and the ask has to name the model's own price operations
+# without ever pricing the family itself.
+GROUP_PROOF_CHAT_MODULE = NORM_PROOF_CHAT_MODULE
+GROUP_PROOF_ASK_NEIGHBOURS = NORM_PROOF_ASK_NEIGHBOURS
+GROUP_PROOF_REQUIRED_CALLS = (
+    "resource_group_proof_reads_needed",
+    "resource_group_proof_request_message",
+    "record_resource_group_proof_request",
+)
+GROUP_PROOF_SERVICE_MODULE = "proxy/services/lsr_resource_group_proof_service.py"
+GROUP_PROOF_MESSAGE_FUNCTION = "proof_request_message"
+GROUP_PROOF_PRICE_TOOLS = ("search_pricebook_resources", "read_resource_price")
+GROUP_PROOF_FORBIDDEN_WORDING = ("цена группы", "первая строка группы не является ценой группы")
+
 # Existing direct transports are migration debt, pinned by exact path + function.
 # New callsites must use ContextGovernor instead of expanding this baseline.
 INFERENCE_CALLSITE_BASELINE: frozenset[tuple[str, str]] = frozenset(
@@ -1483,6 +1500,75 @@ def _price_ownership_violations(relative: str, tree: ast.AST) -> Iterable[Archit
         )
 
 
+def _resource_group_proof_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Build 931 § 6: a read card that cites a family must not leave the row half-priced.
+
+    Two links.  The sheet pass asks the model to name a concrete resource of the group; the ask
+    names the model's own price operations and states that a family has no price.  Dropping either
+    silently returns 931, where 7 read-card blocks carried money and none of them could be
+    calculated, because nobody ever asked which member of `11.2.11.01` the document meant.
+    """
+
+    if relative == GROUP_PROOF_CHAT_MODULE:
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            called = {_call_name(item).split(".")[-1] for item in ast.walk(node)
+                      if isinstance(item, ast.Call)}
+            if not all(name in called for name in GROUP_PROOF_ASK_NEIGHBOURS):
+                continue
+            missing = [name for name in GROUP_PROOF_REQUIRED_CALLS if name not in called]
+            if missing:
+                yield ArchitectureViolation(
+                    "GROUP_RESOURCE_PRICED_WITHOUT_A_MEMBER_CHOICE",
+                    relative,
+                    node.lineno,
+                    f"{node.name}() admits model decisions without asking which concrete resource "
+                    f"of a cited group the position means ({', '.join(missing)} is not called), so "
+                    "a read card that references a family leaves the row drafted and uncalculated "
+                    "exactly as measured on installed 931",
+                )
+        return
+    if relative == GROUP_PROOF_SERVICE_MODULE:
+        constants: dict[str, str] = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) \
+                    and isinstance(node.value.value, str):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        constants[target.id] = node.value.value
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name != GROUP_PROOF_MESSAGE_FUNCTION:
+                continue
+            literals = {item.value for item in ast.walk(node)
+                        if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+            names = {constants.get(item.id, "") for item in ast.walk(node)
+                     if isinstance(item, ast.Name)}
+            tool_named = any(any(tool in text for text in set(literals) | names)
+                             for tool in GROUP_PROOF_PRICE_TOOLS)
+            if not tool_named:
+                yield ArchitectureViolation(
+                    "GROUP_RESOURCE_PRICED_WITHOUT_A_MEMBER_CHOICE",
+                    relative,
+                    node.lineno,
+                    f"{GROUP_PROOF_MESSAGE_FUNCTION}() no longer names the model's price "
+                    f"operations ({', '.join(GROUP_PROOF_PRICE_TOOLS)}), so the group could only "
+                    "be answered by guessing a member or by accepting a family price",
+                )
+            if not any(GROUP_PROOF_FORBIDDEN_WORDING[1] in text for text in literals):
+                yield ArchitectureViolation(
+                    "GROUP_RESOURCE_PRICED_WITHOUT_A_MEMBER_CHOICE",
+                    relative,
+                    node.lineno,
+                    f"{GROUP_PROOF_MESSAGE_FUNCTION}() no longer states that a family has no price "
+                    "of its own, which is the sentence that keeps the application from pricing the "
+                    "first member of a group",
+                )
+        return
+
+
 def _norm_card_proof_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
     """Task 2026-09-30 § 3: a chosen шифр cannot be priced without its own card being shown.
 
@@ -1623,6 +1709,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     yield from _basis_refusal_violations(relative, tree)
     yield from _accrual_label_violations(relative, tree)
     yield from _norm_card_proof_violations(relative, tree)
+    yield from _resource_group_proof_violations(relative, tree)
     yield from _book_price_unit_violations(relative, tree)
     yield from _price_ownership_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
