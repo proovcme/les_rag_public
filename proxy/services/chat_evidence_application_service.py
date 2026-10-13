@@ -3725,6 +3725,15 @@ def bind_row_evidence_ids(
                     evidence_check["card_body_shown"] = (
                         selected_deferred_ids <= delivered_norm_identities
                     )
+                    # Measured on installed 934: 14 of the 16 rows judged unread got their verdict
+                    # from this branch, so the sibling branch below never ran and the operator saw
+                    # «не прочитано» without the fact it was derived from.  A verdict is only useful
+                    # when it names its own source: this one is the delivery state of the card the
+                    # row itself cited, not the search over all delivered bodies.
+                    evidence_check["card_body_shown_basis"] = (
+                        "cited_card_body_delivered"
+                        if selected_deferred_ids <= delivered_norm_identities
+                        else "cited_card_body_not_delivered")
             row_cipher = authored_norm_code(payload.get("norm_code"))
             row_key = qualified_norm_key(row_cipher) if looks_like_cipher(row_cipher) else ""
             if row_cipher and row_key and "card_body_shown" not in evidence_check:
@@ -11729,12 +11738,46 @@ async def _execute_chat_evidence_application(
                                             context_error, purpose=RESOURCE_GROUP_PROOF_PURPOSE))
                                 group_answer_parsed = False
                                 group_previous_answer = pass_answer
+                                group_receipts: list[dict[str, Any]] = []
                                 if group_answer:
                                     group_answered = True
                                     pass_answer, usage = group_answer, dict(group_usage or {})
                                     tokens = int(tokens or 0) + int(
                                         usage.get("completion_tokens") or 0)
                                     last_finish = llm_usage_finish_reason(usage)
+                                    try:
+                                        # Measured on installed 934, the first live run where this
+                                        # round fired: the model answered the group request with a
+                                        # native `read_resource_price` call (`finish_reason =
+                                        # tool_calls`), and the round read only the text — so the
+                                        # call was never executed, the model never saw the price it
+                                        # asked for, and the round was recorded as an answer without
+                                        # a table.  The group round now runs the same read turn as
+                                        # the card proof: the call stays the model's own, it is
+                                        # executed inside this research stage, and the model
+                                        # continues after its own receipt.
+                                        group_turn = await run_model_evidence_read_turn(
+                                            text=pass_answer, usage=usage,
+                                            parse_calls=_parse_model_tool_calls,
+                                            execute=model_research_tools.execute,
+                                            allowed_tools={item["function"]["name"]
+                                                           for item in sheet_read_tools},
+                                            max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
+                                            on_read_results=_accept_sheet_reads,
+                                            continue_native_turn=_continue_sheet_reads,
+                                            on_read_replays=_accept_sheet_read_replays,
+                                        )
+                                        pass_answer, usage = group_turn.text, group_turn.usage
+                                        tokens = int(tokens or 0) + group_turn.extra_completion_tokens
+                                        group_receipts = list(group_turn.receipts)
+                                        if group_turn.stop_reason:
+                                            retrieval_trace["tool_loop"]["evidence_read_stop"] = (
+                                                group_turn.stop_reason)
+                                    except ContextRequiredSectionOverflow as context_error:
+                                        retrieval_trace["context_governor"]["error"] = (
+                                            model_read_capacity_trace(
+                                                context_error,
+                                                purpose=RESOURCE_GROUP_PROOF_PURPOSE))
                                     group_pass = parse_model_rag_result(
                                         pass_answer, diagnostics=pass_transport_diagnostics)
                                     group_rows: list[dict[str, Any]] = []
@@ -11753,10 +11796,13 @@ async def _execute_chat_evidence_application(
                                     groups=proof_groups, answered=group_answered,
                                     attempt=group_proof_attempts[fingerprint],
                                     answer_parsed=group_answer_parsed,
+                                    receipts=group_receipts,
                                 )
                                 logger.warning(
-                                    "[GROUP_PROOF] sheet=%s packet=%s groups=%s answered=%s",
+                                    "[GROUP_PROOF] sheet=%s packet=%s groups=%s answered=%s "
+                                    "model_calls_after_request=%s answer_parsed=%s",
                                     sheet_name, len(packet), len(proof_groups), group_answered,
+                                    len(group_receipts), group_answer_parsed,
                                 )
                             pass_errors = validate_model_rag_result_structure(
                                 pass_rows,

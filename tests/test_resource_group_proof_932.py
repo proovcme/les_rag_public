@@ -158,6 +158,26 @@ def test_an_unreadable_group_answer_is_recorded_apart_from_a_round_that_never_as
     assert read["model_answered"] is True and read["answer_parsed"] is True
 
 
+
+def test_the_group_record_counts_the_models_own_calls_after_the_request():
+    """Installed 934: the group round's answer was a native read_resource_price call.
+
+    A round that only reads text loses that call, so the trace has to count the calls it actually
+    executed — otherwise an executed price lookup and a prose reply look the same fact.
+    """
+    trace: dict = {}
+    found = proof.unresolved_groups(ROWS, [_card_chunk([RESOURCE])], pricebook=_book())
+    proof.record_proof_request(trace, sheet="АР", packet=["АР!R11"], groups=found,
+                               answered=True, attempt=1,
+                               receipts=[{"status": "ok"}, {"status": "not_found"}])
+    entry = trace[proof.PROOF_REQUEST_TRACE][0]
+    assert entry["model_calls_after_request"] == 2
+    assert entry["call_statuses"] == ["not_found", "ok"]
+    assert entry["answer_parsed"] is True
+    proof.record_proof_request(trace, sheet="АР", packet=["АР!R12"], groups=found,
+                               answered=True, attempt=1)
+    assert trace[proof.PROOF_REQUEST_TRACE][1]["model_calls_after_request"] == 0
+
 def test_the_budget_is_bounded_and_measured():
     assert proof.proof_budget() == proof.MAX_GROUPS_PER_PACKET
     assert proof.proof_budget(configured=99) == proof.MAX_GROUPS_PER_PACKET

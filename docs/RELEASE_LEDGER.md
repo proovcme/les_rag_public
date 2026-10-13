@@ -1,5 +1,45 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+<!-- installed-935-group-round-executes:v1 -->
+## Установлен935: раунд группы исполняет собственный вызов модели, и вердикт всегда с основанием
+
+Причина того, что на 934 запрос группы «получил текстовый ответ», найдена не по догадке, а по
+записи самого прогона (`artifacts/live_934/installed934_bap_b1/final.json`,
+`actual_model_calls.calls[4]`): вызов `sheet_pass_resource_group_proof` завершился
+`finish_reason = tool_calls` с нативной идентичностью
+`call_read-resource-price_0_c78d317b` (инструмент `read_resource_price`, 276 completion-токенов,
+prompt 61 066, ревизия связи `…:r10`). То есть модель не ответила «текстом» — она **запросила
+цену**, а групповой раунд читал только текст ответа и никогда не исполнял этот вызов. Карточный
+раунд и основной цикл ответа такие вызовы исполняют через `run_model_evidence_read_turn`;
+раунд группы был написан без него.
+
+Что сделано в 935 (candidate этого раздела — сборка 0.31.207 / build 935):
+
+- групповой раунд проходит через тот же `run_model_evidence_read_turn` с теми же колбэками
+  (`_accept_sheet_reads`, `_continue_sheet_reads`, `_accept_sheet_read_replays`) и тем же
+  `allowed_tools` из `sheet_read_tools`, где `search_pricebook_resources` и `read_resource_price`
+  уже есть. Выбор ресурса остаётся решением модели: приложение исполняет её собственный вызов и
+  передаёт ей результат, не подставляя код и не повышая статус;
+- в `resource_group_proof_requests` пишутся `model_calls_after_request` и `call_statuses` —
+  «модель запросила цену, и мы её прочитали» и «модель ответила без вызова» теперь разные факты;
+  в лог добавлены `model_calls_after_request` и `answer_parsed` в строку `[GROUP_PROOF]`;
+- #82 закрыт: ветка «цитированная карточка осталась указателем» пишет
+  `card_body_shown_basis` = `cited_card_body_not_delivered` / `cited_card_body_delivered`
+  (`proxy/services/chat_evidence_application_service.py`, блок `selected_deferred_ids`).
+  Основание есть у каждой work-строки с шифром, а не только у тех 2 из 16, где срабатывал
+  блок тотального вердикта;
+- гейт `PROOF_ROUND_DROPS_THE_MODELS_OWN_TOOL_CALL`: функция, пишющая proof-запрос, обязана
+  вызывать `run_model_evidence_read_turn`. Мутационная пара проверяет обе стороны: без хелпера
+  код появляется, с хелпером — исчезает.
+
+Локальные проверки 935: `tests/test_norm_card_proof_request_930.py`,
+`tests/test_resource_group_proof_932.py`, `tests/test_architecture_norm_card_proof_gate.py` —
+49 passed (в том числе 3 новых теста: основание вердикта для цитированного указателя,
+счёт исполненных вызовов модели, мутационная пара гейта); `tools/architecture_contract_gate.py`
+чистый; `tools/code_runtime_map.py --check` и `tools/sync_version_contract.py --check` — rc=0.
+Значение `calculated_positions` на живом прогоне после 935 ещё не замерялось — блокer #81
+считается закрытым только после живого подтверждения.
+
 <!-- installed-933-934-authored-json-row-salvage:v1 -->
 ## Установлен933 и живой замер: читатель JSON терял весь пакет из-за одного значения в строке
 

@@ -303,6 +303,32 @@ async def test_a_proof_round_answered_in_prose_delivers_the_packet_rows(tmp_path
     assert int(counts.get("works") or 0) == 2
 
 
+
+def test_a_row_whose_cited_card_was_only_a_pointer_gets_the_basis_too():
+    """Installed 934: 14 of the 16 unread rows were judged here, and none of them said why.
+
+    The total verdict below this branch never ran for them, so the operator saw «не прочитано»
+    without the fact it came from — while the closeout requires exactly this distinction
+    (present in results / shown brief / actually delivered in full) to be readable per row.
+    """
+    from proxy.services import chat_evidence_application_service as service
+
+    row = {"source_row": "S!R2", "row_role": "work", "title": "Монтаж лючка", "unit": "шт",
+           "quantity": 2, "norm_code": NORM_CODE_B, "evidence_refs": ["Q7.H1"]}
+    bound = service.bind_row_evidence_ids([row], [
+        _pointer_chunk("Q7.H1", NORM_CODE_B, identity="deferred-chosen")])[0]
+    check = bound["_evidence_check"]
+    assert check["card_body_shown"] is False
+    assert check["card_body_shown_basis"] == "cited_card_body_not_delivered"
+    assert check["deferred_card_refs"] == ["Q7.H1"]
+    # the same pointer, once its body is delivered in full, discharges with its own basis
+    both = service.bind_row_evidence_ids([row], [
+        _pointer_chunk("Q7.H1", NORM_CODE_B, identity="deferred-chosen"),
+        _shown_chunk("Q7.H1", NORM_CODE_B, identity="deferred-chosen")])[0]
+    assert both["_evidence_check"]["card_body_shown"] is True
+    assert both["_evidence_check"]["card_body_shown_basis"] in (
+        "cited_card_body_delivered", "cipher_card_body_delivered")
+
 def test_the_proof_record_carries_the_answer_parse_flag():
     trace: dict = {}
     proof.record_proof_request(trace, sheet="S", packet=("S!R2",), refs=("Q2.H1",),

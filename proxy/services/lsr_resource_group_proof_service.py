@@ -162,12 +162,15 @@ def proof_request_message(groups: Sequence[Mapping[str, Any]]) -> str:
 
 def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[str],
                          groups: Sequence[Mapping[str, Any]], answered: bool,
-                         attempt: int, answer_parsed: bool = True) -> None:
+                         attempt: int, answer_parsed: bool = True,
+                         receipts: Sequence[Mapping[str, Any]] = ()) -> None:
     """Write the visible fact that the application refused a family price.
 
     ``model_answered`` and ``answer_parsed`` are different facts: a round can come back with text
     the application cannot read as a table, and that has to stay visible instead of looking like
-    the model never answered.
+    the model never answered.  ``receipts`` counts the model's own price-lookup calls executed
+    after the request — installed 934 measured that the round's first answer was a native
+    ``read_resource_price`` call, and a round that only reads text loses it.
     """
     entry = {
         "schema": TRACE_SCHEMA,
@@ -181,6 +184,8 @@ def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[
         "requested": len(groups),
         "model_answered": bool(answered),
         "answer_parsed": bool(answer_parsed),
+        "model_calls_after_request": len(receipts),
+        "call_statuses": sorted({str(receipt.get("status") or "") for receipt in receipts}),
         "packet_attempt": int(attempt),
     }
     trace.setdefault(PROOF_REQUEST_TRACE, []).append(entry)

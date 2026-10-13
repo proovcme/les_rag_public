@@ -374,3 +374,21 @@ def test_a_salvage_that_stops_checking_the_container_is_a_violation(tmp_path):
         "    end_after = _container_end(text, start)\n    if end_after is None:\n        return None\n",
         "    end_after = len(text)\n"))
     assert JSON_CODE in codes
+
+
+TURN_CODE = "PROOF_ROUND_DROPS_THE_MODELS_OWN_TOOL_CALL"
+
+
+def test_a_proof_round_that_never_executes_the_models_call_is_a_violation(tmp_path):
+    """The 934 shape: the model asked for a price, the round read only text and called it prose."""
+
+    assert TURN_CODE in _codes(tmp_path, CHAT_MODULE, GUARDED_SEAM)
+
+
+def test_the_same_round_running_the_read_turn_is_clean(tmp_path):
+    with_turn = GUARDED_SEAM.replace(
+        "    record_norm_card_proof_request(",
+        """    run_model_evidence_read_turn(text=pass_answer, usage=usage,
+                                 execute=research_tools.execute, allowed_tools=tools)
+    record_norm_card_proof_request(""")
+    assert TURN_CODE not in _codes(tmp_path, CHAT_MODULE, with_turn)

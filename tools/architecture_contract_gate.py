@@ -299,6 +299,14 @@ PROOF_ROUND_RECORD_CALLS = ("record_norm_card_proof_request",
 PROOF_ROUND_RECORD_KWARG = "answer_parsed"
 PROOF_ROUND_ROWS_ARGUMENTS = ("parsed_rows", "previous_rows", "chunks")
 
+# Installed 934 measured the second half of the same round: the model answered the resource-group
+# request with a native ``read_resource_price`` call (``finish_reason = tool_calls``), the round
+# read only the text, so the call was never executed, the model never saw the price it asked for,
+# and the round was recorded as an answer without a table.  A proof round is an inference turn
+# like any other: whatever tool the model requests has to run inside this research stage.
+PROOF_ROUND_READ_TURN_FUNCTION = "run_model_evidence_read_turn"
+PROOF_ROUND_RECORD_NAMES = PROOF_ROUND_RECORD_CALLS
+
 # Installed 933 measured the other all-or-nothing reader: one row of a closed 12-row authored JSON
 # carried `"conversion_factor":1/100`, the envelope parse failed on that token, and the packet lost
 # all eleven readable decisions — `source_coverage_incomplete:1/20`, no artifact, and
@@ -1697,6 +1705,25 @@ def _proof_round_violations(relative: str, tree: ast.AST) -> Iterable[Architectu
                     "round carries no table, which is the branch installed 932 measured as a sheet "
                     "of zero works",
                 )
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        recorded = {_call_name(item).split(".")[-1] for item in ast.walk(node)
+                    if isinstance(item, ast.Call)} & set(PROOF_ROUND_RECORD_NAMES)
+        if not recorded:
+            continue
+        if PROOF_ROUND_READ_TURN_FUNCTION not in {_call_name(item).split(".")[-1]
+                                                  for item in ast.walk(node)
+                                                  if isinstance(item, ast.Call)}:
+            yield ArchitectureViolation(
+                "PROOF_ROUND_DROPS_THE_MODELS_OWN_TOOL_CALL",
+                relative,
+                node.lineno,
+                f"{node.name}() records a proof round ({', '.join(sorted(recorded))}) without "
+                f"{PROOF_ROUND_READ_TURN_FUNCTION}(), so a model answer that requests a read or a "
+                "price lookup is dropped as 'text without a table' instead of executed and "
+                "answered — measured on installed 934 with a native read_resource_price call",
+            )
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
