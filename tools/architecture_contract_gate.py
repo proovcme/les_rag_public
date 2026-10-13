@@ -287,6 +287,18 @@ GROUP_PROOF_MESSAGE_FUNCTION = "proof_request_message"
 GROUP_PROOF_PRICE_TOOLS = ("search_pricebook_resources", "read_resource_price")
 GROUP_PROOF_FORBIDDEN_WORDING = ("цена группы", "первая строка группы не является ценой группы")
 
+# Installed 932 measured what a proof round costs when it writes its own parse result
+# unconditionally: the norm-card round answered in prose, the packet's rows were replaced by an
+# empty list, and the cell came back with `work_rows 0`, no rows naming a norm and a preliminary
+# amount of 0.00 — the ask for a card destroyed the answer it had been asked about.  Both rounds
+# therefore rebind through one helper, and the trace has to say whether the round was readable.
+PROOF_ROUND_ROWS_FUNCTION = "rows_after_proof_round"
+PROOF_ROUND_MIN_ROWS_CALLS = 2
+PROOF_ROUND_RECORD_CALLS = ("record_norm_card_proof_request",
+                            "record_resource_group_proof_request")
+PROOF_ROUND_RECORD_KWARG = "answer_parsed"
+PROOF_ROUND_ROWS_ARGUMENTS = ("parsed_rows", "previous_rows", "chunks")
+
 # Existing direct transports are migration debt, pinned by exact path + function.
 # New callsites must use ContextGovernor instead of expanding this baseline.
 INFERENCE_CALLSITE_BASELINE: frozenset[tuple[str, str]] = frozenset(
@@ -1569,6 +1581,75 @@ def _resource_group_proof_violations(relative: str, tree: ast.AST) -> Iterable[A
         return
 
 
+def _proof_round_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Build 932 § 6: a bounded proof round must not erase the rows it was asked about.
+
+    Three links, all measured on installed 932: both proof rounds rebind through
+    ``rows_after_proof_round``, that helper keeps the earlier rows when the new answer carries no
+    table, and the trace records whether the round was readable.  Replace any link with the
+    unconditional ``pass_rows = bind_row_evidence_ids(...)`` of 932 and a prose answer silently
+    turns a whole sheet into zero works again.
+    """
+
+    if relative != GROUP_PROOF_CHAT_MODULE:
+        return
+    rows_calls = [node for node in ast.walk(tree)
+                  if isinstance(node, ast.Call)
+                  and _call_name(node).split(".")[-1] == PROOF_ROUND_ROWS_FUNCTION]
+    if len(rows_calls) < PROOF_ROUND_MIN_ROWS_CALLS:
+        yield ArchitectureViolation(
+            "PROOF_ROUND_ERASES_PACKET_ROWS",
+            relative,
+            rows_calls[0].lineno if rows_calls else 1,
+            f"the sheet-pass proof rounds no longer rebind rows through "
+            f"{PROOF_ROUND_ROWS_FUNCTION}() {PROOF_ROUND_MIN_ROWS_CALLS} times (found "
+            f"{len(rows_calls)}), so a round whose answer carries no table can overwrite the "
+            "packet's rows with an empty list, as measured on installed 932",
+        )
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and node.name == PROOF_ROUND_ROWS_FUNCTION:
+            arguments = {arg.arg for arg in (*node.args.posonlyargs, *node.args.args,
+                                             *node.args.kwonlyargs)}
+            missing = [name for name in PROOF_ROUND_ROWS_ARGUMENTS if name not in arguments]
+            called = {_call_name(item).split(".")[-1] for item in ast.walk(node)
+                      if isinstance(item, ast.Call)}
+            if missing or "bind_row_evidence_ids" not in called:
+                yield ArchitectureViolation(
+                    "PROOF_ROUND_ERASES_PACKET_ROWS",
+                    relative,
+                    node.lineno,
+                    f"{PROOF_ROUND_ROWS_FUNCTION}() no longer takes {missing or 'the rows'} or no "
+                    "longer rebinds through bind_row_evidence_ids(), so the rule that an unreadable "
+                    "answer keeps the previous rows has no home",
+                )
+            if not any(isinstance(item, ast.Name) and item.id == "previous_rows"
+                       for item in ast.walk(node)):
+                yield ArchitectureViolation(
+                    "PROOF_ROUND_ERASES_PACKET_ROWS",
+                    relative,
+                    node.lineno,
+                    f"{PROOF_ROUND_ROWS_FUNCTION}() no longer returns `previous_rows` when the "
+                    "round carries no table, which is the branch installed 932 measured as a sheet "
+                    "of zero works",
+                )
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_name(node).split(".")[-1]
+        if name not in PROOF_ROUND_RECORD_CALLS:
+            continue
+        keywords = {key.arg for key in node.keywords if key.arg}
+        if PROOF_ROUND_RECORD_KWARG not in keywords:
+            yield ArchitectureViolation(
+                "PROOF_ROUND_ERASES_PACKET_ROWS",
+                relative,
+                node.lineno,
+                f"{name}() records the proof round without `{PROOF_ROUND_RECORD_KWARG}`, so a round "
+                "whose answer could not be read looks like a round that never asked anything",
+            )
+
+
 def _norm_card_proof_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
     """Task 2026-09-30 § 3: a chosen шифр cannot be priced without its own card being shown.
 
@@ -1710,6 +1791,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     yield from _accrual_label_violations(relative, tree)
     yield from _norm_card_proof_violations(relative, tree)
     yield from _resource_group_proof_violations(relative, tree)
+    yield from _proof_round_violations(relative, tree)
     yield from _book_price_unit_violations(relative, tree)
     yield from _price_ownership_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}

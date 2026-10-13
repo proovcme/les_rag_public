@@ -162,8 +162,13 @@ def proof_request_message(groups: Sequence[Mapping[str, Any]]) -> str:
 
 def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[str],
                          groups: Sequence[Mapping[str, Any]], answered: bool,
-                         attempt: int) -> None:
-    """Write the visible fact that the application refused a family price."""
+                         attempt: int, answer_parsed: bool = True) -> None:
+    """Write the visible fact that the application refused a family price.
+
+    ``model_answered`` and ``answer_parsed`` are different facts: a round can come back with text
+    the application cannot read as a table, and that has to stay visible instead of looking like
+    the model never answered.
+    """
     entry = {
         "schema": TRACE_SCHEMA,
         "sheet": _txt(sheet),
@@ -175,6 +180,7 @@ def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[
                    for group in groups],
         "requested": len(groups),
         "model_answered": bool(answered),
+        "answer_parsed": bool(answer_parsed),
         "packet_attempt": int(attempt),
     }
     trace.setdefault(PROOF_REQUEST_TRACE, []).append(entry)

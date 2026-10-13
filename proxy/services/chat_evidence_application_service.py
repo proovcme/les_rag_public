@@ -389,6 +389,28 @@ def model_pricebook(basis: object):
     return fps.get_pricebook(path)
 
 
+def rows_after_proof_round(*, parsed_rows: Sequence[Mapping[str, Any]],
+                           previous_rows: Sequence[Mapping[str, Any]],
+                           chunks: Sequence[Any]) -> tuple[list[dict[str, Any]], bool]:
+    """Rows and answer-parse state after a bounded proof round.
+
+    Measured on installed 932 (``artifacts/live_932/installed932_bap_b1/final.json``): the norm-card
+    proof round answered in prose, ``parse_model_rag_result`` therefore returned no table, and the
+    round wrote an empty row list over the packet it had just been asked about — the sheet finished
+    with ``work_rows 0``, no rows naming a norm and a preliminary amount of 0.00.  A proof round is
+    a request to the model, not a licence to erase what the model had already decided: an answer the
+    application cannot read leaves the earlier rows in force, and the round is recorded as
+    ``answer_parsed = False`` so the drop is visible instead of looking like a round that never ran.
+
+    The unread rows keep their own ``norm_card_body_unread`` gap here, because the rows are rebound
+    through ``bind_row_evidence_ids`` only when the new answer actually carries them.
+    """
+    rows = [dict(row) for row in parsed_rows if isinstance(row, Mapping)]
+    if not rows:
+        return [dict(row) for row in previous_rows if isinstance(row, Mapping)], False
+    return bind_row_evidence_ids(rows, chunks, binding_phase="first"), True
+
+
 def task_document_price_basis(job: object, previous_basis: object = None) -> dict[str, Any]:
     """Fill the first-packaging gap using durable operator request dimensions."""
     basis = document_price_basis_arguments(previous_basis)
@@ -8551,6 +8573,10 @@ async def _execute_chat_evidence_application(
 
     model_evidence_chunks = list(llm_chunks)
     model_requested_price_basis = {}
+    # The basis chosen for this document.  The sheet branch binds it from the task and the
+    # attachment before any pass runs; the annotation keeps a proof hook that reads it early from
+    # ever seeing a missing name instead of the honest "nothing chosen yet" empty basis.
+    sheet_price_basis: dict[str, Any] = {}
 
     def _build_model_evidence(current_chunks: Sequence[Any]):
         packet = build_retrieval_evidence_packet(
@@ -11598,6 +11624,8 @@ async def _execute_chat_evidence_application(
                                                 "norm_proof_pending": True},
                                         )
                                     raise
+                                proof_answer_parsed = False
+                                proof_previous_answer = pass_answer
                                 if answered:
                                     pass_answer, usage = answered, dict(answer_usage or {})
                                     tokens = int(tokens or 0) + int(
@@ -11631,17 +11659,22 @@ async def _execute_chat_evidence_application(
                                     proved_rows: list[dict[str, Any]] = []
                                     if proved_pass is not None:
                                         _proved_visible, proved_rows = proved_pass
-                                    pass_rows = bind_row_evidence_ids(
-                                        proved_rows,
-                                        [*prior_page_chunks, *saved_read_chunks,
-                                         *model_evidence_chunks],
-                                        binding_phase="first",
+                                    pass_rows, proof_answer_parsed = rows_after_proof_round(
+                                        parsed_rows=proved_rows,
+                                        previous_rows=pass_rows,
+                                        chunks=[*prior_page_chunks, *saved_read_chunks,
+                                                *model_evidence_chunks],
                                     )
+                                    if not proof_answer_parsed:
+                                        # The prose answer must not stay as the delivered text of a
+                                        # round that produced nothing; the packet keeps its answer.
+                                        pass_answer = proof_previous_answer
                                 record_norm_card_proof_request(
                                     retrieval_trace, sheet=sheet_name, packet=packet,
                                     refs=proof_refs, receipts=proof_receipts,
                                     unread_rows=proof_unread_rows,
                                     attempt=proof_read_attempts[fingerprint],
+                                    answer_parsed=proof_answer_parsed,
                                 )
                                 logger.warning(
                                     "[NORM_PROOF] sheet=%s packet=%s unread_rows=%s "
@@ -11661,7 +11694,12 @@ async def _execute_chat_evidence_application(
                             proof_groups = resource_group_proof_reads_needed(
                                 pass_rows,
                                 [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
-                                pricebook=model_pricebook(model_requested_price_basis),
+                                # The basis of this sheet pass, not only what the model has
+                                # already read back: the chosen book is known before the first
+                                # price tool runs, and waiting for the snapshot would hide the
+                                # family until after the position was already packaged.
+                                pricebook=model_pricebook(
+                                    sheet_price_basis or model_requested_price_basis),
                             )
                             if (proof_groups and sheet_read_tools
                                     and group_proof_attempts.get(fingerprint, 0) < 1):
@@ -11689,6 +11727,8 @@ async def _execute_chat_evidence_application(
                                     retrieval_trace["context_governor"]["error"] = (
                                         model_read_capacity_trace(
                                             context_error, purpose=RESOURCE_GROUP_PROOF_PURPOSE))
+                                group_answer_parsed = False
+                                group_previous_answer = pass_answer
                                 if group_answer:
                                     group_answered = True
                                     pass_answer, usage = group_answer, dict(group_usage or {})
@@ -11700,16 +11740,19 @@ async def _execute_chat_evidence_application(
                                     group_rows: list[dict[str, Any]] = []
                                     if group_pass is not None:
                                         _group_visible, group_rows = group_pass
-                                    pass_rows = bind_row_evidence_ids(
-                                        group_rows,
-                                        [*prior_page_chunks, *saved_read_chunks,
-                                         *model_evidence_chunks],
-                                        binding_phase="first",
+                                    pass_rows, group_answer_parsed = rows_after_proof_round(
+                                        parsed_rows=group_rows,
+                                        previous_rows=pass_rows,
+                                        chunks=[*prior_page_chunks, *saved_read_chunks,
+                                                *model_evidence_chunks],
                                     )
+                                    if not group_answer_parsed:
+                                        pass_answer = group_previous_answer
                                 record_resource_group_proof_request(
                                     retrieval_trace, sheet=sheet_name, packet=packet,
                                     groups=proof_groups, answered=group_answered,
                                     attempt=group_proof_attempts[fingerprint],
+                                    answer_parsed=group_answer_parsed,
                                 )
                                 logger.warning(
                                     "[GROUP_PROOF] sheet=%s packet=%s groups=%s answered=%s",

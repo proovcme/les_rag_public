@@ -251,3 +251,68 @@ def test_a_non_cipher_cipher_names_no_item_and_owes_no_body_verdict():
     bound = service.bind_row_evidence_ids([row], [_pointer_chunk(
         "Q7.H1", NORM_CODE, identity="other-card")])[0]
     assert "card_body_shown" not in bound["_evidence_check"]
+
+
+def test_an_unreadable_proof_answer_leaves_the_rows_it_was_asked_about():
+    """The rule the installed 932 measured as a sheet of zero works, in one call.
+
+    A proof round is a request to the model, not a licence to overwrite the packet: an answer
+    without a table keeps the earlier rows and says so.
+    """
+    from proxy.services import chat_evidence_application_service as service
+
+    previous = [{"source_row": "S!R2", "row_role": "work", "norm_code": NORM_CODE_B}]
+    rows, parsed = service.rows_after_proof_round(
+        parsed_rows=[], previous_rows=previous, chunks=[])
+    assert parsed is False and rows == previous
+    # a non-empty answer is still rebound, so a genuine correction is not swallowed
+    rows, parsed = service.rows_after_proof_round(
+        parsed_rows=[dict(previous[0], quantity=7)], previous_rows=previous, chunks=[])
+    assert parsed is True and rows[0]["quantity"] == 7
+    assert "_evidence_check" in rows[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B1_CANDIDATE"])
+async def test_a_proof_round_answered_in_prose_delivers_the_packet_rows(tmp_path, monkeypatch,
+                                                                       variant):
+    """End-to-end of the 932 regression: the ask may not turn a answered packet into zero works.
+
+    Measured in `artifacts/live_932/installed932_bap_b1/final.json`: ``work_rows 0``,
+    ``rows_naming_a_norm 0``, ``preliminary_amount 0.0`` after a proof round whose answer carried
+    no table, while the same packet before the round had its rows.
+    """
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant=variant,
+                           group_char_budget=7000, distinct_norms=True,
+                           final_answer=SECOND_NORM_ANSWER,
+                           proof_replies=[InferenceResponse(
+                               text="Карточку я не прочитал, уточни, какой сборник брать.",
+                               tool_calls=(), finish_reason="stop",
+                               usage={"completion_tokens": 40})])
+    trace = run.result["retrieval_trace"]
+    entry = trace["norm_card_proof_requests"][0]
+    assert entry["reason"] == "norm_card_body_unread"
+    assert entry["answer_parsed"] is False
+    assert entry["model_reads_after_request"] == 0
+    rows = (trace.get("model_result") or {}).get("decision_rows") or []
+    assert [row["source_row"] for row in rows] == ["S!R2", "S!R3"]
+    assert [row["norm_code"] for row in rows] == [NORM_CODE_B, NORM_CODE_B]
+    # the rows keep their own unread verdict — nothing here promotes a status
+    assert [row["_evidence_check"]["card_body_shown"] for row in rows] == [False, False]
+    counts = (trace.get("result_readiness") or {}).get("counts") or {}
+    assert int(counts.get("works") or 0) == 2
+
+
+def test_the_proof_record_carries_the_answer_parse_flag():
+    trace: dict = {}
+    proof.record_proof_request(trace, sheet="S", packet=("S!R2",), refs=("Q2.H1",),
+                               receipts=(), attempt=1,
+                               unread_rows=[{"source_row": "S!R2", "norm_code": NORM_CODE_B}],
+                               answer_parsed=False)
+    entry = trace["norm_card_proof_requests"][0]
+    assert entry["answer_parsed"] is False
+    assert entry["unread_norm_rows"] == 1 and entry["unread_ciphers"] == [NORM_CODE_B]
+    # a round nobody asked about parse failures still records the honest default
+    proof.record_proof_request(trace, sheet="S", packet=("S!R3",), refs=(), receipts=(),
+                               attempt=1, unread_rows=[])
+    assert trace["norm_card_proof_requests"][1]["answer_parsed"] is True

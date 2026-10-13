@@ -200,8 +200,15 @@ def proof_request_message(refs: Sequence[str], rows: Sequence[Mapping[str, Any]]
 
 def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[str],
                          refs: Sequence[str], receipts: Sequence[Mapping[str, Any]],
-                         attempt: int, unread_rows: Sequence[Mapping[str, Any]] = ()) -> None:
-    """Write the visible fact that the application refused an unproven norm choice."""
+                         attempt: int, unread_rows: Sequence[Mapping[str, Any]] = (),
+                         answer_parsed: bool = True) -> None:
+    """Write the visible fact that the application refused an unproven norm choice.
+
+    ``answer_parsed`` records whether the proof round came back as a table the application could
+    read.  Measured on installed 932: an answer in prose parses to no rows, and the trace has to
+    say that the round was asked, answered, and not usable — otherwise the dropped packet looks
+    like a round that never happened.
+    """
     entry = {
         "schema": TRACE_SCHEMA,
         "sheet": _txt(sheet),
@@ -214,6 +221,7 @@ def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[
                            if isinstance(row, Mapping)],
         "model_reads_after_request": len(receipts),
         "read_statuses": sorted({str(receipt.get("status") or "") for receipt in receipts}),
+        "answer_parsed": bool(answer_parsed),
         "packet_attempt": int(attempt),
     }
     trace.setdefault(PROOF_REQUEST_TRACE, []).append(entry)

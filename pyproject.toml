@@ -1,6 +1,6 @@
 [project]
 name = "les-v2"
-version = "0.31.204"
+version = "0.31.205"
 description = "Л.Е.С. — Локальная Экспертная Система"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

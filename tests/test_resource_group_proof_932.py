@@ -134,6 +134,30 @@ def test_the_refusal_is_recorded_as_a_visible_fact():
     assert entry["packet_locators"] == ["АР!R11"]
 
 
+def test_an_unreadable_group_answer_is_recorded_apart_from_a_round_that_never_asked():
+    """Installed 932 measured both shapes as nothing at all, which is why the sheet hid them.
+
+    ``model_answered`` says the model replied; ``answer_parsed`` says the application could read
+    that reply as a table.  A prose answer is the second kind of fact, not the first, and the
+    sheet pass passes False for a round that produced neither a table nor an answer at all.
+    """
+    trace: dict = {}
+    found = proof.unresolved_groups(ROWS, [_card_chunk([RESOURCE])], pricebook=_book())
+    proof.record_proof_request(trace, sheet="АР", packet=["АР!R11"], groups=found,
+                               answered=True, attempt=1, answer_parsed=False)
+    entry = trace[proof.PROOF_REQUEST_TRACE][0]
+    assert entry["model_answered"] is True and entry["answer_parsed"] is False
+    proof.record_proof_request(trace, sheet="АР", packet=["АР!R12"], groups=found,
+                               answered=False, attempt=1, answer_parsed=False)
+    silent = trace[proof.PROOF_REQUEST_TRACE][1]
+    assert silent["model_answered"] is False and silent["answer_parsed"] is False
+    # a round that did bring a readable table records both flags as they are
+    proof.record_proof_request(trace, sheet="АР", packet=["АР!R13"], groups=found,
+                               answered=True, attempt=1)
+    read = trace[proof.PROOF_REQUEST_TRACE][2]
+    assert read["model_answered"] is True and read["answer_parsed"] is True
+
+
 def test_the_budget_is_bounded_and_measured():
     assert proof.proof_budget() == proof.MAX_GROUPS_PER_PACKET
     assert proof.proof_budget(configured=99) == proof.MAX_GROUPS_PER_PACKET

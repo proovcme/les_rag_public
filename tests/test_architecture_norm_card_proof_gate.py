@@ -245,3 +245,89 @@ def proof_request_message(groups):
             + "; первая строка группы не является ценой группы")
 ''')
     assert GROUP_CODE not in codes
+
+
+ROUND_CODE = "PROOF_ROUND_ERASES_PACKET_ROWS"
+
+# The shape installed 932 actually ran: the round parsed its own answer and wrote it over the
+# packet without asking whether the answer carried a table at all.
+ERASING_SEAM = '''
+def rows_after_proof_round(*, parsed_rows, previous_rows, chunks):
+    if not parsed_rows:
+        return [dict(row) for row in previous_rows], False
+    return bind_row_evidence_ids(parsed_rows, chunks, binding_phase="first"), True
+
+
+async def _execute_chat_evidence_application(request, runtime, boundary):
+    pass_rows = bind_row_evidence_ids(rows, chunks, binding_phase="first")
+    pass_rows = bind_row_evidence_ids(proved_rows, chunks, binding_phase="first")
+    record_norm_card_proof_request(trace, sheet=sheet, packet=packet, refs=refs,
+                                   receipts=(), attempt=1)
+    record_resource_group_proof_request(trace, sheet=sheet, packet=packet, groups=groups,
+                                        answered=True, attempt=1)
+    return pass_rows
+'''
+
+GUARDED_SEAM = '''
+def rows_after_proof_round(*, parsed_rows, previous_rows, chunks):
+    if not parsed_rows:
+        return [dict(row) for row in previous_rows], False
+    return bind_row_evidence_ids(parsed_rows, chunks, binding_phase="first"), True
+
+
+async def _execute_chat_evidence_application(request, runtime, boundary):
+    pass_rows = bind_row_evidence_ids(rows, chunks, binding_phase="first")
+    pass_rows, answer_parsed = rows_after_proof_round(
+        parsed_rows=proved_rows, previous_rows=pass_rows, chunks=chunks)
+    record_norm_card_proof_request(trace, sheet=sheet, packet=packet, refs=refs,
+                                   receipts=(), attempt=1, answer_parsed=answer_parsed)
+    pass_rows, group_parsed = rows_after_proof_round(
+        parsed_rows=group_rows, previous_rows=pass_rows, chunks=chunks)
+    record_resource_group_proof_request(trace, sheet=sheet, packet=packet, groups=groups,
+                                        answered=True, attempt=1, answer_parsed=group_parsed)
+    return pass_rows
+'''
+
+
+def test_a_proof_round_that_writes_its_own_parse_over_the_packet_is_a_violation(tmp_path):
+    """This is what made the 932 БАП cell come back with work_rows 0 and a 0.00 amount."""
+
+    assert ROUND_CODE in _codes(tmp_path, CHAT_MODULE, ERASING_SEAM)
+
+
+def test_both_rounds_rebinding_through_the_helper_are_clean(tmp_path):
+    assert ROUND_CODE not in _codes(tmp_path, CHAT_MODULE, GUARDED_SEAM)
+
+
+def test_one_round_left_unguarded_is_a_violation(tmp_path):
+    codes = _codes(tmp_path, CHAT_MODULE, GUARDED_SEAM.replace(
+        """    pass_rows, group_parsed = rows_after_proof_round(
+        parsed_rows=group_rows, previous_rows=pass_rows, chunks=chunks)
+""",
+        """    pass_rows = bind_row_evidence_ids(group_rows, chunks, binding_phase="first")
+"""))
+    assert ROUND_CODE in codes
+
+
+def test_a_record_without_the_answer_parse_flag_is_a_violation(tmp_path):
+    codes = _codes(tmp_path, CHAT_MODULE, GUARDED_SEAM.replace(
+        "attempt=1, answer_parsed=group_parsed)", "attempt=1)"))
+    assert ROUND_CODE in codes
+
+
+def test_a_helper_with_no_branch_back_to_the_previous_rows_is_a_violation(tmp_path):
+    codes = _codes(tmp_path, CHAT_MODULE, GUARDED_SEAM.replace(
+        """    if not parsed_rows:
+        return [dict(row) for row in previous_rows], False
+""",
+        """    if not parsed_rows:
+        return [], False
+"""))
+    assert ROUND_CODE in codes
+
+
+def test_a_helper_that_stopped_rebinding_through_the_binder_is_a_violation(tmp_path):
+    codes = _codes(tmp_path, CHAT_MODULE, GUARDED_SEAM.replace(
+        "    return bind_row_evidence_ids(parsed_rows, chunks, binding_phase=\"first\"), True",
+        "    return [dict(row) for row in parsed_rows], True"))
+    assert ROUND_CODE in codes
