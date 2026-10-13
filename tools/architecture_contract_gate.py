@@ -253,12 +253,19 @@ NORM_PROOF_ASK_NEIGHBOURS = ("bind_row_evidence_ids", "admit_model_result_packet
 NORM_PROOF_REQUIRED_CALLS = (
     "norm_card_proof_reads_needed",
     "norm_card_proof_request_message",
+    "norm_card_unread_rows",
     "record_norm_card_proof_request",
 )
+# Installed 930 measured why the ask must be counted from rows and the verdict must be total:
+# 15 of the 17 БАП rows that named a шифр cited no card at all, so a refs-only view saw one
+# debt, no verdict was written for the other fourteen, and the calculator paid for them.
+NORM_PROOF_VERDICT_FIELD = "card_body_shown"
+NORM_PROOF_VERDICT_SOURCE = "delivered_cipher_keys"
 NORM_PROOF_SERVICE_MODULE = "proxy/services/norm_card_proof_service.py"
 NORM_PROOF_MESSAGE_FUNCTION = "proof_request_message"
 NORM_PROOF_READ_TOOL = "read_norm_card"
 NORM_PROOF_UNREAD_FUNCTION = "unread_chosen_norm_refs"
+NORM_PROOF_UNREAD_ROWS_FUNCTION = "unread_chosen_norm_rows"
 DELIVERY_FACTS_MODULE = "proxy/services/model_rag_grouped_evidence_service.py"
 DELIVERY_FACTS_FUNCTION = "card_delivery_facts"
 DELIVERY_FACTS_REQUIRED_REFS = ("_pointer_body", "Состав работы:")
@@ -1503,6 +1510,27 @@ def _norm_card_proof_violations(relative: str, tree: ast.AST) -> Iterable[Archit
                     f"chosen norm cards ({', '.join(missing)} is not called), so a шифр taken "
                     "from an inventory pointer would be priced as if its card had been read",
                 )
+        verdict_assignments = [
+            item for item in ast.walk(tree)
+            if isinstance(item, (ast.Assign, ast.AugAssign))
+            and any(isinstance(target, ast.Subscript)
+                    and isinstance(target.slice, ast.Constant)
+                    and target.slice.value == NORM_PROOF_VERDICT_FIELD
+                    for target in ([item.target] if isinstance(item, ast.AugAssign)
+                                   else item.targets))
+        ]
+        if not any(NORM_PROOF_VERDICT_SOURCE in
+                   {getattr(name, "id", "") for name in ast.walk(item.value)}
+                   for item in verdict_assignments):
+            yield ArchitectureViolation(
+                "NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF",
+                relative,
+                (verdict_assignments[0].lineno if verdict_assignments else 1),
+                f"no `{NORM_PROOF_VERDICT_FIELD}` verdict is derived from "
+                f"`{NORM_PROOF_VERDICT_SOURCE}`, so a row that names a шифр without citing any "
+                "card keeps no verdict at all and is still priced for a card nobody showed "
+                "(measured on installed 930: 15 of 17 БАП rows)",
+            )
         return
     if relative == NORM_PROOF_SERVICE_MODULE:
         for node in ast.walk(tree):
@@ -1520,7 +1548,18 @@ def _norm_card_proof_violations(relative: str, tree: ast.AST) -> Iterable[Archit
                         "operation, so the proof request could only be answered by guessing "
                         "another norm instead of reading the cited one",
                     )
-            if node.name == NORM_PROOF_UNREAD_FUNCTION:
+                asked = {_call_name(item).split(".")[-1] for item in ast.walk(node)
+                         if isinstance(item, ast.Call)}
+                if NORM_PROOF_UNREAD_ROWS_FUNCTION not in asked:
+                    yield ArchitectureViolation(
+                        "NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF",
+                        relative,
+                        node.lineno,
+                        f"{NORM_PROOF_MESSAGE_FUNCTION}() no longer walks "
+                        f"{NORM_PROOF_UNREAD_ROWS_FUNCTION}(), so a row that named a шифр without "
+                        "citing any card was left out of the proof request and kept its price",
+                    )
+            if node.name == NORM_PROOF_UNREAD_ROWS_FUNCTION:
                 literals = {item.value for item in ast.walk(node)
                             if isinstance(item, ast.Constant) and isinstance(item.value, str)}
                 if "card_body_shown" not in literals:
@@ -1528,9 +1567,21 @@ def _norm_card_proof_violations(relative: str, tree: ast.AST) -> Iterable[Archit
                         "NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF",
                         relative,
                         node.lineno,
-                        f"{NORM_PROOF_UNREAD_FUNCTION}() stopped reading `card_body_shown`, so "
-                        "the debt would be judged by presence in the retrieval list rather than "
-                        "by the body that was delivered",
+                        f"{NORM_PROOF_UNREAD_ROWS_FUNCTION}() stopped reading `card_body_shown`, "
+                        "so the debt would be judged by presence in the retrieval list rather "
+                        "than by the body that was delivered",
+                    )
+            if node.name == NORM_PROOF_UNREAD_FUNCTION:
+                called = {_call_name(item).split(".")[-1] for item in ast.walk(node)
+                          if isinstance(item, ast.Call)}
+                if NORM_PROOF_UNREAD_ROWS_FUNCTION not in called:
+                    yield ArchitectureViolation(
+                        "NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF",
+                        relative,
+                        node.lineno,
+                        f"{NORM_PROOF_UNREAD_FUNCTION}() no longer judges debt through "
+                        f"{NORM_PROOF_UNREAD_ROWS_FUNCTION}(), so rows that name a шифр without "
+                        "a cited ref would silently drop out of the proof request",
                     )
         return
     if relative == DELIVERY_FACTS_MODULE:

@@ -81,6 +81,39 @@ def is_work_row(row: Mapping[str, Any]) -> bool:
     return bool(_txt(row.get("norm_code"))) and bool(_txt(row.get("source_row")))
 
 
+def unread_candidates(row: Mapping[str, Any], shown_by_ref: set[str]) -> list[str]:
+    """The refs this row itself cited that still owe a card body."""
+    cited = [str(ref).strip().upper() for ref in (row.get("evidence_refs") or [])
+             if str(ref).strip()]
+    check = row.get("_evidence_check")
+    deferred = [str(ref).strip().upper()
+                for ref in ((check.get("deferred_card_refs") if isinstance(check, Mapping)
+                             else []) or [])
+                if str(ref).strip()]
+    return [ref for ref in deferred or cited if ref not in shown_by_ref]
+
+
+def unread_chosen_norm_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Every work row that names a шифр whose card body was not delivered.
+
+    The installed 930 measured why the debt must be counted from the row, not from its refs:
+    15 of the 17 БАП rows that named a шифр cited no card at all, so a refs-only view of the
+    same run saw one debt while the other fourteen were paid for unseen.
+    """
+    unread: list[Mapping[str, Any]] = []
+    for row in rows or ():
+        if not isinstance(row, Mapping) or not _cipher(row.get("norm_code")):
+            continue
+        if not is_work_row(row):
+            continue
+        check = row.get("_evidence_check")
+        if not isinstance(check, Mapping):
+            continue
+        if check.get("card_body_shown") is False:
+            unread.append(row)
+    return unread
+
+
 def unread_chosen_norm_refs(rows: Sequence[Mapping[str, Any]],
                             *, chunks: Sequence[Any] = ()) -> list[str]:
     """Cited refs of chosen norms whose card body was not delivered.
@@ -91,24 +124,8 @@ def unread_chosen_norm_refs(rows: Sequence[Mapping[str, Any]],
     """
     shown_by_ref = delivered_refs_from_chunks(chunks)
     refs: list[str] = []
-    for row in rows or ():
-        if not isinstance(row, Mapping) or not _cipher(row.get("norm_code")):
-            continue
-        if not is_work_row(row):
-            continue
-        check = row.get("_evidence_check")
-        if not isinstance(check, Mapping):
-            continue
-        cited = [str(ref).strip().upper() for ref in (row.get("evidence_refs") or [])
-                 if str(ref).strip()]
-        deferred = [str(ref).strip().upper() for ref in (check.get("deferred_card_refs") or [])
-                    if str(ref).strip()]
-        if check.get("card_body_shown") is not False:
-            # The check says the chosen card was shown (or says nothing about it); either
-            # way there is no unread debt to repair.
-            continue
-        candidates = [ref for ref in deferred or cited if ref not in shown_by_ref]
-        for ref in candidates:
+    for row in unread_chosen_norm_rows(rows):
+        for ref in unread_candidates(row, shown_by_ref):
             if ref not in refs:
                 refs.append(ref)
     return refs
@@ -139,42 +156,51 @@ def proof_request_message(refs: Sequence[str], rows: Sequence[Mapping[str, Any]]
     shown, so the row cannot become a calculated position.  It states the technical way out
     (`read_norm_card` for that exact `evidence_ref`) without proposing, rejecting or
     replacing any norm — the professional choice remains the model's.
+
+    Two shapes of debt are separated, because the 930 live pair showed they are not the same
+    request: a row whose own cited ref still owes a body can be read directly, while a row
+    that cited nothing (or only a card of another шифр) has no ref to read and must search
+    first.
     """
     limited = [str(ref).strip() for ref in refs if str(ref).strip()][:max(0, int(max_refs))]
-    wanted: list[str] = []
-    for row in rows or ():
-        if not isinstance(row, Mapping) or not _cipher(row.get("norm_code")):
+    readable: list[str] = []
+    searchable: list[str] = []
+    for row in unread_chosen_norm_rows(rows):
+        locator = str(row.get("source_row") or row.get("work_id") or "?")
+        cipher = _cipher(row.get("norm_code"))
+        cited = unread_candidates(row, set())
+        direct = next((ref for ref in cited if ref in limited), "")
+        if direct:
+            readable.append(f"- {direct} → {locator} (назван шифр {cipher}): вызови "
+                            f"{READ_TOOL} с этим evidence_ref")
             continue
-        ref = ""
-        check = row.get("_evidence_check")
-        if isinstance(check, Mapping):
-            cited = [str(item).strip().upper() for item in (check.get("deferred_card_refs") or [])]
-            refs_in_row = [item for item in cited if item in limited]
-            if not refs_in_row:
-                refs_in_row = [item for item in
-                               (str(x).strip().upper() for x in (row.get("evidence_refs") or []))
-                               if item in limited]
-            ref = refs_in_row[0] if refs_in_row else ""
-        if ref:
-            wanted.append(f"- {ref} → {row.get('source_row') or row.get('work_id') or '?'} "
-                          f"(назван шифр {row.get('norm_code')})")
-    lines = "\n".join(dict.fromkeys(wanted))
-    return (
-        "Ты назвал нормы, но их карточки тебе не показывали: по этим ссылкам в контексте был "
-        "только указатель (шифр, наименование, единица, источник) без состава работ, ресурсов "
-        "и условий. Без прочитанной карточки такая строка не может стать рассчитанной позицией, "
-        "и цена по ней не начисляется.\n"
-        f"{lines}\n"
-        "Вызови read_norm_card с этим evidence_ref (или подбери другую норму через "
-        "search_sources и затем прочитай её карточку) и перезполни строки. Меняй шифр только "
-        "если состав прочитанной карточки этому противоречит; если карточка не подходит — "
-        "оставь строку с явной причиной, не угадывай."
+        names = ", ".join(dict.fromkeys(cited)) if cited else "ни одной карточки не цитировано"
+        searchable.append(f"- {locator}: шифр {cipher}, ссылки в строке: {names} — найди норму "
+                          f"через search_sources и прочитай её карточку через {READ_TOOL} "
+                          "целиком")
+    if not (readable or searchable):
+        return ""
+    lines = "\n".join(dict.fromkeys(readable))
+    search_lines = "\n".join(dict.fromkeys(searchable))
+    head = (
+        "Ты назвал нормы, но их карточки тебе не показывали: в доставленном тексте по этим "
+        "строкам не было полного тела карточки с названным шифром — только указатель (шифр, "
+        "наименование, единица, источник) без состава работ, ресурсов и условий. Без прочитанной "
+        "карточки такая строка не может стать рассчитанной позицией, и цена по ней не "
+        "начисляется.\n"
     )
+    if lines:
+        head += f"{lines}\n"
+    if search_lines:
+        head += f"{search_lines}\n"
+    return head + ("Перезполни эти строки по прочитанной карточке. Меняй шифр только если состав "
+                   "прочитанной карточки этому противоречит; если карточка не подходит — оставь "
+                   "строку с явной причиной, не угадывай.")
 
 
 def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[str],
                          refs: Sequence[str], receipts: Sequence[Mapping[str, Any]],
-                         attempt: int) -> None:
+                         attempt: int, unread_rows: Sequence[Mapping[str, Any]] = ()) -> None:
     """Write the visible fact that the application refused an unproven norm choice."""
     entry = {
         "schema": TRACE_SCHEMA,
@@ -183,6 +209,9 @@ def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[
         "reason": "norm_card_body_unread",
         "refs": [str(ref) for ref in refs],
         "requested_reads": len(refs),
+        "unread_norm_rows": len(unread_rows),
+        "unread_ciphers": [_cipher(row.get("norm_code")) for row in unread_rows
+                           if isinstance(row, Mapping)],
         "model_reads_after_request": len(receipts),
         "read_statuses": sorted({str(receipt.get("status") or "") for receipt in receipts}),
         "packet_attempt": int(attempt),

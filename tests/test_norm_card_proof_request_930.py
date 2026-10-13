@@ -178,3 +178,76 @@ def test_delivery_facts_are_read_from_the_delivered_text_not_from_the_claim():
     # card А never discharges card Б: the cipher carried by the shown body is a separate fact
     assert other["shown_body_carries_this_cipher"] is False
 
+
+
+def _pointer_chunk(ref: str, code: str, *, identity: str):
+    from types import SimpleNamespace
+    inventory = json.dumps([ref, "deferred_capacity", identity, code, "Synthetic norm",
+                            "м2", "source_x"], ensure_ascii=False)
+    return SimpleNamespace(content=inventory, doc_name="cards", meta={
+        "model_evidence_ref": ref, "global_evidence_id": identity,
+        "norm_code": code, "body_status": "deferred_capacity",
+        "model_delivery_status": "delivered", "model_raw_body_retained": False,
+        "model_inventory_view": inventory, "model_query_text": identity})
+
+
+def _shown_chunk(ref: str, code: str, *, identity: str):
+    from types import SimpleNamespace
+    return SimpleNamespace(content=f"Шифр: {code}\nНаименование: Synthetic norm\n"
+                                   f"Состав работы: Установить изделие\n",
+                           doc_name="cards", meta={
+        "model_evidence_ref": ref, "global_evidence_id": identity,
+        "norm_code": code, "body_status": "full", "model_delivery_status": "delivered"})
+
+
+def test_a_cipher_named_without_any_cited_card_still_owes_its_verdict():
+    """The hole the installed 930 measured live: no citation, no verdict, still money.
+
+    15 of the 17 БАП rows that named a шифр cited nothing, so `bind_row_evidence_ids` wrote
+    no `card_body_shown` at all.  A row with no verdict is invisible to the proof request and
+    to the readiness gap, and the calculator paid for a card nobody showed.
+    """
+    from proxy.services import chat_evidence_application_service as service
+    from proxy.services.lsr_norm_quality_gate_service import applicability_gap_kind
+
+    row = {"source_row": "S!R9", "row_role": "work", "title": "Монтаж лючка", "unit": "шт",
+           "quantity": 2, "norm_code": NORM_CODE_B}
+    bound = service.bind_row_evidence_ids([row], [_pointer_chunk(
+        "Q7.H1", NORM_CODE, identity="other-card")])[0]
+    check = bound["_evidence_check"]
+    assert check["card_body_shown"] is False
+    assert check["card_body_shown_basis"] == "no_delivered_card_names_this_cipher"
+    assert applicability_gap_kind(bound) == "norm_card_body_unread"
+    # the debt is counted from the row, and there is no ref that could discharge it
+    assert [item["source_row"] for item in proof.unread_chosen_norm_rows([bound])] == ["S!R9"]
+    assert proof.unread_chosen_norm_refs([bound]) == []
+    message = proof.proof_request_message([], [bound])
+    assert NORM_CODE_B in message and "search_sources" in message
+    assert "read_norm_card" in message
+
+
+def test_a_delivered_card_of_the_same_cipher_discharges_the_row():
+    from proxy.services import chat_evidence_application_service as service
+
+    row = {"source_row": "S!R9", "row_role": "work", "title": "Монтаж лючка", "unit": "шт",
+           "quantity": 2, "norm_code": NORM_CODE_B}
+    bound = service.bind_row_evidence_ids([row], [
+        _shown_chunk("Q9.H1", NORM_CODE_B, identity="chosen-card")])[0]
+    assert bound["_evidence_check"]["card_body_shown"] is True
+    assert bound["_evidence_check"]["card_body_shown_basis"] == "cipher_card_body_delivered"
+    assert proof.unread_chosen_norm_rows([bound]) == []
+    # a shown card of another cipher does not discharge this row either
+    other = service.bind_row_evidence_ids([row], [
+        _shown_chunk("Q9.H1", NORM_CODE, identity="different-card")])[0]
+    assert other["_evidence_check"]["card_body_shown"] is False
+
+
+def test_a_non_cipher_cipher_names_no_item_and_owes_no_body_verdict():
+    """A bare code identifies no item, so no delivery verdict is written for it."""
+    from proxy.services import chat_evidence_application_service as service
+
+    row = {"source_row": "S!R2", "row_role": "work", "unit": "шт", "quantity": 1,
+           "norm_code": "норма"}
+    bound = service.bind_row_evidence_ids([row], [_pointer_chunk(
+        "Q7.H1", NORM_CODE, identity="other-card")])[0]
+    assert "card_body_shown" not in bound["_evidence_check"]

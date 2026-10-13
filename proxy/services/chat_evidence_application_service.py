@@ -138,6 +138,7 @@ from proxy.services.norm_card_proof_service import (
     proof_request_message as norm_card_proof_request_message,
     record_proof_request as record_norm_card_proof_request,
     unread_chosen_norm_refs as norm_card_proof_reads_needed,
+    unread_chosen_norm_rows as norm_card_unread_rows,
 )
 from proxy.services.model_rag_grouped_evidence_service import (
     EvidenceCard,
@@ -170,6 +171,7 @@ from proxy.services.lsr_candidate_query_service import (
 from proxy.services.lsr_norm_quality_gate_service import (
     LsrResearchRoundResult,
     aggregate_norms_status,
+    authored_norm_code,
     build_blind_review_evidence_items,
     ciphers_compatible,
     ciphers_identical,
@@ -186,6 +188,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
     merge_format_retry_rows,
     merge_quality_gated_rows,
     prepare_selection_row,
+    qualified_norm_key,
     rejected_codes_clause,
     row_is_quality_terminal,
     run_coefficient_review,
@@ -3534,6 +3537,10 @@ def bind_row_evidence_ids(
     # resource consumption; exact native reads expose that separate metadata.
     delivered_norm_identities: set[str] = set()
     deferred_norm_identities: dict[str, set[str]] = {}
+    # Ciphers whose own card body reached the model in this attempt.  A row that names a
+    # cipher with no citation used to receive no verdict at all, and no verdict let the
+    # calculator pay for a card nobody showed.
+    delivered_cipher_keys: set[str] = set()
     ambiguous_aliases: set[str] = set()
     for chunk in evidence_chunks:
         meta = getattr(chunk, "meta", {}) or {}
@@ -3569,6 +3576,10 @@ def bind_row_evidence_ids(
                              if meta.get("norm_code") or meta.get("norm_key") else global_id)
             if body_shown:
                 delivered_norm_identities.add(norm_identity)
+                shown_cipher = str(meta.get("norm_code") or "") or _card_code_from_chunk(chunk)
+                shown_key = qualified_norm_key(shown_cipher) if looks_like_cipher(shown_cipher) else ""
+                if shown_key:
+                    delivered_cipher_keys.add(shown_key)
             else:
                 deferred_norm_identities.setdefault(global_id, set()).add(norm_identity)
             if not body_shown and global_to_body_shown.get(global_id) is True:
@@ -3655,6 +3666,19 @@ def bind_row_evidence_ids(
                     evidence_check["card_body_shown"] = (
                         selected_deferred_ids <= delivered_norm_identities
                     )
+            row_cipher = authored_norm_code(payload.get("norm_code"))
+            row_key = qualified_norm_key(row_cipher) if looks_like_cipher(row_cipher) else ""
+            if row_cipher and row_key and "card_body_shown" not in evidence_check:
+                # Measured on the installed 930 (artifacts/live_930/proof_effect_930.json):
+                # 15 of the 17 БАП rows that named a шифр cited no card at all, so this field
+                # was never written, the row looked debt-free to both the proof request and
+                # the readiness gap, and the calculator still paid for a card nobody showed.
+                # The verdict is now total: only a delivered body that names this same
+                # family-qualified item discharges it.
+                evidence_check["card_body_shown"] = row_key in delivered_cipher_keys
+                evidence_check["card_body_shown_basis"] = (
+                    "cipher_card_body_delivered" if row_key in delivered_cipher_keys
+                    else "no_delivered_card_names_this_cipher")
             payload["_evidence_check"] = evidence_check
         resource_code = str(payload.get("resource_code") or "").strip()
         if resource_code:
@@ -11486,11 +11510,22 @@ async def _execute_chat_evidence_application(
                             # with the model.  Bounded to one proof round per packet attempt; a
                             # second unread answer keeps its `norm_card_body_unread` gap instead of
                             # looping or being promoted.
-                            proof_refs = norm_card_proof_reads_needed(
-                                pass_rows,
-                                chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
-                            )
-                            if (proof_refs and sheet_read_tools
+                            # Installed 930 measured the second half of the same defect
+                            # (`artifacts/live_930/proof_effect_930.json`): the round fired for the
+                            # one row that had cited a pointer, while 15 rows that named a шифр
+                            # without citing anything got no verdict and kept their money.  The
+                            # debt is therefore counted from the rows, and the ask covers both
+                            # shapes: read this ref, or search and then read.
+                            proof_chunks = [*prior_page_chunks, *saved_read_chunks,
+                                            *model_evidence_chunks]
+                            proof_unread_rows = norm_card_unread_rows(pass_rows)
+                            proof_refs = norm_card_proof_reads_needed(pass_rows,
+                                                                     chunks=proof_chunks)
+                            proof_message = norm_card_proof_request_message(
+                                proof_refs, pass_rows,
+                                max_refs=norm_card_proof_budget(configured=_env_int(
+                                    "LES_LSR_NORM_CARD_PROOF_READS", 6)))
+                            if (proof_unread_rows and proof_message and sheet_read_tools
                                     and proof_read_attempts.get(fingerprint, 0) < 1):
                                 proof_read_attempts[fingerprint] = 1
                                 proof_receipts: list[dict[str, Any]] = []
@@ -11501,10 +11536,7 @@ async def _execute_chat_evidence_application(
                                         {**chat_body, "messages": [
                                             *chat_body["messages"],
                                             {"role": "assistant", "content": pass_answer},
-                                            {"role": "user", "content": norm_card_proof_request_message(
-                                                proof_refs, pass_rows,
-                                                max_refs=norm_card_proof_budget(configured=_env_int(
-                                                    "LES_LSR_NORM_CARD_PROOF_READS", 6)))},
+                                            {"role": "user", "content": proof_message},
                                         ]},
                                         purpose=NORM_CARD_PROOF_PURPOSE,
                                         expected_connection_revision_id=measured_connection_revision(
@@ -11568,12 +11600,14 @@ async def _execute_chat_evidence_application(
                                 record_norm_card_proof_request(
                                     retrieval_trace, sheet=sheet_name, packet=packet,
                                     refs=proof_refs, receipts=proof_receipts,
+                                    unread_rows=proof_unread_rows,
                                     attempt=proof_read_attempts[fingerprint],
                                 )
                                 logger.warning(
-                                    "[NORM_PROOF] sheet=%s packet=%s unread_refs=%s "
-                                    "model_reads_after_request=%s answered=%s",
-                                    sheet_name, len(packet), len(proof_refs),
+                                    "[NORM_PROOF] sheet=%s packet=%s unread_rows=%s "
+                                    "unread_refs=%s model_reads_after_request=%s answered=%s",
+                                    sheet_name, len(packet), len(proof_unread_rows),
+                                    len(proof_refs),
                                     len(proof_receipts), bool(answered),
                                 )
                             pass_errors = validate_model_rag_result_structure(
