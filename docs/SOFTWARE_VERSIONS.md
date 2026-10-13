@@ -1,5 +1,23 @@
 # Версии программного контура ЛЕС
 
+<!-- installed-930-931-norm-card-proof:v1 -->
+## Установлен 0.31.202 / 930 и 0.31.203 / 931
+
+Product0.31.203, build931, desktop5.1.931; native EXE остаётся5.1.813 — это runtime-патч,
+приёмка нового установщика не заявляется. 930 (`1bb9a5ad`) и 931 (`139f6fd2ce94324efbd2ca29075f1b5a79704b8e`)
+установлены dry-run → apply → штатный stop/start; откат на 930 и 929 описан планами
+`artifacts/rollback_929_to_930/` и `artifacts/rollback_930_to_931/`.
+
+Frozen профиль931: **4703 passed, 20 skipped, 5 warnings за 696.84 с**
+(`artifacts/gates_931_cipher_verdict_final/`), все гейты rc=0. Живой замер на FreeToken
+`Qwen3.6-35B-A3B-NVFP4` (ревизия подключения `…:r10`, `input_token_limit` 8214): 930 дал один
+proof-раунд и 15 строк без вердикта о показе карточки; 931 записывает вердикт для каждой
+строки с шифром, дал два proof-раунда (12 непрочитанных строк → 7 прочтений модели; 3 ссылки →
+6 прочтений) и впервые поднял `norms_applicability_substantiated` с 0 до 8 из 17.
+`calculated_positions` 0, подтверждённая сумма 0,00; СКС остановлен на
+`MODEL_QUERY_GENERATION_LIMIT` (0 из 75). **customer-ready=false**; подробные числа,
+причины и незакрытые проверки — RELEASE_LEDGER.
+
 <!-- installed-929-live-closeout:v1 -->
 ## Установлен929: результаты живого сравнительного контроля
 
