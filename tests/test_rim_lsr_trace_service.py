@@ -2087,3 +2087,27 @@ def test_a_card_resource_identity_reaches_the_operator_without_markup():
     assert row["columns"]["2"] == "14.5.09.11-0102"
     assert row["columns"]["3"] == "Уайт-спирит очищенный"
     assert row["columns"]["4"] == "л"
+
+
+
+def test_a_norm_card_that_was_never_shown_builds_no_priced_position(monkeypatch, tmp_path):
+    """Installed 931 pinned the money rule for an unread card.
+
+    The live БАП run on 930 showed why the verdict had to be total: a row that named a шифр
+    with no card body delivered still reached the estimate as money.  Once the row carries the
+    verdict, this builder produces no priced position, no known amount and no preliminary
+    contribution for it — the amounts stay only where a card was actually shown.
+    """
+    priced = _active_resource_norm(monkeypatch)
+    shown = build_lsr_trace_from_visible_rows([dict(priced)])
+    unread = build_lsr_trace_from_visible_rows(
+        [dict(priced, _evidence_check={"card_body_shown": False})])
+
+    assert shown["summary"]["positions_built"] == 1
+    assert shown["summary"]["preliminary_amount"] > 0
+    assert shown["row_projection"][0]["known_amount_present"] is True
+
+    assert unread["summary"]["positions_built"] == 0
+    assert unread["summary"]["preliminary_amount"] == 0.0
+    assert unread["row_projection"][0]["status"] == "normative_generation_conflict"
+    assert unread["row_projection"][0]["known_amount_present"] is not True

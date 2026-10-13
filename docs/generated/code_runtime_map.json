@@ -3281,6 +3281,7 @@
         "tests/test_model_vor_quantity_preservation.py",
         "tests/test_model_vor_text_transport.py",
         "tests/test_native_tool_call_diagnostics.py",
+        "tests/test_norm_card_proof_request_930.py",
         "tests/test_notebook_study_chat_policy.py",
         "tests/test_packaging_recovery_service.py",
         "tests/test_pool_completion_alignment_24.py",
@@ -3303,7 +3304,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 14646,
+      "lines": 14680,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5085,6 +5086,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_model_result_resource_actions.py",
         "tests/test_model_vor_export_instruction.py",
+        "tests/test_norm_card_proof_request_930.py",
         "tests/test_norm_price_identity_928.py",
         "tests/test_vor_no_research_query_scope.py"
       ],
@@ -6002,7 +6004,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_norm_card_proof_request_930.py"
       ],
-      "lines": 201,
+      "lines": 230,
       "module": "proxy.services.norm_card_proof_service",
       "outbound": [
         "proxy/__init__.py",
@@ -9848,7 +9850,7 @@
     },
     {
       "inbound": [],
-      "lines": 103,
+      "lines": 181,
       "module": "tests.test_architecture_norm_card_proof_gate",
       "outbound": [
         "tools/architecture_contract_gate.py"
@@ -13887,9 +13889,11 @@
     },
     {
       "inbound": [],
-      "lines": 180,
+      "lines": 253,
       "module": "tests.test_norm_card_proof_request_930",
       "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/lsr_norm_quality_gate_service.py",
         "proxy/services/model_rag_grouped_evidence_service.py",
         "proxy/services/norm_card_proof_service.py",
         "proxy/services/openai_compatible_transport_service.py",
@@ -17506,7 +17510,7 @@
         "tests/test_architecture_contract_gate.py",
         "tests/test_architecture_norm_card_proof_gate.py"
       ],
-      "lines": 1710,
+      "lines": 1761,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -21949,7 +21953,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 772,
     "tracked_python_files": 1163,
-    "tracked_python_lines": 402870
+    "tracked_python_lines": 403135
   },
   "warnings": []
 }
