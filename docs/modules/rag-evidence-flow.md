@@ -2315,3 +2315,89 @@ Three more gate links pin this shape (`tools/architecture_contract_gate.py`, cod
 be derived from the delivered-cipher set, and `unread_chosen_norm_refs` must judge debt through
 `unread_chosen_norm_rows`. Each of the three, reverted, reproduces build 930 with a green test
 suite — which is exactly how 930 shipped.
+
+## Candidate 932 — a read card that cites a resource family buys one bounded member ask
+
+Build 931 closed the card read and left the next layer visible: on the customer's big ВОР every
+priced block had its card read, yet `calculated_positions = 0` and `confirmed_amount = 0.00`,
+because each block carried `price_action = "unresolved_resource_group"` — the card names a family
+(`11.2.11.01`), the chosen book prices its members, and nothing between the read and the calculator
+asked anyone to say which member the document means.
+
+`proxy/services/lsr_resource_group_proof_service.py` owns that ask and only the ask:
+
+* the family is detected through `rim_lsr_trace_service.resource_group_state`, the same helper both
+  LSR calculators use, so the ask and the money cannot disagree about the same row (ADR-16 § 10);
+* the message lists concrete members of the *chosen* book with their own units and prices and names
+  the model's operations (`search_pricebook_resources`, `read_resource_price`). It never picks a
+  member — a family has no price, and the first row of a family is not that price;
+* one round per packet attempt, inside the same research stage as the card proof, and whatever the
+  model leaves unresolved keeps its existing `price_missing:<код>` gap and no confirmed money.
+
+Measured offline against the installed `sankt-peterburg_3kv2026` (`.test-tmp/probe_group_hook_932.py`,
+book hash `2425685924b1dc69…` re-checked before opening): the durable evidence of the real 931
+big-ВОР job produces four such families — `11.2.11.01` (10 members), `07.2.06.03` (145),
+`07.2.06.02` (17), `09.2.03.02` (22) — each offered with six concrete members, so the ask can fire
+on the customer document rather than only in tests. The same probe over the 932 БАП card returns
+zero families, which is correct: that card cites no group, and the small document is not the place
+this ask belongs to.
+
+## Candidate 933 — a proof round that cannot be read may not erase the packet
+
+Installed 932 measured the cost of the round itself. The БАП B1 cell came back with `work_rows 0`,
+`rows_naming_a_norm 0` and `preliminary_amount 0.00` after a norm-card proof round whose answer was
+prose: `parse_model_rag_result` returned no rows, and the round wrote an empty list over `pass_rows`
+— the ask for a card destroyed the answer it had been asked about. The group ask never fired on the
+same cell for a second, independent reason: the book was taken from `model_requested_price_basis`,
+the post-tool snapshot, which was still empty on that packet.
+
+Both rounds now rebind through `rows_after_proof_round(parsed_rows=…, previous_rows=…, chunks=…)`:
+an answer that carries a table is rebound as before, an answer that carries none returns the
+previous rows and reports `answer_parsed = False`, and the earlier answer text stays in force. The
+flag is written into `norm_card_proof_requests` and `resource_group_proof_requests`, so "the model
+answered in prose" and "no round ran at all" remain two different facts instead of one empty entry.
+The group ask resolves the book from this sheet pass's own basis (`sheet_price_basis`, through
+`model_pricebook` with `explicit_only=True` and the recorded source hash re-checked), which is
+known before the first price tool runs.
+
+`tools/architecture_contract_gate.py` code `PROOF_ROUND_ERASES_PACKET_ROWS` pins three links: both
+rounds call the helper, the helper has a branch that returns `previous_rows` and still rebinds
+through `bind_row_evidence_ids`, and both records pass `answer_parsed`. Mutating the branch back to
+`return [], False` makes
+`tests/test_norm_card_proof_request_930.py::test_a_proof_round_answered_in_prose_delivers_the_packet_rows`
+fail, which is the check that the test measures behaviour rather than shape.
+
+## Candidate 934 — one badly-valued row may not cost the packet every row it can read
+
+Installed 933 measured the all-or-nothing reader on the customer's own БАП
+(`artifacts/live_933/installed933_bap_b1/`). The model answered the packet `PDF!R18…R25` as one
+closed JSON document — 6343 characters, 12 rows, `finish_reason = stop`, all seven packet locators
+present — and wrote `"conversion_factor":1/100` inside three of them. The envelope parse failed on
+that token, `decode_model_result_rows` returned nothing, and the run terminated with
+`MODEL_RESULT_JSON_INCOMPLETE_RESULT`, `source_coverage_incomplete:1/20`,
+`packaging_reason = ARTIFACT_KIND_UNRESOLVED` and no downloadable file. Eleven complete decisions
+were discarded by the application, not withheld by the model.
+
+`proxy/services/model_lsr_result_contract.py` now separates the two facts:
+
+* `_container_end` bounds objects and arrays while honouring strings and escapes, so the reader can
+  tell *unterminated* from *unreadable*;
+* `_salvaged_candidate` walks the authored `rows` array element by element. An element that parses
+  on its own is admitted **as its literal text**; an element that does not is returned as a broken
+  row. If the container never closes, or no element parses, or an envelope member other than `rows`
+  is unreadable, the function returns `None` and the refusal is exactly the old one — an unfinished
+  answer is still refused whole, and the application never guesses which document kind the model
+  meant;
+* each broken row becomes a visible proposal `MODEL_RESULT_JSON_INVALID_ROW`
+  (`unreadable_authored_json_row`) carrying the model's own bytes and its `source_row`. No value is
+  computed for it, its locator stays uncovered if nothing else covers it, and no status is promoted.
+
+Replayed against the live bytes (`.test-tmp/replay_authored_json_934.py`, report
+`artifacts/live_934/authored_json_replay_934.json`): the same answer that produced 0 rows produces
+**9 admitted rows covering all 7 locators** with 3 unreadable-row proposals, and the six pinned
+unfinished forms — including `'{"rows":['` and `'artifact_kind: vor\n{"rows":['` — are still refused
+with `MODEL_RESULT_JSON_INCOMPLETE_RESULT` and the full original transport preserved.
+
+`tools/architecture_contract_gate.py` code `AUTHORED_JSON_ROW_LOST_WITH_ENVELOPE` pins both halves:
+the reader must attempt the salvage before it reports an envelope incomplete, and the salvage must
+bound its elements with `_container_end`. Reverting either reproduces 933 with a green test suite.

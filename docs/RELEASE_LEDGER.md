@@ -1,5 +1,78 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+<!-- installed-933-934-authored-json-row-salvage:v1 -->
+## Установлен933 и живой замер: читатель JSON терял весь пакет из-за одного значения в строке
+
+Gates 933 (frozen профиль, канонический набор 264 файла, detached snapshot
+`artifacts/gates_933_proof_round_final/`): **4727 passed, 20 skipped, 5 warnings за 712,37 с**;
+architecture rc=0 (11,41 с), map_check rc=0, docs rc=0 («documentation contract: OK»),
+active_artifacts ok=true (norms 49 818, resources 504 891, pricebook rows 281 223),
+mail 66 passed, metadata 31 passed, provision/version/compile/collect/import_location/map_generate
+— все rc=0. Деплой 933: план → dry-run → apply, candidate `a21f0d20aa6e44f2872020e7b789bddf3858a188`,
+байты установленных файлов совпадают с кандидатом по SHA-256 (4 файла), план отката
+`artifacts/rollback_932_to_933/`. Штатный рестарт сохранил назначение: роль `answer` —
+FreeToken `Qwen3.6-35B-A3B-NVFP4`, ревизия `conn:9458be3549ad449985f9eb10dba3c9e1:r10`,
+`input_token_limit` 8214, `local_fallback` пуст.
+
+Живая клетка 933, БАП B1_CANDIDATE (`artifacts/live_933/installed933_bap_b1/`): 302,75 с,
+`status = measurement_incomplete`, единственная ошибка —
+**`NO_DOWNLOADABLE_FINAL_ARTIFACT`**; личность модели в прогоном подтверждена
+(`model_identity_verified = true`); задача в состоянии `paused`, принятых строк 4,
+остаток 19. Proof-раунды здесь не запускались вовсе (`norm_card_proof_requests` = null,
+`resource_group_proof_requests` = null), то есть регресс 932 на этом прогоне не воспроизводился
+и исправление 933 живым прогоном пока не подтверждено.
+
+Причина отсутствия файла измерена по трём проходам пакета:
+
+1. лист `PDF`, пакет `PDF!R4…R17` — `parsed_rows 0`, 29 leftover-запросов,
+   `source_coverage_incomplete:0/20`;
+2. лист `PDF`, пакет `PDF!R18…R25` (7 локаторов) — модель ответила **законченным JSON на
+   6343 символа с 12 строками, покрывающим все 7 локаторов**, `finish_reason = stop`,
+   документ закрыт (`]}`); внутри трёх строк написано `"conversion_factor":1/100` —
+   арифметическое выражение там, где JSON ждёт значение. Разбор конверта падает на этом токене,
+   читатель возвращает ноль строк и ставит `MODEL_RESULT_JSON_INCOMPLETE_RESULT`;
+3. лист `PDF_TEXT`, пакет `PDF_TEXT!R1` (титульная строка) — 4 строки,
+   `source_unit_mismatch:PDF_TEXT!R1`, покрытие 1/20.
+
+Итог: `errors = [source_unit_mismatch:PDF_TEXT!R1, source_coverage_incomplete:1/20,
+MODEL_RESULT_JSON_INCOMPLETE_RESULT]`, `packaged = false`,
+`packaging_reason = ARTIFACT_KIND_UNRESOLVED`, файла нет. Один неверно записанный стоил
+приложению одиннадцати прочитанных решений модели — и это не лимит генерации (ответ не обрезан),
+а all-or-nothing читатель.
+
+Что закрыто в 934 (`proxy/services/model_lsr_result_contract.py`):
+
+- `_container_end` / `_array_element_texts` / `_salvaged_candidate` — разбор строкок массива `rows`
+  по границам контейнеров с учётом строк и экранирований; принимаются только те элементы, которые
+  читаются сами по себе, и только их буквальными байтами;
+- нечитаемая строка становится видимым предложением `MODEL_RESULT_JSON_INVALID_ROW`
+  (`unreadable_authored_json_row`) с её же текстом и `source_row`; значение за неё не вычисляется,
+  статус не повышается;
+- Незакрытый контейнер по-прежнему отказывается целиком: `MODEL_RESULT_JSON_INCOMPLETE_RESULT`
+  с сохранённым полным транспортом — ветка «ответ оборван» не превращается в «починим»;
+- нечитаемый член конверта (не `rows`) тоже даёт полный отказ: угадывать, какой документ автор,
+  значит писать ответ за модель.
+
+Проверка на живых байтах ответа (`.test-tmp/replay_authored_json_934.py`, то же `raw_json` из артефакта
+933): было 0 строк, стало **9 принятых строк, покрывающих все 7 локаторов пакета**
+(`PDF!R18, R19, R21, R22, R23, R24, R25`), плюс 3 записи `MODEL_RESULT_JSON_INVALID_ROW`
+(`PDF!R21, R22, R23`). Три закреплённых отказа от оборванного ответа (`{"rows":[`,
+`[{"source_row":"S!R8"`, `artifact_kind: vor\n{"rows":[`) остались отказами с тем же кодом.
+
+Регрессии (`tests/test_model_lsr_result_contract.py`, +6): построчный разбор закрытого массива с
+одним нечитаемым значением, тот же разбор голого массива, полный отказ при нечитаемом члене
+конверта, отказ когда ни одна строка не читается, и параметризованный отказ для трёх оборванных
+форм.
+Гейт `AUTHORED_JSON_ROW_LOST_WITH_ENVELOPE` требует, чтобы читатель сначала попробовал построчный
+разбор, а сам разбор опирался на `_container_end`; мутационные пары — в
+`tests/test_architecture_norm_card_proof_gate.py` (+3).
+
+Открыто после 933/934: живого подтверждения того, что proof-раунд 933 сохраняет пакет, пока нет
+ (в клетке 933 раунды не срабатывали); запрос группы ресурса на живом документе не наблюдался;
+ пакет `PDF_TEXT!R1` (титульная строка, не работа) даёт `source_unit_mismatch` и тянет покрытие
+ вниз — это отдельный дефект транспорта листа и его идентичности (#76); лимит генерации
+ объявления запросов (#79) остаётся.
+
 <!-- installed-932-933-proof-round-correction:v1 -->
 ## Установлен932: запрос конкретного ресурса и попутно измеренный регресс proof-раунда
 

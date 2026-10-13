@@ -331,3 +331,46 @@ def test_a_helper_that_stopped_rebinding_through_the_binder_is_a_violation(tmp_p
         "    return bind_row_evidence_ids(parsed_rows, chunks, binding_phase=\"first\"), True",
         "    return [dict(row) for row in parsed_rows], True"))
     assert ROUND_CODE in codes
+
+
+JSON_CODE = "AUTHORED_JSON_ROW_LOST_WITH_ENVELOPE"
+JSON_MODULE = "proxy/services/model_lsr_result_contract.py"
+
+READER_WITH_SALVAGE = '''
+def _container_end(text, start):
+    return None
+
+
+def _salvaged_candidate(text, start, decoder):
+    end_after = _container_end(text, start)
+    if end_after is None:
+        return None
+    return '{"rows":[%s]}' % ",".join(good), broken, end_after
+
+
+def decode_model_result_rows(raw, *, diagnostics=None):
+    salvaged = _salvaged_candidate(segment, index, decoder)
+    if salvaged is None:
+        diagnostics.append({"code": "MODEL_RESULT_JSON_INCOMPLETE_RESULT"})
+        return None
+    return rows
+'''
+
+
+def test_a_json_reader_that_refuses_the_envelope_before_salvaging_rows_is_a_violation(tmp_path):
+    """Installed 933 lost eleven readable decisions to one `1/100` token."""
+
+    codes = _codes(tmp_path, JSON_MODULE, READER_WITH_SALVAGE.replace(
+        "    salvaged = _salvaged_candidate(segment, index, decoder)\n", ""))
+    assert JSON_CODE in codes
+
+
+def test_the_json_reader_that_salvages_rows_before_refusing_is_clean(tmp_path):
+    assert JSON_CODE not in _codes(tmp_path, JSON_MODULE, READER_WITH_SALVAGE)
+
+
+def test_a_salvage_that_stops_checking_the_container_is_a_violation(tmp_path):
+    codes = _codes(tmp_path, JSON_MODULE, READER_WITH_SALVAGE.replace(
+        "    end_after = _container_end(text, start)\n    if end_after is None:\n        return None\n",
+        "    end_after = len(text)\n"))
+    assert JSON_CODE in codes

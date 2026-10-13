@@ -201,3 +201,76 @@ def test_transport_between_two_results_keeps_ambiguity_and_original_bytes():
     assert contract.decode_model_result_rows(raw, diagnostics=diagnostics) is None
     assert diagnostics[0]["code"] == "MODEL_RESULT_JSON_AMBIGUOUS_RESULTS"
     assert diagnostics[0]["decision"]["raw_json"] == raw
+
+
+# Installed 933 measured the all-or-nothing reader on a live customer document
+# (`artifacts/live_933/installed933_bap_b1/`): the model answered a closed 12-row JSON for a
+# 7-locator packet and wrote "conversion_factor":1/100 three times.  The envelope parse failed on
+# those tokens, the decoder returned nothing, and the run ended with
+# `source_coverage_incomplete:1/20`, `packaging_reason = ARTIFACT_KIND_UNRESOLVED` and no file.
+
+BROKEN_ROW_TEXT = ('{"source_row":"PDF!R21","row_role":"material","title":"Коробка оконечная",'
+                   '"unit":"шт","quantity":0.16,"conversion_factor":1/100}')
+
+
+def _authored_rows_row(source_row, title):
+    return {**TRANSPORT_ROW, "source_row": source_row, "title": title}
+
+
+def test_a_closed_rows_array_keeps_the_rows_that_parse_and_names_the_one_that_does_not():
+    first, second = _authored_rows_row("PDF!R18", "First"), _authored_rows_row("PDF!R19", "Second")
+    raw = ('{"artifact_kind":"lsr","rows":['
+           + json.dumps(first, ensure_ascii=False) + ","
+           + json.dumps(second, ensure_ascii=False) + "," + BROKEN_ROW_TEXT + "]}")
+    diagnostics: list[dict] = []
+
+    rows = contract.decode_model_result_rows(raw, diagnostics=diagnostics)
+
+    assert [row["source_row"] for row in rows or []] == ["PDF!R18", "PDF!R19"]
+    assert [item["code"] for item in diagnostics] == ["MODEL_RESULT_JSON_INVALID_ROW"]
+    assert diagnostics[0]["reason"] == "unreadable_authored_json_row"
+    # the unreadable row is kept as the model's own bytes, not rewritten and not invented
+    assert diagnostics[0]["decision"]["raw_json"] == BROKEN_ROW_TEXT
+    assert diagnostics[0]["decision"]["source_row"] == "PDF!R21"
+
+
+def test_a_bare_rows_array_salvages_the_same_way():
+    good = _authored_rows_row("PDF!R24", "Work with a readable sibling")
+    raw = "[" + json.dumps(good, ensure_ascii=False) + "," + BROKEN_ROW_TEXT + "]"
+    diagnostics: list[dict] = []
+
+    assert contract.decode_model_result_rows(raw, diagnostics=diagnostics) == [good]
+    assert [item["code"] for item in diagnostics] == ["MODEL_RESULT_JSON_INVALID_ROW"]
+
+
+def test_an_unreadable_envelope_member_is_still_refused_as_a_whole_result():
+    """Only a row is salvageable; an unreadable envelope means the application cannot know
+    what kind of document the model authored, and guessing it would be authoring the answer."""
+    raw = ('{"artifact_kind":1/2,"rows":[' + json.dumps(TRANSPORT_ROW, ensure_ascii=False) + "]}")
+    diagnostics: list[dict] = []
+
+    assert contract.decode_model_result_rows(raw, diagnostics=diagnostics) is None
+    assert [item["code"] for item in diagnostics] == ["MODEL_RESULT_JSON_INCOMPLETE_RESULT"]
+    assert diagnostics[0]["decision"]["raw_json"] == raw
+
+
+def test_a_rows_array_without_one_readable_row_is_refused_and_not_repaired():
+    raw = '{"artifact_kind":"lsr","rows":[' + BROKEN_ROW_TEXT + "]}"
+    diagnostics: list[dict] = []
+
+    assert contract.decode_model_result_rows(raw, diagnostics=diagnostics) is None
+    assert [item["code"] for item in diagnostics] == ["MODEL_RESULT_JSON_INCOMPLETE_RESULT"]
+
+
+@pytest.mark.parametrize("unfinished", [
+    '{"artifact_kind":"lsr","rows":[{"source_row":"PDF!R18","title":"Cut',
+    '{"artifact_kind":"lsr","rows":[{"source_row":"PDF!R18","title":"Whole"},',
+    '{"artifact_kind":"lsr","rows":[{"source_row":"PDF!R18","title":"Bad":1}',
+])
+def test_salvage_never_resurrects_an_unfinished_answer(unfinished):
+    """A cut-off document is a different fact from a badly-valued row, and it stays refused."""
+    diagnostics: list[dict] = []
+
+    assert contract.decode_model_result_rows(unfinished, diagnostics=diagnostics) is None
+    assert [item["code"] for item in diagnostics] == ["MODEL_RESULT_JSON_INCOMPLETE_RESULT"]
+    assert diagnostics[0]["decision"]["raw_json"] == unfinished

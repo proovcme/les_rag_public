@@ -98,6 +98,189 @@ def _json_row_texts(candidate, decoder):
     return texts
 
 
+def _container_end(text: str, start: int) -> int | None:
+    """Index just past a JSON object/array, honouring strings and escapes.
+
+    ``None`` means the container never closes — an unfinished answer, which this contract must
+    refuse as a whole rather than guess the rest of.
+    """
+    if text[start] not in "{[":
+        return None
+    depth = 0
+    index = start
+    in_string = False
+    escaped = False
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+            if depth < 0:
+                return None
+        index += 1
+    return None
+
+
+def _array_element_texts(text: str, start: int, decoder):
+    """Split a rows array into literal element texts: what parses and what does not.
+
+    Returns ``(good, broken, end_after)`` or ``None`` when the array itself is unfinished.  The
+    element texts are the model's own bytes — nothing here rewrites a value it wrote badly.
+    """
+    good: list[str] = []
+    broken: list[str] = []
+    index = start + 1
+    while True:
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text):
+            return None
+        if text[index] == "]":
+            return good, broken, index + 1
+        end = None
+        try:
+            _value, end = decoder.raw_decode(text, index)
+        except (ValueError, TypeError):
+            end = None
+        if end is None:
+            end = _container_end(text, index)
+            if end is None:
+                comma = _next_top_level_comma(text, index)
+                if comma is None:
+                    return None
+                end = comma
+            if end <= index:
+                return None
+            broken.append(text[index:end].strip())
+        else:
+            good.append(text[index:end])
+            if end <= index:
+                return None
+        index = end
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index < len(text) and text[index] == ",":
+            index += 1
+
+
+def _next_top_level_comma(text: str, start: int) -> int | None:
+    """Next comma outside any string or container, for bounding one unreadable element."""
+    depth = 0
+    index = start
+    in_string = False
+    escaped = False
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            depth += 1
+        elif char in "}]":
+            if depth == 0:
+                return None
+            depth -= 1
+        elif char == "," and depth == 0:
+            return index
+        index += 1
+    return None
+
+
+def _salvaged_candidate(text: str, start: int, decoder):
+    """Rebuild an envelope from the row objects a badly-valued authored JSON really contains.
+
+    Installed 933 measured why this is needed (``artifacts/live_933/installed933_bap_b1/``): the
+    model answered the whole 7-locator packet as one closed JSON document with 12 rows, and wrote
+    ``"conversion_factor":1/100`` — an arithmetic expression where JSON expects a value.  The
+    envelope parse failed on that one token, the decoder returned no rows at all, and the run
+    ended with ``source_coverage_incomplete:1/20``, no artifact and ``packaging_reason
+    ARTIFACT_KIND_UNRESOLVED``.  Eleven of those twelve rows carried a complete decision; the
+    all-or-nothing reader threw all of them away.
+
+    The rule is deliberately narrow:
+
+    * an unfinished container returns ``None``, so the refusal of a cut-off answer is unchanged;
+    * only elements that parse on their own are admitted, as their literal texts;
+    * every unreadable element is returned as a broken row, kept as a visible proposal instead of
+      being repaired or dropped in silence — the application does not invent a number the model
+      did not express as data.
+    """
+    end_after = _container_end(text, start)
+    if end_after is None:
+        return None
+    if text[start] == "[":
+        split = _array_element_texts(text, start, decoder)
+        if split is None or not split[0]:
+            return None
+        good, broken, _rows_end = split
+        return "[%s]" % ",".join(good), broken, end_after
+    index = start + 1
+    members: list[str] = []
+    while True:
+        while index < end_after and text[index].isspace():
+            index += 1
+        if index >= end_after:
+            return None
+        if text[index] == "}":
+            # a closed envelope with no `rows` member: there is nothing here to salvage
+            return None
+        member_start = index
+        try:
+            key, index = decoder.raw_decode(text, index)
+        except (ValueError, TypeError):
+            return None
+        while index < end_after and text[index].isspace():
+            index += 1
+        if index >= end_after or text[index] != ":":
+            return None
+        index += 1
+        while index < end_after and text[index].isspace():
+            index += 1
+        if index >= end_after:
+            return None
+        if key == "rows" and text[index] == "[":
+            split = _array_element_texts(text, index, decoder)
+            if split is None:
+                return None
+            good, broken, _rows_end = split
+            if not good:
+                return None
+            prefix = ",".join(members)
+            rebuilt = ('{%s,"rows":[%s]}' % (prefix, ",".join(good))) if prefix \
+                else '{"rows":[%s]}' % ",".join(good)
+            return rebuilt, broken, end_after
+        try:
+            _value, value_end = decoder.raw_decode(text, index)
+        except (ValueError, TypeError):
+            # an envelope member the model wrote unreadably is not a row-level defect, and
+            # guessing which envelope the document is would be the application authoring it
+            return None
+        members.append(text[member_start:value_end])
+        index = value_end
+        while index < end_after and text[index].isspace():
+            index += 1
+        if index < end_after and text[index] == ",":
+            index += 1
+
+
 def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None) -> list[dict] | None:
     """Keep unique authored rows; preserve duplicate-label objects as proposals."""
     candidates = []
@@ -107,7 +290,7 @@ def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None)
     outside_segments, start = [], 0
     for fence in re.finditer(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text):
         outside_segments.append(text[start:fence.start()])
-        candidates.append(fence.group(1))
+        candidates.append((fence.group(1), []))
         start = fence.end()
     outside_segments.append(text[start:])
     for segment in outside_segments:
@@ -132,20 +315,28 @@ def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None)
                 opener = segment[index]
                 after_opener = segment[index + 1:].lstrip()
                 if after_opener.startswith('"' if opener == "{" else "{"):
-                    if diagnostics is not None:
-                        diagnostics.append({"code": "MODEL_RESULT_JSON_INCOMPLETE_RESULT",
-                            "reason": "incomplete_authored_json_result",
-                            "decision": {"raw_json": original_text}})
-                    return None
+                    salvaged = _salvaged_candidate(segment, index, decoder)
+                    if salvaged is None:
+                        if diagnostics is not None:
+                            diagnostics.append({"code": "MODEL_RESULT_JSON_INCOMPLETE_RESULT",
+                                "reason": "incomplete_authored_json_result",
+                                "decision": {"raw_json": original_text}})
+                        return None
+                    candidate_text, broken_rows, end_after = salvaged
+                    candidates.append((candidate_text, broken_rows))
+                    index = end_after
+                    while index < len(segment) and segment[index].isspace():
+                        index += 1
+                    continue
                 break
             if end < len(segment) and not segment[end].isspace():
                 break
-            candidates.append(segment[index:end])
+            candidates.append((segment[index:end], []))
             index = end
             while index < len(segment) and segment[index].isspace():
                 index += 1
     decoded = []
-    for candidate in candidates:
+    for candidate, broken_rows in candidates:
         try:
             value = decoder.decode(candidate)
         except (ValueError, TypeError):
@@ -169,6 +360,15 @@ def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None)
         if not isinstance(rows, list) or isinstance(rows, _AuthoredJSONPairs):
             continue
         proposals, unique_rows, row_shape_valid = [], [], True
+        for broken_text in broken_rows:
+            # The unreadable row stays the model's own bytes, named and unpaid: no value here is
+            # computed for it, and its absence is a visible proposal rather than a silent gap.
+            decision: dict = {"raw_json": broken_text}
+            located = re.search(r'"source_row"[ \t]*:[ \t]*"([^"]*)"', broken_text)
+            if located is not None:
+                decision["source_row"] = located.group(1)
+            proposals.append({"code": "MODEL_RESULT_JSON_INVALID_ROW",
+                              "reason": "unreadable_authored_json_row", "decision": decision})
         raw_rows = _json_row_texts(candidate, decoder)
         for index, row in enumerate(rows):
             conflicts = _json_duplicate_fields(row)

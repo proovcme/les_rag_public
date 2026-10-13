@@ -299,6 +299,18 @@ PROOF_ROUND_RECORD_CALLS = ("record_norm_card_proof_request",
 PROOF_ROUND_RECORD_KWARG = "answer_parsed"
 PROOF_ROUND_ROWS_ARGUMENTS = ("parsed_rows", "previous_rows", "chunks")
 
+# Installed 933 measured the other all-or-nothing reader: one row of a closed 12-row authored JSON
+# carried `"conversion_factor":1/100`, the envelope parse failed on that token, and the packet lost
+# all eleven readable decisions — `source_coverage_incomplete:1/20`, no artifact, and
+# `packaging_reason = ARTIFACT_KIND_UNRESOLVED`.  The refusal of an *unfinished* answer is a
+# different fact and stays exactly as it was, so the reader must try a row-level salvage before it
+# reports an envelope as incomplete.
+AUTHORED_JSON_MODULE = "proxy/services/model_lsr_result_contract.py"
+AUTHORED_JSON_READER_FUNCTION = "decode_model_result_rows"
+AUTHORED_JSON_SALVAGE_FUNCTION = "_salvaged_candidate"
+AUTHORED_JSON_CONTAINER_FUNCTION = "_container_end"
+AUTHORED_JSON_INCOMPLETE_CODE = "MODEL_RESULT_JSON_INCOMPLETE_RESULT"
+
 # Existing direct transports are migration debt, pinned by exact path + function.
 # New callsites must use ContextGovernor instead of expanding this baseline.
 INFERENCE_CALLSITE_BASELINE: frozenset[tuple[str, str]] = frozenset(
@@ -1581,6 +1593,58 @@ def _resource_group_proof_violations(relative: str, tree: ast.AST) -> Iterable[A
         return
 
 
+def _authored_json_salvage_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Build 933 § 6: a badly-valued row may not cost the packet every row it could read.
+
+    The reader must attempt a row-level salvage before it declares an authored JSON incomplete, and
+    the salvage itself must refuse an answer whose container never closes.  Reverting either link
+    reproduces installed 933: eleven complete decisions dropped because one row wrote `1/100`.
+    """
+
+    if relative != AUTHORED_JSON_MODULE:
+        return
+    functions = {node.name: node for node in ast.walk(tree)
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    reader = functions.get(AUTHORED_JSON_READER_FUNCTION)
+    if reader is None:
+        return
+    called = {_call_name(item).split(".")[-1] for item in ast.walk(reader)
+              if isinstance(item, ast.Call)}
+    literals = {item.value for item in ast.walk(reader)
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+    if AUTHORED_JSON_INCOMPLETE_CODE in literals \
+            and AUTHORED_JSON_SALVAGE_FUNCTION not in called:
+        yield ArchitectureViolation(
+            "AUTHORED_JSON_ROW_LOST_WITH_ENVELOPE",
+            relative,
+            reader.lineno,
+            f"{AUTHORED_JSON_READER_FUNCTION}() reports {AUTHORED_JSON_INCOMPLETE_CODE} without "
+            f"first trying {AUTHORED_JSON_SALVAGE_FUNCTION}(), so one unreadable row value costs "
+            "the packet every decision the model actually wrote",
+        )
+    salvage = functions.get(AUTHORED_JSON_SALVAGE_FUNCTION)
+    if salvage is not None:
+        salvage_calls = {_call_name(item).split(".")[-1] for item in ast.walk(salvage)
+                         if isinstance(item, ast.Call)}
+        if AUTHORED_JSON_CONTAINER_FUNCTION not in salvage_calls:
+            yield ArchitectureViolation(
+                "AUTHORED_JSON_ROW_LOST_WITH_ENVELOPE",
+                relative,
+                salvage.lineno,
+                f"{AUTHORED_JSON_SALVAGE_FUNCTION}() no longer bounds rows with "
+                f"{AUTHORED_JSON_CONTAINER_FUNCTION}(), so an unfinished answer could be salvaged "
+                "as if it were a complete one",
+            )
+    elif AUTHORED_JSON_SALVAGE_FUNCTION in called:
+        yield ArchitectureViolation(
+            "AUTHORED_JSON_ROW_LOST_WITH_ENVELOPE",
+            relative,
+            reader.lineno,
+            f"{AUTHORED_JSON_SALVAGE_FUNCTION}() is called but no longer defined, so the row "
+            "salvage is a name rather than a rule",
+        )
+
+
 def _proof_round_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
     """Build 932 § 6: a bounded proof round must not erase the rows it was asked about.
 
@@ -1792,6 +1856,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     yield from _norm_card_proof_violations(relative, tree)
     yield from _resource_group_proof_violations(relative, tree)
     yield from _proof_round_violations(relative, tree)
+    yield from _authored_json_salvage_violations(relative, tree)
     yield from _book_price_unit_violations(relative, tree)
     yield from _price_ownership_violations(relative, tree)
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
