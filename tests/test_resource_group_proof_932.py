@@ -108,6 +108,25 @@ def test_the_message_lists_members_and_names_the_tools_without_choosing_one():
     assert proof.proof_request_message([]) == ""
 
 
+def test_the_message_names_the_field_the_choice_has_to_land_in():
+    """Installed 935 measured the wrong-row choice, so the ask has to say where to write it.
+
+    The model picked `01.7.07.12-0024` and put it on a separate material row while the work row's
+    `resource_bindings[].target_resource_code` still named the family — `resource_binding_conflict`
+    plus `price_missing:<семья>`, and the position stayed open.  Naming the field is the difference
+    between a correct decision that counts and one that silently does not.
+    """
+    found = proof.unresolved_groups(ROWS, [_card_chunk([RESOURCE])], pricebook=_book())
+    message = proof.proof_request_message(found)
+    assert proof.BINDING_FIELD in message
+    assert proof.BINDING_TARGET_FIELD in message
+    assert "строки работы" in message
+    assert "отдельная строка" in message and "не закрывает" in message
+    # naming the field is not choosing a member: the ask still offers the list and no preference
+    assert "Замени там групповой код на код выбранного конкретного ресурса" in message or \
+        "замени там групповой код на код выбранного конкретного ресурса" in message
+
+
 def test_the_offer_is_bounded_and_the_truncation_is_stated():
     many = [{"row_role": "work", "source_row": f"АР!R{n}", "norm_code": f"ГЭСН 15-01-05{n}-04"}
             for n in range(1, 6)]

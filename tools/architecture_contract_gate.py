@@ -285,6 +285,11 @@ GROUP_PROOF_REQUIRED_CALLS = (
 GROUP_PROOF_SERVICE_MODULE = "proxy/services/lsr_resource_group_proof_service.py"
 GROUP_PROOF_MESSAGE_FUNCTION = "proof_request_message"
 GROUP_PROOF_PRICE_TOOLS = ("search_pricebook_resources", "read_resource_price")
+# Build 935 measured a correct model decision that arrived in a place nothing reads: the member
+# code went onto a separate material row while the work row's binding still named the family, so
+# the position stayed open with resource_binding_conflict + price_missing:<group>.  The ask has to
+# name the field, or the model's right answer keeps failing silently.
+GROUP_PROOF_BINDING_FIELDS = ("resource_bindings", "target_resource_code")
 GROUP_PROOF_FORBIDDEN_WORDING = ("цена группы", "первая строка группы не является ценой группы")
 
 # Installed 932 measured what a proof round costs when it writes its own parse result
@@ -1588,6 +1593,18 @@ def _resource_group_proof_violations(relative: str, tree: ast.AST) -> Iterable[A
                     f"{GROUP_PROOF_MESSAGE_FUNCTION}() no longer names the model's price "
                     f"operations ({', '.join(GROUP_PROOF_PRICE_TOOLS)}), so the group could only "
                     "be answered by guessing a member or by accepting a family price",
+                )
+            field_named = all(any(field in text for text in set(literals) | names)
+                              for field in GROUP_PROOF_BINDING_FIELDS)
+            if not field_named:
+                yield ArchitectureViolation(
+                    "GROUP_RESOURCE_PRICED_WITHOUT_A_MEMBER_CHOICE",
+                    relative,
+                    node.lineno,
+                    f"{GROUP_PROOF_MESSAGE_FUNCTION}() no longer tells the model which field the "
+                    f"member belongs in ({', '.join(GROUP_PROOF_BINDING_FIELDS)}), so a correct "
+                    "choice can land on another row and leave the work row's binding on the "
+                    "family — the resource_binding_conflict measured on installed 935",
                 )
             if not any(GROUP_PROOF_FORBIDDEN_WORDING[1] in text for text in literals):
                 yield ArchitectureViolation(

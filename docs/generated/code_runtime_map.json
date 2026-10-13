@@ -5113,7 +5113,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_resource_group_proof_932.py"
       ],
-      "lines": 201,
+      "lines": 218,
       "module": "proxy.services.lsr_resource_group_proof_service",
       "outbound": [
         "proxy/__init__.py",
@@ -9873,7 +9873,7 @@
     },
     {
       "inbound": [],
-      "lines": 394,
+      "lines": 412,
       "module": "tests.test_architecture_norm_card_proof_gate",
       "outbound": [
         "tools/architecture_contract_gate.py"
@@ -15101,7 +15101,7 @@
     },
     {
       "inbound": [],
-      "lines": 232,
+      "lines": 251,
       "module": "tests.test_resource_group_proof_932",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -17547,7 +17547,7 @@
         "tests/test_architecture_contract_gate.py",
         "tests/test_architecture_norm_card_proof_gate.py"
       ],
-      "lines": 2022,
+      "lines": 2039,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -21990,7 +21990,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 773,
     "tracked_python_files": 1165,
-    "tracked_python_lines": 404632
+    "tracked_python_lines": 404703
   },
   "warnings": []
 }

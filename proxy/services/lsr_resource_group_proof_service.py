@@ -32,6 +32,10 @@ from typing import Any, Mapping, Sequence
 
 SEARCH_TOOL = "search_pricebook_resources"
 PRICE_TOOL = "read_resource_price"
+# Where the model's own choice has to land for the calculator to see it (build 935 measurement:
+# a correct member written on another row leaves the family in the binding and the hole open).
+BINDING_FIELD = "resource_bindings"
+BINDING_TARGET_FIELD = "target_resource_code"
 MAX_GROUPS_PER_PACKET = 4
 MAX_MEMBERS_SHOWN = 6
 PROOF_REQUEST_TRACE = "resource_group_proof_requests"
@@ -132,6 +136,15 @@ def proof_request_message(groups: Sequence[Mapping[str, Any]]) -> str:
     Facts only: this cipher was read, its card cites this group, the chosen book prices this many
     concrete members of it, and here they are with their own units and prices.  Choosing a member
     belongs to the model; the application neither picks one nor accepts a family price.
+
+    The message also names the **field** the choice has to land in, because that is what installed
+    935 measured (``artifacts/live_935/installed935_bap_b1/``, row ``PDF!R4``): the model did pick
+    a concrete member (``01.7.07.12-0024``) but wrote it on a separate material row, while the work
+    row kept ``resource_bindings[].target_resource_code = 01.7.07.12`` — the family.  The
+    calculator reads the binding of the work row, so the position stayed open with
+    ``resource_binding_conflict`` and ``price_missing:<группа>``.  Asking without naming the field
+    lets a correct decision arrive in a place nothing reads; rewriting the binding from here would
+    be the application making the model's professional choice, which it must not do.
     """
     if not groups:
         return ""
@@ -153,9 +166,13 @@ def proof_request_message(groups: Sequence[Mapping[str, Any]]) -> str:
         "на групповой код ресурса, а ценовая книга считает конкретный ресурс этой группы. Цены у "
         "группы не существует — первая строка группы не является ценой группы, и сумма, собранная "
         "на ней, была бы суммой, которую документ никогда не просил. Выбери сам конкретный ресурс "
-        f"из выбранной книги и перезполни строку ресурса его кодом и единицей; проверить цену "
-        f"можно через {PRICE_TOOL}, а список группы — через {SEARCH_TOOL}. Перезаполняй только те "
-        "строки, где состав прочитанной карточки действительно отсылает к группе:\n"
+        f"из выбранной книги и проверь цену через {PRICE_TOOL}, а список группы — через "
+        f"{SEARCH_TOOL}. Перезаполняй только те строки, где состав прочитанной карточки "
+        "действительно отсылает к группе. Важно, куда ложится выбор: калькулятор читает "
+        f"код ресурса из {BINDING_FIELD} самой строки работы ({BINDING_TARGET_FIELD}), поэтому "
+        "замени там групповой код на код выбранного конкретного ресурса; отдельная строка "
+        "материала с этим кодом позицию не закрывает, а групповой код в биндинге строки работы "
+        "остаётся дырой price_missing:\n"
         + "\n".join(blocks)
     )
 

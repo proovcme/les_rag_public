@@ -238,13 +238,31 @@ def test_a_group_message_that_names_the_tools_and_denies_a_family_price_is_clean
     codes = _codes(tmp_path, GROUP_SERVICE_MODULE, '''
 SEARCH_TOOL = "search_pricebook_resources"
 PRICE_TOOL = "read_resource_price"
+BINDING_FIELD = "resource_bindings"
+BINDING_TARGET_FIELD = "target_resource_code"
+
+
+def proof_request_message(groups):
+    return ("выбери конкретный ресурс: " + SEARCH_TOOL + " / " + PRICE_TOOL
+            + "; первая строка группы не является ценой группы"
+            + "; код ресурса меняется в " + BINDING_FIELD + "." + BINDING_TARGET_FIELD)
+''')
+    assert GROUP_CODE not in codes
+
+
+def test_a_group_message_that_never_names_the_binding_field_is_a_violation(tmp_path):
+    """Installed 935: the model chose the right member and wrote it where nothing reads it."""
+
+    codes = _codes(tmp_path, GROUP_SERVICE_MODULE, '''
+SEARCH_TOOL = "search_pricebook_resources"
+PRICE_TOOL = "read_resource_price"
 
 
 def proof_request_message(groups):
     return ("выбери конкретный ресурс: " + SEARCH_TOOL + " / " + PRICE_TOOL
             + "; первая строка группы не является ценой группы")
 ''')
-    assert GROUP_CODE not in codes
+    assert GROUP_CODE in codes
 
 
 ROUND_CODE = "PROOF_ROUND_ERASES_PACKET_ROWS"

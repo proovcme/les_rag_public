@@ -1,5 +1,34 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+<!-- installed-936-group-ask-names-the-field:v1 -->
+## Установлен936: запрос группы называет поле, куда должен лечь выбор
+
+Причина, по которой 935 не закрыла #81, измерена на `PDF!R4` (см. предыдущий раздел): верный
+выбор модели пришёл не в то место, где его читает калькулятор. Приложение не имеет права
+дописывать `resource_bindings` за модель — это была бы подмена профессионального решения, —
+зато оно обязано сказать, куда ложится ответ. В 936 сообщение запроса группы начало называть
+адрес поля:
+
+> «…Важно, куда ложится выбор: калькулятор читает код ресурса из `resource_bindings` самой
+> строки работы (`target_resource_code`), поэтому замени там групповой код на код выбранного
+> конкретного ресурса; отдельная строка материала с этим кодом позицию не закрывает, а
+> групповой код в биндинге строки работы остаётся дырой `price_missing:»…
+
+Формулировка закреплена константами `BINDING_FIELD` / `BINDING_TARGET_FIELD` в
+`proxy/services/lsr_resource_group_proof_service.py` и новым правилом гейта
+`GROUP_RESOURCE_PRICED_WITHOUT_A_MEMBER_CHOICE` (сообщение обязано называть оба имени поля);
+мутационная пара — `test_a_group_message_that_never_names_the_binding_field_is_a_violation`,
+содержательная — `test_the_message_names_the_field_the_choice_has_to_land_in`. Длина сообщения
+на реальном примере — 1077 символов на одну группу (было ~700), лимит `MAX_GROUPS_PER_PACKET = 4`
+и `MAX_MEMBERS_SHOWN = 6` не менялись; правило «приложение не выбирает ресурс и не принимает
+цену группы» тоже не менялось.
+
+Локально: `tests/test_resource_group_proof_932.py`,
+`tests/test_architecture_norm_card_proof_gate.py`, `tests/test_norm_card_proof_request_930.py` —
+51 passed; `tools/architecture_contract_gate.py` — rc=0; version contract и runtime map — rc=0.
+Живая клетка на 936 замеряется после канонических гейтов; #81 остаётся открытым, пока
+`calculated_positions` не станет ≥ 1 на живом прогоне.
+
 <!-- installed-935-group-round-executes:v1 -->
 ## Установлен935: раунд группы исполняет собственный вызов модели, и вердикт всегда с основанием
 
