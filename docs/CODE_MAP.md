@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат938 — сохранённое авторство документа
+
+`proxy/routers/chat.repack_lsr_without_model`: наследование known job.identity
+для author/profile/dataset scope перед fingerprint/packager;409 до executor при
+конфликте. `chat_evidence_application_service.workbook_model_question`: внешние
+пробелы не создают ложный resume-frame, literal current сохраняется. Формат
+числовых решений и профессиональные choices не исправляются за модель.
+
 ## Кандидат937 — техническая целостность доказательных раундов
 
 lsr_resource_group_proof_service: target_resource_code=исходная группа,

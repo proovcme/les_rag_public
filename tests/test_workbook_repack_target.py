@@ -282,7 +282,10 @@ async def test_actual_empty_question_repack_reuses_first_revision_and_pinned_pri
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["decisions", "confirmed_data", "issues", "profile"])
+# Author/profile is not a calculation override for unchanged saved decisions.
+# Its previous "new revision" expectation allowed relabeling another model's
+# decisions; conflicting provenance now has its own explicit 409 regression.
+@pytest.mark.parametrize("change", ["decisions", "confirmed_data", "issues"])
 async def test_actual_changed_repack_inputs_do_not_reuse_the_previous_calculation(tmp_path, monkeypatch, change):
     run, store, _, request = await _actual_unpacked_job(tmp_path, monkeypatch)
     before = store.get(request.job_id)
@@ -297,8 +300,6 @@ async def test_actual_changed_repack_inputs_do_not_reuse_the_previous_calculatio
                                          "price_source": "owned operator confirmation"}}
     elif change == "issues":
         store.pause(request.job_id, remaining=["S!R2", "S!R4"])
-    else:
-        updated.profile_revision_id = "changed-owned-profile"
 
     changed = await chat.repack_lsr_without_model(updated, _user={})
 
@@ -452,3 +453,127 @@ async def test_missing_actual_cache_never_rebuilds_first_unpinned_args_with_new_
     assert not reads and len(run.requests) == model_calls
     assert store.get(request.job_id)["accepted_rows"] == original_rows
     assert store.get(request.job_id)["task_context"]["price_basis"]["pricebook_sha256"] == pin
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_same", [False, True])
+async def test_saved_repack_inherits_author_and_scope_without_relabeling(monkeypatch, explicit_same):
+    job, calls, _ = _boundary(monkeypatch, context={"artifact_intent": "lsr"})
+    job["identity"].update({"model_identity": "saved-model", "profile_revision_id": "saved-profile:r3",
+                            "dataset_ids": ["saved-b", "saved-a"]})
+    before = copy.deepcopy(job)
+    supplied = {"model_identity": "saved-model", "profile_revision_id": "saved-profile:r3",
+                "dataset_ids": ["saved-a", "saved-b", "saved-a"]} if explicit_same else {}
+    request = chat.LsrRepackRequest(session_id="own-session", job_id=job["job_id"], **supplied)
+    request_before = request.model_dump()
+
+    result = await chat.repack_lsr_without_model(request, _user={})
+
+    assert result["model_called"] is False and len(calls) == 1
+    assert calls[0][1]["model_identity"] == "saved-model"
+    assert calls[0][1]["profile_revision_id"] == "saved-profile:r3"
+    assert calls[0][1]["dataset_ids"] == ["saved-b", "saved-a"]
+    assert calls[0][1]["model_preset"] == ""  # The saved identity did not record a preset.
+    assert calls[0][0]["args"]["decisions"] == before["accepted_rows"]
+    assert job == before and request.model_dump() == request_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supplied", [
+    {"model_identity": "current-model"},
+    {"profile_revision_id": "current-profile"},
+    {"dataset_ids": ["saved-dataset", "another-dataset"]},
+    {"dataset_ids": ["another-dataset"]},
+])
+async def test_saved_repack_rejects_conflicting_authorship_or_scope_before_executor(monkeypatch, supplied):
+    job, calls, records = _boundary(monkeypatch, context={"artifact_intent": "lsr"})
+    job["identity"].update({"model_identity": "saved-model", "profile_revision_id": "saved-profile:r3",
+                            "dataset_ids": ["saved-dataset"]})
+    before = copy.deepcopy(job)
+
+    with pytest.raises(chat.HTTPException) as failure:
+        await chat.repack_lsr_without_model(chat.LsrRepackRequest(
+            session_id="own-session", job_id=job["job_id"], **supplied), _user={})
+
+    assert failure.value.status_code == 409
+    assert failure.value.detail["code"] == "REPACK_IDENTITY_MISMATCH"
+    assert failure.value.detail["model_called"] is False
+    assert failure.value.detail["fields"] == list(supplied)
+    assert not calls and not records and job == before
+
+
+@pytest.mark.asyncio
+async def test_saved_repack_does_not_widen_an_explicitly_empty_saved_scope(monkeypatch):
+    job, calls, _ = _boundary(monkeypatch, context={"artifact_intent": "lsr"})
+    job["identity"]["dataset_ids"] = []
+    with pytest.raises(chat.HTTPException) as failure:
+        await chat.repack_lsr_without_model(chat.LsrRepackRequest(
+            session_id="own-session", job_id=job["job_id"], dataset_ids=["new-dataset"]), _user={})
+    assert failure.value.detail["fields"] == ["dataset_ids"]
+    assert not calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("jobless", [False, True])
+async def test_explicit_new_decisions_keep_legacy_caller_metadata(monkeypatch, jobless):
+    job, calls, _ = _boundary(monkeypatch, context={"artifact_intent": "lsr"})
+    job["identity"].update({"model_identity": "old-model", "profile_revision_id": "old-profile",
+                            "dataset_ids": ["old-dataset"]})
+    before = copy.deepcopy(job)
+    request = chat.LsrRepackRequest(session_id="own-session", job_id="" if jobless else job["job_id"],
+        attachment_id="read_123456abcdef", decisions=[{**ROW, "quantity": 7}],
+        model_identity="new-model", profile_revision_id="new-profile", dataset_ids=["new-dataset"])
+
+    result = await chat.repack_lsr_without_model(request, _user={})
+
+    assert result["model_called"] is False
+    assert calls[0][1]["model_identity"] == "new-model"
+    assert calls[0][1]["profile_revision_id"] == "new-profile"
+    assert calls[0][1]["dataset_ids"] == ["new-dataset"]
+    assert calls[0][0]["args"]["decisions"] == request.decisions
+    assert job == before
+
+
+@pytest.mark.asyncio
+async def test_historical_job_without_identity_metadata_keeps_explicit_legacy_values(monkeypatch):
+    job, calls, _ = _boundary(monkeypatch, context={"artifact_intent": "lsr"})
+    result = await chat.repack_lsr_without_model(chat.LsrRepackRequest(
+        session_id="own-session", job_id=job["job_id"], model_identity="caller-model",
+        profile_revision_id="caller-profile", dataset_ids=["caller-dataset"]), _user={})
+    assert result["model_called"] is False
+    assert calls[0][1]["model_identity"] == "caller-model"
+    assert calls[0][1]["profile_revision_id"] == "caller-profile"
+    assert calls[0][1]["dataset_ids"] == ["caller-dataset"]
+
+
+@pytest.mark.asyncio
+async def test_actual_job_only_repack_records_saved_provenance_and_replays_same_revision(tmp_path, monkeypatch):
+    from proxy.services.artifact_revision_service import ArtifactRevisionStore
+    from backend.runtime_paths import mutable_path
+
+    run, store, identity, explicit = await _actual_unpacked_job(tmp_path, monkeypatch)
+    request = explicit.model_copy(update={"dataset_ids": [], "profile_revision_id": "", "model_identity": ""})
+    before = store.get(request.job_id)
+    model_calls = len(run.requests)
+
+    first = await chat.repack_lsr_without_model(request, _user={})
+    replay = await chat.repack_lsr_without_model(explicit, _user={})
+    again = await chat.repack_lsr_without_model(request, _user={})
+
+    revision_id = first["result"]["artifact"]["revision_id"]
+    artifact = ArtifactRevisionStore(mutable_path("storage/artifacts/meta.db"),
+        mutable_path("storage/artifacts/files")).get_revision(revision_id)
+    assert artifact.model_identity == identity.model_identity
+    assert artifact.profile_revision_id == identity.profile_revision_id
+    assert artifact.model_preset == "unknown"
+    assert list(artifact.source_scope) == [f"attachment:{identity.attachment_id}"] + [
+        f"dataset:{dataset_id}" for dataset_id in identity.dataset_ids]
+    for response in (replay, again):
+        for field in ("revision_id", "decision_checkpoint_id", "sha256"):
+            assert response["result"]["artifact"][field] == first["result"]["artifact"][field]
+        assert response["result"]["price_basis"] == first["result"]["price_basis"]
+        assert response["model_called"] is False
+    assert len(run.requests) == model_calls
+    after = store.get(request.job_id)
+    for field in ("identity", "accepted_rows", "remaining", "unapplied_proposals", "operator_overrides"):
+        assert after[field] == before[field]

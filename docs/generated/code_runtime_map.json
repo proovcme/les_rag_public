@@ -1721,7 +1721,7 @@
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_repack_target.py"
       ],
-      "lines": 4852,
+      "lines": 4879,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -3310,7 +3310,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 14944,
+      "lines": 14946,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -17252,7 +17252,7 @@
     },
     {
       "inbound": [],
-      "lines": 454,
+      "lines": 579,
       "module": "tests.test_workbook_repack_target",
       "outbound": [
         "backend/runtime_paths.py",
@@ -17307,7 +17307,7 @@
     },
     {
       "inbound": [],
-      "lines": 250,
+      "lines": 293,
       "module": "tests.test_workbook_task_context",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -22021,7 +22021,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 774,
     "tracked_python_files": 1166,
-    "tracked_python_lines": 405267
+    "tracked_python_lines": 405464
   },
   "warnings": []
 }

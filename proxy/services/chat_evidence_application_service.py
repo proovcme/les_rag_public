@@ -316,7 +316,9 @@ def workbook_model_question(question: str, job: Mapping[str, Any] | None) -> str
     current = str(question or "")
     context = (job or {}).get("task_context") or {}
     original = str(context.get("original_question") or "")
-    if not original or original == current:
+    # Boundary whitespace in a fresh request must not manufacture a resume
+    # frame. Compare only; the current operator message remains byte-for-byte.
+    if not original or original.strip() == current.strip():
         return current
     effective: dict[str, Any] = {}
     if context.get("artifact_intent") in {"vor", "lsr"}:

@@ -1,5 +1,17 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат938 — авторство пересборки и буквальный вопрос
+
+🟡 Код↔док: `proxy/routers/chat.repack_lsr_without_model` наследует identity
+сохранённых решений до fingerprint/executor; конфликтующие author/profile/scope
+возвращают409, новые явно переданные решения и исторически отсутствующая
+identity сохраняют прежний контракт. `workbook_model_question` сравнивает
+внешний whitespace без изменения передаваемых bytes. Регрессии:
+test_workbook_repack_target и test_workbook_task_context; [чат](modules/chat-profiles.md).
+Установлен937; frozen4779 passed, repack живого936 без модели подтверждён.
+Свежий B0 частичен, B1 остановлен на генерации запросов. Gate/live938 pending;
+**customer-ready=false**. Точные ограничения и квитанции — RELEASE_LEDGER.
+
 ## Кандидат937 — привязки, proof-контекст и восстановление файла
 
 🟡 Код↔док: lsr_resource_group_proof_service объясняет реальные binding fields;

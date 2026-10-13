@@ -1,5 +1,21 @@
 # Chat profiles
 
+## Кандидат938: автор пересборки и внешние пробелы вопроса
+
+Пересборка accepted_rows не вызывает модель. Известные model_identity,
+profile_revision_id и dataset_ids принадлежат сохранённой job.identity: пустые
+поля запроса наследуются до расчётного fingerprint и executor, совпадающие
+допустимы, противоречащие409 REPACK_IDENTITY_MISMATCH без новой упаковки.
+Явно переданные новые decisions и jobless/исторически отсутствующие identity
+сохраняют прежний контракт; неизвестный model_preset не выдумывается.
+Существующие immutable ревизии не переписываются.
+
+workbook_model_question сравнивает original.strip()==current.strip(), возвращая
+буквальный current. Конечный LF/внешние пробелы fresh-запроса не создают ложное
+сообщение об изменении задачи; реальные изменения, регистр и внутренние пробелы
+сохраняют original/current framing. Это не обещание исправить выбор норм модели.
+Живой937: repack подтверждён, B0/B1 качество не принято; RELEASE_LEDGER.
+
 ## Candidate 0.31.184 / 912 - optional export declaration in model queries
 
 Query JSON accepts queries without an artifact_kind for source questions; explicit model vor/lsr declarations and strict invalid-metadata checks remain. Bound profile/skill and literal searches are preserved. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s. Customer-ready false.

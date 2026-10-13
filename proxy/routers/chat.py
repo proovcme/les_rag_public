@@ -328,6 +328,9 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     overlays: dict[str, dict[str, Any]] = {}
     job: dict[str, Any] = {}
     saved_model_decisions = False
+    dataset_ids = list(req.dataset_ids or [])
+    profile_revision_id = str(req.profile_revision_id or "")
+    model_identity = str(req.model_identity or "")
     if job_id:
         try:
             job = WorkbookResearchJobService().get(job_id)
@@ -341,6 +344,30 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             ]
             saved_model_decisions = True
         identity = job.get("identity") if isinstance(job.get("identity"), dict) else {}
+        if saved_model_decisions:
+            # Repack executes no inference: known author/scope belong to the
+            # saved decisions, not today's selected model or profile. Explicit
+            # new decisions and historical absent identity keep their contract.
+            conflicts = []
+            for field, supplied in (("profile_revision_id", profile_revision_id),
+                                    ("model_identity", model_identity)):
+                stored = str(identity.get(field) or "")
+                if stored and supplied and supplied != stored:
+                    conflicts.append(field)
+            profile_revision_id = str(identity.get("profile_revision_id") or profile_revision_id)
+            model_identity = str(identity.get("model_identity") or model_identity)
+            if isinstance(identity.get("dataset_ids"), (list, tuple)):
+                saved_scope = list(dict.fromkeys(str(item).strip() for item in identity["dataset_ids"]
+                                                if str(item).strip()))
+                supplied_scope = {str(item).strip() for item in dataset_ids if str(item).strip()}
+                if supplied_scope and supplied_scope != set(saved_scope):
+                    conflicts.append("dataset_ids")
+                dataset_ids = saved_scope
+            if conflicts:
+                raise HTTPException(409, {"code": "REPACK_IDENTITY_MISMATCH", "packaging_status": "pending",
+                    "model_called": False, "fields": conflicts,
+                    "message": "Параметры запроса не совпадают с автором или источниками сохранённых решений. "
+                               "Пересоберите файл из задания без изменения этих параметров; новое исследование не запускалось."})
         attachment_id = attachment_id or str(identity.get("attachment_id") or "").strip()
         remaining = [
             str(item) for item in (job.get("remaining") or []) if str(item).strip()
@@ -465,8 +492,8 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             "tool": repack_tool, "session_id": req.session_id, "attachment_id": attachment_id,
             "source_sha256": source_sha256, "saved_identity": job.get("identity") or {},
             "question": req.question, "decisions": decisions, "confirmed_data": overlays,
-            "dataset_ids": list(req.dataset_ids or []), "profile_revision_id": req.profile_revision_id,
-            "model_identity": req.model_identity, "document_issues": document_issues,
+            "dataset_ids": dataset_ids, "profile_revision_id": profile_revision_id,
+            "model_identity": model_identity, "document_issues": document_issues,
         }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
         try:
             repack_events = WorkbookResearchJobService().list_events(job_id)
@@ -510,11 +537,11 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
             "document_issues": document_issues,
             "session_id": str(req.session_id or ""),
             "question": str(req.question or ""),
-            "dataset_ids": list(req.dataset_ids or []),
+            "dataset_ids": dataset_ids,
             "project_id": None,
             "attachment_id": attachment_id,
-            "profile_revision_id": str(req.profile_revision_id or ""),
-            "model_identity": str(req.model_identity or "unknown"),
+            "profile_revision_id": profile_revision_id,
+            "model_identity": model_identity or "unknown",
             "model_preset": "",
         },
         None,

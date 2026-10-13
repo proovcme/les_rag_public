@@ -1,4 +1,8 @@
 """Durable request survives failed first packaging, resume, and repricing."""
+import copy
+
+import pytest
+
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from proxy.services.lsr_workbook_adapter_service import (
     explicit_estimate_pricebook,
@@ -126,6 +130,45 @@ def test_model_continuation_receives_original_task_and_current_user_message():
     assert original in question and "Продолжи" in question and "vor" in question
     assert workbook_model_question(original, {"task_context": {"original_question": original}}) == original
     assert workbook_model_question("Собери ЛСР", None) == "Собери ЛСР"
+
+
+@pytest.mark.parametrize("prefix,suffix", [
+    ("", "\n"), ("", "\r\n"), (" \t", ""), (" \t", "\r\n"), ("\u00a0", "\u00a0"),
+])
+def test_same_task_with_boundary_whitespace_keeps_literal_current_without_resume_wrapper(prefix, suffix):
+    original = "Собери ВОР по проекту Ω\nМатериалы и работы отдельно"
+    current = prefix + original + suffix
+    job = {"task_context": {"original_question": original, "artifact_intent": "vor",
+                            "price_basis": {"region": "Санкт-Петербург"}}}
+    before = copy.deepcopy(job)
+
+    result = workbook_model_question(current, job)
+
+    assert result.encode("utf-8") == current.encode("utf-8")
+    assert job == before
+    # A legacy saved task may carry the padding instead of the current request.
+    padded_job = {"task_context": {"original_question": current}}
+    assert workbook_model_question(original, padded_job) == original
+
+
+@pytest.mark.parametrize("current", [
+    "Собери ЛСР\nМатериалы отдельно",
+    "собери ВОР\nМатериалы отдельно",
+    "Материалы отдельно\nСобери ВОР",
+    "Собери  ВОР\nМатериалы отдельно",
+])
+def test_changed_task_content_still_keeps_original_and_literal_current(current):
+    original = "Собери ВОР\nМатериалы отдельно"
+    current = " \t" + current + "\r\n"
+    job = {"task_context": {"original_question": original, "artifact_intent": "vor"}}
+    before = copy.deepcopy(job)
+
+    result = workbook_model_question(current, job)
+
+    assert f"Исходное задание пользователя:\n{original}\n\n" in result
+    assert f"Текущее сообщение пользователя:\n{current}\n\n" in result
+    assert '"artifact_intent": "vor"' in result
+    assert job == before
 
 
 def test_model_continuation_sees_new_effective_price_request_after_repricing(tmp_path):
