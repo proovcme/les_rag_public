@@ -5,6 +5,28 @@ import pytest
 from fastapi import HTTPException
 
 from proxy.routers import runtime
+from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
+from proxy.services.model_connection_registry_service import ModelConnectionRegistry
+
+
+@pytest.fixture(autouse=True)
+def isolated_model_registry(tmp_path, monkeypatch):
+    """Status tests must never read or initialize a workstation registry."""
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "runtime-models.sqlite"))
+
+
+def _assigned_answer(*, base_url="http://127.0.0.1:1919/v1"):
+    registry = ModelConnectionRegistry()
+    first = registry.create_connection(
+        display_name="Assigned answer", base_url=base_url, model_id="pinned-model-r1",
+        locality=ConnectionLocality.LOOPBACK, requested_context_tokens=30000,
+        secret_ref="env:TEST_SECRET_REFERENCE", extension_type="freetoken", actor="test",
+    )
+    binding = registry.bind_role(ConnectionRole.ANSWER, first.revision_id,
+                                 expected_binding_revision=None, actor="test")
+    latest = registry.revise_connection(first.connection_id, expected_revision_id=first.revision_id,
+                                       model_id="unbound-model-r2", base_url="http://127.0.0.1:2929/v1", actor="test")
+    return registry, first, latest, binding
 
 
 class FakeBackend:
@@ -254,6 +276,129 @@ def test_freetoken_provider_status_uses_external_runtime(monkeypatch):
         "base_url": "http://127.0.0.1:1919/v1",
         "model": "Qwen3.6-35B-A3B-NVFP4",
     }
+
+
+@pytest.mark.asyncio
+async def test_status_uses_pinned_answer_revision_without_resolving_or_latest_upgrade(runtime_state, monkeypatch):
+    from proxy.services import model_connection_resolver_service as resolver_service
+
+    registry, first, latest, binding = _assigned_answer()
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "legacy-9b")
+    monkeypatch.setenv("LLM_MODEL", "legacy-9b")
+    monkeypatch.setenv("MLX_URL", "http://127.0.0.1:8080")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Status must not resolve secrets, probe or change the model")
+
+    monkeypatch.setattr(resolver_service.ModelConnectionResolver, "resolve", forbidden)
+    monkeypatch.setattr(resolver_service.ModelConnectionResolver, "resolve_revision", forbidden)
+    response = await runtime.get_status()
+    proxy = response["proxy"]
+    status = proxy["llm_provider"]
+    assert proxy["llm_model"] == first.model_id
+    assert proxy["llm_url"] == first.base_url
+    assert status["model"] == first.model_id != latest.model_id
+    assert status["base_url"] == first.base_url != latest.base_url
+    assert status["revision_id"] == first.revision_id
+    assert status["connection_id"] == first.connection_id
+    assert status["source"] == "answer_role_binding"
+    assert status["status"] == "assigned"
+    assert status["provider"] == "model_connection"
+    assert "secret_ref" not in status
+    assert "TEST_SECRET_REFERENCE" not in str(response)
+    assert registry.get_role_binding(ConnectionRole.ANSWER) == binding
+    assert registry.get_connection(first.connection_id) == latest
+
+
+def test_disabled_assigned_answer_is_blocked_without_legacy_fallback(monkeypatch):
+    registry, first, latest, _ = _assigned_answer()
+    registry.disable_connection(first.connection_id, expected_revision_id=latest.revision_id, actor="test")
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "legacy-9b")
+    status = runtime._provider_status()
+    assert status["status"] == "blocked"
+    assert status["code"] == "CONNECTION_DISABLED"
+    assert status["model"] == first.model_id
+    assert status["revision_id"] == first.revision_id
+    assert "legacy-9b" not in str(status)
+
+
+def test_broken_answer_binding_is_blocked_and_does_not_expose_exception(monkeypatch):
+    import sqlite3
+
+    registry, first, _, _ = _assigned_answer()
+    with sqlite3.connect(registry.db_path) as conn:
+        conn.execute("UPDATE les_model_role_bindings SET connection_revision_id=?", ("missing-revision",))
+    monkeypatch.setenv("OLLAMA_MODEL", "legacy-9b")
+    status = runtime._provider_status()
+    assert status["status"] == "blocked"
+    assert status["code"] == "MODEL_CONNECTION_STATUS_UNAVAILABLE"
+    assert status["model"] == ""
+    assert status["base_url"] == ""
+    assert "legacy-9b" not in str(status)
+
+
+def test_registry_read_failure_is_blocked_without_secret_or_bootstrap_fallback(monkeypatch, caplog):
+    import sqlite3
+
+    def broken_registry():
+        raise sqlite3.OperationalError("http://user:must-not-leak@private.invalid/?token=secret")
+
+    monkeypatch.setattr(runtime, "ModelConnectionRegistry", broken_registry)
+    monkeypatch.setenv("LES_LLM_PROVIDER", "freetoken")
+    monkeypatch.setenv("FREETOKEN_MODEL", "legacy-model")
+    status = runtime._provider_status()
+    assert status["status"] == "blocked"
+    assert status["code"] == "MODEL_CONNECTION_STATUS_UNAVAILABLE"
+    assert status["model"] == status["base_url"] == ""
+    assert "must-not-leak" not in str(status) + caplog.text
+
+
+@pytest.mark.parametrize("base_url", [
+    "http://user:password-must-not-leak@127.0.0.1:1919/v1",
+    "http://127.0.0.1:1919/v1?api_key=key-must-not-leak",
+    "http://127.0.0.1:1919/v1#key-must-not-leak",
+    "http://127.0.0.1:invalid-port/v1",
+    "http://[invalid-host/v1",
+])
+def test_assigned_answer_status_does_not_expose_unsafe_endpoint(base_url):
+    _assigned_answer(base_url=base_url)
+    status = runtime._provider_status()
+    assert status["status"] == "blocked"
+    assert status["code"] == "MODEL_CONNECTION_STATUS_INVALID_URL"
+    assert status["base_url"] == ""
+    assert "must-not-leak" not in str(status)
+    assert "invalid-port" not in str(status)
+
+
+def test_unassigned_legacy_endpoint_does_not_expose_credentials(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://user:must-not-leak@example.invalid/v1?key=secret")
+    monkeypatch.setenv("OPENAI_MODEL", "legacy-model")
+    status = runtime._provider_status()
+    assert status["model"] == "legacy-model"
+    assert status["status"] == "blocked"
+    assert status["base_url"] == ""
+    assert "must-not-leak" not in str(status)
+
+
+@pytest.mark.asyncio
+async def test_status_api_returns_safe_blocked_metadata_for_invalid_model_url(runtime_state):
+    import httpx
+    from fastapi import FastAPI
+
+    _assigned_answer(base_url="http://user:must-not-leak@127.0.0.1:invalid/v1")
+    app = FastAPI()
+    app.include_router(runtime.router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/status")
+    assert response.status_code == 200
+    proxy = response.json()["proxy"]
+    assert proxy["llm_provider"]["status"] == "blocked"
+    assert proxy["llm_model"] == "pinned-model-r1"
+    assert proxy["llm_url"] == ""
+    assert "must-not-leak" not in response.text
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,25 @@
 # RAG evidence flow
 
+## Кандидат937 — контекст и частичный ответ proof-раунда
+
+`_continue_sheet_reads` передаёт proof request и предыдущий авторский ответ
+как required context вместе с исходным вопросом/исходником и native exchanges.
+После собственного READ модель не теряет ни цель раунда, ни предыдущую таблицу.
+`rows_after_proof_round` обновляет только поименованные операции. Остальные
+решения сохраняются и повторно связываются с фактическими показанными карточками.
+Однозначный source+role допускает пропуск bookkeeping ID в ответе, сохраняя
+application operation_id/revision; несколько операций требуют однозначного ID.
+Неоднозначный или повторный ID сохраняется в transport diagnostics с literal
+proposal/raw_answer, не выбирает удаляемую операцию. Новый inference не добавлен.
+Регрессии: test_model_proof_turn_integrity (RED4), смежный набор94 passed.
+
+Независимый аудит936 уточнил прежний отчёт: PDF_TEXT!R1 — отдельная нетабличная
+шапка, не повтор таблицы. Модель дала header, source audit не имеет unit mismatch.
+Текстовые блоки нельзя автоматически исключать: другой документ может содержать
+там операции. Legacy preview18000 остаётся отдельным представлением; полный
+catalog/read_source доступен, validation не объявляет preview усечением каталога.
+Установка937 и профессиональное качество pending; **customer-ready=false**.
+
 ## Кандидат 0.31.201 / 929 — неполный состав не скрывает полные ресурсы
 
 Параллельно `parse_model_rag_result` различает адрес исходника и нумерацию
@@ -2333,6 +2353,20 @@ asked anyone to say which member the document means.
   member — a family has no price, and the first row of a family is not that price;
 * one round per packet attempt, inside the same research stage as the card proof, and whatever the
   model leaves unresolved keeps its existing `price_missing:<код>` gap and no confirmed money.
+
+Уточнение контракта после контроля936: в `resource_bindings` поле
+`target_resource_code` сохраняет исходный групповой код из ресурсов нормы;
+`resource_code` содержит выбранный моделью конкретный ресурс. Инструкция936
+ошибочно предлагала заменить сам target, который обработчик ищет среди исходных
+ресурсов. Для `replace` модель задаёт название, единицу, основание и ссылки на
+оба показанных ресурса; `quantity_basis=target_norm` означает обоснованное
+сохранение нормативного расхода с пересчётом кодом, `explicit` требует полного
+физического количества числом. Неизвестный расход или неприменимый материал
+остаётся пробелом. `tests/test_resource_group_proof_932.py` проводит буквальный
+ответ через parser → evidence binding → настоящий resource binding: корректная
+замена применяется, перепутанный target и непоказанный новый ресурс отклоняются
+без изменения исходного состава. Это проверка транспорта, не живой приёмочный
+вердикт о выборе нормы или материала.
 
 Measured offline against the installed `sankt-peterburg_3kv2026` (`.test-tmp/probe_group_hook_932.py`,
 book hash `2425685924b1dc69…` re-checked before opening): the durable evidence of the real 931

@@ -2294,7 +2294,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 970,
+      "lines": 1022,
       "module": "proxy.routers.runtime",
       "outbound": [
         "backend/http_client_policy.py",
@@ -2307,6 +2307,8 @@
         "proxy/routers/__init__.py",
         "proxy/routers/jobs.py",
         "proxy/security.py",
+        "proxy/services/model_connection_contracts.py",
+        "proxy/services/model_connection_registry_service.py",
         "proxy/services/project_service.py",
         "proxy/services/resource_governor.py",
         "proxy/services/runtime_admission.py",
@@ -3256,6 +3258,7 @@
         "tests/test_model_output_diagnostics_tracking.py",
         "tests/test_model_partial_inventory_complete_frontier.py",
         "tests/test_model_price_provenance_service.py",
+        "tests/test_model_proof_turn_integrity.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_query_commentary_transport.py",
         "tests/test_model_query_failure_diagnostics.py",
@@ -3307,7 +3310,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 14874,
+      "lines": 14944,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5113,7 +5116,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_resource_group_proof_932.py"
       ],
-      "lines": 218,
+      "lines": 229,
       "module": "proxy.services.lsr_resource_group_proof_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5460,6 +5463,7 @@
         "backend/qdrant_adapter.py",
         "proxy/routers/chat.py",
         "proxy/routers/model_connections.py",
+        "proxy/routers/runtime.py",
         "proxy/services/canonical_promotion_service.py",
         "proxy/services/canonical_route_service.py",
         "proxy/services/chat_evidence_application_service.py",
@@ -5490,6 +5494,7 @@
         "tests/test_model_reasoning_control.py",
         "tests/test_model_wire_token_count.py",
         "tests/test_openai_compatible_transport_service.py",
+        "tests/test_runtime_router.py",
         "tests/test_workbook_provider_binding_928.py",
         "tools/model_connection_live_acceptance.py"
       ],
@@ -5508,6 +5513,7 @@
         "backend/qdrant_adapter.py",
         "proxy/routers/chat.py",
         "proxy/routers/model_connections.py",
+        "proxy/routers/runtime.py",
         "proxy/services/model_capability_service.py",
         "proxy/services/model_connection_resolver_service.py",
         "tests/test_model_capability_service.py",
@@ -5516,6 +5522,7 @@
         "tests/test_model_connection_resolver_service.py",
         "tests/test_model_connections_router.py",
         "tests/test_model_reasoning_control.py",
+        "tests/test_runtime_router.py",
         "tools/model_connection_live_acceptance.py"
       ],
       "lines": 611,
@@ -5542,6 +5549,7 @@
         "tests/test_model_connection_embeddings_integration.py",
         "tests/test_model_connection_resolver_service.py",
         "tests/test_openai_compatible_transport_service.py",
+        "tests/test_runtime_router.py",
         "tools/model_connection_live_acceptance.py"
       ],
       "lines": 351,
@@ -5869,7 +5877,8 @@
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/rim_lsr_trace_service.py",
         "tests/test_model_resource_binding_service.py",
-        "tests/test_model_resource_reference.py"
+        "tests/test_model_resource_reference.py",
+        "tests/test_resource_group_proof_932.py"
       ],
       "lines": 343,
       "module": "proxy.services.model_resource_binding_service",
@@ -6199,6 +6208,7 @@
         "tests/test_model_engine_extension_service.py",
         "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_no_source_card_read_contract.py",
+        "tests/test_model_proof_turn_integrity.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_query_generation_limit_boundary.py",
         "tests/test_model_query_packet_failure_boundary.py",
@@ -6238,7 +6248,7 @@
         "tests/test_packaging_recovery_service.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 363,
+      "lines": 377,
       "module": "proxy.services.packaging_recovery_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7199,7 +7209,7 @@
         "tests/test_unknown_resource_consumption.py",
         "tools/smeta_vor_finalize.py"
       ],
-      "lines": 787,
+      "lines": 789,
       "module": "proxy.services.rim_trace_xlsx_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8330,7 +8340,7 @@
         "tests/test_workbook_source_frame_identity.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 2950,
+      "lines": 2954,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -13277,6 +13287,20 @@
     },
     {
       "inbound": [],
+      "lines": 88,
+      "module": "tests.test_model_proof_turn_integrity",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/openai_compatible_transport_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_norm_card_proof_request_930.py"
+      ],
+      "path": "tests/test_model_proof_turn_integrity.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 302,
       "module": "tests.test_model_query_checkpoint_draft",
       "outbound": [
@@ -13512,6 +13536,7 @@
         "tests/test_model_exact_card_read_policy.py",
         "tests/test_model_inline_field_records.py",
         "tests/test_model_output_diagnostics_tracking.py",
+        "tests/test_model_proof_turn_integrity.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_query_failure_job_lifecycle.py",
         "tests/test_model_query_generation_limit_boundary.py",
@@ -13911,7 +13936,9 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
+      "inbound": [
+        "tests/test_model_proof_turn_integrity.py"
+      ],
       "lines": 344,
       "module": "tests.test_norm_card_proof_request_930",
       "outbound": [
@@ -14127,7 +14154,7 @@
     },
     {
       "inbound": [],
-      "lines": 447,
+      "lines": 474,
       "module": "tests.test_packaging_recovery_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -15101,12 +15128,13 @@
     },
     {
       "inbound": [],
-      "lines": 251,
+      "lines": 316,
       "module": "tests.test_resource_group_proof_932",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/fgis_price_service.py",
         "proxy/services/lsr_resource_group_proof_service.py",
+        "proxy/services/model_resource_binding_service.py",
         "proxy/services/rim_lsr_trace_service.py"
       ],
       "path": "tests/test_resource_group_proof_932.py",
@@ -15364,7 +15392,7 @@
     },
     {
       "inbound": [],
-      "lines": 499,
+      "lines": 563,
       "module": "tests.test_rim_trace_xlsx",
       "outbound": [
         "proxy/routers/lsr.py",
@@ -15520,10 +15548,13 @@
     },
     {
       "inbound": [],
-      "lines": 379,
+      "lines": 524,
       "module": "tests.test_runtime_router",
       "outbound": [
-        "proxy/routers/runtime.py"
+        "proxy/routers/runtime.py",
+        "proxy/services/model_connection_contracts.py",
+        "proxy/services/model_connection_registry_service.py",
+        "proxy/services/model_connection_resolver_service.py"
       ],
       "path": "tests/test_runtime_router.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -17221,7 +17252,7 @@
     },
     {
       "inbound": [],
-      "lines": 432,
+      "lines": 454,
       "module": "tests.test_workbook_repack_target",
       "outbound": [
         "backend/runtime_paths.py",
@@ -21988,9 +22019,9 @@
     "product_reachable": 380,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 773,
-    "tracked_python_files": 1165,
-    "tracked_python_lines": 404703
+    "test_or_tool_only": 774,
+    "tracked_python_files": 1166,
+    "tracked_python_lines": 405267
   },
   "warnings": []
 }

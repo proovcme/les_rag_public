@@ -14,7 +14,10 @@ status.
 
 from __future__ import annotations
 
+import copy
 from types import SimpleNamespace
+
+import pytest
 
 import proxy.services.lsr_resource_group_proof_service as proof
 
@@ -109,22 +112,84 @@ def test_the_message_lists_members_and_names_the_tools_without_choosing_one():
 
 
 def test_the_message_names_the_field_the_choice_has_to_land_in():
-    """Installed 935 measured the wrong-row choice, so the ask has to say where to write it.
-
-    The model picked `01.7.07.12-0024` and put it on a separate material row while the work row's
-    `resource_bindings[].target_resource_code` still named the family — `resource_binding_conflict`
-    plus `price_missing:<семья>`, and the position stayed open.  Naming the field is the difference
-    between a correct decision that counts and one that silently does not.
-    """
+    """Target identifies the existing norm slot; resource_code is the model's replacement."""
     found = proof.unresolved_groups(ROWS, [_card_chunk([RESOURCE])], pricebook=_book())
     message = proof.proof_request_message(found)
     assert proof.BINDING_FIELD in message
     assert proof.BINDING_TARGET_FIELD in message
     assert "строки работы" in message
-    assert "отдельная строка" in message and "не закрывает" in message
-    # naming the field is not choosing a member: the ask still offers the list and no preference
-    assert "Замени там групповой код на код выбранного конкретного ресурса" in message or \
-        "замени там групповой код на код выбранного конкретного ресурса" in message
+    assert "отдельная строка" in message.casefold() and "не закрывает" in message
+    assert "target_resource_code — исходный групповой код" in message
+    assert "resource_code — код выбранного конкретного ресурса" in message
+    assert "quantity_basis=target_norm" in message
+    assert "reason" in message and "source_refs" in message and "unit" in message
+    assert "замени там групповой код на код выбранного конкретного ресурса" not in message
+
+
+def _literal_member_decision():
+    """A literal authored answer, parsed by the production result transport, not a fake verdict."""
+    from proxy.services.chat_evidence_application_service import parse_model_rag_result
+
+    answer = '''{"rows":[{"source_row":"АР!R11","row_role":"work","work_row":"АР!R11",
+        "title":"Облицовка стен","quantity":10,"unit":"м2","norm_code":"ГЭСН 15-01-050-04",
+        "norm_status":"ANALOGUE_CANDIDATE","coverage":"Требуется проверка применимости",
+        "evidence_refs":["Q136.H1"],"resource_bindings":[{
+            "action":"replace","target_resource_code":"11.2.11.01",
+            "resource_code":"11.2.11.01-0002","resource_name":"Пластик 2",
+            "unit":"м2","quantity_basis":"target_norm",
+            "reason":"Выбран конкретный материал по исходной спецификации; расход сохранён по карточке",
+            "basis_ref":"АР!R11","source_refs":["Q136.H1","Q137.H1"]}]}]}'''
+    parsed = parse_model_rag_result(answer)
+    assert parsed is not None and len(parsed[1]) == 1
+    return parsed[1][0]
+
+
+def _member_evidence():
+    original = SimpleNamespace(content=f"Ресурс {GROUP}: {RESOURCE['name']}, м2",
+        doc_name="Synthetic norm resource", meta={"model_evidence_ref": "Q136.H1",
+            "global_evidence_id": "test-original-group", "resources": [dict(RESOURCE)]})
+    selected = SimpleNamespace(content="Ресурс 11.2.11.01-0002: Пластик 2, м2, цена 102",
+        doc_name="Synthetic chosen book member", meta={"model_evidence_ref": "Q137.H1",
+            "global_evidence_id": "test-selected-member", "resource_code": "11.2.11.01-0002"})
+    return [original, selected]
+
+
+@pytest.mark.parametrize("wrong_target,show_member", [(False, True), (True, True), (False, False)])
+def test_member_answer_applies_to_original_group_with_real_binding_contract(wrong_target, show_member):
+    from proxy.services.chat_evidence_application_service import bind_row_evidence_ids
+    from proxy.services.model_resource_binding_service import resource_binding_position_fields
+
+    row = _literal_member_decision()
+    if wrong_target:
+        # Build936 instructed this direction; the selected member is not a slot in the norm.
+        row["resource_bindings"][0]["target_resource_code"] = "11.2.11.01-0002"
+    chunks = _member_evidence()[:2 if show_member else 1]
+    row = bind_row_evidence_ids([row], chunks)[0]
+    resources = [dict(RESOURCE), {"kind": "labor", "code": "1-100-30", "name": "Труд",
+                                 "unit": "чел.-ч", "per_unit": 3}]
+    before = copy.deepcopy((row, resources))
+    result = resource_binding_position_fields(row, resources, work_id="fixture-operation",
+        work_qty=0.1, physical_quantity=10, physical_unit="м2")
+    assert (row, resources) == before
+    assert result["resource_bindings"] == row["resource_bindings"]
+    if wrong_target or not show_member:
+        assert result["resources"] == resources
+        assert result["resource_binding_audit"][0]["status"] == "conflict"
+        assert result["resource_binding_conflicts"]
+        if wrong_target:
+            assert result["resource_binding_conflicts"][0]["reason"] == "resource target is missing or ambiguous"
+        return
+    assert result["resource_binding_conflicts"] == []
+    assert result["resource_binding_audit"][0]["status"] == "applied"
+    assert result["resource_binding_audit"][0]["evidence_status"] == "checked"
+    assert result["resource_binding_audit"][0]["target"] == RESOURCE
+    assert result["resources"][0] == resources[1]
+    replacement = result["resources"][1]
+    assert replacement["code"] == "11.2.11.01-0002"
+    assert replacement["name"] == "Пластик 2"
+    assert replacement["per_unit"] == pytest.approx(20.475)
+    assert replacement["resource_binding"]["target_resource_code"] == GROUP
+    assert replacement["resource_binding"]["physical_quantity"] == pytest.approx(2.0475)
 
 
 def test_the_offer_is_bounded_and_the_truncation_is_stated():

@@ -334,10 +334,12 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     if fot_row:
         refs = [group_rows[k] for k in ("labor", "machinist") if group_rows[k]]
         _set_formula(ws, fot_row, 12, _sum_formula(refs), S["formula_values"])
-    if nr_row and fot_row:
-        _set_formula(ws, nr_row, 12, f"=ROUND(L{fot_row}*E{nr_row}/100,2)", S["formula_values"])
-    if sp_row and fot_row:
-        _set_formula(ws, sp_row, 12, f"=ROUND(L{fot_row}*E{sp_row}/100,2)", S["formula_values"])
+    for accrual_row in (nr_row, sp_row):
+        if accrual_row and fot_row:
+            # A blank rate is unknown, not 0%. Only expose the editable formula
+            # when the trace actually calculated this accrual (literal 0 counts).
+            if all(ws.cell(accrual_row, column).value not in (None, "") for column in (5, 12)):
+                _set_formula(ws, accrual_row, 12, f"=ROUND(L{fot_row}*E{accrual_row}/100,2)", S["formula_values"])
     if total_row:
         operator_price_value = (
             row_meta_by_type.get("position_total") or {}

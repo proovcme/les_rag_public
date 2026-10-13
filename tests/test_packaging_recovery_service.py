@@ -71,6 +71,33 @@ def test_draft_while_job_is_open_is_not_a_missing_document() -> None:
     assert document["actions"] == []
 
 
+@pytest.mark.parametrize("status, accepted_count, recoverable", [
+    ("paused", 15, True), ("paused", 0, False), ("running", 15, False),
+])
+def test_paused_saved_rows_without_file_offer_draft_recovery(status, accepted_count, recoverable):
+    document = workbook_document_from_events(
+        [], status=status, accepted_row_count=accepted_count,
+    )
+    assert document["needs_document"] is recoverable
+    assert document["state"] == ("pending" if recoverable else "none")
+    assert bool(document["actions"]) is recoverable
+    assert document["final_revision_id"] == document["draft_revision_id"] == ""
+    if recoverable:
+        assert "черновик" in document["recovery_reason"].casefold()
+        assert "завершено" not in document["recovery_reason"].casefold()
+
+
+def test_paused_rows_with_downloadable_draft_do_not_offer_another_rebuild():
+    document = workbook_document_from_events(
+        [_packaged("rev_draft", draft=True)], status="paused", accepted_row_count=15,
+    )
+    assert document["packaged"] is True
+    assert document["draft_revision_id"] == "rev_draft"
+    assert document["final_revision_id"] == ""
+    assert document["needs_document"] is False
+    assert document["actions"] == []
+
+
 def test_final_packaging_after_repair_stops_offering_repair() -> None:
     document = describe_packaging_document(
         [_packaged("rev_draft", draft=True), _packaged("rev_final")],

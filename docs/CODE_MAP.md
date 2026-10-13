@@ -1,5 +1,18 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## Кандидат937 — техническая целостность доказательных раундов
+
+lsr_resource_group_proof_service: target_resource_code=исходная группа,
+resource_code=конкретный выбор модели, без выбора приложением.
+chat_evidence_application_service: partial proof updates по operation_id или
+однозначному source+role; сохраняются остальные строки и конфликтные proposals.
+Native READ governor получает исходный контекст+proof request+previous answer.
+packaging_recovery_service и workbook_research_job_service._scope_document:
+paused+accepted+нет файла → repack draft с remaining и прежней ценовой основой.
+rim_trace_xlsx_service: unknown НР/СП не превращаются формулой в0.
+proxy/routers/runtime._provider_status: pinned answer binding metadata без
+secret resolver/probe; /api/status llm_model и llm_url используют одну проекцию.
+
 ## Кандидат929: точечные адаптации после сравнения PR23
 
 `tools/build_smeta_structured_base.py` → nullable конечный расход;

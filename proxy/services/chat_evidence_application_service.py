@@ -391,7 +391,9 @@ def model_pricebook(basis: object):
 
 def rows_after_proof_round(*, parsed_rows: Sequence[Mapping[str, Any]],
                            previous_rows: Sequence[Mapping[str, Any]],
-                           chunks: Sequence[Any]) -> tuple[list[dict[str, Any]], bool]:
+                           chunks: Sequence[Any],
+                           diagnostics: list[dict[str, Any]] | None = None,
+                           authored_answer: str = "") -> tuple[list[dict[str, Any]], bool]:
     """Rows and answer-parse state after a bounded proof round.
 
     Measured on installed 932 (``artifacts/live_932/installed932_bap_b1/final.json``): the norm-card
@@ -408,7 +410,60 @@ def rows_after_proof_round(*, parsed_rows: Sequence[Mapping[str, Any]],
     rows = [dict(row) for row in parsed_rows if isinstance(row, Mapping)]
     if not rows:
         return [dict(row) for row in previous_rows if isinstance(row, Mapping)], False
-    return bind_row_evidence_ids(rows, chunks, binding_phase="first"), True
+    merged = [dict(row) for row in previous_rows if isinstance(row, Mapping)]
+    by_operation: dict[str, list[int]] = {}
+    by_source_role: dict[tuple[str, str], list[int]] = {}
+    for index, row in enumerate(merged):
+        operation = str(row.get("operation_id") or "").strip()
+        if operation:
+            by_operation.setdefault(operation, []).append(index)
+        key = (str(row.get("source_row") or "").strip(), model_rag_row_kind(row))
+        if key[0]:
+            by_source_role.setdefault(key, []).append(index)
+    replacements: dict[int, dict[str, Any]] = {}
+    additions: list[dict[str, Any]] = []
+    seen_operations: set[str] = set()
+    applied = False
+    for row in rows:
+        operation = str(row.get("operation_id") or "").strip()
+        key = (str(row.get("source_row") or "").strip(), model_rag_row_kind(row))
+        matches = by_operation.get(operation, []) if operation else by_source_role.get(key, [])
+        # A proof reply is an update to named operations, not a replacement of
+        # every other source decision. An ambiguous update cannot choose which
+        # operation disappears; keep the previous packet and its visible ask.
+        ambiguous = (len(matches) > 1 or (matches and matches[0] in replacements)
+                     or bool(operation and operation in seen_operations))
+        if matches and operation and key[0] != str(merged[matches[0]].get("source_row") or "").strip():
+            ambiguous = True
+        if operation:
+            seen_operations.add(operation)
+        if ambiguous:
+            if diagnostics is not None:
+                diagnostics.append({
+                    "code": "MODEL_PROOF_UPDATE_IDENTITY_AMBIGUOUS",
+                    "source_row": key[0], "operation_id": operation,
+                    "reason": "proof_update_does_not_identify_one_existing_operation",
+                    "proposal": dict(row), "raw_answer": str(authored_answer),
+                })
+            continue
+        if matches:
+            index = matches[0]
+            # Identity/revision belongs to the application. An otherwise
+            # addressable response may omit these bookkeeping fields.
+            row = dict(row)
+            for field in ("operation_id", "revision", "revision_origin"):
+                if field in merged[index]:
+                    row[field] = merged[index][field]
+            replacements[index] = row
+        else:
+            additions.append(row)
+        applied = True
+    if not applied:
+        return [dict(item) for item in previous_rows if isinstance(item, Mapping)], False
+    for index, row in replacements.items():
+        merged[index] = row
+    merged.extend(additions)
+    return bind_row_evidence_ids(merged, chunks, binding_phase="first"), True
 
 
 def task_document_price_basis(job: object, previous_basis: object = None) -> dict[str, Any]:
@@ -11438,6 +11493,10 @@ async def _execute_chat_evidence_application(
                                     )
                                 return "evidence_read_capacity" if omitted else ""
 
+                            # The purpose and the previous authored decisions of
+                            # a proof turn survive its own native READ calls.
+                            sheet_proof_context: list[dict[str, Any]] = []
+
                             async def _continue_sheet_reads(receipts, _results, native_exchanges):
                                 nonlocal t_llm, research_job
                                 messages, read_frame, inventory_refs, body_refs = await govern_model_read_messages_bound(
@@ -11445,7 +11504,7 @@ async def _execute_chat_evidence_application(
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail, native_tools=sheet_read_tools,
                                     native_exchanges=native_exchanges,
-                                    source_context=pass_evidence,
+                                    source_context=[*pass_evidence, *sheet_proof_context],
                                     admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                     receipts=[*saved_read_receipts, *receipts],
@@ -11607,6 +11666,10 @@ async def _execute_chat_evidence_application(
                                 answered = ""
                                 answer_usage: dict[str, Any] = {}
                                 try:
+                                    sheet_proof_context = [{
+                                        "proof_previous_model_answer": pass_answer,
+                                        "proof_request": proof_message,
+                                    }]
                                     answered, answer_usage = await _sheet_pass_llm(
                                         {**chat_body, "messages": [
                                             *chat_body["messages"],
@@ -11671,6 +11734,8 @@ async def _execute_chat_evidence_application(
                                     pass_rows, proof_answer_parsed = rows_after_proof_round(
                                         parsed_rows=proved_rows,
                                         previous_rows=pass_rows,
+                                        diagnostics=pass_transport_diagnostics,
+                                        authored_answer=pass_answer,
                                         chunks=[*prior_page_chunks, *saved_read_chunks,
                                                 *model_evidence_chunks],
                                     )
@@ -11717,13 +11782,16 @@ async def _execute_chat_evidence_application(
                                 group_answer = ""
                                 group_usage: dict[str, Any] = {}
                                 try:
+                                    group_message = resource_group_proof_request_message(proof_groups)
+                                    sheet_proof_context = [{
+                                        "proof_previous_model_answer": pass_answer,
+                                        "proof_request": group_message,
+                                    }]
                                     group_answer, group_usage = await _sheet_pass_llm(
                                         {**chat_body, "messages": [
                                             *chat_body["messages"],
                                             {"role": "assistant", "content": pass_answer},
-                                            {"role": "user", "content":
-                                                resource_group_proof_request_message(
-                                                    proof_groups)},
+                                            {"role": "user", "content": group_message},
                                         ]},
                                         purpose=RESOURCE_GROUP_PROOF_PURPOSE,
                                         expected_connection_revision_id=measured_connection_revision(
@@ -11786,6 +11854,8 @@ async def _execute_chat_evidence_application(
                                     pass_rows, group_answer_parsed = rows_after_proof_round(
                                         parsed_rows=group_rows,
                                         previous_rows=pass_rows,
+                                        diagnostics=pass_transport_diagnostics,
+                                        authored_answer=pass_answer,
                                         chunks=[*prior_page_chunks, *saved_read_chunks,
                                                 *model_evidence_chunks],
                                     )

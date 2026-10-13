@@ -308,6 +308,70 @@ def test_missing_resource_price_stays_blank_in_editable_xlsx(tmp_path):
     cached.close()
 
 
+@pytest.mark.parametrize("nr_pct,sp_pct", [(None, None), (0, None), (None, 0), (0, 0), (10, None), (None, 5)])
+@pytest.mark.parametrize("multiple", [False, True])
+def test_unknown_accrual_rate_stays_blank_after_xlsx_recalculation(
+    tmp_path, monkeypatch, nr_pct, sp_pct, multiple,
+):
+    """A missing rate cannot acquire a zero amount through Excel's blank coercion.
+
+    Known labour remains in the partial total; an authored zero rate is a real
+    formula-backed zero. Neither rendering nor aggregation supplies a rate.
+    """
+    import copy
+    import openpyxl
+
+    monkeypatch.setattr(rim.nr_sp_service, "resolve", lambda *a, **k: {"status": "unresolved"})
+    position = {
+        "name": "Работа с неполным основанием начислений", "unit": "шт", "qty": 2,
+        "nr_pct": nr_pct, "sp_pct": sp_pct,
+        "resources": [{
+            "kind": "labor", "code": "test-labor", "name": "Труд", "unit": "чел.-ч",
+            "per_unit": 1, "price": 100, "price_source_ref": "Явная ставка теста",
+        }],
+    }
+    if multiple:
+        trace = rim.build_lsr_trace([
+            {**position, "section": "Раздел 1"}, {**position, "section": "Раздел 2"},
+        ])
+    else:
+        trace = rim.build_position_trace(position)
+    original = copy.deepcopy(trace)
+    expected = (200 + (nr_pct or 0) * 2 + (sp_pct or 0) * 2) * (2 if multiple else 1)
+    summary = trace["summary"]
+    assert summary["known_amount"] == expected
+    assert summary["full_amount"] == (expected if None not in (nr_pct, sp_pct) else None)
+    renderer = rim_xlsx.render_lsr_xlsx if multiple else rim_xlsx.render_trace_xlsx
+    out = renderer(trace, tmp_path / "unknown-accrual.xlsx")
+    formulas = openpyxl.load_workbook(out, data_only=False)
+    cached = openpyxl.load_workbook(out, data_only=True)
+    try:
+        ws, values = formulas.active, cached.active
+        for label, rate in (("НР", nr_pct), ("СП", sp_pct)):
+            accruals = [row for row in ws if row[2].value == label]
+            assert len(accruals) == (2 if multiple else 1)
+            for row in accruals:
+                assert row[4].value == rate
+                if rate is None:
+                    assert row[11].value is None
+                    assert values[row[11].coordinate].value is None
+                else:
+                    assert row[11].data_type == "f"
+                    assert values[row[11].coordinate].value == rate * 2
+        header = next(row[3] for row in ws if row[3].data_type == "f")
+        assert values[header.coordinate].value == expected
+        total_label = (
+            ("ВСЕГО по смете без НДС" if summary["full_amount"] is not None else DRAFT_SUMMARY_LABEL)
+            if multiple else (COMPLETE_TOTAL_LABEL if summary["full_amount"] is not None else DRAFT_TOTAL_LABEL)
+        )
+        total = next(row[11] for row in ws if row[2].value == total_label)
+        assert values[total.coordinate].value == expected
+        assert trace == original
+    finally:
+        formulas.close()
+        cached.close()
+
+
 def test_xlsx_work_row_keeps_official_norm_title_and_source_description(tmp_path):
     import openpyxl
 

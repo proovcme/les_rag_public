@@ -11,6 +11,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import psutil
@@ -40,6 +41,8 @@ from proxy.services.runtime_admission import (
 )
 from proxy.services.runtime_dispatcher import DEFAULT_DATASETS, DispatcherError, RuntimeDispatcher
 from proxy.services.version_service import version_info
+from proxy.services.model_connection_contracts import ConnectionRole
+from proxy.services.model_connection_registry_service import ModelConnectionRegistry, ModelConnectionRegistryError
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +167,55 @@ def _effective_mode_payload(mode: dict[str, Any] | None, admission: Any) -> dict
     return payload
 
 
+def _status_model_url(value: str) -> str:
+    """Expose a configured endpoint without credentials or a network probe."""
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment):
+            return ""
+        _ = parsed.port  # Reject malformed ports without echoing the raw URL.
+    except ValueError:
+        return ""
+    return value
+
+
 def _provider_status() -> dict[str, str]:
+    """Project the pinned answer identity; never resolve secrets or pick a model."""
+    result = {"provider": "model_connection", "base_url": "", "model": "",
+              "source": "answer_role_binding", "status": "blocked"}
+    try:
+        registry = ModelConnectionRegistry()
+        binding = registry.get_role_binding(ConnectionRole.ANSWER)
+        if binding is not None:
+            revision = registry.get_revision(binding.connection_revision_id)
+            result.update(
+                connection_id=revision.connection_id, revision_id=revision.revision_id,
+                display_name=revision.display_name, model=revision.model_id,
+                locality=revision.locality.value, base_url=_status_model_url(revision.base_url),
+            )
+            current = registry.get_connection(revision.connection_id)
+            if not revision.enabled or not current.enabled:
+                result["code"] = "CONNECTION_DISABLED"
+            elif not result["base_url"]:
+                result["code"] = "MODEL_CONNECTION_STATUS_INVALID_URL"
+            else:
+                # Assigned is a metadata fact, not a claim about reachability or quota.
+                result["status"] = "assigned"
+            return result
+    except (ModelConnectionRegistryError, sqlite3.Error, OSError, ValueError):
+        # An unreadable assignment is not permission to display a different model.
+        result["code"] = "MODEL_CONNECTION_STATUS_UNAVAILABLE"
+        return result
+    result = _legacy_provider_status()
+    result["base_url"] = _status_model_url(result["base_url"])
+    if not result["base_url"]:
+        result.update(status="blocked", code="MODEL_CONNECTION_STATUS_INVALID_URL")
+    return result
+
+
+def _legacy_provider_status() -> dict[str, str]:
     provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
     if provider == "openrouter":
         return {
@@ -695,6 +746,7 @@ async def get_status():
     admission = chat_admission_for_state(state)
     memory_pressure = evaluate_memory_pressure(state.metrics_cache)
     effective_mode = _effective_mode_payload(state.current_mode, admission)
+    provider_status = _provider_status()
     return {
         "mode": effective_mode,
         "raw_mode": state.current_mode,
@@ -706,9 +758,9 @@ async def get_status():
             "uptime_sec": int(time.time() - state.proxy_start),
             "version": "2.1",
             "port": 8050,
-            "llm_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),
-            "llm_model": os.getenv("LLM_MODEL", "qwen3:14b"),
-            "llm_provider": _provider_status(),
+            "llm_url": provider_status["base_url"],
+            "llm_model": provider_status["model"],
+            "llm_provider": provider_status,
         },
         "chat_admission": admission.payload(),
         "embedding": rag_runtime_config(),

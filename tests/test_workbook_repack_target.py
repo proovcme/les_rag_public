@@ -234,6 +234,13 @@ async def test_actual_empty_question_repack_reuses_first_revision_and_pinned_pri
     model_calls = len(run.requests)
     assert request.question == "" and not before["document"]["draft_revision_id"]
     assert not before["task_context"]["price_basis"].get("pricebook")
+    assert before["status"] == "paused"
+    assert before["document"]["needs_document"] is True
+    recovery = before["document_recovery"]
+    assert recovery["action"] == "repack" and recovery["model_called"] is False
+    assert recovery["job_id"] == request.job_id
+    assert recovery["remaining"] == before["remaining"]
+    assert recovery["decision_count"] == len(before["accepted_rows"])
 
     first = await chat.repack_lsr_without_model(request, _user={})
     replay = await chat.repack_lsr_without_model(request, _user={})
@@ -251,8 +258,23 @@ async def test_actual_empty_question_repack_reuses_first_revision_and_pinned_pri
     assert first["model_called"] is replay["model_called"] is False
     assert len(run.requests) == model_calls
     after = store.get(request.job_id)
-    for field in ("status", "accepted_rows", "remaining", "operator_overrides", "unapplied_proposals"):
+    for field in ("status", "identity", "accepted_rows", "remaining", "operator_overrides", "unapplied_proposals"):
         assert after[field] == before[field]
+    assert {k: v for k, v in after["task_context"].items() if k != "price_basis"} == {
+        k: v for k, v in before["task_context"].items() if k != "price_basis"
+    }
+    assert after["task_context"]["price_basis"]["pricebook"] == first["result"]["price_basis"]["actual_book"]
+    assert after["task_context"]["price_basis"]["pricebook_sha256"] == first["result"]["price_basis"]["pricebook_sha256"]
+    assert after["document"]["draft_revision_id"] == first["result"]["artifact"]["revision_id"]
+    assert after["document"]["final_revision_id"] == ""
+    assert after["document"]["needs_document"] is False
+    assert "document_recovery" not in after
+    incomplete = next(issue for issue in first["result"]["document_issues"]
+                      if issue["code"] == "WORKBOOK_RESEARCH_INCOMPLETE")
+    assert incomplete["job_status"] == "paused"
+    assert incomplete["remaining_locators"] == before["remaining"]
+    # Readiness also includes the accepted but financially incomplete row.
+    assert first["harvested"]["artifact"]["result_readiness"]["remaining_locators"] == ["S!R2", "S!R3"]
     snapshot = store.list_events(request.job_id, "workbook_packaged")[-1]["payload"]["repack_request"]
     assert snapshot["arguments"]["decisions"] == before["accepted_rows"]
     assert not snapshot["arguments"]["document_price_basis"]["pricebook"]

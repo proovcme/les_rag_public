@@ -1,5 +1,20 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат937 — привязки, proof-контекст и восстановление файла
+
+🟡 Код↔док: lsr_resource_group_proof_service объясняет реальные binding fields;
+chat_evidence_application_service.rows_after_proof_round сохраняет неупомянутые
+операции, identity/revision и неоднозначные proposals. _continue_sheet_reads
+сохраняет proof request+previous answer в required context.
+packaging_recovery_service/workbook_research_job_service._scope_document
+предлагают paused-draft repack без модели. rim_trace_xlsx_service не считает
+unknown НР/СП нулём. Документы: [RAG](modules/rag-evidence-flow.md),
+[чат](modules/chat-profiles.md), [ЛСР](ALGO-lsr-assembly.md).
+Новые регрессии входят в Makefile. Кандидат937; установлен936;
+Runtime API показывает закреплённую редакцию answer-подключения, без чтения
+секретов или обращения к модели; assigned означает назначение, не доступность.
+полный gate/live937 pending; **customer-ready=false**.
+
 <!-- installed-929-live-closeout:v1 -->
 ## Установлен929: результаты живого сравнительного контроля
 

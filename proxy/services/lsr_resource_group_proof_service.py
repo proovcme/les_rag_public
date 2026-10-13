@@ -32,10 +32,11 @@ from typing import Any, Mapping, Sequence
 
 SEARCH_TOOL = "search_pricebook_resources"
 PRICE_TOOL = "read_resource_price"
-# Where the model's own choice has to land for the calculator to see it (build 935 measurement:
-# a correct member written on another row leaves the family in the binding and the hole open).
+# The target identifies the original norm slot; resource_code carries the authored replacement.
+# Confusing the two makes a valid member fail lookup against the unchanged norm resources.
 BINDING_FIELD = "resource_bindings"
 BINDING_TARGET_FIELD = "target_resource_code"
+BINDING_SELECTION_FIELD = "resource_code"
 MAX_GROUPS_PER_PACKET = 4
 MAX_MEMBERS_SHOWN = 6
 PROOF_REQUEST_TRACE = "resource_group_proof_requests"
@@ -140,11 +141,12 @@ def proof_request_message(groups: Sequence[Mapping[str, Any]]) -> str:
     The message also names the **field** the choice has to land in, because that is what installed
     935 measured (``artifacts/live_935/installed935_bap_b1/``, row ``PDF!R4``): the model did pick
     a concrete member (``01.7.07.12-0024``) but wrote it on a separate material row, while the work
-    row kept ``resource_bindings[].target_resource_code = 01.7.07.12`` — the family.  The
-    calculator reads the binding of the work row, so the position stayed open with
-    ``resource_binding_conflict`` and ``price_missing:<группа>``.  Asking without naming the field
-    lets a correct decision arrive in a place nothing reads; rewriting the binding from here would
-    be the application making the model's professional choice, which it must not do.
+    row kept ``resource_bindings[].target_resource_code = 01.7.07.12`` — correctly naming the old
+    slot, but without ``resource_code``, unit or a quantity basis for the replacement. Build 936
+    then incorrectly asked to change the target to the selected member. The real binding contract
+    matches the target against the original norm and builds the replacement from resource_code;
+    naming these roles correctly is transport, not a professional choice. The application never
+    copies a code from a separate material row or selects a member itself.
     """
     if not groups:
         return ""
@@ -168,11 +170,20 @@ def proof_request_message(groups: Sequence[Mapping[str, Any]]) -> str:
         "на ней, была бы суммой, которую документ никогда не просил. Выбери сам конкретный ресурс "
         f"из выбранной книги и проверь цену через {PRICE_TOOL}, а список группы — через "
         f"{SEARCH_TOOL}. Перезаполняй только те строки, где состав прочитанной карточки "
-        "действительно отсылает к группе. Важно, куда ложится выбор: калькулятор читает "
-        f"код ресурса из {BINDING_FIELD} самой строки работы ({BINDING_TARGET_FIELD}), поэтому "
-        "замени там групповой код на код выбранного конкретного ресурса; отдельная строка "
-        "материала с этим кодом позицию не закрывает, а групповой код в биндинге строки работы "
-        "остаётся дырой price_missing:\n"
+        "действительно отсылает к группе. Если замена обоснована, оформи action=replace в "
+        f"{BINDING_FIELD} самой строки работы: {BINDING_TARGET_FIELD} — исходный групповой код "
+        "ресурса нормы (либо точный target_resource_ref из прочитанной карточки); "
+        f"{BINDING_SELECTION_FIELD} — код выбранного конкретного ресурса; resource_name и unit — "
+        "его название и единица из показанного источника. Для обоснованного сохранения расхода "
+        "исходного ресурса при совместимых единицах явно задай quantity_basis=target_norm: "
+        "код пересчитает расход и масштаб измерителя нормы. Если требуется иной расход, "
+        "quantity_basis=explicit и quantity задают полный физический расход числом с основанием; "
+        "не записывай арифметическое выражение вместо числового JSON-значения. В reason объясни "
+        "выбор и расход; source_refs должны ссылаться на прочитанную карточку исходного ресурса "
+        "и показанный выбранный ресурс, basis_ref — на исходную строку или показанное основание. "
+        "Отдельная строка материала с этим кодом замену в ресурсах строки работы не закрывает. "
+        "При неподтверждённом выборе, расходе или несовместимых единицах сохрани конкретный "
+        "open_gap; не подставляй произвольный ресурс или количество:\n"
         + "\n".join(blocks)
     )
 

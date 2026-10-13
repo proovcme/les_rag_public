@@ -78,7 +78,7 @@ def _env_flag(name: str) -> str:
 # durable document state
 # --------------------------------------------------------------------------- #
 def workbook_document_from_events(
-    events: Iterable[Mapping[str, Any]], *, status: str = ""
+    events: Iterable[Mapping[str, Any]], *, status: str = "", accepted_row_count: int = 0,
 ) -> dict[str, Any]:
     """Use the tool recorded by this job, without treating a VOR as a missing LSR."""
     records = list(events or [])
@@ -93,7 +93,7 @@ def workbook_document_from_events(
         if candidate in {"build_lsr_workbook", "build_vor_workbook"}:
             tool = candidate
     return describe_packaging_document(
-        records, status=status, tool=tool,
+        records, status=status, tool=tool, accepted_row_count=accepted_row_count,
         artifact_kind="vor_workbook" if tool == "build_vor_workbook" else "lsr_workbook",
     )
 
@@ -104,6 +104,7 @@ def describe_packaging_document(
     status: str = "",
     tool: str = "build_lsr_workbook",
     artifact_kind: str = "lsr_workbook",
+    accepted_row_count: int = 0,
 ) -> dict[str, Any]:
     """Project the durable packaging history of one job into a file state.
 
@@ -118,7 +119,8 @@ def describe_packaging_document(
       last decision-changing event;
     * ``draft_only`` — only intermediate drafts exist; the finished document
       was never produced;
-    * ``pending``    — the job is terminal but has no final document;
+    * ``pending``    — a terminal job has no final document, or a paused job
+      has durable decisions but no downloadable draft;
     * ``none``       — nothing packaged and the job is still open.
     """
 
@@ -159,19 +161,31 @@ def describe_packaging_document(
             if recorded:
                 final_basis = recorded
 
-    terminal = str(status or "").strip().casefold() in {"complete", "failed"}
+    normalized_status = str(status or "").strip().casefold()
+    terminal = normalized_status in {"complete", "failed"}
+    paused_without_file = (
+        normalized_status == "paused" and accepted_row_count > 0
+        and not final_revision and not draft_revision
+    )
     if final_revision:
         state = "ready"
     elif draft_revision:
         state = "draft_only" if terminal else "none"
     else:
-        state = "pending" if terminal else "none"
+        state = "pending" if terminal or paused_without_file else "none"
     if state not in _DOCUMENT_STATES:  # defensive: projection stays closed
         state = "none"
 
-    needs_document = state in {"draft_only", "pending"} and str(status or "") == "complete"
+    needs_document = (
+        state in {"draft_only", "pending"} and normalized_status == "complete"
+    ) or paused_without_file
     recovery_reason = ""
-    if needs_document:
+    if paused_without_file:
+        recovery_reason = (
+            "Задание приостановлено. Можно собрать черновик из сохранённых решений "
+            "без вызова модели. Необработанные строки останутся открытыми для продолжения."
+        )
+    elif needs_document:
         recovery_reason = (
             "Задание завершено, но финальный файл не собран. "
             "Сохранённые решения модели не пересматриваются."

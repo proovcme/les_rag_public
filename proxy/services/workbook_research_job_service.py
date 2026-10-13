@@ -2618,7 +2618,10 @@ class WorkbookResearchJobService:
     def _scope_document(job: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         """An old file stays available, but cannot cover newly admitted addresses."""
         status = str(job.get("status") or "")
-        previous = workbook_document_from_events(events, status=status)
+        accepted_row_count = sum(isinstance(row, Mapping) for row in job.get("accepted_rows") or ())
+        previous = workbook_document_from_events(
+            events, status=status, accepted_row_count=accepted_row_count,
+        )
         context = job.get("task_context") or {}
         sequence = (int(context.get("_source_scope_expanded_sequence") or 0)
                     if context.get("_source_scope_expanded_job_id") == job.get("job_id") else 0)
@@ -2626,12 +2629,13 @@ class WorkbookResearchJobService:
             return previous
         current = workbook_document_from_events(
             [event for event in events if int(event.get("sequence") or 0) > sequence], status=status,
+            accepted_row_count=accepted_row_count,
         )
         if previous.get("final_revision_id") and current.get("final_revision_id") != previous["final_revision_id"]:
             current["previous_final_revision_id"] = previous["final_revision_id"]
         if not current.get("price_basis"):
             current["price_basis"] = previous.get("price_basis") or {}
-        # A still-open expanded document must not offer final-only recovery.
+        # Paused saved rows may offer a draft, never final-only recovery.
         # Existing packaging records/files are neither deleted nor reclassified.
         current["source_scope_expanded_sequence"] = sequence
         return current
