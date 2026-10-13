@@ -2273,3 +2273,45 @@ clears `norm_card_body_unread`; a second unread answer leaves the gap and costs 
 an answer that already read its cards buys no extra inference at all.
 `tests/test_architecture_norm_card_proof_gate.py` pins the three links of the seam with the
 mutation each would need to silently return 929.
+
+## Candidate 931 — the delivery verdict is total, so an uncited шифр is unread too
+
+Installed 930 measured the surviving half of the same defect
+(`artifacts/live_931/…` was produced on 931; the 930 pair is
+`artifacts/live_930/proof_effect_930.json`). The live БАП B1 on build 930 answered 17 rows that
+named a шифр, and the proof round fired for exactly one of them — the single row that had cited a
+deferred pointer. The other 15 cited no card at all, so `bind_row_evidence_ids` wrote no
+`card_body_shown`, `applicability_gap_kind` saw no debt, the proof request saw no debt, and the
+delivered draft still carried «Сметная стоимость» for 6 of those rows.
+
+Build 931 closes the gap where it was measured:
+
+* the binding pass keeps a set of the ciphers whose card bodies actually reached the model in
+  this attempt (`delivered_cipher_keys`, taken from the shown body or the shown pointer's own
+  `norm_code`), and writes `card_body_shown` for **every** row that names a family-qualified
+  шифр, together with the basis it used (`cipher_card_body_delivered` /
+  `no_delivered_card_names_this_cipher`). Card A never discharges card B: the match is on the
+  qualified cipher, not on any shown body.
+* `norm_card_proof_service` counts the debt from rows (`unread_chosen_norm_rows`) instead of
+  from refs, and the request distinguishes the two shapes it has to ask about — read this
+  `evidence_ref`, or search and then read, because no ref of this row owes a body it already
+  has. The ask stays one bounded round per packet attempt, and the read stays the model's own
+  tool call.
+* the live effect on build 931 (same document, same profile, same FreeToken 35B revision
+  `conn:9458be3549ad449985f9eb10dba3c9e1:r10`): two proof requests instead of one; the first
+  named 12 unread rows and the model read 7 cards (`read_statuses: ["ok"]`), the second named
+  3 refs and the model read 6. `norms_applicability_substantiated` moved from 0 of 16 on 930 to
+  8 of 17 on 931, i.e. for the first time the product has live-substantiated norm choices that
+  were bought by reading the card the model asked for.
+
+`tests/test_rim_lsr_trace_service.py::test_a_norm_card_that_was_never_shown_builds_no_priced_position`
+pins the money rule at the trace builder: with the verdict present, an unread card produces no
+position, no known amount and no preliminary contribution. The draft file keeps the model's own
+amounts as visible draft values; that is presentation, not asserted estimate money, and the row
+carries «Полная карточка выбранной нормы не была прочитана моделью».
+
+Three more gate links pin this shape (`tools/architecture_contract_gate.py`, code
+`NORM_CHOICE_PRICED_WITHOUT_CARD_PROOF`): the sheet pass must trigger from rows, the verdict must
+be derived from the delivered-cipher set, and `unread_chosen_norm_refs` must judge debt through
+`unread_chosen_norm_rows`. Each of the three, reverted, reproduces build 930 with a green test
+suite — which is exactly how 930 shipped.
