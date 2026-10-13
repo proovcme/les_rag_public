@@ -1,5 +1,55 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+<!-- live-936-continuation-no-file:v1 -->
+## Живой прогон 936: запрос группы с адресом поля работает, но продолжение остановленного пакета не даёт файла
+
+Gates 936 (`artifacts/gates_936_field_address_final/`): **4743 passed, 20 skipped, 5 warnings за
+697,95 с**; architecture rc=0 (11,08 с), map_check rc=0, docs rc=0, mail 66, metadata 31,
+provision/version/compile/collect rc=0. Деплой: candidate `339e652684e71f463e4d695a39035441c513ef30`
+(файлы `config/version.json` + `proxy/services/lsr_resource_group_proof_service.py`), план отката
+`artifacts/rollback_935_to_936/`; после штатного рестарта роль `answer` —
+`conn:9458be3549ad449985f9eb10dba3c9e1:r10`, `Qwen3.6-35B-A3B-NVFP4`, лимит 8214, без fallback.
+
+Клетка БАП B1_CANDIDATE (`artifacts/live_936/installed936_bap_b1/`, job
+`wrj_12a6cfb8d8464ee590f64c571cdf88b0`, 625,38 с): 15 строк принято, 5 осталось, терминальный
+статус `structural_error` с `missing_evidence_ref:PDF!R4, PDF!R10, PDF!R21`,
+`source_coverage_incomplete:15/20` и `MODEL_RESULT_JSON_INVALID_ROW` (одна строка нечитаемась,
+остальные 15 принялись — поведение, заведённое в 934), файла нет. Раунд группы сработал
+с расширением: `sheet_pass_evidence_read` = 3 (935: 2, 934: 1), native-цели включили
+`model_rag_sheet_query_repair` = 1.
+
+Продолжение того же документа прогоняется отдельно и даёт самый важный замер сессии
+(`artifacts/live_936/continue_bap_b1/`, драйвер `.test-tmp/continue_paused_job.py`, 755,62 с,
+59 событий, та же сессия `codex-live-selected-92bcd18b16a5` и то же вложение
+`read_5af027ac8bd5`, сверка ревизии модели до и после, билд не менялся):
+
+- состояние задачи до и после идентичны: `accepted 15`, `remaining PDF!R11…R15`, `paused`;
+- ответ модели в этом раунде покрыл только 5 строк из 20, `errors` терминала —
+  `source_incomplete:PDF!R18…R25, PDF_TEXT!R1` и `source_coverage_incomplete:5/20`,
+  `packaged = false`; групповой раунд снова сработал (группы `07.2.06.02`, `14.3.01.03`,
+  `01.6.02.01`, `model_answered = true`, `answer_parsed = true`);
+- то есть продолжение вошло как `chat_refinement` («Замечание передано модели вместе с
+  исходником и прежними решениями»), модель пере-решила документ и ответила неполно; пакет не
+  принят, **при этом 15 уже принятых durable-строк не упакованы ни в какой черновик**.
+
+Корень найден в коде, а не в догадке: `packaging_recovery_service.packaging_recovery_payload`
+считает задание терминальным только при `status ∈ {complete, failed}`
+(`proxy/services/packaging_recovery_service.py:162`), а `needs_document` — только при
+`status == "complete"` (строка 172). У стабильно остановленного документа статус `paused`,
+поэтому проекция даёт `state = "none"`, `needs_document = false`, пустой список действий:
+оператору не предлагается ни пересборки из сохранённых решений, ни файла. Файл при этом
+возможен — ровно тот же путь упаковки уже отдавал черновик на 934/935, где пакет принимался.
+
+Что из этого следует (задача #84): сохранённые решения модели должны упаковываться в черновик
+и при `paused`, с обязательным перечнем непокрытых локаторов и без повышения статусов;
+конкретная правка — допустить `needs_document`/`REPACK_ACTION` для `paused`-задачи, у которой
+есть durable `accepted_rows` и нет ни одной ревизии, плюс тест на то, что такой черновик
+называет непокрытые строки, а не выдаёт себя за готовый документ.
+
+Ни один из прогонов 936 не изменил вердикт: `calculated_positions = 0` живых документов по-прежнему
+не даёт закрытых позиций, а теперь измерено и то, почему останавливающийся документ не доходит
+до файла даже через продолжение.
+
 <!-- installed-936-group-ask-names-the-field:v1 -->
 ## Установлен936: запрос группы называет поле, куда должен лечь выбор
 
