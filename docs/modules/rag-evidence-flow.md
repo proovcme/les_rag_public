@@ -1,5 +1,20 @@
 # RAG evidence flow
 
+<!-- candidate939-proof-kind-sampling:v1 -->
+## 939: декларация завершённого proof сохраняется вместе со строками
+
+После norm/group-proof READ-turn `chat_evidence_application_service` передаёт
+буквальный artifact_kind терминального ответа в update_model_artifact_kind и
+durable record_artifact_kind. Это выполняется до rows_after_proof_round:
+отсутствие новых строк не стирает независимо заявленный тип. Промежуточное
+содержимое tool-call, stop_reason, length и незавершённый carrier не становятся
+терминальным типом. Предварительное query-предложение сохраняет контракт896;
+противоречащие финальные пакеты не выбираются приложением. Сохранённые rows,
+сырой ответ, lineage, исходник и ценовая книга остаются доступны.
+Регрессии test_model_proof_artifact_kind проходят реальный proof→reader→merge→
+job→packaging путь и проверяют отсутствие дополнительного model call.
+Live938 отрицателен; installed939 качество проверяется отдельно.
+
 ## Кандидат937 — контекст и частичный ответ proof-раунда
 
 `_continue_sheet_reads` передаёт proof request и предыдущий авторский ответ

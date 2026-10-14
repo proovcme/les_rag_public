@@ -2143,7 +2143,7 @@
         "tests/test_model_connection_chat_options_registry.py",
         "tests/test_model_connections_router.py"
       ],
-      "lines": 658,
+      "lines": 672,
       "module": "proxy.routers.model_connections",
       "outbound": [
         "proxy/__init__.py",
@@ -3258,6 +3258,7 @@
         "tests/test_model_output_diagnostics_tracking.py",
         "tests/test_model_partial_inventory_complete_frontier.py",
         "tests/test_model_price_provenance_service.py",
+        "tests/test_model_proof_artifact_kind.py",
         "tests/test_model_proof_turn_integrity.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_query_commentary_transport.py",
@@ -3310,7 +3311,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 14946,
+      "lines": 14967,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5498,7 +5499,7 @@
         "tests/test_workbook_provider_binding_928.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 236,
+      "lines": 258,
       "module": "proxy.services.model_connection_contracts",
       "outbound": [
         "proxy/__init__.py",
@@ -5517,6 +5518,7 @@
         "proxy/services/model_capability_service.py",
         "proxy/services/model_connection_resolver_service.py",
         "tests/test_model_capability_service.py",
+        "tests/test_model_connection_chat_options.py",
         "tests/test_model_connection_chat_options_registry.py",
         "tests/test_model_connection_registry_service.py",
         "tests/test_model_connection_resolver_service.py",
@@ -6002,7 +6004,7 @@
         "tests/test_model_current_read_frame.py",
         "tests/test_model_wire_token_count.py"
       ],
-      "lines": 197,
+      "lines": 200,
       "module": "proxy.services.model_wire_token_count_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6208,6 +6210,7 @@
         "tests/test_model_engine_extension_service.py",
         "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_no_source_card_read_contract.py",
+        "tests/test_model_proof_artifact_kind.py",
         "tests/test_model_proof_turn_integrity.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_query_generation_limit_boundary.py",
@@ -6223,7 +6226,7 @@
         "tests/test_workbook_chat_refinement.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 856,
+      "lines": 857,
       "module": "proxy.services.openai_compatible_transport_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8313,6 +8316,7 @@
         "tests/test_model_artifact_kind_authority.py",
         "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_evidence_read_contract.py",
+        "tests/test_model_proof_artifact_kind.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_query_failure_job_lifecycle.py",
         "tests/test_model_query_generation_limit_boundary.py",
@@ -9418,7 +9422,7 @@
         "tests/test_model_connection_chat_options_registry.py",
         "tests/test_sovushka_model_connections.py"
       ],
-      "lines": 316,
+      "lines": 342,
       "module": "sovushka.pages.model_connections",
       "outbound": [
         "proxy/services/model_connection_contracts.py",
@@ -12813,13 +12817,14 @@
     },
     {
       "inbound": [],
-      "lines": 290,
+      "lines": 402,
       "module": "tests.test_model_connection_chat_options",
       "outbound": [
         "proxy/services/context_governor_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/model_capability_service.py",
         "proxy/services/model_connection_contracts.py",
+        "proxy/services/model_connection_registry_service.py",
         "proxy/services/model_connection_resolver_service.py",
         "proxy/services/model_connection_security_service.py",
         "proxy/services/model_execution_preset_service.py",
@@ -12917,7 +12922,7 @@
     },
     {
       "inbound": [],
-      "lines": 406,
+      "lines": 463,
       "module": "tests.test_model_connections_router",
       "outbound": [
         "proxy/config.py",
@@ -13287,6 +13292,21 @@
     },
     {
       "inbound": [],
+      "lines": 214,
+      "module": "tests.test_model_proof_artifact_kind",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/workbook_research_job_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_norm_card_proof_request_930.py"
+      ],
+      "path": "tests/test_model_proof_artifact_kind.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 88,
       "module": "tests.test_model_proof_turn_integrity",
       "outbound": [
@@ -13536,6 +13556,7 @@
         "tests/test_model_exact_card_read_policy.py",
         "tests/test_model_inline_field_records.py",
         "tests/test_model_output_diagnostics_tracking.py",
+        "tests/test_model_proof_artifact_kind.py",
         "tests/test_model_proof_turn_integrity.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_query_failure_job_lifecycle.py",
@@ -13844,7 +13865,7 @@
     },
     {
       "inbound": [],
-      "lines": 400,
+      "lines": 436,
       "module": "tests.test_model_wire_token_count",
       "outbound": [
         "proxy/services/model_connection_contracts.py",
@@ -13937,6 +13958,7 @@
     },
     {
       "inbound": [
+        "tests/test_model_proof_artifact_kind.py",
         "tests/test_model_proof_turn_integrity.py"
       ],
       "lines": 344,
@@ -16244,7 +16266,7 @@
     },
     {
       "inbound": [],
-      "lines": 98,
+      "lines": 152,
       "module": "tests.test_sovushka_model_connections",
       "outbound": [
         "sovushka/pages/model_connections.py"
@@ -22019,9 +22041,9 @@
     "product_reachable": 380,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 774,
-    "tracked_python_files": 1166,
-    "tracked_python_lines": 405464
+    "test_or_tool_only": 775,
+    "tracked_python_files": 1167,
+    "tracked_python_lines": 406024
   },
   "warnings": []
 }

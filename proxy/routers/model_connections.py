@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictFloat, StrictInt, field_validator, model_validator
 
 from proxy.config import ENV_PATH
 from proxy.security import RequestUser, require_admin, require_user
@@ -140,6 +141,19 @@ class ChatOptionsRequest(BaseModel):
     enabled_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     temperature_mode: Literal["profile", "omit"] = "profile"
     requested_output_tokens: StrictInt | None = Field(default=None, ge=1)
+    top_p: StrictFloat | StrictInt | None = None
+    top_k: StrictInt | None = None
+    presence_penalty: StrictFloat | StrictInt | None = None
+
+    @field_validator("top_p", "top_k", "presence_penalty", mode="before")
+    @classmethod
+    def finite_sampling_value(cls, value, info):
+        if isinstance(value, float) and not math.isfinite(value):
+            # Non-standard JSON NaN/Infinity must produce a usable 422, not a
+            # second serialization error from echoing that value in the error.
+            raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                         f"INVALID_{info.field_name.upper()}", "Параметр должен быть конечным числом.")
+        return value
 
     @model_validator(mode="after")
     def validate_options(self):

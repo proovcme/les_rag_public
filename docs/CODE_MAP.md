@@ -1,5 +1,20 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+<!-- candidate939-proof-kind-sampling:v1 -->
+## Кандидат939 — доказательные ответы и sampling
+
+`chat_evidence_application_service`: завершённые norm/group READ-proof ответы
+декодируются в существующий update_model_artifact_kind/record_artifact_kind;
+тип независим от rows_after_proof_round fallback. Конфликтующие финальные
+пакеты и plain resume используют прежний общий контракт, нормы не заменяются.
+`model_connection_contracts.ChatOptions.sampling_parameters`: необязательные
+top_p/top_k/presence_penalty. Общий helper используют capability probe и
+openai_compatible_transport_service (OpenAI/native Ollama); wire token counter
+исключает generation-only поля из count payload и сохраняет exact wire SHA.
+`routers/model_connections` и `sovushka/pages/model_connections`: валидация,
+immutable revisions, clearable существующие number controls. Пустые options
+совместимы с прежним подключением; новый provider/preset не назначается.
+
 ## Кандидат938 — сохранённое авторство документа
 
 `proxy/routers/chat.repack_lsr_without_model`: наследование known job.identity

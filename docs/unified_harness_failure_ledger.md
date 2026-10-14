@@ -1,5 +1,20 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+<!-- candidate939-proof-kind-sampling:v1 -->
+## 14.10.2026 — потеря типа ЛСР после проверки карточки
+
+Live938 B1 сохранил строки завершённого norm-proof с artifact_kind=lsr, но
+не перенёс его декларацию в task_context. Следующий header-пакет заявилvor;
+в итоговом trace authority=result/vor, query_declaration=lsr. В результате
+запрос ЛСР выдал ВОР. История scoped run, governor proof_previous_model_answer
+и фактический XLSX доказывают дефект; исходный результат не исправлен задним числом.
+Кандидат939 переносит завершённую декларацию norm/group-proof тем же reader,
+без переписывания строк. Противоречия финальных пакетов остаются conflict;
+READ-stop и length не становятся финальной декларацией. Отдельные регрессии
+проверяют fallback, native continuation, поздний пакет и durable plain resume.
+Изменение sampler — отдельный конечный опыт, не объявленная причина сбоя.
+Качество norms/prices и разные входы пока не приняты; customer-ready=false.
+
 ## 13.10.2026 — живой937 и технический кандидат938
 
 Установлен937/979366e4;4779 tests и13 frozen receipts успешны. Сохранённый936

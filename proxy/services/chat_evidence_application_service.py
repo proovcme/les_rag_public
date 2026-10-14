@@ -11723,6 +11723,18 @@ async def _execute_chat_evidence_application(
                                         if proof_turn.stop_reason:
                                             retrieval_trace["tool_loop"]["evidence_read_stop"] = (
                                                 proof_turn.stop_reason)
+                                        elif (llm_usage_finish_reason(usage) not in {"tool_calls", "function_call"}
+                                              and not (finish_reason_is_length(llm_usage_finish_reason(usage))
+                                                       or model_rag_answer_is_truncated(pass_answer))):
+                                            # The proof's completed document declaration is
+                                            # independent of row updates. Keep it even if the
+                                            # rows below fall back to the previous packet.
+                                            artifact_kind_declaration = update_model_artifact_kind(
+                                                artifact_kind_declaration,
+                                                decode_model_artifact_kind(pass_answer), phase="result")
+                                            if research_job_service is not None and research_job is not None:
+                                                research_job = research_job_service.record_artifact_kind(
+                                                    research_job["job_id"], declaration=artifact_kind_declaration)
                                     except ContextRequiredSectionOverflow as context_error:
                                         retrieval_trace["context_governor"]["error"] = (
                                             model_read_capacity_trace(
@@ -11843,6 +11855,15 @@ async def _execute_chat_evidence_application(
                                         if group_turn.stop_reason:
                                             retrieval_trace["tool_loop"]["evidence_read_stop"] = (
                                                 group_turn.stop_reason)
+                                        elif (llm_usage_finish_reason(usage) not in {"tool_calls", "function_call"}
+                                              and not (finish_reason_is_length(llm_usage_finish_reason(usage))
+                                                       or model_rag_answer_is_truncated(pass_answer))):
+                                            artifact_kind_declaration = update_model_artifact_kind(
+                                                artifact_kind_declaration,
+                                                decode_model_artifact_kind(pass_answer), phase="result")
+                                            if research_job_service is not None and research_job is not None:
+                                                research_job = research_job_service.record_artifact_kind(
+                                                    research_job["job_id"], declaration=artifact_kind_declaration)
                                     except ContextRequiredSectionOverflow as context_error:
                                         retrieval_trace["context_governor"]["error"] = (
                                             model_read_capacity_trace(

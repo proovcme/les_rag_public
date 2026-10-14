@@ -1,6 +1,60 @@
 import inspect
 from pathlib import Path
 
+import pytest
+
+
+def _sampling_payload(**sampling):
+    from sovushka.pages.model_connections import connection_chat_options_payload
+    return connection_chat_options_payload(max_output_field=None, reasoning_mode="unconfigured",
+        enabled_effort=None, temperature_mode="profile", requested_output_tokens=None, **sampling)
+
+
+@pytest.mark.parametrize("sampling,expected", [
+    ({}, {}), ({"top_p": None, "top_k": "", "presence_penalty": None}, {}),
+    ({"presence_penalty": 0.0}, {"presence_penalty": 0.0}),
+    ({"top_k": -1.0}, {"top_k": -1}),
+    ({"top_p": 0.85, "top_k": 40.0, "presence_penalty": -0.5},
+     {"top_p": 0.85, "top_k": 40, "presence_penalty": -0.5}),
+])
+def test_sampling_editor_payload_preserves_explicit_values_and_provider_defaults(sampling, expected):
+    assert _sampling_payload(**sampling) == expected
+    if "top_k" in expected:
+        assert type(_sampling_payload(**sampling)["top_k"]) is int
+
+
+@pytest.mark.parametrize("field,value", [
+    ("top_p", 0), ("top_p", True), ("top_p", "0.8"), ("top_p", float("nan")),
+    ("top_k", 1.5), ("top_k", 0), ("top_k", True), ("top_k", float("inf")),
+    ("presence_penalty", -2.1), ("presence_penalty", True), ("presence_penalty", float("nan")),
+])
+def test_sampling_editor_rejects_bad_values_without_truncation(field, value):
+    from sovushka.pages.model_connections import connection_save_error
+    with pytest.raises(ValueError) as failure:
+        _sampling_payload(**{field: value})
+    message = connection_save_error(str(failure.value))
+    assert "INVALID_" not in message
+    assert "числ" in message.casefold()
+
+
+def test_sampling_summary_distinguishes_operator_values_from_unknown_provider_defaults():
+    from sovushka.pages.model_connections import connection_chat_options_summary
+    default = connection_chat_options_summary({"chat_options": {}})
+    assert "значение провайдера неизвестно" in default
+    explicit = connection_chat_options_summary({"chat_options": {"top_p": 0.8, "top_k": -1, "presence_penalty": 0}})
+    for text in ("0.8", "-1", "Штраф за присутствие: 0", "Источник: декларация оператора", "Перезапуск не требуется"):
+        assert text in explicit
+
+
+def test_sampling_controls_use_existing_numbers_and_all_values_reach_save_payload():
+    from sovushka.pages.model_connections import build_model_connections
+    source = inspect.getsource(build_model_connections)
+    for name in ("top_p", "top_k", "presence_penalty"):
+        assert f"value=options.{name}" in source
+        assert f"{name}={name}.value" in source
+    for label in ("Суммарная вероятность", "Число вариантов", "Штраф за присутствие", "Пустое поле"):
+        assert label in source
+
 
 def test_model_connection_names_are_unique_before_submit():
     from sovushka.pages.model_connections import (

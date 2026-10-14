@@ -95,6 +95,63 @@ def _valid_connection(**overrides):
     return payload
 
 
+@pytest.mark.parametrize("options", [
+    {"top_p": 0.85, "top_k": 40, "presence_penalty": 0},
+    {"presence_penalty": 0.0}, {"top_k": -1}, {"top_p": 1},
+])
+def test_sampling_options_survive_api_create_revision_and_explicit_clear(api, options):
+    client, registry, _secrets, probe = api
+    created = client.post("/api/model-connections", headers=_headers(ADMIN_ROLE),
+                          json=_valid_connection(chat_options=options))
+    assert created.status_code == 201, created.text
+    first = created.json()
+    assert first["chat_options"] == options
+    assert registry.get_revision(first["revision_id"]).chat_options.to_dict() == options
+    revised = client.post(f"/api/model-connections/{first['connection_id']}/revisions",
+                          headers=_headers(ADMIN_ROLE), json={
+                              "expected_revision_id": first["revision_id"], "display_name": "Renamed only"})
+    assert revised.status_code == 200, revised.text
+    second = revised.json()
+    assert second["chat_options"] == options
+    updated_options = {"top_p": 0.6, "top_k": -1, "presence_penalty": -2}
+    updated = client.post(f"/api/model-connections/{first['connection_id']}/revisions",
+                          headers=_headers(ADMIN_ROLE), json={
+                              "expected_revision_id": second["revision_id"], "chat_options": updated_options})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["chat_options"] == updated_options
+    cleared = client.post(f"/api/model-connections/{first['connection_id']}/revisions",
+                          headers=_headers(ADMIN_ROLE), json={
+                              "expected_revision_id": updated.json()["revision_id"],
+                              "chat_options": {"top_p": None, "top_k": None, "presence_penalty": None}})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["chat_options"] == {}
+    assert registry.get_revision(first["revision_id"]).chat_options.to_dict() == options
+    assert not probe.requests
+
+
+@pytest.mark.parametrize("field,value", [
+    ("top_p", 0), ("top_p", -0.1), ("top_p", 1.1), ("top_p", True), ("top_p", "0.8"),
+    ("top_k", 0), ("top_k", -2), ("top_k", 2.5), ("top_k", 40.0), ("top_k", True), ("top_k", "40"),
+    ("presence_penalty", -2.1), ("presence_penalty", 2.1), ("presence_penalty", True), ("presence_penalty", "0"),
+])
+def test_api_sampling_rejects_invalid_values_before_registry_write(api, field, value):
+    client, registry, _secrets, _probe = api
+    created = client.post("/api/model-connections", headers=_headers(ADMIN_ROLE),
+                          json=_valid_connection(chat_options={field: value}))
+    assert created.status_code == 422, created.text
+    assert registry.list_connections(include_disabled=True) == ()
+
+
+@pytest.mark.parametrize("field", ["top_p", "top_k", "presence_penalty"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_api_sampling_nonfinite_json_returns_validation_error_without_write(api, field, value):
+    client, registry, _secrets, _probe = api
+    response = client.post("/api/model-connections", headers={**_headers(ADMIN_ROLE), "Content-Type": "application/json"},
+                           content=json.dumps(_valid_connection(chat_options={field: value})))
+    assert response.status_code == 422, response.text
+    assert registry.list_connections(include_disabled=True) == ()
+
+
 def _create_test_bind(client: TestClient, *, secret_value: str | None = None) -> dict:
     request = _valid_connection()
     if secret_value is not None:

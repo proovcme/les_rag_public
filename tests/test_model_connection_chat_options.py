@@ -8,7 +8,7 @@ import pytest
 
 from proxy.services.model_capability_service import CapabilityProbe
 from proxy.services.model_connection_contracts import (
-    CapabilityName, CapabilityObservation, CapabilitySnapshot, CapabilityState,
+    CapabilityName, CapabilityObservation, CapabilitySnapshot, CapabilityState, ChatOptions,
     ConnectionLocality, ModelConnectionRevision,
 )
 from proxy.services.model_connection_resolver_service import ResolvedModelConnection
@@ -288,3 +288,115 @@ def test_configured_remote_boolean_is_not_suppressed_as_unsupported(mode, effort
     assert model_rag_query_execution_preset(profile).reasoning_enabled is False
     assert profile.diagnostics()["reasoning"]["effective"] is True
     assert profile.diagnostics()["query_reasoning"]["effective"] is False
+
+
+@pytest.mark.parametrize("values", [
+    {}, {"top_p": None, "top_k": None, "presence_penalty": None},
+    {"top_p": 0.8, "top_k": 20, "presence_penalty": 1.5},
+    {"top_p": 1, "top_k": -1, "presence_penalty": 0},
+    {"top_p": 0.0001, "top_k": 1, "presence_penalty": -2},
+    {"presence_penalty": 2},
+])
+def test_optional_sampling_values_are_sparse_and_round_trip(values):
+    options = ChatOptions.from_value(values)
+    expected = {key: value for key, value in values.items() if value is not None}
+    assert options.to_dict() == expected
+    assert ChatOptions.from_value(options.to_dict()) == options
+    parameters = options.parameters(max_output_tokens=128, temperature=0.7, reasoning_enabled=False)
+    assert parameters == {"max_tokens": 128, "temperature": 0.7, **expected}
+    assert ChatOptions.from_value({}).to_dict() == {}  # Legacy JSON needs no rewrite.
+
+
+@pytest.mark.parametrize("field,code,values", [
+    ("top_p", "INVALID_TOP_P", [True, False, "0.8", 0, -0.1, 1.01, float("nan"), float("inf"), -float("inf"), [], {}]),
+    ("top_k", "INVALID_TOP_K", [True, False, "20", 20.0, 0, -2, float("nan"), float("inf"), [], {}]),
+    ("presence_penalty", "INVALID_PRESENCE_PENALTY", [True, False, "0", -2.01, 2.01, float("nan"), float("inf"), -float("inf"), [], {}]),
+])
+def test_sampling_rejects_invalid_values_without_coercion(field, code, values):
+    for value in values:
+        with pytest.raises(ValueError, match=code):
+            ChatOptions.from_value({field: value})
+
+
+def test_sampling_connection_revisions_keep_legacy_default_and_explicit_zero(tmp_path):
+    from proxy.services.model_connection_registry_service import ModelConnectionRegistry
+
+    registry = ModelConnectionRegistry(tmp_path / "registry.db")
+    original = registry.create_connection(
+        display_name="Arbitrary", base_url="http://127.0.0.1:1919/v1", model_id="arbitrary-model",
+        locality=ConnectionLocality.LOOPBACK, requested_context_tokens=8192,
+        secret_ref=None, extension_type=None, actor="fixture",
+    )
+    declared = {"top_p": 0.8, "top_k": -1, "presence_penalty": 0}
+    revised = registry.revise_connection(original.connection_id,
+        expected_revision_id=original.revision_id, actor="fixture", chat_options=declared)
+    reopened = ModelConnectionRegistry(tmp_path / "registry.db")
+    assert reopened.get_revision(original.revision_id).chat_options.to_dict() == {}
+    assert reopened.get_revision(revised.revision_id).chat_options.to_dict() == declared
+    assert reopened.latest_capability_snapshot(revised.revision_id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extension", [None, "freetoken", "ollama"])
+@pytest.mark.parametrize("declared", [{}, {"top_p": 0.8, "top_k": -1, "presence_penalty": 0}])
+async def test_optional_sampling_reaches_probe_and_repeated_actual_http_body(tmp_path, extension, declared):
+    bodies = []
+    revision = _revision(declared, local=extension is not None, extension=extension)
+
+    def handler(request):
+        body = json.loads(request.content)
+        bodies.append((request.url.path, body))
+        if request.url.path == "/api/chat":
+            return httpx.Response(200, content=b'{"message":{"content":"literal"},"done":true}\n')
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "literal"}, "finish_reason": "stop"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await CapabilityProbe(client=client,
+            resolver=lambda *_args: ("127.0.0.1" if extension else "93.184.216.34",),
+            peer_verifier=lambda *_args: None, clock=lambda: NOW).probe(
+                revision, requested={CapabilityName.CHAT_COMPLETIONS})
+        transport = OpenAICompatibleTransport(client=client,
+            secret_store=EnvironmentSecretStore(tmp_path / "fixture.env", environ={}),
+            peer_verifier=lambda *_args: None)
+        request = InferenceRequest(messages=({"role": "user", "content": "literal question"},),
+            max_output_tokens=128, temperature=0.7, reasoning_enabled=False)
+        for _ in range(2):
+            assert (await transport.complete(_resolved(revision, snapshot), request)).text == "literal"
+    sampling_names = {"top_p", "top_k", "presence_penalty"}
+    generation_bodies = [(path, body) for path, body in bodies if path != "/api/show"]
+    for path, body in generation_bodies:
+        options = body["options"] if path == "/api/chat" else body
+        assert {name: options[name] for name in sampling_names if name in options} == declared
+        if path == "/api/chat":
+            assert not sampling_names.intersection(body)
+            assert body["think"] is False
+    assert generation_bodies[-1] == generation_bodies[-2]
+    sent = generation_bodies[-1][1]
+    assert sent["messages"] == list(request.messages)
+    final_options = sent["options"] if extension == "ollama" else sent
+    assert final_options["temperature"] == 0.7
+    assert final_options["num_predict" if extension == "ollama" else "max_tokens"] == 128
+    assert not sampling_names.intersection(snapshot.transport_options)
+    assert revision.chat_options.to_dict() == declared
+
+
+@pytest.mark.asyncio
+async def test_unsupported_declared_sampling_is_not_retried_without_it(tmp_path):
+    bodies = []
+    declared = {"top_p": 0.8, "top_k": 20, "presence_penalty": 0}
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(400, json={"error": "unsupported sampling control"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = OpenAICompatibleTransport(client=client,
+            secret_store=EnvironmentSecretStore(tmp_path / "fixture.env", environ={}),
+            peer_verifier=lambda *_args: None)
+        with pytest.raises(ModelTransportError, match="UPSTREAM_HTTP_ERROR: 400"):
+            await transport.complete(_resolved(_revision(declared)), InferenceRequest(
+                messages=({"role": "user", "content": "literal"},), max_output_tokens=8))
+    assert len(bodies) == 1
+    assert {key: bodies[0][key] for key in declared} == declared

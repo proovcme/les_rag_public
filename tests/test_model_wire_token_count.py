@@ -8,9 +8,9 @@ import json
 import httpx
 import pytest
 
-from proxy.services.model_connection_contracts import ConnectionLocality
+from proxy.services.model_connection_contracts import ChatOptions, ConnectionLocality
 from proxy.services.model_wire_token_count_service import (
-    UnsupportedTokenCountWire, freetoken_count_payload, normalize_freetoken_count_wire,
+    UnsupportedTokenCountWire, freetoken_count_payload, normalize_freetoken_count_wire, wire_sha256,
 )
 from proxy.services.openai_compatible_transport_service import InferenceRequest
 from test_openai_compatible_transport_service import _resolved, _transport
@@ -48,6 +48,42 @@ def _model(model_id="model-1", root="C:/models/the-active-model"):
 def _raw_body():
     return {"model": "model-1", "messages": deepcopy(MESSAGES), "tools": deepcopy(TOOLS),
             "max_tokens": 16384, "chat_template_kwargs": {"enable_thinking": False}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("penalty", [0, 1.5])
+async def test_sampling_preserves_exact_count_projection_and_actual_wire_identity(tmp_path, penalty):
+    captured = []
+
+    def handler(request):
+        captured.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json=_model())
+        if request.url.path.endswith("count_tokens"):
+            return httpx.Response(200, json={"input_tokens": 32123})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "literal"}, "finish_reason": "stop"}]})
+
+    transport, client = _transport(tmp_path, handler)
+    base = _resolved(extension_type="freetoken")
+    declared = {"top_p": 0.8, "top_k": 20, "presence_penalty": penalty}
+    connection = replace(base, chat_options=ChatOptions.from_value(declared))
+    request = _request()
+    try:
+        result = await transport.count_input_tokens(connection, request)
+        assert result is not None and result.tokens == 32123
+        await transport.complete(connection, request)
+        assert [item.url.path for item in captured] == [
+            "/v1/models", "/v1/messages/count_tokens", "/v1/models", "/v1/chat/completions",
+        ]
+        counted, sent = json.loads(captured[1].content), json.loads(captured[-1].content)
+        assert counted == freetoken_count_payload(sent)
+        assert not set(declared).intersection(counted)  # Samplers do not alter the prompt.
+        assert {key: sent[key] for key in declared} == declared
+        assert result.wire_sha256 == wire_sha256(sent)
+        assert result.wire_sha256 != wire_sha256(transport._chat_body(base, request, stream=False))
+        assert counted == freetoken_count_payload(transport._chat_body(base, request, stream=False))
+    finally:
+        await client.aclose()
 
 
 def test_two_native_exchanges_preserve_literal_evidence_ids_arguments_and_schema():

@@ -1,5 +1,17 @@
 # Chat profiles
 
+<!-- candidate939-proof-kind-sampling:v1 -->
+## 939: optional sampling в immutable model connection
+
+top_p, top_k и presence_penalty задаются в «Модели и подключения» существующими
+очищаемыми number controls. Пустое значение означает default backend; явный0
+presence_penalty остаётся0. Источник — операторская immutable revision,
+перезапуск не нужен; edit/copy не переназначают ANSWER. API не принимает bool,
+строки, NaN/Infinity, дробный top_k или значения вне контрактного диапазона.
+Probe и inference используют один sampling_parameters helper; unsupported
+параметры не удаляются при retry. Подробный контракт — ALGO-context-memory.
+Пользовательский профиль и старые подключения не мигрируются автоматически.
+
 ## Кандидат938: автор пересборки и внешние пробелы вопроса
 
 Пересборка accepted_rows не вызывает модель. Известные model_identity,

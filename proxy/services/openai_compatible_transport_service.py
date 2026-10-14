@@ -388,6 +388,7 @@ class OpenAICompatibleTransport:
         options: dict[str, Any] = {
             "num_predict": min(request.max_output_tokens, connection.chat_options.requested_output_tokens or request.max_output_tokens),
             "num_ctx": int(connection.effective_preset.input_token_limit),
+            **connection.chat_options.sampling_parameters(),
         }
         if request.temperature is not None and connection.chat_options.temperature_mode == "profile":
             options["temperature"] = request.temperature

@@ -1,5 +1,19 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+<!-- candidate939-proof-kind-sampling:v1 -->
+## Кандидат939 — тип после proof и явные параметры генерации
+
+🟡 Код↔док: chat_evidence_application_service сохраняет artifact_kind завершённых
+norm/group-proof ответов до fallback строк; durable record/event и plain resume
+сохраняют тип, позднее противоречие блокирует упаковку, без нового inference.
+Регрессии: test_model_proof_artifact_kind; [RAG](modules/rag-evidence-flow.md).
+ChatOptions/API/GUI/probe/OpenAI/Ollama/exact-count передают необязательные
+top_p/top_k/presence_penalty; blank=backend default,0 не теряется.
+[Контекст](ALGO-context-memory.md), [чат](modules/chat-profiles.md).
+Установлен938/2dbd7b52, frozen4798 passed; repack без модели подтверждён.
+Live938 B0 не выдал запросов, B1 выдал ВОР вместо ЛСР; доказательства в ledger.
+Gate/install/live939 pending; **customer-ready=false**.
+
 ## Кандидат938 — авторство пересборки и буквальный вопрос
 
 🟡 Код↔док: `proxy/routers/chat.repack_lsr_without_model` наследует identity

@@ -1,5 +1,23 @@
 # ALGO-context-memory — память чата и паспорт датасета
 
+<!-- candidate939-proof-kind-sampling:v1 -->
+## 939: необязательные sampling controls
+
+ChatOptions хранит nullable top_p (0<value<=1), top_k (integer>0 либо-1) и
+presence_penalty (-2..2). None не входит в snapshot/wire; legacy{} не меняется.
+Явный0 сохраняется. Общий sampling_parameters применяется к OpenAI-compatible
+body, native Ollama options и capability probes. FreeToken count_tokens не
+получает generation-only параметры, но exact provider-wire SHA их учитывает.
+Provider400 остаётся видимой ошибкой; retry не удаляет пользовательский sampler.
+Ни UI echo, ни MockTransport не доказывают эффективные параметры backend.
+
+Официальная рекомендация [Qwen3.6](https://huggingface.co/Qwen/Qwen3.6-35B-A3B#best-practices)
+для non-thinking: temperature0.7, top_p0.8, top_k20, presence_penalty1.5.
+Это основание отдельного конечного опыта, не скрытый default продукта.
+Сравнение сохраняет один commit/model/profile/question/source/scope и все
+отрицательные результаты; три изменённых параметра и случайность не позволяют
+объявить причинный вывод по одному удачному файлу.
+
 ## Кандидат 0.31.185 / 913 — явный контекст в пределах наблюдаемой ёмкости
 
 Явный положительный запрос контекста подключения ограничивается наблюдаемой ёмкостью backend, затем ограничениями workflow. Фабричный предел 32768 без явного запроса сохранён; неизвестная ёмкость, tools, batching, reasoning и output guards не меняются. Настройка и effective value остаются публичными. Модель, профиль, запросы, порядок RRF и предметные решения не изменяются.

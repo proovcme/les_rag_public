@@ -1,5 +1,16 @@
 # UI KIT «Совушка»
 
+## 939: параметры генерации в редакторе подключения
+
+Три nullable поля top_p/top_k/presence_penalty используют существующий `ui.number`
+с теми же props, стилями и отзывчивым layout редактора876. Пустое поле означает
+значение backend по умолчанию; ноль presence_penalty сохраняется. Операторские
+подписи и ошибки на русском, параметры входят в новую immutable revision,
+не требуют restart и сами не меняют привязку ANSWER. Новых primitives/CSS нет.
+Регрессии: test_sovushka_model_connections и test_model_connections_router.
+Installed desktop/mobile и фактический sampler backend проверяются отдельно;
+unit fixtures не объявляются браузерной или профессиональной приёмкой.
+
 ## 927: каталог и прайс ЭТМ
 
 В существующей карточке служебного источника используются `text_field`,

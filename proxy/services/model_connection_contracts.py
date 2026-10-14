@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+import math
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -72,6 +73,9 @@ class ChatOptions:
     enabled_effort: str | None = None
     temperature_mode: str = "profile"
     requested_output_tokens: int | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    presence_penalty: float | None = None
 
     def __post_init__(self) -> None:
         if self.max_output_field is not None and self.max_output_field not in _MAX_OUTPUT_FIELDS:
@@ -88,6 +92,18 @@ class ChatOptions:
         value = self.requested_output_tokens
         if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
             raise ValueError("requested_output_tokens must be a positive integer")
+        value = self.top_p
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                                  or not 0 < value <= 1 or not math.isfinite(value)):
+            raise ValueError("INVALID_TOP_P")
+        value = self.top_k
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)
+                                  or (value != -1 and value < 1)):
+            raise ValueError("INVALID_TOP_K")
+        value = self.presence_penalty
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                                  or not -2 <= value <= 2 or not math.isfinite(value)):
+            raise ValueError("INVALID_PRESENCE_PENALTY")
 
     @classmethod
     def from_value(cls, value: ChatOptions | Mapping[str, Any] | None) -> ChatOptions:
@@ -101,6 +117,11 @@ class ChatOptions:
     def output_field(self, legacy_field: str = "max_tokens") -> str:
         return self.max_output_field or legacy_field
 
+    def sampling_parameters(self) -> dict[str, int | float]:
+        """Same declared controls in OpenAI fields and native Ollama options."""
+        return {name: value for name in ("top_p", "top_k", "presence_penalty")
+                if (value := getattr(self, name)) is not None}
+
     def parameters(
         self, *, max_output_tokens: int, temperature: float | None,
         reasoning_enabled: bool, legacy_field: str = "max_tokens",
@@ -111,6 +132,7 @@ class ChatOptions:
         result: dict[str, Any] = {self.output_field(legacy_field): output}
         if temperature is not None and self.temperature_mode == "profile":
             result["temperature"] = temperature
+        result.update(self.sampling_parameters())
         if include_reasoning and self.reasoning_mode == "effort":
             result["reasoning_effort"] = self.enabled_effort if reasoning_enabled else "none"
         elif include_reasoning and self.reasoning_mode == "enabled":

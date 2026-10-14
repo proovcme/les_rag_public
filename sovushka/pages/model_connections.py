@@ -38,21 +38,34 @@ def suggested_connection_name(base_name: str, connections: list[dict[str, Any]])
 def connection_save_error(raw_error: str) -> str:
     if "DISPLAY_NAME_IN_USE" in str(raw_error or ""):
         return "Такое название уже используется. Укажите другое название подключения."
+    for code, message in {
+        "INVALID_TOP_P": "Суммарная вероятность: введите конечное число больше 0 и не больше 1 или оставьте поле пустым.",
+        "INVALID_TOP_K": "Число вариантов: введите целое число от 1 или −1 либо оставьте поле пустым.",
+        "INVALID_PRESENCE_PENALTY": "Штраф за присутствие: введите конечное число от −2 до 2 или оставьте поле пустым.",
+    }.items():
+        if code in str(raw_error or ""):
+            return message
     return str(raw_error or "Не удалось сохранить подключение")
 
 
 def connection_chat_options_payload(
     *, max_output_field: str | None, reasoning_mode: str, enabled_effort: str | None,
     temperature_mode: str, requested_output_tokens: Any,
+    top_p: Any = None, top_k: Any = None, presence_penalty: Any = None,
 ) -> dict[str, Any]:
     """Normalize only the integral number produced by the existing UI control."""
     value = requested_output_tokens
     if isinstance(value, float) and value.is_integer():
         value = int(value)
+    sampling = {key: None if item is None or item == "" else item
+                for key, item in {"top_p": top_p, "top_k": top_k, "presence_penalty": presence_penalty}.items()}
+    if isinstance(sampling["top_k"], float) and sampling["top_k"].is_integer():
+        sampling["top_k"] = int(sampling["top_k"])
     options = ChatOptions(
         max_output_field=None if max_output_field == "inherit" else max_output_field,
         reasoning_mode=reasoning_mode, enabled_effort=enabled_effort,
         temperature_mode=temperature_mode, requested_output_tokens=value,
+        **sampling,
     )
     return options.to_dict()
 
@@ -72,8 +85,13 @@ def connection_chat_options_summary(connection: dict[str, Any]) -> str:
     field = options.max_output_field or "из проверки / max_tokens"
     temperature = "по профилю" if options.temperature_mode == "profile" else "не передаётся"
     observed = connection.get("observed_context_tokens") or "Неизвестно"
+    sampling = " · ".join(
+        f"{label}: {getattr(options, name) if getattr(options, name) is not None else 'значение провайдера неизвестно'}"
+        for name, label in (("top_p", "Суммарная вероятность"), ("top_k", "Число вариантов"),
+                            ("presence_penalty", "Штраф за присутствие"))
+    )
     return (f"Лимит ответа: запрошено {output} · Поле: {field} · Рассуждение: {reasoning} · "
-            f"Температура: {temperature} · Наблюдалось окно: {observed} · "
+            f"Температура: {temperature} · {sampling} · Наблюдалось окно: {observed} · "
             "Источник: декларация оператора; наблюдение отдельно · Перезапуск не требуется")
 
 
@@ -183,6 +201,10 @@ def build_model_connections():
                                   value=options.enabled_effort, label="Усилие при включённом рассуждении", clearable=True, classes="w-full")
             temperature = select_field({"profile": "Передавать значение профиля", "omit": "Не передавать параметр"},
                                        value=options.temperature_mode, label="Температура", classes="w-full")
+            top_p = ui.number("Суммарная вероятность", value=options.top_p, min=0, max=1, step=0.05).props("outlined clearable").classes("sov-ui-input w-full")
+            top_k = ui.number("Число вариантов", value=options.top_k, min=-1, step=1).props("outlined clearable").classes("sov-ui-input w-full")
+            presence_penalty = ui.number("Штраф за присутствие", value=options.presence_penalty, min=-2, max=2, step=0.1).props("outlined clearable").classes("sov-ui-input w-full")
+            ui.label("Пустое поле — параметр не передаётся; значение провайдера неизвестно. Суммарная вероятность: больше 0 и до 1; число вариантов: целое от 1 или −1; штраф: от −2 до 2, включая 0. Источник: декларация оператора. Перезапуск не требуется.").classes("sov-ui-section-detail")
             ui.label("Лимиты заданы оператором и не доказывают ёмкость провайдера. Локальное наблюдаемое окно ограничивает запрос. Рассуждение включается выбранным профилем; без протокола его фактический режим неизвестен.").classes("sov-ui-section-detail")
             secret_value = text_field(label="Новый ключ", placeholder="Оставьте пустым, если ключ не нужен", classes="w-full").props('type="password"')
 
@@ -205,9 +227,13 @@ def build_model_connections():
                         max_output_field=output_field.value, reasoning_mode=reasoning_mode.value,
                         enabled_effort=effort.value if reasoning_mode.value == "effort" else None,
                         temperature_mode=temperature.value, requested_output_tokens=output.value,
+                        top_p=top_p.value, top_k=top_k.value, presence_penalty=presence_penalty.value,
                     )
-                except ValueError:
-                    ui.notify("Проверьте положительный целый лимит ответа и усилие для выбранного протокола рассуждения", type="negative")
+                except ValueError as error:
+                    detail = connection_save_error(str(error))
+                    if detail == str(error):
+                        detail = "Проверьте положительный целый лимит ответа и усилие для выбранного протокола рассуждения"
+                    ui.notify(detail, type="negative")
                     return
                 if locality.value != "loopback":
                     ok = await ui.run_javascript("confirm(" + repr(f"Сохранить {_LOCALITY.get(locality.value, locality.value)}: {endpoint.value}?") + ")")

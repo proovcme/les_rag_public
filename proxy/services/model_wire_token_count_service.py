@@ -80,7 +80,10 @@ FreeToken protocol adapters; no model-cache path is used by admission.
 def freetoken_count_payload(body: Mapping[str, Any]) -> dict[str, Any]:
     """Convert a normalized OpenAI prompt without changing any model evidence."""
     allowed = {"model", "messages", "tools", "tool_choice", "chat_template_kwargs",
-               "max_tokens", "max_completion_tokens", "temperature", "stream"}
+               "max_tokens", "max_completion_tokens", "temperature", "stream",
+               "top_p", "top_k", "presence_penalty"}
+    # These generation-only controls do not alter the rendered prompt. They
+    # remain in the actual wire hash, but are absent from the count API schema.
     if set(body) - allowed or body.get("stream") is True:
         raise UnsupportedTokenCountWire("unsupported_prompt_fields")
     model = body.get("model")

@@ -353,7 +353,7 @@ class CapabilityProbe:
                 "messages": [{"role": "user", "content": "capability probe"}],
                 "think": False,
                 "stream": False,
-                "options": {"num_predict": 1, **({"temperature": 0}
+                "options": {"num_predict": 1, **connection.chat_options.sampling_parameters(), **({"temperature": 0}
                             if connection.chat_options.temperature_mode == "profile" else {})},
             }
             try:
