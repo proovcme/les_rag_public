@@ -1,5 +1,18 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+<!-- candidate940-neutral-source-facts:v1 -->
+## Кандидат940 — query и ответ используют нейтральные source facts
+
+attachment_source_catalog_service.catalog_sheet_packet_facts сохраняет те же
+строки, source_quantity_cells и адреса; source_scope_instruction описывает
+current/reference scope без команды вернуть итоговые операции.
+chat_evidence_application_service.model_rag_prior_page_context сохраняет
+prior_model_decisions, cited evidence, structural facts и literal user remark;
+application evidence_continuation_instruction описывает lineage/delta/review.
+sheet_pass_question_tail/model_lsr_result_contract по-прежнему требуют
+итоговые операции в ответном этапе, включая IDs/revisions явного пересмотра.
+Никаких предметных решений, новых этапов/HTTP calls или увеличения лимитов нет.
+
 <!-- candidate939-proof-kind-sampling:v1 -->
 ## Кандидат939 — доказательные ответы и sampling
 

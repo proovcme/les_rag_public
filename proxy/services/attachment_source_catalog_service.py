@@ -664,8 +664,8 @@ def catalog_sheet_packet_facts(
         "reference_only_source_rows": [row.locator for row in visible if row.sheet != sheet],
         "source_quantity_cells": cells,
         "source_scope_instruction": (
-            "Верни операции requested_source_rows текущего пакета. reference_source_rows "
-            "показаны для понимания контекста, их не нужно возвращать заново в этом пакете. "
+            "requested_source_rows — исходные строки текущего пакета. "
+            "reference_source_rows — показанные контекстные строки вне текущей области обработки. "
             "source_quantity_cells — значения исходной колонки количества, не расчётные объёмы. "
             "null означает пустое или не определённое значение, а не количество 0 или 1. "
             "reference_only_source_rows — дословный контекст других листов без заданий: "

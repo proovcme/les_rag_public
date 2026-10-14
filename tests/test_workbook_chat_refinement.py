@@ -177,12 +177,14 @@ def test_review_response_contract_is_full_while_normal_page_remains_delta():
     normal, _ = application.model_rag_prior_page_context(rows, [])
     review, _ = application.model_rag_prior_page_context([], [], review_rows=rows,
         review_instruction="Recheck the offered operation")
-    assert "Верни только новые и изменённые" in normal["evidence_continuation_instruction"]
+    assert "текущая область обновления — новые и изменённые операции этого пакета" in normal["evidence_continuation_instruction"]
     assert "Неизменённые операции и цитаты остаются в документе" in normal["evidence_continuation_instruction"]
     instruction = review["evidence_continuation_instruction"]
-    assert "верни все предложенные прежние операции" in instruction
+    assert "текущая область результата — все предложенные прежние операции" in instruction
     assert "expected_revision" in instruction and "дословно" in instruction
-    assert "Верни только новые и изменённые" not in instruction
+    for metadata in (normal["evidence_continuation_instruction"], instruction):
+        assert "Верни" not in metadata and "верни" not in metadata
+    assert "текущая область обновления" not in instruction
     assert "Неизменённые операции и цитаты остаются в документе" not in instruction
     assert [{key: projected[key] for key in original}
             for original, projected in zip(rows, review["prior_model_decisions"])] == rows
@@ -193,6 +195,7 @@ def test_review_response_contract_is_full_while_normal_page_remains_delta():
         assert "При обычном продолжении" in prompt
         assert "При явном пересмотре" in prompt
         assert "все предложенные прежние операции" in prompt
+        assert "верни" in prompt
 
 
 @pytest.mark.asyncio
@@ -216,8 +219,7 @@ async def test_actual_reopened_review_offers_all_operations_without_auto_restori
     authored[1]["title"] = "Model changed second title"
     frame_rows = []
 
-    def review_response():
-        frame = run.requests[-1].messages
+    def prior_in_frame(frame):
         found = None
         decoder = json.JSONDecoder()
         for message in frame:
@@ -235,8 +237,16 @@ async def test_actual_reopened_review_offers_all_operations_without_auto_restori
             if found is not None:
                 break
         assert found is not None
-        assert "верни все предложенные прежние операции" in found["evidence_continuation_instruction"]
+        return found
+
+    def review_response():
+        frame = run.requests[-1].messages
+        found = prior_in_frame(frame)
+        assert "текущая область результата — все предложенные прежние операции" in found["evidence_continuation_instruction"]
+        assert "Верни" not in found["evidence_continuation_instruction"] and "верни" not in found["evidence_continuation_instruction"]
         assert "Неизменённые операции и цитаты остаются в документе" not in found["evidence_continuation_instruction"]
+        assert found["review_instruction"] == "Recheck these operations"
+        assert "При явном пересмотре верни все предложенные прежние операции" in str(frame)
         offered = found["prior_model_decisions"]
         assert [row["operation_id"] for row in offered] == [row["operation_id"] for row in published]
         for prior, actual in zip(published, offered):
@@ -247,10 +257,19 @@ async def test_actual_reopened_review_offers_all_operations_without_auto_restori
         return InferenceResponse(text=text, tool_calls=(), finish_reason="length" if cut else "stop", usage={})
 
     literal_queries = ["S!R2 literal query", "S!R3 literal query"]
-    query_response = InferenceResponse(
-        text=json.dumps({"artifact_kind": "lsr", "queries": literal_queries}),
-        tool_calls=(), finish_reason="stop", usage={},
-    )
+    def query_response():
+        # Inspect the actual governed query (and repair), retaining the same
+        # literal review baseline that the answer receives below.
+        delivered = "\n".join(str(message.get("content") or "") for message in run.requests[-1].messages)
+        assert "Для изменённой прежней операции верни" not in delivered
+        assert "Верни только новые и изменённые операции этого пакета" not in delivered
+        prior_context = prior_in_frame(run.requests[-1].messages)
+        assert prior_context["review_instruction"] == "Recheck these operations"
+        assert "верни" not in prior_context["evidence_continuation_instruction"]
+        for prior in published:
+            assert prior["operation_id"] in delivered
+        return InferenceResponse(text=json.dumps({"artifact_kind": "lsr", "queries": literal_queries}),
+                                 tool_calls=(), finish_reason="stop", usage={})
     # A mixed metadata/plain-query response needs the existing format repair.
     # Neither that repair nor valid transport may erase the reopened operations.
     initial_responses = ([InferenceResponse(

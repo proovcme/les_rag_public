@@ -3271,6 +3271,7 @@
         "tests/test_model_query_reasoning.py",
         "tests/test_model_query_rejected_visible_diagnostics.py",
         "tests/test_model_query_repair_context.py",
+        "tests/test_model_query_resume_scope.py",
         "tests/test_model_query_table_transport.py",
         "tests/test_model_rag_pointer_alias_replay.py",
         "tests/test_model_rag_query_declaration.py",
@@ -3311,7 +3312,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 14967,
+      "lines": 14969,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3709,6 +3710,7 @@
         "tests/test_model_evidence_read_contract.py",
         "tests/test_model_preset_workflow_parity.py",
         "tests/test_model_query_phase_scope.py",
+        "tests/test_model_query_resume_scope.py",
         "tests/test_model_rag_grouped_evidence_service.py",
         "tests/test_model_rag_pointer_alias_replay.py",
         "tests/test_native_ollama_tool_exchange.py",
@@ -5680,6 +5682,7 @@
         "tests/test_model_query_phase_scope.py",
         "tests/test_model_query_reasoning.py",
         "tests/test_model_query_repair_context.py",
+        "tests/test_model_query_resume_scope.py",
         "tests/test_model_rag_grouped_evidence_service.py",
         "tests/test_model_rag_pointer_alias_replay.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
@@ -10094,7 +10097,7 @@
     },
     {
       "inbound": [],
-      "lines": 515,
+      "lines": 538,
       "module": "tests.test_attachment_source_catalog_service",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py"
@@ -13421,7 +13424,7 @@
     },
     {
       "inbound": [],
-      "lines": 210,
+      "lines": 215,
       "module": "tests.test_model_query_phase_scope",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -13477,6 +13480,19 @@
         "tests/test_model_rag_sheet_evidence_reads.py"
       ],
       "path": "tests/test_model_query_repair_context.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 113,
+      "module": "tests.test_model_query_resume_scope",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/context_governor_service.py",
+        "proxy/services/model_execution_preset_service.py"
+      ],
+      "path": "tests/test_model_query_resume_scope.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -17211,7 +17227,7 @@
     },
     {
       "inbound": [],
-      "lines": 277,
+      "lines": 296,
       "module": "tests.test_workbook_chat_refinement",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -22041,9 +22057,9 @@
     "product_reachable": 380,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 775,
-    "tracked_python_files": 1167,
-    "tracked_python_lines": 406024
+    "test_or_tool_only": 776,
+    "tracked_python_files": 1168,
+    "tracked_python_lines": 406186
   },
   "warnings": []
 }

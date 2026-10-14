@@ -1,5 +1,20 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+<!-- candidate940-neutral-source-facts:v1 -->
+## Кандидат940 — факты исходника без команды выпуска результата
+
+🟡 Код↔док: attachment_source_catalog_service.catalog_sheet_packet_facts и
+chat_evidence_application_service.model_rag_prior_page_context описывают scope,
+количество/null, lineage и прочитанные карточки нейтрально. Shared evidence
+не требует вернуть операции в query-фазе; answer/proof contracts сохранены.
+Literal user review_instruction и prior rows/cards остаются дословными.
+Регрессии: test_model_query_phase_scope (whole wire primary/repair),
+test_model_query_resume_scope, test_attachment_source_catalog_service
+(1/75/318 строк), test_workbook_chat_refinement. [RAG](modules/rag-evidence-flow.md).
+Установлен939/2cfc255b: frozen4882 passed, basic smoke10/10, native-RRF1/1.
+Четыре live-контроля не подтвердили качественную ЛСР; ANSWER возвращён наr10.
+Gate/install/live940 pending; customer-ready=false. Прежние разделы ниже — история.
+
 <!-- candidate939-proof-kind-sampling:v1 -->
 ## Кандидат939 — тип после proof и явные параметры генерации
 

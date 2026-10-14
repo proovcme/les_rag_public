@@ -1,5 +1,54 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+<!-- candidate940-neutral-source-facts:v1 -->
+## 14.10.2026 — установлен939; отрицательная приёмка и кандидат940
+
+Установлен runtime **0.31.211 / 939**, commit
+`2cfc255b6083904269783b8c9c680afbbd24383c`; native EXE остаётся5.1.813.
+Frozen939:4882 passed,20 skipped,5 warnings,726.72с;13 квитанций rc=0.
+Post-deploy basic smoke:10 PASS,0 FAIL,0 WARN; общий native-RRF:1/1,5 chunks.
+Это технические проверки, не профессиональная приёмка документов.
+
+Первый apply939 остановился на несовпавшем nonsecret factor hash. Исходная
+полная таблица старого process938 не сохранена, поэтому причина старого хеша
+не объявляется установленной. Guarded rollback938→939 выполнен: после обоих
+перезапусков404 публичных factor tuples одинаковы; исходные роли, подключения,
+профиль и семь durable jobs сохранены. Отрицательная первая квитанция остаётся
+в artifacts/live_939; installed_after_diagnosis.json описывает эту границу.
+
+Конечное сравнение — четыре свежих контроля БАП на939, одна модель
+Qwen3.6-35B-A3B-NVFP4, один исходник/вопрос/профиль/dataset:
+r10 B0:65.2с, файл0, MODEL_RAG_QUERY_LIST_EMPTY;
+r10 B1:248.5с, файл0, MODEL_QUERY_GENERATION_LIMIT;
+r11 B0:237.38с, XLSX1,19 строк, все norm_code пустые, calculated_positions0,
+confirmed0, preliminary0, PRICED_PARTIAL;
+r11 B1:267.03с, файл0, MODEL_QUERY_GENERATION_LIMIT.
+В B0r11 пять исходных работ по3.2м² стали ресурсами с количеством0; три монтажа
+стали equipment. Это буквальные решения модели, не подмена приложением.
+Книга sankt-peterburg_3kv2026 выбрана точно; отсутствие книги не является причиной.
+Файл SHA29462067d1f034bbf7304c74704327f51165d42bbc548da229c14c6b70897290.
+
+r11 задаёт top_p0.8/top_k20/presence_penalty1.5, но fresh bind одновременно
+обновил наблюдения capacity/base preset. Поэтому четыре контроля не доказывают
+чистую причинность sampler. Новая редакция сохранена; ANSWER возвращён наr10
+guarded CAS, без удаления заданий. Дальнейшего случайного перебора параметров нет.
+
+Найден воспроизводимый технический конфликт: source_scope_instruction B1
+требовала вернуть операции результата уже на этапе запросов. Новый тест всей
+wire-модели (system+user evidence) сначала RED. Кандидат **0.31.212 / 940**
+заменяет только application-generated output directives в source facts и
+prior-page facts нейтральными описаниями области/lineage. Literal source rows,
+ячейки количества/null, прежние решения/цитаты и пользовательское замечание
+не фильтруются. Команды выдачи строк остаются в ответном этапе.
+Нормы, запросы, цены, роли, коэффициенты и объёмы приложение не выбирает.
+
+Причинность конфликта для length/repetition и улучшение результата ещё требуют
+installed940 сравнения; большие документы и разные разделы не квалифицированы.
+Gate/install/live940 pending. **customer-ready=false**; пустой частичный XLSX
+не выдаётся за готовую ЛСР, точный новый Windows installer не принимался.
+Доказательства: artifacts/live_939/sampler_comparison/,
+query_phase_comparison_audit_v2.json, basic_function_smoke.json.
+
 <!-- candidate939-proof-kind-sampling:v1 -->
 ## 14.10.2026 — установлен938, кандидат939
 

@@ -18,6 +18,29 @@ def _write_sheet(tmp_path, rows, *, title="Лист1"):
     return path
 
 
+@pytest.mark.parametrize("count", [1, 75, 318])
+def test_packet_facts_describe_source_scope_without_requesting_result_operations(tmp_path, count):
+    rows = [["Наименование", "Ед. изм.", "Кол-во"],
+            *[[f"Работа Ω-{index}", "м²", 3.2 if index < count else None]
+              for index in range(1, count + 1)]]
+    catalog = service.load_tabular_source_catalog(_write_sheet(tmp_path, rows))
+    before = [(row.locator, row.line, row.header_quantity, row.values) for row in catalog.rows]
+    requested = list(dict.fromkeys(["Лист1!R2", f"Лист1!R{count + 1}"]))
+
+    facts = service.catalog_sheet_packet_facts(catalog, "Лист1", requested)
+
+    assert facts["requested_source_rows"] == requested
+    assert "Верни операции" not in facts["source_scope_instruction"]
+    assert "null означает пустое или не определённое значение" in facts["source_scope_instruction"]
+    cells = {cell["source_row"]: cell for cell in facts["source_quantity_cells"]}
+    for locator in requested:
+        source = catalog.lookup(locator)
+        assert cells[locator]["quantity"] == source.header_quantity
+        assert cells[locator]["unit"] == "м²"
+    assert cells[requested[-1]]["quantity"] is None
+    assert [(row.locator, row.line, row.header_quantity, row.values) for row in catalog.rows] == before
+
+
 @pytest.mark.parametrize("source_qty,source_unit,model_qty,model_unit,expected", [
     (800, "м", 0.8, "км", []),
     (0.8, "км", 800, "м", []),

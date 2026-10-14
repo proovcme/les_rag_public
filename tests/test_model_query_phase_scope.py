@@ -171,6 +171,11 @@ async def test_actual_baseline_and_candidate_use_identical_query_scope_and_repai
         query_requests = run.requests[:2]
         scopes[variant] = []
         for request in query_requests:
+            # Check the whole admitted request, not only its system prefix:
+            # application source facts used to request result operations in
+            # this search-only phase of B1 (including the repair).
+            delivered = json.dumps(request.messages, ensure_ascii=False)
+            assert "Верни операции requested_source_rows" not in delivered
             system = next(message["content"] for message in request.messages if message["role"] == "system")
             assert _PHASE_MARKER in system
             assert service._MODEL_RAG_QUERY_FORMAT_CONTRACT in system

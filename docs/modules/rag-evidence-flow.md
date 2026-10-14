@@ -1,5 +1,22 @@
 # RAG evidence flow
 
+<!-- candidate940-neutral-source-facts:v1 -->
+## 940: shared source facts не командуют выпуском документа
+
+Source catalog facts используются и в query, и в answer/proof. Поэтому
+source_scope_instruction описывает requested/reference scope декларативно;
+она не требует вернуть операции результата до поиска. Количество, null,
+source order и все literal source rows остаются прежними.
+model_rag_prior_page_context сохраняет model decisions/cited cards/structural
+facts и дословное пользовательское review_instruction; application-generated
+continuation metadata описывает ID/revision/delta/review без команды выпуска.
+Answer tail и model_lsr_result_contract по-прежнему требуют текущие операции,
+обычное продолжение — delta, явный пересмотр — полный предложенный набор.
+Ни исходный вопрос, ни выбор нормы/ресурса/покрытия не меняются; новых запросов
+к модели или автомодельного цикла техническая правка не добавляет.
+Regression проверяет весь admitted wire и оба этапа, а не только system.
+Installed939 professional gate отрицателен; качество940 ещё не доказано.
+
 <!-- candidate939-proof-kind-sampling:v1 -->
 ## 939: декларация завершённого proof сохраняется вместе со строками
 

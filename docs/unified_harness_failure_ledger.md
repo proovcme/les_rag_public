@@ -1,5 +1,23 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+<!-- candidate940-neutral-source-facts:v1 -->
+## 14.10.2026 — команда результата в фактах поисковой фазы
+
+Live939 B1 query получает required source facts с «Верни операции
+requested_source_rows текущего пакета», тогда как system требует только
+поисковые запросы. B0 whole-source эту команду не получает. Whole-wire
+регрессия reproduces RED; system-only прежний тест эту границу пропускал.
+Prior-page application instruction тоже просила вернуть новые/изменённые
+операции до поиска. Кандидат940 заменяет только эти fixed output directives
+нейтральными facts; ответные контракты сохраняют scope/delta/review semantics.
+Замечание пользователя review_instruction и все literal data не изменяются.
+Обнаружение конфликта не доказывает причинность деградации модели: r10B1
+печатал тысячи нулей, r11B1 сотни последовательных шифров до length8192.
+Увеличение output не выполняется; fresh installed comparison ещё нужен.
+B0r11 доставил пустую по нормам/деньгам ЛСР и исказил роли/объёмы сам.
+Ни исправление команды, ни технические4882 теста не закрывают профессиональную
+приёмку: customer-ready=false. Отрицательные939 квитанции сохранены.
+
 <!-- candidate939-proof-kind-sampling:v1 -->
 ## 14.10.2026 — потеря типа ЛСР после проверки карточки
 
