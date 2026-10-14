@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1168 |
-| Строк Python | 406186 |
-| PRODUCT_REACHABLE | 380 |
+| Python-файлов под git | 1171 |
+| Строк Python | 406606 |
+| PRODUCT_REACHABLE | 381 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 776 |
+| TEST_OR_TOOL_ONLY | 778 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 342 |
 | Ошибок разбора | 0 |
@@ -40,7 +40,7 @@
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |
 | proxy/routers/datasets.py | 3811 | 17 |
-| proxy/services/rim_lsr_trace_service.py | 3400 | 41 |
+| proxy/services/rim_lsr_trace_service.py | 3401 | 42 |
 | sovushka/styles.py | 3301 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/workbook_research_job_service.py | 2954 | 42 |

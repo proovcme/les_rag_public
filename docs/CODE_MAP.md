@@ -1,5 +1,17 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+<!-- candidate941-cited-literals-bound-warmup:v1 -->
+## 941 — scalar conversion и role-bound warmup
+
+rim_lsr_trace_service._cited_conversion читает numeric literals через _num;
+_unconfirmed_source_change требует того же конечного числа. Исходные поля
+сохранены; неизвестный/невалидный пересчёт виден, не становится новой суммой.
+proxy/services/model_warmup_service.py — единственная generation warmup-функция:
+explicit ANSWER revision → resolver → ContextGovernor → existing transport.
+proxy/app.py._warmup_models и proxy/routers/runtime.py.warmup_models вызывают
+её; legacy main/val больше не загружаются этим маршрутом. Embedding/RRF и
+reranker прогреваются прежним самостоятельным кодом. Нормы/ресурсы/цены не выбираются.
+
 <!-- candidate940-neutral-source-facts:v1 -->
 ## Кандидат940 — query и ответ используют нейтральные source facts
 

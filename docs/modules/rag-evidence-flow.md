@@ -1,5 +1,19 @@
 # RAG evidence flow
 
+<!-- candidate941-cited-literals-bound-warmup:v1 -->
+## 941 — generation warmup сохраняет назначение модели
+
+Startup и ручной /api/warmup используют shared model_warmup_service только
+для явно назначенной локальной ANSWER-revision, через существующий resolver,
+ContextGovernor и transport. REMOTE/пустая/невалидная роль не вызывает модель;
+legacy MLX_URL/LLM_MODEL/val, probes и LOCAL_FALLBACK не выбираются. Один
+синтетический запрос, output cap1, reasoning off; ошибки видны как ошибки.
+Отдельные retrieval/EMBEDDINGS и reranker настройки не меняются. Поэтому
+нулевые CLOUD ANSWER вызовы не означают нулевые вызовы отдельно назначенного
+облачного EMBEDDINGS. GUI-фактор LES_STARTUP_MODEL_WARMUP остаётся действующим.
+940 query/answer/refinement transport проверен; пригодность результата ЛСР
+профессиональную проверку не прошла и этой startup-правкой не утверждается.
+
 <!-- candidate940-neutral-source-facts:v1 -->
 ## 940: shared source facts не командуют выпуском документа
 

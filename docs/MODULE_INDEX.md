@@ -1,5 +1,21 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+<!-- candidate941-cited-literals-bound-warmup:v1 -->
+## Кандидат941 — одинаковые числовые литералы и прогрев назначенного подключения
+
+🟡 Код↔док: rim_lsr_trace_service._cited_conversion и source-change basis
+используют тот же _num, что и validation; конечность обязательна. Никакого
+вычисления выражений/извлечения коэффициентов из prose. Регрессия
+test_rim_cited_numeric_literals: scientific/comma/space/NBSP, источник,
+масштаб нормы один раз, raw и корректный сосед сохранены.
+model_warmup_service связывает только явный local ANSWER с общим resolver,
+ContextGovernor и существующим transport; startup и ручной /api/warmup
+не читают legacy model для generation и не вызывают remote/fallback/probe.
+Embedding/reranker неизменны. Регрессия test_model_warmup_service.
+[ЛСР](ALGO-lsr-assembly.md) · [RAG/runtime](modules/rag-evidence-flow.md).
+Установлен940/f42c379f:4889 тестов зелёные; B0/B1 и явный chat refinement
+профессиональную приёмку не прошли. Gate/install941 pending; customer-ready=false.
+
 <!-- candidate940-neutral-source-facts:v1 -->
 ## Кандидат940 — факты исходника без команды выпуска результата
 

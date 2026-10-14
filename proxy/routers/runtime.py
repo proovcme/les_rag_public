@@ -383,31 +383,9 @@ async def warmup_models(_admin=Depends(require_admin)):
     admission = chat_admission_for_state(state)
     if not admission.allowed:
         raise HTTPException(status_code=admission.status_code, detail=admission.reason)
-    mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
-    results = {}
-    async with httpx.AsyncClient(
-        trust_env=trust_env_for_url(mlx_url),
-        timeout=120.0,
-    ) as client:
-        for name, model in [
-            ("main", os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)),
-            ("val", os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")),
-        ]:
-            try:
-                started = time.time()
-                response = await client.post(
-                    f"{mlx_url}/v1/chat/completions",
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": "/no_think\n1"}],
-                        "max_tokens": 1,
-                        "temperature": 0.0,
-                    },
-                )
-                response.raise_for_status()
-                results[name] = {"status": "ok", "elapsed": round(time.time() - started, 1)}
-            except Exception as e:
-                results[name] = {"status": "error", "msg": str(e)}
+    from proxy.services.model_warmup_service import warmup_answer_model
+
+    results = {"main": await warmup_answer_model()}
     logger.info("[WARMUP] %s", results)
     return {"status": "done", "models": results}
 

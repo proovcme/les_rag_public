@@ -1,5 +1,20 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+<!-- candidate941-cited-literals-bound-warmup:v1 -->
+## 14.10.2026 — пересмотр не исправил применимость; два технических дефекта
+
+940 finite same-model controls и один natural chat refinement закрывают замер,
+но не готовность. Источник/объёмы/pricebook/revision сохранены; ошибочный БАП,
+неподтверждённая окраска и38074.06 новых реек остались. Неполные resource
+exclude и omitted IDs авторские: точные старые12 IDs переданы модели; состав
+R16 прочитан, R17 модель читает неверную ссылку. Код не подменяет их решения.
+Числовой offline контроль доказывает1e3→13 на второй стадии конверсии;
+941 использует общий strict scalar parser (five RED regressions before fix).
+Отдельный startup legacy9B занимал память рядом с ANSWER FreeToken: сейчас
+GUI warmup=false,941 общий warmup следуетlocal ANSWER и пропускаетremote.
+Никаких новых циклов подбора, скрытых sampler defaults или расширения контекста.
+Профессиональный gate остаётся открытым; больше green tests его не заменяют.
+
 <!-- candidate940-neutral-source-facts:v1 -->
 ## 14.10.2026 — команда результата в фактах поисковой фазы
 

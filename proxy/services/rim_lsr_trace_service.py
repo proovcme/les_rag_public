@@ -15,7 +15,6 @@ from typing import Any, Mapping, Optional
 
 from proxy.smeta_core.unit_contract import norm_measure
 
-from proxy.services.estimate_math_service import parse_ru_number
 from proxy.services import gesn_service, nr_sp_service
 from proxy.services.lsr_source_coverage_service import (
     apply_confirmed_data,
@@ -569,15 +568,17 @@ def _cited_conversion(row: Mapping[str, Any], source_qty: float) -> tuple[float,
     ).strip()
     if not source:
         return None
-    calc = parse_ru_number(row.get("calc_quantity"))
-    factor = parse_ru_number(row.get("conversion_factor"))
-    if calc is not None:
+    # Use the same numeric literal parser as the validation step. A text reader
+    # that strips letters would turn an accepted "1e3" into 13 here.
+    calc = _num(row.get("calc_quantity"))
+    factor = _num(row.get("conversion_factor"))
+    if calc is not None and math.isfinite(calc):
         return float(calc), {
             "status": "cited_calc_quantity",
             "conversion_source": source,
             "calc_quantity": float(calc),
         }
-    if factor is None:
+    if factor is None or not math.isfinite(factor):
         return None
     return round(float(source_qty) * float(factor), 9), {
         "status": "cited_conversion_factor",
@@ -2186,9 +2187,9 @@ def _unconfirmed_source_change(
     basis = str(
         row.get("conversion_source") or row.get("quantity_source") or ""
     ).strip()
-    if basis and (
-        parse_ru_number(row.get("calc_quantity")) is not None
-        or parse_ru_number(row.get("conversion_factor")) is not None
+    if basis and any(
+        (number := _num(row.get(field))) is not None and math.isfinite(number)
+        for field in ("calc_quantity", "conversion_factor")
     ):
         return None
     unit_norm = normalize_unit(source_unit)

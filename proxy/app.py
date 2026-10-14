@@ -637,21 +637,10 @@ async def _warmup_models():
     except Exception as exc:
         logger.warning("[WARMUP] rerank: %s", exc)
     try:
-        # Прогрев основной LLM: грузит main-движок на старте, иначе первый реальный
-        # запрос после рестарта платил холодную загрузку модели (~100-120с).
-        import httpx
+        from proxy.services.model_warmup_service import warmup_answer_model
 
-        mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-        model = os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)
-        async with httpx.AsyncClient(
-            trust_env=trust_env_for_url(mlx),
-            timeout=180,
-        ) as client:
-            await client.post(
-                f"{mlx}/v1/chat/completions",
-                json={"model": model, "messages": [{"role": "user", "content": "прогрев"}], "max_tokens": 1},
-            )
-        logger.info("[WARMUP] LLM прогрета")
+        result = await warmup_answer_model()
+        logger.info("[WARMUP] answer: %s", result)
     except Exception as exc:
         logger.warning("[WARMUP] llm: %s", exc)
 
