@@ -7266,7 +7266,7 @@
         "tests/test_unknown_resource_consumption.py",
         "tools/smeta_vor_finalize.py"
       ],
-      "lines": 796,
+      "lines": 812,
       "module": "proxy.services.rim_trace_xlsx_service",
       "outbound": [
         "proxy/__init__.py",
@@ -12554,7 +12554,7 @@
     },
     {
       "inbound": [],
-      "lines": 58,
+      "lines": 81,
       "module": "tests.test_lsr_render_byte_determinism_943",
       "outbound": [
         "proxy/services/rim_trace_xlsx_service.py",
@@ -22181,7 +22181,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 781,
     "tracked_python_files": 1174,
-    "tracked_python_lines": 406952
+    "tracked_python_lines": 406991
   },
   "warnings": []
 }

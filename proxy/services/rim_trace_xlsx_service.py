@@ -215,6 +215,9 @@ def _set_formula(ws, row: int, column: int, formula: str, values: dict) -> None:
     cell.value = formula
 
 
+_DOCUMENT_EPOCH_ISO = "2000-01-01T00:00:00Z"
+
+
 def _save_calculated_workbook(wb, path: Path, values: dict) -> None:
     """Store trace values as OOXML formula caches; never evaluate workbook code.
 
@@ -225,6 +228,7 @@ def _save_calculated_workbook(wb, path: Path, values: dict) -> None:
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.forceFullCalc = True
     wb.calculation.calcMode = "auto"
+    import re  # локально: нужен только нормализующий замену метаданных путь
     wb.save(path)
     ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
     with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".xlsx", delete=False) as handle:
@@ -233,6 +237,18 @@ def _save_calculated_workbook(wb, path: Path, values: dict) -> None:
         with ZipFile(path) as source, ZipFile(temporary, "w") as target:
             for info in source.infolist():
                 content = source.read(info)
+                if info.filename == "docProps/core.xml":
+                    # openpyxl при сохранении перезаписывает `dcterms:modified` текущим временем
+                    # (openpyxl/writer/excel.py:292), поэтому свойства документа фиксируются здесь.
+                    # Пересборка тех же сохранённых решений обязана давать то же содержимое файла:
+                    # иначе «тот же документ» нельзя сверить по хешу после повторной доставки
+                    # (§ 7 «пересчёт скачанных байтов», § 1 «скачать актуальную ревизию»).
+                    # Числа, строки и формулы этим не затрагиваются — правка только про метаданные.
+                    text = content.decode("utf-8")
+                    for tag in ("created", "modified"):
+                        text = re.sub(rf"(<dcterms:{tag}[^>]*>)[^<]*(</dcterms:{tag}>)",
+                                      rf"\g<1>{_DOCUMENT_EPOCH_ISO}\g<2>", text)
+                    content = text.encode("utf-8")
                 if info.filename == "xl/worksheets/sheet1.xml":
                     sheet = ElementTree.fromstring(content)
                     for cell in sheet.iter(ns + "c"):
