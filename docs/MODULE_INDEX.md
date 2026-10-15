@@ -21,6 +21,14 @@
 после правки 165 passed вместе с `test_datasets_router`, `test_chat_harness_format`,
 `test_live_workbook_acceptance_contract`.
 
+Установлено: 0.31.214 / 942, коммит `3b76aae0`, рестарт только backend, `/api/version` и deploy
+stamp совпадают, назначенная ANSWER-ревизия и durable-задания не изменились,
+`basic_function_smoke --release` = 9 pass / 1 warn / 0 P0 / 0 P1, поведение правки подтверждено на
+установленных байтах и клиентском `ВОР.xlsx`. Не выполнено: живой B0/B1 по инварианту № 1 (блокирован
+окном сервиса 8214), матрица S1–S6, большой ВОР с обрывом, installer. customer-ready=false;
+подробности и найденная хрупкость deploy-пути — `docs/RELEASE_LEDGER.md`, секция
+installed942-attachment-accounting-deploy.
+
 <!-- candidate941-cited-literals-bound-warmup:v1 -->
 ## Кандидат941 — одинаковые числовые литералы и прогрев назначенного подключения
 

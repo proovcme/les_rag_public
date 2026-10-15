@@ -1,5 +1,65 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+<!-- installed942-attachment-accounting-deploy:v1 -->
+## 15.10.2026 — установлен942: выкатка, проверка и найденная хрупкость provenance
+
+Кандидат **0.31.214 / 942**, коммит `3b76aae041b997fc1b56243aaa028f2482525657`
+(`codex/qwen-finalization`), выкатан в
+`C:\Users\MVBul\AppData\Local\Programs\LES\runtime`.
+
+Штатный путь: dry-run → снимок несекретной конфигурации
+(`artifacts/live_942/config_before.json`, `version_before.json`) → `deploy_to_runtime.py --apply
+--force` (10 файлов) → рестарт только backend-контура (`windows_runtime.py stop/start --mode
+backend`, прокси 8050) → проверка. UI 8051 жив (healthz 200).
+
+Установленная проверка: `/api/version` — `product_version 0.31.214`, `build_number 942`,
+`desktop_version 5.1.942`, `les_version 0.31.214`, `deployed_les_version 0.31.214`,
+`deployed_commit 3b76aae0…`, `runtime_alignment aligned`, `changed_files []`,
+`hash_mismatch_files []`, `repo_dirty false`. Назначения не изменились: ANSWER остаётся
+`conn:9458be3549ad449985f9eb10dba3c9e1:r10` / Qwen3.6-35B-A3B-NVFP4 / loopback; профили, роли,
+подключения и region/период не трогались. Durable-задания сохранены: 113 complete / 152 paused /
+3 running; у трёх running `updated_at` = 22.09.2026, то есть раньше старта текущего прокси
+(старые маркеры, их не трогал и не переквалифицировал).
+
+Поведение правки на установленных байтах проверено отдельно: импорт
+`proxy/routers/datasets.py` из рантайма на фактическом клиентском `ВОР.xlsx` даёт
+«[Учёт недоставленного: листов 10; передано 155 из 439 непустых строк…]» и поимённо называет шесть
+недоставленных листов. `tools/basic_function_smoke.py --release`: 9 pass, 1 warn
+(`diagnostics_endpoint`), `p0_fail []`, `p1_fail []`; обычные чат-проверки прошли за 10,3 с и
+5,4 с. Канонический короткий гейт на этом же дереве перед выкаткой: `verify` (version contract,
+compileall, collect-only) rc=0, CURRENT_TESTS 903 passed / 17 skipped, architecture gate rc=0.
+
+**Найдена и задокументирована хрупкость deploy-пути (не правил продуктивный код).**
+Первая запись deploy stamp получила `build_number 941` и `les_version 0.31.213` при уже
+скопированном `config/version.json` 942. Причины измерены: `tools/deploy_to_runtime.py` при запуске
+`python tools/…` не содержит корень репозитория в `sys.path`, и `proxy.services.version_service`
+разрешился из соседнего worktree (там ещё 0.31.213), а сам тул не выгружает `pyproject.toml`, из
+которого `version_service` берёт `les_version`/`app_version`. После явного `PYTHONPATH` на это
+дерево и копирования `pyproject.toml` stamp и все поля `/api/version` совпали (942 / 0.31.214).
+Грубая ошибка провенанса была бы невидимой: `deployed_commit` при этом всегда был верным.
+Отмечено как кандидат правки тулинга (проверять, чей `version_service` импортируется, и выгружать
+`pyproject.toml`), а не как готовое решение.
+
+Откат: побайтовая опись 11 файлов 941 в `artifacts/live_942/rollback_941_to_942` с sha256 каждой
+пары и сопоставлением установленных байтов с исходником коммита
+(`artifacts/live_942/rollback_proof.json`): 10 файлов «exact», `pyproject.toml` до ручного копирования
+отличался — это и есть тот самый незагруженный deploy-файл. Живой цикл rollback→re-apply на 942
+**не выполнялся** (обратимость доказана точными байтами и хешами, а не прогнанным откатом);
+это же остаётся открытым требованием (#78).
+
+Для гейта пришлось восстановить отсутствующее окружение чистого worktree: `data/smeta_base/`
+(canonical база ГЭСН, 573 МБ) скопирована только на чтение из соседнего worktree, реиндекса не
+было, ничего не удалено; без неё `test_rim_api` даёт `bound_rows 0` — и это корректное поведение
+при пустой базе, а не дефект. `docs/CODE_RUNTIME_MAP.md` перегенерирован, потому что отставал от
+дерева после добавления тестовых файлов.
+
+**Что не сделано на 942:** живой B0/B1 по инварианту № 1 (правка касается пути доставки evidence в
+модель, поэтому сравнение обязательно перед выпуском; сегодня блокируется окном сервиса 8214),
+матрица S1–S6, большой ВОР с контролируемым обрывом и скачиванием после перезапуска, отложенный
+документ другого семейства, точный Windows installer и его приёмка. Ни один ВОР/ЛСР на этом
+кандидате профессионально не принят. **customer-ready=false**; публичный выпуск и merge в main не
+выполнялись.
+
 <!-- candidate942-attachment-sheet-accounting:v1 -->
 ## 15.10.2026 — кандидат942: усечённый кадр вложения обязан называть недоставленное
 
