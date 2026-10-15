@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from uuid import uuid4
 
-from proxy.config import META_DB_PATH
+from proxy.config import meta_db_path
 from proxy.services.lsr_source_coverage_service import inferred_row_role
 from proxy.services.packaging_recovery_service import (
     packaging_recovery_payload,
@@ -582,8 +582,8 @@ class WorkbookResearchJobService:
                 for locator in snapshot.get("locators") or ()} - set(
                     map(str, held_packet.get("reopened_locators") or ()))
 
-    def __init__(self, db_path: Path | str = META_DB_PATH):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Path | str | None = None):
+        self.db_path = Path(meta_db_path() if db_path is None else db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(

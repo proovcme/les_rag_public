@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
-from proxy.config import META_DB_PATH
+from proxy.config import meta_db_path
 from proxy.memory_core.contracts import (
     EntryKind,
     EvidenceRef,
@@ -33,8 +33,8 @@ _NON_FACT_KINDS = {EntryKind.VERIFIED_TRACE, EntryKind.QUERY_PATTERN, EntryKind.
 
 
 class MemoryStore:
-    def __init__(self, db_path: str | Path = META_DB_PATH):
-        self.db_path = str(db_path)
+    def __init__(self, db_path: str | Path | None = None):
+        self.db_path = str(meta_db_path() if db_path is None else db_path)
         self._memory_connection: sqlite3.Connection | None = None
         if self.db_path == ":memory:":
             self._memory_connection = sqlite3.connect(":memory:", timeout=2.0, check_same_thread=False)

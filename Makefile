@@ -86,6 +86,7 @@ UNIT_TESTS += tests/test_attachment_sheet_accounting_942.py tests/test_connectio
 UNIT_TESTS += tests/test_lsr_render_byte_determinism_943.py tests/test_resource_group_packet_overflow_944.py
 UNIT_TESTS += tests/test_model_proof_turn_integrity.py
 UNIT_TESTS += tests/test_rim_cited_numeric_literals.py tests/test_model_warmup_service.py
+UNIT_TESTS += tests/test_meta_store_env_binding_945.py
 
 CURRENT_TESTS ?= $(sort $(UNIT_TESTS) $(INTEGRATION_TESTS) $(RAG_CORE_TESTS) $(FOCUS_TESTS) $(MEMORY_TESTS) $(SMETA_DOCUMENT_TESTS) $(MODEL_CONNECTION_TESTS) tests/test_code_runtime_map.py tests/test_documentation_contract.py tests/test_test_profiles.py tests/test_software_versions.py)
 LEGACY_ARCHITECTURE_TESTS ?= tests/test_construction_harness.py tests/test_resource_cost_v05.py tests/test_resource_cost_v06.py tests/test_unified_adapters_v09.py tests/test_unified_async_v10.py tests/test_unified_construction_harness.py tests/test_unified_construction_v04.py tests/test_unified_filebody_v12.py tests/test_unified_live_v07.py tests/test_unified_operational_v08.py tests/test_unified_real_v11.py

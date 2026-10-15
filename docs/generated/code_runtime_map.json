@@ -1409,7 +1409,7 @@
         "tests/test_sovushka_chat.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 173,
+      "lines": 187,
       "module": "proxy.config",
       "outbound": [
         "backend/runtime_paths.py",
@@ -5129,6 +5129,7 @@
     {
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
+        "tests/test_resource_group_packet_overflow_944.py",
         "tests/test_resource_group_proof_932.py"
       ],
       "lines": 255,
@@ -15274,6 +15275,17 @@
     },
     {
       "inbound": [],
+      "lines": 101,
+      "module": "tests.test_resource_group_packet_overflow_944",
+      "outbound": [
+        "proxy/services/lsr_resource_group_proof_service.py"
+      ],
+      "path": "tests/test_resource_group_packet_overflow_944.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 316,
       "module": "tests.test_resource_group_proof_932",
       "outbound": [
@@ -22179,9 +22191,9 @@
     "product_reachable": 381,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 781,
-    "tracked_python_files": 1174,
-    "tracked_python_lines": 407017
+    "test_or_tool_only": 782,
+    "tracked_python_files": 1175,
+    "tracked_python_lines": 407132
   },
   "warnings": []
 }

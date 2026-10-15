@@ -13,7 +13,21 @@ from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 
 ROOT = Path(".")
 DATA_DIR = mutable_root("data")
-META_DB_PATH = Path(os.getenv("RAG_META_DB_PATH", str(DATA_DIR / "les_meta.db"))).expanduser()
+
+
+def meta_db_path() -> Path:
+    """Расположение meta-хранилища, актуальное на момент вызова.
+
+    `META_DB_PATH` ниже снимается один раз при импорте модуля. Для сервиса, сконструированного
+    без явного пути, этого достаточно только там, где окружение не меняется после импорта;
+    тест, который подменяет `RAG_META_DB_PATH` через monkeypatch, с импортированным значением
+    читает чужое хранилище, и поведение (граница черновика, счётчики) начинает зависеть от того,
+    что в этом чужом хранилище уже лежит. Поэтому такие сервисы спрашивают путь здесь.
+    """
+    return Path(os.getenv("RAG_META_DB_PATH", str(DATA_DIR / "les_meta.db"))).expanduser()
+
+
+META_DB_PATH = meta_db_path()
 ENV_PATH = Path(os.getenv("LES_ENV_PATH", str(ROOT / ".env"))).expanduser()
 load_dotenv(ENV_PATH, override=False)
 
