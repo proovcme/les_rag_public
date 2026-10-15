@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1172 |
-| Строк Python | 406803 |
+| Python-файлов под git | 1173 |
+| Строк Python | 406887 |
 | PRODUCT_REACHABLE | 381 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 779 |
+| TEST_OR_TOOL_ONLY | 780 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 342 |
 | Ошибок разбора | 0 |
@@ -39,7 +39,7 @@
 | backend/qdrant_adapter.py | 4598 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |
-| proxy/routers/datasets.py | 3851 | 17 |
+| proxy/routers/datasets.py | 3851 | 18 |
 | proxy/services/rim_lsr_trace_service.py | 3401 | 42 |
 | sovushka/styles.py | 3301 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |

@@ -1855,6 +1855,7 @@
         "proxy/routers/filemap.py",
         "proxy/routers/mail.py",
         "proxy/routers/rag_advanced.py",
+        "tests/test_attachment_sheet_accounting_942.py",
         "tests/test_candidate_acceptance_service.py",
         "tests/test_cloud_drive_service.py",
         "tests/test_datasets_router.py",
@@ -10141,6 +10142,17 @@
         "tools/build_atlas_release.py"
       ],
       "path": "tests/test_atlas_packaging.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 84,
+      "module": "tests.test_attachment_sheet_accounting_942",
+      "outbound": [
+        "proxy/routers/datasets.py"
+      ],
+      "path": "tests/test_attachment_sheet_accounting_942.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -22152,9 +22164,9 @@
     "product_reachable": 381,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 779,
-    "tracked_python_files": 1172,
-    "tracked_python_lines": 406803
+    "test_or_tool_only": 780,
+    "tracked_python_files": 1173,
+    "tracked_python_lines": 406887
   },
   "warnings": []
 }
