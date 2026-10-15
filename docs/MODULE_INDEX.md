@@ -1,5 +1,25 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+<!-- candidate944-group-debt-packet-bound:v1 -->
+## Кандидат944 — ограничение пакета групповых долгов называется
+
+`proxy/services/lsr_resource_group_proof_service.py`: `unresolved_groups()` помечает каждый
+показанный долг полями `detected_in_pass` и `deferred_in_pass`, `proof_request_message()` при
+избытке добавляет явную строку «запрошено N из M; ещё K не запрашивалось и остаётся открытым —
+будет спрошено в следующем пакете», `record_proof_request()` пишет `detected`,
+`deferred_to_next_packet` и `max_groups_per_packet`. раньше `items[:max_groups]` отрезал избыток
+молча, а квитанция содержала только `requested = len(groups)`, из-за чего «пакет из четырёх из пяти
+долгов» выглядел как «долгов ровно четыре».
+
+Границы соблюдены: приложение по-прежнему не выбирает конкретный ресурс, не повышает статус и не
+трогает арифметику — отложенный долг сохраняет `price_missing:<код>` и не попадает в
+подтверждённую сумму (§ 3 ТЗ, ADR-16). Точка входа:
+`tests/test_resource_group_packet_overflow_944.py` (4 RED → 30 passed вместе с
+`test_resource_group_proof_932`, `test_lsr_group_resource_specificity`).
+
+Отдельно в этом же номере исправлен зазор проверок: регрессии 942–944 не были перечислены в
+`UNIT_TESTS` Makefile и не входили в канонический `CURRENT_TESTS`; теперь все четыре файла в гейте.
+
 <!-- candidate943-lsr-metadata-epoch:v1 -->
 ## Кандидат943 — метаданные ЛСР фиксируются постоянной эпохой
 

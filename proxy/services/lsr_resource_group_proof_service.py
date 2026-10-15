@@ -128,7 +128,16 @@ def unresolved_groups(rows: Sequence[Mapping[str, Any]], chunks: Sequence[Any], 
             "members": members[:max(1, int(member_limit))],
             "truncated": bool(state.get("truncated")),
         })
-    return items[:max(0, int(max_groups))]
+    detected = len(items)
+    shown = items[:max(0, int(max_groups))]
+    # Ограничение пакета обязано быть видно: молчаливое «4 из 5» читается и квитанцией, и
+    # человеком как «больше долгов нет». Ничего не выбирается, не подтверждается и не переносится
+    # в рассчитанные — только называется отложенное.
+    deferred = detected - len(shown)
+    for item in shown:
+        item["detected_in_pass"] = detected
+        item["deferred_in_pass"] = deferred
+    return shown
 
 
 def proof_request_message(groups: Sequence[Mapping[str, Any]]) -> str:
@@ -163,7 +172,7 @@ def proof_request_message(groups: Sequence[Mapping[str, Any]]) -> str:
             f"- {group.get('cipher')} (строка {group.get('locator') or '?'}): ресурс "
             f"{group.get('code')} «{group.get('name')}», {group.get('unit')} — в выбранной "
             f"книге это группа из {group.get('total')} конкретных ресурсов:\n{members}{tail}")
-    return (
+    text = (
         "Карточки ты прочитал, но позиция всё равно не становится рассчитанной: норма ссылается "
         "на групповой код ресурса, а ценовая книга считает конкретный ресурс этой группы. Цены у "
         "группы не существует — первая строка группы не является ценой группы, и сумма, собранная "
@@ -186,6 +195,17 @@ def proof_request_message(groups: Sequence[Mapping[str, Any]]) -> str:
         "open_gap; не подставляй произвольный ресурс или количество:\n"
         + "\n".join(blocks)
     )
+    deferred = max((int(group.get("deferred_in_pass") or 0) for group in groups), default=0)
+    if deferred > 0:
+        # Ограничение пакета называется, а не молчится: иначе перечень читается как полный
+        # список долгов документа. Ничего не выбирается и не закрывается — отложенное остаётся
+        # открытым `price_missing:<код>` и будет спрошено в следующем пакете.
+        text += (
+            f"\nОграничение этого пакета: запрошено {len(groups)} групповых долгов из "
+            f"{len(groups) + deferred}; ещё {deferred} не запрашивалались и остаются открытыми — "
+            "они будут спрошены в следующем пакете, и это не значит, что долгов больше нет."
+        )
+    return text
 
 
 def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[str],
@@ -210,6 +230,12 @@ def record_proof_request(trace: dict[str, Any], *, sheet: str, packet: Sequence[
                     "members_offered": len(group.get("members") or [])}
                    for group in groups],
         "requested": len(groups),
+        # Долг, отложенный ограничением пакета, остаётся видимым в квитанции: без этих полей
+        # «requested = 4» неотличимо от «долгов было ровно 4».
+        "detected": int((groups[0] if groups else {}).get("detected_in_pass") or len(groups)),
+        "deferred_to_next_packet": int(
+            (groups[0] if groups else {}).get("deferred_in_pass") or 0),
+        "max_groups_per_packet": int(MAX_GROUPS_PER_PACKET),
         "model_answered": bool(answered),
         "answer_parsed": bool(answer_parsed),
         "model_calls_after_request": len(receipts),

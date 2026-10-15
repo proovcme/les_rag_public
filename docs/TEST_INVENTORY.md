@@ -13,6 +13,18 @@ budget is that window minus the declared generation and safety reserves, and the
 the same window it was given. Characterization only — no product behaviour changed there, because
 the hypothesis that the transport conflated the two numbers was disproved by the live measurement.
 
+Candidate944 adds test_resource_group_packet_overflow_944.py: the per-packet cap on resource-group
+asks must state its own surplus. Four tests were RED (5 detected groups, 4 shown, deferred count
+absent everywhere), 30 pass with test_resource_group_proof_932 and
+test_lsr_group_resource_specificity. Nothing is chosen and no status promoted: the deferred debt
+keeps its `price_missing:<код>` gap.
+
+Coverage correction in the same build: the regression files added in 942-944 were **not** listed in
+the Makefile `UNIT_TESTS`, so the green `CURRENT_TESTS` gate never ran them.
+test_attachment_sheet_accounting_942, test_connection_window_budget_942,
+test_lsr_render_byte_determinism_943 and test_resource_group_packet_overflow_944 are now part of
+the canonical gate. This was a gap in verification coverage, not in product behaviour.
+
 Candidate943 adds test_lsr_render_byte_determinism_943.py: the delivered LSR must carry no
 build-time wall clock in its document properties, because the same saved decisions repacked from
 another session produced 39 707 and 39 708 bytes with different hashes and the diff was confined

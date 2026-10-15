@@ -5131,7 +5131,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_resource_group_proof_932.py"
       ],
-      "lines": 229,
+      "lines": 255,
       "module": "proxy.services.lsr_resource_group_proof_service",
       "outbound": [
         "proxy/__init__.py",
@@ -22181,7 +22181,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 781,
     "tracked_python_files": 1174,
-    "tracked_python_lines": 406991
+    "tracked_python_lines": 407017
   },
   "warnings": []
 }

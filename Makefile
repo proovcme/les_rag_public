@@ -79,6 +79,11 @@ UNIT_TESTS += tests/test_model_norm_snapshot_binding.py tests/test_model_query_g
 UNIT_TESTS += tests/test_workbook_provider_binding_928.py tests/test_smeta_conflict_visible_identity_928.py
 UNIT_TESTS += tests/test_model_initial_schema_reserve_928.py
 UNIT_TESTS += tests/test_norm_card_proof_request_930.py tests/test_architecture_norm_card_proof_gate.py tests/test_resource_group_proof_932.py
+# Регрессии 942-944 обязаны быть в каноническом гейте, а не только в ручном прогоне файла:
+# 942 — транспорт вложения и граница окна, 943 — воспроизводимость доставленного файла,
+# 944 — видимое ограничение пакета групповых долгов.
+UNIT_TESTS += tests/test_attachment_sheet_accounting_942.py tests/test_connection_window_budget_942.py
+UNIT_TESTS += tests/test_lsr_render_byte_determinism_943.py tests/test_resource_group_packet_overflow_944.py
 UNIT_TESTS += tests/test_model_proof_turn_integrity.py
 UNIT_TESTS += tests/test_rim_cited_numeric_literals.py tests/test_model_warmup_service.py
 
