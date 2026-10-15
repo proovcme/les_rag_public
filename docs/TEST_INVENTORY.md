@@ -1,5 +1,18 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+Candidate942 adds mandatory test_attachment_sheet_accounting_942.py: an overflowing tabular
+attachment frame must name every sheet of the document with delivered-versus-actual non-empty row
+counts, must mark a sheet the model never saw at all, must not invent a gap when the frame is
+complete, and CSV goes through the same accounting. 3 RED / 1 PASS before the change, 165 PASS
+together with test_datasets_router, test_chat_harness_format and
+test_live_workbook_acceptance_contract after it. Measured on the real customer ВОР.xlsx: the frame
+now states 155 delivered of 439 non-empty rows across 10 sheets and names six undelivered sheets.
+test_connection_window_budget_942.py additionally pins the budget convention that made today's
+8214-token truncation readable: input_token_limit is the whole observed window, the Governor packet
+budget is that window minus the declared generation and safety reserves, and the native path names
+the same window it was given. Characterization only — no product behaviour changed there, because
+the hypothesis that the transport conflated the two numbers was disproved by the live measurement.
+
 Candidate873 adds mandatory test_chat_native_research_exchange.py (actual ordinary
 chat rounds/final, literal native protocol, invalid IDs/args, physical overflow,
 legacy unchanged) and test_model_norm_evidence_ref_reads.py (actual admission,

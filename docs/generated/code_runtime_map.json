@@ -1869,7 +1869,7 @@
         "tests/test_scope_model_v21.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3811,
+      "lines": 3851,
       "module": "proxy.routers.datasets",
       "outbound": [
         "backend/converter.py",
@@ -3710,6 +3710,7 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_native_research_exchange.py",
         "tests/test_chat_ordinary_final_phase.py",
+        "tests/test_connection_window_budget_942.py",
         "tests/test_context_governor_service.py",
         "tests/test_context_wire_token_admission.py",
         "tests/test_model_connection_chat_options.py",
@@ -5017,6 +5018,7 @@
         "proxy/services/smeta_chat_adapter_service.py",
         "proxy/services/version_service.py",
         "sovushka/components/header.py",
+        "tests/test_connection_window_budget_942.py",
         "tests/test_freetoken_provider.py",
         "tests/test_llm_transport_profile_service.py",
         "tests/test_model_connection_chat_options.py",
@@ -5491,6 +5493,7 @@
         "tests/test_canonical_route_service.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_mail_query.py",
+        "tests/test_connection_window_budget_942.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_capability_service.py",
         "tests/test_model_connection_chat_integration.py",
@@ -5562,6 +5565,7 @@
         "proxy/services/canonical_route_service.py",
         "proxy/services/model_warmup_service.py",
         "proxy/services/openai_compatible_transport_service.py",
+        "tests/test_connection_window_budget_942.py",
         "tests/test_model_connection_chat_integration.py",
         "tests/test_model_connection_chat_options.py",
         "tests/test_model_connection_embeddings_integration.py",
@@ -5595,6 +5599,7 @@
         "proxy/services/model_connection_resolver_service.py",
         "proxy/services/model_engine_extension_service.py",
         "proxy/services/openai_compatible_transport_service.py",
+        "tests/test_connection_window_budget_942.py",
         "tests/test_model_connection_chat_options.py",
         "tests/test_model_connection_security_service.py",
         "tests/test_openai_compatible_transport_service.py"
@@ -5682,6 +5687,7 @@
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_mail_query.py",
         "tests/test_chat_ordinary_final_phase.py",
+        "tests/test_connection_window_budget_942.py",
         "tests/test_context_governor_service.py",
         "tests/test_context_wire_token_admission.py",
         "tests/test_live_workbook_acceptance_contract.py",
@@ -6245,6 +6251,7 @@
         "tests/test_chat_ordinary_native_continuation.py",
         "tests/test_chat_research_read_deadline.py",
         "tests/test_chat_terminal_output_diagnostics.py",
+        "tests/test_connection_window_budget_942.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_connection_chat_integration.py",
         "tests/test_model_connection_chat_options.py",
@@ -10915,6 +10922,23 @@
         "proxy/services/command_service.py"
       ],
       "path": "tests/test_command_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 157,
+      "module": "tests.test_connection_window_budget_942",
+      "outbound": [
+        "proxy/services/context_governor_service.py",
+        "proxy/services/llm_transport_profile_service.py",
+        "proxy/services/model_connection_contracts.py",
+        "proxy/services/model_connection_resolver_service.py",
+        "proxy/services/model_connection_security_service.py",
+        "proxy/services/model_execution_preset_service.py",
+        "proxy/services/openai_compatible_transport_service.py"
+      ],
+      "path": "tests/test_connection_window_budget_942.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -22128,9 +22152,9 @@
     "product_reachable": 381,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 778,
-    "tracked_python_files": 1171,
-    "tracked_python_lines": 406606
+    "test_or_tool_only": 779,
+    "tracked_python_files": 1172,
+    "tracked_python_lines": 406803
   },
   "warnings": []
 }

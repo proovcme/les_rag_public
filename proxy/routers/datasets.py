@@ -3408,6 +3408,10 @@ def _format_tabular_attachment_context(path: Path, original_name: str, *, max_ch
         "",
     ]
     truncated = False
+    # (лист, передано непустых строк, сколько их в исходном файле). Считается для ВСЕХ листов,
+    # даже когда кадр уже заполнен: «не доставлено модели» и «нет в источнике» — разные вещи,
+    # и модель не должна их путать.
+    accounts: list[tuple[str, int, int]] = []
 
     def _append(line: str) -> bool:
         nonlocal truncated
@@ -3429,19 +3433,29 @@ def _format_tabular_attachment_context(path: Path, original_name: str, *, max_ch
         try:
             for sheet in wb.sheetnames:
                 ws = wb[sheet]
-                if not _append(f"## Лист: {sheet}"):
-                    break
+                if truncated:
+                    accounts.append((sheet, 0, sum(
+                        1 for row in ws.iter_rows(values_only=True)
+                        if any(value not in (None, "") for value in row))))
+                    continue
                 nonempty = 0
+                delivered = 0
+                stopped = not _append(f"## Лист: {sheet}")
                 for ri, row in enumerate(ws.iter_rows(values_only=True), 1):
                     vals = [_compact_cell(v) for v in row if v not in (None, "")]
                     if not vals:
                         continue
                     nonempty += 1
-                    if not _append(f"{sheet}!R{ri}: " + " | ".join(vals)):
-                        break
+                    if stopped:
+                        continue
+                    if _append(f"{sheet}!R{ri}: " + " | ".join(vals)):
+                        delivered += 1
+                    else:
+                        stopped = True
                 _append(f"Итого непустых строк на листе «{sheet}»: {nonempty}")
-                if truncated:
-                    break
+                accounts.append((sheet, delivered, nonempty))
+                # Здесь не прерывают цикл: следующие листы всё равно должны быть посчитаны,
+                # иначе карта недоставленного покажет только начало документа.
         finally:
             wb.close()
     elif suffix == ".csv":
@@ -3458,20 +3472,46 @@ def _format_tabular_attachment_context(path: Path, original_name: str, *, max_ch
         delimiter = ";" if sample.count(";") >= sample.count(",") else ","
         reader = csv.reader(text.splitlines(), delimiter=delimiter)
         nonempty = 0
-        _append("## CSV")
+        delivered = 0
+        stopped = not _append("## CSV")
         for ri, row in enumerate(reader, 1):
             vals = [_compact_cell(v) for v in row if str(v or "").strip()]
             if not vals:
                 continue
             nonempty += 1
-            if not _append(f"CSV!R{ri}: " + " | ".join(vals)):
-                break
+            if stopped:
+                continue
+            if _append(f"CSV!R{ri}: " + " | ".join(vals)):
+                delivered += 1
+            else:
+                stopped = True
         _append(f"Итого непустых строк CSV: {nonempty}")
+        accounts.append(("CSV", delivered, nonempty))
     else:
         return None
 
     if truncated and parts[-1] != "[Табличный контекст усечён по лимиту; для полной сметы нужен файл как датасет или более узкий лист.]":
         parts.append("[Табличный контекст усечён по лимиту; для полной сметы нужен файл как датасет или более узкий лист.]")
+    if truncated and accounts:
+        delivered_total = sum(item[1] for item in accounts)
+        actual_total = sum(item[2] for item in accounts)
+        parts.append(
+            f"[Учёт недоставленного: листов {len(accounts)}; передано {delivered_total} из "
+            f"{actual_total} непустых строк. Недоставленное не означает отсутствие данных в "
+            "исходном файле. Полные строки доступны, когда файл подключён датасетом либо когда "
+            "запрошен отдельный лист.]")
+        for sheet_name, delivered, total in accounts:
+            if delivered == total:
+                # Блок учёта — это карта всего документа, а не список потерь: полностью
+                # доставленный лист тоже должен быть в ней назван.
+                parts.append(f"  «{sheet_name}»: передано {delivered} из {total} — лист доставлен "
+                             "целиком")
+            elif delivered == 0:
+                parts.append(f"  «{sheet_name}»: передано 0 из {total} — строки есть в источнике, "
+                             "модели не доставлялось ни одной")
+            else:
+                parts.append(f"  «{sheet_name}»: передано {delivered} из {total} — остаток листа "
+                             "модели не доставлялся")
     text = "\n".join(parts).strip()
     return (text, truncated) if text else None
 
