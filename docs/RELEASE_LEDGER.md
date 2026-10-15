@@ -26,7 +26,18 @@
 Проверки: новый тест до правки 1 failed / 1 passed (RED на закреплённой эпохе), после — 52 passed
 вместе с `test_rim_trace_xlsx`, `test_workbook_partial_draft`, `test_revision_projection_830`.
 Версия двинута по контракту: 0.31.215 / 943 / desktop 5.1.943, surfaces синхронизированы,
-`docs/CODE_RUNTIME_MAP.md` перегенерирован. Канонические гейты и выкатка — ниже по тексту после
+`docs/CODE_RUNTIME_MAP.md` перегенерирован (после коммита, добавившего тестовой файл — счётчик
+учтённых python-файлов сверяется именно с коммитом). Канонический гейт в штатной конфигурации
+чистого дерева (без пользовательского state root): `sync_version_contract --check` rc=0,
+`compileall` rc=0, `collect-only` rc=0, CURRENT_TESTS **903 passed / 17 skipped**,
+architecture gate rc=0 — `GATE RESULT: GREEN`.
+
+Важная оговорка по окружению, чтобы цифра не читалась произвольно: тот же состав тестов с
+`LES_WINDOWS_STATE_ROOT` (и особенно с `RAG_META_DB_PATH` на рабочий `les_meta_qwen.db`) даёт уже
+5 падений в `tests/test_model_query_checkpoint_draft.py` — `DID NOT RAISE ModelQueryFailure` и
+`assert 4 == 5` по числу обращений к модели. Это не регрессия 943: те же тесты так же вели себя на
+942 и на базовом коммите. Поведение границы «сбой поиска → отдать физический черновик» зависит от
+расположения durable-состояния — заведено в трекер (#92) как отдельный дефект, а не как шум
 прогона. **customer-ready=false**: профессиональная приёмка ВОР/ЛСР, живой B0/B1 на этом номере,
 матрица S1–S6 и точный Windows installer по-прежнему не выполнены.
 

@@ -7256,6 +7256,7 @@
         "proxy/smeta_core/lsr_renderer.py",
         "tests/test_finalization_defects_782.py",
         "tests/test_lsr_labor_tariff_830.py",
+        "tests/test_lsr_render_byte_determinism_943.py",
         "tests/test_model_result_resource_actions.py",
         "tests/test_model_result_resource_code.py",
         "tests/test_revision_projection_830.py",
@@ -12553,6 +12554,18 @@
     },
     {
       "inbound": [],
+      "lines": 58,
+      "module": "tests.test_lsr_render_byte_determinism_943",
+      "outbound": [
+        "proxy/services/rim_trace_xlsx_service.py",
+        "tests/test_rim_trace_xlsx.py"
+      ],
+      "path": "tests/test_lsr_render_byte_determinism_943.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 583,
       "module": "tests.test_lsr_result_readiness_service",
       "outbound": [
@@ -15536,7 +15549,9 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
+      "inbound": [
+        "tests/test_lsr_render_byte_determinism_943.py"
+      ],
       "lines": 563,
       "module": "tests.test_rim_trace_xlsx",
       "outbound": [
@@ -22164,9 +22179,9 @@
     "product_reachable": 381,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 780,
-    "tracked_python_files": 1173,
-    "tracked_python_lines": 406894
+    "test_or_tool_only": 781,
+    "tracked_python_files": 1174,
+    "tracked_python_lines": 406952
   },
   "warnings": []
 }
