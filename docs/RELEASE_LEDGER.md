@@ -26,11 +26,32 @@
 Проверки: новый тест до правки 1 failed / 1 passed (RED на закреплённой эпохе), после — 52 passed
 вместе с `test_rim_trace_xlsx`, `test_workbook_partial_draft`, `test_revision_projection_830`.
 Версия двинута по контракту: 0.31.215 / 943 / desktop 5.1.943, surfaces синхронизированы,
-`docs/CODE_RUNTIME_MAP.md` перегенерирован (после коммита, добавившего тестовой файл — счётчик
-учтённых python-файлов сверяется именно с коммитом). Канонический гейт в штатной конфигурации
-чистого дерева (без пользовательского state root): `sync_version_contract --check` rc=0,
-`compileall` rc=0, `collect-only` rc=0, CURRENT_TESTS **903 passed / 17 skipped**,
-architecture gate rc=0 — `GATE RESULT: GREEN`.
+`docs/CODE_RUNTIME_MAP.md` перегенерирован (счётчик строк Python 406952 → 406991).
+
+Первой половины оказалось мало, и это тоже замерено: openpyxl безусловно поднимает
+`workbook.properties.modified` текущим временем в момент сохранения
+(`openpyxl/writer/excel.py:292`), поэтому на установленном 943 две пересборки всё ещё
+различались содержимым `docProps/core.xml` (`09:32:52Z` против `09:33:09Z`). Теперь
+`_save_calculated_workbook` нормализует обе метки уже в готовом архиве — рядом с той же петлёй,
+которая подставляет кэш-значения формул. Тест после этого сдвигает часы именно на сохранениях
+(подменяя имя модуля `datetime` в `openpyxl.writer.excel`), иначе две сборки попадают в одну
+секунду и проверка проходит случайно; отдельно утверждается, что не-эпохальной метки в
+метаданных не осталось.
+
+Выкатано и проверено на установленных байтах (`artifacts/live_943/determinism.json`,
+`basic_function_smoke.json`): пересборка одного и того же завершённого задания из двух **новых**
+сессий даёт 39 703 байта в обоих случаях, `same_content_every_part: true`, `core_pinned: true`;
+сырые sha при этом разные — остаются метки времени записей ZIP, принадлежащие упаковщику, и это
+сформулировано как проверяемое утверждение, а не как «байты совпадают». Повтор того же
+`session_id` возвращает ту же ревизию (идемпотентность доставки), поэтому проверка намеренно
+использует уникальные сессии. `basic_function_smoke --release`: 9 pass / 1 warn / 0 P0 / 0 P1;
+`/api/model-connections/effective` — тот же `conn:9458be3549ad449985f9eb10dba3c9e1:r10`,
+Qwen3.6-35B-A3B-NVFP4; durable-задания после рестарта 113 complete / 172 paused / 3 running
+(три «running» с `updated_at` 22.09.2026 — старые маркеры, не трогались).
+
+Канонический гейт в штатной конфигурации чистого дерева (без пользовательского state root):
+`sync_version_contract --check`, `compileall`, `collect-only` и architecture gate — rc=0,
+CURRENT_TESTS **903 passed / 17 skipped**.
 
 Важная оговорка по окружению, чтобы цифра не читалась произвольно: тот же состав тестов с
 `LES_WINDOWS_STATE_ROOT` (и особенно с `RAG_META_DB_PATH` на рабочий `les_meta_qwen.db`) даёт уже
