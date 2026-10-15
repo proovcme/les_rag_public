@@ -13,6 +13,14 @@ budget is that window minus the declared generation and safety reserves, and the
 the same window it was given. Characterization only — no product behaviour changed there, because
 the hypothesis that the transport conflated the two numbers was disproved by the live measurement.
 
+Candidate943 adds test_lsr_render_byte_determinism_943.py: the delivered LSR must carry no
+build-time wall clock in its document properties, because the same saved decisions repacked from
+another session produced 39 707 and 39 708 bytes with different hashes and the diff was confined
+to docProps/core.xml. Both statements are pinned — the pinned epoch inside core.xml, and equal
+content for every archive part across two renders. 1 RED / 1 PASS before the change, 52 PASS with
+test_rim_trace_xlsx, test_workbook_partial_draft and test_revision_projection_830 after it. Raw
+ZIP entry timestamps are explicitly out of scope and stated as such, not hidden.
+
 Candidate873 adds mandatory test_chat_native_research_exchange.py (actual ordinary
 chat rounds/final, literal native protocol, invalid IDs/args, physical overflow,
 legacy unchanged) and test_model_norm_evidence_ref_reads.py (actual admission,

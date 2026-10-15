@@ -441,8 +441,15 @@ def _finalize(ws, head_r: int) -> None:
 def _new_sheet():
     """Новая книга + лист «ЛСР РИМ» + стили + `put`."""
     import openpyxl
+    from datetime import datetime
 
     wb = openpyxl.Workbook()
+    # Метаданные не должны штамповаться текущим временем: пересборка тех же сохранённых
+    # решений обязана давать те же байты, иначе «тот же документ» нельзя сверить по хешу
+    # после повторной доставки (§ 7 «пересчёт скачанных байтов»). Дата, которую читает
+    # оператор, остаётся в листе и приходит из той же трассы.
+    wb.properties.created = datetime(2000, 1, 1)
+    wb.properties.modified = datetime(2000, 1, 1)
     ws = wb.active
     ws.title = "ЛСР РИМ"
     S = _styles()
