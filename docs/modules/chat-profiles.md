@@ -1,5 +1,21 @@
 # Chat profiles
 
+## 946 — частичный переопрос сохраняет измеряемый набор возможностей
+
+`CapabilityProbe.probe_and_store` заново проверяет объединение requested и
+наблюдений `evidence_source=probe` последнего snapshot той же immutable revision.
+Состояния SUPPORTED не копируются из прошлого: текущий отказ/UNKNOWN заменяет
+старое измерение, новый TTL относится только к заново измеренным возможностям.
+Непроверенные/template-наблюдения и другая revision не расширяют набор.
+Ранее сохранённый узкий snapshot восстанавливается штатным полным переопросом.
+
+`ModelCapabilityError` отделяет локальный отказ допуска от ошибки провайдера:
+HTTP409 с `CAPABILITY_REQUIRED` либо `CAPABILITY_EVIDENCE_INSUFFICIENT`, без
+вызова другого подключения и деградации в повторный ответ. Точки входа:
+model_capability_service, openai_compatible_transport_service,
+canonical_route_service и общий catch активного chat. Регрессии:
+test_model_capability_service и test_model_capability_admission_946.
+
 <!-- candidate939-proof-kind-sampling:v1 -->
 ## 939: optional sampling в immutable model connection
 

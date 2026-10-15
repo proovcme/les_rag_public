@@ -18,6 +18,7 @@ from proxy.services.model_connection_resolver_service import (
 from proxy.services.openai_compatible_transport_service import (
     InferenceRequest,
     InferenceResponse,
+    ModelCapabilityError,
     ModelTransportError,
     OpenAICompatibleTransport,
 )
@@ -197,6 +198,10 @@ class BoundModelChatRunner:
                 fallback_used=False,
                 preserve_all_tool_calls=True,
             )
+        except ModelCapabilityError:
+            # Missing local evidence is an admission problem; trying another
+            # provider cannot establish the assigned connection's capabilities.
+            raise
         except ModelTransportError as primary_error:
             try:
                 fallback = self.resolver.resolve_fallback(primary.revision_id)

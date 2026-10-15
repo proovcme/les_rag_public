@@ -1,5 +1,17 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат946 — прозрачный допуск и сохранность отклонённых строк
+
+`model_capability_service.CapabilityProbe.probe_and_store` повторно измеряет
+полный ранее проверенный набор той же revision; transport/runner/chat различают
+локальный отказ допуска и upstream failure. Док↔код:
+[chat-profiles](modules/chat-profiles.md). `chat_evidence_application_service`
+сохраняет source-conflict proposals и передаёт их отдельным checkpoint для
+поправки, не принимая неверный объём в расчёт. Док↔код:
+[RAG evidence flow](modules/rag-evidence-flow.md). Регрессии:
+test_model_capability_admission_946, test_model_lsr_rejected_source_proposals.
+Статус: кандидат; полная проверка и installed live pending, customer-ready=false.
+
 <!-- candidate945-meta-store-env-binding:v1 -->
 ## Кандидат945 — путь meta-хранилища решается при конструировании сервиса
 

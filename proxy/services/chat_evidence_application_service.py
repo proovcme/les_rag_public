@@ -65,6 +65,7 @@ from proxy.services.openai_compatible_transport_service import (
     CloudBudgetStop,
     InferenceRequest,
     InferenceResponse,
+    ModelCapabilityError,
     ModelTransportError,
 )
 from proxy.services.context_governor_service import (
@@ -3097,6 +3098,66 @@ def _sheet_pass_row_blocked(row: Mapping[str, Any], blocking_errors: Sequence[st
         if prefix == "unknown_evidence_ref" and rest.upper() in refs:
             return True
     return False
+
+
+def sheet_pass_rejected_row_proposals(
+    rows: Sequence[Mapping[str, Any]], *, kept_rows: Sequence[Mapping[str, Any]],
+    sheet: str, catalog: AttachmentSourceCatalog, errors: Sequence[str],
+    packet_locators: Sequence[str], drop_locator: str = "",
+) -> list[dict[str, Any]]:
+    """Retain complete decisions refused by the existing source/identity guard.
+
+    Packet admission already keeps unknown identities and foreign rows as
+    proposals. This projection fills the later source-validation gap without
+    accepting a changed quantity, inferring a conversion or extending the guard.
+    """
+    proposals: list[dict[str, Any]] = []
+    for row in rows:
+        if any(dict(row) == dict(kept) for kept in kept_rows):
+            continue
+        source = catalog.lookup(row.get("source_row"))
+        if source is None or source.sheet != str(sheet or "").strip():
+            continue
+        if str(drop_locator or "").strip().casefold() in {
+            str(row.get("source_row") or "").strip().casefold(), source.locator.casefold(),
+        }:
+            continue
+        key = str(row.get("source_row") or "").strip()
+        operation_id = str(row.get("operation_id") or "")
+        row_errors = [str(error) for error in errors if str(error) in {
+            f"source_quantity_mismatch:{key}", f"source_unit_mismatch:{key}",
+            f"duplicate_source_row:{key}", f"unknown_operation_id:{key}:{operation_id}",
+            f"operation_source_mismatch:{key}:{operation_id}",
+        }]
+        if not row_errors:
+            continue
+        proposals.append({
+            "schema": "les.model-result-unapplied-proposal.v1",
+            "code": "MODEL_RESULT_SOURCE_CONFLICT", "reason": "source_structure_conflict",
+            "source_row": row.get("source_row"), "operation_id": operation_id,
+            "packet_locators": list(packet_locators), "errors": row_errors,
+            "decision": dict(row),
+        })
+    return proposals
+
+
+def active_source_conflict_proposals(job: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """A completed correction retains history without reopening old proposals."""
+    if not isinstance(job, Mapping) or str(job.get("status") or "") == "complete":
+        return []
+    return [dict(item) for item in job.get("unapplied_proposals") or ()
+            if isinstance(item, Mapping) and item.get("code") == "MODEL_RESULT_SOURCE_CONFLICT"]
+
+
+def packet_source_conflict_proposals(
+    job: Mapping[str, Any] | None, *, catalog: AttachmentSourceCatalog,
+    packet_locators: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Resolve locator aliases for scope without rewriting authored proposals."""
+    owned = set(packet_locators)
+    return [item for item in active_source_conflict_proposals(job)
+            if (source := catalog.lookup((item.get("decision") or {}).get("source_row"))) is not None
+            and source.locator in owned]
 
 
 def remaining_sheet_work_locators(
@@ -6258,6 +6319,7 @@ def model_rag_prior_page_context(
     rows: Sequence[Mapping[str, Any]], evidence_chunks: Sequence[Any],
     *, review_rows: Sequence[Mapping[str, Any]] = (), review_instruction: str = "",
     source_catalog: AttachmentSourceCatalog | None = None,
+    unapplied_proposals: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[dict[str, Any], list[Any]]:
     """Replay authored rows and exactly their cited cards; never choose a norm."""
     rows = model_rag_existing_operation_rows(rows, review_rows)
@@ -6299,11 +6361,13 @@ def model_rag_prior_page_context(
                 }
         if any(key in fact for key in ("norm_reference", "resource_reference", "price_reference", "source_comparison")):
             structural_facts.append(fact)
+    proposed_rows = [item["decision"] for item in unapplied_proposals
+                     if isinstance(item.get("decision"), Mapping)]
     cited = {
-        str(identity) for row in rows
+        str(identity) for row in [*rows, *proposed_rows]
         for identity in (row.get("evidence_bindings") or {}).values()
     }
-    for row in rows:
+    for row in [*rows, *proposed_rows]:
         nested_bindings = row.get("_resource_binding_evidence_bindings")
         if isinstance(nested_bindings, Mapping):
             for bindings in nested_bindings.values():
@@ -6329,6 +6393,15 @@ def model_rag_prior_page_context(
         })
     return {
         **({"review_instruction": review_instruction} if review_instruction else {}),
+        **({"source_conflict_origin": "application",
+            "unapplied_model_proposals": [dict(item) for item in unapplied_proposals],
+            "source_conflict_instruction": (
+                "Это прежние разобранные предложения, которые приложение не приняло из-за "
+                "названного буквального расхождения с исходником. Они не являются сохранёнными "
+                "операциями prior_model_decisions и не участвуют в расчёте. Сверь их с исходником "
+                "и замечанием пользователя и самостоятельно верни уточнённые строки; приложение "
+                "не исправляло количество, единицу, норму или способ перевода.")}
+           if unapplied_proposals else {}),
         # These diagnostics are application-derived projections of the same
         # authored fields/citations, not additional model choices. Repeating
         # their full citation dumps crowded out the next exact evidence group.
@@ -10041,6 +10114,8 @@ async def _execute_chat_evidence_application(
                                 "message": "Обязательная часть выбора инструмента не помещается в безопасный контекст модели.",
                             },
                         ) from context_error
+                    except ModelCapabilityError:
+                        raise
                     except Exception as tool_err:  # noqa: BLE001 - tool loop must degrade into trace, not block chat
                         logger.exception(
                             "[TOOLS] model tool loop skipped: %s",
@@ -10654,8 +10729,9 @@ async def _execute_chat_evidence_application(
                                 prior_page_context, prior_page_chunks = model_rag_prior_page_context(
                                     prior_page_rows, sheet_pass_evidence_chunks,
                                     review_rows=prior_packet_rows, review_instruction=review_instruction,
-                                    source_catalog=source_catalog)
-                                if prior_page_rows or prior_packet_rows:
+                                    source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
+                                        research_job, catalog=source_catalog, packet_locators=packet))
+                                if prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals"):
                                     pass_evidence.append(prior_page_context)
                                 declared_queries = []
                                 query_calls = []
@@ -10716,8 +10792,9 @@ async def _execute_chat_evidence_application(
                                 prior_page_context, prior_page_chunks = model_rag_prior_page_context(
                                     prior_page_rows, sheet_pass_evidence_chunks,
                                     review_rows=prior_packet_rows, review_instruction=review_instruction,
-                                    source_catalog=source_catalog)
-                                if prior_page_rows or prior_packet_rows:
+                                    source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
+                                        research_job, catalog=source_catalog, packet_locators=packet))
+                                if prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals"):
                                     pass_evidence.append(prior_page_context)
                                 selector_evidence = pass_evidence
                                 query_text = ""
@@ -11933,6 +12010,11 @@ async def _execute_chat_evidence_application(
                                 artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
                                                if artifact_kind_declaration.get("status") == "declared" else ""),
                             )
+                            source_conflict_proposals = sheet_pass_rejected_row_proposals(
+                                admission.accepted_rows, kept_rows=kept, sheet=sheet_name,
+                                catalog=source_catalog, errors=pass_errors,
+                                packet_locators=packet, drop_locator=tail_locator,
+                            )
                             if tail_locator:
                                 # Addressed handling of the unread tail (blocker § 2):
                                 # the cut row is put to the model again, it is not
@@ -12116,7 +12198,7 @@ async def _execute_chat_evidence_application(
                                 query_addresses=pass_query_addresses,
                                 pending_result_packets=pending_result_packets)
                             held_query_context = held_payload
-                            if not last_truncated and not pass_transport_diagnostics:
+                            if not last_truncated and not pass_transport_diagnostics and not source_conflict_proposals:
                                 held_payload.update({
                                     "sheet": sheet_name, "locators": list(packet),
                                     "packet_id": row_packet_id(source_catalog, sheet=sheet_name, locators=packet),
@@ -12189,7 +12271,8 @@ async def _execute_chat_evidence_application(
                                     omitted=pass_omitted,
                                     remaining=remaining,
                                     held_packet=held_payload,
-                                    unapplied_proposals=[*admission.unapplied_proposals, *pass_transport_diagnostics],
+                                    unapplied_proposals=[*admission.unapplied_proposals, *pass_transport_diagnostics,
+                                                        *source_conflict_proposals],
                                     enforce_packet_scope=True,
                                     canonicalize_locator=lambda value: (
                                         source_catalog.lookup(value).locator if source_catalog.lookup(value) else value
@@ -13505,6 +13588,10 @@ async def _execute_chat_evidence_application(
                         research_job
                     )
                     packaging_is_draft = bool(research_job) and not durable_packaging_rows
+                    source_conflict_proposals = active_source_conflict_proposals(research_job)
+                    source_conflict_errors = list(dict.fromkeys(
+                        str(error) for proposal in source_conflict_proposals
+                        for error in proposal.get("errors") or ()))
                     if parsed_model_result is not None:
                         answer, model_result_rows = parsed_model_result
                         # The model's first complete result is the terminal professional
@@ -13929,6 +14016,8 @@ async def _execute_chat_evidence_application(
                             finish_reason=answer_finish_reason,
                             validate_evidence_refs=True,
                         )
+                        model_result_errors.extend(error for error in source_conflict_errors
+                                                   if error not in model_result_errors)
                         if research_cancelled:
                             model_result_errors.append("workbook_research_cancelled")
                         transport_error_codes = list(dict.fromkeys(
@@ -13997,6 +14086,13 @@ async def _execute_chat_evidence_application(
                         read_stop_reason = str((retrieval_trace.get("tool_loop") or {}).get(
                             "evidence_read_stop") or "")
                         notice = (
+                            "Таблица получена, но строки не прошли сверку с исходником. "
+                            + ("Объёмы или единицы в ответе не совпадают с исходными. "
+                               if any(error.startswith(("source_quantity_mismatch:", "source_unit_mismatch:"))
+                                      for error in source_conflict_errors) else "")
+                            + "ЛСР не создана. Полные предложения модели сохранены без изменения значений. "
+                            "Уточнение можно написать обычным сообщением в чате, например: «Исправь пересчёт»."
+                            if source_conflict_proposals else
                             "Чтение источников приостановлено: данные для следующего шага "
                             "не помещаются в окно контекста модели. ЛСР ещё не собрана."
                             if read_stop_reason == "evidence_read_capacity" else
@@ -14009,7 +14105,11 @@ async def _execute_chat_evidence_application(
                             answer = f"{answer.rstrip()}\n\n{notice}"
                         retrieval_trace["model_result"] = {
                             "schema": "les_model_rag_result_v1",
-                            "status": "technical_pending" if read_stop_reason else "unstructured",
+                            "status": ("structural_error" if source_conflict_proposals else
+                                       "technical_pending" if read_stop_reason else "unstructured"),
+                            **({"errors": source_conflict_errors, "row_count": 0,
+                                "proposed_row_count": len(source_conflict_proposals)}
+                               if source_conflict_proposals else {}),
                             **({"reason": read_stop_reason} if read_stop_reason else {}),
                             "packaged": False,
                             "notice": notice,
@@ -14894,6 +14994,9 @@ async def _execute_chat_evidence_application(
                 "cloud_token_budget": retrieval_trace.get("cloud_token_budget", {}),
                 "job_id": (research_job or {}).get("job_id"),
             }) from e
+        except ModelCapabilityError as e:
+            logger.error("[CHAT] ASSIGNED MODEL CAPABILITY ERROR: %s", e)
+            raise HTTPException(409, detail=e.public_detail) from e
         except ModelTransportError as e:
             logger.error("[CHAT] ASSIGNED MODEL ERROR: %s", e)
             raise HTTPException(502, f"Назначенная модель не ответила: {e}")

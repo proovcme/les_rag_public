@@ -1,5 +1,20 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 946 — таблица распознана, но source guard отклонил все строки
+
+Owned history live945-eff75e64 показала parsed_rows2/kept_rows0: модель заменила
+п.м и исходные количества на м², не заполнив row-level conversion fields.
+Отклонение не даёт коду права угадать пересчёт из prose. Дефект приложения:
+отклонённые строки не попадали в unapplied proposals, а terminal message ложно
+сообщал об отсутствии таблицы. Кандидат сохраняет полные решения и причины,
+передаёт их отдельно на явном продолжении; до поправки confirmed не возникает.
+
+Второй дефект: partial capability snapshot делал остальные возможности UNKNOWN
+и блокировал tools до provider request, но выглядел как upstream502.
+Кандидат переизмеряет прежний measured scope exact revision и отделяет отказ
+допуска HTTP409 от provider failure без fallback. Исторические возможности
+автоматически не считаются поддержанными. Профессиональная приёмка остаётся открыта.
+
 <!-- candidate941-cited-literals-bound-warmup:v1 -->
 ## 14.10.2026 — пересмотр не исправил применимость; два технических дефекта
 

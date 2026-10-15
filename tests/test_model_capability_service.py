@@ -314,6 +314,146 @@ async def test_probe_and_store_persists_one_immutable_snapshot(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tools_status", [200, 400, 404])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_partial_reprobe_remeasures_previous_capabilities_instead_of_erasing_or_reusing_them(
+    tmp_path, tools_status, expired,
+) -> None:
+    registry = ModelConnectionRegistry(tmp_path / "capabilities.db")
+    revision = registry.create_connection(
+        display_name="Partial probe", base_url="http://127.0.0.1:1919/v1",
+        model_id="qwen-test", locality=ConnectionLocality.LOOPBACK,
+        requested_context_tokens=8192, secret_ref=None, extension_type=None,
+        actor="admin:test",
+    )
+    calls = []
+    now = NOW
+    tool_status = 200
+
+    def handler(request):
+        body = json.loads(request.content) if request.content else {}
+        capability = CapabilityName.TOOLS if body.get("tools") else CapabilityName.CHAT_COMPLETIONS
+        calls.append(capability)
+        return httpx.Response(tool_status if body.get("tools") else 200, json={"choices": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probe = CapabilityProbe(client=client, peer_verifier=_peer_ok, clock=lambda: now)
+        original = await probe.probe_and_store(
+            revision, requested=[CapabilityName.CHAT_COMPLETIONS, CapabilityName.TOOLS],
+            registry=registry, actor="admin:test",
+        )
+        assert original.state(CapabilityName.TOOLS) is CapabilityState.SUPPORTED
+        calls.clear()
+        now += timedelta(hours=25 if expired else 1)
+        tool_status = tools_status
+        refreshed = await probe.probe_and_store(
+            revision, requested=iter([CapabilityName.CHAT_COMPLETIONS]),
+            registry=registry, actor="admin:test",
+        )
+
+    expected = {200: CapabilityState.SUPPORTED, 400: CapabilityState.UNKNOWN,
+                404: CapabilityState.UNSUPPORTED}[tools_status]
+    assert refreshed.state(CapabilityName.TOOLS) is expected
+    assert set(calls) == {CapabilityName.CHAT_COMPLETIONS, CapabilityName.TOOLS}
+    assert refreshed.observation(CapabilityName.TOOLS).observed_at == now
+    assert refreshed.observation(CapabilityName.TOOLS).detail == f"http_{tools_status}"
+    assert refreshed.expires_at == now + probe.freshness
+    assert refreshed.state(CapabilityName.EMBEDDINGS) is CapabilityState.UNKNOWN
+    assert refreshed.observation(CapabilityName.EMBEDDINGS).detail == "not_requested"
+    assert original.observation(CapabilityName.TOOLS).observed_at == NOW
+    assert registry.latest_capability_snapshot(revision.revision_id) == refreshed
+
+
+@pytest.mark.asyncio
+async def test_partial_reprobe_never_inherits_another_revision_or_template_claim(tmp_path) -> None:
+    registry = ModelConnectionRegistry(tmp_path / "capabilities.db")
+    revision = registry.create_connection(
+        display_name="Revision isolation", base_url="http://127.0.0.1:1919/v1",
+        model_id="qwen-test", locality=ConnectionLocality.LOOPBACK,
+        requested_context_tokens=8192, secret_ref=None, extension_type=None,
+        actor="admin:test",
+    )
+    registry.save_capability_snapshot(CapabilitySnapshot(
+        snapshot_id="cap:previous", connection_revision_id=revision.revision_id,
+        observations=(CapabilityObservation(CapabilityName.TOOLS, CapabilityState.SUPPORTED,
+                                           "probe", NOW, "http_200"),),
+        observed_at=NOW, expires_at=NOW + timedelta(days=1),
+    ), actor="admin:test")
+    newer = registry.revise_connection(
+        revision.connection_id, expected_revision_id=revision.revision_id,
+        actor="admin:test", model_id="another-model",
+    )
+    registry.save_capability_snapshot(CapabilitySnapshot(
+        snapshot_id="cap:template", connection_revision_id=newer.revision_id,
+        observations=(CapabilityObservation(CapabilityName.TOOLS, CapabilityState.SUPPORTED,
+                                           "template_default", NOW, "template_claim"),),
+        observed_at=NOW, expires_at=NOW + timedelta(days=1),
+    ), actor="admin:test")
+    calls = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        return httpx.Response(200, json={"choices": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await CapabilityProbe(client=client, peer_verifier=_peer_ok,
+                                         clock=lambda: NOW).probe_and_store(
+            newer, requested=[CapabilityName.CHAT_COMPLETIONS], registry=registry, actor="admin:test",
+        )
+    assert len(calls) == 1 and calls[0]["model"] == "another-model"
+    assert "tools" not in calls[0]
+    assert snapshot.state(CapabilityName.TOOLS) is CapabilityState.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_partial_reprobe_rechecks_previous_failed_probe_for_recovery(tmp_path) -> None:
+    registry = ModelConnectionRegistry(tmp_path / "capabilities.db")
+    revision = registry.create_connection(
+        display_name="Probe recovery", base_url="http://127.0.0.1:1919/v1",
+        model_id="qwen-test", locality=ConnectionLocality.LOOPBACK,
+        requested_context_tokens=8192, secret_ref=None, extension_type=None,
+        actor="admin:test",
+    )
+    tools_status = 400
+
+    def handler(request):
+        body = json.loads(request.content)
+        return httpx.Response(tools_status if body.get("tools") else 200, json={"choices": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probe = CapabilityProbe(client=client, peer_verifier=_peer_ok, clock=lambda: NOW)
+        failed = await probe.probe_and_store(revision, requested=[CapabilityName.TOOLS],
+                                             registry=registry, actor="admin:test")
+        assert failed.state(CapabilityName.TOOLS) is CapabilityState.UNKNOWN
+        assert failed.observation(CapabilityName.TOOLS).evidence_source == "probe"
+        tools_status = 200
+        recovered = await probe.probe_and_store(
+            revision, requested=[CapabilityName.CHAT_COMPLETIONS], registry=registry, actor="admin:test",
+        )
+    assert recovered.state(CapabilityName.TOOLS) is CapabilityState.SUPPORTED
+    assert recovered.observation(CapabilityName.TOOLS).detail == "http_200"
+
+
+@pytest.mark.asyncio
+async def test_persisted_reprobe_rejects_empty_request_even_after_previous_probe(tmp_path) -> None:
+    registry = ModelConnectionRegistry(tmp_path / "capabilities.db")
+    revision = registry.create_connection(
+        display_name="Empty request", base_url="http://127.0.0.1:1919/v1",
+        model_id="qwen-test", locality=ConnectionLocality.LOOPBACK,
+        requested_context_tokens=8192, secret_ref=None, extension_type=None,
+        actor="admin:test",
+    )
+    async with _client({("GET", "/v1/models"): (200, {"data": []})}) as client:
+        probe = CapabilityProbe(client=client, peer_verifier=_peer_ok, clock=lambda: NOW)
+        first = await probe.probe_and_store(revision, requested=[CapabilityName.MODELS],
+                                            registry=registry, actor="admin:test")
+        with pytest.raises(CapabilityProbeError, match="CAPABILITY_REQUEST_EMPTY"):
+            await probe.probe_and_store(revision, requested=[], registry=registry, actor="admin:test")
+    assert registry.latest_capability_snapshot(revision.revision_id) == first
+
+
+@pytest.mark.asyncio
 async def test_probe_rejects_empty_request_set() -> None:
     async with _client({}) as client:
         probe = CapabilityProbe(

@@ -1,5 +1,15 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 946 — отклонённая таблица и допуск инструментов
+
+`model_capability_service.probe_and_store` → повторный probe requested union
+ранее измеренных capabilities exact revision → новый snapshot. Transport
+`ModelCapabilityError` проходит через canonical runner без fallback и даёт
+в chat явную ошибку локального допуска. `chat_evidence_application_service`
+после sheet row guard сохраняет отклонённые строки в `unapplied_proposals`,
+отдельно от accepted rows и с точными structural errors; checkpoint продолжения
+не представляет их подтверждёнными решениями. Ресурсы/нормы/суммы не выбираются.
+
 <!-- candidate941-cited-literals-bound-warmup:v1 -->
 ## 941 — scalar conversion и role-bound warmup
 

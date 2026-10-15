@@ -44,6 +44,25 @@ class ModelTransportError(RuntimeError):
     """The exact resolved connection could not complete a safe request."""
 
 
+class ModelCapabilityError(ModelTransportError):
+    """Local capability admission failed before an upstream request was sent."""
+
+    def __init__(self, capability: CapabilityName, *, weak_evidence: bool = False):
+        self.capability = CapabilityName(capability)
+        self.code = "CAPABILITY_EVIDENCE_INSUFFICIENT" if weak_evidence else "CAPABILITY_REQUIRED"
+        super().__init__(f"{self.code}: {self.capability.value}")
+
+    @property
+    def public_detail(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "detail": (
+                f"Для назначенной модели не подтверждена возможность «{self.capability.value}». "
+                "Выполните проверку подключения в разделе «Модели и подключения»."
+            ),
+        }
+
+
 class CloudBudgetStop(RuntimeError):
     """A technical spending stop; never a transport failure eligible for fallback."""
 
@@ -309,11 +328,9 @@ class OpenAICompatibleTransport:
     def _require(connection: ResolvedModelConnection, capability: CapabilityName) -> None:
         observation = connection.capability_snapshot.observation(capability)
         if observation.state is not CapabilityState.SUPPORTED:
-            raise ModelTransportError(f"CAPABILITY_REQUIRED: {capability.value}")
+            raise ModelCapabilityError(capability)
         if observation.evidence_source in {"template_default", "unavailable"}:
-            raise ModelTransportError(
-                f"CAPABILITY_EVIDENCE_INSUFFICIENT: {capability.value}"
-            )
+            raise ModelCapabilityError(capability, weak_evidence=True)
 
     def _headers(self, connection: ResolvedModelConnection) -> dict[str, str]:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}

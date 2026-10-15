@@ -489,7 +489,21 @@ class CapabilityProbe:
         registry: ModelConnectionRegistry,
         actor: str,
     ) -> CapabilitySnapshot:
-        snapshot = await self.probe(connection, requested=requested)
+        requested_set = {CapabilityName(item) for item in requested}
+        if not requested_set:
+            raise CapabilityProbeError("CAPABILITY_REQUEST_EMPTY")
+        previous = registry.latest_capability_snapshot(connection.revision_id)
+        if previous is not None:
+            # A saved snapshot replaces the latest evidence for this revision.
+            # Re-measure its previously probed scope instead of turning omitted
+            # capabilities into not_requested or prolonging old support claims.
+            # Failed/unsupported probes are included too, so regressions remain
+            # visible and only newly measured evidence receives the new TTL.
+            requested_set.update(
+                item.capability for item in previous.observations
+                if item.evidence_source == "probe"
+            )
+        snapshot = await self.probe(connection, requested=requested_set)
         registry.save_capability_snapshot(snapshot, actor=actor)
         return snapshot
 

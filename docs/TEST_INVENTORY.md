@@ -1,5 +1,16 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## 946 — сохранность отклонённых решений и capability admission
+
+`test_model_lsr_rejected_source_proposals.py`: source guard отклоняет строки,
+но полные решения и точные причины сохраняются отдельно от accepted; смешанный
+пакет сохраняет корректного соседа; явное продолжение получает неприменённые
+предложения отдельно от принятых решений. `test_model_capability_service.py`
+проверяет полный повторный замер requested union previous measured scope той же
+revision, регрессии capability и отсутствие переноса template/другой revision.
+`test_model_capability_admission_946.py`: отказ до model HTTP, отсутствие fallback
+и явная ошибка локального допуска. Новые файлы включены в CURRENT_TESTS Makefile.
+
 Candidate942 adds mandatory test_attachment_sheet_accounting_942.py: an overflowing tabular
 attachment frame must name every sheet of the document with delivered-versus-actual non-empty row
 counts, must mark a sheet the model never saw at all, must not invent a gap when the frame is
@@ -874,4 +885,3 @@ pytest не подменяет этот результат.
   `.test-tmp/gate942/943/944.py` терял 55 из 57 строк `UNIT_TESTS`, поэтому заявления
   «903 passed / 17 skipped» покрывали 65 файлов, а не весь состав. Полный прогон пересобран в
   `.test-tmp/gate945b.py` и печатает состав по группам перед запуском.
-
