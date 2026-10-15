@@ -1,5 +1,26 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## 947 — ссылки и продолжение работы при материале того же адреса
+
+`test_model_workbook_citation_instructions_947.py`: реальные governed messages
+B0/B1 и native-read continuation не получают противоречащих правил ссылок;
+карточки, исходник и обычный чат сохраняются. Парсер не угадывает `[Источник N]`.
+`test_model_source_conflict_resume_947.py`: материал не закрывает отклонённый
+work; продолжение получает оба адреса, исправляет предложения по одному,
+сохраняет материалы и raw proposals. Анонимная поправка требует явного
+resolves_proposal_id; существующая операция — точного operation_id. Чужой
+маркер/роль/адрес и stale revision не снимают pending. Допустимые aliases проверяются как scope,
+без переписывания авторской строки. Оба файла включены в CURRENT_TESTS.
+`test_model_quote_dimensions_947.py` исключает стоимость от несовместимых
+единиц, проверяет отдельное сохранение цитаты цены, совместимые SI/масштаб,
+явный пересчёт, work unit_price/position_total/unknown и сохранность
+действительного нормативного subtotal. Файл также включён в CURRENT_TESTS;
+соседние provenance/SI проверки усилены, а не пропущены.
+`test_model_query_phase_scope` различает ссылки ответа, чтения и документа,
+проверяя неизменность профиля/skill. `test_runtime_config_registry_service`
+исключает архивные AST-факторы и сохраняет дефолт 300.0. Первый полный запуск
+зафиксирован как failed в RELEASE_LEDGER; он не засчитан готовностью кандидата.
+
 ## 946 — сохранность отклонённых решений и capability admission
 
 `test_model_lsr_rejected_source_proposals.py`: source guard отклоняет строки,

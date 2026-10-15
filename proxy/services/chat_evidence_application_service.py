@@ -121,7 +121,9 @@ from proxy.services.model_answer_table_service import (
     table_cells,
     table_line,
 )
-from proxy.services.workbook_research_job_service import WorkbookResearchJobError, WorkbookResearchJobService
+from proxy.services.workbook_research_job_service import (
+    WorkbookResearchJobError, WorkbookResearchJobService, source_conflict_resolutions,
+)
 from proxy.services.model_result_packet_service import admit_model_result_packet
 from proxy.services.model_lsr_result_contract import (
     model_lsr_result_field_instruction, decode_model_artifact_kind,
@@ -1044,6 +1046,8 @@ def workbook_document_issues(
         issues.append({"code": str(error), "reason": str(error)})
     for proposal in (job.get("unapplied_proposals") or ()) if str(job.get("status") or "") != "complete" else ():
         if isinstance(proposal, Mapping):
+            if proposal.get("proposal_id") in (job.get("task_context") or {}).get("resolved_source_conflict_proposal_ids", ()):
+                continue
             issues.append({"code": "MODEL_PROPOSAL_UNAPPLIED",
                            "reason": "Неприменённое предложение сохранено без исправления ячеек.",
                            "proposal": dict(proposal)})
@@ -1073,7 +1077,7 @@ def model_answer_timeout_seconds() -> float:
     workbook pass with ReadTimeout/502 and the operator setting changed nothing.
     """
     try:
-        return max(1.0, float(os.getenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "300")))
+        return max(1.0, float(os.getenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "300.0")))
     except (TypeError, ValueError):
         return 300.0
 
@@ -2252,6 +2256,11 @@ _WORKBOOK_RESULT_CARRIER_INSTRUCTION = (
     "Если пользователь явно задал формат, сохрани его; это уточнение не требует JSON. "
     "Обоснования решений и конкретные пробелы пиши в coverage/open_gap соответствующих строк."
 )
+_WORKBOOK_ROW_CITATION_INSTRUCTION = (
+    "В evidence_refs строк результата используй буквальные Qx.Hy показанных карточек. "
+    "[Источник N] не заменяет Qx.Hy в evidence_refs; эти номера допустимы только "
+    "в комментарии, если такие заголовки показаны."
+)
 _MODEL_RAG_QUERY_PHASE_INSTRUCTION = (
     "Технический этап составления поисковых запросов, до ответа оператору. "
     "Сохранённые профиль и skill задают профессиональные правила работы; их "
@@ -2616,8 +2625,8 @@ def sheet_pass_question_tail(
         f"Вопрос: {question}\n\n"
         + ("" if reasoning_enabled else "/no_think\n")
         +
-        "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
-        "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
+        "Дай итоговый инженерный ответ. Не выдумывай факты. "
+        "Если материалов недостаточно, отдели это от подтверждённых выводов."
         f"\nСейчас только лист «{sheet}» ({sheet_index}/{sheet_count}). "
         "Для ещё не решённых исходных строк текущего пакета дай решения. "
         "При обычном продолжении, если prior_model_decisions уже содержит операции, верни только новые "
@@ -3142,11 +3151,25 @@ def sheet_pass_rejected_row_proposals(
 
 
 def active_source_conflict_proposals(job: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    """A completed correction retains history without reopening old proposals."""
-    if not isinstance(job, Mapping) or str(job.get("status") or "") == "complete":
+    """Resolution is explicit durable metadata; job status alone proves nothing."""
+    if not isinstance(job, Mapping):
         return []
+    resolved = set((job.get("task_context") or {}).get("resolved_source_conflict_proposal_ids") or ())
     return [dict(item) for item in job.get("unapplied_proposals") or ()
-            if isinstance(item, Mapping) and item.get("code") == "MODEL_RESULT_SOURCE_CONFLICT"]
+            if isinstance(item, Mapping) and item.get("code") == "MODEL_RESULT_SOURCE_CONFLICT"
+            and item.get("proposal_id") not in resolved]
+
+
+def source_conflict_locators(
+    job: Mapping[str, Any] | None, source_catalog: AttachmentSourceCatalog | None = None,
+) -> set[str]:
+    result: set[str] = set()
+    for item in active_source_conflict_proposals(job):
+        raw = (item.get("decision") or {}).get("source_row")
+        source = source_catalog.lookup(raw) if source_catalog is not None else None
+        if raw:
+            result.add(source.locator if source is not None else str(raw))
+    return result
 
 
 def packet_source_conflict_proposals(
@@ -4074,6 +4097,7 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
         }
         for field_name in (
             "operation_id",
+            "resolves_proposal_id",
             "revision",
             "expected_revision",
             "base_revision",
@@ -4970,6 +4994,7 @@ def parse_model_rag_result(
     }
     header_fields = {
         "operation_id": "operation_id",
+        "resolves_proposal_id": "resolves_proposal_id",
         "revision": "revision",
         "expected_revision": "expected_revision",
         "base_revision": "base_revision",
@@ -5477,6 +5502,7 @@ def parse_model_rag_result(
         header_index = max(row_index, header_index + 1)
     block_fields = {
         "operation_id": "operation_id",
+        "resolves_proposal_id": "resolves_proposal_id",
         "revision": "revision",
         "expected_revision": "expected_revision",
         "base_revision": "base_revision",
@@ -5695,6 +5721,7 @@ def parse_model_rag_result(
 
     labelled_fields = {
         "operation_id": "operation_id",
+        "resolves_proposal_id": "resolves_proposal_id",
         "revision": "revision",
         "expected_revision": "expected_revision",
         "base_revision": "base_revision",
@@ -6400,7 +6427,12 @@ def model_rag_prior_page_context(
                 "названного буквального расхождения с исходником. Они не являются сохранёнными "
                 "операциями prior_model_decisions и не участвуют в расчёте. Сверь их с исходником "
                 "и замечанием пользователя и самостоятельно верни уточнённые строки; приложение "
-                "не исправляло количество, единицу, норму или способ перевода.")}
+                "не исправляло количество, единицу, норму или способ перевода. "
+                "Когда возвращаешь исправление конкретного предложения, укажи в строке "
+                "resolves_proposal_id с дословным proposal_id из его показанного wrapper. "
+                "Этот маркер связывает исправление с предложением, а не с любой работой по тому же адресу. "
+                "Если прежнее предложение содержит operation_id, сохрани именно этот operation_id "
+                "и актуальный expected_revision; маркер не заменяет идентичность операции.")}
            if unapplied_proposals else {}),
         # These diagnostics are application-derived projections of the same
         # authored fields/citations, not additional model choices. Repeating
@@ -7572,6 +7604,11 @@ def profile_system_prompt(
         parts.append("Активный skill профиля (правила работы, не evidence):\n" + skill)
     if purpose == "query":
         parts.append(_MODEL_RAG_QUERY_PHASE_INSTRUCTION)
+    elif purpose == "workbook_result":
+        parts.append(
+            _WORKBOOK_ROW_CITATION_INSTRUCTION
+            + " Навигационные карты помогают выбрать файл, но сами по себе не подтверждают факт."
+        )
     elif strict:
         parts.append(
             "Повторная попытка: сохрани полезный ответ, но привяжи числа, требования и "
@@ -10431,6 +10468,7 @@ async def _execute_chat_evidence_application(
                             settled_source_keys(accumulated_rows, source_catalog))
                     pending_result_packets = model_rag_pending_result_packets(stored_held)
                     transport_pending_locators, pending_diagnostics = model_rag_pending_result_projection(pending_result_packets)
+                    terminal_packet_locators.difference_update(source_conflict_locators(research_job, source_catalog))
                     if pending_diagnostics:
                         retrieval_trace["model_result_transport_diagnostics"] = pending_diagnostics
                     explicit_reopened_locators: set[str] = set()
@@ -10451,6 +10489,7 @@ async def _execute_chat_evidence_application(
                         settled_source_keys(
                             accumulated_rows, source_catalog
                         )
+                        - source_conflict_locators(research_job, source_catalog)
                         & set(source_catalog.work_locators())
                     )
                     prior_elapsed = float(
@@ -10464,6 +10503,7 @@ async def _execute_chat_evidence_application(
                             settled_source_keys(
                                 accumulated_rows, source_catalog
                             )
+                            - source_conflict_locators(research_job, source_catalog)
                             & set(source_catalog.work_locators())
                         )
                         counts = sheet_pass_progress_counts(
@@ -10550,7 +10590,7 @@ async def _execute_chat_evidence_application(
                         remaining = remaining_sheet_work_locators(
                             source_catalog,
                             sheet_name,
-                            settled_source_keys(accumulated_rows, source_catalog),
+                            settled_source_keys(accumulated_rows, source_catalog) - source_conflict_locators(research_job, source_catalog),
                         )
                         remaining = [locator for locator in remaining
                                      if locator not in terminal_packet_locators
@@ -10607,6 +10647,8 @@ async def _execute_chat_evidence_application(
                             deferred_here = research_job_service.still_deferred(
                                 str(research_job["job_id"]), sheet=sheet_name
                             )
+                            deferred_here = [locator for locator in deferred_here
+                                             if locator not in source_conflict_locators(research_job, source_catalog)]
                         if deferred_here:
                             exhausted_locators.update(deferred_here)
                             remaining = [
@@ -12015,6 +12057,20 @@ async def _execute_chat_evidence_application(
                                 catalog=source_catalog, errors=pass_errors,
                                 packet_locators=packet, drop_locator=tail_locator,
                             )
+                            resolved_source_proposal_ids = source_conflict_resolutions(
+                                active_source_conflict_proposals(research_job), kept,
+                                packet_locators=packet, canonicalize_locator=lambda value: (
+                                    source_catalog.lookup(value).locator if source_catalog.lookup(value) else value),
+                            )
+                            source_conflicts_after_packet = [
+                                item for item in active_source_conflict_proposals(research_job)
+                                if item.get("proposal_id") not in resolved_source_proposal_ids
+                            ] + source_conflict_proposals
+                            source_conflict_pending = {
+                                source_catalog.lookup((item.get("decision") or {}).get("source_row")).locator
+                                if source_catalog.lookup((item.get("decision") or {}).get("source_row")) else
+                                str((item.get("decision") or {}).get("source_row") or "")
+                                for item in source_conflicts_after_packet}
                             if tail_locator:
                                 # Addressed handling of the unread tail (blocker § 2):
                                 # the cut row is put to the model again, it is not
@@ -12040,7 +12096,7 @@ async def _execute_chat_evidence_application(
                             )
                             settled_after = settled_source_keys(
                                 accumulated_rows, source_catalog
-                            )
+                            ) - source_conflict_pending
                             # Blocker § 2: найдено / показано / отложено / выбрано
                             # measured for this packet alone, then added to the run
                             # roll-up one number at a time.
@@ -12111,7 +12167,7 @@ async def _execute_chat_evidence_application(
                             remaining = remaining_sheet_work_locators(
                                 source_catalog,
                                 sheet_name,
-                                settled_source_keys(accumulated_rows, source_catalog),
+                                settled_source_keys(accumulated_rows, source_catalog) - source_conflict_pending,
                             )
                             remaining = [
                                 locator
@@ -12198,7 +12254,8 @@ async def _execute_chat_evidence_application(
                                 query_addresses=pass_query_addresses,
                                 pending_result_packets=pending_result_packets)
                             held_query_context = held_payload
-                            if not last_truncated and not pass_transport_diagnostics and not source_conflict_proposals:
+                            if (not last_truncated and not pass_transport_diagnostics
+                                    and not source_conflict_pending.intersection(packet)):
                                 held_payload.update({
                                     "sheet": sheet_name, "locators": list(packet),
                                     "packet_id": row_packet_id(source_catalog, sheet=sheet_name, locators=packet),
@@ -12326,10 +12383,20 @@ async def _execute_chat_evidence_application(
                                 held_packet = []
                                 held_query_context = {}
                                 continue
+                            if source_conflict_proposals:
+                                # Save this exact failed proposal once in this turn;
+                                # a user resume can correct it even when a material
+                                # on the same address was already accepted.
+                                blocked_sources = {
+                                    source_catalog.lookup(item["source_row"]).locator
+                                    if source_catalog.lookup(item["source_row"]) else str(item["source_row"])
+                                    for item in source_conflict_proposals}
+                                exhausted_locators.update(blocked_sources)
+                                remaining = [locator for locator in remaining if locator not in blocked_sources]
                             if not last_truncated:
                                 # The final answer is scoped to this source packet.
                                 # Keep its cursor; only NEVER_REACHED rows may follow.
-                                terminal_packet_locators.update(packet)
+                                terminal_packet_locators.update(set(packet) - source_conflict_pending)
                                 exhausted_locators.update(locator for locator in packet if locator not in settled_after)
                                 remaining = [locator for locator in remaining if locator not in set(packet)]
                                 if defer_query_packet:
@@ -12488,6 +12555,7 @@ async def _execute_chat_evidence_application(
                     ]
                     pending_transport = (model_rag_pending_result_projection(pending_result_packets)[0]
                                          if pending_result_packets else set(transport_pending_locators))
+                    pending_transport.update(source_conflict_locators(research_job, source_catalog))
                     pending_held = (research_job or {}).get("held_packet") or {}
                     pending_read_stop = (str(pending_held.get("read_stop") or "")
                                          if pending_held.get("model_read_pending") or pending_held.get("cloud_budget_pending") else "")
@@ -12516,6 +12584,9 @@ async def _execute_chat_evidence_application(
                             {"transport_diagnostics": [proposal], "locators": proposal.get("packet_locators") or ()})
                                                  if locator not in resolved_transport_locators)
                     unfinished_locators = list(dict.fromkeys([*unfinished_locators, *pending_transport]))
+                    if source_catalog is not None:
+                        source_order = {locator: index for index, locator in enumerate(source_catalog.work_locators())}
+                        unfinished_locators.sort(key=lambda locator: source_order.get(locator, len(source_order)))
                     if research_job_service is not None and research_job is not None:
                         if owns_sheet_pass and not query_checkpoint_failed:
                             if research_cancelled or unfinished_locators:
@@ -12768,9 +12839,13 @@ async def _execute_chat_evidence_application(
                     question_tail = (
                         f"Вопрос: {req.question}\n\n"
                         + ("" if execution_preset.reasoning_enabled else "/no_think\n")
-                        +
-                        "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
-                        "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
+                        + (
+                            "Дай итоговый инженерный ответ. Не выдумывай факты. "
+                            "Если материалов недостаточно, отдели это от подтверждённых выводов."
+                            if model_driven_retrieval and workbook_carrier_required else
+                            "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
+                            "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
+                        )
                     )
                     direct_read_tools = (
                         model_evidence_read_tool_schemas()

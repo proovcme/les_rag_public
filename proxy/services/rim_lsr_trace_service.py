@@ -349,6 +349,7 @@ PRICE_ACTION_LABELS = {
     "needs_fgis_price": "нужна цена эксплуатации машины",
     "card_price_without_basis": "цена из карточки нормы, основания нет",
     "model_price_without_basis": "цена модели без подтверждённого источника",
+    "model_price_unit_conflict": "цена не применена: нужен обоснованный перевод единиц",
     "kac_without_source_unit": "цена КАЦ без источника и подтверждённой единицы",
     "book_price_unit_unknown": "единица цены книги не подтверждена",
     "ambiguous_price_record": "конфликт записей выбранной книги цен",
@@ -625,6 +626,7 @@ PRICE_REASON_PREFIXES = (
     "price_missing:", "card_price_without_basis:", "model_price_without_basis:", "kac_without_source_unit:",
     "position_price_without_basis:", "book_price_unit_unknown:",
     "position_price_kind_unknown:", "position_price_unit_conflict:",
+    "model_price_unit_conflict:",
     "supply_price_kind_conflict",
 )
 CONFLICT_REASON_PREFIXES = ("action_conflict:",)
@@ -1008,7 +1010,11 @@ def _resolve_price_trace(
     explicit = (
         _round(res.get("price")) if res.get("price") not in (None, "") else None
     )
-    if explicit is not None and price_is_attributed(res):
+    explicit_unit_conflict = (
+        book_price_unit_conflict(res.get("price_unit"), res.get("unit"))
+        if res.get("price_origin") == "model_result" else ""
+    )
+    if explicit is not None and price_is_attributed(res) and not explicit_unit_conflict:
         if isinstance(res.get("resource_binding"), Mapping) and res["resource_binding"].get("action") == "reuse":
             return PriceTrace(price=explicit, source="reuse", column_10=explicit,
                               basis=str(res.get("price_source_ref") or ""), action="reuse")
@@ -1093,6 +1099,11 @@ def _resolve_price_trace(
     # it is labelled with its own action, and the position stops being a
     # confirmed amount (ADR-16 § 7, acceptance § 12 "no invented prices").
     if explicit is not None and res.get("price_origin") == "model_result":
+        if explicit_unit_conflict:
+            return PriceTrace(
+                price=None, source="model_price_unit_conflict", basis="model_authored_price",
+                action="model_price_unit_conflict",
+            )
         return PriceTrace(
             price=explicit, source="model_unattributed_price", column_10=explicit,
             basis="model_authored_price", action="model_price_without_basis", book_unit=book_unit_conflict,
@@ -1496,6 +1507,12 @@ def build_position_trace(
                 action_label = price_action_label(price.action, price.source)
                 flags.append(f"{action_label}: {res.get('name','?')} ({res.get('code','—')})")
             completeness_reasons.append(f"price_missing:{res.get('code') or res.get('name') or '?'}")
+            if price.action == "model_price_unit_conflict":
+                completeness_reasons.append(f"model_price_unit_conflict:{res.get('code') or res.get('name') or '?'}")
+                flags.append(
+                    f"Цена {res.get('price')} за «{res.get('price_unit')}» сохранена, но не применена "
+                    f"к количеству в «{res.get('unit')}»: нет обоснованного перевода единиц"
+                )
             if price.record_conflict:
                 completeness_reasons.append(f"ambiguous_price_record:{res.get('code') or res.get('name') or '?'}")
         elif price.action == "card_price_without_basis":
@@ -1550,6 +1567,8 @@ def build_position_trace(
                 "price_basis": price.basis or "",
                 "price_source": price.source or "",
                 "price_book_unit": price.book_unit or "",
+                **{key: res[key] for key in ("price_unit", "price_quantity_trace") if key in res},
+                **({"quoted_price": res.get("price")} if res.get("price_origin") == "model_result" else {}),
                 **({"price_unit_conversion": dict(price.unit_conversion)} if price.unit_conversion else {}),
                 **({"price_record_conflict": dict(price.record_conflict)} if price.record_conflict else {}),
                 "resource_group": str((price.group or {}).get("group") or ""),
@@ -1592,6 +1611,8 @@ def build_position_trace(
                     "kind": kind,
                     "price_action": price.action,
                     "price_book_unit": price.book_unit,
+                    **{key: res[key] for key in ("price_unit", "price_quantity_trace") if key in res},
+                    **({"quoted_price": res.get("price")} if res.get("price_origin") == "model_result" else {}),
                     **({"price_unit_conversion": dict(price.unit_conversion)} if price.unit_conversion else {}),
                     "price_source_ref": res.get("price_source_ref") or "",
                     "resource_binding": res.get("resource_binding") or {},
@@ -1638,7 +1659,9 @@ def build_position_trace(
         price_qty = work_qty
         price_unit = work_unit
         price_issue = str(position.get("confirmed_price_issue") or "")
-        if price_owner != "operator" and "confirmed_price_kind" in position:
+        if "confirmed_price_kind" in position and (
+            price_owner != "operator" or price_kind in {"unit_price", "position_total"}
+        ):
             if price_kind == "position_total":
                 price_qty = 1.0
                 price_unit = "позиция"
@@ -1646,16 +1669,17 @@ def build_position_trace(
                 price_qty = _num(position.get("confirmed_price_quantity"))
                 price_unit = str(position.get("confirmed_price_unit") or "")
                 if price_qty is None:
-                    price_qty = work_qty
                     attributed = False
                     price_issue = price_issue or "position_price_unit_conflict"
             else:
+                price_qty = None
                 attributed = False
                 price_issue = "position_price_kind_unknown"
-        operator_cost = round(price_qty * operator_price, 2)
+        operator_cost = round(price_qty * operator_price, 2) if price_qty is not None else None
         norm_known = total
-        direct = operator_cost
-        total = operator_cost
+        if operator_cost is not None:
+            direct = operator_cost
+            total = operator_cost
         full_amount = operator_cost if attributed else None
         position_total_label = (
             "Всего по позиции (цена подтверждена оператором)" if price_owner == "operator"
@@ -1676,6 +1700,9 @@ def build_position_trace(
             f"{note_prefix}: {operator_price} ₽ за "
             f"«{price_unit or '?'}» × {price_qty} = {operator_cost} ₽, а не по ресурсному "
             "составу нормы"
+        ) if operator_cost is not None else (
+            f"Цена {operator_price} ₽ за «{price_unit or '?'}» сохранена, но не применена: "
+            "нет обоснованного перевода исходного количества в единицу цены"
         )
         source_qty = _num(position.get("source_quantity"))
         source_unit = str(position.get("source_unit") or "").strip()
@@ -1707,6 +1734,8 @@ def build_position_trace(
             "price_kind": price_kind or ("operator_unit_price" if price_owner == "operator" else ""),
             "source_unit": str(position.get("source_unit") or ""),
             "source_quantity": source_qty,
+            **({"quantity_trace": position["confirmed_price_quantity_trace"]}
+               if "confirmed_price_quantity_trace" in position else {}),
             "unit_note": unit_note,
             "source": str(position.get("price_source") or ("operator" if price_owner == "operator" else "")),
         }
@@ -1867,6 +1896,7 @@ def build_position_trace(
             # summary loop, which runs before the caller can annotate, honors it.
             "resource_reference_only": bool(
                 isinstance(operator_price_trace, Mapping)
+                and operator_price_trace.get("cost") is not None
                 and operator_price_trace.get("status") in {
                     "operator_confirmed_position_price", "source_confirmed_position_price", "position_price_without_basis",
                 }
@@ -2684,6 +2714,9 @@ def positions_from_visible_lsr_rows(
                 "requires_price_unit_provenance": True,
                 "price_origin": "model_result",
             }
+            price_unit = str(row.get("price_unit") or "").strip()
+            if price_unit:
+                resource["price_unit"] = price_unit
             price_source, price_owner = _visible_price_owner(row)
             if price is not None:
                 resource["price"] = price
@@ -2726,6 +2759,14 @@ def positions_from_visible_lsr_rows(
                 "source_quantity": source_qty,
                 "source_unit": source_unit,
             }
+            if price is not None and price_unit and book_price_unit_conflict(price_unit, source_unit):
+                price_qty, price_qty_trace = _norm_qty_from_visible_row(row, "", {"unit": price_unit})
+                resource["price_quantity_trace"] = price_qty_trace
+                if price_qty is not None:
+                    # A supply has no normative target unit: its own declared
+                    # quote is the conversion target. Keep the source unchanged.
+                    position.update(qty=price_qty, unit=price_unit, quantity_trace=price_qty_trace)
+                    resource["unit"] = price_unit
             refs = _normalize_evidence_refs(_first_value(row, "evidence_refs", "source_refs"))
             if refs:
                 position["evidence_refs"] = refs
@@ -2934,7 +2975,7 @@ def positions_from_visible_lsr_rows(
             position["price_source"] = price_source
             position["confirmed_price_attributed"] = bool(price_source)
             position["price_owner"] = price_owner
-            if price_owner != "operator":
+            if price_owner != "operator" or str(row.get("price_kind") or "").strip() in {"unit_price", "position_total"}:
                 price_kind = str(row.get("price_kind") or "").strip()
                 price_unit = str(_first_value(row, "price_unit", "unit") or "").strip()
                 position["confirmed_price_kind"] = price_kind
@@ -2944,8 +2985,18 @@ def positions_from_visible_lsr_rows(
                     position["confirmed_price_attributed"] = False
                     position["confirmed_price_issue"] = "position_price_kind_unknown"
                 elif price_kind == "unit_price" and book_price_unit_conflict(price_unit, source_unit):
-                    position["confirmed_price_attributed"] = False
-                    position["confirmed_price_issue"] = "position_price_unit_conflict"
+                    conversion_row = row
+                    if _norm_unit_factor(price_unit)[1] != _norm_unit_factor((norm or {}).get("unit"))[1]:
+                        # An authored conversion to the norm's physical unit
+                        # cannot silently become a conversion to another quote.
+                        conversion_row = {key: value for key, value in row.items()
+                                          if key not in {"calc_quantity", "conversion_factor", "conversion_source", "quantity_source"}}
+                    price_qty, price_qty_trace = _norm_qty_from_visible_row(conversion_row, "", {"unit": price_unit})
+                    position["confirmed_price_quantity"] = price_qty
+                    position["confirmed_price_quantity_trace"] = price_qty_trace
+                    if price_qty is None:
+                        position["confirmed_price_attributed"] = False
+                        position["confirmed_price_issue"] = "position_price_unit_conflict"
         if norm and norm.get("unit"):
             position["unit"] = norm.get("unit")
         position["row_role"] = role

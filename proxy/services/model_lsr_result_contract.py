@@ -26,6 +26,7 @@ OPTIONAL_FIELDS = (
     "confirmed_price", "price_kind", "price_unit", "price_source",
     "price_currency", "price_vat", "price_period",
     "resource_bindings", "resource_review", "covered_by_work_id",
+    "resolves_proposal_id",
 )
 
 

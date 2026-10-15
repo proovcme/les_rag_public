@@ -1,5 +1,19 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 947 — идентичность ссылки и достижимость отклонённой работы
+
+`profile_system_prompt(purpose=workbook_result)` → единое правило Qx.Hy;
+sheet/direct question tails больше не требуют вместо него номера источника.
+`active_source_conflict_proposals` → unresolved proposal IDs → packet/checkpoint
+pending даже при принятом материале на том же source_row.
+`source_conflict_resolutions` → только однозначное соответствие принятого
+решения прежнему предложению → append-only receipt в task_context и event.
+Исходные предложения, выбранные нормы и прочие предметные значения сохраняются.
+`rim_lsr_trace_service.positions_from_visible_lsr_rows` сохраняет price_unit и
+явную quantity trace; `_resolve_price_trace` не применяет несовместимую цену.
+`build_position_trace` не умножает цену с неизвестным видом/количеством и не
+исключает действительные norm subtotals из-за неиспользованной цитаты.
+
 ## 946 — отклонённая таблица и допуск инструментов
 
 `model_capability_service.probe_and_store` → повторный probe requested union

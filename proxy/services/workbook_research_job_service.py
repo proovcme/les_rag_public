@@ -58,6 +58,53 @@ _PLAIN_CONTINUATION_HASHES = frozenset(
 )
 
 
+def source_conflict_resolutions(
+    proposals: Sequence[Mapping[str, Any]], accepted_rows: Sequence[Mapping[str, Any]], *,
+    packet_locators: Sequence[str],
+    canonicalize_locator: Callable[[Any], Any] | None = None,
+) -> list[str]:
+    """Match only already-presented proposals to this accepted model packet.
+
+    A material is never a correction of a work on the same source. Anonymous
+    proposals require the model's explicit proposal marker; a sole operation on
+    the same source is not proof of identity. Existing operations require their
+    exact identity after normal packet admission and revision checks.
+    This records technical proposal resolution, not a professional selection.
+    """
+    from proxy.services.model_result_packet_service import _locator_key
+
+    def source_key(value: Any) -> str:
+        return _locator_key(canonicalize_locator(value) if canonicalize_locator else value)
+
+    owned = {source_key(value) for value in packet_locators}
+    candidates: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    pending: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for row in accepted_rows:
+        key = (source_key(row.get("source_row")), inferred_row_role(row))
+        if key[0] in owned:
+            candidates.setdefault(key, []).append(row)
+    for proposal in proposals:
+        decision = proposal.get("decision")
+        if proposal.get("code") != "MODEL_RESULT_SOURCE_CONFLICT" or not isinstance(decision, Mapping):
+            continue
+        key = (source_key(decision.get("source_row")), inferred_row_role(decision))
+        if key[0] in owned and proposal.get("proposal_id"):
+            pending.setdefault(key, []).append(proposal)
+    resolved: list[str] = []
+    for key, group in pending.items():
+        rows = candidates.get(key, [])
+        for proposal in group:
+            operation_id = str(proposal["decision"].get("operation_id") or "")
+            proposal_id = str(proposal["proposal_id"])
+            matching = [row for row in rows
+                        if str(row.get("resolves_proposal_id") or "") in {"", proposal_id}
+                        and (str(row.get("operation_id") or "") == operation_id if operation_id
+                             else str(row.get("resolves_proposal_id") or "") == proposal_id)]
+            if len(matching) == 1:
+                resolved.append(proposal_id)
+    return resolved
+
+
 def research_cache_entry(
     hits: Sequence[Mapping[str, Any]], *, cache_contract: str = "", previous: Any = None,
 ) -> Any:
@@ -369,6 +416,7 @@ _IDENTITY_DECISION_FIELDS = frozenset(
         "content_sha256",
         "expected_revision",
         "base_revision",
+        "resolves_proposal_id",
     }
 )
 # Task 2026-09-29 § 3: these fields explain a decision that is already on the record.
@@ -1423,6 +1471,15 @@ class WorkbookResearchJobService:
                 dict(item) for item in context.get("unapplied_proposals", [])
                 if isinstance(item, Mapping)
             ]
+            resolved_ids = list(context.get("resolved_source_conflict_proposal_ids") or ())
+            newly_resolved_ids = source_conflict_resolutions(
+                [item for item in saved_proposals if item.get("proposal_id") not in resolved_ids],
+                accepted_rows, packet_locators=packet_locators,
+                canonicalize_locator=canonicalize_locator,
+            )
+            if newly_resolved_ids:
+                resolved_ids.extend(identity for identity in newly_resolved_ids if identity not in resolved_ids)
+                context["resolved_source_conflict_proposal_ids"] = resolved_ids
             seen_proposals = {str(item.get("proposal_id") or "") for item in saved_proposals}
             new_proposals: list[dict[str, Any]] = []
             for item in proposals:
@@ -1440,14 +1497,21 @@ class WorkbookResearchJobService:
                 new_proposals.append(item)
             if new_proposals:
                 context["unapplied_proposals"] = saved_proposals
+            if new_proposals or newly_resolved_ids:
                 conn.execute(
                     "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
                     (json.dumps(context, ensure_ascii=False), str(job_id)),
                 )
+            if new_proposals:
                 self._append_event(conn, job_id, "unapplied_model_proposals", {
                     "schema": "les.model-result-unapplied-proposal.v1",
                     "sheet": str(sheet), "packet_locators": list(packet_locators),
                     "count": len(new_proposals), "proposals": new_proposals,
+                })
+            if newly_resolved_ids:
+                self._append_event(conn, job_id, "source_conflict_proposals_resolved", {
+                    "origin": "application", "sheet": str(sheet),
+                    "packet_locators": list(packet_locators), "proposal_ids": newly_resolved_ids,
                 })
             active_shas = {op: _decision_content_sha(item) for op, item in by_op.items()}
             new_revisions: list[tuple[str, int, str, dict[str, Any]]] = [
@@ -1526,6 +1590,22 @@ class WorkbookResearchJobService:
             remaining_locators = [
                 str(item) for item in remaining if str(item).strip()
             ]
+            def proposal_source(item):
+                value = (item.get("decision") or {}).get("source_row")
+                return str(canonicalize_locator(value) if canonicalize_locator is not None else value or "")
+
+            unresolved_sources = list(dict.fromkeys(
+                proposal_source(item)
+                for item in saved_proposals
+                if item.get("code") == "MODEL_RESULT_SOURCE_CONFLICT"
+                and item.get("proposal_id") not in resolved_ids))
+            resolved_sources = {
+                proposal_source(item)
+                for item in saved_proposals if item.get("proposal_id") in newly_resolved_ids}
+            remaining_locators = [source for source in remaining_locators
+                                  if source not in resolved_sources or source in unresolved_sources]
+            remaining_locators.extend(source for source in unresolved_sources
+                                      if source and source not in remaining_locators)
             held_payload = _merge_held_packet(_json_object(row, "held_packet_json"), dict(held_packet or {}))
             for op_id, revision, origin, payload in new_revisions:
                 self._insert_revision(conn, job_id, op_id, revision, origin, payload, None)

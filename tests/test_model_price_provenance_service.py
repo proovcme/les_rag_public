@@ -199,12 +199,14 @@ def test_work_commercial_price_requires_its_explicit_meaning_and_uses_source_qua
     assert trace["summary"]["confirmed_amount"] == (expected or 0)
     if kind is None:
         assert "position_price_kind_unknown:ГЭСНм08-02-409-09" in summary["completeness_reasons"]
-        assert summary["known_amount"] == 12  # the previous candidate is preserved, never confirmed
+        assert summary["known_amount"] == 0
+        assert summary["operator_price_trace"]["price"] == 100
+        assert summary["operator_price_trace"]["cost"] is None
     else:
         assert summary["operator_price_trace"]["qty"] == (12 if kind == "unit_price" else 1)
 
 
-def test_work_unit_quote_conflict_keeps_its_authored_price_preliminary(monkeypatch):
+def test_work_unit_quote_conflict_retains_quote_without_an_invalid_preliminary_amount(monkeypatch):
     from proxy.services import rim_lsr_trace_service as service
 
     monkeypatch.setattr(service.gesn_service, "get_norm", lambda _: {
@@ -217,7 +219,11 @@ def test_work_unit_quote_conflict_keeps_its_authored_price_preliminary(monkeypat
     trace = service.build_lsr_trace_from_visible_rows([{**row, "_price_evidence_check": check,
                                                        "evidence_bindings": {"Q1.H1": "actual-quote"}}])
     summary = trace["sections"][0]["positions"][0]["summary"]
-    assert summary["known_amount"] == 1200
+    assert summary["known_amount"] == 0
+    assert trace["summary"]["preliminary_amount"] == 0
+    assert summary["operator_price_trace"]["price"] == 100
+    assert summary["operator_price_trace"]["unit"] == "kg"
+    assert summary["operator_price_trace"]["cost"] is None
     assert summary["full_amount"] is None
     assert "position_price_unit_conflict:ГЭСНм08-02-409-09" in summary["completeness_reasons"]
 

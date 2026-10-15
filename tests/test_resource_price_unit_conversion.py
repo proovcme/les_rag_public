@@ -138,7 +138,7 @@ def test_assembly_refuses_a_book_candidate_whose_conversion_keeps_the_wrong_unit
     assert "price_unit_conversion" not in result["resources"][0]
 
 
-def test_visible_unit_quote_caller_does_not_accept_si_factor_without_applying_it(monkeypatch):
+def test_visible_unit_quote_caller_applies_si_factor_with_a_quantity_trace(monkeypatch):
     monkeypatch.setattr(rim.gesn_service, "get_norm", lambda *_args, **_kwargs: {
         "code": "ГЭСН01-01-001-01", "name": "Authored work", "unit": "т", "resources": [],
     })
@@ -150,8 +150,15 @@ def test_visible_unit_quote_caller_does_not_accept_si_factor_without_applying_it
     original = deepcopy(row)
     position = rim.positions_from_visible_lsr_rows([row])["positions"][0]
     assert position["confirmed_price"] == 10
-    assert position["confirmed_price_attributed"] is False
-    assert position["confirmed_price_issue"] == "position_price_unit_conflict"
+    assert position["confirmed_price_attributed"] is True
+    assert position["confirmed_price_quantity"] == 1000
+    assert position["confirmed_price_unit"] == "кг"
+    assert position["confirmed_price_quantity_trace"]["si_factor"] == 1000
+    assert "1000" in position["confirmed_price_quantity_trace"]["formula"]
+    trace = rim.build_lsr_trace_from_visible_rows([row])
+    assert trace["summary"]["confirmed_amount"] == 10000
+    assert trace["row_bindings"][0]["position"]["source_quantity"] == 1
+    assert trace["row_bindings"][0]["position"]["source_unit"] == "т"
     assert row == original
 
 

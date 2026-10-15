@@ -1,5 +1,25 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Кандидат947 — согласованные ссылки и продолжение отклонённых операций
+
+`chat_evidence_application_service` использует Qx.Hy для строк результата в
+обоих сметных маршрутах; обычные answer/query/source_read сохраняют своё
+соглашение. Source-conflict работа остаётся pending при принятом материале
+того же адреса. `workbook_research_job_service.source_conflict_resolutions`
+фиксирует однозначное техническое исправление отдельного предложения,
+не изменяя сохранённое авторское решение. Док↔код:
+[RAG evidence flow](modules/rag-evidence-flow.md),
+[chat profiles](modules/chat-profiles.md). Регрессии:
+test_model_source_conflict_resume_947, test_model_workbook_citation_instructions_947.
+`rim_lsr_trace_service` сохраняет цитату цены отдельно от вычислимой стоимости:
+несовместимые единицы/неизвестный вид цены не дают даже предварительного
+произведения. Док↔код: [расчёт ЛСР](ALGO-lsr-assembly.md);
+test_model_quote_dimensions_947.
+`runtime_config_registry_service` исключает `artifacts/` из объявления факторов:
+старые копии исходников не меняют настройки GUI. Док↔код:
+[chat profiles](modules/chat-profiles.md); test_runtime_config_registry_service.
+Статус: кандидат; полный gate и installed947 pending; customer-ready=false.
+
 ## Кандидат946 — прозрачный допуск и сохранность отклонённых строк
 
 `model_capability_service.CapabilityProbe.probe_and_store` повторно измеряет

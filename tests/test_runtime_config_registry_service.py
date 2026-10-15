@@ -54,6 +54,36 @@ def test_registry_reports_literal_default_as_effective_value(monkeypatch):
     assert factor["declared_default"] == "64"
 
 
+def test_declared_runtime_factors_ignore_historical_artifact_sources(tmp_path, monkeypatch):
+    active = tmp_path / "proxy" / "active.py"
+    active.parent.mkdir()
+    active.write_text(
+        'import os\n'
+        'os.getenv("LES_ACTIVE_ONLY_FACTOR", 17)\n'
+        'os.getenv("LES_ARTIFACT_CONFLICT_FACTOR", "")\n', encoding="utf-8",
+    )
+    rollback = tmp_path / "artifacts" / "rollback" / "proxy" / "historical.py"
+    rollback.parent.mkdir(parents=True)
+    rollback.write_text(
+        'import os\n'
+        'os.getenv("LES_ARTIFACT_CONFLICT_FACTOR", "historical default")\n'
+        'os.getenv("LES_REMOVED_ARTIFACT_FACTOR", 999)\n', encoding="utf-8",
+    )
+    monkeypatch.setattr(registry, "_ROOT", tmp_path)
+    registry.declared_env_defaults.cache_clear()
+    registry.declared_env_keys.cache_clear()
+    try:
+        defaults = registry.declared_env_defaults()
+        assert defaults["LES_ACTIVE_ONLY_FACTOR"] == "17"
+        assert defaults["LES_ARTIFACT_CONFLICT_FACTOR"] == ""
+        assert "LES_REMOVED_ARTIFACT_FACTOR" not in defaults
+        assert "LES_ACTIVE_ONLY_FACTOR" in registry.declared_env_keys()
+        assert "LES_REMOVED_ARTIFACT_FACTOR" not in registry.declared_env_keys()
+    finally:
+        registry.declared_env_defaults.cache_clear()
+        registry.declared_env_keys.cache_clear()
+
+
 def test_cloud_turn_budget_is_visible_numeric_not_secret(monkeypatch):
     monkeypatch.delenv("LES_CLOUD_TURN_TOKEN_BUDGET", raising=False)
     registry.declared_env_defaults.cache_clear()

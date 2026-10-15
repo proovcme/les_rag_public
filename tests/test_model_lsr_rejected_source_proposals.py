@@ -145,7 +145,9 @@ async def test_explicit_resume_receives_rejected_decisions_and_keeps_audit_after
     request.req.question = "Продолжи это же задание по тому же прикреплённому документу."
     corrected = _rows()
     for row, quantity in zip(corrected, (12, 3), strict=True):
-        row.update(quantity=quantity, unit="m")
+        proposal = next(item for item in original_proposals
+                        if str(item["decision"]["source_row"]).casefold() == row["source_row"].casefold())
+        row.update(quantity=quantity, unit="m", resolves_proposal_id=proposal["proposal_id"])
     run.responses.extend([
         InferenceResponse(text=json.dumps({"artifact_kind": "lsr", "queries": [
             "S!R2 — Cable A", "S!R3 — Cable B"]}), tool_calls=(), finish_reason="stop", usage={}),

@@ -255,7 +255,7 @@ _RESTART_KEYS = {
 }
 _SKIP_PARTS = {
     ".git", ".venv", ".test-tmp", "data", "logs", "storage", "dist",
-    "docs", "local_private_archive", "node_modules", "target", "build",
+    "docs", "artifacts", "local_private_archive", "node_modules", "target", "build",
 }
 
 

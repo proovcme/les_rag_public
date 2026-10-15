@@ -149,6 +149,7 @@ def test_whole_position_price_has_the_actual_owner_in_amount_and_trace(monkeypat
         row["price_kind"] = "unit_price"
     else:
         row["price_source"] = "operator"  # self-authored claim is not confirmation
+        row["price_kind"] = "unit_price"
     trace = build_lsr_trace_from_visible_rows([row], confirmed_data=overlay)
     summary = trace["sections"][0]["positions"][0]["summary"]
     expected_status = {

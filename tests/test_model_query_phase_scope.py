@@ -92,12 +92,24 @@ def test_factory_profile_conflicting_prose_rules_remain_literal_but_do_not_defin
     assert json.dumps(snapshot, ensure_ascii=False).encode("utf-8") == profile_bytes
 
 
-@pytest.mark.parametrize("purpose", ["answer", "workbook_result"])
-def test_operator_result_keeps_its_citations_without_query_phase_override(purpose):
-    prompt = service.profile_system_prompt(_snapshot(), strict=False, purpose=purpose)
-    assert _ANSWER_CITATION_RULE in prompt
+@pytest.mark.parametrize("purpose", ["answer", "source_read", "workbook_result"])
+def test_result_citations_follow_their_phase_without_query_phase_override(purpose):
+    snapshot = _snapshot()
+    before = copy.deepcopy(snapshot)
+    prompt = service.profile_system_prompt(snapshot, strict=False, purpose=purpose)
+    if purpose == "workbook_result":
+        assert "В evidence_refs строк результата используй буквальные Qx.Hy показанных карточек" in prompt
+        assert "[Источник N] не заменяет Qx.Hy в evidence_refs" in prompt
+        assert "эти номера допустимы только в комментарии, если такие заголовки показаны" in prompt
+        assert _ANSWER_CITATION_RULE not in prompt
+    else:
+        assert _ANSWER_CITATION_RULE in prompt
+        assert "В evidence_refs строк результата используй буквальные Qx.Hy" not in prompt
     assert _PHASE_MARKER not in prompt
     assert _FINAL_CITATION_RULE not in prompt
+    assert prompt.startswith(snapshot["prompt_text"])
+    assert snapshot["skill_text"] in prompt
+    assert snapshot == before
 
 
 def test_primary_repair_and_continuation_offer_the_same_two_query_formats():
