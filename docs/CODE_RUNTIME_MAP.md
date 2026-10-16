@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1186 |
-| Строк Python | 409704 |
+| Python-файлов под git | 1188 |
+| Строк Python | 410004 |
 | PRODUCT_REACHABLE | 382 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 792 |
+| TEST_OR_TOOL_ONLY | 794 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 342 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 15214 | 101 |
+| proxy/services/chat_evidence_application_service.py | 15214 | 103 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7811 | 7 |
 | proxy/routers/chat.py | 4880 | 54 |
@@ -56,7 +56,7 @@
 | sovushka/pages/diag.py | 1605 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
-| proxy/services/attachment_source_catalog_service.py | 1441 | 37 |
+| proxy/services/attachment_source_catalog_service.py | 1441 | 38 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 16 |
