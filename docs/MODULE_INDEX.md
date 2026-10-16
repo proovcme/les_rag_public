@@ -1,5 +1,34 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 960 — текущий native reasoning и единый Windows bootstrap
+
+`ContextPacket.messages` ставит текущий source/evidence frame перед native-цепочкой
+только при непустом `reasoning_content` в типизированном `NativeToolExchange`
+этого же пользовательского хода. Обязательный boundary cue входит в Governor;
+без reasoning и в terminal-пути сохранён прежний порядок. Исходники, карточки,
+ID вызовов, аргументы и предметные решения не меняются. Док↔код: ✅
+[RAG evidence flow](modules/rag-evidence-flow.md).
+Регрессии: `test_native_reasoning_frame_960.py` и прежние current-frame tests.
+
+Hard/soft apply, resume и rollback/recovery запускают продукт через native entry
+после прежних guarded stop/dependency checks. Generic headless CLI остаётся
+отдельным явным контуром. Recovery проверяет точную восстановленную identity до
+объявления готовности; его ошибка сохраняется отдельно от исходной. Док↔код: ✅
+[Windows release](RELEASE_PROCEDURE.md).
+Регрессия: `test_windows_native_boot_960.py`; установленный live gate обязателен.
+
+`audit_vor_result_integrity` проверяет явно заполненную ссылку work_row также у
+самой работы: отсутствующий/нерабочий endpoint становится видимым замечанием.
+Пустая ссылка самостоятельной работы допустима; решение остаётся дословным.
+VOR-only contract требует сохранять техническую идентичность своей source,
+обосновывать объединение работ и задавать вопросы только по необходимым для ВОР
+данным. Это общие требования модели, не кодовый выбор работ. Док↔код: ✅
+[ВОР](ALGO-spec-to-bor.md). Регрессия: `test_vor_operation_basis_960.py`.
+
+Установщик959 принят технически (install → rollback → reinstall одинаковых байтов,
+native EXE-only boot); это не профессиональная приёмка ВОР/ЛСР. Кандидат960 ещё
+должен пройти полный gate и установленное сравнение. Customer-ready не заявляется.
+
 ## 959 — перенос поисковых запросов и отображение сохранённого документа
 
 `model_query_declaration_transport_service` предлагает необязательную native-функцию

@@ -197,13 +197,12 @@ def audit_vor_result_integrity(
             has_derived_unit = isinstance(derived.get("calc_unit"), str) and derived["calc_unit"].strip() not in _EMPTY_REFERENCES
             if (not _text(row.get("unit")) or _text(row.get("unit")) in _EMPTY_REFERENCES) and not has_derived_unit:
                 report("missing_work_unit", index, row, "Для работы не указана единица измерения.")
-            continue
-        if role not in _SUPPLY_ROLES:
+        if role != "work" and role not in _SUPPLY_ROLES:
             continue
 
         parent = _text(row.get("work_row"))
         if parent in _EMPTY_REFERENCES:
-            if not _has_relationship_explanation(row):
+            if role in _SUPPLY_ROLES and not _has_relationship_explanation(row):
                 report(
                     "missing_work_relationship", index, row,
                     "Для материала, оборудования или ресурса не указана связь с работой "

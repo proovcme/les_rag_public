@@ -98,6 +98,7 @@ UPDATER_BEHAVIOR_TESTS = (
     "tests/test_patch_release.py",
     "tests/test_vps_patch.py",
     "tests/test_windows_application_update.py",
+    "tests/test_windows_native_boot_960.py",
     "tests/test_windows_release_acceptance.py",
     "tests/test_windows_update_shell.py",
     "tests/test_update_service.py",

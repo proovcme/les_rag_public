@@ -1,5 +1,27 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Регрессии960 — native reasoning и Windows boot
+
+`test_native_reasoning_frame_960.py`: 9 случаев actual B0/B1 message boundaries,
+точного сохранения source/cards/native chain, required cue/whole-wire budget,
+None/empty/whitespace compatibility и запрета активации untrusted reasoning.
+Прежние current-read-frame tests обновлены только для явно непустого reasoning;
+их ограничения бюджета и проверки содержимого не ослаблялись.
+
+`test_windows_native_boot_960.py`: 26 behavioral случаев native-first boot,
+точной identity при rollback, отдельной recovery error и guarded foreign PID
+для 9 hard/soft маршрутов. Headless helpers неизменны. Оба новых файла включены
+в CURRENT_TESTS, updater-файл также в отдельный updater gate.
+Focused результаты до full gate: 69 reasoning-related + 99 updater-related PASS.
+Они не заменяют установленную приёмку и профессиональную проверку документов.
+
+`test_vor_operation_basis_960.py`: 18 случаев false-green при неверном endpoint
+work, совместимости blank/self/source/operation_id и cross-packet relationships,
+дословного экспорта решения, замечаний в readiness и следующем обычном review.
+VOR-only instruction проверяется отдельно от неизменного LSR contract; кейсовых
+шифров/изделий нет. Файл входит в CURRENT_TESTS. RED8failed/10passed, GREEN
+совместно с94 прежними VOR-проверками:112passed; это не live quality acceptance.
+
 ## Регрессии959 — транспорт запросов и пользовательская проекция
 
 `test_model_query_declaration_transport_959.py` проверяет actual B0/B1 callsites:

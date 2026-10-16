@@ -1,5 +1,27 @@
 # RAG evidence flow
 
+## 960 — текущий источник не завершает native thinking-ход
+
+При непустом строковом `reasoning_content` в типизированной native-цепочке текущего
+пользовательского хода CURRENT_READ_FRAME передаётся перед этой цепочкой. Иначе
+Qwen template трактовал добавленный после tool-result user frame как новую
+человеческую реплику и отбрасывал прежний reasoning. Canonical transport fields
+при этом были сохранены: дефект находился в порядке сериализации, а не в тексте.
+Измерение установленного tokenizer/count endpoint: reasoning marker добавляет
+354 токена перед цепочкой и 0 после неё; это измерение входа, не доказательство
+качества профессионального выбора.
+
+Required boundary cue называет frame текущим source/evidence, native exchanges —
+завершёнными чтениями этого же хода, а источник — untrusted evidence. Cue виден
+в trace и входит в whole-wire budget. Source rows, evidence refs/cards, native IDs,
+аргументы, model reasoning и professional decisions не переписываются.
+Initial/query, native reads с None/пустым/пробельным reasoning и terminal tools-off
+сохраняют прежний порядок. Не вводится глобальное сохранение исторического thinking,
+новый model-specific switch или новый предметный цикл.
+
+Регрессия: `test_native_reasoning_frame_960.py`; обязательны live B0/B1 на одной
+модели, области и источнике. Профессиональная готовность отдельно от transport.
+
 ## 959 — необязательный native-перенос поискового конверта
 
 На двух существующих query-callsite `model_query_declaration_transport_service`

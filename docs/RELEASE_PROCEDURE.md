@@ -1,5 +1,21 @@
 # Выпуск ЛЕС
 
+## 960 — продуктовый старт принадлежит native bootstrap
+
+Hard/soft apply, resume после недоступного API, rollback и recovery сохраняют
+прежние dependency/PID/stop guards, затем запускают native entry. Generic
+headless start перед ним больше не занимает продуктовые порты с другим env.
+Здоровый resume не останавливает уже работающий backend; явный headless CLI
+сохраняет прежнее поведение. User-owned FreeToken/Ollama не завершаются.
+
+После восстановления проверяется прежний deploy commit/version/build, а не
+только HTTP health. `rollback_ready` не объявляется до этой проверки; исходная
+ошибка не скрывается ошибкой recovery. Установленная приёмка обязана сверить
+effective factors и bindings сразу после canonical apply, до любого ручного
+start-light, иначе ручной перезапуск может замаскировать дефект обновления.
+Packaged native SHA берётся из точного NSIS artifact, отдельно от loose Cargo EXE.
+Регрессия: `test_windows_native_boot_960.py` (9 маршрутов и foreign PID guards).
+
 ## 959 — восстановление после отказа до замены Windows-приложения
 
 Hard update сохраняет прежние version/deploy identity и SHA native EXE до

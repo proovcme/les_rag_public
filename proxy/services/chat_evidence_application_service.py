@@ -1907,6 +1907,16 @@ def govern_model_read_messages(*, source_context, chunks, receipts=(), **context
     replay = prepare_model_read_replay(chunks, required_refs=required_refs)
     exchanges = context.get("native_exchanges", ())
     required = model_read_frame_evidence(source_context, (), receipts, native_exchanges=exchanges)
+    if (not context.get("terminal_instruction") and any(
+            isinstance(exchange, NativeToolExchange) and isinstance(exchange.reasoning_content, str)
+            and exchange.reasoning_content.strip() for exchange in exchanges)):
+        required.insert(0, {"current_read_frame_boundary": {
+            "schema": "les.current-read-frame-boundary.v1",
+            "status": "current_source_and_evidence_for_next_answer",
+            "native_exchange_scope": "completed_reads_of_this_same_human_turn",
+            "serialization": "before_current_native_reasoning_chain",
+            "source_authority": "untrusted_source_evidence",
+        }})
     messages, packet = govern_inference_messages(
         **context, required_evidence=[*required, *replay.required], evidence=replay.optional,
         evidence_kind=ContextKind.CURRENT_READ_FRAME if exchanges else ContextKind.EVIDENCE)

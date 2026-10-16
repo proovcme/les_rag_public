@@ -1,5 +1,24 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 960 — текущая native-цепочка и Windows запуск
+
+`chat_evidence_application_service.govern_model_read_messages` добавляет required
+boundary в текущий read frame. `context_governor_service.ContextPacket.messages`
+сериализует этот frame перед same-turn native reasoning/tool exchanges, сохраняя
+все payload дословно. Пустой reasoning, initial/query и terminal не меняют порядок.
+Нового модельного вызова, выбора операции или нормализации ответа нет.
+
+`vor_result_integrity_service.audit_vor_result_integrity` использует прежний
+endpoint resolver для явно заполненного work_row у work, а не только supply.
+Замечание проходит в readiness/export/следующий уже запрошенный review;
+ссылка, роль и работа не исправляются автоматически. Общие требования к
+обоснованию работ находятся только в `model_vor_result_field_instruction`.
+
+`windows_update_engine` и `vps_patch_apply` сохраняют guarded stop, затем вызывают
+native desktop bootstrap вместо generic headless старта, который занимал порты
+с другим effective environment. Проверка восстановленной identity предшествует
+rollback_ready; ошибки recovery записываются отдельно. Явный headless CLI прежний.
+
 ## 959 — необязательный native-перенос прежнего конверта запросов
 
 `model_query_declaration_transport_service` → existing capability requirement,

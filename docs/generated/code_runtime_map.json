@@ -3363,7 +3363,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15510,
+      "lines": 15520,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3778,7 +3778,7 @@
         "tests/test_workbook_result_carrier_scope.py",
         "tools/measure_model_resource_literal_capacity.py"
       ],
-      "lines": 415,
+      "lines": 422,
       "module": "proxy.services.context_governor_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5809,7 +5809,7 @@
         "tests/test_vor_task_instruction_955.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 901,
+      "lines": 907,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -8402,7 +8402,7 @@
         "tests/test_vor_derived_quantity_export_949.py",
         "tests/test_vor_result_integrity_948.py"
       ],
-      "lines": 230,
+      "lines": 229,
       "module": "proxy.services.vor_result_integrity_service",
       "outbound": [
         "proxy/__init__.py",
@@ -13247,7 +13247,7 @@
     },
     {
       "inbound": [],
-      "lines": 112,
+      "lines": 126,
       "module": "tests.test_model_current_read_frame",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -13261,7 +13261,7 @@
     },
     {
       "inbound": [],
-      "lines": 127,
+      "lines": 129,
       "module": "tests.test_model_current_read_frame_flow",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -13273,7 +13273,7 @@
     },
     {
       "inbound": [],
-      "lines": 291,
+      "lines": 292,
       "module": "tests.test_model_discovery_read_admission",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -17791,7 +17791,7 @@
     },
     {
       "inbound": [],
-      "lines": 1767,
+      "lines": 1778,
       "module": "tests.test_windows_application_update",
       "outbound": [
         "tools/vps_patch_apply.py",
@@ -19720,7 +19720,7 @@
         "tests/test_patch_release.py",
         "tests/test_test_profiles.py"
       ],
-      "lines": 354,
+      "lines": 355,
       "module": "tools.platform_release_gate",
       "outbound": [
         "tools/__init__.py"
@@ -20610,7 +20610,7 @@
         "tools/release_orchestrator.py",
         "tools/windows_release_acceptance.py"
       ],
-      "lines": 988,
+      "lines": 1012,
       "module": "tools.vps_patch_apply",
       "outbound": [
         "tools/__init__.py",
@@ -20713,7 +20713,7 @@
         "tools/vps_patch_apply.py",
         "tools/windows_release_acceptance.py"
       ],
-      "lines": 1127,
+      "lines": 1158,
       "module": "tools.windows_update_engine",
       "outbound": [
         "tools/__init__.py",
@@ -22811,7 +22811,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 815,
     "tracked_python_files": 1210,
-    "tracked_python_lines": 414815
+    "tracked_python_lines": 414921
   },
   "warnings": []
 }

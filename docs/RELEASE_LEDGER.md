@@ -1,5 +1,52 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 16.10.2026 — установлен959; кандидат960: native reasoning и запуск
+
+Runtime959/0.31.231, commit `ed7b53d974c295191c457f7240773335dc569488`,
+aligned96; полный manifest513files совпадает. Frozen gate959: 5633passed /
+20skipped за775.90s; 9/9команд rc0, updater286passed. Квитанция:
+`artifacts/gates_959_qualified/receipt.json`. Первичный failed gate сохранён.
+
+Точный NSIS959 SHA `43fe8bdd14d622042b17d80c37369d202bd2800918074e807ecbcea236d85f90`
+принят технически: install → rollback958 → reinstall тех же байтов → настоящий
+packaged EXE-only boot. Packaged native SHA `4d3695f0c800b8a965d19df1f6d940a1c229d889c6d97aaf8a260566052e0c3a`.
+Все395 shared effective factors, bindings, 3owned jobs и 3artifact SHA сохранены.
+8старых registry rows отсутствуют из-за исключения build/release Python-файлов;
+это не потеря настроек продукта. Первый403→395 отказ не удалён. Финальный smoke:
+9PASS/1WARN/0FAIL (RAM91% и нейтральная статистика CRAG); nativeRRF PASS.
+Индекс: `artifacts/live_959/installer_acceptance/final_acceptance.json`.
+
+При штатном updater restart обнаружен отдельный дефект: generic headless start
+занимал порты до native bootstrap и менял effective product environment. 960
+сохраняет guarded stop/dependency checks и запускает все продуктовые update/
+rollback/recovery маршруты через native. Проверка точной восстановленной версии
+предшествует rollback_ready; исходная ошибка и recovery error раздельны.
+
+960 также условно передвигает CURRENT_READ_FRAME перед typed native chain с
+непустым reasoning этого же хода. Измеренный installed template/count результат:
+reasoning marker354tokens до chain /0 после. Полные source/evidence/tool payload
+сохранены, terminal/no-reasoning paths прежние. Это исправляет измеренный дефект
+сериализации, но само по себе не доказывает профессиональное качество ВОР/ЛСР.
+
+Свежие B0/B1/959 используют один source/frame3/model/profile. B0:174.5s,5rows,
+две монтажные работы с23.6м², но неправильные work_row и ложный duplicate gap.
+B1:110.563s,3rows; durable checkpoint/remaining17 и файл сохранены. Профессионально
+не принят: разные панели объединены в одну работу, лишний вопрос о массе.
+Все контроли drained; собственные временные answer binding/frame3 откачены
+штатным CAS, глобальный profile не активировался. Квитанции:
+`artifacts/live_959/full_thinking_first_frame/`.
+
+Кандидат960/0.31.232 ещё не квалифицирован полным gate/установщиком/live.
+
+В тот же кандидат включён подтверждённый двумя независимыми аудитами пробел:
+work_row у role=work пропускал structural link audit. Теперь явно заполненный
+endpoint проверяется прежним resolver по полному графу; ошибка видна, авторское
+решение не исправляется/не удаляется. VOR-only contract уточняет обоснование
+технической идентичности source, объединения и task-necessary questions без
+подгонки под пример. RED8failed/10passed; focused112passed. Live ещё требуется.
+Customer-ready=false; полнота норм первого прохода не требуется, но качество
+принятых работ, сохранение решений и адресный добор остаются обязательными.
+
 ## 16.10.2026 — установлен958; кандидат959: транспорт и понятное состояние ВОР
 
 Runtime958/0.31.230 установлен aligned с bc0472abaf48ceaa476c0688c4f8ea8bceb4d14e.

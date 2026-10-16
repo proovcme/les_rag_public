@@ -800,7 +800,9 @@ def apply_hard_job(job_path: Path) -> int:
             update_id=job["update_id"],
             message="Запускаю и проверяю новую версию",
         )
-        start_runtime(new_runtime, state, log_root)
+        stop_runtime(new_runtime, state, log_root)
+        # The native shell owns the measured bootstrap/start-light path.
+        # A generic headless start here would win the ports with another env.
         desktop_task = start_desktop(install, str(job["update_id"]), log_root)
         smoke = wait_ready(
             expected_commit=job["target_commit"],
@@ -830,6 +832,8 @@ def apply_hard_job(job_path: Path) -> int:
         return 0
     except Exception as exc:  # noqa: BLE001
         rollback_ready = False
+        rollback_recovery_error = ""
+        rollback_recovery: dict[str, Any] = {}
         previous_restarted = False
         previous_recovery_error = ""
         previous_recovery: dict[str, Any] = {}
@@ -846,10 +850,23 @@ def apply_hard_job(job_path: Path) -> int:
                     shutil.rmtree(install)
                 os.replace(recovery, install)
                 restored = runtime_root(install)
-                start_runtime(restored, state, log_root)
-                start_desktop(install, f"{job.get('update_id', 'hard')}-rollback", log_root)
+                if (
+                    previous_identity is None
+                    or _previous_application_identity(install, restored) != previous_identity
+                ):
+                    raise RuntimeError("PREVIOUS_APPLICATION_IDENTITY_UNPROVEN: restored release differs from the before-stop identity")
+                stop_runtime(restored, state, log_root)
+                if desktop_task:
+                    remove_task(desktop_task, install, log_root)
+                desktop_task = start_desktop(install, f"{job.get('update_id', 'hard')}-rollback", log_root)
+                rollback_recovery = wait_ready(
+                    expected_commit=previous_identity["deployed_commit"],
+                    expected_version=previous_identity["product_version"],
+                    expected_build=previous_identity["build_number"], state=state, timeout=120,
+                )
                 rollback_ready = True
-            except Exception:
+            except Exception as recovery_error:
+                rollback_recovery_error = str(recovery_error)
                 rollback_ready = False
         elif previous_application_stopped:
             try:
@@ -900,6 +917,8 @@ def apply_hard_job(job_path: Path) -> int:
             ),
             error=str(exc),
             user_data_untouched=True,
+            **({"rollback_recovery_error": rollback_recovery_error,
+                "rollback_recovery": rollback_recovery} if moved_old else {}),
             **({
                 "previous_application_restarted": previous_restarted,
                 "previous_application_recovery_error": previous_recovery_error,
@@ -973,7 +992,10 @@ def resume_hard_job(job_path: Path) -> int:
     try:
         _json_url("http://127.0.0.1:8050/api/version", timeout=5)
     except Exception:
-        start_runtime(runtime, state, log_root)
+        # Preserve the old generic start's guarded stop, while the native shell
+        # alone owns the restarted process environment.
+        stop_runtime(runtime, state, log_root)
+        stop_desktop()
     desktop_task = start_desktop(install, f"{job['update_id']}-resume", log_root)
     try:
         smoke = wait_ready(
@@ -1065,7 +1087,7 @@ def rollback_accepted_hard_update(
         os.replace(recovery, install)
         swapped = True
         restored_runtime = runtime_root(install)
-        start_runtime(restored_runtime, state, log_root)
+        stop_runtime(restored_runtime, state, log_root)
         desktop_task = start_desktop(install, "accepted-hard-rollback", log_root)
         smoke = wait_ready(
             expected_commit=previous_commit,
@@ -1084,7 +1106,7 @@ def rollback_accepted_hard_update(
             "smoke": smoke,
             "user_data_untouched": True,
         }
-    except Exception:
+    except Exception as original_error:
         if swapped:
             try:
                 if desktop_task:
@@ -1095,10 +1117,19 @@ def rollback_accepted_hard_update(
                 os.replace(install, recovery)
                 os.replace(candidate, install)
                 restored_target = runtime_root(install)
-                start_runtime(restored_target, state, log_root)
-                start_desktop(install, "accepted-hard-rollback-recovery", log_root)
-            except Exception:
-                pass
+                stop_runtime(restored_target, state, log_root)
+                recovery_task = start_desktop(install, "accepted-hard-rollback-recovery", log_root)
+                try:
+                    wait_ready(
+                        expected_commit=current_stamp["deployed_commit"],
+                        expected_version=str(current_stamp.get("product_version") or ""),
+                        expected_build=int(current_stamp.get("build_number") or 0),
+                        state=state, timeout=120,
+                    )
+                finally:
+                    remove_task(recovery_task, install, log_root)
+            except Exception as recovery_error:
+                original_error.add_note("ACCEPTED_HARD_ROLLBACK_RECOVERY_FAILED: " + str(recovery_error))
         raise
 
 

@@ -254,15 +254,16 @@ async def test_sixty_prepared_search_cards_fit_bound_continuation_as_inventory_a
     assert packet.safety_reserve_tokens == 2048 and packet.included_tokens <= packet.input_budget_tokens
     assert len(inventory) == 60 and bodies and len(bodies) < 60
     assert 'Literal complete original source' in wire
-    assert messages[-12:-1] == exchange.as_messages()
-    assert messages[-12]['reasoning_content'] == calls[0]['native_reasoning_content']
+    assert messages[3:] == exchange.as_messages()
+    assert messages[3]['reasoning_content'] == calls[0]['native_reasoning_content']
     assert messages[1]['role'] == 'user' and 'Literal original question' in messages[1]['content']
-    assert messages[-1]['role'] == 'user' and 'Literal complete original source' in messages[-1]['content']
+    assert messages[2]['role'] == 'user' and 'Literal complete original source' in messages[2]['content']
+    assert 'current_read_frame_boundary' in messages[2]['content']
     if not counter_available:
         assert packet.token_count_binding['status'] == 'fallback'
         assert packet.token_count_source == 'conservative_chars_per_two'
     for call in calls:
-        assert call['native_arguments'] in [item['function']['arguments'] for item in messages[-12]['tool_calls']]
+        assert call['native_arguments'] in [item['function']['arguments'] for item in messages[3]['tool_calls']]
     admitted_groups = {int(ref.split('.')[0][1:]) for ref in bodies}
     assert all(sum(ref.startswith(f'Q{group}.') for ref in bodies) == 6 for group in admitted_groups)
     assert all(ref in wire for ref in inventory)

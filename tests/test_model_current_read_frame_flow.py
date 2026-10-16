@@ -1,4 +1,4 @@
-"""Actual B0/B1 native reads keep current literal evidence after completed history."""
+"""Actual B0/B1 reads preserve current literal evidence and complete native history."""
 import copy
 import json
 
@@ -85,15 +85,17 @@ async def test_actual_current_cards_follow_completed_native_history_without_rewr
         ("S!R2", RESOURCE_A, 12), ("S!R3", RESOURCE_B, 3)]
     assert workbook["confirmed_amount"] == 1800 and workbook["preliminary_amount"] == 0
 
-    # This intentional semantic transition changes provider last-user selection;
-    # canonical native history is immutable, but tokenizer rendering is not
-    # asserted to be byte-identical to the old ordering.
-    assert messages[-1]["role"] == "user", "current evidence must follow the completed tool history"
-    assert messages[-2]["role"] == "tool"
+    # This current chain has nonempty native reasoning. Keep its opaque fields
+    # after the current source's user boundary; an explicit technical cue still
+    # marks the whole registry as the current input for the next response.
+    assert messages[2]["role"] == "user"
+    assert "current_read_frame_boundary" in messages[2]["content"]
+    assert "current_source_and_evidence_for_next_answer" in messages[2]["content"]
+    assert messages[3:] == native_history and messages[-1]["role"] == "tool"
     assert not any("previously_shown_evidence_registry" in message.get("content", "")
-                   for message in messages[:-1])
+                   for index, message in enumerate(messages) if index != 2)
     registries = []
-    for line in messages[-1]["content"].splitlines():
+    for line in messages[2]["content"].splitlines():
         try:
             value = json.loads(line)
         except json.JSONDecodeError:

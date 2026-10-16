@@ -197,13 +197,20 @@ class ContextPacket:
             messages.append({"role": "system", "content": system})
         if user_sections:
             messages.append({"role": "user", "content": "\n".join(user_sections)})
+        current_frame = "\n".join(section.render() for section in self.sections
+                                  if section.kind == ContextKind.CURRENT_READ_FRAME)
+        current_chain = [item.payload for section in self.sections for item in section.objects
+                         if isinstance(item.payload, NativeToolExchange)]
+        before_native = (bool(current_frame) and any(isinstance(exchange.reasoning_content, str) and exchange.reasoning_content.strip()
+                                 for exchange in current_chain)
+                         and not any(section.kind == ContextKind.TERMINAL_REQUEST for section in self.sections))
+        if before_native:
+            messages.append({"role": "user", "content": current_frame})
         for section in self.sections:
             for item in section.objects:
                 if isinstance(item.payload, NativeToolExchange):
                     messages.extend(item.payload.as_messages())
-        current_frame = "\n".join(section.render() for section in self.sections
-                                  if section.kind == ContextKind.CURRENT_READ_FRAME)
-        if current_frame:
+        if current_frame and not before_native:
             messages.append({"role": "user", "content": current_frame})
         for section in self.sections:
             if section.kind == ContextKind.TERMINAL_REQUEST:

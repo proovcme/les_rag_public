@@ -1,5 +1,6 @@
-"""Current evidence follows completed native reads without changing literal objects."""
+"""Current evidence and native history retain literal objects and counted scope."""
 from copy import deepcopy
+from dataclasses import replace
 import hashlib
 import json
 
@@ -30,21 +31,30 @@ def _scope():
     return source, exchanges
 
 
-def test_read_producer_places_whole_frame_once_after_all_complete_native_history_and_exposes_public_proof():
+@pytest.mark.parametrize("native_reasoning", [False, True])
+def test_read_producer_keeps_whole_frame_and_complete_native_history_with_public_proof(native_reasoning):
     source, exchanges = _scope()
+    if not native_reasoning:
+        exchanges = tuple(replace(exchange, reasoning_content=None) for exchange in exchanges)
     frozen = deepcopy(source)
     messages, packet, _, _ = service.govern_model_read_messages(preset=_preset(), profile_prefix="literal profile",
         request_payload="literal original question", source_context=source, chunks=(), native_exchanges=exchanges)
-    assert messages[-1]["role"] == "user"
     assert messages[:2] == [{"role": "system", "content": "literal profile"},
         {"role": "user", "content": "literal original question"}]
-    assert messages[2:-1] == [message for exchange in exchanges for message in exchange.as_messages()]
+    native = [message for exchange in exchanges for message in exchange.as_messages()]
+    frame_index = 2 if native_reasoning else len(messages) - 1
+    assert messages[frame_index]["role"] == "user"
+    assert (messages[3:] if native_reasoning else messages[2:-1]) == native
     frame = next(section for section in packet.sections if section.kind == ContextKind.CURRENT_READ_FRAME)
     replay = service.prepare_model_read_replay((), required_refs=())
     expected = [*frozen, *replay.required]
+    if native_reasoning:
+        boundary = frame.objects[0].payload
+        assert boundary["current_read_frame_boundary"]["status"] == "current_source_and_evidence_for_next_answer"
+        expected.insert(0, boundary)
     assert [item.payload for item in frame.objects] == expected and source == frozen
     assert frame.object_ids == tuple("source-required:" + str(index) for index in range(len(expected)))
-    assert messages[-1]["content"] == frame.render()
+    assert messages[frame_index]["content"] == frame.render()
     assert sum(message.get("content", "").count("COMPLETE_CARD_BODY") for message in messages) == 1
     assert service.packet_evidence_text(packet) == frame.render()
     trace = service.context_packet_trace(packet, purpose="sheet_pass_evidence_read")
@@ -77,13 +87,17 @@ def test_current_frame_keeps_existing_evidence_optional_priority_before_source_m
 
 
 @pytest.mark.asyncio
-async def test_bound_count_sees_final_current_frame_order_and_original_budget_before_admission():
+@pytest.mark.parametrize("native_reasoning", [False, True])
+async def test_bound_count_sees_final_current_frame_order_and_original_budget_before_admission(native_reasoning):
     source, exchanges = _scope()
+    if not native_reasoning:
+        exchanges = tuple(replace(exchange, reasoning_content=None) for exchange in exchanges)
     probes = []
     async def count(messages):
         probes.append(deepcopy(messages))
-        assert messages[-1]["role"] == "user" and "COMPLETE_CARD_BODY" in messages[-1]["content"]
-        assert messages[2:-1] == [message for exchange in exchanges for message in exchange.as_messages()]
+        frame_index = 2 if native_reasoning else len(messages) - 1
+        assert messages[frame_index]["role"] == "user" and "COMPLETE_CARD_BODY" in messages[frame_index]["content"]
+        assert (messages[3:] if native_reasoning else messages[2:-1]) == [message for exchange in exchanges for message in exchange.as_messages()]
         return InputTokenCount(tokens=55297, source="synthetic_fixture_not_provider_tokens", model_id="test-model",
             connection_revision_id="test:r8", wire_sha256=hashlib.sha256(json.dumps(messages).encode()).hexdigest(),
             model_identity_sha256="synthetic-owner")

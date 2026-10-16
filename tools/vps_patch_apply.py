@@ -444,6 +444,16 @@ def remove_task(name: str) -> None:
         )
 
 
+def _probe_native_runtime(runtime: Path, state: Path) -> None:
+    """Keep dependency/stop guards; the following native entry alone owns boot."""
+    windows_update_engine.probe_environment(
+        runtime,
+        state,
+        state / "logs" / "updates" / "soft-update",
+    )
+    _stop_runtime(runtime, state)
+
+
 def _start_runtime(runtime: Path, state: Path) -> None:
     windows_update_engine.probe_environment(
         runtime,
@@ -560,7 +570,7 @@ def rollback_accepted_patch(
         stopped = True
         _restore_file_set(manifest, runtime, backup)
         (runtime / ".les_deploy_stamp.json").write_bytes(previous_stamp_bytes)
-        _start_runtime(runtime, state)
+        _probe_native_runtime(runtime, state)
         desktop_task = start_desktop(runtime, f"{manifest['patch_id']}-accepted-rollback")
         smoke = _wait_restored_ready(previous_stamp, state)
         remove_task(desktop_task)
@@ -573,7 +583,7 @@ def rollback_accepted_patch(
             "smoke": smoke,
             "user_data_untouched": True,
         }
-    except Exception:
+    except Exception as original_error:
         if stopped:
             try:
                 if desktop_task:
@@ -584,11 +594,14 @@ def rollback_accepted_patch(
                 (runtime / ".les_deploy_stamp.json").write_bytes(
                     (candidate / "target_deploy_stamp.json").read_bytes()
                 )
-                _start_runtime(runtime, state)
+                _probe_native_runtime(runtime, state)
                 retry_task = start_desktop(runtime, f"{manifest['patch_id']}-rollback-recovery")
-                remove_task(retry_task)
-            except Exception:
-                pass
+                try:
+                    _wait_restored_ready(current_stamp, state)
+                finally:
+                    remove_task(retry_task)
+            except Exception as recovery_error:
+                original_error.add_note("ACCEPTED_SOFT_ROLLBACK_RECOVERY_FAILED: " + str(recovery_error))
         raise
 
 
@@ -860,7 +873,7 @@ def apply_job(job_path: Path) -> int:
         os.replace(stamp_tmp, stamp_path)
         stamp_touched = True
         write_status(status, state="applying", stage="restart", patch_id=patch_id, message="Перезапускаю ЛЕС")
-        _start_runtime(runtime, state)
+        _probe_native_runtime(runtime, state)
         desktop_task = start_desktop(runtime, patch_id)
         process_hygiene = _wait_ready(manifest, state)
         remove_task(desktop_task)
@@ -931,18 +944,27 @@ def apply_job(job_path: Path) -> int:
             except Exception as restore_error:  # noqa: BLE001
                 restore_errors.append(f"{stamp_path}: {restore_error}")
         rollback_ready = False
+        rollback_recovery_error = ""
+        rollback_recovery: dict[str, Any] = {}
         if runtime_stopped and not restore_errors:
             try:
                 if desktop_task:
                     remove_task(desktop_task)
-                _start_runtime(runtime, state)
+                # The removed generic start used to stop its old listeners.
+                # Keep that guarded restart so native UI-ready cannot skip boot.
+                _stop_desktop()
+                restored_identity = json.loads(previous_stamp.decode("utf-8-sig")) if previous_stamp is not None else {}
+                if not isinstance(restored_identity, dict):
+                    raise RuntimeError("PREVIOUS_APPLICATION_IDENTITY_UNPROVEN: previous deploy stamp is not an object")
+                _probe_native_runtime(runtime, state)
                 rollback_task = start_desktop(runtime, f"{patch_id}-rollback")
-                with urllib.request.urlopen(  # noqa: S310 - loopback only
-                    "http://127.0.0.1:8051/healthz", timeout=30
-                ) as response:
-                    rollback_ready = response.status == 200
-                remove_task(rollback_task)
-            except Exception:
+                try:
+                    rollback_recovery = _wait_restored_ready(restored_identity, state)
+                    rollback_ready = True
+                finally:
+                    remove_task(rollback_task)
+            except Exception as recovery_error:
+                rollback_recovery_error = str(recovery_error)
                 rollback_ready = False
         write_status(
             status,
@@ -968,6 +990,8 @@ def apply_job(job_path: Path) -> int:
                 else f"{exc}; rollback errors: {'; '.join(restore_errors)}"
             ),
             user_data_untouched=True,
+            **({"rollback_recovery_error": rollback_recovery_error,
+                "rollback_recovery": rollback_recovery} if runtime_stopped else {}),
         )
         remove_task(helper_task_name)
         return 1

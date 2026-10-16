@@ -34,7 +34,7 @@ def _prepared_job(
     user_data = state / "data" / "user-owned.db"
     user_data.parent.mkdir(parents=True)
     user_data.write_bytes(b"never replace me")
-    previous_stamp = {"deployed_commit": "a" * 40, "product_version": "0.25.17"}
+    previous_stamp = {"deployed_commit": "a" * 40, "product_version": "0.25.17", "build_number": 490}
     (runtime / ".les_deploy_stamp.json").write_text(
         json.dumps(previous_stamp), encoding="utf-8"
     )
@@ -135,7 +135,12 @@ def _prepared_job(
 def _patch_windows_actions(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(vps_patch_apply, "_stop_runtime", lambda _runtime, _state: None)
     monkeypatch.setattr(vps_patch_apply, "_stop_desktop", lambda: None)
-    monkeypatch.setattr(vps_patch_apply, "_start_runtime", lambda _runtime, _state: None)
+    monkeypatch.setattr(vps_patch_apply, "_probe_native_runtime", lambda _runtime, _state: None)
+    def restored_ready(stamp, _state):
+        assert stamp.get("deployed_commit") in {"a" * 40, "b" * 40}
+        assert stamp.get("product_version") and int(stamp.get("build_number") or 0) > 0
+        return _ready_process_contract()
+    monkeypatch.setattr(vps_patch_apply, "_wait_restored_ready", restored_ready)
     monkeypatch.setattr(
         vps_patch_apply,
         "_verify_smeta_baseline",
@@ -922,6 +927,10 @@ def _hard_job(tmp_path: Path) -> tuple[Path, Path, Path]:
         encoding="utf-8",
     )
     (runtime / "old-code.txt").write_text("old", encoding="utf-8")
+    (runtime / ".les_deploy_stamp.json").write_text(
+        json.dumps({"deployed_commit": "a" * 40, "product_version": "0.25.19", "build_number": 492}),
+        encoding="utf-8",
+    )
     (install / "les-desktop.exe").write_bytes(b"old desktop")
     (state / "data").mkdir(parents=True)
     (state / "data" / "user.db").write_bytes(b"user-owned")
@@ -990,11 +999,13 @@ def _mock_hard_lifecycle(
 
     monkeypatch.setattr(windows_update_engine, "run_bounded", fake_run)
     if smoke_error:
-        monkeypatch.setattr(
-            windows_update_engine,
-            "wait_ready",
-            lambda **_kwargs: (_ for _ in ()).throw(RuntimeError(smoke_error)),
-        )
+        def candidate_failure(**kwargs):
+            if kwargs["expected_commit"] == "b" * 40:
+                raise RuntimeError(smoke_error)
+            assert kwargs["expected_commit"] == "a" * 40
+            assert kwargs["expected_version"] == "0.25.19" and kwargs["expected_build"] == 492
+            return {"index_contract_compatible": True}
+        monkeypatch.setattr(windows_update_engine, "wait_ready", candidate_failure)
     else:
         monkeypatch.setattr(
             windows_update_engine,
