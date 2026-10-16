@@ -2030,7 +2030,10 @@ async def test_chat_workbook_executor_builds_revision_and_streams_checkpoint(tmp
         {
             "call_id": "call-1",
             "tool": "build_vor_workbook",
-            "args": {"attachment_id": attachment["attachment_id"]},
+            "args": {"attachment_id": attachment["attachment_id"], "decisions": [{
+                "source_row": "Sheet!R2", "row_role": "work", "title": "Монтаж воздуховода",
+                "unit": "м", "quantity": 12.5, "coverage": "Монтаж по исходной спецификации",
+            }]},
         },
         {
             "session_id": "session-1",
@@ -2471,6 +2474,8 @@ async def test_chat_workbook_executor_binds_exact_request_dataset_scope(
             "args": {
                 "attachment_id": attachment["attachment_id"],
                 "dataset_ids": model_dataset_ids,
+                "decisions": [{"source_row": "Sheet!R2", "row_role": "work",
+                               "title": "Прокладка кабеля", "unit": "м", "quantity": 2}],
             },
         },
         {
@@ -4860,7 +4865,7 @@ def test_workbook_packaging_args_match_each_tool_contract():
     )
 
     decisions = [
-        {"source_row": "СКС!R2", "title": "Монтаж трубы", "unit": "м", "quantity": 10}
+        {"source_row": "СКС!R2", "row_role": "work", "title": "Монтаж трубы", "unit": "м", "quantity": 10}
     ]
     overrides = {"СКС!R2": {"confirmed_price": 125.5}}
     vor_args = service.workbook_packaging_args(
@@ -4932,7 +4937,7 @@ def test_workbook_packaging_args_draft_and_parent_are_opt_in():
     )
 
     decisions = [
-        {"source_row": "СКС!R2", "title": "Монтаж трубы", "unit": "м", "quantity": 10}
+        {"source_row": "СКС!R2", "row_role": "work", "title": "Монтаж трубы", "unit": "м", "quantity": 10}
     ]
     base = service.workbook_packaging_args(
         packaging_tool="build_lsr_workbook",

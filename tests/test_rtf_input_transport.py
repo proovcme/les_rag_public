@@ -285,7 +285,9 @@ async def test_rtf_requires_authored_rows_and_explicit_lsr_adapter(tmp_path, mon
                                     root=tmp_path / "attachments")
     context = _context(tmp_path)
     result = await workbook_service.build_vor_workbook({"attachment_id": meta["attachment_id"]}, context)
-    assert result["code"] == "UNSUPPORTED_ATTACHMENT_TYPE"
+    # The public VOR contract rejects missing model rows before opening any source type.
+    assert result["code"] == "MODEL_WORK_ROWS_REQUIRED"
+    assert result["status"] == "rejected" and not result.get("artifact")
     result = await workbook_service.build_lsr_workbook({"attachment_id": meta["attachment_id"]}, context)
     assert result["code"] == "UNSUPPORTED_ATTACHMENT_TYPE"
     result = await workbook_service.build_lsr_workbook({"attachment_id": meta["attachment_id"], "decisions": [

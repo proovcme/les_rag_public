@@ -31,7 +31,16 @@ Nested refs имеют собственные immutable bindings при перв
 проекцию при упаковке; обычное замечание получает точные финансовые вопросы
 той же ревизии, а native результат обновляет прежние ID без изменения parent.
 Все пять новых файлов добавлены в CURRENT_TESTS.
-Полный frozen gate и live962 ещё требуются; unit mocks не являются приёмкой модели.
+Первый frozen gate962:5890passed/20skipped/10failed. Шесть старых fixtures
+обновлены для явных авторских work rows/ролей и раннего отказа ВОР без decisions;
+прежние проверки ценовой базы, scope, checkpoint и revision сохранены. Четыре
+read-scope cases отдельно проверяют неизменные reader schemas и ровно
+один соответствующий объявленному типу optional terminal. Две дополнительные
+парные проверки сравнивают все schema каждого фактического read frame B0/B1.
+Точечный повтор:7passed для шести fixture-падений с параметризацией;
+read-scope/terminal/read-boundary:56passed. Первичный failed
+receipt сохранён; повторный полный gate и live962 ещё требуются. Unit mocks
+не являются приёмкой модели.
 
 ## Регрессии961 — XLSX source metadata и release version hygiene
 

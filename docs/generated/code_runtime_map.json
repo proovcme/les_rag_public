@@ -10726,7 +10726,7 @@
         "tests/test_model_no_source_card_read_contract.py",
         "tests/test_model_workbook_citation_instructions_947.py"
       ],
-      "lines": 5597,
+      "lines": 5602,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -16187,7 +16187,7 @@
     },
     {
       "inbound": [],
-      "lines": 298,
+      "lines": 300,
       "module": "tests.test_rtf_input_transport",
       "outbound": [
         "backend/converter.py",
@@ -17785,7 +17785,7 @@
     },
     {
       "inbound": [],
-      "lines": 58,
+      "lines": 89,
       "module": "tests.test_vor_native_read_scope_956",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -23060,7 +23060,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 824,
     "tracked_python_files": 1222,
-    "tracked_python_lines": 418317
+    "tracked_python_lines": 418355
   },
   "warnings": []
 }

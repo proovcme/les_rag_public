@@ -45,7 +45,19 @@ async def test_model_declared_type_scopes_actual_native_read_frames_without_chan
         # This deliberately literal legacy request asks for LSR. The new scope
         # follows the model declaration rather than rewriting that user text.
         assert "Собери ЛСР; ВОР не создавай" in shown
-    assert list(run.requests[1].tools) == model_evidence_read_tool_schemas()
+    readers = model_evidence_read_tool_schemas()
+    for request in run.requests[1:]:
+        tools = list(request.tools)
+        # Existing read contracts stay byte-for-byte equal and in the same order.
+        assert tools[:len(readers)] == readers
+        if kind:
+            assert len(tools) == len(readers) + 1
+            terminal = tools[-1]["function"]
+            assert terminal["name"] == f"build_{kind}_workbook"
+            assert set(terminal["parameters"]["properties"]) == {"attachment_id", "decisions"}
+            assert terminal["parameters"]["properties"]["attachment_id"]["enum"] == ["read_123456abcdef"]
+        else:
+            assert tools == readers, "a missing model type must not enable a terminal"
     native = run.result["retrieval_trace"]["tool_loop"]["evidence_reads"]
     assert [item["call"]["tool"] for item in native] == ["read_norm_card", "read_resource_price", "read_resource_price"]
     assert [item["call"]["args"] for item in native] == [
@@ -56,3 +68,22 @@ async def test_model_declared_type_scopes_actual_native_read_frames_without_chan
         saved = run.executions[0][0]["args"]["decisions"]
         assert [{key: row[key] for key in source} for row, source in zip(saved, authored)] == authored
         assert run.result["retrieval_trace"]["result_readiness"]["vor_complete"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["vor", "lsr"])
+async def test_declared_terminal_and_reader_schemas_are_identical_in_actual_b0_b1(tmp_path, monkeypatch, kind):
+    projections = []
+    for variant in ("B0_DIRECT", "B1_CANDIDATE"):
+        case = tmp_path / variant
+        case.mkdir()
+        with monkeypatch.context() as scoped:
+            run = await _run_sheet(case, scoped, reads=True, variant=variant,
+                query_declaration=json.dumps({"artifact_kind": kind, "queries": ["Literal source query"]}),
+                final_answer=(json.dumps({"artifact_kind": "vor", "rows": [
+                    {"source_row": source, "row_role": "work", "title": title, "unit": "m", "quantity": quantity}
+                    for source, title, quantity in (("S!R2", "Install Cable A", 12), ("S!R3", "Install Cable B", 3))]})
+                    if kind == "vor" else None))
+        assert len(run.requests) == 4 and not run.responses
+        projections.append([list(request.tools) for request in run.requests[1:]])
+    assert projections[0] == projections[1]

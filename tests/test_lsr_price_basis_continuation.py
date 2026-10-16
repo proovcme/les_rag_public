@@ -344,7 +344,7 @@ def test_the_basis_written_at_packaging_is_the_basis_the_next_turn_reads(tmp_pat
         packaging_tool="build_lsr_workbook",
         attachment_id="read_123456abcdef",
         question="Продолжи это же задание по тому же прикреплённому документу.",
-        decisions=[{"source_row": "ВОР!R4", "title": "Монтаж", "unit": "м", "quantity": 1}],
+        decisions=[{"source_row": "ВОР!R4", "row_role": "work", "title": "Монтаж", "unit": "м", "quantity": 1}],
         operator_overrides={},
         document_price_basis=carried,
     )
@@ -362,7 +362,7 @@ def test_the_basis_written_at_packaging_is_the_basis_the_next_turn_reads(tmp_pat
         packaging_tool="build_vor_workbook",
         attachment_id="read_123456abcdef",
         question="Продолжи это же задание по тому же прикреплённому документу.",
-        decisions=[{"source_row": "ВОР!R4", "title": "Монтаж", "unit": "м", "quantity": 1}],
+        decisions=[{"source_row": "ВОР!R4", "row_role": "work", "title": "Монтаж", "unit": "м", "quantity": 1}],
         operator_overrides={},
         document_price_basis=carried,
     )
