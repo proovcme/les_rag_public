@@ -79,8 +79,10 @@ def test_vor_source_derivation_is_never_inferred_or_promoted_by_preservation(tmp
 
 
 def test_optional_vor_norm_citation_checks_remain_visible_without_requiring_norms():
-    rows = [{"source_row": "S!R2", "row_role": "work", "norm_code": "Authored norm"},
-            {"source_row": "S!R3", "row_role": "work", "norm_code": ""}]
+    rows = [{"source_row": "S!R2", "row_role": "work", "norm_code": "Authored norm",
+             "title": "Literal operation A", "unit": "m", "quantity": 2},
+            {"source_row": "S!R3", "row_role": "work", "norm_code": "",
+             "title": "Literal operation B", "unit": "m", "quantity": 3}]
     errors = ["missing_evidence_ref:S!R2", "missing_evidence_ref:S!R3",
               "unknown_evidence_ref:Q777.H2", "norm_code_not_in_referenced_evidence:S!R2"]
     assert service.vor_model_result_audit_errors(rows, errors) == [errors[0], *errors[2:]]

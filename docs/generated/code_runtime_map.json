@@ -3335,7 +3335,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15187,
+      "lines": 15192,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -14066,7 +14066,7 @@
     },
     {
       "inbound": [],
-      "lines": 88,
+      "lines": 93,
       "module": "tests.test_model_vor_export_instruction",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -14082,7 +14082,7 @@
       "inbound": [
         "tests/test_model_lsr_rejected_source_proposals.py"
       ],
-      "lines": 204,
+      "lines": 206,
       "module": "tests.test_model_vor_quantity_preservation",
       "outbound": [
         "backend/runtime_paths.py",
@@ -22384,7 +22384,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 792,
     "tracked_python_files": 1186,
-    "tracked_python_lines": 409526
+    "tracked_python_lines": 409538
   },
   "warnings": []
 }

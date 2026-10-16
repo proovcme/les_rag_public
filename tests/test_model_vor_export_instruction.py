@@ -76,10 +76,15 @@ async def test_actual_model_declared_export_wire_contains_conditional_common_con
     assert len(run["requests"]) == 2
     messages = str(run["requests"][1].messages)
     shared = contract.model_lsr_result_field_instruction()
-    assert shared in messages
-    assert _declared_fields(shared, "ВОР") == VOR_CORE
-    assert _declared_fields(shared, "ЛСР") == LSR_REQUIRED
-    assert "Для ВОР нормы и цены не являются условием создания работ и объёмов" in messages
+    if kind == "vor":
+        assert contract.model_vor_result_field_instruction() in messages
+        assert shared not in messages
+        assert "Нормы и цены для ВОР не обязательны" in messages
+    else:
+        assert shared in messages
+        assert _declared_fields(shared, "ВОР") == VOR_CORE
+        assert _declared_fields(shared, "ЛСР") == LSR_REQUIRED
+        assert "Для ВОР нормы и цены не являются условием создания работ и объёмов" in messages
     assert "LITERAL READ PROFILE Ω" in messages and "LITERAL READ SKILL Ω" in messages
     # The model declaration remains authoritative; neither the instruction nor
     # code infers the export kind from words or changes selected norm decisions.

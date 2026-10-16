@@ -6,8 +6,8 @@
 `model_vor_result_field_instruction`; LSR-ветка сохраняет прежний контракт.
 Профиль и исходные данные не заменяются. JSON queries[] →
 `read_declared_query_list(query_literals=...)`: строки больше не теряются из-за
-квадратных скобок, кавычек или внешнего вида вызова инструмента. Failed empty
-reply получает прежнюю ограниченную sanitized-квитанцию независимо от формы.
+квадратных скобок, кавычек или внешнего вида вызова инструмента. Неуспешный
+пустой JSON-конверт также получает ограниченную sanitized-квитанцию.
 `vor_result_integrity_service.audit_vor_result_integrity` → open_questions и
 document_issues экспорта. Авторские роли/объёмы/ссылки остаются неизменными.
 `_docx_source_sheets` отличает пустые Word note separators от непрочитанного

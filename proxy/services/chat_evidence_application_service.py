@@ -4488,7 +4488,8 @@ def read_declared_query_list(
     for line in complete_lines:
         text, marker_form = ((line.strip(), "json") if query_literals is not None
                              else _strip_declared_query_markers(line))
-        reason = "" if query_literals is not None else declared_query_rejection_reason(text, marker_form, instruction)
+        reason = (("table_rule_line" if _TABLE_RULE_RE.match(text) else "") if query_literals is not None
+                  else declared_query_rejection_reason(text, marker_form, instruction))
         if reason:
             accompanying.append({"line": text or line.strip(), "reason": reason})
             continue
@@ -6818,7 +6819,8 @@ def add_rejected_query_visible_diagnostics(
 ) -> None:
     """Keep a bounded sanitized failed query reply, including decoded empty results."""
     parsed = diagnostic.get("declared_parse") or {}
-    if parsed.get("accepted_count") != 0 or parsed.get("intentional_empty") is True:
+    if (parsed.get("output_shape") not in {"unsupported_structured_output", "query_envelope"}
+            or parsed.get("accepted_count") != 0 or parsed.get("intentional_empty") is True):
         return
     # Match the existing public failure snapshot before secret redaction.
     snapshot_text = re.sub(r"<think\b[^>]*>.*?(?:</think>|$)", "", str(text or ""), flags=re.I | re.S)
@@ -7132,10 +7134,10 @@ def build_vor_result_readiness(
     from proxy.services.lsr_source_coverage_service import canonicalize_row_role
 
     integrity_issues = audit_vor_result_integrity(rows, source_catalog=source_catalog)
-    questions.extend(f"{issue['source_row']}: {issue['reason']}" for issue in integrity_issues)
-    if not any(canonicalize_row_role(row.get("row_role")) == "work" for row in rows):
-        if not any(issue["code"] == "no_work_operations" for issue in integrity_issues):
-            questions.append("В результате нет ни одной строки работы; полнота ВОР не подтверждена.")
+    has_authored_questions = any(str(row.get("open_gap") or "").strip()
+        or canonicalize_row_role(row.get("row_role")) == "unresolved" for row in rows)
+    questions.extend(f"{issue['source_row']}: {issue['reason']}" for issue in integrity_issues
+        if not (issue["code"] == "no_work_operations" and has_authored_questions))
     for row in rows:
         gap = str(row.get("open_gap") or "").strip()
         unresolved = canonicalize_row_role(row.get("row_role")) == "unresolved"
@@ -7143,6 +7145,9 @@ def build_vor_result_readiness(
             continue
         title = str(row.get("title") or row.get("source_row") or "Позиция").strip()
         questions.append(f"{title}: {gap}" if gap else f"{title}: требуется уточнение")
+    if not questions and not remaining_locators and not any(
+            canonicalize_row_role(row.get("row_role")) == "work" for row in rows):
+        questions.append("В результате нет ни одной строки работы; полнота ВОР не подтверждена.")
     questions = list(dict.fromkeys(questions))
     technical = bool(has_file) and not draft and not remaining_locators and not audit_errors
     return {
