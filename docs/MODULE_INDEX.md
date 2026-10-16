@@ -1,5 +1,24 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 948 — ВОР: операции, буквальные запросы и достоверный прогресс
+
+`model_vor_result_field_instruction` и `lsr_result_table_instruction(artifact_kind=vor)`
+задают отдельный конечный контракт уже объявленного моделью ВОР. Исходный профиль,
+источники и native READ сохраняются; запросы и профессиональные решения выбирает модель.
+`read_declared_query_list(query_literals=...)` принимает декодированные JSON-строки
+без повторного распознавания JSON/кавычек. `vor_result_integrity_service` сообщает
+структурные пробелы работ/объёмов/связей, не создавая операции; те же вопросы видны
+в readiness и XLSX. Пустые служебные части сносок DOCX не являются потерянным текстом;
+рисунки и реальные непрочитанные части сохраняют предупреждения.
+`workbook_document_from_events(task_context=...)` использует сохранённый тип до файла,
+затем — тип действительной ревизии. Общая фаза packets называется «обработка строк».
+Док↔код: ✅ [RAG evidence flow](modules/rag-evidence-flow.md),
+[ВОР](ALGO-spec-to-bor.md), [UI kit](modules/sovushka-uikit.md).
+Регрессии: test_vor_workflow_contract_948, test_vor_result_integrity_948,
+test_vor_operation_instructions_948, test_docx_empty_notes_948,
+test_packaging_recovery_service, test_sovushka_chat. Квитанции проверок и живых
+документов хранятся отдельно; этот структурный контракт не объявляет customer-ready.
+
 ## Кандидат947 — согласованные ссылки и продолжение отклонённых операций
 
 `chat_evidence_application_service` использует Qx.Hy для строк результата в

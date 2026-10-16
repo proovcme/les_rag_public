@@ -1,5 +1,19 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 948 — отдельный контракт ВОР и проверяемая доставка
+
+Модельная декларация vor → `sheet_pass_question_tail` / direct answer →
+`model_vor_result_field_instruction`; LSR-ветка сохраняет прежний контракт.
+Профиль и исходные данные не заменяются. JSON queries[] →
+`read_declared_query_list(query_literals=...)`: строки больше не теряются из-за
+квадратных скобок, кавычек или внешнего вида вызова инструмента. Failed empty
+reply получает прежнюю ограниченную sanitized-квитанцию независимо от формы.
+`vor_result_integrity_service.audit_vor_result_integrity` → open_questions и
+document_issues экспорта. Авторские роли/объёмы/ссылки остаются неизменными.
+`_docx_source_sheets` отличает пустые Word note separators от непрочитанного
+содержимого. `workbook_document_from_events(task_context=...)` и существующая
+progress bubble не выдумывают ЛСР/поиск норм до фактического действия.
+
 ## 947 — идентичность ссылки и достижимость отклонённой работы
 
 `profile_system_prompt(purpose=workbook_result)` → единое правило Qx.Hy;

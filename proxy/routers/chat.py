@@ -627,6 +627,7 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     elif isinstance(artifact, dict) and repack_tool == "build_vor_workbook":
         artifact["result_readiness"] = build_vor_result_readiness(
             rows=decisions, has_file=bool(artifact.get("download_url")),
+            source_catalog=source_catalog,
             remaining_locators=remaining,
             catalog_work_count=len(source_catalog.work_locators()) if source_catalog else 0,
             model_errors=[*vor_audit_errors, *list(payload.get("vor_source_errors") or [])],

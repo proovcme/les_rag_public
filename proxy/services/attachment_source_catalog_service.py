@@ -700,12 +700,51 @@ def _docx_source_sheets(
     from docx import Document
     from docx.table import Table
     from docx.text.paragraph import Paragraph
+    from xml.etree import ElementTree
 
     document = Document(path)
     sheets: list[tuple[str, str, bool, list[CatalogRow]]] = []
     warnings: list[str] = []
     table_index = 0
     seen_tables: set[Any] = set()
+
+    def empty_notes_scaffolding(blob: bytes) -> bool:
+        """Exclude only known-empty Word separator parts, never unread notes."""
+        try:
+            root = ElementTree.fromstring(blob)
+        except (ElementTree.ParseError, ValueError, LookupError):
+            return False
+        word_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+        note_tag = {
+            word_ns + "footnotes": word_ns + "footnote",
+            word_ns + "endnotes": word_ns + "endnote",
+        }.get(root.tag)
+        if note_tag is None:
+            return False
+        for note in root:
+            if note.tag != note_tag or note.get(word_ns + "type") not in {
+                "separator", "continuationSeparator",
+            }:
+                return False
+        # A conservative scaffold vocabulary: unsupported nodes remain a gap.
+        # In particular no table, image, object, field, textbox or math content
+        # is discarded just because its note carries a separator type.
+        scaffold_tags = {
+            root.tag, note_tag,
+            *(word_ns + name for name in (
+                "p", "r", "pPr", "rPr", "t", "separator", "continuationSeparator",
+                "pStyle", "rStyle", "spacing", "ind", "jc", "contextualSpacing",
+                "keepNext", "keepLines", "widowControl", "rFonts", "sz", "szCs",
+                "b", "bCs", "i", "iCs", "lang", "color", "vanish", "vertAlign",
+                "tabs", "tab", "br",
+            )),
+        }
+        return all(
+            node.tag in scaffold_tags
+            and not (node.text or "").strip()
+            and not (node.tail or "").strip()
+            for node in root.iter()
+        )
 
     def rows_for(
         sheet: str, physical_rows: Sequence[tuple[int, Sequence[str]]], *, text_blocks: bool = False,
@@ -796,7 +835,8 @@ def _docx_source_sheets(
         name = str(part.partname)
         if name.startswith("/word/") and name.endswith(".xml") and name not in seen_parts:
             if any(marker in name for marker in ("footnotes", "endnotes")):
-                warnings.append(f"docx_unread_part:{name.rsplit('/', 1)[-1]}")
+                if not empty_notes_scaffolding(part.blob):
+                    warnings.append(f"docx_unread_part:{name.rsplit('/', 1)[-1]}")
     return sheets, tuple(dict.fromkeys(warnings))
 
 

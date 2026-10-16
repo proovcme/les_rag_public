@@ -2614,6 +2614,7 @@ def sheet_pass_question_tail(
     sheet_count: int,
     remaining_work: Sequence[str] | None = None,
     reasoning_enabled: bool = False,
+    artifact_kind: str = "",
 ) -> str:
     remaining = [str(item).strip() for item in (remaining_work or ()) if str(item).strip()]
     remainder = ""
@@ -2646,6 +2647,7 @@ def sheet_pass_question_tail(
     return lsr_result_table_instruction(
         sheet_clause=sheet_clause,
         remaining_clause=remaining_clause,
+        artifact_kind=artifact_kind,
     )
 
 
@@ -4238,7 +4240,7 @@ class DeclaredQuery:
     """One query as the model declared it: text verbatim, structure understood."""
 
     text: str
-    marker_form: str  # "plain" | "numbered" | "bulleted" | "heading" | "wrapped"
+    marker_form: str  # plain/numbered/bulleted/heading/wrapped/json
     addresses: tuple[str, ...] = ()
     attribution: str = ""  # "address_written" | "literal_matches_row" | ""
 
@@ -4448,6 +4450,7 @@ def split_declared_query_tail(
 def read_declared_query_list(
     raw: str,
     *,
+    query_literals: Sequence[str] | None = None,
     finish_reason: str = "",
     packet_locators: Sequence[str] = (),
     row_literals: Mapping[str, str] | None = None,
@@ -4473,14 +4476,19 @@ def read_declared_query_list(
         for locator, text in (row_literals or {}).items()
         if str(locator or "").strip()
     }
+    # A decoded queries[] is already an explicit list of literal searches.
+    # Running its strings through the plain-text wrapper detector again loses
+    # valid brackets/quotes and may erase unrelated neighbouring queries too.
     complete_lines, unread_tail = split_declared_query_tail(
-        _unwrap_model_rag_query_lines(raw), finish_reason=finish_reason
+        query_literals if query_literals is not None else _unwrap_model_rag_query_lines(raw),
+        finish_reason=finish_reason,
     )
     queries: list[DeclaredQuery] = []
     accompanying: list[dict[str, str]] = []
     for line in complete_lines:
-        text, marker_form = _strip_declared_query_markers(line)
-        reason = declared_query_rejection_reason(text, marker_form, instruction)
+        text, marker_form = ((line.strip(), "json") if query_literals is not None
+                             else _strip_declared_query_markers(line))
+        reason = "" if query_literals is not None else declared_query_rejection_reason(text, marker_form, instruction)
         if reason:
             accompanying.append({"line": text or line.strip(), "reason": reason})
             continue
@@ -4929,7 +4937,8 @@ def read_model_query_response(raw: str, **kwargs) -> dict:
             "finish_reason": str(kwargs.get("finish_reason") or ""),
         }
     else:
-        declared = read_declared_query_list(query_text, **kwargs)
+        declared = read_declared_query_list(query_text, **kwargs,
+            **({"query_literals": envelope["queries"]} if envelope is not None else {}))
     if envelope is not None and envelope.get("commentary"):
         declared["commentary"] = envelope["commentary"]
     declared["artifact_kind_declaration"] = declaration
@@ -6807,9 +6816,9 @@ def model_query_pending_phase(code: str) -> str:
 def add_rejected_query_visible_diagnostics(
     diagnostic: dict[str, Any], text: str, *, secret_values: Sequence[str] = (),
 ) -> None:
-    """Expose only a bounded sanitized final for an unsupported empty query result."""
+    """Keep a bounded sanitized failed query reply, including decoded empty results."""
     parsed = diagnostic.get("declared_parse") or {}
-    if parsed.get("output_shape") != "unsupported_structured_output" or parsed.get("accepted_count") != 0:
+    if parsed.get("accepted_count") != 0 or parsed.get("intentional_empty") is True:
         return
     # Match the existing public failure snapshot before secret redaction.
     snapshot_text = re.sub(r"<think\b[^>]*>.*?(?:</think>|$)", "", str(text or ""), flags=re.I | re.S)
@@ -6903,6 +6912,7 @@ def declared_query_output_diagnostics(raw: str, declared: Mapping[str, Any]) -> 
     return {"accepted_count": len(declared.get("queries") or ()),
             "rejected_count": len(declared.get("accompanying_answer") or ()),
             "reason_counts": reasons, "answer_cut": bool(declared.get("answer_cut")), "output_shape": shape,
+            "intentional_empty": bool(declared.get("intentional_empty")),
             **({"mechanical_format_errors": format_errors} if format_errors else {}),
             **({"commentary": declared["commentary"]} if declared.get("commentary") else {})}
 
@@ -7113,13 +7123,22 @@ def build_vor_result_readiness(
     *, rows: Sequence[Mapping[str, Any]], has_file: bool,
     remaining_locators: Sequence[str], catalog_work_count: int,
     model_errors: Sequence[str], draft: bool = False,
+    source_catalog: AttachmentSourceCatalog | None = None,
 ) -> dict[str, Any]:
     """Expose authored gaps; delivering a VOR does not establish its completeness."""
     audit_errors = vor_model_result_audit_errors(rows, model_errors)
     questions = list(audit_errors)
+    from proxy.services.vor_result_integrity_service import audit_vor_result_integrity
+    from proxy.services.lsr_source_coverage_service import canonicalize_row_role
+
+    integrity_issues = audit_vor_result_integrity(rows, source_catalog=source_catalog)
+    questions.extend(f"{issue['source_row']}: {issue['reason']}" for issue in integrity_issues)
+    if not any(canonicalize_row_role(row.get("row_role")) == "work" for row in rows):
+        if not any(issue["code"] == "no_work_operations" for issue in integrity_issues):
+            questions.append("В результате нет ни одной строки работы; полнота ВОР не подтверждена.")
     for row in rows:
         gap = str(row.get("open_gap") or "").strip()
-        unresolved = str(row.get("row_role") or "").strip().casefold() == "unresolved"
+        unresolved = canonicalize_row_role(row.get("row_role")) == "unresolved"
         if not gap and not unresolved:
             continue
         title = str(row.get("title") or row.get("source_row") or "Позиция").strip()
@@ -7131,6 +7150,7 @@ def build_vor_result_readiness(
         "technical_complete": technical, "vor_complete": technical and not questions,
         "remaining_locators": list(remaining_locators),
         "catalog_work_count": int(catalog_work_count), "open_questions": questions,
+        "row_integrity_issues": integrity_issues,
     }
 
 
@@ -7585,6 +7605,7 @@ def model_workbook_carrier_required(
 def profile_system_prompt(
     profile_snapshot: dict[str, Any] | None, *, strict: bool,
     purpose: Literal["answer", "query", "workbook_result", "source_read"] = "answer",
+    artifact_kind: str = "",
 ) -> str:
     """Keep the bound profile literal; add application contracts for this phase only.
 
@@ -7633,8 +7654,12 @@ def profile_system_prompt(
         or profile_uses_tabular_estimator_path(snapshot)
     ):
         if purpose not in {"query", "source_read"}:
-            parts.append(_TABULAR_LSR_OPERATION_INSTRUCTION if purpose == "workbook_result"
-                         else _TABULAR_LSR_VOLUME_INSTRUCTION)
+            if purpose == "workbook_result" and artifact_kind == "vor":
+                parts.append(_SOURCE_CONTEXT_ROLE_INSTRUCTION
+                             + "Для ВОР нужны работы и обоснованные объёмы; нормы и цены не обязательны.")
+            else:
+                parts.append(_TABULAR_LSR_OPERATION_INSTRUCTION if purpose == "workbook_result"
+                             else _TABULAR_LSR_VOLUME_INSTRUCTION)
             if purpose == "workbook_result":
                 parts.append(_WORKBOOK_RESULT_CARRIER_INSTRUCTION)
     return "\n\n".join(parts)
@@ -10536,7 +10561,7 @@ async def _execute_chat_evidence_application(
 
                     if session_accepted_start > 0 and sheet_pass_names:
                         await _emit_row_progress(
-                            "поиск норм",
+                            "обработка строк",
                             sheet=sheet_pass_names[0],
                             index=1,
                         )
@@ -10815,7 +10840,7 @@ async def _execute_chat_evidence_application(
                                     accumulated_rows, source_catalog
                                 )
                                 await _emit_row_progress(
-                                    "поиск норм",
+                                    "обработка строк",
                                     sheet=sheet_name,
                                     index=sheet_index,
                                 )
@@ -11214,8 +11239,18 @@ async def _execute_chat_evidence_application(
                                 model_rag_query_hits = pass_hits
                             leftover_query_hits: list[tuple[str, Sequence[Any]]] = []
                             included_hits: list[tuple[str, Sequence[Any]]] = []
+                            result_artifact_kind = (str(artifact_kind_declaration.get("artifact_kind") or "")
+                                if artifact_kind_declaration.get("status") == "declared" else "")
+                            sheet_sys_msg = profile_system_prompt(profile_snapshot, strict=False,
+                                purpose="workbook_result", artifact_kind=result_artifact_kind)
+                            if answer_form.instruction:
+                                sheet_sys_msg += " " + answer_form.instruction
+                            sheet_sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
+                            if req.output_directive and req.output_directive.strip():
+                                sheet_sys_msg += " " + req.output_directive.strip()
                             question_tail = sheet_pass_question_tail(
                                 workbook_model_question(str(req.question or ""), research_job),
+                                artifact_kind=result_artifact_kind,
                                 sheet=sheet_name,
                                 sheet_index=sheet_index,
                                 sheet_count=sheet_count,
@@ -12824,7 +12859,9 @@ async def _execute_chat_evidence_application(
                             source_catalog=source_catalog, model_declaration=artifact_kind_declaration,
                         )
                         answer_profile = (profile_system_prompt(profile_snapshot, strict=False,
-                                          purpose="workbook_result" if workbook_carrier_required else "source_read")
+                                          purpose="workbook_result" if workbook_carrier_required else "source_read",
+                                          artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
+                                              if artifact_kind_declaration.get("status") == "declared" else ""))
                                           if model_driven_retrieval else sys_normal)
                         sys_msg = answer_profile + (f" {answer_form.instruction}" if answer_form.instruction else "")
                         # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
@@ -12871,6 +12908,8 @@ async def _execute_chat_evidence_application(
                     if model_driven_retrieval:
                         if workbook_carrier_required:
                             question_tail = lsr_result_table_instruction(
+                                artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
+                                    if artifact_kind_declaration.get("status") == "declared" else ""),
                                 sheet_clause=question_tail + "\n",
                                 remaining_clause=(
                                     " Ответ должен вместить все строки: без вводного обзора "
@@ -14650,6 +14689,7 @@ async def _execute_chat_evidence_application(
                         if packaged_kind == "vor_workbook":
                             lsr_readiness = build_vor_result_readiness(
                                 rows=model_result_rows, has_file=bool(workbook_files),
+                                source_catalog=source_catalog,
                                 remaining_locators=remaining_locators,
                                 catalog_work_count=len(source_catalog.work_locators()) if source_catalog else 0,
                                 model_errors=[*model_result_errors, *((safe_payload or {}).get("vor_source_errors") or [])],

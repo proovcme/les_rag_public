@@ -421,6 +421,12 @@ async def _default_vor_adapter(
             requires_decision_count += 1
     progress("source_rows", 0, len(rows))
     document_issues = [dict(issue) for issue in args.get("_document_issues") or () if isinstance(issue, Mapping)]
+    if authored:
+        from proxy.services.vor_result_integrity_service import audit_vor_result_integrity
+
+        # A structural issue never rewrites an operation or invents installation.
+        # Preserve the same authored rows and make unanswered relationships visible.
+        document_issues.extend(audit_vor_result_integrity(draft, source_catalog=catalog))
     draft_document = bool(args.get("_draft"))
     if draft_document and not document_issues:
         document_issues = [{"code": "WORKBOOK_DRAFT", "reason": "Промежуточная ревизия; работа не завершена."}]

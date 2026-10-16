@@ -1,5 +1,16 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Регрессии948 — ВОР, запросы и восстановление
+
+В CURRENT_TESTS добавлены test_vor_workflow_contract_948,
+test_vor_result_integrity_948, test_vor_operation_instructions_948,
+test_docx_empty_notes_948. Они проверяют буквальные JSON-запросы, отсутствие
+ложного поиска в прогрессе, ВОР без обязательных норм/цен, честную неполноту
+при неверных связях, сохранность авторских решений, ноль отдельно от null,
+и DOCX empty-note scaffolding отдельно от реального непрочитанного содержимого.
+Recovery/UI regressions находятся в существующих test_packaging_recovery_service
+и test_sovushka_chat. Эти проверки не являются профессиональной live-приёмкой.
+
 ## 947 — ссылки и продолжение работы при материале того же адреса
 
 `test_model_workbook_citation_instructions_947.py`: реальные governed messages

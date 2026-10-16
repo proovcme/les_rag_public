@@ -159,7 +159,21 @@ def test_workbook_chat_filename_never_exposes_path_or_generic_artifact():
         "filename": "C:/private/workbook.xlsx",
         "artifact_kind": "vor_workbook",
     }) == "VOR.xlsx"
-    assert workbook_chat_filename({"filename": "artifact.xlsx"}) == "LSR.xlsx"
+    assert workbook_chat_filename({"filename": "artifact.xlsx"}) == "Документ.xlsx"
+
+
+@pytest.mark.parametrize("kind", [None, "", "future_workbook"])
+def test_workbook_download_without_declared_kind_has_a_neutral_label(kind):
+    assert workbook_chat_filename({"artifact_kind": kind}) == "Документ.xlsx"
+    name = chat_page.terminal_revision_download_name(
+        {"document": {"artifact_kind": kind}}, "rev_current"
+    )
+    assert name == "Документ_current.xlsx"
+
+
+@pytest.mark.parametrize("kind, prefix", [("vor_workbook", "VOR"), ("lsr_workbook", "LSR")])
+def test_workbook_download_with_declared_kind_preserves_its_label(kind, prefix):
+    assert workbook_chat_filename({"artifact_kind": kind}) == f"{prefix}.xlsx"
 
 
 def test_artifact_workbook_files_preserves_all_distinct_downloads():
@@ -719,10 +733,10 @@ def test_overnight_sse_drop_is_not_a_job_death():
     )
     assert "24/75" in live
     assert "осталось 51" in live
-    assert "лист «СКС»: поиск норм" in live
+    assert "лист «СКС»: обработка строк" in live
     assert "с начала задачи 1ч 0м" in live
     assert "Результат будет готов примерно через" in live
-    assert format_workbook_phase_label("packets", "СКС") == "лист «СКС»: поиск норм"
+    assert format_workbook_phase_label("packets", "СКС") == "лист «СКС»: обработка строк"
     assert "fetch_active_workbook_research" in source
     assert "workbook_job_to_pending_progress" in source
     assert "_paint_in_progress_bubble" in source
@@ -967,6 +981,73 @@ def test_selected_history_local_fallback_reads_latest_terminal_state():
     assert read_active_workbook_research(session_id="session-selected", service=Service()) == old
 
 
+@pytest.mark.parametrize("artifact_kind", ["vor", "lsr", None])
+def test_recovered_packet_phase_does_not_invent_a_norm_search(artifact_kind, monkeypatch):
+    monkeypatch.setattr(chat_page, "_work_total_from_job_events", lambda _job_id: 0)
+    task_context = {"model_artifact_kind": artifact_kind} if artifact_kind else {}
+    job = {
+        "job_id": "wrj_recovered",
+        "status": "running",
+        "phase": "packets",
+        "sheet": "Раздел проекта",
+        "task_context": task_context,
+        "accepted_rows": [{"source_row": "Раздел проекта!R2", "row_role": "work"}],
+        "remaining": ["Раздел проекта!R3"],
+        "work_total": 2,
+    }
+
+    # A persisted phase says only that rows are being processed. Old pending
+    # labels and the document kind cannot establish what the model is doing.
+    pending = workbook_job_to_pending_progress(
+        job, {"status_label": "поиск норм", "accepted": 0, "total": 2}
+    )
+    notice = format_in_progress_assembly_notice(pending)
+
+    assert pending["status_label"] == "лист «Раздел проекта»: обработка строк"
+    assert "лист «Раздел проекта»: обработка строк" in notice
+    assert "1/2" in notice
+    assert "осталось 1" in notice
+    assert "поиск норм" not in notice
+    assert "ЛСР" not in notice
+    assert "ВОР" not in notice
+    assert task_context == ({"model_artifact_kind": artifact_kind} if artifact_kind else {})
+
+
+def test_actual_progress_label_is_preserved_without_a_saved_phase():
+    pending = merge_chat_pending_progress(
+        {}, {"workbook_research_job_id": "wrj_search", "label": "поиск норм"}
+    )
+
+    assert "поиск норм" in format_in_progress_assembly_notice(pending)
+
+
+@pytest.mark.parametrize("artifact_kind", ["vor_workbook", "lsr_workbook", ""])
+def test_paused_workbook_notice_does_not_describe_every_draft_as_an_estimate(
+    artifact_kind, monkeypatch
+):
+    monkeypatch.setattr(chat_page, "_work_total_from_job_events", lambda _job_id: 0)
+    pending = workbook_job_to_pending_progress({
+        "job_id": "wrj_paused",
+        "status": "paused",
+        "phase": "packets",
+        "document": {"state": "draft_only", "artifact_kind": artifact_kind},
+        "accepted_rows": [{"source_row": "Раздел!R2", "row_role": "work"}],
+        "remaining": ["Раздел!R3"],
+        "work_total": 2,
+    })
+
+    notice = format_workbook_assembly_notice(pending)
+
+    assert "полнота документа ещё не подтверждена" in notice
+    assert "В черновик записано 1 строк" in notice
+    assert "Незакрытых строк покрытия: 1 из 2" in notice
+    assert "Повторная обработка строк" in notice
+    assert "Сборка сейчас не идёт" in notice
+    assert "смета" not in notice
+    assert "расчёт" not in notice
+    assert "поиск норм" not in notice
+
+
 @pytest.mark.asyncio
 async def test_reconnect_progress_uses_workbook_checkpoint(tmp_path):
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
@@ -1005,7 +1086,7 @@ async def test_reconnect_progress_uses_workbook_checkpoint(tmp_path):
     notice = format_in_progress_assembly_notice(pending)
     assert "1/3" in notice
     assert "осталось 2" in notice
-    assert "поиск норм" in notice
+    assert "обработка строк" in notice
     sks_roles = workbook_job_to_pending_progress(
         {
             "job_id": "wrj_sks",
@@ -2098,7 +2179,7 @@ def test_restored_document_name_keeps_the_revision_identity() -> None:
         {"identity": {"source_name": "ВОР.xlsx"}}, "rev_17e60265abcd"
     )
 
-    assert name.startswith("ЛСР")
+    assert name.startswith("Документ")
     assert "17e60265" in name
     assert name.endswith(".xlsx")
 

@@ -338,7 +338,7 @@ DETACHED_HISTORY_TIMEOUT_SEC = 36 * 3600
 
 _WORKBOOK_PHASE_RU = {
     "catalog": "разбор исходника",
-    "packets": "поиск норм",
+    "packets": "обработка строк",
     "complete": "сборка файла",
     "cancelled": "остановлено",
     "paused": "на паузе",
@@ -603,7 +603,10 @@ def terminal_revision_download_name(
     source = str(identity.get("source_name") or identity.get("original_name") or "").strip()
     stem = source.rsplit(".", 1)[0] if source else ""
     document = payload.get("document") if isinstance(payload.get("document"), dict) else {}
-    kind = "ВОР" if document.get("artifact_kind") == "vor_workbook" else "ЛСР"
+    kind = {
+        "vor_workbook": "ВОР",
+        "lsr_workbook": "ЛСР",
+    }.get(str(document.get("artifact_kind") or "").strip(), "Документ")
     stem = stem.replace("ВОР", "").strip(" -_")
     label = f"{kind}_{stem}" if stem else kind
     tail = str(revision_id or "").replace("rev_", "")[:8]
@@ -708,7 +711,7 @@ def format_paused_assembly_notice(pending: Any = None) -> str:
     total = _pending_int(payload, "total")
     parts = [
         "Первый проход закончен. Сборка сейчас не идёт.",
-        "В панели «Файлы» лежит черновик — это ещё не посчитанная смета.",
+        "В панели «Файлы» лежит черновик — полнота документа ещё не подтверждена.",
     ]
     if remaining:
         if total:
@@ -716,9 +719,9 @@ def format_paused_assembly_notice(pending: Any = None) -> str:
         else:
             parts.append(f"Незакрытых строк покрытия: {remaining}.")
     if accepted_all:
-        parts.append(f"В черновик записано {accepted_all} строк без полного расчёта.")
+        parts.append(f"В черновик записано {accepted_all} строк.")
     parts.append(
-        "Новый поиск норм — только кнопка «Продолжить незакрытые строки»; "
+        "Повторная обработка строк — кнопка «Продолжить незакрытые строки»; "
         "это отдельный проход, не продолжение той же минуты."
     )
     return " ".join(parts)
@@ -1279,7 +1282,10 @@ def workbook_chat_filename(item: Any) -> str:
         and name.lower() not in {".xlsx", "artifact.xlsx"}
     ):
         return name
-    return "VOR.xlsx" if payload.get("artifact_kind") == "vor_workbook" else "LSR.xlsx"
+    return {
+        "vor_workbook": "VOR.xlsx",
+        "lsr_workbook": "LSR.xlsx",
+    }.get(str(payload.get("artifact_kind") or "").strip(), "Документ.xlsx")
 
 
 def artifact_workbook_files(artifact: Any) -> list[dict[str, str]]:

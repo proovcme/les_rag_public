@@ -36,6 +36,92 @@ def _packaged(revision_id: str, *, draft: bool = False, tool: str = "build_lsr_w
     }
 
 
+@pytest.mark.parametrize("kind", ["vor", "lsr"])
+def test_unpacked_document_uses_saved_declared_target_without_claiming_a_file(kind):
+    document = workbook_document_from_events([], status="running", accepted_row_count=4,
+        task_context={"artifact_kind_status": "declared", "model_artifact_kind": kind,
+                      "artifact_intent": "both"})
+    assert document["tool"] == f"build_{kind}_workbook"
+    assert document["artifact_kind"] == f"{kind}_workbook"
+    assert document["packaged"] is False
+    assert document["final_revision_id"] == document["draft_revision_id"] == ""
+    assert document["state"] == "none"
+
+
+@pytest.mark.parametrize("context", [
+    {},
+    {"artifact_intent": "both"},
+    {"artifact_kind_status": "conflict", "model_artifact_kind": "vor", "artifact_intent": "lsr"},
+    {"artifact_kind_status": "invalid", "artifact_intent": "vor"},
+    {"artifact_kind_status": "declared", "model_artifact_kind": "unknown", "artifact_intent": "lsr"},
+    {"artifact_kind_status": "unexpected", "artifact_intent": "vor"},
+])
+def test_unresolved_document_target_is_not_projected_as_lsr(context):
+    document = workbook_document_from_events([], status="complete", task_context=context)
+    assert document["tool"] == document["artifact_kind"] == ""
+    assert document["state"] == "pending"
+    assert document["needs_document"] is True
+    assert document["packaged"] is False
+
+
+@pytest.mark.parametrize("kind", ["vor", "lsr"])
+def test_legacy_saved_intent_and_literal_declaration_are_projected_without_new_inference(kind):
+    for context in ({"artifact_intent": kind}, {
+        "artifact_kind_declaration": {"status": "declared", "artifact_kind": kind},
+    }):
+        document = workbook_document_from_events([], status="paused", accepted_row_count=2,
+            task_context=context)
+        assert document["tool"] == f"build_{kind}_workbook"
+        assert document["artifact_kind"] == f"{kind}_workbook"
+        assert document["state"] == "pending" and document["needs_document"] is True
+
+
+@pytest.mark.parametrize("kind,declared", [("vor", "lsr"), ("lsr", "vor")])
+@pytest.mark.parametrize("declaration_status", ["declared", "conflict"])
+def test_actual_packaged_revision_owns_kind_despite_changed_or_conflicting_target(kind, declared, declaration_status):
+    document = workbook_document_from_events([_packaged("actual-revision", tool=f"build_{kind}_workbook")],
+        status="complete", task_context={"artifact_kind_status": declaration_status,
+                                         "model_artifact_kind": declared})
+    assert document["tool"] == f"build_{kind}_workbook"
+    assert document["artifact_kind"] == f"{kind}_workbook"
+    assert document["final_revision_id"] == "actual-revision"
+    assert document["state"] == "ready" and document["packaged"] is True
+
+
+def test_packaging_metadata_without_a_revision_cannot_override_saved_target():
+    document = workbook_document_from_events([_packaged("", tool="build_lsr_workbook")],
+        task_context={"artifact_kind_status": "declared", "model_artifact_kind": "vor"})
+    assert document["tool"] == "build_vor_workbook"
+    assert document["artifact_kind"] == "vor_workbook"
+    assert document["packaged"] is False
+
+
+@pytest.mark.parametrize("kind", ["vor", "lsr"])
+def test_research_document_target_survives_restart_and_source_scope_projection(tmp_path, kind):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+
+    database = tmp_path / "document-target.sqlite"
+    service = WorkbookResearchJobService(database)
+    identity = service.identity(session_id="own", attachment_id="read_own", source_sha256="a" * 64,
+        dataset_ids=[], profile_revision_id="profile", model_identity="model", question="Literal task")
+    job = service.begin_or_resume(identity, task_context={"artifact_intent": "both"}, source_locators=["S!R2"])
+    service.record_artifact_kind(job["job_id"], declaration={"status": "declared", "artifact_kind": kind})
+    service.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"],
+        accepted_rows=[{"source_row": "S!R2", "row_role": "work", "title": "Literal work", "quantity": 2}],
+        evidence=[], remaining=[])
+    service.finish(job["job_id"], status="complete")
+    restarted = WorkbookResearchJobService(database)
+    assert restarted.get(job["job_id"])["document"]["artifact_kind"] == f"{kind}_workbook"
+    assert restarted.document_state(job["job_id"])["tool"] == f"build_{kind}_workbook"
+    service.record_packaging(job["job_id"], tool=f"build_{kind}_workbook", revision_id="old-file", draft=False)
+    expanded = restarted.begin_or_resume(identity, source_locators=["S!R2", "S!R3"])
+    assert expanded["document"]["artifact_kind"] == f"{kind}_workbook"
+    assert expanded["document"]["tool"] == f"build_{kind}_workbook"
+    assert expanded["document"]["previous_final_revision_id"] == "old-file"
+    assert expanded["document"]["packaged"] is False
+    assert expanded["document"]["state"] != "ready"
+
+
 def test_completed_job_without_final_packaging_is_durable_pending() -> None:
     """The MemoryError case: the research is over, the file is not."""
 

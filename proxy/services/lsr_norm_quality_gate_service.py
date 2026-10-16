@@ -24,6 +24,7 @@ from proxy.services.model_answer_table_service import (
 from proxy.services.model_lsr_result_contract import (
     MATCH_FIELDS,
     model_lsr_result_field_instruction,
+    model_vor_result_field_instruction,
 )
 
 
@@ -1833,7 +1834,11 @@ def _evidence_cards(chunks: Sequence[Any]) -> dict[str, dict[str, Any]]:
     return cards
 
 
-def lsr_result_table_instruction(*, sheet_clause: str = "", remaining_clause: str = "") -> str:
+def lsr_result_table_instruction(
+    *, sheet_clause: str = "", remaining_clause: str = "", artifact_kind: str = "",
+) -> str:
+    if artifact_kind == "vor":
+        return f"{sheet_clause}{model_vor_result_field_instruction()}{remaining_clause}"
     return (
         f"{sheet_clause}"
         + model_lsr_result_field_instruction()

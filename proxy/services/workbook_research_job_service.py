@@ -2699,10 +2699,11 @@ class WorkbookResearchJobService:
         """An old file stays available, but cannot cover newly admitted addresses."""
         status = str(job.get("status") or "")
         accepted_row_count = sum(isinstance(row, Mapping) for row in job.get("accepted_rows") or ())
+        context = job.get("task_context") or {}
         previous = workbook_document_from_events(
             events, status=status, accepted_row_count=accepted_row_count,
+            task_context=context,
         )
-        context = job.get("task_context") or {}
         sequence = (int(context.get("_source_scope_expanded_sequence") or 0)
                     if context.get("_source_scope_expanded_job_id") == job.get("job_id") else 0)
         if not sequence:
@@ -2710,6 +2711,7 @@ class WorkbookResearchJobService:
         current = workbook_document_from_events(
             [event for event in events if int(event.get("sequence") or 0) > sequence], status=status,
             accepted_row_count=accepted_row_count,
+            task_context=context,
         )
         if previous.get("final_revision_id") and current.get("final_revision_id") != previous["final_revision_id"]:
             current["previous_final_revision_id"] = previous["final_revision_id"]

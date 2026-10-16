@@ -79,10 +79,29 @@ def _env_flag(name: str) -> str:
 # --------------------------------------------------------------------------- #
 def workbook_document_from_events(
     events: Iterable[Mapping[str, Any]], *, status: str = "", accepted_row_count: int = 0,
+    task_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Use the tool recorded by this job, without treating a VOR as a missing LSR."""
+    """Project a recorded file, or its saved target when no file exists yet.
+
+    A packaging event with an actual revision owns that file's kind. Before
+    packaging, only a saved declaration (or an older job's unambiguous saved
+    intent) can name the target. An absent or conflicting target stays unnamed;
+    the lack of a file must never manufacture an LSR decision.
+    """
     records = list(events or [])
-    tool = "build_lsr_workbook"
+    context = task_context if isinstance(task_context, Mapping) else {}
+    declaration = context.get("artifact_kind_declaration")
+    declaration = declaration if isinstance(declaration, Mapping) else {}
+    declaration_status = str(context.get("artifact_kind_status") or declaration.get("status") or "")
+    kind = str(context.get("model_artifact_kind") or declaration.get("artifact_kind") or "")
+    if declaration_status == "declared":
+        target = kind if kind in {"vor", "lsr"} else ""
+    elif declaration_status in {"", "missing"} and not kind:
+        saved_intent = str(context.get("artifact_intent") or "")
+        target = saved_intent if saved_intent in {"vor", "lsr"} else ""
+    else:
+        target = ""
+    tool = f"build_{target}_workbook" if target else ""
     for event in records:
         if not isinstance(event, Mapping):
             continue
@@ -90,11 +109,12 @@ def workbook_document_from_events(
             continue
         payload = event.get("data") or event.get("payload") or {}
         candidate = payload.get("tool") if isinstance(payload, Mapping) else None
-        if candidate in {"build_lsr_workbook", "build_vor_workbook"}:
+        if (candidate in {"build_lsr_workbook", "build_vor_workbook"}
+                and str(payload.get("revision_id") or "").strip()):
             tool = candidate
     return describe_packaging_document(
         records, status=status, tool=tool, accepted_row_count=accepted_row_count,
-        artifact_kind="vor_workbook" if tool == "build_vor_workbook" else "lsr_workbook",
+        artifact_kind={"build_vor_workbook": "vor_workbook", "build_lsr_workbook": "lsr_workbook"}.get(tool, ""),
     )
 
 
