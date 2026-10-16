@@ -97,6 +97,7 @@ UNIT_TESTS += tests/test_equivalent_artifact_transport_953.py tests/test_vor_rev
 UNIT_TESTS += tests/test_model_packet_document_context_954.py
 UNIT_TESTS += tests/test_csv_literal_boundaries_955.py tests/test_xlsx_unread_metadata_955.py
 UNIT_TESTS += tests/test_vor_task_instruction_955.py tests/test_workbook_gap_followup_955.py
+UNIT_TESTS += tests/test_vor_native_read_scope_956.py
 UNIT_TESTS += tests/test_unresolved_retry_routes_955.py tests/test_retry_target_projection_955.py
 UNIT_TESTS += tests/test_rim_cited_numeric_literals.py tests/test_model_warmup_service.py
 UNIT_TESTS += tests/test_meta_store_env_binding_945.py

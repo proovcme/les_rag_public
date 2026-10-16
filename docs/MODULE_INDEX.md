@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 956 — инструкция чтения соответствует объявленному моделью документу
+
+`model_evidence_read_instruction(artifact_kind=...)` отделяет чтение исходника
+для ВОР от расчётного контракта ЛСР. Sheet/result/direct callsites передают
+буквальную декларацию модели; при неизвестном типе сохранён прежний контракт.
+Доступные tools/evidence неизменны, код не выбирает операции и нормы.
+VOR carrier явно описывает coverage/covered_by_work_id и реальные parent works;
+НР/СП относятся к ЛСР. Док↔код: ✅ [RAG evidence flow](modules/rag-evidence-flow.md).
+Регрессия: `test_vor_task_instruction_955.py`; живое качество проверяется отдельно.
+
 ## 955 — добор сохраняет принятые решения и открывает точную область
 
 `WorkbookResearchJobService.reopen_locators(preserve_accepted=True, operation_ids=...)`

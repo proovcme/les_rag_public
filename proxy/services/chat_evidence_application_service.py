@@ -130,7 +130,7 @@ from proxy.services.model_lsr_result_contract import (
     decode_model_query_envelope, update_model_artifact_kind,
 )
 from proxy.services.model_evidence_read_contract import (
-    MODEL_EVIDENCE_READ_INSTRUCTION,
+    model_evidence_read_instruction,
     model_evidence_read_tool_schemas,
     read_result_receipt,
 )
@@ -10453,7 +10453,7 @@ async def _execute_chat_evidence_application(
                         f" {answer_form.instruction}" if answer_form.instruction else ""
                     )
                     sheet_read_tools = model_evidence_read_tool_schemas()
-                    sheet_sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
+                    sheet_sys_msg += "\n" + model_evidence_read_instruction()
                     if req.output_directive and req.output_directive.strip():
                         sheet_sys_msg += " " + req.output_directive.strip()
                     research_job_service: WorkbookResearchJobService | None = None
@@ -11395,7 +11395,7 @@ async def _execute_chat_evidence_application(
                                 purpose="workbook_result", artifact_kind=result_artifact_kind)
                             if answer_form.instruction:
                                 sheet_sys_msg += " " + answer_form.instruction
-                            sheet_sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
+                            sheet_sys_msg += "\n" + model_evidence_read_instruction(artifact_kind=result_artifact_kind)
                             if req.output_directive and req.output_directive.strip():
                                 sheet_sys_msg += " " + req.output_directive.strip()
                             question_tail = sheet_pass_question_tail(
@@ -13067,7 +13067,9 @@ async def _execute_chat_evidence_application(
                             source_name=str(getattr(source_catalog, "original_name", "") or ""),
                         )
                         model_research_tools.set_price_basis(direct_price_basis)
-                        sys_msg += "\n" + MODEL_EVIDENCE_READ_INSTRUCTION
+                        sys_msg += "\n" + model_evidence_read_instruction(
+                            artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
+                                if artifact_kind_declaration.get("status") == "declared" else ""))
                         sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(direct_price_basis, ensure_ascii=False)
                     if model_driven_retrieval:
                         if workbook_carrier_required:

@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 956 — read-contract по объявленному типу документа
+
+`proxy/services/model_evidence_read_contract.py:model_evidence_read_instruction`
+возвращает отдельную инструкцию чтения для vor, прежнюю для lsr/неизвестного типа.
+`chat_evidence_application_service.py` передаёт текущую декларацию модели в sheet
+и direct answer. Schema tools и исходные evidence неизменны. Поля включённых
+операций описаны в `model_lsr_result_contract.py:model_vor_result_field_instruction`.
+Док: [RAG evidence flow](modules/rag-evidence-flow.md).
+
 ## 955 — сохраняемый добор и единый транспорт исходных таблиц
 
 `workbook_research_job_service.reopen_locators` принимает `preserve_accepted`

@@ -2,6 +2,13 @@
 
 ## Регрессии955 — сохранение решений и явный повторный проход
 
+956 дополняет `test_vor_task_instruction_955.py`: явный vor получает собственный
+native read-contract, lsr/unknown сохраняют прежний строковый контракт; tools и
+evidence не меняются. Проверяется передача буквального типа в packet/direct
+callsites в `test_vor_native_read_scope_956.py` (включён в CURRENT_TESTS).
+Это structural/behavior tests, не доказательство профессионального
+качества ВОР модели; установленный B0/B1 фиксируется отдельными квитанциями.
+
 В CURRENT_TESTS включены `test_workbook_gap_followup_955.py`,
 `test_unresolved_retry_routes_955.py`, `test_retry_target_projection_955.py`:
 сохранность baseline/цитат/ценовой базы после нового store и продолжения,

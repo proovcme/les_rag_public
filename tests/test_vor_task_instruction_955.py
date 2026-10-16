@@ -10,6 +10,12 @@ import pytest
 
 from proxy.services import chat_evidence_application_service as app
 from proxy.services.chat_profile_service import _factory_contracts
+from proxy.services.model_lsr_result_contract import model_vor_result_field_instruction
+from proxy.services.model_evidence_read_contract import (
+    MODEL_EVIDENCE_READ_INSTRUCTION,
+    model_evidence_read_instruction,
+    model_evidence_read_tool_schemas,
+)
 
 
 SKILL_PATH = Path(__file__).resolve().parents[1] / "skills/smeta/references/rag-estimator.md"
@@ -29,9 +35,24 @@ def test_search_and_nrsp_requirements_have_document_scope_in_the_shared_skill():
     assert "Для ВОР достаточный исходник не требует поиска норм и цен" in search
     assert "Для подбираемой нормы" in search
     nrsp = _point(8)
-    assert nrsp.startswith("8. Для ЛСР или добровольно выбранной для ВОР нормы:")
-    assert "В ВОР без выбранной нормы отсутствие НР/СП не является открытым вопросом" in nrsp
+    assert nrsp.startswith("8. Только для ЛСР:")
+    assert "Для ВОР отсутствие НР/СП не является открытым вопросом, даже если норма выбрана добровольно" in nrsp
     assert "nr_sp_rule_id" in nrsp and "не подставляй процент или правило по памяти" in nrsp
+
+
+def test_vor_contract_requires_actual_work_parent_and_literal_coverage_without_creating_work_by_code():
+    instruction = model_vor_result_field_instruction()
+    for clause in (
+        "В строке материала или оборудования не ссылайся на само изделие без фактически возвращённой работы row_role=work по этому адресу",
+        "Если операция включена в другую работу, опиши в coverage её включённый и исключённый состав",
+        "укажи адрес родительской работы в work_row",
+        "при уже показанном operation_id родителя укажи его в covered_by_work_id",
+    ):
+        assert clause in instruction
+    assert "Не добавляй монтаж каждому изделию автоматически" in instruction
+    assert "Неоднозначную связь оставь вопросом" in instruction
+    assert "source_row дословно копируй" in instruction
+    assert "обоснованное исключение укажи в coverage, не как открытый вопрос" in instruction
 
 
 def test_confirmed_zero_and_unknown_have_distinct_meanings_without_role_forcing():
@@ -68,6 +89,56 @@ def test_instruction_keeps_model_authorship_no_automatic_installation_and_source
                  "производный объём требует формулы и источника",
                  "Для выбранной нормы явно верни action_match, object_match, condition_match"):
         assert rule in skill
+
+
+@pytest.mark.parametrize("artifact_kind", ["lsr", "", "unknown", "VOR", "Собери ВОР", None])
+def test_read_guidance_keeps_the_literal_lsr_contract_without_an_explicit_vor_declaration(artifact_kind):
+    assert model_evidence_read_instruction(artifact_kind=artifact_kind) is MODEL_EVIDENCE_READ_INSTRUCTION
+    assert model_evidence_read_instruction() is MODEL_EVIDENCE_READ_INSTRUCTION
+
+
+def test_vor_read_guidance_does_not_require_norm_or_price_work_from_a_sufficient_source():
+    instruction = model_evidence_read_instruction(artifact_kind="vor")
+    assert "Достаточный исходник не требует поиска норм и цен" in instruction
+    assert "нормы, расценки, цены ресурсов и НР/СП не обязательны для ВОР" in instruction
+    assert "Их отсутствие не является пробелом ВОР" in instruction
+    assert "В open_gap укажи только конкретный нерешённый вопрос об исходных работах" in instruction
+    assert "подтверждённое пояснение сохраняй в coverage" in instruction
+    assert "неизвестный quantity" in instruction.lower() and "null" in instruction
+    assert "явный исходный ноль — как 0" in instruction
+    assert "search_pricebook_resources" not in instruction and "read_resource_price" not in instruction
+    assert "resource_review" not in instruction and "resource_bindings" not in instruction
+
+
+def test_optional_vor_norm_keeps_full_card_provenance_and_literal_applicability_flags():
+    instruction = model_evidence_read_instruction(artifact_kind="vor")
+    optional = instruction.index("Если ты добровольно выбираешь норму")
+    assert instruction.index("целой карточке") > optional
+    assert instruction.index("read_norm_card с буквальным evidence_ref") > optional
+    assert "Индекс/указатель не является полной карточкой" in instruction
+    for flag in ("action_match", "object_match", "condition_match", "unit_compatible", "composition_covers"):
+        assert flag in instruction
+    assert "yes/no/unknown; пояснение пиши в coverage, а не вместо признака" in instruction
+    assert "Полнота ресурсов не доказывает применимость или показ всей техчасти" in instruction
+    assert "только фактически показанное основание в evidence_refs" in instruction
+
+
+def test_vor_read_guidance_retains_literal_source_access_and_the_entire_tool_surface():
+    before = deepcopy(model_evidence_read_tool_schemas())
+    instruction = model_evidence_read_instruction(artifact_kind="vor")
+    assert "read_source с source_row — точным буквальным адресом из полного манифеста/каталога" in instruction
+    assert "search_sources с target=documents" in instruction
+    assert "показанным doc_id либо dataset_id/doc_name" in instruction
+    assert "Внешний поиск и дополнительные чтения нужны только при недостаточном" in instruction
+    assert "Все показанные evidence и инструменты остаются доступны" in instruction
+    assert "выполненное чтение подтверждается его ответом" in instruction
+    assert model_evidence_read_tool_schemas() == before
+    assert {tool["function"]["name"] for tool in before} == {
+        "search_sources", "read_norm_card", "search_pricebook_resources", "read_resource_price", "read_source"}
+    signature = inspect.signature(model_evidence_read_instruction)
+    assert list(signature.parameters) == ["artifact_kind"], "No filename, section or query classification"
+    for case_token in ("БАП", "Каменка", "Мельник", "СКС", "DOCX", "XLSX", "PDF", "Москва"):
+        assert case_token not in instruction
 
 
 def test_exact_factory_managed_skill_is_replaced_only_for_the_turn_with_truthful_provenance():

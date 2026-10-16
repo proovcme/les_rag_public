@@ -3339,6 +3339,7 @@
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_delivery_notice_949.py",
         "tests/test_vor_derived_quantity_export_949.py",
+        "tests/test_vor_native_read_scope_956.py",
         "tests/test_vor_no_research_query_scope.py",
         "tests/test_vor_operation_instructions_948.py",
         "tests/test_vor_review_structural_facts_953.py",
@@ -3353,7 +3354,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15356,
+      "lines": 15358,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5682,9 +5683,11 @@
         "tests/test_lsr_measure_scale_instruction.py",
         "tests/test_model_evidence_read_contract.py",
         "tests/test_model_exact_card_read_policy.py",
-        "tests/test_model_norm_evidence_ref_reads.py"
+        "tests/test_model_norm_evidence_ref_reads.py",
+        "tests/test_vor_native_read_scope_956.py",
+        "tests/test_vor_task_instruction_955.py"
       ],
-      "lines": 186,
+      "lines": 218,
       "module": "proxy.services.model_evidence_read_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -5786,9 +5789,10 @@
         "tests/test_model_vor_text_transport.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_operation_instructions_948.py",
+        "tests/test_vor_task_instruction_955.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 897,
+      "lines": 901,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -13906,6 +13910,7 @@
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_delivery_notice_949.py",
+        "tests/test_vor_native_read_scope_956.py",
         "tests/test_vor_no_research_query_scope.py",
         "tests/test_vor_review_structural_facts_953.py",
         "tests/test_vor_task_instruction_955.py",
@@ -17500,6 +17505,19 @@
     },
     {
       "inbound": [],
+      "lines": 58,
+      "module": "tests.test_vor_native_read_scope_956",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/model_evidence_read_contract.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
+      ],
+      "path": "tests/test_vor_native_read_scope_956.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 241,
       "module": "tests.test_vor_no_research_query_scope",
       "outbound": [
@@ -17582,13 +17600,15 @@
     },
     {
       "inbound": [],
-      "lines": 337,
+      "lines": 408,
       "module": "tests.test_vor_task_instruction_955",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/chat_profile_service.py",
         "proxy/services/context_governor_service.py",
+        "proxy/services/model_evidence_read_contract.py",
         "proxy/services/model_execution_preset_service.py",
+        "proxy/services/model_lsr_result_contract.py",
         "proxy/services/openai_compatible_transport_service.py",
         "proxy/services/workbook_research_job_service.py",
         "tests/test_model_rag_sheet_evidence_reads.py"
@@ -22632,9 +22652,9 @@
     "product_reachable": 382,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 806,
-    "tracked_python_files": 1200,
-    "tracked_python_lines": 412369
+    "test_or_tool_only": 807,
+    "tracked_python_files": 1201,
+    "tracked_python_lines": 412536
   },
   "warnings": []
 }
