@@ -1,5 +1,19 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Регрессии953 — два согласованных транспорта и факты review
+
+В CURRENT_TESTS включены `test_equivalent_artifact_transport_953.py` и
+`test_vor_review_structural_facts_953.py`.
+Эквивалентная plain+JSON пара проверяется на vor/lsr и реальном sheet-pass,
+включая неизменённые rows и частичную готовность. Отрицательные случаи сохраняют
+duplicate keys, два JSON, два plain label, конфликт типов и неполный JSON.
+Факты review проверяются отдельно: полный prior graph, корректная межпакетная
+связь, неизменность строк и отсутствие нового модельного цикла.
+Durable regression сохраняет Vor review → новый текущий LSR → pause → новый store
+→ plain continuation: тип прежнего результата и факты остаются Vor, текущий — LSR.
+Повторный показ авторского расчёта сохраняет также `calc_unit`; поле уже было
+в контракте и экспорте949, но отсутствовало в compact replay whitelist.
+
 ## Регрессии952 — подпись количества и повторное чтение
 
 `test_vor_authored_measure_provenance_952.py` включён в CURRENT_TESTS: null,

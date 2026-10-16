@@ -93,6 +93,7 @@ UNIT_TESTS += tests/test_vor_derived_quantity_export_949.py tests/test_vor_deliv
 UNIT_TESTS += tests/test_vor_candidate_scope_950.py
 UNIT_TESTS += tests/test_model_query_phase_request_951.py
 UNIT_TESTS += tests/test_vor_authored_measure_provenance_952.py
+UNIT_TESTS += tests/test_equivalent_artifact_transport_953.py tests/test_vor_review_structural_facts_953.py
 UNIT_TESTS += tests/test_rim_cited_numeric_literals.py tests/test_model_warmup_service.py
 UNIT_TESTS += tests/test_meta_store_env_binding_945.py
 UNIT_TESTS += tests/test_model_capability_admission_946.py tests/test_model_lsr_rejected_source_proposals.py

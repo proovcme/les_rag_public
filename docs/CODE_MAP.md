@@ -1,5 +1,15 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 953 — согласование транспортов и факты пользовательского review
+
+`model_lsr_result_contract.decode_model_artifact_kind` проверяет каждый transport
+до признания равнозначной plain+JSON пары. Raw не нормализуется и не переписывается.
+`model_rag_prior_page_context` использует существующий аудит ВОР по полному прежнему
+результату и ограничивает показ фактов текущим пакетом; профессионального выбора нет.
+`begin_workbook_chat_review` сохраняет prior_artifact_kind в существующей event-note;
+`WorkbookResearchJobService.chat_review_context` возвращает его после открытия БД
+и продолжения. Изменения схемы/миграции не требуются.
+
 ## 952 — подписи меры в экспортированном ВОР
 
 `bor_service.source_rows_to_vor_xlsx` сохраняет авторские unit/quantity в E/F

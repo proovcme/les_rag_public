@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 953 — согласованные декларации и существующие ошибки ревизии
+
+`model_lsr_result_contract.decode_model_artifact_kind` допускает ровно одну
+согласованную plain+JSON декларацию; реальные конфликты и duplicate keys
+остаются fail-closed. `chat_evidence_application_service.model_rag_prior_page_context`
+передаёт при пользовательском пересмотре компактные факты прежнего структурного
+аудита вместе со сверкой исходника, сохраняя решения за моделью.
+`workbook_research_job_service.chat_review_context` сохраняет prior_artifact_kind
+из события пересмотра отдельно от текущего назначения документа, включая resume.
+Док↔код: ✅ [RAG evidence flow](modules/rag-evidence-flow.md), [ВОР](ALGO-spec-to-bor.md).
+
 ## 952 — происхождение количества не утверждается подписью
 
 `bor_service.source_rows_to_vor_xlsx` при расчётном layout называет E/F

@@ -919,6 +919,9 @@ def begin_workbook_chat_review(service, job, question, source_locators):
         "request_sha256": hashlib.sha256(str(question).encode("utf-8")).hexdigest(),
         "message": str(question), "decision_author": "user", "review_scope": "document",
     }
+    prior_declaration = (job.get("task_context") or {}).get("artifact_kind_declaration") or {}
+    if prior_declaration.get("status") == "declared":
+        note["prior_artifact_kind"] = str(prior_declaration.get("artifact_kind") or "")
     prior_rows = None
     if job.get("remaining") or job.get("held_packet"):
         context = workbook_chat_review_context(service, job)
@@ -931,7 +934,12 @@ def begin_workbook_chat_review(service, job, question, source_locators):
 
 def workbook_chat_review_context(service, job) -> dict[str, Any]:
     """Read the latest user's review and its baseline across resume jobs."""
-    return service.chat_review_context(job["job_id"])
+    context = service.chat_review_context(job["job_id"])
+    if context and "prior_artifact_kind" not in context:
+        prior_declaration = (job.get("task_context") or {}).get("artifact_kind_declaration") or {}
+        if prior_declaration.get("status") == "declared":
+            context["prior_artifact_kind"] = str(prior_declaration.get("artifact_kind") or "")
+    return context
 
 
 def model_rag_existing_operation_rows(current_rows, review_rows=()) -> list[dict[str, Any]]:
@@ -4139,6 +4147,7 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "conversion_factor",
             "conversion_source",
             "calc_quantity",
+            "calc_unit",
             "confirmed_price",
             "price_source",
             "price_kind",
@@ -6372,10 +6381,16 @@ def model_rag_prior_page_context(
     *, review_rows: Sequence[Mapping[str, Any]] = (), review_instruction: str = "",
     source_catalog: AttachmentSourceCatalog | None = None,
     unapplied_proposals: Sequence[Mapping[str, Any]] = (),
+    prior_artifact_kind: str = "", full_result_rows: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[dict[str, Any], list[Any]]:
     """Replay authored rows and exactly their cited cards; never choose a norm."""
     rows = model_rag_existing_operation_rows(rows, review_rows)
     structural_facts = []
+    vor_issues = []
+    if review_rows and review_instruction and prior_artifact_kind == "vor" and full_result_rows:
+        from proxy.services.vor_result_integrity_service import audit_vor_result_integrity
+
+        vor_issues = audit_vor_result_integrity(full_result_rows, source_catalog=source_catalog)
     # Recompute observations from immutable cards/source, not saved diagnostics.
     # These are facts for the existing model turn, never replacement decisions.
     observation_rows = [{key: value for key, value in row.items()
@@ -6411,7 +6426,14 @@ def model_rag_prior_page_context(
                     "model_quantity": row.get("quantity"),
                     "model_unit": row.get("unit"),
                 }
-        if any(key in fact for key in ("norm_reference", "resource_reference", "price_reference", "source_comparison")):
+        row_issues = [{key: value for key, value in issue.items()
+                       if key not in {"row_index", "source_row", "operation_id"}}
+                      for issue in vor_issues
+                      if issue["source_row"] == str(row.get("source_row") or "")
+                      and (issue.get("operation_id") or "") == (row.get("operation_id") or "")]
+        if row_issues:
+            fact["vor_integrity"] = row_issues
+        if any(key in fact for key in ("norm_reference", "resource_reference", "price_reference", "source_comparison", "vor_integrity")):
             structural_facts.append(fact)
     proposed_rows = [item["decision"] for item in unapplied_proposals
                      if isinstance(item.get("decision"), Mapping)]
@@ -6479,7 +6501,9 @@ def model_rag_prior_page_context(
             "work_row остаётся адресом исходной строки работы. "
             "prior_result_structural_facts содержит только сравнение с буквальными "
             "карточками и исходными ячейками, не вердикт о применимости нормы. "
-            "code_in_refs=null означает, что сравнить шифр невозможно. "
+            + ("vor_integrity — структурные факты связей и объёмов по полному прежнему результату ВОР, "
+               "не предметные решения. " if vor_issues else "")
+            + "code_in_refs=null означает, что сравнить шифр невозможно. "
             "Указанные противоречия — факты для самостоятельного предметного решения модели. "
             + ("При явном пересмотре текущая область результата — все предложенные прежние операции "
                "этого пакета, включая неизменённые. Неизменённые предметные поля и цитаты сохраняются "
@@ -10442,6 +10466,7 @@ async def _execute_chat_evidence_application(
                     review_notice = ""
                     review_prior_rows: list[dict[str, Any]] = []
                     review_instruction = ""
+                    review_prior_artifact_kind = ""
                     if research_job_service is not None and research_job is not None:
                         review_events = research_job_service.list_events_with_lineage(research_job["job_id"])
                         if workbook_chat_review_needed(req.question, research_job, review_events):
@@ -10463,6 +10488,7 @@ async def _execute_chat_evidence_application(
                         review_context = workbook_chat_review_context(research_job_service, research_job)
                         review_prior_rows = list(review_context.get("prior_rows") or [])
                         review_instruction = str(review_context.get("message") or "")
+                        review_prior_artifact_kind = str(review_context.get("prior_artifact_kind") or "")
                     accumulated_rows: list[dict[str, Any]] = [
                         dict(item)
                         for item in ((research_job or {}).get("accepted_rows") or ())
@@ -10836,6 +10862,8 @@ async def _execute_chat_evidence_application(
                                 prior_page_context, prior_page_chunks = model_rag_prior_page_context(
                                     prior_page_rows, sheet_pass_evidence_chunks,
                                     review_rows=prior_packet_rows, review_instruction=review_instruction,
+                                    prior_artifact_kind=review_prior_artifact_kind,
+                                    full_result_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
                                 if prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals"):
@@ -10899,6 +10927,8 @@ async def _execute_chat_evidence_application(
                                 prior_page_context, prior_page_chunks = model_rag_prior_page_context(
                                     prior_page_rows, sheet_pass_evidence_chunks,
                                     review_rows=prior_packet_rows, review_instruction=review_instruction,
+                                    prior_artifact_kind=review_prior_artifact_kind,
+                                    full_result_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
                                 if prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals"):

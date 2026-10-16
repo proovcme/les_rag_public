@@ -534,15 +534,18 @@ def _model_json_documents(raw: str) -> tuple[list[str], list[str]]:
 def decode_model_artifact_kind(raw: str) -> dict:
     """Read a document-level literal declaration, without choosing its purpose.
 
-    Target ambiguity is independent of row admission: no repeated declaration
-    is selected, even when repeated values are identical.
+    Target ambiguity is independent of row admission. A single plain label may
+    repeat the same valid target in one complete, unique-key JSON document;
+    repeated declarations within either transport remain ambiguous.
     """
     decoder = json.JSONDecoder(object_pairs_hook=_AuthoredJSONPairs)
     candidates, segments = _model_json_documents(raw)
     declarations, errors = [], []
+    plain_label_count = 0
     for segment in segments:
         # This label is a transport field, not an interpretation of prose.
         labels = list(re.finditer(r"(?m)^[ \t]*artifact_kind[ \t]*:[ \t]*(.*?)[ \t]*$", segment))
+        plain_label_count += len(labels)
         declarations.extend(match.group(1).strip() for match in labels)
     for candidate in candidates:
         try:
@@ -553,7 +556,20 @@ def decode_model_artifact_kind(raw: str) -> dict:
             continue
         if isinstance(value, _AuthoredJSONPairs):
             declarations.extend(item for key, item in value if key == "artifact_kind")
-    if len(declarations) > 1:
+    matching_transport_forms = False
+    if (len(declarations) == 2 and plain_label_count == 1 and len(candidates) == 1
+            and not errors and declarations[0] in ("vor", "lsr")
+            and declarations[0] == declarations[1]):
+        try:
+            # Keep the literal audit above, but never legitimise duplicate JSON
+            # keys, an incomplete document or a second authored JSON document.
+            document = json.loads(candidates[0], object_pairs_hook=_unique_json_object)
+        except (ValueError, TypeError):
+            pass
+        else:
+            matching_transport_forms = (isinstance(document, dict)
+                and document.get("artifact_kind") == declarations[0])
+    if len(declarations) > 1 and not matching_transport_forms:
         errors.append("ARTIFACT_KIND_AMBIGUOUS")
         status = "conflict"
     elif errors or (declarations and declarations[0] not in ("vor", "lsr")):

@@ -1122,7 +1122,9 @@ class WorkbookResearchJobService:
             if note:
                 return {"prior_rows": [dict(item) for item in payload.get("prior_rows") or ()
                                        if isinstance(item, Mapping)],
-                        "message": str(note.get("message") or "")}
+                        "message": str(note.get("message") or ""),
+                        **({"prior_artifact_kind": str(note["prior_artifact_kind"] or "")}
+                           if "prior_artifact_kind" in note else {})}
         return {}
 
     @staticmethod
