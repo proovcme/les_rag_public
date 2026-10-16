@@ -5211,6 +5211,7 @@ def parse_model_rag_result(
     transport_diagnostics: list[dict[str, Any]] = []
     from proxy.services.model_lsr_result_contract import (
         decode_model_result_rows, decode_model_resource_field, decode_model_inline_rows,
+        decode_model_quoted_text_scalar, TEXT_NULLABLE_FIELDS,
     )
     json_rows = decode_model_result_rows(raw, diagnostics=transport_diagnostics)
     if diagnostics is not None:
@@ -5684,6 +5685,9 @@ def parse_model_rag_result(
             }
             row: dict[str, Any] = {}
             for name, value in raw_row.items():
+                if name in TEXT_NULLABLE_FIELDS and value == "null":
+                    row[name] = None
+                    continue
                 if not value:
                     if (declared_vor and name in vor_core_fields) or name in {"_display_ordinal", "operation_id"}:
                         row[name] = value
@@ -5853,19 +5857,36 @@ def parse_model_rag_result(
 
     block_rows: list[dict[str, Any]] = []
     current_block: dict[str, Any] | None = None
+    block_lines: list[str] = []
+    block_seen_keys: set[str] = set()
+    duplicate_block_fields: list[str] = []
+    duplicate_block_seen = False
     invalid_block = False
 
     def flush_block() -> None:
-        nonlocal current_block, invalid_block
+        nonlocal current_block, invalid_block, block_lines, block_seen_keys, duplicate_block_fields, duplicate_block_seen
         if current_block is None:
             return
-        if not required_fields.issubset(current_block) or current_block.get(
+        if duplicate_block_fields:
+            # Named text has the same no-last-write-wins boundary as JSON.
+            proposal = {"code": "MODEL_RESULT_TEXT_DUPLICATE_FIELD",
+                "reason": "duplicate_text_field", "fields": list(dict.fromkeys(duplicate_block_fields)),
+                "decision": {"raw_block": "\n".join(block_lines),
+                             "source_row": current_block.get("source_row")}}
+            transport_diagnostics.append(proposal)
+            if diagnostics is not None:
+                diagnostics.append(proposal)
+            duplicate_block_seen = True
+        elif not required_fields.issubset(current_block) or current_block.get(
             "source_row"
         ) in (None, ""):
             invalid_block = True
         else:
             block_rows.append(current_block)
         current_block = None
+        block_lines = []
+        block_seen_keys = set()
+        duplicate_block_fields = []
 
     for line in lines:
         stripped = line.strip()
@@ -5911,17 +5932,29 @@ def parse_model_rag_result(
         if not delimiter:
             continue
         key = block_fields.get(label.strip().strip("*_` ").casefold())
+        if (key == "operation_id" and current_block is not None
+                and required_fields.issubset(current_block)
+                and re.match(r"^\s*[-+*•]\s+operation_id\s*:", line)):
+            flush_block()
         if key == "source_row" and current_block is not None and required_fields.issubset(current_block):
             flush_block()
         if current_block is None and key in {"source_row", "operation_id"}:
             current_block = {}
         if current_block is None:
             continue
-        clean = value.strip().lstrip("*_` ").strip()
+        block_lines.append(line)
+        clean = decode_model_quoted_text_scalar(value.strip().lstrip("*_` ").strip())
         if not key:
             continue
+        if key in block_seen_keys:
+            duplicate_block_fields.append(key)
+            continue
+        block_seen_keys.add(key)
+        if key in TEXT_NULLABLE_FIELDS and value.strip() == "null":
+            current_block[key] = None
+            continue
         if not clean:
-            if (declared_vor and key in vor_core_fields) or key == "operation_id":
+            if key in required_fields or (declared_vor and key in vor_core_fields) or key == "operation_id":
                 current_block[key] = clean
             continue
         if key == "source_row":
@@ -5952,8 +5985,8 @@ def parse_model_rag_result(
         else:
             current_block[key] = clean
     flush_block()
-    if block_rows and not invalid_block:
-        return str(raw or ""), block_rows
+    if duplicate_block_seen or block_rows and not invalid_block:
+        return str(raw or ""), block_rows if not invalid_block else []
 
     labelled_fields = {
         "operation_id": "operation_id",
@@ -7933,6 +7966,9 @@ def profile_system_prompt(
         parts.append(
             _WORKBOOK_ROW_CITATION_INSTRUCTION
             + " Навигационные карты помогают выбрать файл, но сами по себе не подтверждают факт."
+            + " Правила профиля об обычном ответе без JSON и с Markdown не запрещают формат "
+            "активного контракта документа: строки передавай в выбранном формате этого контракта; "
+            "обычный комментарий пользователю остаётся человекочитаемым."
         )
     elif strict:
         parts.append(
@@ -14875,7 +14911,8 @@ async def _execute_chat_evidence_application(
                             and artifact_kind_declaration.get("authority") in {"query", "result"}
                             or packaging_tools == ["build_lsr_workbook"]
                             and all(str(error) in {"MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH", "MODEL_RESULT_SOURCE_LOCATOR_MISSING",
-                                                  "MODEL_RESULT_JSON_DUPLICATE_FIELD", "MODEL_RESULT_JSON_DUPLICATE_FIELD_ALIAS"}
+                                                  "MODEL_RESULT_JSON_DUPLICATE_FIELD", "MODEL_RESULT_JSON_DUPLICATE_FIELD_ALIAS",
+                                                  "MODEL_RESULT_TEXT_DUPLICATE_FIELD"}
                                     or str(error).startswith(("source_quantity_unconfirmed:", "source_quantity_mismatch:"))
                                     for error in model_result_blocking_errors)
                         )

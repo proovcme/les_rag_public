@@ -1,5 +1,19 @@
 # RAG evidence flow
 
+## 964 — named-text carrier без потери кавычек и неполных работ
+
+В явном model-authored поле полная JSON-строка читается как её строковое
+значение; исходный ответ сохраняется. Это относится также к plain label
+`artifact_kind: "vor"`. Не JSON-строка, неполное значение, конфликт или повтор
+декларации не получают догадку/приоритет. Прежний block reader сохраняет
+one-to-many source rows и ID/revision; duplicate fields остаются raw proposals.
+Explicit unquoted `null` в nullable поле означает отсутствие, quoted"null"
+остаётся строкой. Неизвестная норма не удаляет явную работу ЛСР.
+
+Общие подсказки человеческого Markdown/без JSON относятся к обычному ответу;
+для создаваемого документа действует его контракт строк. Сохранённый prompt
+профиля не изменяется. Нового model round, selector или YAML-executor нет.
+
 ## 963 — сохранение запросов и обоих вариантов результата
 
 Model-generated declare_research_queries_result внутри точного schema/kind/data

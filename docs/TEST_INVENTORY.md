@@ -1,5 +1,30 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Регрессии964 — текстовый carrier и сохраняемая подсказка добора
+
+`test_model_quoted_text_scalar_964.py`: фактическая форма явных multiline
+записей из live963, complete JSON-string scalar, буквальное сохранение
+решений/raw, пустые/escaped значения,0/null и quoted"null", duplicate fields
+до отбрасывания пустого значения, несколько операций одного source_row,
+operation_id-first list/CAS fields и пустая норма у незакрытой работы ЛСР.
+Не допускает интерпретацию YAML-выражений, nested/non-string/trailing payload
+или конфликтующих типов. Общие правила обычного ответа не запрещают формат
+активного документа, сохранённый prompt не переписывается. Первый adjacent
+текстового carrier:99passed; полный гейт кандидата ещё требуется.
+После отрицательных границ и проверки вместимости:177passed, включая
+literal resource capacity/native continuations/неполный draft. Это scoped
+проверка, её результат не заменяет frozen gate или реальную ЛСР.
+
+`test_lsr_gap_hint_resume_964.py`: сохраняемая дословная подсказка и точные
+pending ID при прежнем вопросе/ценовой базе, настоящие SQLite межоперационные
+конфликты, повторный клик/устаревшая карточка/новый ввод и неприменённый POST,
+обычный native LSR review без расширения на закрытых соседей. Первый scoped
+run58passed, adjacent402passed; это пересекающиеся проверки, не release gate.
+Финальный targeted run83passed и adjacent402passed после peer-замечаний;
+квитанции и первый непройденный fixture сохранены в `artifacts/live_964/gap_hint/`.
+Оба файла включены в CURRENT_TESTS. Установленный UI, повтор подсказки и
+профессиональный результат требуют живого доказательства точного кандидата.
+
 ## Регрессии963 — авторская оболочка и отсутствие query-типа
 
 `test_model_query_wrapper_963.py`: actual784char replay с7запросами, сохранение

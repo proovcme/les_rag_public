@@ -344,6 +344,72 @@ def lsr_explicit_resume_reopen_payload(resume: Any, job: Any) -> dict[str, Any] 
             "research_operation_ids": payload.get("research_operation_ids")}
 
 
+def lsr_gap_retry_reopen_payload(
+    resume: dict, job: dict, *, review_instruction: str = "", document_revision_id: str = "", explicit_scope: bool = False,
+) -> dict[str, Any] | None:
+    """Keep an explicit gap retry within its current durable operation scope."""
+    from proxy.services.model_result_packet_service import _locator_key
+
+    result = lsr_explicit_resume_reopen_payload(resume, job)
+    current_revision = str(job.get("retry_document_revision_id") or "")
+    if document_revision_id and current_revision and document_revision_id != current_revision:
+        raise ValueError("Ревизия документа изменилась. Обновите карточку результата; уточнение сохранено.")
+    if job.get("retry_document_rows_current") is False:
+        raise ValueError("Сохранённые решения новее файла. Сначала пересоберите файл из сохранённых строк; уточнение сохранено.")
+    context = job.get("task_context") or {}
+    pending = {_locator_key(item) for item in context.get("pending_research_locators") or ()}
+    if explicit_scope:
+        sources = list(dict.fromkeys(str(item) for item in resume.get("research_locators") or ()))
+        result = ({"job_id": job["job_id"], "session_id": str((job.get("identity") or {}).get("session_id") or ""),
+                   "attachment_id": str((job.get("identity") or {}).get("attachment_id") or ""),
+                   "question": str(resume.get("question") or ""), "reopen_locators": sources,
+                   "repack": False, "preserve_accepted": True,
+                   "research_operation_ids": resume.get("research_operation_ids")} if sources else None)
+    elif pending:
+        sources = [str(item) for item in resume.get("research_locators") or () if _locator_key(item) in pending]
+        keys = {_locator_key(item) for item in sources}
+        pending_ids = set(context.get("pending_research_operation_ids") or ())
+        requested_ids = resume.get("research_operation_ids")
+        ids = [str(row["operation_id"]) for row in job.get("accepted_rows") or ()
+               if row.get("operation_id") in pending_ids and _locator_key(row.get("source_row")) in keys
+               and (requested_ids is None or row["operation_id"] in requested_ids)]
+        unassigned = {_locator_key(item) for item in context.get("pending_research_unassigned_locators") or ()}
+        owned_keys = {_locator_key(row.get("source_row")) for row in job.get("accepted_rows") or ()
+                      if row.get("operation_id") in ids} | (keys & unassigned)
+        sources = [source for source in sources if _locator_key(source) in owned_keys]
+        result = ({"job_id": job["job_id"], "session_id": str((job.get("identity") or {}).get("session_id") or ""),
+                   "attachment_id": str((job.get("identity") or {}).get("attachment_id") or ""),
+                   "question": str(resume.get("question") or ""), "reopen_locators": sources,
+                   "repack": False, "preserve_accepted": True, "research_operation_ids": list(dict.fromkeys(ids))}
+                  if sources else None)
+    elif result is None and review_instruction.strip() and job.get("status") not in {"complete", "failed"}:
+        remaining = {_locator_key(item) for item in job.get("remaining") or ()}
+        sources = [str(item) for item in resume.get("research_locators") or () if _locator_key(item) in remaining]
+        if sources:
+            result = {"job_id": job["job_id"], "session_id": str((job.get("identity") or {}).get("session_id") or ""),
+                      "attachment_id": str((job.get("identity") or {}).get("attachment_id") or ""),
+                      "question": str(resume.get("question") or ""), "reopen_locators": sources,
+                      "repack": False, "preserve_accepted": True,
+                      "research_operation_ids": resume.get("research_operation_ids")}
+    if result is not None:
+        token = str(job.get("retry_state_sha256") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", token):
+            raise ValueError("Не удалось проверить состояние задания. Обновите карточку; уточнение сохранено.")
+        result["expected_retry_state"] = token
+        if review_instruction.strip():
+            result["review_instruction"] = review_instruction
+    return result
+
+
+def consume_lsr_resume_input(control: Any, captured: str) -> bool:
+    """Only the text captured by this accepted send may leave the composer."""
+    if str(control.value or "") != captured:
+        return False
+    control.value = ""
+    control.update()
+    return True
+
+
 DETACHED_HISTORY_POLL_SEC = 8.0
 DETACHED_HISTORY_TIMEOUT_SEC = 36 * 3600
 
@@ -5103,6 +5169,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     # ── ФАЙЛЫ-АРТЕФАКТЫ: готовые документы (смета xlsx, формы) в панели «Файлы» ──
     _file_artifacts: dict[str, dict] = {}  # url → {name, kind}
     _lsr_card_state: dict[str, Any] = {}
+    _lsr_resume_inflight = {"v": False}
     # Sessions whose finished research was already restored in this page
     # instance; the repair of a missing document must not retry every rerender.
     _terminal_restore_attempted: set[str] = set()
@@ -5338,7 +5405,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 )
         dialog.open()
 
-    async def _repack_lsr_from_ui(resume: dict, artifact: dict) -> None:
+    async def _repack_lsr_from_ui(resume: dict, artifact: dict, *, still_current=None) -> None:
         payload = {
             "session_id": str(state.get("session_id") or resume.get("session_id") or ""),
             "job_id": str(resume.get("job_id") or ""),
@@ -5351,6 +5418,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         result = await api_post("/api/chat/repack-lsr", payload)
         if not isinstance(result, dict) or result.get("model_called") is not False:
             _notify(last_api_error_text("Не удалось пересобрать файл без модели"), type="negative")
+            return
+        if still_current is not None and not still_current():
+            _notify("Новая ревизия сохранена в исходном задании. Чат изменился; уточнение сохранено в поле запроса.", type="info")
             return
         harvested = result.get("harvested") if isinstance(result.get("harvested"), dict) else {}
         _register_artifact_downloads({"artifact": harvested.get("artifact") or {}})
@@ -5425,68 +5495,92 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         _notify(reason or "Задание завершено.", type="info")
 
-    async def _resume_lsr_packets(resume: dict) -> None:
-        payload = merge_lsr_resume_payload(
-            resume,
-            (_lsr_card_state.get("artifact") or {}).get("result_readiness"),
-        )
-        question = str(payload.get("question") or resume.get("question") or "").strip()
-        if not question:
-            _notify("Нет сохранённого запроса для продолжения", type="warning")
-            return
-        if _sending["v"]:
+    async def _resume_lsr_packets(resume: dict, *, explicit_scope: bool = False) -> None:
+        if _sending["v"] or _lsr_resume_inflight["v"]:
             _notify("Дождитесь окончания текущего ответа", type="warning")
             return
-        job_id = str(payload.get("job_id") or "").strip()
-        if job_id:
+        _lsr_resume_inflight["v"] = True
+        captured_input = str(chat_input.value or "")
+        captured_binding = (str(state.get("session_id") or ""), str(attach_state.get("id") or ""))
+        captured_card = (str((_lsr_card_state.get("resume") or {}).get("job_id") or ""),
+                         str((_lsr_card_state.get("artifact") or {}).get("revision_id") or ""))
+
+        def composer_scope_unchanged():
+            return (not _sending["v"] and captured_binding ==
+                    (str(state.get("session_id") or ""), str(attach_state.get("id") or ""))
+                    and captured_card == (str((_lsr_card_state.get("resume") or {}).get("job_id") or ""),
+                                          str((_lsr_card_state.get("artifact") or {}).get("revision_id") or "")))
+
+        try:
+            artifact = _lsr_card_state.get("artifact") or {}
+            payload = dict(resume) if explicit_scope else merge_lsr_resume_payload(resume, artifact.get("result_readiness"))
+            question = str(payload.get("question") or resume.get("question") or "").strip()
+            attachment_id = str(payload.get("attachment_id") or resume.get("attachment_id") or "").strip()
+            session_id = str(payload.get("session_id") or resume.get("session_id") or "").strip()
+            if not question or not payload.get("job_id"):
+                _notify("Нет сохранённого задания для продолжения", type="warning")
+                return
+            if ((captured_binding[0] and session_id != captured_binding[0])
+                    or (captured_binding[1] and attachment_id != captured_binding[1])):
+                _notify("Открыт другой чат или прикреплён другой файл. Уточнение сохранено.", type="warning")
+                return
+            job_id = str(payload["job_id"])
             current_job = await api_get(f"/api/workbook-research/{job_id}?view=progress")
+            if not composer_scope_unchanged():
+                _notify("Чат или запрос изменился. Уточнение сохранено; продолжение не отправлено.", type="warning")
+                return
             try:
-                reopen = lsr_explicit_resume_reopen_payload(payload, current_job)
+                lsr_explicit_resume_reopen_payload(payload, current_job or {})
             except ValueError as error:
                 _notify(str(error), type="warning")
                 return
-            if reopen:
+            if current_job.get("retry_document_rows_current") is False:
+                _notify("Решения обновились: обновляю файл из сохранённых строк. После обновления повторите добор.", type="info")
+                await _repack_lsr_from_ui(payload, {}, still_current=composer_scope_unchanged)
+                return
+            try:
+                reopen = lsr_gap_retry_reopen_payload(payload, current_job or {},
+                    review_instruction=captured_input, document_revision_id=str(artifact.get("revision_id") or ""),
+                    explicit_scope=explicit_scope)
+            except ValueError as error:
+                _notify(str(error), type="warning")
+                return
+            if reopen is None:
+                if captured_input.strip() or not current_job.get("remaining") or current_job.get("status") in {"complete", "failed"}:
+                    _notify("Нет незакрытых позиций в выбранной области. Уточнение сохранено.", type="info")
+                    return
+            else:
                 reopened = await api_post("/api/chat/patch-lsr-rows", reopen)
                 if not isinstance(reopened, dict) or reopened.get("model_called") is not False:
-                    _notify(last_api_error_text("Не удалось продолжить незакрытые строки"), type="negative")
+                    _notify(last_api_error_text("Не удалось продолжить незакрытые строки. Уточнение сохранено."), type="negative")
                     return
-        attachment_id = str(payload.get("attachment_id") or resume.get("attachment_id") or "").strip()
-        session_id = str(payload.get("session_id") or resume.get("session_id") or "").strip()
-        if session_id:
-            state["session_id"] = session_id
-        if attachment_id:
-            pending = {
-                "id": attachment_id,
-                "name": str(attach_state.get("name") or "сохранённый исходник"),
-                "mode": "read",
-                "text": str(attach_state.get("text") or ""),
-                "chars": int(attach_state.get("chars") or 0),
-                "rows": int(attach_state.get("rows") or 0),
-                "truncated": bool(attach_state.get("truncated")),
-                "dataset_name": str(attach_state.get("dataset_name") or ""),
-            }
-            attach_state.update(pending)
-            title, detail, _chat_msg = _attachment_visible_text(pending)
-            attach_title.set_text(title)
-            attach_chip.set_text(detail)
-            attach_strip.set_visibility(True)
-        elif not attach_state.get("id"):
-            _notify(
-                "Нет исходника для продолжения. Прикрепите файл и нажмите «Продолжить» ещё раз.",
-                type="warning",
-            )
-            return
-        chat_input.value = ""
-        chat_input.update()
-        _notify(
-            "Продолжаю незакрытые строки. Закрытые решения сохраняются.",
-            type="info",
-        )
-        await _do_send(
-            question,
-            display_question=format_lsr_resume_display(payload),
-            force_mode="estimator",
-        )
+            if not composer_scope_unchanged():
+                _notify("Уточнение сохранено в задании. Чат изменился; продолжение не отправлено.", type="warning")
+                return
+            if session_id:
+                state["session_id"] = session_id
+            if attachment_id:
+                pending = {**attach_state, "id": attachment_id, "mode": "read",
+                           "name": str(attach_state.get("name") or "сохранённый исходник")}
+                attach_state.update(pending)
+                title, detail, _chat_msg = _attachment_visible_text(pending)
+                attach_title.set_text(title)
+                attach_chip.set_text(detail)
+                attach_strip.set_visibility(True)
+            elif not attach_state.get("id"):
+                _notify("Нет исходника для продолжения. Уточнение сохранено.", type="warning")
+                return
+            display = ("Уточняю выбранные позиции в текущей ценовой базе." if explicit_scope
+                       else format_lsr_resume_display(payload))
+            if captured_input.strip():
+                display += ("\nУточнение для выбранных позиций в текущей ценовой базе:\n" if explicit_scope
+                            else "\nУточнение для незакрытых позиций в текущей ценовой базе:\n") + captured_input
+            _notify(("Исследую выбранные позиции в текущей ценовой базе. Остальные решения сохраняются." if explicit_scope
+                     else "Продолжаю незакрытые строки в текущей ценовой базе. Закрытые решения сохраняются."), type="info")
+            await _do_send(question, display_question=display, force_mode="estimator",
+                composer_snapshot=captured_input, resume_binding=(session_id, attachment_id))
+        finally:
+            _lsr_resume_inflight["v"] = False
 
     async def _resume_stalled_lsr() -> None:
         """Повторная диспатч застывшей сборки: сервер подхватывает
@@ -5548,23 +5642,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if not job_id:
             _notify("Нет сохранённого задания для уточнения строк", type="warning")
             return
-        result = await api_post(
-            "/api/chat/patch-lsr-rows",
-            {
-                "session_id": str(state.get("session_id") or resume.get("session_id") or ""),
-                "job_id": job_id,
-                "attachment_id": str(resume.get("attachment_id") or attach_state.get("id") or ""),
-                "question": str(resume.get("question") or ""),
-                "reopen_locators": locators,
-                "preserve_accepted": True,
-                "repack": False,
-            },
-        )
-        if not isinstance(result, dict) or result.get("model_called") is not False:
-            _notify(last_api_error_text("Не удалось открыть строки для уточнения"), type="negative")
-            return
-        _notify("Строки открыты. Остальные решения сохранены.", type="positive")
-        await _resume_lsr_packets(resume)
+        await _resume_lsr_packets({**resume, "research_locators": locators,
+                                   "research_operation_ids": None}, explicit_scope=True)
 
     async def _confirm_lsr_data(
         resume: dict,
@@ -5749,7 +5828,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             ),
                             variant="primary",
                             compact=True,
-                        )
+                        ).tooltip("Уточнение из поля запроса применяется к незакрытым позициям в текущей ценовой базе.")
                     elif kind == "refine":
                         action_button(
                             str(item.get("label") or "Уточнить выбранные строки"),
@@ -6897,6 +6976,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         *,
         display_question: str | None = None,
         force_mode: str | None = None,
+        composer_snapshot: str | None = None,
+        resume_binding: tuple[str, str] | None = None,
     ):
         if _sending["v"]:
             return
@@ -6918,7 +6999,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _set_chat_blocked(False)
         else:
             await _refresh_resource_gate()
+        if _sending["v"]:
+            return
+        if resume_binding is not None and resume_binding != (
+                str(state.get("session_id") or ""), str(attach_state.get("id") or "")):
+            _notify("Чат или файл изменился. Уточнение сохранено; запрос не отправлен.", type="warning")
+            return
         _sending["v"] = True
+        if composer_snapshot is not None:
+            consume_lsr_resume_input(chat_input, composer_snapshot)
         _active_send_task["task"] = asyncio.current_task()
         send_btn.props("disabled")
         apply_btn.props("disabled")

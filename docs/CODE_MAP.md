@@ -1,5 +1,20 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 964 — буквальные named-text поля и область инженерного уточнения
+
+`model_lsr_result_contract.decode_model_quoted_text_scalar` читает только
+complete JSON string; `parse_model_rag_result` использует его в прежнем
+блочном reader. Никакой интерпретации работ/норм или нового YAML-контура нет.
+Explicit nullable `null` отделён от quoted"null". Duplicate labels сохраняют
+raw proposal; явная новая list-запись operation_id не теряет прежний ID.
+`prompt_registry_service` и workbook-result phase различают формат обычного
+ответа и технический формат строк создаваемого документа.
+
+Уточнение добора: `_resume_lsr_packets` → `LsrPatchRequest.review_instruction`
+→ существующий `reopen_locators(chat_review=..., preserve_accepted=True)`.
+Сохранённый вопрос и книга прежние; target IDs не угадываются. Непрозрачный
+retry token вычисляется сервером и сверяется транзакционно с idle-state.
+
 ## 961 — OOXML metadata как дословный источник
 
 `xlsx_source_metadata_service` читает print parts/classic comments из того же

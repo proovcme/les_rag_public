@@ -229,6 +229,8 @@ class LsrPatchRequest(BaseModel):
     reopen_locators: list[str] = []
     preserve_accepted: bool = False
     research_operation_ids: list[str] | None = None
+    review_instruction: str = ""
+    expected_retry_state: str = ""
     replace_rows: list[dict[str, Any]] = []
     dataset_ids: list[str] = []
     profile_revision_id: str = ""
@@ -258,7 +260,7 @@ async def get_workbook_research(
     _user=Depends(require_user),
 ):
     try:
-        job = WorkbookResearchJobService().get(job_id)
+        job = WorkbookResearchJobService().get(job_id, include_retry_token=view == "progress")
         return workbook_research_transport_view(job, view=view)
     except WorkbookResearchJobError as error:
         raise HTTPException(404, str(error)) from error
@@ -645,6 +647,35 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
     }
 
 
+def _retained_operation_review(req: LsrPatchRequest, job: dict, events: list[dict]) -> dict | None:
+    """Retain a literal hint only for the same or a narrower explicit scope."""
+    from proxy.services.model_result_packet_service import _locator_key
+
+    if not req.preserve_accepted or req.research_operation_ids is None or not events:
+        return None
+    payload = events[-1].get("payload") or {}
+    note = payload.get("chat_review") or {}
+    if (note.get("decision_author") != "user" or note.get("review_scope") != "operations"
+            or not str(note.get("message") or "").strip()
+            or note.get("request_sha256") != hashlib.sha256(req.question.encode("utf-8")).hexdigest()):
+        return None
+    old_sources = {_locator_key(source) for source in payload.get("locators") or ()}
+    sources = {_locator_key(source) for source in req.reopen_locators}
+    old_pairs = {(str(row.get("operation_id") or "").strip(), _locator_key(row.get("source_row")))
+                 for row in payload.get("prior_rows") or () if isinstance(row, dict) and row.get("operation_id")}
+    ids = {str(value).strip() for value in req.research_operation_ids}
+    pairs = {(str(row.get("operation_id") or "").strip(), _locator_key(row.get("source_row")))
+             for row in job.get("accepted_rows") or ()
+             if str(row.get("operation_id") or "").strip() in ids and _locator_key(row.get("source_row")) in sources}
+    old_unassigned = old_sources - {source for _, source in old_pairs}
+    unassigned = sources - {source for _, source in pairs}
+    if (not sources or not sources <= old_sources or not pairs <= old_pairs
+            or {op for op, _ in pairs} != ids or not unassigned <= old_unassigned):
+        return None
+    return {"message": note["message"], "decision_author": "user", "review_scope": "operations",
+            "request_sha256": note["request_sha256"], "instruction_origin": "retained_user_scope"}
+
+
 @router.post("/chat/patch-lsr-rows")
 async def patch_lsr_rows(req: LsrPatchRequest, _user=Depends(require_user)):
     """Apply operator-confirmed fields or reopen selected locators. Does not choose norms."""
@@ -665,12 +696,21 @@ async def patch_lsr_rows(req: LsrPatchRequest, _user=Depends(require_user)):
             raise HTTPException(409, "Исходник сохранённого задания изменился.")
         if job.get("status") == "running":
             raise HTTPException(409, "Задание уже выполняется.")
+    if req.review_instruction.strip() and not (req.preserve_accepted and req.reopen_locators):
+        raise HTTPException(409, "Уточнение требует явной области незакрытых позиций с сохранением решений.")
     try:
         if req.replace_rows:
             job = service.replace_accepted_rows(job_id, req.replace_rows)
         if req.reopen_locators:
+            review = None
+            if req.review_instruction.strip():
+                review = {"message": req.review_instruction, "decision_author": "user", "review_scope": "operations",
+                          "request_sha256": hashlib.sha256(req.question.encode("utf-8")).hexdigest()}
+            elif req.preserve_accepted:
+                review = _retained_operation_review(req, job, service.list_events_with_lineage(job_id, "locators_reopened"))
             job = service.reopen_locators(job_id, req.reopen_locators,
-                preserve_accepted=req.preserve_accepted, operation_ids=req.research_operation_ids)
+                preserve_accepted=req.preserve_accepted, operation_ids=req.research_operation_ids,
+                chat_review=review, require_idle=req.preserve_accepted, expected_retry_state=req.expected_retry_state)
         if req.confirmed_data:
             job = service.record_overrides(job_id, req.confirmed_data)
     except WorkbookResearchJobError as error:

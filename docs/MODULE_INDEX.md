@@ -1,5 +1,29 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 964 — буквальные текстовые поля и единый формат документа
+
+`model_lsr_result_contract.decode_model_quoted_text_scalar` читает только
+полную JSON-строку в прежнем named-text carrier и явной декларации типа.
+`parse_model_rag_result` сохраняет исходный raw, ID/revision и one-to-many
+адреса. Duplicate labels, в том числе с первым пустым значением, остаются
+неприменённым raw proposal; при наличии явной новой list-записи operation_id
+сохраняются оба авторских решения. Bare `null` в nullable поле отделён от
+quoted"null". Явный пустой шифр не удаляет незакрытую работу ЛСР.
+`prompt_registry_service` и workbook-result phase отделяют общую стилистику
+обычного ответа от формата строк документа; сохранённый prompt не изменяется.
+Нового YAML-parser, model round или выбора работ/норм кодом нет.
+Док↔код: ✅ [RAG flow](modules/rag-evidence-flow.md).
+Регрессия: `test_model_quoted_text_scalar_964.py`; installed gate ещё требуется.
+
+### Кандидат: адресный добор с уточнением инженера
+
+🟡 `sovushka.pages.chat.lsr_gap_retry_reopen_payload` / `_resume_lsr_packets` сохраняют
+дословное уточнение из composer в существующем `chat_review`, сохраняя исходный запрос,
+ценовую базу и точные ID целевых операций. `GET workbook-research?view=progress` выдаёт
+серверный токен состояния; `patch-lsr-rows` / `reopen_locators` проверяют его и idle
+в одной транзакции. Новый тест: `test_lsr_gap_hint_resume_964`; установленная приёмка
+ещё не выполнена. Док: [UI kit](modules/sovushka-uikit.md).
+
 ## 963 — транспорт запроса и тип документа без промежуточного обязательства
 
 `model_lsr_result_contract` принимает одну строго ограниченную авторскую

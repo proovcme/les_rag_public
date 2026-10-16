@@ -20,6 +20,15 @@ MATCH_FIELDS = (
     "composition_covers",
 )
 SELECTED_NORM_FIELDS = (*MATCH_FIELDS, "coverage")
+# Only explicit nullable transport fields. A title or role named 'null' is not
+# rewritten; JSON-quoted "null" remains a literal string in named text.
+TEXT_NULLABLE_FIELDS = frozenset({
+    "operation_id", "revision", "expected_revision", "base_revision", "work_row", "covered_by_work_id",
+    "unit", "quantity", "open_gap", "coverage", "norm_code", "norm_status", "evidence_refs",
+    "calc_quantity", "calc_unit", "conversion_factor", "conversion_source", "coefficient",
+    "coefficient_applies_to", "nr_sp_rule_id", "confirmed_price", "price_source", "price_unit",
+    "price_currency", "price_period", "price_vat", "price_year", "price_quarter",
+})
 OPTIONAL_FIELDS = (
     "section", "supply_kind", "calc_quantity", "calc_unit", "conversion_factor", "conversion_source",
     "coefficient", "coefficient_applies_to", "extra_ops", "missing_ops", "norm_components",
@@ -556,6 +565,22 @@ def _model_query_wrapper_data(value):
     return data
 
 
+def decode_model_quoted_text_scalar(value: str) -> str:
+    """Unwrap a complete JSON string in a named text field, without interpreting prose.
+
+    The original answer remains the audit. Non-string JSON, incomplete quotes,
+    YAML expressions and ordinary text retain their literal representation.
+    """
+    if value.startswith('"'):
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError):
+            return value
+        if isinstance(parsed, str):
+            return parsed
+    return value
+
+
 def decode_model_artifact_kind(raw: str) -> dict:
     """Read a document-level literal declaration, without choosing its purpose.
 
@@ -571,7 +596,7 @@ def decode_model_artifact_kind(raw: str) -> dict:
         # This label is a transport field, not an interpretation of prose.
         labels = list(re.finditer(r"(?m)^[ \t]*artifact_kind[ \t]*:[ \t]*(.*?)[ \t]*$", segment))
         plain_label_count += len(labels)
-        declarations.extend(match.group(1).strip() for match in labels)
+        declarations.extend(decode_model_quoted_text_scalar(match.group(1).strip()) for match in labels)
     for candidate in candidates:
         try:
             value = decoder.decode(candidate)

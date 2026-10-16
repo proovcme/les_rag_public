@@ -2270,6 +2270,8 @@ class WorkbookResearchJobService:
         review_prior_rows: Sequence[Mapping[str, Any]] | None = None,
         preserve_accepted: bool = False,
         operation_ids: Sequence[str] | None = None,
+        require_idle: bool = False,
+        expected_retry_state: str = "",
     ) -> dict[str, Any]:
         """Queue source research, optionally retaining exact accepted operation baselines.
 
@@ -2299,6 +2301,14 @@ class WorkbookResearchJobService:
             ).fetchone()
             if row is None:
                 raise WorkbookResearchJobError("workbook research job not found")
+            if require_idle and str(row["status"]) == "running":
+                raise WorkbookResearchJobError("research job is already running")
+            if expected_retry_state:
+                sequence = conn.execute(
+                    "SELECT COALESCE(MAX(sequence),0) FROM workbook_research_events WHERE job_id=?", (job_id,)
+                ).fetchone()[0]
+                if expected_retry_state != self._retry_state_token(row, sequence):
+                    raise WorkbookResearchJobError("research state changed; refresh the result card")
             existing_rows = json.loads(str(row["accepted_rows_json"]))
             context = _json_object(row, "task_context_json")
             if not preserve_accepted and set(wanted) & self.pending_research_locators({"task_context": context}):
@@ -2834,12 +2844,56 @@ class WorkbookResearchJobService:
                 )
         return self.get(job_id)
 
-    def get(self, job_id: str) -> dict[str, Any]:
+    @staticmethod
+    def _retry_state_token(row: sqlite3.Row, sequence: int) -> str:
+        """Opaque compare-and-set boundary; no caller interprets stored JSON."""
+        digest = hashlib.sha256(b"les.research-retry-state.v1\0")
+        for value in (str(sequence), *(str(row[key]) for key in (
+            "job_id", "identity_json", "status", "accepted_rows_json", "remaining_json",
+            "task_context_json", "operator_overrides_json",
+        ))):
+            raw = value.encode("utf-8")
+            digest.update(len(raw).to_bytes(8, "big"))
+            digest.update(raw)
+        return digest.hexdigest()
+
+    def get(self, job_id: str, *, include_retry_token: bool = False) -> dict[str, Any]:
         with self._connect() as conn:
+            if include_retry_token:
+                conn.execute("BEGIN")
             row = conn.execute(
                 "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)
             ).fetchone()
             events = self._events(conn, str(job_id), "workbook_packaged")
+            sequence = (conn.execute(
+                "SELECT COALESCE(MAX(sequence),0) FROM workbook_research_events WHERE job_id=?", (str(job_id),)
+            ).fetchone()[0] if include_retry_token else 0)
+            document_rows_current = True
+            if include_retry_token and events:
+                mutations = conn.execute(
+                    "SELECT event_type,payload_json FROM workbook_research_events WHERE job_id=? AND sequence>?"
+                    " AND event_type IN ('packet_checkpoint','rows_replaced','decision_revision','locators_reopened')",
+                    (str(job_id), events[-1]["sequence"]),
+                ).fetchall()
+                for mutation in mutations:
+                    try:
+                        payload = json.loads(str(mutation["payload_json"]))
+                    except ValueError:
+                        document_rows_current = False
+                        break
+                    if not isinstance(payload, Mapping):
+                        document_rows_current = False
+                        break
+                    changed = (mutation["event_type"] == "decision_revision"
+                        or (mutation["event_type"] == "packet_checkpoint"
+                            and (not isinstance(payload.get("new_revisions"), int) or payload["new_revisions"] != 0))
+                        or (mutation["event_type"] == "rows_replaced"
+                            and (not isinstance(payload.get("replaced"), int) or payload["replaced"] != 0))
+                        or (mutation["event_type"] == "locators_reopened" and not payload.get("preserve_accepted")
+                            and ("prior_rows" not in payload or bool(payload.get("prior_rows")))))
+                    if changed:
+                        document_rows_current = False
+                        break
         if row is None:
             # An unknown id is the documented "not found" answer, not a crash:
             # callers probe several durable databases and skip the ones that do
@@ -2847,6 +2901,12 @@ class WorkbookResearchJobService:
             raise WorkbookResearchJobError("workbook research job not found")
         job = self._row(row)
         job["document"] = self._scope_document(job, events)
+        if include_retry_token:
+            job["retry_state_sha256"] = self._retry_state_token(row, sequence)
+            job["retry_document_rows_current"] = document_rows_current
+            job["retry_document_revision_id"] = str(
+                ((events[-1].get("payload") or {}).get("revision_id") if events else "")
+                or job["document"].get("final_revision_id") or job["document"].get("draft_revision_id") or "")
         # ADR-16 § 7 asks every surface for the same basis; § 10 for one state.
         # The job answers with the basis its own packaged document carries.
         basis = job["document"].get("price_basis")
