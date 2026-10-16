@@ -3288,6 +3288,7 @@
         "tests/test_model_query_generation_limit_boundary.py",
         "tests/test_model_query_metadata_transport.py",
         "tests/test_model_query_packet_failure_boundary.py",
+        "tests/test_model_query_phase_request_951.py",
         "tests/test_model_query_phase_scope.py",
         "tests/test_model_query_reasoning.py",
         "tests/test_model_query_rejected_visible_diagnostics.py",
@@ -3340,7 +3341,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15226,
+      "lines": 15241,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5726,6 +5727,7 @@
         "tests/test_model_norm_evidence_ref_reads.py",
         "tests/test_model_norm_pointer_navigation.py",
         "tests/test_model_preset_workflow_parity.py",
+        "tests/test_model_query_phase_request_951.py",
         "tests/test_model_query_phase_scope.py",
         "tests/test_model_query_reasoning.py",
         "tests/test_model_query_repair_context.py",
@@ -13633,6 +13635,20 @@
     },
     {
       "inbound": [],
+      "lines": 103,
+      "module": "tests.test_model_query_phase_request_951",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/model_execution_preset_service.py",
+        "tests/test_model_query_repair_context.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
+      ],
+      "path": "tests/test_model_query_phase_request_951.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 227,
       "module": "tests.test_model_query_phase_scope",
       "outbound": [
@@ -13679,7 +13695,9 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
+      "inbound": [
+        "tests/test_model_query_phase_request_951.py"
+      ],
       "lines": 247,
       "module": "tests.test_model_query_repair_context",
       "outbound": [
@@ -13800,6 +13818,7 @@
         "tests/test_model_query_generation_limit_boundary.py",
         "tests/test_model_query_metadata_transport.py",
         "tests/test_model_query_packet_failure_boundary.py",
+        "tests/test_model_query_phase_request_951.py",
         "tests/test_model_query_phase_scope.py",
         "tests/test_model_query_reasoning.py",
         "tests/test_model_query_rejected_visible_diagnostics.py",
@@ -22438,9 +22457,9 @@
     "product_reachable": 382,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 795,
-    "tracked_python_files": 1189,
-    "tracked_python_lines": 410169
+    "test_or_tool_only": 796,
+    "tracked_python_files": 1190,
+    "tracked_python_lines": 410287
   },
   "warnings": []
 }

@@ -2342,9 +2342,21 @@ def govern_model_query_messages(
     first_source_packet: ContextPacket | None = None, **kwargs,
 ) -> tuple[list[dict[str, Any]], ContextPacket]:
     """Admit rejected technical data whole in the existing required request."""
+    # The operator's final document task stays literal. State the current
+    # technical phase alongside it in the same required request, including
+    # repair calls, rather than relying only on the system-prefix contract.
+    payload = {
+        **dict(kwargs["request_payload"]),
+        "current_phase": "search_queries",
+        "technical_request": (
+            "Сейчас верни только поисковые запросы в одном из объявленных оформлений. "
+            "Если для ВОР внешний поиск не нужен: {\"artifact_kind\":\"vor\",\"queries\":[]}. "
+            "Итоговые строки документа — на следующем этапе."
+        ),
+    }
+    kwargs = {**kwargs, "request_payload": payload}
     if rejected_attempt is None:
         return govern_inference_messages(**kwargs)
-    payload = dict(kwargs["request_payload"])
     payload["rejected_query_attempt"] = dict(rejected_attempt)
     if first_source_packet is not None:
         # Preserve only source objects actually shown on the first attempt.
@@ -7681,7 +7693,10 @@ def profile_system_prompt(
             elif purpose == "workbook_result" and not artifact_kind:
                 parts.append(_SOURCE_CONTEXT_ROLE_INSTRUCTION
                     + "Тип документа определяешь ты; в текущем вопросе даны отдельные условные контракты. "
-                    "Применяй только контракт выбранного тобой типа; нормы и цены не обязательны для ВОР.")
+                    "Применяй только контракт выбранного тобой типа. "
+                    "Для ВОР нормы и цены не являются условием создания работ и объёмов. "
+                    "Для ЛСР пустые ценовые колонки не мешают сборке. "
+                    "При подборе нормы для ЛСР или добровольно для ВОР проверяй карточку по контракту ЛСР.")
             else:
                 parts.append(_TABULAR_LSR_OPERATION_INSTRUCTION if purpose == "workbook_result"
                              else _TABULAR_LSR_VOLUME_INSTRUCTION)

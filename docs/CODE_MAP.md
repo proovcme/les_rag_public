@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 951 — технический этап в обязательном query request
+
+`govern_model_query_messages` в `chat_evidence_application_service.py` создаёт
+копию request с current_phase/technical_request до первого вызова и repair.
+Исходный вопрос и переданные объекты не меняются; бюджет считает весь request.
+Конечные answer/workbook вызовы этот wrapper не используют.
+
 ## 950 — сметные добавки требуют текущего выбора модели
 
 `chat_evidence_application_service` допускает `_execute_system_candidate_queries`
