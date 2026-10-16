@@ -90,6 +90,7 @@ UNIT_TESTS += tests/test_model_quote_dimensions_947.py
 UNIT_TESTS += tests/test_vor_workflow_contract_948.py tests/test_vor_result_integrity_948.py
 UNIT_TESTS += tests/test_vor_operation_instructions_948.py tests/test_docx_empty_notes_948.py
 UNIT_TESTS += tests/test_vor_derived_quantity_export_949.py tests/test_vor_delivery_notice_949.py
+UNIT_TESTS += tests/test_vor_candidate_scope_950.py
 UNIT_TESTS += tests/test_rim_cited_numeric_literals.py tests/test_model_warmup_service.py
 UNIT_TESTS += tests/test_meta_store_env_binding_945.py
 UNIT_TESTS += tests/test_model_capability_admission_946.py tests/test_model_lsr_rejected_source_proposals.py

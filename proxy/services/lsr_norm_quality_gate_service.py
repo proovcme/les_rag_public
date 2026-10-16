@@ -1839,6 +1839,27 @@ def lsr_result_table_instruction(
 ) -> str:
     if artifact_kind == "vor":
         return f"{sheet_clause}{model_vor_result_field_instruction()}{remaining_clause}"
+    if not artifact_kind:
+        # The current model may choose the document in its final answer. Keep
+        # both contracts explicit and conditional instead of treating silence
+        # in its query declaration as a request for an estimate.
+        return (
+            f"{sheet_clause}"
+            "Тип документа определяешь ты по запросу пользователя и исходнику. "
+            "Объяви artifact_kind: vor или artifact_kind: lsr в том же итоговом ответе. "
+            "Применяй только контракт выбранного тобой типа: отсутствие декларации "
+            "в запросном ходе не означает выбор ЛСР. Для ВОР нормы и цены не обязательны.\n\n"
+            "КОНТРАКТ ВОР — только при artifact_kind: vor\n"
+            "source_row, row_role, work_row, title, unit, quantity, open_gap: работы и "
+            "обоснованные объёмы по исходнику; монтаж каждого изделия автоматически не назначай. "
+            "Исходные unit/quantity сохраняй, неизвестный объём — null, исходный ноль — 0. "
+            "Производный объём: calc_quantity, calc_unit и conversion_source с формулой "
+            "и источником; коэффициент — только если применим. Нормы, цены, ресурсы нормы "
+            "и НР/СП не являются условиями создания ВОР.\nКОНЕЦ КОНТРАКТА ВОР\n\n"
+            "КОНТРАКТ ЛСР — только при artifact_kind: lsr\n"
+            + lsr_result_table_instruction(artifact_kind="lsr")
+            + f"\nКОНЕЦ КОНТРАКТА ЛСР{remaining_clause}"
+        )
     return (
         f"{sheet_clause}"
         + model_lsr_result_field_instruction()

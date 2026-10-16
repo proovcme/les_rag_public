@@ -7678,6 +7678,10 @@ def profile_system_prompt(
             if purpose == "workbook_result" and artifact_kind == "vor":
                 parts.append(_SOURCE_CONTEXT_ROLE_INSTRUCTION
                              + "Для ВОР нужны работы и обоснованные объёмы; нормы и цены не обязательны.")
+            elif purpose == "workbook_result" and not artifact_kind:
+                parts.append(_SOURCE_CONTEXT_ROLE_INSTRUCTION
+                    + "Тип документа определяешь ты; в текущем вопросе даны отдельные условные контракты. "
+                    "Применяй только контракт выбранного тобой типа; нормы и цены не обязательны для ВОР.")
             else:
                 parts.append(_TABULAR_LSR_OPERATION_INSTRUCTION if purpose == "workbook_result"
                              else _TABULAR_LSR_VOLUME_INSTRUCTION)
@@ -11211,7 +11215,15 @@ async def _execute_chat_evidence_application(
                                         search_block_status,
                                     )
                                     break
-                                candidate_added = 0 if artifact_kind_declaration.get("artifact_kind") == "vor" else await _execute_system_candidate_queries(
+                                # Missing a declaration is not an LSR choice. A
+                                # review may retain a saved VOR while the new
+                                # model query lists only literal searches; do
+                                # not add estimate candidates on that basis.
+                                # All model queries above still execute intact.
+                                candidate_added = 0 if not (
+                                    artifact_kind_declaration.get("status") == "declared"
+                                    and artifact_kind_declaration.get("artifact_kind") == "lsr"
+                                ) else await _execute_system_candidate_queries(
                                     catalog=source_catalog,
                                     sheet=sheet_name,
                                     packet=packet,

@@ -29,7 +29,7 @@ def test_only_explicit_vor_target_receives_dedicated_operation_contract():
     assert "Неоднозначную связь оставь вопросом" in instruction
 
 
-@pytest.mark.parametrize("kind", ["", "lsr", "both", "unknown", "VOR"])
+@pytest.mark.parametrize("kind", ["lsr", "both", "unknown", "VOR"])
 def test_existing_lsr_instruction_is_byte_for_byte_unchanged(kind):
     instruction = lsr_result_table_instruction(artifact_kind=kind)
     assert hashlib.sha256(instruction.encode("utf-8")).hexdigest() == (

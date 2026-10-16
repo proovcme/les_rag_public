@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1188 |
-| Строк Python | 410004 |
+| Python-файлов под git | 1189 |
+| Строк Python | 410169 |
 | PRODUCT_REACHABLE | 382 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 794 |
+| TEST_OR_TOOL_ONLY | 795 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 342 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 15214 | 103 |
+| proxy/services/chat_evidence_application_service.py | 15226 | 104 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7811 | 7 |
 | proxy/routers/chat.py | 4880 | 54 |
@@ -42,11 +42,11 @@
 | proxy/routers/datasets.py | 3851 | 18 |
 | proxy/services/rim_lsr_trace_service.py | 3452 | 43 |
 | sovushka/styles.py | 3301 | 3 |
-| proxy/services/workbook_research_job_service.py | 3036 | 45 |
+| proxy/services/workbook_research_job_service.py | 3036 | 46 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
-| proxy/services/lsr_norm_quality_gate_service.py | 2248 | 19 |
+| proxy/services/lsr_norm_quality_gate_service.py | 2269 | 20 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
 | proxy/smeta_core/norm_browser.py | 1951 | 20 |
