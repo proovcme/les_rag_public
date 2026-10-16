@@ -68,7 +68,8 @@ def test_review_is_durable_without_model_planning_and_preserves_operator_data(tm
     service.finish(current["job_id"], status="complete")
     saved_rows = service.get(current["job_id"])["accepted_rows"]
     reopened = begin_workbook_chat_review(service, current, "Добери нормы", ["Лист 1!R14", "Лист 1!R15"])
-    assert reopened["accepted_rows"] == []
+    assert reopened["accepted_rows"] == saved_rows
+    assert service.pending_research_operation_ids(reopened) == {row["operation_id"] for row in saved_rows}
     assert reopened["remaining"] == ["Лист 1!R14", "Лист 1!R15"]
     assert reopened["operator_overrides"]["Лист 1!R14"]["confirmed_price"] == 123
     events = service.list_events(current["job_id"], "locators_reopened")
@@ -95,7 +96,7 @@ def _review_checkpoint(tmp_path):
     published = service.get(job["job_id"])["accepted_rows"]
     review = service.begin_or_resume(identity("Исправь объёмы по исходнику"))
     review = begin_workbook_chat_review(service, review, "Исправь объёмы по исходнику", ["Схема!R14", "Схема!R15"])
-    assert review["accepted_rows"] == []
+    assert review["accepted_rows"] == published
     return service, identity, review, published
 
 
@@ -116,7 +117,9 @@ def test_reopened_operation_can_keep_its_published_identity(tmp_path):
         accepted_rows=[changed], evidence=[], remaining=["Схема!R15"])
     assert saved["accepted_rows"][0]["operation_id"] == published[0]["operation_id"]
     assert saved["accepted_rows"][0]["revision"] == published[0]["revision"] + 1
-    assert len(saved["accepted_rows"]) == 1
+    assert len(saved["accepted_rows"]) == 2
+    assert saved["accepted_rows"][1] == published[1]
+    assert service.pending_research_operation_ids(saved) == {published[1]["operation_id"]}
 
 
 def test_review_resume_retains_instruction_identity_and_exact_cited_card(tmp_path):
@@ -147,19 +150,23 @@ def test_new_remark_during_partial_review_does_not_lose_unreviewed_baseline(tmp_
     assert len(prior) == 2
     assert prior[0]["title"] == "Исправленный монтаж"
     assert prior[1] == published[1]
-    assert service.get(next_review["job_id"])["accepted_rows"] == []
+    assert service.get(next_review["job_id"])["accepted_rows"] == prior
 
 
-def test_new_review_after_completed_result_does_not_restore_removed_old_operations(tmp_path):
+def test_omitted_review_operation_stays_durable_pending_until_an_explicit_model_reply(tmp_path):
     service, identity, review, published = _review_checkpoint(tmp_path)
     service.record_packet(review["job_id"], sheet="Схема", packet_locators=["Схема!R14", "Схема!R15"],
         accepted_rows=[published[0]], evidence=[], remaining=[])
-    service.finish(review["job_id"], status="complete")
+    current = service.get(review["job_id"])
+    assert current["accepted_rows"] == published
+    assert current["remaining"] == [published[1]["source_row"]]
+    assert service.pending_research_operation_ids(current) == {published[1]["operation_id"]}
+    service.pause(review["job_id"], remaining=[], phase="model_result_transport_pending")
     next_review = service.begin_or_resume(identity("Проверь готовый результат"))
     begin_workbook_chat_review(service, next_review, "Проверь готовый результат", ["Схема!R14", "Схема!R15"])
     prior = service.chat_review_context(next_review["job_id"])["prior_rows"]
-    assert len(prior) == 1
-    assert prior[0]["operation_id"] == published[0]["operation_id"]
+    assert prior == published
+    assert service.get(next_review["job_id"])["accepted_rows"] == published
 
 
 def test_operator_confirmations_survive_new_review_and_resume_job(tmp_path):
@@ -201,7 +208,7 @@ def test_review_response_contract_is_full_while_normal_page_remains_delta():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cut", [False, True])
 @pytest.mark.parametrize("repair_query_transport", [False, True])
-async def test_actual_reopened_review_offers_all_operations_without_auto_restoring_omitted_rows(tmp_path, monkeypatch, cut, repair_query_transport):
+async def test_actual_review_preserves_accepted_baseline_until_a_valid_model_revision(tmp_path, monkeypatch, cut, repair_query_transport):
     from test_model_rag_sheet_evidence_reads import _run_sheet
     from proxy.services.openai_compatible_transport_service import InferenceResponse
 
@@ -212,7 +219,8 @@ async def test_actual_reopened_review_offers_all_operations_without_auto_restori
     assert len(published) == 2
     reopened = application.begin_workbook_chat_review(store, store.get(job_id), "Recheck these operations",
         [row["source_row"] for row in published])
-    assert reopened["accepted_rows"] == []
+    assert reopened["accepted_rows"] == published
+    assert store.pending_research_operation_ids(reopened) == {row["operation_id"] for row in published}
     fields = ("source_row", "row_role", "title", "unit", "quantity", "norm_code", "resource_code", "evidence_refs", "operation_id")
     authored = [{**{key: row[key] for key in fields if key in row}, "expected_revision": row["revision"]}
                 for row in published]
@@ -282,7 +290,8 @@ async def test_actual_reopened_review_offers_all_operations_without_auto_restori
     current = store.get(job_id)
     assert frame_rows and len(run.requests) == calls_before + 2 + int(repair_query_transport) and not run.responses
     if cut:
-        assert current["accepted_rows"] == []
+        assert current["accepted_rows"] == published
+        assert store.pending_research_operation_ids(current) == {row["operation_id"] for row in published}
         assert set(current["remaining"]) == {row["source_row"] for row in published}
         assert result["retrieval_trace"]["model_result_transport_diagnostics"]
         assert len(run.executions) == 1
@@ -290,7 +299,9 @@ async def test_actual_reopened_review_offers_all_operations_without_auto_restori
         assert len(current["accepted_rows"]) == 2 and current["remaining"] == []
         for returned, expected in zip(current["accepted_rows"], authored):
             assert {key: returned.get(key) for key in fields} == {key: expected.get(key) for key in fields}
-            assert returned["revision"] == expected["expected_revision"] + 1
+            changed = expected["operation_id"] == authored[1]["operation_id"]
+            assert returned["revision"] == expected["expected_revision"] + int(changed)
+        assert store.pending_research_operation_ids(current) == set()
         assert len(run.executions) == 2
     prior_event = store.list_events(job_id, "locators_reopened")[-1]
     assert prior_event["payload"]["prior_rows"] == published

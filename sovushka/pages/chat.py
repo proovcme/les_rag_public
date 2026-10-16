@@ -298,11 +298,17 @@ def merge_lsr_resume_payload(resume: Any, readiness: Any = None) -> dict[str, An
         catalog_n = 0
     payload["remaining_locators"] = remaining
     payload["catalog_work_count"] = catalog_n
+    research_scope = (ready["research_locators"] if "research_locators" in ready
+                      else payload.get("research_locators", remaining))
+    payload["research_locators"] = list(research_scope or ())
+    research_ids = (ready["research_operation_ids"] if "research_operation_ids" in ready
+                    else payload.get("research_operation_ids"))
+    payload["research_operation_ids"] = list(research_ids) if research_ids is not None else None
     return payload
 
 
 def lsr_explicit_resume_reopen_payload(resume: Any, job: Any) -> dict[str, Any] | None:
-    """A Continue click reopens only unresolved, previously terminal packets."""
+    """Explicit retry targets can reopen terminal legacy jobs without packet cursors."""
     payload = resume if isinstance(resume, dict) else {}
     current = job if isinstance(job, dict) else {}
     if str(current.get("job_id") or "") != str(payload.get("job_id") or ""):
@@ -319,17 +325,23 @@ def lsr_explicit_resume_reopen_payload(resume: Any, job: Any) -> dict[str, Any] 
         snapshots.append(held)
     completed_packets = {str(locator) for snapshot in snapshots if isinstance(snapshot, dict)
                          for locator in snapshot.get("locators") or ()}
-    already_open = set(map(str, held.get("reopened_locators") or ()))
+    context = current.get("task_context") or {}
+    already_open = set(map(str, context.get("pending_research_locators") or ())) if (
+        "pending_research_locators" in context) else set(map(str, held.get("reopened_locators") or ()))
     remaining = [str(locator) for locator in current.get("remaining") or ()]
-    requested = set(map(str, payload.get("remaining_locators") or remaining))
-    locators = list(dict.fromkeys(locator for locator in remaining
-        if locator in requested and locator in completed_packets and locator not in already_open))
+    requested_rows = list(map(str, payload.get("research_locators") or ())) if (
+        "research_locators" in payload) else list(map(str, payload.get("remaining_locators") or remaining))
+    requested = set(requested_rows)
+    terminal_retry = current.get("status") in {"complete", "failed"} and "research_locators" in payload
+    locators = list(dict.fromkeys(locator for locator in [*remaining, *requested_rows]
+        if locator in requested and (locator in completed_packets or terminal_retry) and locator not in already_open))
     if not locators:
         return None
     return {"job_id": current["job_id"], "session_id": session,
             "attachment_id": str(identity.get("attachment_id") or ""),
             "question": str(payload.get("question") or ""),
-            "reopen_locators": locators, "repack": False}
+            "reopen_locators": locators, "repack": False, "preserve_accepted": True,
+            "research_operation_ids": payload.get("research_operation_ids")}
 
 
 DETACHED_HISTORY_POLL_SEC = 8.0
@@ -342,6 +354,7 @@ _WORKBOOK_PHASE_RU = {
     "complete": "сборка файла",
     "cancelled": "остановлено",
     "paused": "на паузе",
+    "research_pending": "ожидает повторного исследования",
 }
 
 
@@ -5412,6 +5425,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "attachment_id": str(resume.get("attachment_id") or attach_state.get("id") or ""),
                 "question": str(resume.get("question") or ""),
                 "reopen_locators": locators,
+                "preserve_accepted": True,
                 "repack": False,
             },
         )

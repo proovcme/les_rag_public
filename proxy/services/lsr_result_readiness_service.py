@@ -34,9 +34,8 @@ SCHEMA = "les.lsr-result-readiness.v1"
 # so the live file status keeps the wording in that case.
 _DURABLE_DOCUMENT_STATES = frozenset({"ready", "draft_only", "pending"})
 
-# A research job in one of these states will not process another packet, so no
-# readiness line may send the operator to «Продолжить» to close a row.  The open
-# rows of such a job are declared gaps that a person decides on.
+# Terminal research does not restart automatically. An explicit retry may open
+# its declared gaps while preserving the last revision and accepted decisions.
 FINISHED_RESEARCH_JOB_STATUSES = frozenset({"complete", "failed"})
 
 _ABSENT_CODES = frozenset(
@@ -299,14 +298,14 @@ def gap_reason_action(
     «continue searching»: a line whose own text is too thin is closed by the
     customer adding the characteristic, a line whose candidates were read and
     rejected is closed by the estimate engineer's professional decision.  Once the
-    research is finished the second half has to say so, because «Продолжить» no
-    longer reopens anything.
+    research is finished it stays finished until the operator explicitly asks
+    to research these gaps again, optionally supplying the missing conditions.
     """
 
     words = _own_words(row)
     finished_tail = (
-        " Строка объявлена пробелом в листе «Проверка»; «Продолжить» для "
-        "завершённого задания её не считает."
+        " Строка объявлена пробелом в листе «Проверка». Можно уточнить условия "
+        "в чате или явно продолжить поиск по незакрытым позициям."
         if research_finished
         else ""
     )
@@ -390,7 +389,7 @@ def build_lsr_result_readiness(
                 **dict(gap),
                 "action": (
                     f"Строка {gap.get('locator')} не закрыта и объявлена пробелом в "
-                    "листе «Проверка»; «Продолжить» для завершённого задания её не считает."
+                    "листе «Проверка»; её можно явно открыть для повторного исследования."
                     if "Продолжите" in _text(gap.get("action"))
                     else _text(gap.get("action"))
                 ),
@@ -404,9 +403,6 @@ def build_lsr_result_readiness(
     # calculation layer already proved this cipher is absent from the normative
     # base, which outranks "the label carried no citation" — the citation would not
     # have made an unknown cipher known.
-    base_absent_locators = {
-        _text(item.get("locator")) for item in unbound if item.get("status") == "norm_not_found"
-    }
     validated_covered = {
         _text(item.get("operation_id")) for item in row_projection
         if item.get("status") == "covered" and item.get("covered_by_operation_id")
@@ -420,8 +416,6 @@ def build_lsr_result_readiness(
         if not kind:
             continue
         locator = _locator(row)
-        if kind == "cipher_without_cited_card" and locator in base_absent_locators:
-            continue
         if kind == "conflict":
             action = (
                 f"Проверьте применимость выбранного шифра {_norm_code(row) or 'без кода'} "
@@ -431,7 +425,8 @@ def build_lsr_result_readiness(
             if research_finished:
                 action = (
                     f"Строка {locator} осталась без нормы и закрыта как объявленный "
-                    "пробел в листе «Проверка»; новое исследование по ней не идёт."
+                    "пробел в листе «Проверка»; нажмите «Продолжить незакрытые строки» "
+                    "для повторного исследования."
                 )
             else:
                 action = (
@@ -481,30 +476,57 @@ def build_lsr_result_readiness(
                 f"Модель должна выбрать норму для строки {locator} "
                 "или явно оставить пропуск. Код шифр не подставляет."
             )
-        norm_gaps.append({"locator": locator, "kind": kind, "action": action})
+        norm_gaps.append({"locator": locator, "kind": kind, "action": action,
+                          "operation_id": _text(row.get("operation_id"))})
     # Task 2026-09-29 § 3: an unknown cipher is the third cause of an unready norm,
     # and the calculation layer already knows it (``norm_not_found``).  It used to be
     # reported only under «Цены» as an uncalculated row, which asked the operator for
     # a price on a line whose шифр the base does not hold.  One row, one question
     # (§ 10): the norm question is asked here, and the prices line stops repeating it.
     cipher_absent = [item for item in unbound if item.get("status") == "norm_not_found"]
-    already_asked = {_text(gap.get("locator")) for gap in norm_gaps}
     for item in cipher_absent:
         locator = _text(item.get("locator"))
-        if not locator or locator in already_asked:
+        if not locator:
             continue
-        already_asked.add(locator)
-        norm_gaps.append(
-            {
-                "locator": locator,
+        source = catalog_source_locator(locator, source_catalog)
+        candidates = [row for row in work_rows if inferred_row_role(row) == "work"
+                      and catalog_source_locator(_locator(row), source_catalog) == source]
+        projected = [record for record in row_projection
+                     if catalog_source_locator(record.get("locator"), source_catalog) == source]
+        # Calculator projections use operation_identity (often op:<authored ID>).
+        # Resolve only an exact known identity, never title/norm similarity.
+        targets = []
+        for record in projected:
+            if record.get("status") != "norm_not_found":
+                continue
+            matches = [row for row in candidates if _text(record.get("operation_id")) in {
+                operation_identity(row), _text(row.get("operation_id"))} - {""}]
+            if len(matches) == 1 and matches[0] not in targets:
+                targets.append(matches[0])
+        if not projected and len(candidates) == 1:
+            targets = candidates
+        # Historical locator-only diagnostics remain explicit if their precise
+        # operation cannot be recovered. Do not label all sibling works missing.
+        for target in targets or [{"source_row": locator}]:
+            target_locator = _locator(target)
+            target_id = _text(target.get("operation_id"))
+            gap = {
+                "locator": target_locator,
+                "operation_id": target_id,
                 "kind": "cipher_not_in_base",
                 "action": (
-                    f"Строка {locator}: названный шифр не найден в нормативной базе. "
+                    f"Строка {target_locator}: названный шифр не найден в нормативной базе. "
                     "Это пробел нормы, а не цены: подтвердите шифр по карточке или "
                     "выберите другую норму; код в базу не обращается и шифр не меняет."
                 ),
             }
-        )
+            prior = next((index for index, old in enumerate(norm_gaps)
+                          if _text(old.get("operation_id")) == target_id
+                          and catalog_source_locator(old.get("locator"), source_catalog) == source), None)
+            if prior is not None:
+                norm_gaps[prior] = gap
+            else:
+                norm_gaps.append(gap)
     source_conflict_statuses = {"norm_identity_conflict", "normative_generation_conflict"}
     unbound_priced = [item for item in unbound
                       if item.get("status") not in source_conflict_statuses | {"norm_not_found"}]
@@ -513,7 +535,7 @@ def build_lsr_result_readiness(
         if research_finished:
             gap_action = (
                 f"Строка {locator} не закрыта и объявлена пробелом в листе "
-                "«Проверка»; «Продолжить» для завершённого задания её не считает."
+                "«Проверка»; её можно явно открыть для повторного исследования."
             )
         else:
             gap_action = (
@@ -622,10 +644,15 @@ def build_lsr_result_readiness(
     if remaining:
         coverage_complete = False
 
-    if paused and remaining:
+    retry_locators = list(dict.fromkeys([*remaining,
+        *(_text(item.get("locator")) for item in norm_gaps if _text(item.get("locator")))]))
+    retry_operation_ids = list(dict.fromkeys(_text(item.get("operation_id")) for item in norm_gaps
+                                            if _text(item.get("operation_id"))))
+    if retry_locators:
         continue_action = (
             "Нажмите «Продолжить незакрытые строки». "
-            "Источники и решения сохранены; поиск уже обработанного не повторяется."
+            "Источники и принятые решения сохранены; повторно исследуются открытые позиции. "
+            "Уточнение условий можно написать в чате."
         )
     elif paused:
         continue_action = (
@@ -653,7 +680,7 @@ def build_lsr_result_readiness(
     elif research_finished and remaining:
         norms_action = (
             "Незакрытые строки объявлены пробелами в листе «Проверка»: "
-            f"{_preview(remaining)}. Их закрывает решение человека, а не «Продолжить»."
+            f"{_preview(remaining)}. Продолжите их исследование; уточнение условий можно написать в чате."
         )
     elif remaining:
         norms_action = (
@@ -877,8 +904,8 @@ def build_lsr_result_readiness(
     }
     if file_status != "ready" and work_rows:
         actions.append({"id": "repack", "label": "Пересобрать файл", "kind": "repack"})
-    if remaining or paused:
-        if not research_finished:
+    if retry_locators or paused:
+        if retry_locators or not research_finished:
             actions.append(
                 {"id": "resume", "label": "Продолжить незакрытые строки", "kind": "resume"}
             )
@@ -1017,6 +1044,8 @@ def build_lsr_result_readiness(
         "gap_states": gap_states,
         "paused": bool(paused),
         "remaining_locators": remaining,
+        "research_locators": retry_locators,
+        "research_operation_ids": retry_operation_ids,
         "catalog_work_count": int(catalog_work_count or len(wanted) or 0),
         "row_count": len(work_rows),
         "technical_complete": technical_complete,

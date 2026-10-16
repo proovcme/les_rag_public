@@ -3459,22 +3459,13 @@ def _format_tabular_attachment_context(path: Path, original_name: str, *, max_ch
         finally:
             wb.close()
     elif suffix == ".csv":
-        import csv
-        for enc in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
-            try:
-                text = path.read_text(encoding=enc)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        sample = text.splitlines()[0] if text.splitlines() else ""
-        delimiter = ";" if sample.count(";") >= sample.count(",") else ","
-        reader = csv.reader(text.splitlines(), delimiter=delimiter)
+        from backend.converter import iter_csv_source_records, read_csv_source_text
+
+        reader = iter_csv_source_records(read_csv_source_text(path))
         nonempty = 0
         delivered = 0
         stopped = not _append("## CSV")
-        for ri, row in enumerate(reader, 1):
+        for ri, row in reader:
             vals = [_compact_cell(v) for v in row if str(v or "").strip()]
             if not vals:
                 continue

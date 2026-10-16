@@ -614,6 +614,16 @@ def _same_research_scope(row: sqlite3.Row, identity: WorkbookResearchIdentity) -
 
 class WorkbookResearchJobService:
     @staticmethod
+    def pending_research_operation_ids(job: Mapping[str, Any]) -> set[str]:
+        return {str(value) for value in (job.get("task_context") or {}).get(
+            "pending_research_operation_ids", ()) if str(value)}
+
+    @staticmethod
+    def pending_research_locators(job: Mapping[str, Any]) -> set[str]:
+        return {str(value) for value in (job.get("task_context") or {}).get(
+            "pending_research_locators", ()) if str(value)}
+
+    @staticmethod
     def is_plain_continuation(
         identity: WorkbookResearchIdentity, task_context: Mapping[str, Any] | None = None,
     ) -> bool:
@@ -1469,6 +1479,20 @@ class WorkbookResearchJobService:
                 accepted_rows = admission.accepted_rows
                 proposals.extend(admission.unapplied_proposals)
             context = _json_object(row, "task_context_json")
+            pending_scope = self.pending_research_locators({"task_context": context})
+            pending_operation_scope = self.pending_research_operation_ids({"task_context": context})
+            if pending_scope:
+                scoped_rows = []
+                for item in accepted_rows:
+                    operation_id = str(item.get("operation_id") or "")
+                    if (str(item.get("source_row") or "") in pending_scope and operation_id in by_op
+                            and operation_id not in pending_operation_scope):
+                        proposals.append({"code": "MODEL_RESULT_RESEARCH_OPERATION_NOT_REQUESTED",
+                                          "reason": "existing_operation_outside_explicit_research_targets",
+                                          "decision": dict(item), "packet_locators": list(packet_locators)})
+                    else:
+                        scoped_rows.append(item)
+                accepted_rows = scoped_rows
             saved_proposals = [
                 dict(item) for item in context.get("unapplied_proposals", [])
                 if isinstance(item, Mapping)
@@ -1520,6 +1544,7 @@ class WorkbookResearchJobService:
                 (op, int(item.get("revision") or 1), "migration", item)
                 for op, item in migrated
             ]
+            admitted_model_replies: list[tuple[str, str]] = []
             for item in accepted_rows:
                 if not isinstance(item, Mapping):
                     continue
@@ -1542,10 +1567,14 @@ class WorkbookResearchJobService:
                     by_op[op_id] = payload
                     active_shas[op_id] = _decision_content_sha(payload)
                     new_revisions.append((op_id, revision, origin, payload))
+                    if origin == "model":
+                        admitted_model_replies.append((op_id, locator))
                     continue
                 if op_id and op_id in by_op:
                     sha = _decision_content_sha(payload)
                     if sha == active_shas.get(op_id):
+                        if origin == "model":
+                            admitted_model_replies.append((op_id, locator))
                         continue
                     revision = int(by_op[op_id].get("revision") or 1) + 1
                     payload["operation_id"] = op_id
@@ -1560,6 +1589,8 @@ class WorkbookResearchJobService:
                             existing_rows[pos] = payload
                             break
                     new_revisions.append((op_id, revision, origin, payload))
+                    if origin == "model":
+                        admitted_model_replies.append((op_id, locator))
                     continue
                 sha = _decision_content_sha(payload)
                 if sha in active_shas.values():
@@ -1572,6 +1603,8 @@ class WorkbookResearchJobService:
                 by_op[op_id] = payload
                 active_shas[op_id] = sha
                 new_revisions.append((op_id, 1, origin, payload))
+                if origin == "model":
+                    admitted_model_replies.append((op_id, locator))
             existing_evidence = json.loads(str(row["evidence_json"]))
             evidence_by_id = {
                 str(item.get("global_evidence_id") or ""): item for item in existing_evidence
@@ -1608,7 +1641,42 @@ class WorkbookResearchJobService:
                                   if source not in resolved_sources or source in unresolved_sources]
             remaining_locators.extend(source for source in unresolved_sources
                                       if source and source not in remaining_locators)
+            pending_ids = self.pending_research_operation_ids({"task_context": context})
+            pending_sources = list(context.get("pending_research_locators") or ())
+            if pending_ids or pending_sources:
+                before_sources = {str(item.get("operation_id") or ""): str(item.get("source_row") or "")
+                                  for item in json.loads(str(row["accepted_rows_json"])) if isinstance(item, Mapping)}
+                owned = set(packet)
+                answered = {operation_id for operation_id, source in admitted_model_replies
+                            if operation_id in pending_ids and before_sources.get(operation_id) == source
+                            and source in owned}
+                unassigned = set(context.get("pending_research_unassigned_locators") or ())
+                answered_sources = {source for _, source in admitted_model_replies if source in owned}
+                answered_unassigned = unassigned & answered_sources
+                pending_ids.difference_update(answered)
+                unassigned.difference_update(answered_sources)
+                unresolved_targets = unassigned | {before_sources[op] for op in pending_ids if op in before_sources}
+                if pending_ids - before_sources.keys():
+                    unresolved_targets.update(pending_sources)
+                next_sources = [source for source in pending_sources if source in unresolved_targets]
+                context.update(pending_research_operation_ids=sorted(pending_ids),
+                               pending_research_locators=next_sources,
+                               pending_research_unassigned_locators=sorted(unassigned))
+                resolved_sources = set(pending_sources) - set(next_sources)
+                remaining_locators = [source for source in remaining_locators
+                                      if source not in resolved_sources or source in unresolved_sources]
+                remaining_locators.extend(source for source in next_sources if source not in remaining_locators)
+                conn.execute("UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
+                             (json.dumps(context, ensure_ascii=False), job_id))
+                if answered or answered_unassigned:
+                    self._append_event(conn, job_id, "research_targets_answered", {
+                        "operation_ids": sorted(answered), "remaining_operation_ids": sorted(pending_ids),
+                        "remaining_locators": next_sources, "decision_author": "model",
+                    })
             held_payload = _merge_held_packet(_json_object(row, "held_packet_json"), dict(held_packet or {}))
+            if context.get("pending_research_locators"):
+                held_payload["reopened_locators"] = sorted(set(held_payload.get("reopened_locators") or ())
+                    | set(context["pending_research_locators"]))
             for op_id, revision, origin, payload in new_revisions:
                 self._insert_revision(conn, job_id, op_id, revision, origin, payload, None)
             # ─── Directive §1 (22.09): orthogonal stall / progress counters ───
@@ -2151,8 +2219,15 @@ class WorkbookResearchJobService:
         *,
         chat_review: Mapping[str, Any] | None = None,
         review_prior_rows: Sequence[Mapping[str, Any]] | None = None,
+        preserve_accepted: bool = False,
+        operation_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
-        """Remove listed rows from accepted decisions and return them to remaining."""
+        """Queue source research, optionally retaining exact accepted operation baselines.
+
+        ``operation_ids`` narrows a preserving requeue at a shared source anchor;
+        only an admitted reply for that identity completes its pending attempt.
+        The default keeps the previous explicit, destructive reopen contract.
+        """
 
         wanted = [str(item).strip() for item in locators if str(item).strip()]
         prior_context = (list(review_prior_rows) if review_prior_rows is not None
@@ -2169,6 +2244,16 @@ class WorkbookResearchJobService:
             if row is None:
                 raise WorkbookResearchJobError("workbook research job not found")
             existing_rows = json.loads(str(row["accepted_rows_json"]))
+            context = _json_object(row, "task_context_json")
+            if not preserve_accepted and set(wanted) & self.pending_research_locators({"task_context": context}):
+                raise WorkbookResearchJobError("pending research requires preserving accepted operation baselines")
+            selected_ids = None if operation_ids is None else {str(value) for value in operation_ids}
+            targeted = [item for item in existing_rows if str(item.get("source_row") or "") in wanted
+                        and (selected_ids is None or str(item.get("operation_id") or "") in selected_ids)]
+            if preserve_accepted and selected_ids is not None:
+                found_ids = {str(item.get("operation_id") or "") for item in targeted}
+                if selected_ids - found_ids:
+                    raise WorkbookResearchJobError("research operation is outside requested source scope")
             active_held = _json_object(row, "held_packet_json")
             completed_locators = self.terminal_packet_locators(active_held)
             # A completed packet owns its current accepted operations even
@@ -2185,7 +2270,7 @@ class WorkbookResearchJobService:
                 review_note["request_sha256"] = str(_json_object(row, "identity_json").get("question_sha256") or "")
             baseline = {str(item.get("operation_id") or f"unassigned:{index}"): dict(item)
                         for index, item in enumerate([*prior_context, *existing_rows])}
-            kept = [
+            kept = existing_rows if preserve_accepted else [
                 item
                 for item in existing_rows
                 if str(item.get("source_row") or "") not in wanted
@@ -2195,7 +2280,7 @@ class WorkbookResearchJobService:
                 if locator not in remaining:
                     remaining.append(locator)
             overlays = _json_object(row, "operator_overrides_json")
-            if chat_review is None:
+            if chat_review is None and not preserve_accepted:
                 for locator in wanted:
                     overlays.pop(locator, None)
             # An operator who reopens a row also lifts the packet deferral that
@@ -2208,6 +2293,18 @@ class WorkbookResearchJobService:
             held = _json_object(row, "held_packet_json")
             if held.get("terminal_packets") or held.get("terminal_model_result_saved"):
                 held["reopened_locators"] = sorted(set(map(str, held.get("reopened_locators") or ())) | set(wanted))
+            if preserve_accepted:
+                queued_ids = self.pending_research_operation_ids({"task_context": context})
+                queued_ids.update(str(item.get("operation_id")) for item in targeted if item.get("operation_id"))
+                queued_sources = list(dict.fromkeys([*context.get("pending_research_locators", ()), *wanted]))
+                unassigned = set(context.get("pending_research_unassigned_locators") or ())
+                assigned_sources = {str(item.get("source_row") or "") for item in targeted if item.get("operation_id")}
+                unassigned.update(source for source in wanted if source not in assigned_sources)
+                context.update(pending_research_operation_ids=sorted(queued_ids),
+                               pending_research_locators=queued_sources,
+                               pending_research_unassigned_locators=sorted(unassigned))
+                conn.execute("UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
+                             (json.dumps(context, ensure_ascii=False), job_id))
             conn.execute(
                 """UPDATE workbook_research_jobs
                 SET status='paused',phase='refine',accepted_rows_json=?,remaining_json=?,
@@ -2232,7 +2329,11 @@ class WorkbookResearchJobService:
                     "locators": wanted, "accepted_total": len(kept),
                     "chat_review": review_note,
                     "prior_rows": [item for item in baseline.values()
-                                   if str(item.get("source_row") or "") in wanted],
+                                   if str(item.get("source_row") or "") in wanted
+                                   and (not preserve_accepted or selected_ids is None
+                                        or str(item.get("operation_id") or "") in selected_ids)],
+                    **({"preserve_accepted": True, "research_operation_ids": sorted(queued_ids)}
+                       if preserve_accepted else {}),
                 },
             )
         return self.get(job_id)
@@ -2259,6 +2360,8 @@ class WorkbookResearchJobService:
                 if remaining is not None
                 else _json_list(row, "remaining_json")
             )
+            remaining_locators = list(dict.fromkeys([*remaining_locators,
+                *_json_object(row, "task_context_json").get("pending_research_locators", ())]))
             held_payload = (
                 dict(held_packet)
                 if held_packet is not None
@@ -2485,14 +2588,31 @@ class WorkbookResearchJobService:
         if status not in TERMINAL_STATUSES:
             raise WorkbookResearchJobError("invalid terminal status")
         with self._connect() as conn:
-            changed = conn.execute(
-                """UPDATE workbook_research_jobs
-                SET status=?,phase=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=?""",
-                (status, str(phase), job_id),
-            ).rowcount
-            if not changed:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM workbook_research_jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
                 raise WorkbookResearchJobError("workbook research job not found")
-            self._append_event(conn, job_id, status, {"phase": str(phase)})
+            context = _json_object(row, "task_context_json")
+            pending_ids = self.pending_research_operation_ids({"task_context": context})
+            pending_sources = list(context.get("pending_research_locators") or ())
+            if status == "complete" and (pending_ids or pending_sources):
+                remaining = list(dict.fromkeys([*_json_list(row, "remaining_json"), *pending_sources]))
+                conn.execute(
+                    """UPDATE workbook_research_jobs SET status='paused',phase='research_pending',
+                    pause_kind='research_pending',remaining_json=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=?""",
+                    (json.dumps(remaining, ensure_ascii=False), job_id),
+                )
+                self._append_event(conn, job_id, "completion_deferred", {
+                    "reason": "pending_model_research_targets", "requested_phase": str(phase),
+                    "operation_ids": sorted(pending_ids), "locators": pending_sources,
+                })
+            else:
+                conn.execute(
+                    """UPDATE workbook_research_jobs
+                    SET status=?,phase=?,updated_at=CURRENT_TIMESTAMP WHERE job_id=?""",
+                    (status, str(phase), job_id),
+                )
+                self._append_event(conn, job_id, status, {"phase": str(phase)})
         return self.get(job_id)
 
     def finish_with_declared_gaps(

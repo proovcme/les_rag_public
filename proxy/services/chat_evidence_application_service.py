@@ -929,7 +929,7 @@ def begin_workbook_chat_review(service, job, question, source_locators):
             prior_rows = model_rag_existing_operation_rows(
                 job.get("accepted_rows") or (), context["prior_rows"])
     return service.reopen_locators(job["job_id"], list(source_locators), chat_review=note,
-                                   review_prior_rows=prior_rows)
+                                   review_prior_rows=prior_rows, preserve_accepted=True)
 
 
 def workbook_chat_review_context(service, job) -> dict[str, Any]:
@@ -2536,13 +2536,22 @@ def overlay_tabular_estimator_snapshot(
     snapshot["tabular_estimator_path"] = True
     skill_path = Path(__file__).resolve().parents[2] / "skills" / "smeta" / "references" / "rag-estimator.md"
     workbook_skill = skill_path.read_text(encoding="utf-8").strip()
-    existing_skill = str(snapshot.get("skill_text") or "").strip()
-    if workbook_skill not in existing_skill:
+    bound_skill_text = str(snapshot.get("skill_text") or "")
+    existing_skill = bound_skill_text.strip()
+    managed_revision = str(snapshot.get("skill_revision_id") or "")
+    factory_managed = managed_revision == "factory:skill:estimator:base"
+    if factory_managed:
+        snapshot["skill_text"] = workbook_skill
+    elif workbook_skill not in existing_skill:
         snapshot["skill_text"] = existing_skill + "\n\n" + workbook_skill
     snapshot["effective_skill_modules"] = [{
         "path": "skills/smeta/references/rag-estimator.md",
         "sha256": hashlib.sha256(workbook_skill.encode("utf-8")).hexdigest(),
-        "source": "tabular_attachment_estimator_path_v1",
+        "source": ("factory_managed_turn_overlay" if factory_managed
+                   else "tabular_attachment_estimator_path_v1"),
+        **({"replaced_managed_skill_revision_id": managed_revision,
+            "replaced_managed_skill_sha256": hashlib.sha256(bound_skill_text.encode("utf-8")).hexdigest(),
+            "saved_snapshot_modified": False} if factory_managed else {}),
     }]
     return snapshot
 
@@ -3266,13 +3275,37 @@ def settled_source_keys(rows, catalog):
     the end of the sheet-pass loop has always accepted an adjudicated row; this
     helper is simply that one rule shared by the pool, so the loop can never
     queue work the completion check would already accept.  Quality gaps stay
-    visible in the reported ``missing`` list, and an operator reopen of a
-    locator removes its accepted rows, which returns it to the pool.
+    visible in the reported ``missing`` list. Explicit research targets are
+    scheduled separately while their accepted baseline remains durable.
     """
 
     return structurally_complete_source_keys(rows, catalog) | adjudicated_source_keys(
         rows, catalog
     )
+
+
+def research_settled_source_keys(rows, catalog, job):
+    """A retained baseline is not an answer to a newly requested review."""
+    return settled_source_keys(rows, catalog) - WorkbookResearchJobService.pending_research_locators(job)
+
+
+def model_rag_research_target_context(job, packet):
+    """Expose the operator's durable retry scope without choosing a norm."""
+    wanted = WorkbookResearchJobService.pending_research_locators(job) & set(packet)
+    if not wanted:
+        return {}
+    pending_ids = WorkbookResearchJobService.pending_research_operation_ids(job)
+    operation_ids = [str(row["operation_id"]) for row in (job or {}).get("accepted_rows") or ()
+                     if row.get("operation_id") in pending_ids and row.get("source_row") in wanted]
+    return {"research_target_source_rows": sorted(wanted),
+            "research_target_operation_ids": operation_ids,
+            "research_scope_instruction": (
+                "Пользователь запросил повторное исследование указанных открытых позиций. "
+                "research_target_operation_ids задаёт область пересмотра прежних операций. "
+                "Остальные prior_model_decisions — сохранённый контекст: их нормы и цитаты "
+                "не требуется искать заново. Исходные адреса без прежних операций также входят "
+                "в область исследования. При изменении сохраняются operation_id и expected_revision; "
+                "неотвеченные позиции остаются открытыми, прежние решения не исчезают.")}
 
 
 def research_run_stopped(job: Any) -> tuple[bool, bool, str]:
@@ -6514,8 +6547,8 @@ def model_rag_prior_page_context(
             + ("При явном пересмотре текущая область результата — все предложенные прежние операции "
                "этого пакета, включая неизменённые. Неизменённые предметные поля и цитаты сохраняются "
                "дословно вместе с operation_id; expected_revision соответствует показанному revision. "
-               "Пропущенные операции не возвращаются "
-               "в текущий документ автоматически. " if review_rows else
+               "Отсутствие прежней операции в ответе не удаляет её: сохранённое решение "
+               "остаётся в документе, а запрос его пересмотра остаётся открытым. " if review_rows else
                "При обычном продолжении текущая область обновления — новые и изменённые операции этого пакета. Неизменённые "
                "операции и цитаты остаются в документе. ")
             + "Код не изменял предметные решения."
@@ -10562,7 +10595,7 @@ async def _execute_chat_evidence_application(
                         # A new explicit resume may reach sources with no saved decision.
                         # Same-request replay and this run's later terminal barriers stay intact.
                         terminal_packet_locators.intersection_update(
-                            settled_source_keys(accumulated_rows, source_catalog))
+                            research_settled_source_keys(accumulated_rows, source_catalog, research_job))
                     pending_result_packets = model_rag_pending_result_packets(stored_held)
                     transport_pending_locators, pending_diagnostics = model_rag_pending_result_projection(pending_result_packets)
                     terminal_packet_locators.difference_update(source_conflict_locators(research_job, source_catalog))
@@ -10576,6 +10609,9 @@ async def _execute_chat_evidence_application(
                                 explicit_reopened_locators.difference_update(event_payload.get("packet_locators") or ())
                             elif event.get("event_type") == "locators_reopened":
                                 explicit_reopened_locators.update(event_payload.get("locators") or ())
+                    explicit_reopened_locators.update(
+                        WorkbookResearchJobService.pending_research_locators(research_job))
+                    terminal_packet_locators.difference_update(explicit_reopened_locators)
                     if stored_held.get("terminal_model_result_saved") or stored_held.get("model_result_transport_pending"):
                         # A completed packet's unused candidates stay durable;
                         # they are not an automatic professional re-offer.
@@ -10583,8 +10619,8 @@ async def _execute_chat_evidence_application(
                     sheet_count = len(sheet_pass_names)
                     work_total = len(source_catalog.work_locators())
                     session_accepted_start = len(
-                        settled_source_keys(
-                            accumulated_rows, source_catalog
+                        research_settled_source_keys(
+                            accumulated_rows, source_catalog, research_job
                         )
                         - source_conflict_locators(research_job, source_catalog)
                         & set(source_catalog.work_locators())
@@ -10597,8 +10633,8 @@ async def _execute_chat_evidence_application(
                         stage: str, *, sheet: str, index: int
                     ) -> None:
                         accepted_now = len(
-                            settled_source_keys(
-                                accumulated_rows, source_catalog
+                            research_settled_source_keys(
+                                accumulated_rows, source_catalog, research_job
                             )
                             - source_conflict_locators(research_job, source_catalog)
                             & set(source_catalog.work_locators())
@@ -10687,7 +10723,7 @@ async def _execute_chat_evidence_application(
                         remaining = remaining_sheet_work_locators(
                             source_catalog,
                             sheet_name,
-                            settled_source_keys(accumulated_rows, source_catalog) - source_conflict_locators(research_job, source_catalog),
+                            research_settled_source_keys(accumulated_rows, source_catalog, research_job) - source_conflict_locators(research_job, source_catalog),
                         )
                         remaining = [locator for locator in remaining
                                      if locator not in terminal_packet_locators
@@ -10850,8 +10886,8 @@ async def _execute_chat_evidence_application(
                                 cited_before = structurally_complete_source_keys(
                                     accumulated_rows, source_catalog
                                 )
-                                settled_before = settled_source_keys(
-                                    accumulated_rows, source_catalog
+                                settled_before = research_settled_source_keys(
+                                    accumulated_rows, source_catalog, research_job
                                 )
                                 pass_source_frame = (build_model_source_frame(source_catalog, packet)
                                                      if initial_source_frame is not None else None)
@@ -10872,6 +10908,7 @@ async def _execute_chat_evidence_application(
                                     full_result_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
+                                prior_page_context.update(model_rag_research_target_context(research_job, packet))
                                 if prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals"):
                                     pass_evidence.append(prior_page_context)
                                 declared_queries = []
@@ -10910,8 +10947,8 @@ async def _execute_chat_evidence_application(
                                 cited_before = structurally_complete_source_keys(
                                     accumulated_rows, source_catalog
                                 )
-                                settled_before = settled_source_keys(
-                                    accumulated_rows, source_catalog
+                                settled_before = research_settled_source_keys(
+                                    accumulated_rows, source_catalog, research_job
                                 )
                                 await _emit_row_progress(
                                     "обработка строк",
@@ -10937,6 +10974,7 @@ async def _execute_chat_evidence_application(
                                     full_result_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
+                                prior_page_context.update(model_rag_research_target_context(research_job, packet))
                                 if prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals"):
                                     pass_evidence.append(prior_page_context)
                                 selector_evidence = pass_evidence
@@ -12218,8 +12256,8 @@ async def _execute_chat_evidence_application(
                             cited_after = structurally_complete_source_keys(
                                 accumulated_rows, source_catalog
                             )
-                            settled_after = settled_source_keys(
-                                accumulated_rows, source_catalog
+                            settled_after = research_settled_source_keys(
+                                accumulated_rows, source_catalog, research_job
                             ) - source_conflict_pending
                             # Blocker § 2: найдено / показано / отложено / выбрано
                             # measured for this packet alone, then added to the run
@@ -12291,7 +12329,7 @@ async def _execute_chat_evidence_application(
                             remaining = remaining_sheet_work_locators(
                                 source_catalog,
                                 sheet_name,
-                                settled_source_keys(accumulated_rows, source_catalog) - source_conflict_pending,
+                                research_settled_source_keys(accumulated_rows, source_catalog, research_job) - source_conflict_pending,
                             )
                             remaining = [
                                 locator
@@ -12322,47 +12360,6 @@ async def _execute_chat_evidence_application(
                                     len(leftover_query_hits),
                                     len(packet),
                                 )
-                            # One definition of progress for the guard and for the
-                            # packet pool.  Judging progress only by the strict
-                            # completeness metric counted a row the model had decided
-                            # but that keeps a quality gap as zero progress, while that
-                            # same row had already left the pool for good: a healthy
-                            # sheet then looked stalled and nothing behind it was
-                            # reached.  `settled_after` is literally the set the pool
-                            # subtracts below, so the two can never disagree again.
-                            made_progress = bool(settled_after - settled_before)
-                            if not made_progress and not defer_query_packet:
-                                if (
-                                    packet_attempts[fingerprint]
-                                    >= _ROW_PACKET_MAX_ATTEMPTS
-                                ):
-                                    exhausted_locators.update(packet)
-                                    remaining = [
-                                        locator
-                                        for locator in remaining
-                                        if locator not in exhausted_locators
-                                    ]
-                                    # Blocker § 1: set aside exactly this packet and
-                                    # carry that decision across a restart, so the next
-                                    # run does not begin from the same dead rows while
-                                    # the unseen elements of the other sheets are
-                                    # worked.  The deferral lifts itself once the job
-                                    # gains evidence or an operator reopens a row.
-                                    if (
-                                        research_job_service is not None
-                                        and research_job is not None
-                                    ):
-                                        research_job = research_job_service.defer_locators(
-                                            research_job["job_id"],
-                                            sheet=sheet_name,
-                                            locators=packet,
-                                            reason=(
-                                                f"без предметного решения за "
-                                                f"{int(packet_attempts[fingerprint])} "
-                                                f"предложения(й)"
-                                            ),
-                                            offers=int(packet_attempts[fingerprint]),
-                                        )
                             if pending_result_packets and not last_truncated:
                                 # Only an explicit user reopen plus newly admitted
                                 # literal rows resolves prior transport ambiguity.
@@ -12466,7 +12463,57 @@ async def _execute_chat_evidence_application(
                                     dict(row) for row in research_job["accepted_rows"]
                                     if isinstance(row, Mapping)
                                 ]
+                                # Only an admitted answer resolves a requested review;
+                                # the baseline remains visible throughout the call.
+                                settled_after = research_settled_source_keys(
+                                    accumulated_rows, source_catalog, research_job) - source_conflict_pending
+                                remaining = [locator for locator in remaining if locator not in settled_after]
+                                if retrieval_trace["tool_loop"]["passes"]:
+                                    retrieval_trace["tool_loop"]["passes"][-1]["newly_decided"] = len(settled_after - settled_before)
+                            # One definition of progress for the guard and for the
+                            # packet pool.  Judging progress only by the strict
+                            # completeness metric counted a row the model had decided
+                            # but that keeps a quality gap as zero progress, while that
+                            # same row had already left the pool for good: a healthy
+                            # sheet then looked stalled and nothing behind it was
+                            # reached.  `settled_after` is literally the set the pool
+                            # subtracts below, so the two can never disagree again.
+                            made_progress = bool(settled_after - settled_before)
+                            if not made_progress and not defer_query_packet:
+                                if (
+                                    packet_attempts[fingerprint]
+                                    >= _ROW_PACKET_MAX_ATTEMPTS
+                                ):
+                                    exhausted_locators.update(packet)
+                                    remaining = [
+                                        locator
+                                        for locator in remaining
+                                        if locator not in exhausted_locators
+                                    ]
+                                    # Blocker § 1: set aside exactly this packet and
+                                    # carry that decision across a restart, so the next
+                                    # run does not begin from the same dead rows while
+                                    # the unseen elements of the other sheets are
+                                    # worked.  The deferral lifts itself once the job
+                                    # gains evidence or an operator reopens a row.
+                                    if (
+                                        research_job_service is not None
+                                        and research_job is not None
+                                    ):
+                                        research_job = research_job_service.defer_locators(
+                                            research_job["job_id"],
+                                            sheet=sheet_name,
+                                            locators=packet,
+                                            reason=(
+                                                f"без предметного решения за "
+                                                f"{int(packet_attempts[fingerprint])} "
+                                                f"предложения(й)"
+                                            ),
+                                            offers=int(packet_attempts[fingerprint]),
+                                        )
                             explicit_reopened_locators.difference_update(packet)
+                            explicit_reopened_locators.update(
+                                WorkbookResearchJobService.pending_research_locators(research_job))
                             # Blocker § 1 wants the whole chain readable from one
                             # trace: response -> parsed -> kept -> durable merge ->
                             # settled keys -> packet pool -> stall guard.  The guard
@@ -12595,7 +12642,7 @@ async def _execute_chat_evidence_application(
                         held.update({"model_query_output_missing": True, "query_checkpoint_failure": failure})
                         held.setdefault("sheet", sheet_name)
                         held.setdefault("locators", list(packet))
-                        settled_checkpoint = settled_source_keys(saved_rows, source_catalog)
+                        settled_checkpoint = research_settled_source_keys(saved_rows, source_catalog, saved_job)
                         checkpoint_remaining = list(dict.fromkeys([
                             *((saved_job or {}).get("remaining") or ()),
                             *(locator for locator in source_catalog.work_locators() if locator not in settled_checkpoint),
@@ -12671,7 +12718,7 @@ async def _execute_chat_evidence_application(
                     # received NO decision at all are re-queued for the next resume pass.
                     # The packet pool uses this same set, so a row counted as unfinished
                     # here is always still reachable by the loop that produces it.
-                    settled_keys = settled_source_keys(accumulated_rows, source_catalog)
+                    settled_keys = research_settled_source_keys(accumulated_rows, source_catalog, research_job)
                     unfinished_locators = [
                         locator
                         for locator in source_catalog.work_locators()

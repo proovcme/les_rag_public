@@ -1,5 +1,31 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 955 — сохраняемый добор и единый транспорт исходных таблиц
+
+`workbook_research_job_service.reopen_locators` принимает `preserve_accepted`
+и необязательные `operation_ids`: старые решения остаются до принятой поправки
+того же ID. `pending_research_operation_ids/locators` читают durable-область;
+`record_packet` снимает её только по реально допущенному ответу, `pause` сохраняет,
+а `finish` не объявляет неотвеченный пересмотр завершённым. Legacy destructive
+reopen совместим при отсутствии активной сохраняемой области этого адреса.
+`chat_evidence_application_service.begin_workbook_chat_review`,
+`research_settled_source_keys` и `model_rag_research_target_context` передают
+замечание и отделяют целевые операции от сохранённого контекста.
+`lsr_result_readiness_service` возвращает `research_locators/research_operation_ids`;
+`sovushka.pages.chat.lsr_explicit_resume_reopen_payload` передаёт их в
+`POST /api/chat/patch-lsr-rows` с `preserve_accepted=True`. API проверяет чат,
+вложение и отсутствие активного выполнения. Это не автоматический выбор нормы.
+
+`backend.converter.read_csv_source_text/csv_source_delimiter/iter_csv_source_records`
+используются CSV-конвертером, attachment preview и source catalog: кавычки,
+разделители внутри ячеек и физический номер начала многострочной записи согласованы.
+`attachment_source_catalog_service` отмечает непрочитанные XLSX-колонтитулы и
+комментарии как extraction warnings. `overlay_tabular_estimator_snapshot`
+обновляет управляемый factory skill только в эффективной копии кадра,
+показывая SHA и происхождение; сохранённый snapshot не переписывается.
+Регрессии: `test_workbook_gap_followup_955`, `test_unresolved_retry_routes_955`,
+`test_workbook_chat_refinement`; установленная профессиональная приёмка отдельно.
+
 ## 954 — текущая модельная декларация при чтении строк
 
 `chat_evidence_application_service.parse_model_rag_result` принимает

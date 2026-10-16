@@ -51,7 +51,9 @@ def _assert_neutral(payload, review):
     if review:
         assert "все предложенные прежние операции" in instruction
         assert "включая неизменённые" in instruction and "дословно" in instruction
-        assert "Пропущенные операции не возвращаются" in instruction
+        assert "Отсутствие прежней операции в ответе не удаляет её" in instruction
+        assert "сохранённое решение остаётся в документе" in instruction
+        assert "запрос его пересмотра остаётся открытым" in instruction
     else:
         assert "новые и изменённые операции этого пакета" in instruction
         assert "Неизменённые операции и цитаты остаются в документе" in instruction

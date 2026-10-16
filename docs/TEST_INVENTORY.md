@@ -1,5 +1,25 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Регрессии955 — сохранение решений и явный повторный проход
+
+В CURRENT_TESTS включены `test_workbook_gap_followup_955.py`,
+`test_unresolved_retry_routes_955.py`, `test_retry_target_projection_955.py`:
+сохранность baseline/цитат/ценовой базы после нового store и продолжения,
+открытая и закрытая операции одного source_row, stale/source-conflict replies,
+пустой ответ, terminal job и пустые targets, проверки session/attachment/running.
+Завершение с неотвеченными targets остаётся на паузе; сохранённые решения не
+удаляются по omission. Прежние контрактные тесты review/readiness обновлены
+под этот заявленный продуктовый контракт, source/revision guards сохранены.
+
+`test_csv_literal_boundaries_955.py` проверяет delimiter вне кавычек, multiline
+и физические адреса, BOM/CP1251, Unicode-пути и нулевые значения.
+`test_xlsx_unread_metadata_955.py` проверяет предупреждения о непрочитанных
+комментариях и всех шести вариантах колонтитулов; это не тест их извлечения.
+`test_vor_task_instruction_955.py` проверяет различие требований ВОР/ЛСР и
+managed factory-overlay без изменения immutable snapshot/custom skill.
+Проверки professional B0/B1 и installed955 фиксируются отдельно после freeze;
+сам по себе этот offline-набор не подтверждает готовность ВОР/ЛСР заказчику.
+
 ## Регрессии954 — контекст типа при разборе строк
 
 `test_model_packet_document_context_954.py` включён в CURRENT_TESTS:

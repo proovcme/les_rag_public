@@ -4,6 +4,8 @@ converter.py — конвертация документов в Markdown для 
 Поддерживаемые форматы:
   PDF, DOCX, EML/EMLX, MSG, XLSX/XLS/CSV, JSON/JSONL, MD, TXT
 """
+import csv
+import io
 import json
 import logging
 import multiprocessing
@@ -649,22 +651,73 @@ def _parse_email(path: Path) -> str:
     return profile.message_embedding_text(include_attachment_text=True)
 
 
+def read_csv_source_text(path: Path) -> str:
+    """Read existing CSV encodings without normalizing quoted line endings."""
+    for encoding in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
+        try:
+            with path.open("r", encoding=encoding, newline="") as stream:
+                return stream.read()
+        except UnicodeDecodeError:
+            continue
+    # latin-1 maps every byte; kept explicit for the same fallback contract.
+    raise UnicodeError("CSV encoding is not utf-8/cp1251/latin-1")
+
+
+def csv_source_delimiter(text: str) -> str:
+    """Count separators only outside quoted cells in the first nonempty record.
+
+    CSV supports comma and semicolon here as before. Quoted separators and
+    quoted line breaks are content, not evidence of a different column layout.
+    A tie retains the previous semicolon default; no source role is inferred.
+    """
+    counts = {",": 0, ";": 0}
+    quoted, field_start, nonempty = False, True, False
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if quoted:
+            if character == '"':
+                if index + 1 < len(text) and text[index + 1] == '"':
+                    index += 1
+                else:
+                    quoted = False
+        elif character == '"' and field_start:
+            quoted, nonempty = True, True
+        elif character in counts:
+            counts[character] += 1
+            field_start, nonempty = True, True
+        elif character in "\r\n":
+            if nonempty:
+                break
+            field_start = True
+        else:
+            field_start = False
+            nonempty = nonempty or bool(character.strip())
+        index += 1
+    return ";" if counts[";"] >= counts[","] else ","
+
+
+def iter_csv_source_records(text: str):
+    """Yield a record's physical starting line and its unchanged parsed cells."""
+    reader = csv.reader(io.StringIO(text, newline=""), delimiter=csv_source_delimiter(text))
+    while True:
+        physical_start = reader.line_num + 1
+        try:
+            row = next(reader)
+        except StopIteration:
+            return
+        yield physical_start, row
+
+
 def _parse_spreadsheet(path: Path) -> str:
     import pandas as pd
     md_parts = []
 
     try:
         if path.suffix.lower() == ".csv":
-            # Пробуем несколько кодировок
-            df = None
-            for enc in ("utf-8", "cp1251", "latin-1"):
-                try:
-                    df = pd.read_csv(path, encoding=enc, nrows=SPREADSHEET_READ_ROWS)
-                    break
-                except UnicodeDecodeError:
-                    continue
-            if df is None:
-                raise ValueError("CSV encoding is not utf-8/cp1251/latin-1")
+            text = read_csv_source_text(path)
+            df = pd.read_csv(io.StringIO(text, newline=""), sep=csv_source_delimiter(text),
+                             nrows=SPREADSHEET_READ_ROWS)
             md_parts.append(_render_spreadsheet_sheet(path.stem, df))
         else:
             xls = pd.ExcelFile(path)

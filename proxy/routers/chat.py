@@ -227,6 +227,8 @@ class LsrPatchRequest(BaseModel):
     question: str = ""
     confirmed_data: dict[str, dict[str, Any]] = {}
     reopen_locators: list[str] = []
+    preserve_accepted: bool = False
+    research_operation_ids: list[str] | None = None
     replace_rows: list[dict[str, Any]] = []
     dataset_ids: list[str] = []
     profile_revision_id: str = ""
@@ -655,11 +657,20 @@ async def patch_lsr_rows(req: LsrPatchRequest, _user=Depends(require_user)):
         job = service.get(job_id)
     except WorkbookResearchJobError as error:
         raise HTTPException(404, str(error)) from error
+    if req.preserve_accepted:
+        identity = job.get("identity") or {}
+        if str(identity.get("session_id") or "") != req.session_id:
+            raise HTTPException(409, "Задание относится к другому чату.")
+        if req.attachment_id and req.attachment_id != str(identity.get("attachment_id") or ""):
+            raise HTTPException(409, "Исходник сохранённого задания изменился.")
+        if job.get("status") == "running":
+            raise HTTPException(409, "Задание уже выполняется.")
     try:
         if req.replace_rows:
             job = service.replace_accepted_rows(job_id, req.replace_rows)
         if req.reopen_locators:
-            job = service.reopen_locators(job_id, req.reopen_locators)
+            job = service.reopen_locators(job_id, req.reopen_locators,
+                preserve_accepted=req.preserve_accepted, operation_ids=req.research_operation_ids)
         if req.confirmed_data:
             job = service.record_overrides(job_id, req.confirmed_data)
     except WorkbookResearchJobError as error:

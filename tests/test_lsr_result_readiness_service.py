@@ -374,8 +374,8 @@ def _vor_rows() -> list[dict]:
     ])
 
 
-def test_finished_research_never_offers_the_continue_gesture() -> None:
-    """A terminal job cannot take another packet, so «Продолжить» must not appear."""
+def test_finished_partial_research_offers_preserving_retry_for_open_norms() -> None:
+    """A delivered partial file keeps its decisions and can research its gaps."""
 
     readiness = build_lsr_result_readiness(
         packaged=True,
@@ -390,21 +390,13 @@ def test_finished_research_never_offers_the_continue_gesture() -> None:
     )
 
     ids = {item["id"] for item in readiness["actions"]}
-    assert "resume" not in ids
-    assert "document" in ids
-    # The advice now names where the open rows already live instead of sending
-    # the operator to a gesture that cannot close them.
-    assert "Проверка" in readiness["dimensions"]["norms"]["action"]
-    assert "Продолжите" not in readiness["dimensions"]["norms"]["action"]
+    assert "resume" in ids
+    assert readiness["document"]["download_url"] == "/api/artifacts/rev_final/download"
+    assert set(readiness["research_locators"]) == {"АР!R81", "АР!R86", "АР!R23"}
+    assert "АР!R11" not in readiness["research_locators"]
     assert [gap["action"] for gap in readiness["dimensions"]["norms"]["gaps"]]
-    assert all("Продолжите" not in gap["action"] for gap in readiness["dimensions"]["norms"]["gaps"])
-    assert "объявлен" in readiness["dimensions"]["norms"]["gaps"][0]["action"]
-    # The coverage service writes its own gap actions: they are reworded too.
-    assert all(
-        "Продолжите" not in str(gap.get("action") or "")
-        for gap in readiness["dimensions"]["coverage"]["gaps"]
-    )
-    assert "завершено" in readiness["continue_action"]
+    assert "Продолжить незакрытые строки" in readiness["continue_action"]
+    assert "принятые решения сохранены" in readiness["continue_action"]
 
 
 def test_open_research_still_offers_the_continue_gesture() -> None:
@@ -427,7 +419,7 @@ def test_open_research_still_offers_the_continue_gesture() -> None:
     assert "Продолжите незакрытые строки" in readiness["dimensions"]["norms"]["action"]
 
 
-def test_failed_research_is_finished_too() -> None:
+def test_failed_research_keeps_its_saved_file_and_offers_preserving_retry() -> None:
     readiness = build_lsr_result_readiness(
         packaged=True,
         rows=_vor_rows(),
@@ -439,11 +431,12 @@ def test_failed_research_is_finished_too() -> None:
     )
 
     ids = {item["id"] for item in readiness["actions"]}
-    assert "resume" not in ids
-    assert "document" in ids
+    assert "resume" in ids
+    assert readiness["document"]["download_url"] == "/api/artifacts/rev_final/download"
+    assert set(readiness["research_locators"]) == {"АР!R81", "АР!R23"}
 
 
-def test_readiness_notice_of_a_finished_job_does_not_point_at_continue() -> None:
+def test_readiness_notice_of_a_finished_partial_job_keeps_explicit_retry_advice() -> None:
     readiness = build_lsr_result_readiness(
         packaged=True,
         rows=_vor_rows(),
@@ -457,8 +450,8 @@ def test_readiness_notice_of_a_finished_job_does_not_point_at_continue() -> None
     )
 
     notice = format_lsr_readiness_notice(readiness, filename="LSR_ВОР.xlsx")
-    assert "Продолжите" not in notice
-    assert "Проверка" in notice
+    assert "Продолжить незакрытые строки" in readiness["continue_action"]
+    assert "ЛСР" in notice and "не полные" in notice
 
 
 def test_finished_and_fully_closed_job_offers_no_action_at_all() -> None:

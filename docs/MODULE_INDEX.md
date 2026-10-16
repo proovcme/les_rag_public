@@ -1,5 +1,21 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 955 — добор сохраняет принятые решения и открывает точную область
+
+`WorkbookResearchJobService.reopen_locators(preserve_accepted=True, operation_ids=...)`
+сохраняет все принятые операции, их доказательства и подтверждения инженера.
+Ожидаемые ответы хранятся в `task_context.pending_research_operation_ids/locators`;
+только допущенный модельный ответ закрывает соответствующее ожидание.
+`research_settled_source_keys` отличает прежний результат от ответа на новый
+пересмотр. Readiness и GUI передают `research_locators/research_operation_ids`
+даже при завершённом первом проходе и пустой старой очереди. Перезапуск и обычное
+продолжение сохраняют область, ценовую базу и цепочку ревизий.
+Док↔код: ✅ [RAG evidence flow](modules/rag-evidence-flow.md).
+CSV использует общий reader записей; непрочитанные XLSX-колонтитулы и комментарии
+явно отмечаются. Управляемый factory skill обновляется только в копии кадра хода:
+[chat profiles](modules/chat-profiles.md). Полная профессиональная готовность
+этими контрактами не доказана; установленная приёмка955 ещё требуется.
+
 ## 954 — сохранение типа документа при разборе пакета
 
 `chat_evidence_application_service.parse_model_rag_result(model_declaration=...)`

@@ -1038,13 +1038,25 @@ def load_tabular_source_catalog(
                 if (not authored_audit and worksheet.cell(1, 1).value == VOR_MODEL_AUDIT_SCHEMA
                         and tuple(worksheet.cell(3, column).value for column in range(1, 4)) == VOR_MODEL_AUDIT_HEADERS):
                     extraction_warnings = (*extraction_warnings, f"vor_model_audit_invalid:{sheet}")
+                # These source parts are not represented by worksheet cells.
+                # Surface the unread scope instead of claiming full extraction;
+                # do not classify their content or invent extra work rows.
+                for part_name in ("oddHeader", "evenHeader", "firstHeader", "oddFooter", "evenFooter", "firstFooter"):
+                    part = getattr(worksheet, part_name)
+                    if any(str(getattr(part, position).text or "").strip()
+                           for position in ("left", "center", "right")):
+                        extraction_warnings = (*extraction_warnings,
+                            f"xlsx_unread_content:{sheet}:{part_name}")
                 merged_ranges = tuple(worksheet.merged_cells.ranges)
                 rows: list[CatalogRow] = []
                 section_context = ""
+                has_unread_comments = False
                 for excel_row, raw_cells in enumerate(worksheet.iter_rows(), 1):
                     cells: list[CatalogCell] = []
                     values: list[str] = []
                     for cell in raw_cells:
+                        # A comment can belong to an otherwise empty/hidden cell.
+                        has_unread_comments = has_unread_comments or getattr(cell, "comment", None) is not None
                         raw_value = cell.value
                         if raw_value in (None, ""):
                             continue
@@ -1122,29 +1134,21 @@ def load_tabular_source_catalog(
                             hidden_sheet=hidden_sheet,
                         )
                     )
+                if has_unread_comments:
+                    extraction_warnings = (*extraction_warnings, f"xlsx_unread_content:{sheet}:cell_comments")
                 sheets.append((sheet, sheet_id, hidden_sheet, rows))
         finally:
             workbook.close()
             cached_workbook.close()
     elif suffix == ".csv":
-        import csv
+        from backend.converter import iter_csv_source_records, read_csv_source_text
 
-        text = ""
-        for encoding in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
-            try:
-                text = file_path.read_text(encoding=encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            text = file_path.read_text(encoding="utf-8", errors="replace")
-        sample = text.splitlines()[0] if text.splitlines() else ""
-        delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+        text = read_csv_source_text(file_path)
         sheet = "CSV"
         sheet_id = _stable_id(source_sha256, 0, sheet, prefix="sheet")
         rows: list[CatalogRow] = []
         section_context = ""
-        for excel_row, raw in enumerate(csv.reader(text.splitlines(), delimiter=delimiter), 1):
+        for excel_row, raw in iter_csv_source_records(text):
             # CSV fields have physical column identity, including empty fields.
             # Filtering them per row shifts quantities under adjacent headers.
             values = tuple(_compact_cell(item) for item in raw)
@@ -1161,7 +1165,7 @@ def load_tabular_source_catalog(
                 CatalogCell(
                     coordinate=f"{_column_letter(column)}{excel_row}",
                     column=column,
-                    raw_value=value,
+                    raw_value=raw[column - 1],
                     display_value=value,
                     data_type="s",
                     number_format="General",
