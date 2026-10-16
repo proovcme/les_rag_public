@@ -1,5 +1,24 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Регрессии959 — транспорт запросов и пользовательская проекция
+
+`test_model_query_declaration_transport_959.py` проверяет actual B0/B1 callsites:
+literal Unicode queries в native arguments, `tool_calls` finish, ошибочные arguments,
+один прежний repair, unknown/stale capability и точный text fallback при overflow
+схемы. Если оба кадра не помещаются, модель не вызывается. Это протокольное
+доказательство; качество норм и скорость требуют установленного сравнения.
+`test_workbook_pending_source_progress_959.py` отделяет число исходных адресов от
+числа операций и пересмотра. `test_model_output_observability_959.py` проверяет
+reported reasoning usage и размеры каналов без публикации текста размышлений.
+`test_sovushka_chat.py` проверяет ВОР-блок без
+требования нормы, исходные/расчётные величины, связи и неизменность ЛСР-проекции.
+`test_workbook_primary_artifact_959.py` проверяет совпадение экспортированной
+revision в history/job/final при навигационном реестре; отсутствие workbook
+сохраняет прежний выбор основного навигационного артефакта.
+`test_windows_hard_rejection_recovery_959.py` проверяет возврат прежнего запуска
+при pre-move отказе после stop, fail-closed disk identity и отдельное сохранение
+исходной ошибки и ошибки восстановления. Это не live-приёмка установщика.
+
 ## Регрессии958 — идентичность сохраняемого пересмотра
 
 `test_pending_review_operation_identity.py` включён в CURRENT_TESTS. Actual sheet

@@ -314,7 +314,10 @@ def test_smeta_operator_sees_live_tool_and_rrf_telemetry():
     assert "sov-smeta-live-table" in source
     assert "smeta_live_rows[work_id] = row" in source
     assert '_show_artifact(' in source
-    assert 'Артефакт обновляется после каждой завершённой строки.' in source
+    assert '_smeta_notebook_markdown(rows, artifact_kind=artifact_kind, final=final)' in source
+    assert 'Артефакт обновляется после каждой завершённой строки.' in chat_page._smeta_notebook_markdown(
+        [{"title": "Работа", "quantity": 0, "unit": "м"}], artifact_kind="lsr_workbook"
+    )
     assert ".sov-smeta-live-table" in styles
     assert "font-variant-numeric: tabular-nums" in styles
     assert "Авточерновик" in source
@@ -646,7 +649,7 @@ def test_chat_ready_eta_and_slot_error_stay_operator_facing():
     assert "except Exception as notify_exc:" in chat_src
     apply_src = chat_src.split("def _apply_chat_result", 1)[1].split("stream_state =", 1)[0]
     register_at = apply_src.find("_register_artifact_downloads(meta)")
-    live_at = apply_src.find("_render_smeta_live_rows(final=True)")
+    live_at = apply_src.find('_render_smeta_live_rows(final=True, artifact=meta.get("artifact"))')
     assert register_at != -1 and live_at != -1 and register_at < live_at
     notice_src = inspect.getsource(format_in_progress_assembly_notice)
     send_src = inspect.getsource(chat_page.build_chat)
@@ -1865,7 +1868,10 @@ def test_chat_adds_metadb_inventory_context_without_project_summary_hijack():
     assert "source_map+project_inventory_artifact" in source
     assert 'validation_context = ""' in source
     assert 'response["project_inventory"] = project_inventory_payload or {}' in source
-    assert 'response["notebook_artifact"]' in source
+    assert "project_final_artifact_carriers(" in source
+    artifact_projection = inspect.getsource(chat_evidence_application_service.project_final_artifact_carriers)
+    assert 'response["notebook_artifact"]' in artifact_projection
+    assert 'response["project_inventory_artifact"]' in artifact_projection
     assert '"reason": "model_first_single_rrf"' in source
     assert "LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE" not in source
     assert 'if project_inventory_prompt:' in source
@@ -3071,3 +3077,95 @@ def test_chat_page_surfaces_the_price_basis_choice_in_the_readiness_card() -> No
     assert "_render_price_basis_prompt(basis_prompt)" in card
     assert 'if basis_prompt["visible"]:' in card
     assert "PRICE_BASIS_CITY_VS_ZONE_NOTE" in card
+
+
+@pytest.mark.parametrize("artifact_kind", ["", "lsr_workbook", "unknown", "vor"])
+def test_notebook_lsr_or_unknown_presentation_remains_literal(artifact_kind):
+    rows = [{"title": "Кабель", "quantity": 0, "unit": "м", "decision": "unbound"}]
+    expected_table = "| № | Работа | Объём | Решение |\n|---:|:-------|------:|:--------|\n| 1 | Кабель | 0 м | Норма не привязана |"
+    assert chat_page._smeta_rows_markdown(rows, artifact_kind=artifact_kind) == expected_table
+    assert chat_page._smeta_notebook_markdown(rows, artifact_kind=artifact_kind, final=True) == (
+        "### Черновой подбор норм\n\nСтрок в итоговом черновике: 1. Показаны все позиции, включая строки без привязанной нормы.\n\n" + expected_table
+    )
+
+
+def test_notebook_vor_retains_literal_roles_links_gaps_zero_and_unknown():
+    rows = [
+        {"title": "Работа по исходнику", "source_row": "Лист!R7", "row_role": "work",
+         "work_row": "op_work", "quantity": None, "unit": "м²", "coverage": "Исходная площадь не указана",
+         "open_gap": "Укажите площадь"},
+        {"title": "Материал", "source_row": "Лист!R8", "row_role": "material",
+         "work_row": "op_work", "quantity": 0, "unit": "шт"},
+    ]
+    output = chat_page._smeta_notebook_markdown(rows, artifact_kind="vor_workbook", final=True)
+    assert output.startswith("### ВОР: работы и объёмы\n\nСтрок в ВОР: 2.")
+    for literal in ("Работа; связь: op_work", "Материал; связь: op_work", "— м²", "0 шт", "Укажите площадь", "Источник: Лист!R7"):
+        assert literal in output
+    assert "Норма не привязана" not in output and "без привязанной нормы" not in output
+    assert rows[0]["quantity"] is None and rows[1]["quantity"] == 0
+
+
+def test_notebook_vor_projection_preserves_same_source_operations_and_all_fields():
+    from copy import deepcopy
+    artifact = {"artifact_kind": "vor_workbook", "draft_rows": [
+        {"work_id": "Лист!R7", "source_row": "Лист!R7", "operation_id": "op_work",
+         "row_role": "work", "work_row": "Лист!R7", "title": "Работа", "quantity": 2,
+         "unit": "м", "open_gap": "Уточнить состав", "coverage": "По исходнику", "custom": "literal"},
+        {"work_id": "Лист!R7", "source_row": "Лист!R7", "operation_id": "op_material",
+         "row_role": "material", "work_row": "op_work", "title": "Материал", "quantity": 2,
+         "unit": "м", "open_gap": "", "coverage": "По исходнику", "custom": "literal2"},
+    ]}
+    before = deepcopy(artifact)
+    projected = chat_page._smeta_artifact_rows(artifact)
+    assert projected == artifact["draft_rows"] and len(projected) == 2
+    assert projected[0] is not artifact["draft_rows"][0]
+    chat_page._smeta_notebook_markdown(projected, artifact_kind="vor_workbook", final=True)
+    assert artifact == before
+
+
+def test_notebook_vor_keeps_optional_norm_and_evidence():
+    row = {"source_row": "Т!R2", "title": "Работа", "quantity": 3, "unit": "шт",
+           "row_role": "work", "norm_code": "CUSTOM-NORM-1", "evidence_refs": "Q4.H2"}
+    output = chat_page._smeta_rows_markdown([row], artifact_kind="vor_workbook")
+    assert "Доп. норма: CUSTOM-NORM-1" in output and "Источники: Q4.H2" in output
+    assert row["norm_code"] == "CUSTOM-NORM-1" and row["evidence_refs"] == "Q4.H2"
+
+
+@pytest.mark.parametrize("source,derived,expected", [
+    (12, 6, "Исходный: 12 м²; расчётный: 6 м"),
+    (None, 192, "Исходный: — м²; расчётный: 192 м"),
+    (0, 0, "Исходный: 0 м²; расчётный: 0 м"),
+])
+def test_notebook_vor_displays_source_and_explicit_calculated_volume(source, derived, expected):
+    from copy import deepcopy
+    row = {"source_row": "Т!R2", "title": "Работа", "row_role": "work", "quantity": source,
+           "unit": "м²", "calc_quantity": derived, "calc_unit": "м", "conversion_source": "Формула <A> | основание"}
+    before = deepcopy(row)
+    output = chat_page._smeta_rows_markdown([row], artifact_kind="vor_workbook")
+    assert expected in output
+    assert "Пересчёт: Формула &lt;A&gt; \\| основание" in output
+    assert row == before
+
+
+def test_notebook_vor_escapes_markup_without_erasing_literals():
+    row = {"source_row": "Т!R2", "title": "<script>x</script> | А\nБ", "quantity": 0,
+           "unit": "шт", "row_role": "work", "coverage": "<img src=x>", "open_gap": "<b>уточнить</b>"}
+    output = chat_page._smeta_rows_markdown([row], artifact_kind="vor_workbook")
+    assert "<script>" not in output and "<img" not in output and "<b>" not in output
+    assert "&lt;script&gt;x&lt;/script&gt; \\| А Б" in output and "0 шт" in output
+    assert row["title"] == "<script>x</script> | А\nБ"
+
+
+def test_notebook_vor_history_and_final_share_explicit_artifact_kind():
+    source = inspect.getsource(chat_page.build_chat)
+    assert '_render_smeta_live_rows(final=True, artifact=meta.get("artifact"))' in source
+    assert '_smeta_notebook_markdown(rows, artifact_kind=str((meta.get("artifact") or {}).get("artifact_kind") or ""), final=True)' in source
+    assert '_smeta_rows_markdown(rows, artifact_kind=artifact_kind)' in source
+
+
+def test_notebook_vor_kind_is_never_inferred_from_filename():
+    artifact = {"filename": "VOR_собери_ВОР.xlsx", "draft_rows": [
+        {"source_row": "Т!R2", "title": "Работа", "quantity": 1, "unit": "шт"},
+    ]}
+    rows = chat_page._smeta_artifact_rows(artifact)
+    assert chat_page._smeta_notebook_markdown(rows, final=True).startswith("### Черновой подбор норм")

@@ -490,6 +490,48 @@ def _work_total_from_job_events(job_id: str) -> int:
     return 0
 
 
+def _workbook_source_progress_counts(job: Any) -> dict[str, int] | None:
+    """Count source anchors separately from authored operation rows and reviews."""
+    from proxy.services.model_result_packet_service import _locator_key
+
+    payload = job if isinstance(job, dict) else {}
+    context = payload.get("task_context") or {}
+    catalog = context.get("_source_catalog_locators")
+    if not isinstance(catalog, (list, tuple)) or not catalog:
+        return None
+    source_keys = {_locator_key(item) for item in catalog if _locator_key(item)}
+    suffixes: dict[str, set[str]] = {}
+    for source in source_keys:
+        suffixes.setdefault(source.rsplit("!", 1)[-1], set()).add(source)
+
+    def source_key(value):
+        key = _locator_key(value)
+        if key not in source_keys and "!" not in key:
+            candidates = suffixes.get(key) or set()
+            if len(candidates) == 1:
+                return next(iter(candidates))
+        return key
+
+    rows = [row for row in payload.get("accepted_rows") or ()
+            if isinstance(row, dict) and str(row.get("source_row") or "").strip()]
+    saved = {source_key(row.get("source_row")) for row in rows} & source_keys
+    unseen = source_keys - saved
+    review = {source_key(value) for value in context.get("pending_research_locators") or ()} & saved
+    remaining = {source_key(value) for value in payload.get("remaining") or ()} & source_keys
+    remaining |= unseen | review
+    return {
+        "total_source_count": len(source_keys),
+        "saved_operation_count": len(rows),
+        "saved_source_count": len(saved),
+        "unprocessed_source_count": len(unseen),
+        "review_source_count": len(review),
+        "review_operation_count": len(set(context.get("pending_research_operation_ids") or ())),
+        "other_revisit_source_count": len((remaining & saved) - review),
+        "remaining_source_count": len(remaining),
+        "settled_source_count": len(source_keys - remaining),
+    }
+
+
 def workbook_job_to_pending_progress(job: Any, pending: Any = None) -> dict[str, Any]:
     """Map a durable workbook-research checkpoint to the reconnect bubble."""
 
@@ -507,36 +549,46 @@ def workbook_job_to_pending_progress(job: Any, pending: Any = None) -> dict[str,
     accepted_rows = [
         item for item in (job.get("accepted_rows") or []) if isinstance(item, dict)
     ]
-    dims = job.get("status_dimensions") if isinstance(job.get("status_dimensions"), dict) else {}
-    try:
-        remaining_n = int(dims.get("remaining") if dims.get("remaining") is not None else len(remaining))
-    except (TypeError, ValueError):
-        remaining_n = len(remaining)
-    accepted_all = sum(1 for item in accepted_rows if str(item.get("source_row") or "").strip())
-    accepted_work = _accepted_work_row_count(accepted_rows)
-    prior_total = _pending_int(data, "total") or 0
-    packet_n, held_queries = _held_packet_progress(job)
-    work_total = 0
-    for raw in (
-        job.get("work_total"),
-        dims.get("work_total"),
-        dims.get("catalog_work_count"),
-        _work_total_from_job_events(job_id) if job_id else 0,
-        remaining_n + accepted_work,
-        remaining_n,
-    ):
+    source_counts = _workbook_source_progress_counts(job)
+    if source_counts is not None:
+        data["source_counts"] = source_counts
+        accepted_all = source_counts["saved_operation_count"]
+        data["accepted"] = source_counts["settled_source_count"]
+        data["total"] = source_counts["total_source_count"]
+        data["remaining"] = source_counts["remaining_source_count"]
+        packet_n, held_queries = _held_packet_progress(job)
+    else:
+        dims = job.get("status_dimensions") if isinstance(job.get("status_dimensions"), dict) else {}
         try:
-            work_total = max(work_total, int(raw or 0))
+            remaining_n = int(dims.get("remaining") if dims.get("remaining") is not None else len(remaining))
         except (TypeError, ValueError):
-            continue
-    mixed_total = accepted_all + remaining_n if remaining_n else accepted_all
-    if prior_total and prior_total != mixed_total:
-        work_total = max(work_total, prior_total)
-    closed = max(0, work_total - remaining_n) if work_total else accepted_work
-    if work_total:
-        data["accepted"] = closed
-        data["total"] = work_total
-        data["remaining"] = remaining_n
+            remaining_n = len(remaining)
+        accepted_all = sum(1 for item in accepted_rows if str(item.get("source_row") or "").strip())
+        accepted_work = _accepted_work_row_count(accepted_rows)
+        prior_total = _pending_int(data, "total") or 0
+        packet_n, held_queries = _held_packet_progress(job)
+        work_total = 0
+        for raw in (
+            job.get("work_total"),
+            dims.get("work_total"),
+            dims.get("catalog_work_count"),
+            _work_total_from_job_events(job_id) if job_id else 0,
+            remaining_n + accepted_work,
+            remaining_n,
+        ):
+            try:
+                work_total = max(work_total, int(raw or 0))
+            except (TypeError, ValueError):
+                continue
+        mixed_total = accepted_all + remaining_n if remaining_n else accepted_all
+        if prior_total and prior_total != mixed_total:
+            work_total = max(work_total, prior_total)
+        closed = max(0, work_total - remaining_n) if work_total else accepted_work
+        if work_total:
+            data["accepted"] = closed
+            data["total"] = work_total
+            data["remaining"] = remaining_n
+        data.pop("source_counts", None)
     data["accepted_all"] = accepted_all
     data["packet_size"] = packet_n
     data["held_queries"] = held_queries
@@ -726,13 +778,28 @@ def format_paused_assembly_notice(pending: Any = None) -> str:
         "Первый проход закончен. Сборка сейчас не идёт.",
         "В панели «Файлы» лежит черновик — полнота документа ещё не подтверждена.",
     ]
-    if remaining:
-        if total:
-            parts.append(f"Незакрытых строк покрытия: {remaining} из {total}.")
-        else:
-            parts.append(f"Незакрытых строк покрытия: {remaining}.")
-    if accepted_all:
-        parts.append(f"В черновик записано {accepted_all} строк.")
+    source_counts = payload.get("source_counts")
+    if isinstance(source_counts, dict):
+        unseen = _pending_int(source_counts, "unprocessed_source_count") or 0
+        review = _pending_int(source_counts, "review_source_count") or 0
+        other_revisit = _pending_int(source_counts, "other_revisit_source_count") or 0
+        if unseen:
+            parts.append(f"Ещё не обработано исходных строк: {unseen} из {total}.")
+        if review:
+            parts.append(f"Повторно открыто для уточнения: {review} исходных строк.")
+        if other_revisit:
+            parts.append(f"Дополнительного уточнения ожидают: {other_revisit} исходных строк.")
+        if accepted_all:
+            saved_sources = _pending_int(source_counts, "saved_source_count") or 0
+            parts.append(f"В черновик записано {accepted_all} строк результата; исходных строк учтено: {saved_sources}.")
+    else:
+        if remaining:
+            if total:
+                parts.append(f"Незакрытых строк покрытия: {remaining} из {total}.")
+            else:
+                parts.append(f"Незакрытых строк покрытия: {remaining}.")
+        if accepted_all:
+            parts.append(f"В черновик записано {accepted_all} строк.")
     parts.append(
         "Повторная обработка строк — кнопка «Продолжить незакрытые строки»; "
         "это отдельный проход, не продолжение той же минуты."
@@ -2385,6 +2452,12 @@ def _runtime_guard_reason_label(value: object) -> str:
 def _smeta_artifact_rows(artifact: dict | None) -> list[dict]:
     """Project the authoritative final LSR rows for a complete UI artifact."""
     artifact = artifact if isinstance(artifact, dict) else {}
+    if artifact.get("artifact_kind") == "vor_workbook":
+        draft_rows = artifact.get("draft_rows")
+        if not isinstance(draft_rows, list):
+            return []
+        return [dict(item) for item in draft_rows
+                if isinstance(item, dict) and item.get("source_row") not in (None, "")]
     trace = artifact.get("rim_trace") if isinstance(artifact.get("rim_trace"), dict) else {}
     positions = [item for item in (trace.get("positions") or []) if isinstance(item, dict)]
     for section in trace.get("sections") or []:
@@ -2439,8 +2512,66 @@ def _smeta_artifact_rows(artifact: dict | None) -> list[dict]:
     return rows
 
 
-def _smeta_rows_markdown(rows: list[dict]) -> str:
+def _vor_rows_markdown(rows: list[dict]) -> str:
+    """Display literal VOR decisions without requiring a norm or assigning roles."""
+    def cell(value) -> str:
+        text = str(value if value not in (None, "") else "—")
+        return esc(text).replace("|", "\\|").replace("\n", " ")
+
+    role_labels = {
+        "work": "Работа", "material": "Материал", "equipment": "Оборудование",
+        "header": "Заголовок", "unresolved": "Требует уточнения",
+    }
+    lines = [
+        "| № | Работа / позиция | Роль и связь | Объём | Обоснование / уточнение |",
+        "|---:|:----------------|:-------------|------:|:------------------------|",
+    ]
+    for index, item in enumerate(rows, 1):
+        quantity, unit = cell(item.get("quantity")), cell(item.get("unit"))
+        volume = f"{quantity} {unit}" if unit != "—" else quantity
+        if item.get("calc_quantity") not in (None, "") or item.get("calc_unit") not in (None, ""):
+            calc_quantity, calc_unit = cell(item.get("calc_quantity")), cell(item.get("calc_unit"))
+            calculated = f"{calc_quantity} {calc_unit}" if calc_unit != "—" else calc_quantity
+            volume = f"Исходный: {volume}; расчётный: {calculated}"
+        role = role_labels.get(str(item.get("row_role") or "").strip().casefold(), "Роль не указана")
+        parent = item.get("work_row") or item.get("covered_by_work_id")
+        relationship = f"{cell(role)}; связь: {cell(parent)}" if parent else cell(role)
+        details = [item.get("coverage"), item.get("open_gap")]
+        if item.get("conversion_source") not in (None, ""):
+            details.append(f"Пересчёт: {item['conversion_source']}")
+        if item.get("source_row") not in (None, ""):
+            details.append(f"Источник: {item['source_row']}")
+        code = item.get("norm_code")
+        if code not in (None, "") and str(code).casefold() != "missing":
+            details.append(f"Доп. норма: {code}")
+        evidence_refs = item.get("evidence_refs")
+        if evidence_refs:
+            details.append(f"Источники: {evidence_refs}")
+        basis = "; ".join(cell(value) for value in details if value not in (None, "")) or "—"
+        lines.append(f"| {index} | {cell(item.get('title'))} | {relationship} | {volume} | {basis} |")
+    return "\n".join(lines)
+
+
+def _smeta_notebook_markdown(
+    rows: list[dict], *, artifact_kind: str = "", final: bool = False,
+) -> str:
+    """Name the existing notebook only from explicit delivered artifact metadata."""
+    if artifact_kind == "vor_workbook":
+        heading = "ВОР: работы и объёмы"
+        note = f"Строк в ВОР: {len(rows)}. Показаны позиции, связи и обоснования из документа."
+    else:
+        heading = "Черновой подбор норм"
+        note = (
+            f"Строк в итоговом черновике: {len(rows)}. Показаны все позиции, включая строки без привязанной нормы."
+            if final else f"Готово строк: {len(rows)}. Артефакт обновляется после каждой завершённой строки."
+        )
+    return f"### {heading}\n\n{note}\n\n{_smeta_rows_markdown(rows, artifact_kind=artifact_kind)}"
+
+
+def _smeta_rows_markdown(rows: list[dict], *, artifact_kind: str = "") -> str:
     """Build the shared live/history table without changing row decisions."""
+    if artifact_kind == "vor_workbook":
+        return _vor_rows_markdown(rows)
     def cell(value) -> str:
         return str(value if value not in (None, "") else "—").replace("|", "\\|").replace("\n", " ")
 
@@ -6194,9 +6325,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             rows = _smeta_artifact_rows(meta.get("artifact"))
             if rows:
                 _show_artifact(
-                    f"### Черновой подбор норм\n\n"
-                    f"Строк в итоговом черновике: {len(rows)}. Показаны все позиции, включая строки без привязанной нормы.\n\n"
-                    f"{_smeta_rows_markdown(rows)}",
+                    _smeta_notebook_markdown(rows, artifact_kind=str((meta.get("artifact") or {}).get("artifact_kind") or ""), final=True),
                     "markdown",
                 )
                 break
@@ -6881,21 +7010,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         "border-top:1px dashed var(--border);max-height:190px;overflow:auto;"
                     )
 
-            def _render_smeta_live_rows(*, final: bool = False) -> None:
-                if smeta_live_table is None or not smeta_live_rows:
+            def _render_smeta_live_rows(*, final: bool = False, artifact: dict | None = None) -> None:
+                artifact_kind = str((artifact or {}).get("artifact_kind") or "")
+                rows = _smeta_artifact_rows(artifact) if artifact_kind == "vor_workbook" else list(smeta_live_rows.values())
+                if smeta_live_table is None or not rows:
                     return
-                content = _smeta_rows_markdown(list(smeta_live_rows.values()))
+                content = _smeta_rows_markdown(rows, artifact_kind=artifact_kind)
                 smeta_live_table.set_content(content)
                 smeta_live_table.style(remove="display:none;")
                 smeta_live_table.update()
-                ready = len(smeta_live_rows)
-                note = (
-                    f"Строк в итоговом черновике: {ready}. Показаны все позиции, включая строки без привязанной нормы."
-                    if final
-                    else f"Готово строк: {ready}. Артефакт обновляется после каждой завершённой строки."
-                )
                 try:
-                    _show_artifact(f"### Черновой подбор норм\n\n{note}\n\n{content}", "markdown")
+                    _show_artifact(_smeta_notebook_markdown(rows, artifact_kind=artifact_kind, final=final), "markdown")
                 except Exception as live_art_exc:
                     add_log(f"[СМЕТА] артефакт черновика: {live_art_exc}")
         _scroll_chat_to_tail(force=True)
@@ -7121,7 +7246,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             try:
                 _register_artifact_downloads(meta)
                 if final_rows:
-                    _render_smeta_live_rows(final=True)
+                    _render_smeta_live_rows(final=True, artifact=meta.get("artifact"))
                 explicit_artifact = _artifact_from_meta(meta)
                 if explicit_artifact and (artifact_shell.visible or _inventory_file_rows_from_meta(meta)):
                     _show_meta_artifact(

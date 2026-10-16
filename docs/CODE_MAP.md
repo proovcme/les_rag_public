@@ -1,5 +1,21 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 959 — необязательный native-перенос прежнего конверта запросов
+
+`model_query_declaration_transport_service` → existing capability requirement,
+ContextGovernor schema admission и exact text fallback → два существующих
+query callsite в `chat_evidence_application_service` → прежний
+`read_model_query_response` → общий RAG. Native arguments не исполняют поиск;
+multiple/unknown/malformed calls попадают в прежнюю ограниченную техническую
+repair/pending границу. Нового предметного цикла и выбора норм нет.
+
+`chat_evidence_application_service.project_final_artifact_carriers` отделяет
+выданную workbook revision от сопутствующей навигации: final/history/job
+сохраняют один основной XLSX. Навигационные блоки остаются отдельными payload.
+`windows_update_engine._previous_application_identity` связывает восстановление
+pre-move отказа с неизменным прежним native/config/stamp; старт выполняет
+прежний native bootstrap, исходная ошибка и ошибка recovery не смешиваются.
+
 ## 957 — адресный stop
 
 `chat_evidence_application_service.py:await_workbook_model_call` вызывает тот же

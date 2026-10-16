@@ -135,6 +135,10 @@ from proxy.services.model_evidence_read_contract import (
     read_result_receipt,
 )
 from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
+from proxy.services.model_query_declaration_transport_service import (
+    resolve_query_declaration_transport, govern_query_declaration_messages,
+    query_declaration_response_text,
+)
 from proxy.services.norm_card_proof_service import (
     PROOF_PURPOSE as NORM_CARD_PROOF_PURPOSE,
     proof_budget as norm_card_proof_budget,
@@ -2806,6 +2810,28 @@ def merge_model_rag_rows(
 ACTUAL_MODEL_CALLS_SCHEMA = "les.actual_model_calls.v1"
 
 
+def project_final_artifact_carriers(
+    response: dict[str, Any], *, workbook_artifact: Any = None,
+    notebook_artifact: dict[str, Any] | None = None,
+    project_inventory_artifact: dict[str, Any] | None = None,
+) -> None:
+    """Keep an issued document primary; navigation keeps its own carrier."""
+    revision = workbook_artifact.get("revision_id") if isinstance(workbook_artifact, dict) else None
+    document_issued = isinstance(revision, str) and bool(revision.strip())
+    if notebook_artifact is not None:
+        if document_issued or project_inventory_artifact is not None:
+            response["notebook_artifact"] = notebook_artifact
+        if not document_issued:
+            response["artifact"] = notebook_artifact
+    if project_inventory_artifact is not None:
+        if document_issued:
+            response["project_inventory_artifact"] = project_inventory_artifact
+        else:
+            response["artifact"] = project_inventory_artifact
+    if document_issued:
+        response["artifact"] = workbook_artifact
+
+
 def ensure_actual_model_calls(trace: dict[str, Any] | None) -> dict[str, Any]:
     payload = trace if isinstance(trace, dict) else {}
     bucket = payload.get("actual_model_calls")
@@ -2839,7 +2865,7 @@ def append_actual_model_call(
     usage = usage if isinstance(usage, Mapping) else {}
     provider_usage = {
         key: value if type(value := usage.get(key)) is int and value >= 0 else None
-        for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens")
+        for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens", "reasoning_tokens")
     }
     canonical_sha = execution.get("canonical_request_sha256")
     canonical_sha = (
@@ -2853,6 +2879,10 @@ def append_actual_model_call(
             "finish_reason": str(finish_reason or ""),
             "completion_tokens": int(completion_tokens or 0),
             "provider_usage": provider_usage,
+            **({"output_channel_counts": {
+                key: value if type(value := execution["output_channel_counts"].get(key)) is int and value >= 0 else None
+                for key in ("provider_content_chars", "provider_reasoning_chars", "final_text_chars")
+            }} if isinstance(execution.get("output_channel_counts"), Mapping) else {}),
             "canonical_request_sha256": canonical_sha,
             "canonical_request_source": "canonical_inference_request" if canonical_sha else None,
             **({"model_connection_revision_id": str(execution["model_connection_revision_id"])}
@@ -9015,6 +9045,10 @@ async def _execute_chat_evidence_application(
     model_delivered_source_locators: set[str] = set()
     answer_finish_reason = ""
     model_driven_retrieval = profile_uses_model_driven_retrieval(profile_snapshot)
+    query_declaration_native_tools, query_transport_state = resolve_query_declaration_transport(
+        resolved_connection if canonical_execution_mode is CanonicalRouteMode.ACTIVE else None)
+    if model_driven_retrieval:
+        retrieval_trace["query_declaration_transport"] = {"decision": query_transport_state, "calls": []}
     source_frame_rows = configured_source_frame_rows(_env_int)
     initial_source_frame: ModelSourceFrame | None = None
     source_frame_contract: dict[str, Any] = {}
@@ -9242,8 +9276,16 @@ async def _execute_chat_evidence_application(
                         )
                         execution["provider_usage"] = {
                             key: value if type(value := provider_usage.get(key)) is int and value >= 0 else None
-                            for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens")
+                            for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens", "reasoning_tokens")
                         }
+                        channel_counts = getattr(active_model_result.response, "output_channel_counts", None)
+                        if isinstance(channel_counts, Mapping):
+                            execution["output_channel_counts"] = {
+                                key: value if type(value := channel_counts.get(key)) is int and value >= 0 else None
+                                for key in ("provider_content_chars", "provider_reasoning_chars", "final_text_chars")
+                            }
+                        else:
+                            execution.pop("output_channel_counts", None)
                         selected_model = str(getattr(active_model_result.connection, "model_id", "") or "").strip()
                         execution["canonical_request_sha256"] = None
                         execution["canonical_request_source"] = None
@@ -9546,12 +9588,14 @@ async def _execute_chat_evidence_application(
                     query_first_source_packet = None
                     for query_attempt, query_instruction in enumerate(query_instructions, start=1):
                         try:
-                            query_messages, query_packet = govern_model_query_messages(
+                            query_messages, query_packet, query_call_tools, query_capacity = govern_query_declaration_messages(
+                                govern_model_query_messages,
                                 retrieval_trace=retrieval_trace,
                                 purpose="model_rag_queries" if query_attempt == 1 else "model_rag_query_repair",
                                 rejected_attempt=query_rejected_attempt,
                                 first_source_packet=query_first_source_packet,
                                 preset=query_execution_preset,
+                                native_tools=query_declaration_native_tools,
                                 profile_prefix=(
                                     profile_system_prompt(profile_snapshot, strict=False, purpose="query")
                                     + "\n\n"
@@ -9594,6 +9638,7 @@ async def _execute_chat_evidence_application(
                             "stream": False,
                             "temperature": profile_temperature(profile_snapshot, fallback=_env_float("CHAT_TEMPERATURE", 0.2)),
                             "max_tokens": query_budget["effective"],
+                            **({"tools": query_call_tools} if query_call_tools else {}),
                         }
                         t_query_model = time.time()
                         query_text, query_usage = await _post_llm(
@@ -9605,6 +9650,13 @@ async def _execute_chat_evidence_application(
                             inference_preset=query_execution_preset,
                             expected_connection_revision_id=workbook_connection_revision_id,
                         )
+                        query_text, query_transport_call = query_declaration_response_text(
+                            query_text, advertised=bool(query_call_tools),
+                            response=(active_model_result.response if canonical_execution_mode is CanonicalRouteMode.ACTIVE
+                                      and active_model_result is not None else None))
+                        query_transport_call["purpose"] = "model_rag_queries" if query_attempt == 1 else "model_rag_query_repair"
+                        query_transport_call["capacity"] = query_capacity
+                        retrieval_trace["query_declaration_transport"]["calls"].append(query_transport_call)
                         t_llm += time.time() - t_query_model
                         record_source_frame_delivery(retrieval_trace, initial_source_frame,
                             purpose="model_rag_queries" if query_attempt == 1 else "model_rag_query_repair")
@@ -11143,11 +11195,13 @@ async def _execute_chat_evidence_application(
                                             )
                                         )
                                         query_instruction = query_directive
-                                        query_messages, query_packet = govern_model_query_messages(
+                                        query_messages, query_packet, query_call_tools, query_capacity = govern_query_declaration_messages(
+                                            govern_model_query_messages,
                                             retrieval_trace=retrieval_trace, purpose=query_purpose,
                                             rejected_attempt=query_rejected_attempt,
                                             first_source_packet=query_first_source_packet,
                                             preset=query_execution_preset,
+                                            native_tools=query_declaration_native_tools,
                                             profile_prefix=(
                                                 profile_system_prompt(
                                                     profile_snapshot, strict=False, purpose="query"
@@ -11185,6 +11239,7 @@ async def _execute_chat_evidence_application(
                                             "stream": False,
                                             "temperature": profile_temperature(profile_snapshot, fallback=_env_float("CHAT_TEMPERATURE", 0.2)),
                                             "max_tokens": query_budget["effective"],
+                                            **({"tools": query_call_tools} if query_call_tools else {}),
                                         }
                                         t_query_model = time.time()
                                         query_text, query_usage = await _sheet_pass_llm(
@@ -11193,6 +11248,13 @@ async def _execute_chat_evidence_application(
                                             inference_preset=query_execution_preset,
                                             expected_connection_revision_id=workbook_connection_revision_id,
                                         )
+                                        query_text, query_transport_call = query_declaration_response_text(
+                                            query_text, advertised=bool(query_call_tools),
+                                            response=(active_model_result.response if canonical_execution_mode is CanonicalRouteMode.ACTIVE
+                                                      and active_model_result is not None else None))
+                                        query_transport_call["purpose"] = query_purpose
+                                        query_transport_call["capacity"] = query_capacity
+                                        retrieval_trace["query_declaration_transport"]["calls"].append(query_transport_call)
                                         t_llm += time.time() - t_query_model
                                         record_source_frame_delivery(retrieval_trace, pass_source_frame, purpose=query_purpose)
                                         query_diagnostic = model_query_output_diagnostics(
@@ -15255,10 +15317,11 @@ async def _execute_chat_evidence_application(
                     response["model_connection"]["pending_tool_calls"] = active_pending_tool_calls
                 if workbook_chat_meta:
                     response.update(workbook_chat_meta)
+                notebook_navigation_artifact = None
                 if notebook_study_pack is not None:
                     response["notebook_context"] = notebook_study_pack.payload()
                     if notebook_study_artifact:
-                        response["artifact"] = {
+                        notebook_navigation_artifact = {
                             "title": "Инженерный блокнот",
                             "mode": "markdown",
                             "content": notebook_study_artifact,
@@ -15271,19 +15334,19 @@ async def _execute_chat_evidence_application(
                     }
                 if project_inventory_prompt:
                     response["project_inventory"] = project_inventory_payload or {}
-                    if notebook_study_pack is not None and notebook_study_artifact:
-                        response["notebook_artifact"] = {
-                            "title": "Инженерный блокнот",
-                            "mode": "markdown",
-                            "content": notebook_study_artifact,
-                        }
+                inventory_navigation_artifact = None
                 if project_inventory_prompt:
-                    response["artifact"] = {
+                    inventory_navigation_artifact = {
                         "title": "Реестр файлов",
                         "mode": "markdown",
                         "content": "```text\n" + (project_inventory_artifact_text or project_inventory_prompt).replace("```", "'''") + "\n```",
                         "project_inventory": project_inventory_payload or {},
                     }
+                project_final_artifact_carriers(
+                    response, workbook_artifact=workbook_chat_meta.get("artifact"),
+                    notebook_artifact=notebook_navigation_artifact,
+                    project_inventory_artifact=inventory_navigation_artifact,
+                )
 
                 # W6.7: source_id CAD/BIM-элементов из текста чанков → ответ + снимок
                 # подсветки. Вьювер АТЛАС поллит /api/cad-bim/highlight и перекрашивает.

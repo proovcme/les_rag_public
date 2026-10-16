@@ -673,6 +673,36 @@ def _validate_job(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _previous_application_identity(install: Path, runtime: Path) -> dict[str, Any] | None:
+    """Read only the previous release identity needed for a safe native restart."""
+    try:
+        relative = runtime.resolve().relative_to(install.resolve()).as_posix()
+        version_path = runtime / "config" / "version.json"
+        stamp_path = runtime / ".les_deploy_stamp.json"
+        version = json.loads(version_path.read_text(encoding="utf-8-sig"))
+        stamp = json.loads(stamp_path.read_text(encoding="utf-8-sig"))
+        if not isinstance(version, dict) or not isinstance(stamp, dict):
+            return None
+        commit = str(stamp.get("deployed_commit") or "")
+        product = str(version.get("product_version") or "")
+        number = int(version.get("build_number") or 0)
+        if (
+            re.fullmatch(r"[0-9a-f]{40}", commit) is None
+            or not product or number <= 0
+            or stamp.get("product_version") != product
+            or stamp.get("build_number") != number
+        ):
+            return None
+        return {
+            "deployed_commit": commit, "product_version": product, "build_number": number,
+            "runtime_relative": relative,
+            "native_sha256": sha256_file(install / "les-desktop.exe"),
+            "version_sha256": sha256_file(version_path), "stamp_sha256": sha256_file(stamp_path),
+        }
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def apply_hard_job(job_path: Path) -> int:
     job = _validate_job(json.loads(job_path.read_text(encoding="utf-8-sig")))
     install, state = validate_boundary(
@@ -689,6 +719,8 @@ def apply_hard_job(job_path: Path) -> int:
     old_runtime: Path | None = None
     new_runtime: Path | None = None
     moved_old = False
+    previous_application_stopped = False
+    previous_identity: dict[str, Any] | None = None
     desktop_task = ""
     lock_fd: int | None = None
     try:
@@ -700,6 +732,7 @@ def apply_hard_job(job_path: Path) -> int:
         if not install.is_dir():
             raise RuntimeError(f"existing LES application is missing: {install}")
         old_runtime = runtime_root(install)
+        previous_identity = _previous_application_identity(install, old_runtime)
         probe_environment(old_runtime, state, log_root)
         state.mkdir(parents=True, exist_ok=True)
         preservation = state / "artifacts" / "updates" / "state-preservation.json"
@@ -719,6 +752,7 @@ def apply_hard_job(job_path: Path) -> int:
         )
         stop_runtime(old_runtime, state, log_root)
         stop_desktop()
+        previous_application_stopped = True
         lock_owners = application_tree_lock_owners(install)
         if lock_owners:
             summary = "; ".join(
@@ -796,6 +830,9 @@ def apply_hard_job(job_path: Path) -> int:
         return 0
     except Exception as exc:  # noqa: BLE001
         rollback_ready = False
+        previous_restarted = False
+        previous_recovery_error = ""
+        previous_recovery: dict[str, Any] = {}
         if moved_old:
             try:
                 if new_runtime is not None:
@@ -814,11 +851,36 @@ def apply_hard_job(job_path: Path) -> int:
                 rollback_ready = True
             except Exception:
                 rollback_ready = False
+        elif previous_application_stopped:
+            try:
+                if (
+                    previous_identity is None or old_runtime is None
+                    or _previous_application_identity(install, old_runtime) != previous_identity
+                ):
+                    raise RuntimeError("PREVIOUS_APPLICATION_IDENTITY_UNPROVEN: previous release changed or was not captured")
+                # The previous native shell starts its own bootstrap/services.
+                # Do not replace its measured launch semantics with the generic
+                # windows_runtime.start dotenv importer during rejection recovery.
+                desktop_task = start_desktop(
+                    install, f"{job.get('update_id', 'hard')}-rejected-previous", log_root
+                )
+                previous_recovery = wait_ready(
+                    expected_commit=previous_identity["deployed_commit"],
+                    expected_version=previous_identity["product_version"],
+                    expected_build=previous_identity["build_number"], state=state, timeout=120,
+                )
+                previous_restarted = True
+            except Exception as recovery_error:  # retain this failure beside the original rejection
+                previous_recovery_error = str(recovery_error)
         write_status(
             status,
             state="failed",
             stage=(
-                "rejected"
+                "rejected_previous_restarted"
+                if not moved_old and previous_restarted
+                else "rejected_previous_restart_failed"
+                if not moved_old and previous_application_stopped
+                else "rejected"
                 if not moved_old
                 else "rolled_back"
                 if rollback_ready
@@ -826,7 +888,11 @@ def apply_hard_job(job_path: Path) -> int:
             ),
             update_id=str(job.get("update_id") or ""),
             message=(
-                "Установка отклонена до изменения приложения"
+                "Установка отклонена; прежнее приложение снова запущено"
+                if not moved_old and previous_restarted
+                else "Установка отклонена; запуск прежнего приложения восстановить не удалось"
+                if not moved_old and previous_application_stopped
+                else "Установка отклонена до изменения приложения"
                 if not moved_old
                 else "Новая версия не прошла проверку; предыдущая восстановлена"
                 if rollback_ready
@@ -834,6 +900,11 @@ def apply_hard_job(job_path: Path) -> int:
             ),
             error=str(exc),
             user_data_untouched=True,
+            **({
+                "previous_application_restarted": previous_restarted,
+                "previous_application_recovery_error": previous_recovery_error,
+                "previous_application_recovery": previous_recovery,
+            } if not moved_old and previous_application_stopped else {}),
         )
         return 1
     finally:

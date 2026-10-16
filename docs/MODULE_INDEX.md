@@ -1,5 +1,30 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 959 — перенос поисковых запросов и отображение сохранённого документа
+
+`model_query_declaration_transport_service` предлагает необязательную native-функцию
+для прежнего конверта запросов только при достаточном действующем TOOLS-снимке
+назначенного подключения. Тот же parser получает дословные arguments; запросы,
+профессиональные решения и число модельных ходов кодом не меняются. Нет инструмента
+выбора нормы или нового workbook workflow. При нехватке места для схемы до отправки
+используется прежний текстовый кадр без удаления исходника/evidence.
+Док↔код: ✅ [RAG evidence flow](modules/rag-evidence-flow.md).
+Регрессии: `test_model_query_declaration_transport_959.py`.
+`openai_compatible_transport_service` сохраняет только счётчики каналов ответа
+и reported reasoning usage; public trace не содержит текста размышлений.
+Регрессия: `test_model_output_observability_959.py`.
+UI отдельно считает исходные адреса, операции и пересмотр; блок ВОР показывает
+работы/связи и исходный/расчётный объём вместо обязательного подбора норм.
+Док↔код: ✅ [Совушка UI kit](modules/sovushka-uikit.md).
+Установленная профессиональная приёмка этих изменений требуется отдельно.
+`project_final_artifact_carriers` сохраняет реальную workbook revision
+основным final-артефактом; навигационные payload доступны отдельно.
+`windows_update_engine` при pre-move отказе после собственной остановки
+восстанавливает прежний запуск только при неизменной identity на диске.
+Док↔код: ✅ [Windows release](RELEASE_PROCEDURE.md).
+Регрессии: `test_workbook_primary_artifact_959.py`,
+`test_windows_hard_rejection_recovery_959.py`.
+
 ## 958 — пересмотр сохраняет идентичность и область операции
 
 `record_packet` сохраняет ответ без ID в proposals, когда исходный адрес содержит

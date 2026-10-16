@@ -99,6 +99,8 @@ class InferenceResponse:
     model_id: str = ""
     # Provider protocol state, never visible answer text or a public receipt.
     reasoning_content: str | None = field(default=None, repr=False)
+    # Channel sizes only; no reasoning text is exposed in public diagnostics.
+    output_channel_counts: Mapping[str, int | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -130,7 +132,30 @@ def _usage(value: object) -> Mapping[str, int]:
             continue
         if parsed >= 0:
             result[str(key)] = parsed
+    details = value.get("completion_tokens_details")
+    if "reasoning_tokens" not in result and isinstance(details, Mapping):
+        raw_reasoning = details.get("reasoning_tokens")
+        if type(raw_reasoning) is int and raw_reasoning >= 0:
+            result["reasoning_tokens"] = raw_reasoning
     return MappingProxyType(result)
+
+
+def _output_text_chars(value: object, *, present: bool) -> int | None:
+    """Count literal text parts only; absent/unsupported shapes stay unknown."""
+    if not present:
+        return None
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, (list, tuple)):
+        count = 0
+        for part in value:
+            if not isinstance(part, Mapping) or part.get("type") not in {"text", "output_text"} or not isinstance(part.get("text"), str):
+                return None
+            count += len(part["text"])
+        return count
+    return None
 
 
 def _message_text(message: Mapping[str, Any]) -> str:
@@ -757,13 +782,20 @@ class OpenAICompatibleTransport:
             reasoning_content = message.get("reasoning_content")
             if reasoning_content is not None and not isinstance(reasoning_content, str):
                 raise ModelTransportError("UPSTREAM_REASONING_CONTENT_INVALID")
+            final_text = _message_text(message)
+            raw_content = message.get("content")
             return InferenceResponse(
-                text=_message_text(message),
+                text=final_text,
                 tool_calls=tool_calls,
                 finish_reason=str(choice.get("finish_reason") or ""),
                 usage=_usage(payload.get("usage")),
                 model_id=str(payload.get("model") or ""),
                 reasoning_content=reasoning_content,
+                output_channel_counts=MappingProxyType({
+                    "provider_content_chars": _output_text_chars(raw_content, present="content" in message),
+                    "provider_reasoning_chars": _output_text_chars(reasoning_content, present="reasoning_content" in message),
+                    "final_text_chars": len(final_text),
+                }),
             )
         finally:
             await response.aclose()
