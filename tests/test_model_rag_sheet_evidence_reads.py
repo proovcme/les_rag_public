@@ -251,7 +251,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                      exact_resource_padding=0, query_declaration=None, budget_stop_at=None,
                      wire_budget_bytes=None, norm_ref_read=None, native_repeats=0,
                      native_reasoning=None, temperature=None, final_answer=None,
-                     proof_replies=(), distinct_norms=False):
+                     proof_replies=(), distinct_norms=False, question=None):
     # All stores, attachment bytes, norm cards and prices belong to this test.
     from proxy.services import nr_sp_service
     real_load_catalog = nr_sp_service._load
@@ -568,7 +568,7 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         workbook_tool_executor=execute_workbook,
     )
     request = service.EvidenceRequestContext(
-        req=SimpleNamespace(question="Собери ЛСР; ВОР не создавай. Санкт-Петербург, 3 квартал 2026",
+        req=SimpleNamespace(question=(question if question is not None else "Собери ЛСР; ВОР не создавай. Санкт-Петербург, 3 квартал 2026"),
                             mode="estimator", response_length="short", output_directive="", session_id="sheet-session",
                             dataset_filter=None, project_id=0, attachment_id=attachment["attachment_id"],
                             attachment_context="Cable A — 12 m; Cable B — 3 m", candidate_acceptance=False,

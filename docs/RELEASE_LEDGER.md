@@ -1,5 +1,39 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 17.10.2026 — установлена962; приёмка документа не пройдена, кандидат963
+
+Установлена0.31.234/build962, commit `fb466b87d5e32658f8eb4d405dc78a2d609a7c7f`.
+Все9команд frozen gate rc0:5902passed/20skipped/798,34s,315файлов тестов.
+Exact NSIS SHA `5b0458067d5a094ac9d5f7325fdb7b0f0cdd79286a9036be20f32ee8d59e6b07`;
+actual packaged EXE5.1.962.0 SHA
+`79b9f006b1f4efca367a4bfb22d027e23cc9a599de724d4065ae25c0d13eb280`.
+Установка→откат961→повторная установка тех же байтов→EXE-only boot прошли;
+516файлов,395факторов,роли,8заданий/8SHA сохранены. Basic smoke9PASS/1WARN/0FAIL,
+оба чата MODEL_OUTPUT. Индекс: `artifacts/live_962/corrected_candidate/installer_acceptance/final_acceptance.json`.
+
+B0 DOCX first12 завершился130,39s с файлом:12строк, но2работы/7материалов/
+3header. Армирование объявлено материалом, количественная отделка header,
+у R7 добавлена отсутствующая единица.6материалов без работы. Literal export
+не изменил12/12строк; исходные R5/R6/объёмы доставлены. Query type отсутствовал,
+поэтому optional native terminal не предлагался; модель вернула Markdown.
+Краткий условный ВОР и factory skill были, профессиональный FAIL нельзя
+объяснить только missing-kind. Отчёты: `document_controls/B0_DIRECT/`.
+
+B1 того же DOCX завершился29,078s ошибкой MODEL_RAG_QUERY_LIST_EMPTY. На деле
+видимый ответ содержит7запросов+vor внутри модельной schema/kind/data оболочки.
+Парсер отверг форму; это технический отказ, не отсутствие норм. Задание
+wrj_3afce7d0dfbe45108a9e3d0b0e4ee74d сохранено paused/model_query_format_pending.
+Кандидат963 принимает только этот ограниченный тип оболочки как UNTRUSTED
+model envelope и сохраняет обычный выбор типа через разрешённые terminal.
+Actual raw replay:0→7literalqueries без дополнительного model call.
+
+Customer-ready=false. Компактный кандидат прошёл204целевых проверки, включая
+прежние лимиты вместимости; полный frozen gate/installed live ещё требуются.
+Graphic input также не закрыт: активный estimator получает text,
+OCR на этой машине не настроен, embedded drawings не становятся прочитанными
+из-за доступной таблицы. Нормы первого прохода могут быть частичными по
+уточнению владельца; необоснованные EXACT и ложное полное чтение недопустимы.
+
 ## 17.10.2026 — проверена961; кандидат962: ВОР/ЛСР и целевой добор
 
 Установлен **0.31.233 / 961**, commit `1d964323ee486fe83bcab694f655e1a67c3dfdfd`.

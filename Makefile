@@ -112,6 +112,7 @@ UNIT_TESTS += tests/test_xlsx_literal_metadata_961.py
 UNIT_TESTS += tests/test_model_evidence_terminal_boundary_962.py tests/test_model_workbook_terminal_transport_962.py tests/test_vor_native_terminal_workflow_962.py
 UNIT_TESTS += tests/test_lsr_supply_retry_962.py
 UNIT_TESTS += tests/test_lsr_native_feedback_962.py
+UNIT_TESTS += tests/test_model_query_wrapper_963.py tests/test_model_workbook_unknown_terminal_963.py tests/test_model_document_kind_availability_963.py
 UNIT_TESTS += tests/test_unresolved_retry_routes_955.py tests/test_retry_target_projection_955.py
 UNIT_TESTS += tests/test_rim_cited_numeric_literals.py tests/test_model_warmup_service.py
 UNIT_TESTS += tests/test_meta_store_env_binding_945.py

@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1222 |
-| Строк Python | 418355 |
+| Python-файлов под git | 1225 |
+| Строк Python | 418877 |
 | PRODUCT_REACHABLE | 386 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 824 |
+| TEST_OR_TOOL_ONLY | 827 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 342 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 15737 | 120 |
+| proxy/services/chat_evidence_application_service.py | 15752 | 121 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 7950 | 10 |
 | proxy/routers/chat.py | 4891 | 56 |
@@ -46,7 +46,7 @@
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
-| proxy/services/lsr_norm_quality_gate_service.py | 2269 | 22 |
+| proxy/services/lsr_norm_quality_gate_service.py | 2268 | 23 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
 | proxy/smeta_core/norm_browser.py | 1951 | 20 |

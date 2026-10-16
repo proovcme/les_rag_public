@@ -1,5 +1,22 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Регрессии963 — авторская оболочка и отсутствие query-типа
+
+`test_model_query_wrapper_963.py`: actual784char replay с7запросами, сохранение
+Vor/commentary и равенство прежнему canonical reader; недоверенный wrapper
+не становится runtime facts. Негативы: extra metadata/rows/results/цены,
+duplicates/два JSON/конфликт/невалидные queries.48новых cases;241смежный
+и124граничных проверки прошли до полного gate.
+`test_model_workbook_unknown_terminal_963.py`: explicit empty type позволяет
+один выбранный моделью Vor/LSR terminal; omitted/None сохраняет legacy Vor.
+Mixed/два terminal/видимый конфликт/raw guards неизменны. RED12→GREEN128 с adjacent.
+`test_model_document_kind_availability_963.py`: actual B0/B1 при missing-kind,
+оба доступных optional tools, единый прежний packager, literal решения и
+отсутствие лишнего inference; условный ВОР и обычное чтение без документа.
+Компактный production-вариант:204passed, включая прежние ограниченные wire-cases;
+полный frozen gate и installed live ещё требуются. Десять исходных падений
+первого adjacent замера сохранены, лимиты ради зелёного не увеличивались.
+
 ## Регрессии962 — literal native terminal и запрет spec-copy
 
 `test_model_workbook_terminal_transport_962.py`: сохранение исходных аргументов,

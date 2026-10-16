@@ -57,7 +57,11 @@ async def test_model_declared_type_scopes_actual_native_read_frames_without_chan
             assert set(terminal["parameters"]["properties"]) == {"attachment_id", "decisions"}
             assert terminal["parameters"]["properties"]["attachment_id"]["enum"] == ["read_123456abcdef"]
         else:
-            assert tools == readers, "a missing model type must not enable a terminal"
+            assert [tool["function"]["name"] for tool in tools[len(readers):]] == [
+                "build_vor_workbook", "build_lsr_workbook"], "the model keeps both final document choices"
+            for terminal in tools[len(readers):]:
+                assert set(terminal["function"]["parameters"]["properties"]) == {"attachment_id", "decisions"}
+                assert terminal["function"]["parameters"]["properties"]["attachment_id"]["enum"] == ["read_123456abcdef"]
     native = run.result["retrieval_trace"]["tool_loop"]["evidence_reads"]
     assert [item["call"]["tool"] for item in native] == ["read_norm_card", "read_resource_price", "read_resource_price"]
     assert [item["call"]["args"] for item in native] == [

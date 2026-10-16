@@ -9659,9 +9659,19 @@ async def _execute_chat_evidence_application(
                 def _with_workbook_terminal(read_tools, *, frame=None, prior_rows=()):
                     kind = artifact_kind_declaration.get("artifact_kind")
                     if (canonical_execution_mode is not CanonicalRouteMode.ACTIVE
-                            or artifact_kind_declaration.get("status") != "declared"
-                            or kind not in {"vor", "lsr"}
-                            or f"build_{kind}_workbook" not in profile_tools or source_catalog is None):
+                            or source_catalog is None):
+                        return read_tools
+                    if artifact_kind_declaration.get("status") == "declared" and kind in {"vor", "lsr"}:
+                        kinds = [kind]
+                    elif artifact_kind_declaration.get("status") in {None, "missing"} and not kind:
+                        # An optional query declaration must not remove a final
+                        # document route. The model can declare its type by the
+                        # single terminal function it actually chooses.
+                        kinds = ["vor", "lsr"]
+                    else:
+                        return read_tools
+                    kinds = [value for value in kinds if f"build_{value}_workbook" in profile_tools]
+                    if not kinds:
                         return read_tools
                     # The prompt frame is a packet, while read_source can expose any catalog row.
                     # Keep the transport schema equally broad without changing packet admission.
@@ -9671,16 +9681,17 @@ async def _execute_chat_evidence_application(
                         and (canonicalize_row_role(row.get("row_role")) == "work"
                              or (source_catalog.lookup(row.get("source_row")) is not None
                                  and source_catalog.lookup(row.get("source_row")).locator in anchors))]
-                    return [*read_tools, build_workbook_terminal_tool_schema(
-                        anchors, old_ids, artifact_kind=kind,
+                    return [*read_tools, *(build_workbook_terminal_tool_schema(
+                        anchors, old_ids, artifact_kind=value,
                         attachment_id=str(getattr(req, "attachment_id", "") or ""),
-                        require_operation_identity=bool(prior_rows))]
+                        require_operation_identity=bool(prior_rows),
+                        technical_only=artifact_kind_declaration.get("status") != "declared") for value in kinds)]
 
                 def _terminal_extractor(native_tools, *, purpose):
                     terminal_kinds = {"build_vor_workbook": "vor", "build_lsr_workbook": "lsr"}
-                    terminal_name = next((tool.get("function", {}).get("name") for tool in native_tools
-                                          if tool.get("function", {}).get("name") in terminal_kinds), None)
-                    if terminal_name is None:
+                    terminal_names = [tool.get("function", {}).get("name") for tool in native_tools
+                                      if tool.get("function", {}).get("name") in terminal_kinds]
+                    if not terminal_names:
                         return None
 
                     def extract(_text):
@@ -9689,11 +9700,14 @@ async def _execute_chat_evidence_application(
                         if response is None:
                             return None
                         terminal = decode_workbook_terminal_response(response.tool_calls, response.text,
-                            artifact_kind=terminal_kinds[terminal_name],
+                            artifact_kind=terminal_kinds[terminal_names[0]] if len(terminal_names) == 1 else "",
                             visible_result_parser=lambda text, diagnostics: parse_model_rag_result(
                                 text, diagnostics=diagnostics, model_declaration=artifact_kind_declaration))
                         if terminal is None:
                             return None
+                        if terminal.trace["function"] not in terminal_names:
+                            raise WorkbookTerminalTransportError("WORKBOOK_TERMINAL_NOT_OFFERED",
+                                raw_calls=terminal.raw_calls, assistant_content=response.text)
                         if terminal.arguments.get("attachment_id") != str(getattr(req, "attachment_id", "") or ""):
                             raise WorkbookTerminalTransportError("WORKBOOK_TERMINAL_ATTACHMENT_MISMATCH",
                                 raw_calls=terminal.raw_calls, assistant_content=response.text)
@@ -9710,10 +9724,11 @@ async def _execute_chat_evidence_application(
 
                 def _workbook_terminal_instruction(native_tools):
                     terminal_labels = {"build_vor_workbook": "ВОР", "build_lsr_workbook": "ЛСР"}
-                    terminal_name = next((tool.get("function", {}).get("name") for tool in native_tools
-                                          if tool.get("function", {}).get("name") in terminal_labels), None)
-                    if terminal_name is None:
+                    terminal_names = [tool.get("function", {}).get("name") for tool in native_tools
+                                      if tool.get("function", {}).get("name") in terminal_labels]
+                    if len(terminal_names) != 1 or artifact_kind_declaration.get("status") != "declared":
                         return ""
+                    terminal_name = terminal_names[0]
                     return (f"\nЕсли пользователь не задал формат ответа, завершённые строки {terminal_labels[terminal_name]} можно передать "
                             f"в {terminal_name} через decisions. Это итоговые решения, не новый поиск и не "
                             "непосредственная упаковка. source_row и work_row — буквальные предложенные адреса; "

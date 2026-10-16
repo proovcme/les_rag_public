@@ -531,6 +531,31 @@ def _model_json_documents(raw: str) -> tuple[list[str], list[str]]:
     return candidates, commentary
 
 
+def _model_query_wrapper_data(value):
+    """Read one known model-authored wrapper, never application runtime facts.
+
+    The model can copy a schema label into its visible output. That gives the
+    output no trust or authority: only this narrow literal query representation
+    is accepted, and the caller keeps the original authored carrier unchanged.
+    """
+    if (not isinstance(value, dict) or set(value) != {"schema", "kind", "data"}
+            or value["schema"] != "les.model-runtime-facts.v1"
+            or value["kind"] != "declare_research_queries_result"):
+        return None
+    data = value["data"]
+    if (not isinstance(data, dict) or "queries" not in data
+            or not set(data).issubset({"queries", "artifact_kind", "commentary"})
+            or ("artifact_kind" in data and data["artifact_kind"] not in ("vor", "lsr"))
+            or ("commentary" in data and not isinstance(data["commentary"], str))):
+        return None
+    queries = data["queries"]
+    if (not isinstance(queries, list)
+            or any(not isinstance(query, str) or not query.strip()
+                   or "\n" in query or "\r" in query for query in queries)):
+        return None
+    return data
+
+
 def decode_model_artifact_kind(raw: str) -> dict:
     """Read a document-level literal declaration, without choosing its purpose.
 
@@ -556,6 +581,13 @@ def decode_model_artifact_kind(raw: str) -> dict:
             continue
         if isinstance(value, _AuthoredJSONPairs):
             declarations.extend(item for key, item in value if key == "artifact_kind")
+            if {key for key, _item in value} == {"schema", "kind", "data"}:
+                try:
+                    wrapped = _model_query_wrapper_data(json.loads(candidate, object_pairs_hook=_unique_json_object))
+                except (ValueError, TypeError):
+                    wrapped = None
+                if wrapped is not None and "artifact_kind" in wrapped:
+                    declarations.append(wrapped["artifact_kind"])
     matching_transport_forms = False
     if (len(declarations) == 2 and plain_label_count == 1 and len(candidates) == 1
             and not errors and declarations[0] in ("vor", "lsr")
@@ -654,6 +686,19 @@ def decode_model_query_envelope(raw: str, *, format_errors: list[dict[str, str]]
         except TypeError:
             return reject(f"$[{index}]", "QUERY_JSON_INVALID")
     value = documents[0]
+    wrapped = False
+    if any(isinstance(document, dict) and (
+            ("data" in document and bool({"schema", "kind"}.intersection(document)))
+            or document.get("schema") == "les.model-runtime-facts.v1"
+            or document.get("kind") == "declare_research_queries_result") for document in documents):
+        # Do not select between wrapped and ordinary envelopes, discard a side
+        # document, or extract queries from unknown/business wrapper metadata.
+        data = _model_query_wrapper_data(value)
+        if len(documents) != 1 or data is None:
+            return reject("$", "QUERY_WRAPPER_FIELDS_INVALID")
+        value = data
+        documents = [data]
+        wrapped = True
     if len(documents) == 2:
         # A separate commentary-only document carries no search or business
         # decision. Admit exactly one query envelope; never select between
@@ -676,6 +721,12 @@ def decode_model_query_envelope(raw: str, *, format_errors: list[dict[str, str]]
             return reject("$.artifact_kind", "QUERY_ARTIFACT_KIND_CONFLICT")
     if not isinstance(value, dict):
         return reject("$", "QUERY_ENVELOPE_OBJECT_REQUIRED")
+    if wrapped:
+        declaration = decode_model_artifact_kind(raw)
+        expected_status = "declared" if "artifact_kind" in value else "missing"
+        if (declaration["status"] != expected_status
+                or (expected_status == "declared" and declaration["artifact_kind"] != value["artifact_kind"])):
+            return reject("$.artifact_kind", "QUERY_ARTIFACT_KIND_CONFLICT")
     if "artifact_kind" in value and value["artifact_kind"] not in ("vor", "lsr"):
         return reject("$.artifact_kind", "QUERY_ARTIFACT_KIND_INVALID")
     if "artifact_kind" not in value and decode_model_artifact_kind(raw)["status"] != "missing":

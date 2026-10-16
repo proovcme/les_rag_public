@@ -73,9 +73,10 @@ def decode_workbook_terminal_response(
 ) -> WorkbookTerminalTransportResult | None:
     """Project one explicitly declared canonical workbook call; execute nothing.
 
-    An omitted kind preserves the former VOR-only API. Explicit kinds are the
-    model's declaration, never inferred from a question. Unrelated calls keep
-    the existing read/text route. A
+    An omitted/None kind preserves the former VOR-only API. An explicit empty
+    kind allows either existing canonical function to declare its own kind;
+    a known kind remains strict. Nothing is inferred from a question.
+    Unrelated calls keep the existing read/text route. A
     terminal mixed with any other call is ambiguous and must not execute reads
     or select one of the authored alternatives. Reasoning is never an input.
     """
@@ -95,7 +96,7 @@ def decode_workbook_terminal_response(
         reject("WORKBOOK_TERMINAL_MULTIPLE_CALLS")
     function = terminal[0]["function"]["name"]
     kind = _TERMINAL_KINDS[function]
-    if artifact_kind is not None and artifact_kind != kind:
+    if artifact_kind not in (None, "") and artifact_kind != kind:
         reject("WORKBOOK_TERMINAL_ARTIFACT_KIND_CONFLICT")
     authored = terminal[0]["function"].get("arguments")
     try:
@@ -174,6 +175,7 @@ def build_vor_terminal_tool_schema(
 def build_workbook_terminal_tool_schema(
     source_rows: Sequence[str], shown_operation_ids: Sequence[str] = (), *, artifact_kind: str,
     attachment_id: str | None = None, require_operation_identity: bool = False,
+    technical_only: bool = False,
 ) -> dict[str, Any]:
     """Project exact known identifiers onto the existing canonical tool schema."""
     from proxy.services.workbook_tool_service import BUILD_LSR_WORKBOOK, BUILD_VOR_WORKBOOK
@@ -230,6 +232,25 @@ def build_workbook_terminal_tool_schema(
         if not isinstance(attachment_id, str) or not attachment_id:
             raise ValueError("attachment_id must be a nonempty literal string")
         properties["attachment_id"]["enum"] = [attachment_id]
-    return {"type": "function", "function": {"name": contract.name,
+    tool = {"type": "function", "function": {"name": contract.name,
         "description": f"Declare the completed model-authored {artifact_kind.upper()} rows for packaging; this transport does not execute a tool or choose operations, prices or confirmations.",
         "parameters": schema}}
+    if technical_only:
+        # Until the model declares a document kind, offer both existing carriers
+        # without duplicating their professional field contracts in tool hints.
+        # Exact identifiers, required identity and the authored extra fields stay
+        # unchanged; ordinary post-result validation still applies.
+        keep = {"source_row", "row_role", "title", "work_row", "operation_id", "expected_revision"}
+        row["properties"] = {key: value for key, value in row_properties.items() if key in keep}
+        row.pop("allOf", None)
+        tool["function"]["description"] = "Declare completed model-authored rows; the function name declares document kind."
+
+        def without_descriptions(value):
+            if isinstance(value, dict):
+                return {key: without_descriptions(item) for key, item in value.items() if key != "description"}
+            if isinstance(value, list):
+                return [without_descriptions(item) for item in value]
+            return value
+
+        return without_descriptions(tool)
+    return tool
