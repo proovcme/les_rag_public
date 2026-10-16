@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 949 — исходный и расчётный объёмы ВОР
+
+`proxy/services/model_lsr_result_contract.py` объявляет авторское `calc_unit`.
+`workbook_tool_service._vor_rows_from_draft` передаёт расчётные поля в
+`bor_service.source_rows_to_vor_xlsx` без замены исходного количества.
+`vor_result_integrity_service` проверяет наличие численного результата,
+его единицы и основания, а не профессиональную правильность формулы.
+
 ## 948 — отдельный контракт ВОР и проверяемая доставка
 
 Модельная декларация vor → `sheet_pass_question_tail` / direct answer →

@@ -166,6 +166,8 @@ def workbook_download_filename(
 def _vor_rows_from_draft(draft: Any, *, source_label: str) -> list[dict[str, Any]]:
     """Map already-authored rows to VOR cells without selecting or renumbering them."""
 
+    from proxy.services.vor_result_integrity_service import vor_derived_quantity_fields
+
     rows: list[dict[str, Any]] = []
     for item in draft or []:
         if not isinstance(item, Mapping):
@@ -187,6 +189,7 @@ def _vor_rows_from_draft(draft: Any, *, source_label: str) -> list[dict[str, Any
             "row_role": str(item.get("row_role") or "").strip(),
             "work_row": str(item.get("work_row") or "").strip(),
             "open_gap": str(item.get("open_gap") or "").strip(),
+            "_derived_quantity": vor_derived_quantity_fields(item),
             # Keep the complete authored result alongside the display cells.
             # Renderers must not discard operation/coverage/resource decisions
             # or their literal conversion/source metadata during packaging.
@@ -406,6 +409,17 @@ async def _default_vor_adapter(
             source_errors.extend(errors)
             rendered["source_audit"] = "; ".join(messages.get(error.split(":", 1)[0], "Исходные объёмы не проверены") for error in errors)
 
+    integrity_issues: list[dict[str, Any]] = []
+    if authored:
+        from proxy.services.vor_result_integrity_service import audit_vor_result_integrity
+
+        integrity_issues = audit_vor_result_integrity(draft, source_catalog=catalog)
+        for issue in integrity_issues:
+            rendered = rows[issue["row_index"]]
+            rendered["source_audit"] = "; ".join(filter(None, (
+                str(rendered.get("source_audit") or ""), issue["reason"],
+            )))
+
     requires_decision_count = 0
     for row in rows:
         if not isinstance(row, dict):
@@ -421,12 +435,9 @@ async def _default_vor_adapter(
             requires_decision_count += 1
     progress("source_rows", 0, len(rows))
     document_issues = [dict(issue) for issue in args.get("_document_issues") or () if isinstance(issue, Mapping)]
-    if authored:
-        from proxy.services.vor_result_integrity_service import audit_vor_result_integrity
-
-        # A structural issue never rewrites an operation or invents installation.
-        # Preserve the same authored rows and make unanswered relationships visible.
-        document_issues.extend(audit_vor_result_integrity(draft, source_catalog=catalog))
+    # A structural issue never rewrites an operation or invents installation.
+    # Preserve the same authored rows and make unanswered relationships visible.
+    document_issues.extend(integrity_issues)
     draft_document = bool(args.get("_draft"))
     if draft_document and not document_issues:
         document_issues = [{"code": "WORKBOOK_DRAFT", "reason": "Промежуточная ревизия; работа не завершена."}]
@@ -438,12 +449,15 @@ async def _default_vor_adapter(
         **({"document_issues": document_issues, "draft": draft_document} if document_issues or draft_document else {}),
     )
     missing: list[str] = []
+    from proxy.services.vor_result_integrity_service import vor_has_complete_derived_measure
+
     for index, row in enumerate(rows, 1):
         if row.get("row_role") in {"header", "note", "subtotal"}:
             continue
-        if not str(row.get("unit") or "").strip():
+        authored_derived_measure = vor_has_complete_derived_measure(row.get("_authored_decision") or {})
+        if not str(row.get("unit") or "").strip() and not authored_derived_measure:
             missing.append(f"row:{index}:unit")
-        if row.get("qty") is None:
+        if row.get("qty") is None and not authored_derived_measure:
             missing.append(f"row:{index}:quantity")
             if row.get("quantity_issue") == "formula_without_cached_value":
                 missing.append(f"row:{index}:quantity_formula_without_cached_value")

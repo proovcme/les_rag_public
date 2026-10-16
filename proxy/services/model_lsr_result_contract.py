@@ -21,7 +21,7 @@ MATCH_FIELDS = (
 )
 SELECTED_NORM_FIELDS = (*MATCH_FIELDS, "coverage")
 OPTIONAL_FIELDS = (
-    "section", "supply_kind", "calc_quantity", "conversion_factor", "conversion_source",
+    "section", "supply_kind", "calc_quantity", "calc_unit", "conversion_factor", "conversion_source",
     "coefficient", "coefficient_applies_to", "extra_ops", "missing_ops", "norm_components",
     "confirmed_price", "price_kind", "price_unit", "price_source",
     "price_currency", "price_vat", "price_period",
@@ -754,11 +754,16 @@ def model_vor_result_field_instruction() -> str:
         "section хранит название раздела отдельно. unit и quantity сохраняй из той же исходной строки. "
         "Неизвестный quantity — null в JSON или пустая ячейка в Markdown, не 0; "
         "явный исходный ноль сохраняй как 0. Если требуется производный объём, "
-        "укажи calc_quantity/conversion_factor и conversion_source с проверяемой формулой, "
+        "укажи итоговый calc_quantity, его явную calc_unit и conversion_source с проверяемой формулой; "
+        "conversion_factor укажи только для точного скалярного перевода: "
+        "quantity × conversion_factor = calc_quantity. Для многошагового или округлённого расчёта "
+        "без точного скаляра оставь conversion_factor пустым и опиши расчёт в conversion_source. Обоснуй расчёт "
         "исходными параметрами и их точным источником; исходные unit/quantity не подменяй. "
         "Не придумывай толщину, число сторон, площадь, вид отделки или расход. "
         "Если основания недостаточно, в open_gap назови конкретно недостающий параметр или решение, "
-        "а не общий призыв проверить всё. evidence_refs добавляй для фактически показанного основания "
+        "а не общий призыв проверить всё. open_gap — только нерешённый вопрос; подтверждённое пояснение "
+        "или обоснованное исключение укажи в coverage, не как открытый вопрос. "
+        "evidence_refs добавляй для фактически показанного основания "
         "с его буквальным Qx.Hy; исходник обосновывай через source_row. Нормы и цены для ВОР "
         "не обязательны: их отсутствие не превращает известную работу в unresolved. "
         "Для прежней операции сохраняй operation_id из prior_model_decisions; для новой оставь "
@@ -840,7 +845,7 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "Адрес выбирает ровно показанный ресурс; его код/название повторять не нужно. "
         "basis_ref для сохранения/исключения указывает исходную строку или показанное основание. "
         "add/replace: resource_name/code, unit, quantity/quantity_basis. "
-        + ", ".join(field for field in OPTIONAL_FIELDS if field != "resource_bindings") + "."
+        + ", ".join(field for field in OPTIONAL_FIELDS if field not in {"resource_bindings", "calc_unit"}) + "."
     )
     if include_examples:
         examples = model_lsr_result_examples()

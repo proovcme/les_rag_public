@@ -5050,6 +5050,7 @@ def parse_model_rag_result(
         "источник перевода": "conversion_source",
         "calc_quantity": "calc_quantity",
         "расчётное количество": "calc_quantity",
+        "calc_unit": "calc_unit",
         "confirmed_price": "confirmed_price",
         "resource_code": "resource_code",
         "resource_bindings": "resource_bindings",
@@ -5533,6 +5534,7 @@ def parse_model_rag_result(
         "conversion_source": "conversion_source",
         "calc_quantity": "calc_quantity",
         "confirmed_price": "confirmed_price",
+        "calc_unit": "calc_unit",
         "resource_code": "resource_code",
         "resource_bindings": "resource_bindings",
         "resource_review": "resource_review",
@@ -5755,6 +5757,7 @@ def parse_model_rag_result(
         "conversion_source": "conversion_source",
         "calc_quantity": "calc_quantity",
         "confirmed_price": "confirmed_price",
+        "calc_unit": "calc_unit",
         "resource_code": "resource_code",
         "price_source": "price_source",
         "price_kind": "price_kind",
@@ -7062,6 +7065,7 @@ def format_lsr_not_created_notice(
     omitted_sheets: Sequence[str] = (),
     rejected_queries: int = 0,
     omitted_evidence: int = 0,
+    artifact_kind: str = "",
 ) -> str:
     """Operator-visible reason that a workbook was not published."""
 
@@ -7074,7 +7078,7 @@ def format_lsr_not_created_notice(
         omitted_evidence=omitted_evidence,
     )
     return (
-        f"ЛСР не создана: {'; '.join(reasons)}. "
+        f"{'ВОР' if artifact_kind == 'vor' else 'ЛСР'} не создана: {'; '.join(reasons)}. "
         f"Строк в ответе модели: {row_count}."
     )
 
@@ -7088,6 +7092,7 @@ def format_lsr_partial_notice(
     omitted_sheets: Sequence[str] = (),
     rejected_queries: int = 0,
     omitted_evidence: int = 0,
+    artifact_kind: str = "",
 ) -> str:
     """Visible reason that a workbook was published from an incomplete source/answer."""
 
@@ -7099,6 +7104,12 @@ def format_lsr_partial_notice(
         rejected_queries=rejected_queries,
         omitted_evidence=omitted_evidence,
     )
+    if artifact_kind == "vor":
+        return (
+            f"ВОР сформирована с замечаниями: {'; '.join(reasons)}. "
+            f"В файл переданы {row_count} строк ответа модели; "
+            "замечания и полнота исходника показаны в проверке документа."
+        )
     return (
         f"ЛСР собрана частично: {'; '.join(reasons)}. "
         f"В расчёт вошли {row_count} строк ответа модели; полный файл по всем "
@@ -7231,6 +7242,7 @@ def validate_model_rag_result_structure(
     validate_evidence_refs: bool = True,
     existing_operation_rows: Sequence[Mapping[str, Any]] | None = None,
     review_operation_rows: Sequence[Mapping[str, Any]] = (),
+    artifact_kind: str = "",
 ) -> list[str]:
     """Validate references before packaging without changing model decisions."""
 
@@ -7313,7 +7325,11 @@ def validate_model_rag_result_structure(
             continue
         refs = extract_model_evidence_refs(row.get("evidence_refs"))
         if not refs:
-            errors.append(f"missing_evidence_ref:{source_row}")
+            # A source-grounded VOR operation does not require a norm or an
+            # external RAG citation. Explicitly selected norms still do, and
+            # references actually supplied by the model are always checked.
+            if artifact_kind != "vor" or not _explicit_absence_value(row.get("norm_code")):
+                errors.append(f"missing_evidence_ref:{source_row}")
             continue
         raw_bindings = row.get("evidence_bindings")
         bindings = (
@@ -12068,6 +12084,8 @@ async def _execute_chat_evidence_application(
                                 answer_truncated=last_truncated,
                                 existing_operation_rows=accumulated_rows,
                                 review_operation_rows=review_prior_rows,
+                                artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
+                                               if artifact_kind_declaration.get("status") == "declared" else ""),
                             )
                             tail_locator = truncated_tail_locator(
                                 pass_rows, truncated=last_truncated
@@ -14134,6 +14152,8 @@ async def _execute_chat_evidence_application(
                             source_incomplete_locators=source_incomplete_locators,
                             finish_reason=answer_finish_reason,
                             validate_evidence_refs=True,
+                            artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
+                                           if artifact_kind_declaration.get("status") == "declared" else ""),
                         )
                         model_result_errors.extend(error for error in source_conflict_errors
                                                    if error not in model_result_errors)
@@ -14176,6 +14196,8 @@ async def _execute_chat_evidence_application(
                             "omitted_sheets": sheet_coverage["omitted"],
                             "rejected_queries": len(rejected_model_queries),
                             "omitted_evidence": len(omitted_evidence_refs),
+                            "artifact_kind": (str(artifact_kind_declaration.get("artifact_kind") or "")
+                                              if artifact_kind_declaration.get("status") == "declared" else ""),
                         }
                         if model_result_blocking_errors:
                             notice = format_lsr_not_created_notice(**notice_kwargs)

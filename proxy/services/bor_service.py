@@ -204,13 +204,19 @@ def source_rows_to_vor_xlsx(
         sheet["A2"] = "ВОР НЕ ЗАВЕРШЁН — промежуточная ревизия; см. лист «Проверка»"
     authored_columns = any(row.get("row_role") or row.get("work_row") or row.get("open_gap") or row.get("source_audit") or row.get("_authored_decision") for row in rows)
     authored_metadata = any(isinstance(row.get("_authored_decision"), dict) for row in rows)
+    authored_derivation = any(row.get("_derived_quantity") for row in rows)
     headers = ["№", "Раздел", "Наименование", "Код/Шифр", "Ед. изм.", "Кол-во",
                "Источник", "Предполагаемая работа", "Статус решения"]
     if authored_columns:
         headers += ["Тип строки", "Связанная работа", "Замечания / проверка исходника"]
     if authored_metadata:
         headers += ["ID операции", "Учтено работой", "Полное решение модели"]
+    if authored_derivation:
+        headers[4:6] = ["Ед. изм. источника", "Кол-во источника"]
+        headers += ["Расчётная единица", "Результат расчёта", "Коэффициент перевода", "Основание расчёта"]
     sheet.append(headers)
+    if authored_derivation:
+        sheet.row_dimensions[3].height = 30
     for cell in sheet[3]:
         cell.font = Font(bold=True)
         cell.alignment = Alignment(wrap_text=True)
@@ -279,6 +285,24 @@ def source_rows_to_vor_xlsx(
             audit_row = audit_rows.get(index + 3)
             values += [str(decision.get("operation_id") or ""), str(decision.get("covered_by_work_id") or ""),
                        f"Решения модели!R{audit_row}" if audit_row is not None else ""]
+        if authored_derivation:
+            from proxy.services.vor_result_integrity_service import vor_quantity_number
+
+            def authored_cell(value, *, numeric=False):
+                if value is None:
+                    return None
+                number = vor_quantity_number(value) if numeric else None
+                if number is not None:
+                    return number
+                literal = (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
+                # An authored expression is evidence text, never an Excel formula.
+                return "'" + literal if literal.startswith("=") else literal
+
+            derived = row.get("_derived_quantity") or {}
+            values += [authored_cell(derived.get("calc_unit")),
+                       authored_cell(derived.get("calc_quantity"), numeric=True),
+                       authored_cell(derived.get("conversion_factor"), numeric=True),
+                       authored_cell(derived.get("conversion_source"))]
         sheet.append(values)
         if authored_metadata and audit_row is not None:
             sheet.cell(index + 3, 15).hyperlink = f"#'Решения модели'!C{audit_row}"
@@ -291,6 +315,15 @@ def source_rows_to_vor_xlsx(
                           "H": 46, "I": 18, **({"J": 14, "K": 20, "L": 64} if authored_columns else {}),
                           **({"M": 28, "N": 28, "O": 32} if authored_metadata else {})}.items():
         sheet.column_dimensions[column].width = width
+    if authored_derivation:
+        from openpyxl.utils import get_column_letter
+
+        first_column = len(headers) - 3
+        for offset, width in enumerate((22, 20, 22, 80)):
+            sheet.column_dimensions[get_column_letter(first_column + offset)].width = width
+        for row in sheet.iter_rows(min_row=4, min_col=first_column, max_col=first_column + 3):
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
     if draft or document_issues:
         check = workbook.create_sheet("Проверка")
         check.append([sheet["A2"].value])

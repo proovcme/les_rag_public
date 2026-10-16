@@ -64,7 +64,7 @@ def test_vor_source_derivation_is_never_inferred_or_promoted_by_preservation(tmp
     catalog = _catalog(tmp_path)
     row = {"source_row": "S!R2", "row_role": "work", "title": "Literal proposal",
            "quantity": 191, "unit": "m", "norm_code": "", "evidence_refs": [],
-           "conversion_factor": 24, "calc_quantity": 192,
+           "conversion_factor": 24, "calc_quantity": 192, "calc_unit": "m",
            "conversion_source": "S!R2 title: 24 m per pack", "quantity_formula": "8 * 24"}
     before = copy.deepcopy(row)
     errors = compare_model_row_to_catalog(row, catalog)
@@ -75,7 +75,9 @@ def test_vor_source_derivation_is_never_inferred_or_promoted_by_preservation(tmp
     readiness = service.build_vor_result_readiness(rows=[row], has_file=True, remaining_locators=[],
                                                     catalog_work_count=1, model_errors=errors)
     assert readiness["vor_complete"] is False and readiness["technical_complete"] is False
-    assert readiness["open_questions"] == errors
+    assert readiness["open_questions"][:len(errors)] == errors
+    assert [issue["code"] for issue in readiness["row_integrity_issues"]] == ["conversion_result_mismatch"]
+    assert len(readiness["open_questions"]) == len(errors) + 1
 
 
 def test_optional_vor_norm_citation_checks_remain_visible_without_requiring_norms():

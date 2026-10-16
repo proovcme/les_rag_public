@@ -3027,14 +3027,15 @@
         "tests/test_vor_route_columns_23.py",
         "tools/les_mcp_server.py"
       ],
-      "lines": 338,
+      "lines": 371,
       "module": "proxy.services.bor_service",
       "outbound": [
         "backend/parquet_writer.py",
         "backend/runtime_paths.py",
         "proxy/__init__.py",
         "proxy/services/__init__.py",
-        "proxy/services/attachment_source_catalog_service.py"
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/vor_result_integrity_service.py"
       ],
       "path": "proxy/services/bor_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -3335,7 +3336,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15192,
+      "lines": 15214,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5760,7 +5761,7 @@
         "tests/test_vor_operation_instructions_948.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 876,
+      "lines": 881,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -8319,11 +8320,12 @@
     },
     {
       "inbound": [
+        "proxy/services/bor_service.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/workbook_tool_service.py",
         "tests/test_vor_result_integrity_948.py"
       ],
-      "lines": 140,
+      "lines": 230,
       "module": "proxy.services.vor_result_integrity_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8476,7 +8478,7 @@
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 744,
+      "lines": 758,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -14082,7 +14084,7 @@
       "inbound": [
         "tests/test_model_lsr_rejected_source_proposals.py"
       ],
-      "lines": 206,
+      "lines": 208,
       "module": "tests.test_model_vor_quantity_preservation",
       "outbound": [
         "backend/runtime_paths.py",
@@ -22384,7 +22386,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 792,
     "tracked_python_files": 1186,
-    "tracked_python_lines": 409538
+    "tracked_python_lines": 409704
   },
   "warnings": []
 }
