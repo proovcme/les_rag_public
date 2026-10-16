@@ -5934,7 +5934,8 @@ def parse_model_rag_result(
         key = block_fields.get(label.strip().strip("*_` ").casefold())
         if (key == "operation_id" and current_block is not None
                 and required_fields.issubset(current_block)
-                and re.match(r"^\s*[-+*•]\s+operation_id\s*:", line)):
+                and stripped[:1] in {"-", "+", "*", "•"}
+                and len(stripped) > 1 and stripped[1].isspace()):
             flush_block()
         if key == "source_row" and current_block is not None and required_fields.issubset(current_block):
             flush_block()
