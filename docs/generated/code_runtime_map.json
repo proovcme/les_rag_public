@@ -3279,6 +3279,7 @@
         "tests/test_model_norm_pointer_navigation.py",
         "tests/test_model_norm_snapshot_binding.py",
         "tests/test_model_output_diagnostics_tracking.py",
+        "tests/test_model_packet_document_context_954.py",
         "tests/test_model_partial_inventory_complete_frontier.py",
         "tests/test_model_price_provenance_service.py",
         "tests/test_model_proof_artifact_kind.py",
@@ -3344,7 +3345,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15271,
+      "lines": 15281,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5764,6 +5765,7 @@
         "tests/test_model_artifact_kind_authority.py",
         "tests/test_model_exact_card_read_policy.py",
         "tests/test_model_lsr_result_contract.py",
+        "tests/test_model_packet_document_context_954.py",
         "tests/test_model_query_commentary_transport.py",
         "tests/test_model_query_rejected_visible_diagnostics.py",
         "tests/test_model_result_field_instruction.py",
@@ -8434,6 +8436,7 @@
         "tests/test_model_evidence_native_exchange.py",
         "tests/test_model_evidence_read_contract.py",
         "tests/test_model_lsr_rejected_source_proposals.py",
+        "tests/test_model_packet_document_context_954.py",
         "tests/test_model_proof_artifact_kind.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_query_failure_job_lifecycle.py",
@@ -13484,6 +13487,20 @@
     },
     {
       "inbound": [],
+      "lines": 143,
+      "module": "tests.test_model_packet_document_context_954",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/model_lsr_result_contract.py",
+        "proxy/services/workbook_research_job_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
+      ],
+      "path": "tests/test_model_packet_document_context_954.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 125,
       "module": "tests.test_model_partial_inventory_complete_frontier",
       "outbound": [
@@ -13834,6 +13851,7 @@
         "tests/test_model_inline_field_records.py",
         "tests/test_model_lsr_rejected_source_proposals.py",
         "tests/test_model_output_diagnostics_tracking.py",
+        "tests/test_model_packet_document_context_954.py",
         "tests/test_model_proof_artifact_kind.py",
         "tests/test_model_proof_turn_integrity.py",
         "tests/test_model_query_checkpoint_draft.py",
@@ -22509,9 +22527,9 @@
     "product_reachable": 382,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 799,
-    "tracked_python_files": 1193,
-    "tracked_python_lines": 410855
+    "test_or_tool_only": 800,
+    "tracked_python_files": 1194,
+    "tracked_python_lines": 411008
   },
   "warnings": []
 }

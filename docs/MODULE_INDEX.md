@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 954 — сохранение типа документа при разборе пакета
+
+`chat_evidence_application_service.parse_model_rag_result(model_declaration=...)`
+при отсутствии новой декларации использует уже объявленный текущий тип.
+Sheet-pass и B0 не требуют от строк ВОР сметных полей только из-за отсутствия
+повторной метки. Неопределённость и реальные конфликты сохраняются.
+Док↔код: ✅ [RAG evidence flow](modules/rag-evidence-flow.md), [ВОР](ALGO-spec-to-bor.md).
+Регрессия: `test_model_packet_document_context_954.py`; live-приёмка отдельно.
+
 ## 953 — согласованные декларации и существующие ошибки ревизии
 
 `model_lsr_result_contract.decode_model_artifact_kind` допускает ровно одну

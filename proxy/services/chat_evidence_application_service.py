@@ -4998,10 +4998,16 @@ def unresolved_evidence_placeholder(value: Any) -> bool:
 
 def parse_model_rag_result(
     raw: str, *, diagnostics: list[dict[str, Any]] | None = None,
+    model_declaration: Mapping[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]]] | None:
     """Decode only an unambiguous table; preserve the authored answer and cell values."""
 
     declaration = decode_model_artifact_kind(raw)
+    if declaration["status"] == "missing" and (model_declaration or {}).get("status") == "declared":
+        # A packet may omit repeated document metadata. Only the model's already
+        # declared current target supplies its transport schema; explicit raw
+        # metadata, including invalid/conflicting declarations, always wins.
+        declaration = model_declaration
     declared_vor = declaration["status"] == "declared" and declaration["artifact_kind"] == "vor"
     required_fields = {"title", "unit"} if declared_vor else {"title", "unit", "norm_code"}
     vor_core_fields = {"source_row", "row_role", "work_row", "title", "unit", "quantity", "open_gap"}
@@ -11851,6 +11857,7 @@ async def _execute_chat_evidence_application(
                                     research_job["job_id"], declaration=artifact_kind_declaration)
                             parsed_pass = parse_model_rag_result(
                                 pass_answer, diagnostics=pass_transport_diagnostics,
+                                model_declaration=artifact_kind_declaration,
                             )
                             if pass_transport_diagnostics:
                                 for proposal in pass_transport_diagnostics:
@@ -11975,6 +11982,7 @@ async def _execute_chat_evidence_application(
                                                 context_error, purpose=NORM_CARD_PROOF_PURPOSE))
                                     proved_pass = parse_model_rag_result(
                                         pass_answer, diagnostics=pass_transport_diagnostics,
+                                        model_declaration=artifact_kind_declaration,
                                     )
                                     proved_rows: list[dict[str, Any]] = []
                                     if proved_pass is not None:
@@ -12104,7 +12112,8 @@ async def _execute_chat_evidence_application(
                                                 context_error,
                                                 purpose=RESOURCE_GROUP_PROOF_PURPOSE))
                                     group_pass = parse_model_rag_result(
-                                        pass_answer, diagnostics=pass_transport_diagnostics)
+                                        pass_answer, diagnostics=pass_transport_diagnostics,
+                                        model_declaration=artifact_kind_declaration)
                                     group_rows: list[dict[str, Any]] = []
                                     if group_pass is not None:
                                         _group_visible, group_rows = group_pass
@@ -13692,6 +13701,7 @@ async def _execute_chat_evidence_application(
                     else:
                         parsed_model_result = parse_model_rag_result(
                             answer, diagnostics=retrieval_trace.setdefault("model_result_transport_diagnostics", []),
+                            model_declaration=artifact_kind_declaration,
                         )
                         expected_format_locators = (
                             list(source_catalog.work_locators())
