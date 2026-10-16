@@ -1,5 +1,18 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 958 — пересмотр сохраняет идентичность и область операции
+
+`record_packet` сохраняет ответ без ID в proposals, когда исходный адрес содержит
+операцию активного пересмотра. Явный пустой ID допускает новую работу; прежний ID
+и expected_revision обновляют существующую. `parse_model_rag_result` сохраняет
+декларированный пустой ID во всех поддерживаемых форматах. Guard использует
+те же технические алиасы ID/адреса, что admission. Док↔код: ✅
+[RAG evidence flow](modules/rag-evidence-flow.md).
+Регрессия: `test_pending_review_operation_identity.py`; installed live обязателен.
+`latest()` отбирает session/attachment в SQL до LIMIT, читает лёгкий индекс перед
+единственным полным снимком. Старая сессия не скрывается новыми чужими заданиями.
+Регрессия: `test_workbook_latest_identity_projection.py`.
+
 ## 957 — адресная остановка выполняющегося model await
 
 `await_workbook_model_call` оборачивает прежний `_sheet_pass_llm_body` без

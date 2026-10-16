@@ -2996,6 +2996,7 @@
         "tests/test_model_source_frame_service.py",
         "tests/test_model_vor_quantity_preservation.py",
         "tests/test_pdf_layout.py",
+        "tests/test_pending_review_operation_identity.py",
         "tests/test_resource_price_unit_conversion.py",
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_rtf_input_transport.py",
@@ -3325,6 +3326,7 @@
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_notebook_study_chat_policy.py",
         "tests/test_packaging_recovery_service.py",
+        "tests/test_pending_review_operation_identity.py",
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_resource_binding_provenance.py",
         "tests/test_resource_group_proof_932.py",
@@ -3356,7 +3358,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15412,
+      "lines": 15443,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -6333,6 +6335,7 @@
         "tests/test_native_ollama_tool_exchange.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_openai_compatible_transport_service.py",
+        "tests/test_pending_review_operation_identity.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_review_structural_facts_953.py",
         "tests/test_vor_task_instruction_955.py",
@@ -8470,6 +8473,7 @@
         "tests/test_model_source_conflict_resume_947.py",
         "tests/test_model_vor_quantity_preservation.py",
         "tests/test_packaging_recovery_service.py",
+        "tests/test_pending_review_operation_identity.py",
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_sovushka_chat.py",
         "tests/test_stall_bound_25.py",
@@ -8482,6 +8486,7 @@
         "tests/test_workbook_chat_refinement.py",
         "tests/test_workbook_document_scope_integrity_928.py",
         "tests/test_workbook_gap_followup_955.py",
+        "tests/test_workbook_latest_identity_projection.py",
         "tests/test_workbook_model_call_cancellation.py",
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_plain_continuation.py",
@@ -8491,7 +8496,7 @@
         "tests/test_workbook_source_frame_identity.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 3159,
+      "lines": 3198,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -13911,6 +13916,7 @@
         "tests/test_model_workbook_citation_instructions_947.py",
         "tests/test_native_tool_call_diagnostics.py",
         "tests/test_norm_card_proof_request_930.py",
+        "tests/test_pending_review_operation_identity.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_delivery_notice_949.py",
         "tests/test_vor_native_read_scope_956.py",
@@ -14701,6 +14707,21 @@
         "tools/pdf_preprocess.py"
       ],
       "path": "tests/test_pdf_preprocess.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 343,
+      "module": "tests.test_pending_review_operation_identity",
+      "outbound": [
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/workbook_research_job_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
+      ],
+      "path": "tests/test_pending_review_operation_identity.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -17834,6 +17855,17 @@
         "proxy/services/workbook_research_job_service.py"
       ],
       "path": "tests/test_workbook_gap_followup_955.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 137,
+      "module": "tests.test_workbook_latest_identity_projection",
+      "outbound": [
+        "proxy/services/workbook_research_job_service.py"
+      ],
+      "path": "tests/test_workbook_latest_identity_projection.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -22670,9 +22702,9 @@
     "product_reachable": 382,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 808,
-    "tracked_python_files": 1202,
-    "tracked_python_lines": 412890
+    "test_or_tool_only": 810,
+    "tracked_python_files": 1204,
+    "tracked_python_lines": 413440
   },
   "warnings": []
 }

@@ -1481,11 +1481,28 @@ class WorkbookResearchJobService:
             context = _json_object(row, "task_context_json")
             pending_scope = self.pending_research_locators({"task_context": context})
             pending_operation_scope = self.pending_research_operation_ids({"task_context": context})
+            from proxy.services.model_result_packet_service import _locator_key
+
+            def identity_source_key(value):
+                return _locator_key(canonicalize_locator(value) if canonicalize_locator is not None else value)
+
             if pending_scope:
+                target_sources = {identity_source_key(by_op[op].get("source_row"))
+                                  for op in pending_operation_scope if op in by_op}
+                pending_source_keys = {identity_source_key(value) for value in pending_scope}
                 scoped_rows = []
                 for item in accepted_rows:
-                    operation_id = str(item.get("operation_id") or "")
-                    if (str(item.get("source_row") or "") in pending_scope and operation_id in by_op
+                    operation_id = str(item.get("operation_id") or "").strip()
+                    source_key = identity_source_key(item.get("source_row"))
+                    explicit_new = ("operation_id" in item
+                                    and isinstance(item["operation_id"], str)
+                                    and not item["operation_id"].strip())
+                    if (source_key in target_sources
+                            and not operation_id and not explicit_new):
+                        proposals.append({"code": "MODEL_RESULT_OPERATION_IDENTITY_MISSING",
+                                          "reason": "missing_operation_identity",
+                                          "decision": dict(item), "packet_locators": list(packet_locators)})
+                    elif (source_key in pending_source_keys and operation_id in by_op
                             and operation_id not in pending_operation_scope):
                         proposals.append({"code": "MODEL_RESULT_RESEARCH_OPERATION_NOT_REQUESTED",
                                           "reason": "existing_operation_outside_explicit_research_targets",
@@ -1644,28 +1661,35 @@ class WorkbookResearchJobService:
             pending_ids = self.pending_research_operation_ids({"task_context": context})
             pending_sources = list(context.get("pending_research_locators") or ())
             if pending_ids or pending_sources:
-                before_sources = {str(item.get("operation_id") or ""): str(item.get("source_row") or "")
+                before_sources = {str(item.get("operation_id") or ""): identity_source_key(item.get("source_row"))
                                   for item in json.loads(str(row["accepted_rows_json"])) if isinstance(item, Mapping)}
-                owned = set(packet)
+                owned = {identity_source_key(source) for source in packet}
                 answered = {operation_id for operation_id, source in admitted_model_replies
-                            if operation_id in pending_ids and before_sources.get(operation_id) == source
-                            and source in owned}
+                            if operation_id in pending_ids
+                            and before_sources.get(operation_id) == identity_source_key(source)
+                            and identity_source_key(source) in owned}
                 unassigned = set(context.get("pending_research_unassigned_locators") or ())
-                answered_sources = {source for _, source in admitted_model_replies if source in owned}
-                answered_unassigned = unassigned & answered_sources
+                answered_sources = {identity_source_key(source) for _, source in admitted_model_replies
+                                    if identity_source_key(source) in owned}
+                answered_unassigned = {source for source in unassigned if identity_source_key(source) in answered_sources}
                 pending_ids.difference_update(answered)
-                unassigned.difference_update(answered_sources)
-                unresolved_targets = unassigned | {before_sources[op] for op in pending_ids if op in before_sources}
+                unassigned.difference_update(answered_unassigned)
+                unresolved_targets = {identity_source_key(source) for source in unassigned} | {
+                    before_sources[op] for op in pending_ids if op in before_sources}
                 if pending_ids - before_sources.keys():
-                    unresolved_targets.update(pending_sources)
-                next_sources = [source for source in pending_sources if source in unresolved_targets]
+                    unresolved_targets.update(identity_source_key(source) for source in pending_sources)
+                next_sources = [source for source in pending_sources if identity_source_key(source) in unresolved_targets]
                 context.update(pending_research_operation_ids=sorted(pending_ids),
                                pending_research_locators=next_sources,
                                pending_research_unassigned_locators=sorted(unassigned))
-                resolved_sources = set(pending_sources) - set(next_sources)
+                resolved_sources = {identity_source_key(source) for source in pending_sources} - {
+                    identity_source_key(source) for source in next_sources}
+                unresolved_source_keys = {identity_source_key(source) for source in unresolved_sources}
                 remaining_locators = [source for source in remaining_locators
-                                      if source not in resolved_sources or source in unresolved_sources]
-                remaining_locators.extend(source for source in next_sources if source not in remaining_locators)
+                                      if identity_source_key(source) not in resolved_sources
+                                      or identity_source_key(source) in unresolved_source_keys]
+                remaining_keys = {identity_source_key(source) for source in remaining_locators}
+                remaining_locators.extend(source for source in next_sources if identity_source_key(source) not in remaining_keys)
                 conn.execute("UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
                              (json.dumps(context, ensure_ascii=False), job_id))
                 if answered or answered_unassigned:
@@ -2229,7 +2253,10 @@ class WorkbookResearchJobService:
         The default keeps the previous explicit, destructive reopen contract.
         """
 
+        from proxy.services.model_result_packet_service import _locator_key
+
         wanted = [str(item).strip() for item in locators if str(item).strip()]
+        wanted_keys = {_locator_key(source) for source in wanted}
         prior_context = (list(review_prior_rows) if review_prior_rows is not None
                          else self.chat_review_context(job_id).get("prior_rows", []))
         review_note = dict(chat_review or {
@@ -2248,7 +2275,9 @@ class WorkbookResearchJobService:
             if not preserve_accepted and set(wanted) & self.pending_research_locators({"task_context": context}):
                 raise WorkbookResearchJobError("pending research requires preserving accepted operation baselines")
             selected_ids = None if operation_ids is None else {str(value) for value in operation_ids}
-            targeted = [item for item in existing_rows if str(item.get("source_row") or "") in wanted
+            targeted = [item for item in existing_rows
+                        if (_locator_key(item.get("source_row")) in wanted_keys if preserve_accepted
+                            else str(item.get("source_row") or "") in wanted)
                         and (selected_ids is None or str(item.get("operation_id") or "") in selected_ids)]
             if preserve_accepted and selected_ids is not None:
                 found_ids = {str(item.get("operation_id") or "") for item in targeted}
@@ -2298,8 +2327,8 @@ class WorkbookResearchJobService:
                 queued_ids.update(str(item.get("operation_id")) for item in targeted if item.get("operation_id"))
                 queued_sources = list(dict.fromkeys([*context.get("pending_research_locators", ()), *wanted]))
                 unassigned = set(context.get("pending_research_unassigned_locators") or ())
-                assigned_sources = {str(item.get("source_row") or "") for item in targeted if item.get("operation_id")}
-                unassigned.update(source for source in wanted if source not in assigned_sources)
+                assigned_sources = {_locator_key(item.get("source_row")) for item in targeted if item.get("operation_id")}
+                unassigned.update(source for source in wanted if _locator_key(source) not in assigned_sources)
                 context.update(pending_research_operation_ids=sorted(queued_ids),
                                pending_research_locators=queued_sources,
                                pending_research_unassigned_locators=sorted(unassigned))
@@ -2945,12 +2974,19 @@ class WorkbookResearchJobService:
         if not sid and not aid:
             return None
         limit_n = max(1, min(int(limit or 200), 500))
+        filters, parameters = [], []
+        if sid:
+            filters.append("json_extract(identity_json,'$.session_id')=?")
+            parameters.append(sid)
+        if aid:
+            filters.append("json_extract(identity_json,'$.attachment_id')=?")
+            parameters.append(aid)
         found: sqlite3.Row | None = None
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM workbook_research_jobs"
+                "SELECT job_id,identity_json FROM workbook_research_jobs WHERE " + " AND ".join(filters) +
                 " ORDER BY updated_at DESC LIMIT ?",
-                (limit_n,),
+                (*parameters, limit_n),
             ).fetchall()
             for row in rows:
                 identity = json.loads(str(row["identity_json"] or "{}") or "{}")
@@ -2959,8 +2995,11 @@ class WorkbookResearchJobService:
                     continue
                 if aid and str(identity.get("attachment_id") or "") != aid:
                     continue
-                found = row
-                events = self._events(conn, str(row["job_id"]), "workbook_packaged")
+                found = conn.execute(
+                    "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(row["job_id"]),)
+                ).fetchone()
+                if found is not None:
+                    events = self._events(conn, str(row["job_id"]), "workbook_packaged")
                 break
         if found is None:
             return None

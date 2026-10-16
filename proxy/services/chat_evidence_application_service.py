@@ -3285,19 +3285,33 @@ def settled_source_keys(rows, catalog):
     )
 
 
+def research_source_key(value, catalog=None):
+    """Compare only existing technical source identities, never rewrite a row."""
+    from proxy.services.model_result_packet_service import _locator_key
+
+    found = catalog.lookup(value) if catalog is not None else None
+    return _locator_key(found.locator if found is not None else value)
+
+
 def research_settled_source_keys(rows, catalog, job):
     """A retained baseline is not an answer to a newly requested review."""
-    return settled_source_keys(rows, catalog) - WorkbookResearchJobService.pending_research_locators(job)
+    pending = {research_source_key(source, catalog)
+               for source in WorkbookResearchJobService.pending_research_locators(job)}
+    return {source for source in settled_source_keys(rows, catalog) if research_source_key(source, catalog) not in pending}
 
 
-def model_rag_research_target_context(job, packet):
+def model_rag_research_target_context(job, packet, *, source_catalog=None):
     """Expose the operator's durable retry scope without choosing a norm."""
-    wanted = WorkbookResearchJobService.pending_research_locators(job) & set(packet)
+    pending = {research_source_key(source, source_catalog)
+               for source in WorkbookResearchJobService.pending_research_locators(job)}
+    wanted = {source for source in packet if research_source_key(source, source_catalog) in pending}
     if not wanted:
         return {}
     pending_ids = WorkbookResearchJobService.pending_research_operation_ids(job)
+    wanted_keys = {research_source_key(source, source_catalog) for source in wanted}
     operation_ids = [str(row["operation_id"]) for row in (job or {}).get("accepted_rows") or ()
-                     if row.get("operation_id") in pending_ids and row.get("source_row") in wanted]
+                     if row.get("operation_id") in pending_ids
+                     and research_source_key(row.get("source_row"), source_catalog) in wanted_keys]
     return {"research_target_source_rows": sorted(wanted),
             "research_target_operation_ids": operation_ids,
             "research_scope_instruction": (
@@ -3305,7 +3319,12 @@ def model_rag_research_target_context(job, packet):
                 "research_target_operation_ids задаёт область пересмотра прежних операций. "
                 "Остальные prior_model_decisions — сохранённый контекст: их нормы и цитаты "
                 "не требуется искать заново. Исходные адреса без прежних операций также входят "
-                "в область исследования. При изменении сохраняются operation_id и expected_revision; "
+                "в область исследования. После основных полей строк явно добавь две колонки "
+                "operation_id и expected_revision. Для прежней операции верни показанный operation_id "
+                "и expected_revision из её revision. Для новой операции явно укажи operation_id=\"\" "
+                "в JSON или пустую ячейку в отдельной колонке operation_id; отсутствие ключа/колонки "
+                "не объявляет новую работу на адресе пересматриваемой операции. "
+                "При изменении сохраняются operation_id и expected_revision; "
                 "неотвеченные позиции остаются открытыми, прежние решения не исчезают.")}
 
 
@@ -5563,7 +5582,7 @@ def parse_model_rag_result(
             row: dict[str, Any] = {}
             for name, value in raw_row.items():
                 if not value:
-                    if (declared_vor and name in vor_core_fields) or name == "_display_ordinal":
+                    if (declared_vor and name in vor_core_fields) or name in {"_display_ordinal", "operation_id"}:
                         row[name] = value
                     continue
                 if name == "source_row":
@@ -5799,7 +5818,7 @@ def parse_model_rag_result(
         if not key:
             continue
         if not clean:
-            if declared_vor and key in vor_core_fields:
+            if (declared_vor and key in vor_core_fields) or key == "operation_id":
                 current_block[key] = clean
             continue
         if key == "source_row":
@@ -5912,7 +5931,11 @@ def parse_model_rag_result(
                 continue
             key = labelled_fields.get(" ".join(label.strip().split()).casefold())
             clean = value.strip()
-            if not key or not clean:
+            if not key:
+                continue
+            if not clean:
+                if key == "operation_id":
+                    row[key] = clean
                 continue
             if key in numeric_fields:
                 parsed_number = number(clean)
@@ -10979,8 +11002,11 @@ async def _execute_chat_evidence_application(
                                     remaining_work=packet,
                                     source_frame=pass_source_frame,
                                 )
-                                prior_page_rows = [row for row in accumulated_rows if str(row.get("source_row") or "") in packet]
-                                prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
+                                packet_keys = {research_source_key(source, source_catalog) for source in packet}
+                                prior_page_rows = [row for row in accumulated_rows
+                                                   if research_source_key(row.get("source_row"), source_catalog) in packet_keys]
+                                prior_packet_rows = [row for row in review_prior_rows
+                                                     if research_source_key(row.get("source_row"), source_catalog) in packet_keys]
                                 prior_page_context, prior_page_chunks = model_rag_prior_page_context(
                                     prior_page_rows, sheet_pass_evidence_chunks,
                                     review_rows=prior_packet_rows, review_instruction=review_instruction,
@@ -10988,7 +11014,8 @@ async def _execute_chat_evidence_application(
                                     full_result_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
-                                prior_page_context.update(model_rag_research_target_context(research_job, packet))
+                                prior_page_context.update(model_rag_research_target_context(
+                                    research_job, packet, source_catalog=source_catalog))
                                 if (prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals")
                                         or prior_page_context.get("accepted_work_index")):
                                     pass_evidence.append(prior_page_context)
@@ -11046,8 +11073,11 @@ async def _execute_chat_evidence_application(
                                     remaining_work=packet,
                                     source_frame=pass_source_frame,
                                 )
-                                prior_packet_rows = [row for row in review_prior_rows if str(row.get("source_row") or "") in packet]
-                                prior_page_rows = [row for row in accumulated_rows if str(row.get("source_row") or "") in packet]
+                                packet_keys = {research_source_key(source, source_catalog) for source in packet}
+                                prior_packet_rows = [row for row in review_prior_rows
+                                                     if research_source_key(row.get("source_row"), source_catalog) in packet_keys]
+                                prior_page_rows = [row for row in accumulated_rows
+                                                   if research_source_key(row.get("source_row"), source_catalog) in packet_keys]
                                 prior_page_context, prior_page_chunks = model_rag_prior_page_context(
                                     prior_page_rows, sheet_pass_evidence_chunks,
                                     review_rows=prior_packet_rows, review_instruction=review_instruction,
@@ -11055,7 +11085,8 @@ async def _execute_chat_evidence_application(
                                     full_result_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
-                                prior_page_context.update(model_rag_research_target_context(research_job, packet))
+                                prior_page_context.update(model_rag_research_target_context(
+                                    research_job, packet, source_catalog=source_catalog))
                                 if (prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals")
                                         or prior_page_context.get("accepted_work_index")):
                                     pass_evidence.append(prior_page_context)
