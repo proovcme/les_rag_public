@@ -7,7 +7,7 @@ import json
 import pytest
 
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
-from proxy.services.model_evidence_read_contract import MODEL_EVIDENCE_READ_INSTRUCTION
+from proxy.services.model_evidence_read_contract import MODEL_EVIDENCE_READ_INSTRUCTION, model_evidence_read_tool_schemas
 from proxy.services.model_lsr_result_contract import (
     model_lsr_resource_decision_instruction, model_lsr_result_field_instruction,
 )
@@ -79,10 +79,10 @@ async def test_actual_answer_and_native_continuations_keep_policy_and_literal_de
         assert _SOURCE_PROVENANCE in delivered
         assert "Answer only from shown evidence." in delivered
         assert request.temperature == 0.65
-        assert {tool["function"]["name"] for tool in request.tools} == {
-            "search_sources", "read_norm_card", "search_pricebook_resources",
-            "read_resource_price", "read_source",
-        }
+        readers = model_evidence_read_tool_schemas()
+        assert list(request.tools)[:len(readers)] == readers
+        assert [tool["function"]["name"] for tool in list(request.tools)[len(readers):]] == [
+            "build_vor_workbook", "build_lsr_workbook"]
     # The application neither inserts a READ nor converts source provenance
     # into a card selection; it executes exactly the model-authored native call.
     native_calls = [call for message in run.requests[2].messages

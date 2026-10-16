@@ -16,6 +16,11 @@ Mixed/два terminal/видимый конфликт/raw guards неизмен�
 Компактный production-вариант:204passed, включая прежние ограниченные wire-cases;
 полный frozen gate и installed live ещё требуются. Десять исходных падений
 первого adjacent замера сохранены, лимиты ради зелёного не увеличивались.
+Первый полный963:5985passed/20skipped/3failed. Legacy exact-card tests теперь
+требуют byte-equal readers + ровно оба optional terminal для missing type;
+проверки настоящих READ, literal decisions и source facts сохранены. Прежние
+conditional wording/LSR SHA/компактность сохранены. Целевой повтор80passed;
+новый полный frozen gate обязателен перед установкой.
 
 ## Регрессии962 — literal native terminal и запрет spec-copy
 

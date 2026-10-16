@@ -43,16 +43,16 @@ def test_missing_type_keeps_compact_conditional_vor_contract_and_literal_lsr_con
     vor_end = instruction.index("КОНЕЦ КОНТРАКТА ВОР")
     vor = instruction[vor_start:vor_end]
     for requirement in ("source_row, row_role, work_row, title, unit, quantity, open_gap",
-            "Явную работу сохраняй работой", "ГОСТ не делает её материалом",
-            "работой-родителем либо вопросом", "не автоматическим монтажом",
-            "неясной технологией — не header", "включённый состав — покрытием",
+            "Явная работа остаётся работой", "даже с ГОСТ",
+            "работа-родитель либо вопрос", "не автоматический монтаж",
+            "Неясная технология в строке с объёмом — не header", "включение — с обоснованием покрытия",
             "unit/quantity сохраняй", "неизвестное — null, ноль — 0",
             "calc_quantity, calc_unit, conversion_source", "с формулой и источником"):
         assert requirement in vor
     assert model_vor_result_field_instruction() in lsr_result_table_instruction(artifact_kind="vor")
     lsr_start = instruction.index("КОНТРАКТ ЛСР")
     assert lsr_result_table_instruction(artifact_kind="lsr") in instruction[lsr_start:]
-    assert "отсутствие типа в поиске не означает ЛСР" in instruction
+    assert "отсутствие декларации в запросном ходе не означает выбор ЛСР" in instruction
     assert "чтение/объяснение — без типа и строк документа" in instruction
 
 
