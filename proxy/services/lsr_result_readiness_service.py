@@ -524,7 +524,10 @@ def build_lsr_result_readiness(
                           if _text(old.get("operation_id")) == target_id
                           and catalog_source_locator(old.get("locator"), source_catalog) == source), None)
             if prior is not None:
-                norm_gaps[prior] = gap
+                # An explicit model reason remains its professional decision.
+                # The calculator's diagnostic cannot replace it with a new cause.
+                if norm_gaps[prior].get("kind") not in MODEL_GAP_REASONS:
+                    norm_gaps[prior] = gap
             else:
                 norm_gaps.append(gap)
     source_conflict_statuses = {"norm_identity_conflict", "normative_generation_conflict"}

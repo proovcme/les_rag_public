@@ -511,7 +511,12 @@ def test_the_loop_asks_the_run_question_and_defers_instead_of_aborting() -> None
         '"pause_kind"',
     ):
         assert field in loop, f"the pass trace lost {field}"
-    tail = loop[loop.index("settled_keys = settled_source_keys") :]
+    # Scheduling, resumed checkpoint accounting and final completion must use
+    # the same boundary: retained rows do not answer newly pending research.
+    assert "settled_before = research_settled_source_keys(" in loop
+    assert "settled_after = research_settled_source_keys(" in loop
+    assert "settled_checkpoint = research_settled_source_keys(saved_rows, source_catalog, saved_job)" in loop
+    tail = loop[loop.index("settled_keys = research_settled_source_keys(accumulated_rows, source_catalog, research_job)") :]
     assert "starved_locators(" in tail
     assert "offers_by_locator=offer_ledger" in tail
     assert "left_open_never_offered" in tail

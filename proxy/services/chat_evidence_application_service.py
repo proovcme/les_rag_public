@@ -126,7 +126,7 @@ from proxy.services.workbook_research_job_service import (
 )
 from proxy.services.model_result_packet_service import admit_model_result_packet
 from proxy.services.model_lsr_result_contract import (
-    model_lsr_result_field_instruction, decode_model_artifact_kind,
+    MATCH_FIELDS, model_lsr_result_field_instruction, decode_model_artifact_kind,
     decode_model_query_envelope, update_model_artifact_kind,
 )
 from proxy.services.model_evidence_read_contract import (
@@ -181,6 +181,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
     LsrResearchRoundResult,
     aggregate_norms_status,
     authored_norm_code,
+    canonicalize_match_flag,
     build_blind_review_evidence_items,
     ciphers_compatible,
     ciphers_identical,
@@ -6447,6 +6448,13 @@ def model_rag_prior_page_context(
                                  if check["citation_checkable"] else None),
                 "unresolved_refs": check["unresolved_refs"],
             }
+        if authored_norm_code(row.get("norm_code")) and any(name in row for name in MATCH_FIELDS):
+            fact["applicability_fields"] = {
+                "accepted_values": ["yes", "no", "unknown"],
+                "fields": {name: {"authored": row.get(name), "read_as": canonicalize_match_flag(row.get(name))}
+                           for name in MATCH_FIELDS},
+                "explanation_field": "coverage",
+            }
         resource_check = row.get("_resource_evidence_check")
         if isinstance(resource_check, Mapping):
             fact["resource_reference"] = dict(resource_check)
@@ -6472,7 +6480,7 @@ def model_rag_prior_page_context(
                       and (issue.get("operation_id") or "") == (row.get("operation_id") or "")]
         if row_issues:
             fact["vor_integrity"] = row_issues
-        if any(key in fact for key in ("norm_reference", "resource_reference", "price_reference", "source_comparison", "vor_integrity")):
+        if any(key in fact for key in ("norm_reference", "applicability_fields", "resource_reference", "price_reference", "source_comparison", "vor_integrity")):
             structural_facts.append(fact)
     proposed_rows = [item["decision"] for item in unapplied_proposals
                      if isinstance(item.get("decision"), Mapping)]
@@ -6543,7 +6551,11 @@ def model_rag_prior_page_context(
             + ("vor_integrity — структурные факты связей и объёмов по полному прежнему результату ВОР, "
                "не предметные решения. " if vor_issues else "")
             + "code_in_refs=null означает, что сравнить шифр невозможно. "
-            "Указанные противоречия — факты для самостоятельного предметного решения модели. "
+            + ("applicability_fields показывает дословные значения полей применимости и их чтение кодом "
+               "(yes/no/unknown/missing), не новый вердикт. Контракт полей — yes/no/unknown; "
+               "пояснения состава и применимости указываются в coverage. "
+               if any("applicability_fields" in fact for fact in structural_facts) else "")
+            + "Указанные противоречия — факты для самостоятельного предметного решения модели. "
             + ("При явном пересмотре текущая область результата — все предложенные прежние операции "
                "этого пакета, включая неизменённые. Неизменённые предметные поля и цитаты сохраняются "
                "дословно вместе с operation_id; expected_revision соответствует показанному revision. "

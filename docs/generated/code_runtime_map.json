@@ -3353,7 +3353,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15328,
+      "lines": 15340,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5196,7 +5196,7 @@
         "tests/test_stall_bound_25.py",
         "tests/test_unresolved_retry_routes_955.py"
       ],
-      "lines": 1217,
+      "lines": 1220,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
@@ -12727,7 +12727,7 @@
     },
     {
       "inbound": [],
-      "lines": 517,
+      "lines": 522,
       "module": "tests.test_lsr_scheduler_starvation_824",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -15616,7 +15616,7 @@
     },
     {
       "inbound": [],
-      "lines": 121,
+      "lines": 151,
       "module": "tests.test_retry_target_projection_955",
       "outbound": [
         "proxy/services/lsr_result_readiness_service.py",
@@ -17580,7 +17580,7 @@
     },
     {
       "inbound": [],
-      "lines": 166,
+      "lines": 216,
       "module": "tests.test_vor_task_instruction_955",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -22630,7 +22630,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 806,
     "tracked_python_files": 1200,
-    "tracked_python_lines": 412132
+    "tracked_python_lines": 412232
   },
   "warnings": []
 }

@@ -4,6 +4,7 @@ import inspect
 import json
 from pathlib import Path
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 
@@ -164,3 +165,52 @@ async def test_admitted_review_resolves_pending_before_the_packet_stall_guard(tm
     assert trace["tool_loop"]["passes"][-1]["newly_decided"] == 2
     assert not run.responses, "resolving the review must not buy another model cycle"
     assert store.get(original_id)["accepted_rows"] == before
+
+
+def test_saved_applicability_prose_is_feedback_as_unknown_without_changing_authored_rows_or_quotes():
+    prose = "Состав включает демонтаж и монтаж панелей"
+    row = {"source_row": "PDF!R16", "operation_id": "authored-operation", "row_role": "work",
+           "title": "Демонтаж потолка с сохранением", "quantity": 15, "unit": "м2",
+           "norm_code": "ГЭСНр63-03-008-02", "norm_status": "EXACT_VERIFIED",
+           "action_match": "yes", "object_match": "no", "condition_match": "unknown",
+           "composition_covers": prose, "coverage": "Literal authored coverage Ω",
+           "evidence_refs": ["Q51.H1"], "evidence_bindings": {"Q51.H1": "saved-card"}}
+    card = SimpleNamespace(content="ГЭСНр63-03-008-02\n01. Демонтаж панелей.\n02. Монтаж панелей.",
+                           doc_name="cards", doc_id="card", meta={
+                               "global_evidence_id": "saved-card", "model_evidence_ref": "Q51.H1"})
+    before = deepcopy(row)
+    original_content = card.content
+    payload, retained = app.model_rag_prior_page_context([row], [card])
+    applicability = payload["prior_result_structural_facts"][0]["applicability_fields"]
+    assert applicability["accepted_values"] == ["yes", "no", "unknown"]
+    assert applicability["explanation_field"] == "coverage"
+    assert applicability["fields"] == {
+        "action_match": {"authored": "yes", "read_as": "yes"},
+        "object_match": {"authored": "no", "read_as": "no"},
+        "condition_match": {"authored": "unknown", "read_as": "unknown"},
+        "unit_compatible": {"authored": None, "read_as": "missing"},
+        "composition_covers": {"authored": prose, "read_as": "unknown"},
+    }
+    decision = payload["prior_model_decisions"][0]
+    for field, value in before.items():
+        assert decision[field] == value
+    assert row == before and card.content == original_content and retained == [card]
+    assert payload["previously_shown_cited_evidence"] == [{
+        "ref": "Q51.H1", "global_evidence_id": "saved-card", "content": original_content}]
+    instruction = payload["evidence_continuation_instruction"]
+    assert "Контракт полей — yes/no/unknown" in instruction
+    assert "пояснения состава и применимости указываются в coverage" in instruction
+
+
+@pytest.mark.parametrize("norm_code, flags", [("", {"action_match": "unknown"}),
+                                               ("—", {"composition_covers": "Состав включает"}),
+                                               ("ГЭСН01-01-001-01", {})])
+def test_no_applicability_feedback_without_selected_norm_and_authored_flags(norm_code, flags):
+    row = {"source_row": "Документ Ω!R3", "row_role": "work", "title": "Исходная работа",
+           "quantity": None, "unit": "м", "norm_code": norm_code, **flags}
+    before = deepcopy(row)
+    payload, retained = app.model_rag_prior_page_context([row], [])
+    assert not any("applicability_fields" in fact for fact in payload["prior_result_structural_facts"])
+    assert "applicability_fields" not in payload["evidence_continuation_instruction"]
+    assert row == before and retained == []
+    assert "open_gap" not in payload["prior_model_decisions"][0]

@@ -119,3 +119,33 @@ def test_ambiguous_legacy_diagnostic_does_not_invent_which_sibling_work_is_missi
         missing=["row:S!R2:norm_not_found"], job_status="complete")
     assert readiness["research_operation_ids"] == []
     assert readiness["dimensions"]["norms"]["gaps"][0]["operation_id"] == ""
+
+@pytest.mark.parametrize("reason", ["insufficient_source_data", "no_suitable_candidate"])
+@pytest.mark.parametrize("with_projection", [False, True])
+def test_calculator_missing_norm_does_not_replace_explicit_model_gap_reason(reason, with_projection):
+    row = _work("S!R2", "model-op", norm_status="NEEDS_RESEARCH")
+    row.update(gap_reason=reason, open_gap="Literal professional reason")
+    before = copy.deepcopy(row)
+    readiness = build_lsr_result_readiness(packaged=True, rows=[row],
+        missing=["row:S!R2:norm_not_found"], job_status="complete",
+        row_projection=[{"locator": "S!R2", "operation_id": "op:model-op", "status": "norm_not_found"}]
+        if with_projection else [])
+    gaps = readiness["dimensions"]["norms"]["gaps"]
+    assert len(gaps) == 1 and gaps[0]["kind"] == reason
+    assert gaps[0]["operation_id"] == "model-op"
+    assert "Literal professional reason" in gaps[0]["action"]
+    assert readiness["research_operation_ids"] == ["model-op"]
+    assert row == before
+
+
+def test_calculator_missing_norm_can_replace_an_unsubstantiated_citation_question():
+    row = _work("S!R2", "uncited-op")
+    before = copy.deepcopy(row)
+    readiness = build_lsr_result_readiness(packaged=True, rows=[row],
+        missing=["row:S!R2:norm_not_found"], job_status="complete",
+        row_projection=[{"locator": "S!R2", "operation_id": "op:uncited-op", "status": "norm_not_found"}])
+    gaps = readiness["dimensions"]["norms"]["gaps"]
+    assert len(gaps) == 1 and gaps[0]["kind"] == "cipher_not_in_base"
+    assert gaps[0]["operation_id"] == "uncited-op"
+    assert readiness["research_operation_ids"] == ["uncited-op"]
+    assert row == before
