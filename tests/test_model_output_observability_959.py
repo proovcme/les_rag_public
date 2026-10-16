@@ -86,7 +86,14 @@ async def test_invalid_reasoning_content_remains_a_transport_error(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('variant',['B0_DIRECT','B1_CANDIDATE'])
-async def test_canonical_response_metadata_survives_both_real_trace_whitelists(tmp_path,monkeypatch,variant):
+@pytest.mark.parametrize('reasoning_usage,expected_reasoning', [
+    pytest.param({}, None, id='missing-keeps-legacy-four-keys'),
+    pytest.param({'reasoning_tokens': None}, None, id='unknown-omitted'),
+    pytest.param({'reasoning_tokens': True}, None, id='invalid-boolean-omitted'),
+    pytest.param({'reasoning_tokens': 0}, 0, id='reported-zero'),
+    pytest.param({'reasoning_tokens': 7}, 7, id='reported-positive'),
+])
+async def test_canonical_response_metadata_survives_both_real_trace_whitelists(tmp_path,monkeypatch,variant,reasoning_usage,expected_reasoning):
     literal_reasoning='PRIVATE-REASONING-MUST-NOT-APPEAR'
     literal_inline='PRIVATE-INLINE-MUST-NOT-APPEAR'
     wire_results=[]
@@ -108,7 +115,8 @@ async def test_canonical_response_metadata_survives_both_real_trace_whitelists(t
                 await client.aclose()
             assert result.text==reply.text
             # Unknown metadata must be rejected at both public trace boundaries.
-            result=replace(result,output_channel_counts={**result.output_channel_counts,
+            provider_usage = {key: value for key, value in result.usage.items() if key != 'reasoning_tokens'}
+            result=replace(result,usage={**provider_usage, **reasoning_usage},output_channel_counts={**result.output_channel_counts,
                 'reasoning_content':literal_reasoning,'foreign':{'text':literal_inline}})
             wire_results.append(result)
             return result
@@ -127,13 +135,33 @@ async def test_canonical_response_metadata_survives_both_real_trace_whitelists(t
     assert len(wire_results)==len(trace['actual_model_calls']['calls'])==len(run.requests)
     assert len(wire_results)>=1
     for response,call in zip(wire_results,trace['actual_model_calls']['calls']):
-        assert call['provider_usage']['reasoning_tokens']==7
+        expected_usage = {'prompt_tokens':20,'input_tokens':None,'completion_tokens':23,'total_tokens':43}
+        if expected_reasoning is not None:
+            expected_usage['reasoning_tokens'] = expected_reasoning
+        assert call['provider_usage'] == expected_usage
         assert call['output_channel_counts']=={key:value for key,value in response.output_channel_counts.items()
             if key in {'provider_content_chars','provider_reasoning_chars','final_text_chars'}}
         assert set(call['output_channel_counts'])=={'provider_content_chars','provider_reasoning_chars','final_text_chars'}
     last=trace['last_model_call_execution']
-    assert last['provider_usage']['reasoning_tokens']==7
+    assert last['provider_usage'] == trace['actual_model_calls']['calls'][-1]['provider_usage']
     assert last['output_channel_counts']==trace['actual_model_calls']['calls'][-1]['output_channel_counts']
     public_execution=json.dumps({'last':last,'calls':trace['actual_model_calls']['calls']},ensure_ascii=False)
     assert literal_reasoning not in public_execution and literal_inline not in public_execution
     assert 'reasoning_content' not in public_execution and 'foreign' not in public_execution
+
+
+@pytest.mark.parametrize('reasoning_usage,expected_reasoning', [
+    ({}, None), ({'reasoning_tokens': None}, None), ({'reasoning_tokens': True}, None),
+    ({'reasoning_tokens': False}, None), ({'reasoning_tokens': -1}, None),
+    ({'reasoning_tokens': '7'}, None), ({'reasoning_tokens': 7.5}, None),
+    ({'reasoning_tokens': {}}, None), ({'reasoning_tokens': []}, None),
+    ({'reasoning_tokens': 0}, 0), ({'reasoning_tokens': 7}, 7),
+])
+def test_optional_reasoning_counter_preserves_exact_legacy_usage_when_unknown(reasoning_usage,expected_reasoning):
+    legacy_usage = {'prompt_tokens':20,'input_tokens':None,'completion_tokens':23,'total_tokens':43}
+    trace = {'last_model_call_execution': {'provider_usage': {**legacy_usage, **reasoning_usage}}}
+    application.append_actual_model_call(trace, purpose='answer')
+    expected_usage = dict(legacy_usage)
+    if expected_reasoning is not None:
+        expected_usage['reasoning_tokens'] = expected_reasoning
+    assert trace['actual_model_calls']['calls'][0]['provider_usage'] == expected_usage

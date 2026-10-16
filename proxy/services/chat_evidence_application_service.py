@@ -2865,8 +2865,10 @@ def append_actual_model_call(
     usage = usage if isinstance(usage, Mapping) else {}
     provider_usage = {
         key: value if type(value := usage.get(key)) is int and value >= 0 else None
-        for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens", "reasoning_tokens")
+        for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens")
     }
+    if type(reasoning_tokens := usage.get("reasoning_tokens")) is int and reasoning_tokens >= 0:
+        provider_usage["reasoning_tokens"] = reasoning_tokens
     canonical_sha = execution.get("canonical_request_sha256")
     canonical_sha = (
         canonical_sha if isinstance(canonical_sha, str)
@@ -9276,8 +9278,10 @@ async def _execute_chat_evidence_application(
                         )
                         execution["provider_usage"] = {
                             key: value if type(value := provider_usage.get(key)) is int and value >= 0 else None
-                            for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens", "reasoning_tokens")
+                            for key in ("prompt_tokens", "input_tokens", "completion_tokens", "total_tokens")
                         }
+                        if type(reasoning_tokens := provider_usage.get("reasoning_tokens")) is int and reasoning_tokens >= 0:
+                            execution["provider_usage"]["reasoning_tokens"] = reasoning_tokens
                         channel_counts = getattr(active_model_result.response, "output_channel_counts", None)
                         if isinstance(channel_counts, Mapping):
                             execution["output_channel_counts"] = {
