@@ -280,10 +280,13 @@ async def test_empty_source_does_not_publish_an_empty_vor_artifact(tmp_path):
 
     result = await workbook_service.build_vor_workbook({"attachment_id": meta["attachment_id"]}, context)
 
-    assert result["status"] == "failed"
-    assert "NO_SOURCE_ROWS" in result["message"]
+    assert result["status"] == "rejected"
+    assert result["code"] == "MODEL_WORK_ROWS_REQUIRED"
+    assert "checkpoint" not in result
     assert "artifact" not in result
     assert not list(context.work_dir.rglob("*.xlsx"))
+    from proxy.services.spec_to_bor_service import rows_from_spec_xlsx
+    assert rows_from_spec_xlsx(source) == []
 
 
 @pytest.mark.asyncio

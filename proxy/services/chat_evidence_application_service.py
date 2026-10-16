@@ -135,6 +135,9 @@ from proxy.services.model_evidence_read_contract import (
     read_result_receipt,
 )
 from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
+from proxy.services.model_workbook_terminal_transport_service import (
+    WorkbookTerminalTransportError, build_workbook_terminal_tool_schema, decode_workbook_terminal_response,
+)
 from proxy.services.model_query_declaration_transport_service import (
     resolve_query_declaration_transport, govern_query_declaration_messages,
     query_declaration_response_text,
@@ -886,6 +889,8 @@ def model_packaging_record_arguments(
         # the parent the packager actually built on, not a guessed one
         "parent_revision_id": str(artifact.get("parent_revision_id") or ""),
         "price_basis": harvested.get("price_basis"),
+        **({"financial_projection": list(harvested["row_projection"])}
+           if str(tool) == "build_lsr_workbook" and isinstance(harvested.get("row_projection"), list) else {}),
     }
 
 
@@ -3102,6 +3107,44 @@ def truncated_tail_locator(rows: Sequence[Any], *, truncated: bool) -> str:
     return str(last.get("source_row") or "").strip()
 
 
+def model_read_result_packet_locators(
+    packet, *, rows, receipts, catalog, existing_rows=(), review_scope=False, job=None,
+):
+    """Admit new literal source anchors the model actually read in this research.
+
+    A source frame is not the reader's scope. Only a successful full read from
+    this exact attachment can extend a new-result packet; explicit review and
+    retained operations keep their existing identity and target guards.
+    """
+    result = list(packet)
+    if review_scope or WorkbookResearchJobService.pending_research_locators(job or {}):
+        return result
+    existing = {research_source_key(row.get("source_row"), catalog)
+                for row in existing_rows if isinstance(row, Mapping)}
+    authored_new = set()
+    for row in rows:
+        if not isinstance(row, Mapping) or str(row.get("operation_id") or "").strip():
+            continue
+        source = catalog.lookup(row.get("source_row"))
+        if source is not None and research_source_key(source.locator, catalog) not in existing:
+            authored_new.add(source.locator)
+    for receipt in receipts:
+        call = receipt.get("call") or {}
+        args = call.get("args") or {}
+        trace = receipt.get("trace") or {}
+        if (call.get("tool") != "read_source" or set(args) != {"source_row"}
+                or receipt.get("status") != "ok" or trace.get("body_complete") is not True
+                or trace.get("source_sha256") != catalog.source_file_sha256
+                or trace.get("source_file_id") != catalog.source_file_id):
+            continue
+        source = catalog.lookup(args["source_row"])
+        traced_source = catalog.lookup(trace.get("source_row"))
+        if (source is not None and traced_source is not None and source.locator == traced_source.locator
+                and source.locator in authored_new and source.locator not in result):
+            result.append(source.locator)
+    return result
+
+
 def sheet_pass_keep_rows(
     rows: Sequence[Mapping[str, Any]],
     *,
@@ -3110,6 +3153,7 @@ def sheet_pass_keep_rows(
     errors: Sequence[str],
     drop_locator: str = "",
     artifact_kind: str = "",
+    additional_locators: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Keep owned decisions; VOR source disagreements remain audited proposals.
 
@@ -3128,7 +3172,7 @@ def sheet_pass_keep_rows(
         payload = dict(row)
         catalog_row = catalog.lookup(payload.get("source_row"))
         if catalog_row is not None:
-            if catalog_row.sheet != wanted:
+            if catalog_row.sheet != wanted and catalog_row.locator not in additional_locators:
                 continue
         else:
             # Keep the raw answer in history, but a partial/unknown locator
@@ -3186,7 +3230,7 @@ def _sheet_pass_row_blocked(row: Mapping[str, Any], blocking_errors: Sequence[st
 def sheet_pass_rejected_row_proposals(
     rows: Sequence[Mapping[str, Any]], *, kept_rows: Sequence[Mapping[str, Any]],
     sheet: str, catalog: AttachmentSourceCatalog, errors: Sequence[str],
-    packet_locators: Sequence[str], drop_locator: str = "",
+    packet_locators: Sequence[str], drop_locator: str = "", additional_locators: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Retain complete decisions refused by the existing source/identity guard.
 
@@ -3199,7 +3243,7 @@ def sheet_pass_rejected_row_proposals(
         if any(dict(row) == dict(kept) for kept in kept_rows):
             continue
         source = catalog.lookup(row.get("source_row"))
-        if source is None or source.sheet != str(sheet or "").strip():
+        if source is None or (source.sheet != str(sheet or "").strip() and source.locator not in additional_locators):
             continue
         if str(drop_locator or "").strip().casefold() in {
             str(row.get("source_row") or "").strip().casefold(), source.locator.casefold(),
@@ -3927,6 +3971,7 @@ def bind_row_evidence_ids(
         first_bind = binding_phase == "first" or (
             binding_phase is None and "evidence_bindings" not in payload
             and "_resource_binding_evidence_bindings" not in payload
+            and "_separate_supply_review_evidence_bindings" not in payload
         )
         current = None if first_bind else payload.get("evidence_bindings")
         merged = {
@@ -4020,6 +4065,20 @@ def bind_row_evidence_ids(
         price_check = price_evidence_check(payload, evidence_chunks, checkable_bindings)
         if price_check is not None:
             payload["_price_evidence_check"] = price_check
+        review = payload.get("resource_review")
+        if isinstance(review, Mapping) and "separate_supply_reviews" in review:
+            from proxy.services.model_resource_binding_service import separate_supply_review_evidence_checks
+
+            relation_checks = separate_supply_review_evidence_checks(
+                payload, checkable_bindings, cards, global_to_body_shown, first_bind=first_bind,
+                issued_alias_bindings=alias_to_global, global_cards=global_to_card,
+                ambiguous_aliases=ambiguous_aliases)
+            payload["_separate_supply_review_evidence_checks"] = relation_checks
+            payload["_separate_supply_review_evidence_bindings"] = {
+                str(check["index"]): dict(check["evidence_bindings"]) for check in relation_checks}
+        else:
+            payload.pop("_separate_supply_review_evidence_checks", None)
+            payload.pop("_separate_supply_review_evidence_bindings", None)
         actions = payload.get("resource_bindings")
         if isinstance(actions, list):
             old_bindings = None if first_bind else payload.get("_resource_binding_evidence_bindings")
@@ -4298,6 +4357,8 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "resource_review",
             "_resource_binding_evidence_checks",
             "_resource_binding_evidence_bindings",
+            "_separate_supply_review_evidence_checks",
+            "_separate_supply_review_evidence_bindings",
             "nr_sp_rule_id",
         ):
             if field_name in item:
@@ -6528,6 +6589,9 @@ def model_rag_prior_page_context(
     source_catalog: AttachmentSourceCatalog | None = None,
     unapplied_proposals: Sequence[Mapping[str, Any]] = (),
     prior_artifact_kind: str = "", full_result_rows: Sequence[Mapping[str, Any]] = (),
+    financial_feedback: Mapping[str, Any] | None = None,
+    financial_identity: Mapping[str, Any] | None = None,
+    financial_price_basis: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[Any]]:
     """Replay authored rows and exactly their cited cards; never choose a norm."""
     rows = model_rag_existing_operation_rows(rows, review_rows)
@@ -6539,6 +6603,11 @@ def model_rag_prior_page_context(
                           and (row.get("operation_id") not in current_operation_ids
                                if row.get("operation_id") else row not in rows)]
     structural_facts = []
+    from proxy.services.lsr_financial_feedback_service import financial_feedback_for_rows
+
+    financial_facts = (financial_feedback_for_rows(financial_feedback, rows,
+        identity=financial_identity, price_basis=financial_price_basis)
+        if review_instruction and review_rows and financial_identity is not None else [])
     vor_issues = []
     if review_rows and review_instruction and prior_artifact_kind == "vor" and full_result_rows:
         from proxy.services.vor_result_integrity_service import audit_vor_result_integrity
@@ -6586,6 +6655,10 @@ def model_rag_prior_page_context(
                     "model_quantity": row.get("quantity"),
                     "model_unit": row.get("unit"),
                 }
+        financial_fact = next((item for item in financial_facts
+                               if item["operation_id"] == row.get("operation_id")), None)
+        if financial_fact is not None:
+            fact["financial_readiness"] = financial_fact
         row_issues = [{key: value for key, value in issue.items()
                        if key not in {"row_index", "source_row", "operation_id"}}
                       for issue in vor_issues
@@ -6593,7 +6666,7 @@ def model_rag_prior_page_context(
                       and (issue.get("operation_id") or "") == (row.get("operation_id") or "")]
         if row_issues:
             fact["vor_integrity"] = row_issues
-        if any(key in fact for key in ("norm_reference", "applicability_fields", "resource_reference", "price_reference", "source_comparison", "vor_integrity")):
+        if any(key in fact for key in ("norm_reference", "applicability_fields", "resource_reference", "price_reference", "source_comparison", "vor_integrity", "financial_readiness")):
             structural_facts.append(fact)
     proposed_rows = [item["decision"] for item in unapplied_proposals
                      if isinstance(item.get("decision"), Mapping)]
@@ -6602,11 +6675,12 @@ def model_rag_prior_page_context(
         for identity in (row.get("evidence_bindings") or {}).values()
     }
     for row in [*rows, *proposed_rows]:
-        nested_bindings = row.get("_resource_binding_evidence_bindings")
-        if isinstance(nested_bindings, Mapping):
-            for bindings in nested_bindings.values():
-                if isinstance(bindings, Mapping):
-                    cited.update(str(identity) for identity in bindings.values())
+        for binding_field in ("_resource_binding_evidence_bindings", "_separate_supply_review_evidence_bindings"):
+            nested_bindings = row.get(binding_field)
+            if isinstance(nested_bindings, Mapping):
+                for bindings in nested_bindings.values():
+                    if isinstance(bindings, Mapping):
+                        cited.update(str(identity) for identity in bindings.values())
     retained = []
     seen = set()
     for chunk in evidence_chunks:
@@ -6653,7 +6727,7 @@ def model_rag_prior_page_context(
         # their full citation dumps crowded out the next exact evidence group.
         "prior_model_decisions": [
             {key: value for key, value in row.items()
-             if key not in {"_quality_gate", "_evidence_check", "_resource_evidence_check", "_price_evidence_check", "_resource_binding_evidence_checks", "_resource_binding_evidence_bindings", "quality_message"}}
+             if key not in {"_quality_gate", "_evidence_check", "_resource_evidence_check", "_price_evidence_check", "_resource_binding_evidence_checks", "_resource_binding_evidence_bindings", "_separate_supply_review_evidence_checks", "_separate_supply_review_evidence_bindings", "quality_message"}}
             for row in compact_estimator_draft_rows(list(rows))
         ],
         "previously_shown_cited_evidence": cited_evidence,
@@ -6670,6 +6744,8 @@ def model_rag_prior_page_context(
             "карточками и исходными ячейками, не вердикт о применимости нормы. "
             + ("vor_integrity — структурные факты связей и объёмов по полному прежнему результату ВОР, "
                "не предметные решения. " if vor_issues else "")
+            + ("financial_readiness — записанные расчётчиком факты открытых вопросов указанной ревизии "
+               "для неизменённой операции и той же ценовой базы; это не новые решения модели. " if financial_facts else "")
             + "code_in_refs=null означает, что сравнить шифр невозможно. "
             + ("applicability_fields показывает дословные значения полей применимости и их чтение кодом "
                "(yes/no/unknown/missing), не новый вердикт. Контракт полей — yes/no/unknown; "
@@ -9579,6 +9655,75 @@ async def _execute_chat_evidence_application(
                     retrieval_trace["route_comparison"]["candidate_acceptance"] = True
                 canonical_shadow_recorded = False
                 tool_loop_enabled = bool(profile_tools)
+
+                def _with_workbook_terminal(read_tools, *, frame=None, prior_rows=()):
+                    kind = artifact_kind_declaration.get("artifact_kind")
+                    if (canonical_execution_mode is not CanonicalRouteMode.ACTIVE
+                            or artifact_kind_declaration.get("status") != "declared"
+                            or kind not in {"vor", "lsr"}
+                            or f"build_{kind}_workbook" not in profile_tools or source_catalog is None):
+                        return read_tools
+                    # The prompt frame is a packet, while read_source can expose any catalog row.
+                    # Keep the transport schema equally broad without changing packet admission.
+                    anchors = list(source_catalog.work_locators())
+                    from proxy.services.lsr_source_coverage_service import canonicalize_row_role
+                    old_ids = [row["operation_id"] for row in prior_rows if row.get("operation_id")
+                        and (canonicalize_row_role(row.get("row_role")) == "work"
+                             or (source_catalog.lookup(row.get("source_row")) is not None
+                                 and source_catalog.lookup(row.get("source_row")).locator in anchors))]
+                    return [*read_tools, build_workbook_terminal_tool_schema(
+                        anchors, old_ids, artifact_kind=kind,
+                        attachment_id=str(getattr(req, "attachment_id", "") or ""),
+                        require_operation_identity=bool(prior_rows))]
+
+                def _terminal_extractor(native_tools, *, purpose):
+                    terminal_kinds = {"build_vor_workbook": "vor", "build_lsr_workbook": "lsr"}
+                    terminal_name = next((tool.get("function", {}).get("name") for tool in native_tools
+                                          if tool.get("function", {}).get("name") in terminal_kinds), None)
+                    if terminal_name is None:
+                        return None
+
+                    def extract(_text):
+                        nonlocal active_pending_tool_calls
+                        response = getattr(active_model_result, "response", None)
+                        if response is None:
+                            return None
+                        terminal = decode_workbook_terminal_response(response.tool_calls, response.text,
+                            artifact_kind=terminal_kinds[terminal_name],
+                            visible_result_parser=lambda text, diagnostics: parse_model_rag_result(
+                                text, diagnostics=diagnostics, model_declaration=artifact_kind_declaration))
+                        if terminal is None:
+                            return None
+                        if terminal.arguments.get("attachment_id") != str(getattr(req, "attachment_id", "") or ""):
+                            raise WorkbookTerminalTransportError("WORKBOOK_TERMINAL_ATTACHMENT_MISMATCH",
+                                raw_calls=terminal.raw_calls, assistant_content=response.text)
+                        if response.finish_reason not in {"stop", "tool_calls", "function_call", "end_turn"}:
+                            raise WorkbookTerminalTransportError("WORKBOOK_TERMINAL_PROVIDER_INCOMPLETE",
+                                raw_calls=terminal.raw_calls, assistant_content=response.text)
+                        active_pending_tool_calls = max(0, active_pending_tool_calls - len(terminal.raw_calls))
+                        retrieval_trace.setdefault("workbook_terminal_transport", []).append({
+                            **terminal.trace, "purpose": purpose, "provider_finish_reason": response.finish_reason,
+                            "semantic_finish_reason": "stop", "transport_complete": True,
+                            "raw_arguments": terminal.raw_arguments})
+                        return terminal
+                    return extract
+
+                def _workbook_terminal_instruction(native_tools):
+                    terminal_labels = {"build_vor_workbook": "ВОР", "build_lsr_workbook": "ЛСР"}
+                    terminal_name = next((tool.get("function", {}).get("name") for tool in native_tools
+                                          if tool.get("function", {}).get("name") in terminal_labels), None)
+                    if terminal_name is None:
+                        return ""
+                    return (f"\nЕсли пользователь не задал формат ответа, завершённые строки {terminal_labels[terminal_name]} можно передать "
+                            f"в {terminal_name} через decisions. Это итоговые решения, не новый поиск и не "
+                            "непосредственная упаковка. source_row и work_row — буквальные предложенные адреса; "
+                            "operation_id и expected_revision сохраняй из прежних решений. Явный формат пользователя сохраняется.")
+
+                def _record_terminal_error(error, *, purpose):
+                    retrieval_trace.setdefault("workbook_terminal_transport", []).append({
+                        **error.trace, "purpose": purpose, "raw_calls": list(error.raw_calls),
+                        "assistant_content": error.assistant_content, "transport_complete": False})
+
                 query_headers: dict[str, str] = {}
                 model_research_tools = None
                 retrieval_limits = effective_retrieval_policy(profile_snapshot)
@@ -10672,6 +10817,7 @@ async def _execute_chat_evidence_application(
                             (research_job.get("task_context") or {}).get("artifact_kind_declaration") or
                             {"status": "missing", "artifact_kind": "", "declarations": [], "errors": []}, phase="restore")
                     review_notice = ""
+                    review_context: dict[str, Any] = {}
                     review_prior_rows: list[dict[str, Any]] = []
                     review_instruction = ""
                     review_prior_artifact_kind = ""
@@ -11077,6 +11223,9 @@ async def _execute_chat_evidence_application(
                                     prior_page_rows, sheet_pass_evidence_chunks,
                                     review_rows=prior_packet_rows, review_instruction=review_instruction,
                                     prior_artifact_kind=review_prior_artifact_kind,
+                                    financial_feedback=review_context.get("financial_feedback"),
+                                    financial_identity=(research_job or {}).get("identity"),
+                                    financial_price_basis=((research_job or {}).get("task_context") or {}).get("price_basis"),
                                     full_result_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
@@ -11148,6 +11297,9 @@ async def _execute_chat_evidence_application(
                                     prior_page_rows, sheet_pass_evidence_chunks,
                                     review_rows=prior_packet_rows, review_instruction=review_instruction,
                                     prior_artifact_kind=review_prior_artifact_kind,
+                                    financial_feedback=review_context.get("financial_feedback"),
+                                    financial_identity=(research_job or {}).get("identity"),
+                                    financial_price_basis=((research_job or {}).get("task_context") or {}).get("price_basis"),
                                     full_result_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
@@ -11552,11 +11704,14 @@ async def _execute_chat_evidence_application(
                             included_hits: list[tuple[str, Sequence[Any]]] = []
                             result_artifact_kind = (str(artifact_kind_declaration.get("artifact_kind") or "")
                                 if artifact_kind_declaration.get("status") == "declared" else "")
+                            sheet_read_tools = _with_workbook_terminal(model_evidence_read_tool_schemas(), frame=pass_source_frame,
+                                prior_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows))
                             sheet_sys_msg = profile_system_prompt(profile_snapshot, strict=False,
                                 purpose="workbook_result", artifact_kind=result_artifact_kind)
                             if answer_form.instruction:
                                 sheet_sys_msg += " " + answer_form.instruction
                             sheet_sys_msg += "\n" + model_evidence_read_instruction(artifact_kind=result_artifact_kind)
+                            sheet_sys_msg += _workbook_terminal_instruction(sheet_read_tools)
                             if req.output_directive and req.output_directive.strip():
                                 sheet_sys_msg += " " + req.output_directive.strip()
                             question_tail = sheet_pass_question_tail(
@@ -11965,6 +12120,23 @@ async def _execute_chat_evidence_application(
                             # The purpose and the previous authored decisions of
                             # a proof turn survive its own native READ calls.
                             sheet_proof_context: list[dict[str, Any]] = []
+                            pass_terminal_finish = ""
+
+                            async def _pause_terminal_error(error, *, purpose):
+                                nonlocal research_job
+                                _record_terminal_error(error, purpose=purpose)
+                                run_stop_kinds.append("workbook_terminal_transport_invalid")
+                                retrieval_trace["tool_loop"]["evidence_read_stop"] = "workbook_terminal_transport_invalid"
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.pause(
+                                        research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
+                                        phase="workbook_terminal_transport_invalid",
+                                        held_packet={**model_rag_evidence_page_state(
+                                            sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
+                                            query_offset=evidence_query_offset, query_provenance=pass_query_provenance,
+                                            query_addresses=pass_query_addresses, pending_result_packets=pending_result_packets),
+                                            "model_read_pending": True, "terminal_transport_error": error.code},
+                                    )
 
                             async def _continue_sheet_reads(receipts, _results, native_exchanges):
                                 nonlocal t_llm, research_job
@@ -12009,13 +12181,19 @@ async def _execute_chat_evidence_application(
                                     max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
                                     on_read_results=_accept_sheet_reads, continue_native_turn=_continue_sheet_reads,
                                     on_read_replays=_accept_sheet_read_replays,
+                                    extract_terminal=_terminal_extractor(sheet_read_tools, purpose="sheet_pass_answer"),
                                 )
                                 pass_answer, usage = read_turn.text, read_turn.usage
                                 tokens = int(tokens or 0) + read_turn.extra_completion_tokens
                                 read_stop = read_turn.stop_reason
-                                if active_model_result is not None and active_model_result.response.tool_calls:
+                                if read_turn.terminal_result is not None:
+                                    pass_terminal_finish = "stop"
+                                elif active_model_result is not None and active_model_result.response.tool_calls:
                                     read_stop = read_stop or "evidence_read_unknown_tool"
                                     active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
+                            except WorkbookTerminalTransportError as terminal_error:
+                                await _pause_terminal_error(terminal_error, purpose="sheet_pass_answer")
+                                break
                             except CloudBudgetStop:
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.pause(
@@ -12049,7 +12227,8 @@ async def _execute_chat_evidence_application(
                                             "model_read_pending": True, "read_stop": read_stop},
                                     )
                                 break
-                            active_pending_tool_calls = 0
+                            if not pass_terminal_finish:
+                                active_pending_tool_calls = 0
                             if not pass_answer:
                                 last_finish = llm_usage_finish_reason(usage)
                                 tokens = int(tokens or 0) + int(usage.get("completion_tokens") or 0)
@@ -12071,7 +12250,7 @@ async def _execute_chat_evidence_application(
                             tokens = int(tokens or 0) + int(
                                 usage.get("completion_tokens") or 0
                             )
-                            last_finish = llm_usage_finish_reason(usage)
+                            last_finish = pass_terminal_finish or llm_usage_finish_reason(usage)
                             last_truncated = (
                                 finish_reason_is_length(last_finish)
                                 or model_rag_answer_is_truncated(pass_answer)
@@ -12184,15 +12363,19 @@ async def _execute_chat_evidence_application(
                                             on_read_results=_accept_sheet_reads,
                                             continue_native_turn=_continue_sheet_reads,
                                             on_read_replays=_accept_sheet_read_replays,
+                                            extract_terminal=_terminal_extractor(sheet_read_tools, purpose=NORM_CARD_PROOF_PURPOSE),
                                         )
                                         pass_answer, usage = proof_turn.text, proof_turn.usage
                                         tokens = int(tokens or 0) + proof_turn.extra_completion_tokens
                                         proof_receipts = list(proof_turn.receipts)
+                                        last_finish = "stop" if proof_turn.terminal_result is not None else llm_usage_finish_reason(usage)
+                                        if proof_turn.terminal_result is not None:
+                                            last_truncated = False
                                         if proof_turn.stop_reason:
                                             retrieval_trace["tool_loop"]["evidence_read_stop"] = (
                                                 proof_turn.stop_reason)
-                                        elif (llm_usage_finish_reason(usage) not in {"tool_calls", "function_call"}
-                                              and not (finish_reason_is_length(llm_usage_finish_reason(usage))
+                                        elif (last_finish not in {"tool_calls", "function_call"}
+                                              and not (finish_reason_is_length(last_finish)
                                                        or model_rag_answer_is_truncated(pass_answer))):
                                             # The proof's completed document declaration is
                                             # independent of row updates. Keep it even if the
@@ -12203,6 +12386,9 @@ async def _execute_chat_evidence_application(
                                             if research_job_service is not None and research_job is not None:
                                                 research_job = research_job_service.record_artifact_kind(
                                                     research_job["job_id"], declaration=artifact_kind_declaration)
+                                    except WorkbookTerminalTransportError as terminal_error:
+                                        await _pause_terminal_error(terminal_error, purpose=NORM_CARD_PROOF_PURPOSE)
+                                        break
                                     except ContextRequiredSectionOverflow as context_error:
                                         retrieval_trace["context_governor"]["error"] = (
                                             model_read_capacity_trace(
@@ -12317,15 +12503,19 @@ async def _execute_chat_evidence_application(
                                             on_read_results=_accept_sheet_reads,
                                             continue_native_turn=_continue_sheet_reads,
                                             on_read_replays=_accept_sheet_read_replays,
+                                            extract_terminal=_terminal_extractor(sheet_read_tools, purpose=RESOURCE_GROUP_PROOF_PURPOSE),
                                         )
                                         pass_answer, usage = group_turn.text, group_turn.usage
                                         tokens = int(tokens or 0) + group_turn.extra_completion_tokens
                                         group_receipts = list(group_turn.receipts)
+                                        last_finish = "stop" if group_turn.terminal_result is not None else llm_usage_finish_reason(usage)
+                                        if group_turn.terminal_result is not None:
+                                            last_truncated = False
                                         if group_turn.stop_reason:
                                             retrieval_trace["tool_loop"]["evidence_read_stop"] = (
                                                 group_turn.stop_reason)
-                                        elif (llm_usage_finish_reason(usage) not in {"tool_calls", "function_call"}
-                                              and not (finish_reason_is_length(llm_usage_finish_reason(usage))
+                                        elif (last_finish not in {"tool_calls", "function_call"}
+                                              and not (finish_reason_is_length(last_finish)
                                                        or model_rag_answer_is_truncated(pass_answer))):
                                             artifact_kind_declaration = update_model_artifact_kind(
                                                 artifact_kind_declaration,
@@ -12333,6 +12523,9 @@ async def _execute_chat_evidence_application(
                                             if research_job_service is not None and research_job is not None:
                                                 research_job = research_job_service.record_artifact_kind(
                                                     research_job["job_id"], declaration=artifact_kind_declaration)
+                                    except WorkbookTerminalTransportError as terminal_error:
+                                        await _pause_terminal_error(terminal_error, purpose=RESOURCE_GROUP_PROOF_PURPOSE)
+                                        break
                                     except ContextRequiredSectionOverflow as context_error:
                                         retrieval_trace["context_governor"]["error"] = (
                                             model_read_capacity_trace(
@@ -12367,6 +12560,15 @@ async def _execute_chat_evidence_application(
                                     sheet_name, len(packet), len(proof_groups), group_answered,
                                     len(group_receipts), group_answer_parsed,
                                 )
+                            expanded_packet = model_read_result_packet_locators(
+                                packet, rows=pass_rows, receipts=read_receipts, catalog=source_catalog,
+                                existing_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
+                                review_scope=bool(review_instruction), job=research_job,
+                            )
+                            read_admitted_locators = set(expanded_packet) - set(packet)
+                            packet = expanded_packet
+                            offered_locators.update(read_admitted_locators)
+                            model_delivered_source_locators.update(read_admitted_locators)
                             pass_errors = validate_model_rag_result_structure(
                                 pass_rows,
                                 [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
@@ -12400,6 +12602,7 @@ async def _execute_chat_evidence_application(
                                 catalog=source_catalog,
                                 errors=pass_errors,
                                 drop_locator=tail_locator,
+                                additional_locators=read_admitted_locators,
                                 artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
                                                if artifact_kind_declaration.get("status") == "declared" else ""),
                             )
@@ -12407,6 +12610,7 @@ async def _execute_chat_evidence_application(
                                 admission.accepted_rows, kept_rows=kept, sheet=sheet_name,
                                 catalog=source_catalog, errors=pass_errors,
                                 packet_locators=packet, drop_locator=tail_locator,
+                                additional_locators=read_admitted_locators,
                             )
                             resolved_source_proposal_ids = source_conflict_resolutions(
                                 active_source_conflict_proposals(research_job), kept,
@@ -13209,6 +13413,7 @@ async def _execute_chat_evidence_application(
                             "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
                         )
                     )
+                    direct_terminal_finish = ""
                     direct_read_tools = (
                         model_evidence_read_tool_schemas()
                         if model_driven_retrieval
@@ -13216,6 +13421,8 @@ async def _execute_chat_evidence_application(
                              or not workbook_carrier_required)
                         else []
                     )
+                    if direct_read_tools:
+                        direct_read_tools = _with_workbook_terminal(direct_read_tools, frame=initial_source_frame)
                     ordinary_answer_tools = tuple(
                         tool for tool in (native_tools if ordinary_research_ready else ())
                         if tool.get("function", {}).get("name") in ordinary_read_contracts
@@ -13231,6 +13438,7 @@ async def _execute_chat_evidence_application(
                         sys_msg += "\n" + model_evidence_read_instruction(
                             artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
                                 if artifact_kind_declaration.get("status") == "declared" else ""))
+                        sys_msg += _workbook_terminal_instruction(direct_read_tools)
                         sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(direct_price_basis, ensure_ascii=False)
                     if model_driven_retrieval:
                         if workbook_carrier_required:
@@ -13851,14 +14059,20 @@ async def _execute_chat_evidence_application(
                                 on_read_replays=_accept_direct_read_replays,
                                 allowed_tools={item["function"]["name"] for item in direct_read_tools},
                                 max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
+                                extract_terminal=_terminal_extractor(direct_read_tools, purpose="direct_answer"),
                             )
                             answer, usage = read_turn.text, read_turn.usage
                             direct_read_stop = read_turn.stop_reason
-                            if active_model_result is not None and active_model_result.response.tool_calls:
+                            if read_turn.terminal_result is not None:
+                                direct_terminal_finish = "stop"
+                            elif active_model_result is not None and active_model_result.response.tool_calls:
                                 direct_read_stop = direct_read_stop or "evidence_read_unknown_tool"
                                 active_pending_tool_calls = max(active_pending_tool_calls, len(active_model_result.response.tool_calls))
                             usage = {**usage, "completion_tokens": read_turn.extra_completion_tokens
                                      + (0 if direct_read_stop else int(usage.get("completion_tokens") or 0))}
+                        except WorkbookTerminalTransportError as terminal_error:
+                            _record_terminal_error(terminal_error, purpose="direct_answer")
+                            direct_read_stop = "workbook_terminal_transport_invalid"
                         except ContextRequiredSectionOverflow as context_error:
                             retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
                                 context_error, purpose="direct_evidence_read")
@@ -13870,7 +14084,7 @@ async def _execute_chat_evidence_application(
                             answer = ("Техническая остановка чтения источников: " + direct_read_stop
                                       + (". Решение модели не завершено; ЛСР не упакована."
                                          if workbook_carrier_required else ". Решение модели не завершено."))
-                        else:
+                        elif not direct_terminal_finish:
                             active_pending_tool_calls = 0
                     if (not model_driven_retrieval and not direct_read_tools and active_model_result is not None
                             and (active_model_result.response.tool_calls
@@ -13908,7 +14122,7 @@ async def _execute_chat_evidence_application(
                             continue
                         raise ValueError(f"Пустой ответ LLM (stream={token_sink is not None})")
                     tokens = usage.get("completion_tokens", 0)
-                    answer_finish_reason = llm_usage_finish_reason(usage)
+                    answer_finish_reason = direct_terminal_finish or llm_usage_finish_reason(usage)
                     # W3.3: учёт расходов облака (токены → $). Локальные вызовы не считаем.
                     if is_cloud_provider(llm_runtime.provider):
                         _record_cloud_cost(state, llm_model, usage)
@@ -14870,6 +15084,9 @@ async def _execute_chat_evidence_application(
                                             # much as its revision chain does: the
                                             # next turn inherits it from here (§ 4).
                                             price_basis=harvested.get("price_basis"),
+                                            **({"financial_projection": list(harvested["row_projection"])}
+                                               if packaging_tool == "build_lsr_workbook"
+                                               and isinstance(harvested.get("row_projection"), list) else {}),
                                         )
                                     except Exception as record_error:  # noqa: BLE001 - lineage hint is best-effort
                                         logger.warning(

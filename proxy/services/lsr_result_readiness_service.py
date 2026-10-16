@@ -26,6 +26,7 @@ from proxy.services.rim_lsr_trace_service import (
     RESOURCE_GROUP_ACTION,
     format_ruble_amount,
 )
+from proxy.services.lsr_financial_feedback_service import incomplete_financial_operations
 
 SCHEMA = "les.lsr-result-readiness.v1"
 
@@ -647,10 +648,15 @@ def build_lsr_result_readiness(
     if remaining:
         coverage_complete = False
 
+    financial_open = incomplete_financial_operations(work_rows, row_projection,
+        canonicalize_locator=lambda value: catalog_source_locator(value, source_catalog))
     retry_locators = list(dict.fromkeys([*remaining,
-        *(_text(item.get("locator")) for item in norm_gaps if _text(item.get("locator")))]))
+        *(_text(item.get("locator")) for item in norm_gaps if _text(item.get("locator"))),
+        *(_locator(row) for row, _projection in financial_open)]))
     retry_operation_ids = list(dict.fromkeys(_text(item.get("operation_id")) for item in norm_gaps
                                             if _text(item.get("operation_id"))))
+    retry_operation_ids = list(dict.fromkeys([*retry_operation_ids,
+        *(_text(row.get("operation_id")) for row, _projection in financial_open if _text(row.get("operation_id")))]))
     if retry_locators:
         continue_action = (
             "Нажмите «Продолжить незакрытые строки». "

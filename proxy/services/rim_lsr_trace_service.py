@@ -1272,7 +1272,7 @@ def build_position_trace(
     from proxy.services.model_resource_binding_service import resource_binding_conflict_note
 
     for conflict in resource_binding_conflicts:
-        prefix = "" if conflict.get("code") == "separate_supply_possible_overlap" else "Конфликт действия над ресурсом: "
+        prefix = "" if conflict.get("code") in {"separate_supply_possible_overlap", "separate_supply_review_conflict"} else "Конфликт действия над ресурсом: "
         flags.append(prefix + resource_binding_conflict_note(conflict))
         completeness_reasons.append(str(conflict.get("code") or "resource_binding_conflict"))
     if position.get("resource_selection_unsubstantiated"):
@@ -1911,7 +1911,7 @@ def build_position_trace(
             **({
                 "resource_binding_audit": list(position.get("resource_binding_audit") or []),
                 "resource_binding_conflicts": resource_binding_conflicts,
-                **{key: position[key] for key in ("resource_bindings", "resource_review") if key in position},
+                **{key: position[key] for key in ("resource_bindings", "resource_review", "separate_supply_review_audit") if key in position},
             } if "resource_bindings" in position or "resource_review" in position or resource_binding_conflicts else {}),
             "labor_qty": qty_sums["labor"],
             "machinist_qty": qty_sums["machinist"],
@@ -3077,6 +3077,7 @@ def positions_from_visible_lsr_rows(
             "action_conflict",
             "resource_bindings",
             "resource_review",
+            "separate_supply_review_audit",
             "resource_binding_audit",
             "resource_binding_conflicts",
         ):
@@ -3383,7 +3384,7 @@ def build_lsr_trace_from_visible_rows(
                 for entry in (pos_summary.get("resource_decisions") or [])
                 if isinstance(entry, Mapping)
             ]
-            for key in ("resource_binding_audit", "resource_binding_conflicts", "resource_bindings", "resource_review"):
+            for key in ("resource_binding_audit", "resource_binding_conflicts", "resource_bindings", "resource_review", "separate_supply_review_audit"):
                 if key in pos_summary:
                     binding[key] = pos_summary[key]
             if preliminary:

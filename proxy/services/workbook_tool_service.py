@@ -44,15 +44,37 @@ _BASE_INPUT_PROPERTIES = {
     "draft": {"type": "boolean"},
 }
 
+_VOR_DECISION_SCHEMA = {
+    "type": "object",
+    # Additional literal evidence, calculation and coverage fields belong to the
+    # model too; a technical row schema must not discard professional decisions.
+    "additionalProperties": True,
+    "required": ["source_row", "row_role", "title"],
+    "properties": {
+        "source_row": {"type": "string", "minLength": 1},
+        "row_role": {"type": "string", "enum": ["work", "material", "equipment", "resource", "unresolved", "header"]},
+        "work_row": {"type": ["string", "null"], "description": "Existing work source locator or shown operation_id; empty for an independent work. Never a norm/evidence ref or an invented suffix."},
+        "title": {"type": "string", "minLength": 1},
+        "unit": {"type": ["string", "null"]},
+        "quantity": {"type": ["number", "string", "null"], "description": "Preserve literal or source-justified volume, including a decimal-comma string; unknown is null, confirmed zero is 0."},
+        "open_gap": {"type": ["string", "null"]},
+        "section": {"type": ["string", "null"]},
+        "coverage": {"type": ["string", "null"]},
+        "covered_by_work_id": {"type": ["string", "null"]},
+        "operation_id": {"type": ["string", "null"], "description": "Preserve a shown operation identity; explicitly empty for a new operation."},
+        "expected_revision": {"type": ["integer", "null"], "minimum": 1},
+    },
+}
+
 _VOR_INPUT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["attachment_id"],
+    "required": ["attachment_id", "decisions"],
     "properties": {
         **_BASE_INPUT_PROPERTIES,
         "decisions": {
             "type": "array",
-            "items": {"type": "object"},
+            "items": _VOR_DECISION_SCHEMA,
         },
     },
 }
@@ -128,10 +150,12 @@ BUILD_LSR_WORKBOOK = _contract(
 )
 BUILD_VOR_WORKBOOK = _contract(
     "build_vor_workbook", "Build VOR workbook",
-    "Build an immutable ВОР (ведомость объёма работ) draft that preserves the "
-    "source specification rows, quantities and units WITHOUT norm pricing. Choose "
-    "it when the user asks for a ВОР/ведомость from a specification or source "
-    "table; it needs only the attachment, never model decisions.", (),
+    "Build an immutable ВОР (ведомость объёма работ) draft from explicit "
+    "model-authored work decisions, source-based quantities, units and relationships. "
+    "Derive justified operations from the source instead of copying a specification. "
+    "Norms and prices are not required. An explicit empty decisions array remains an "
+    "incomplete empty draft; missing decisions never copy source rows.",
+    ("source_row", "row_role", "work_row", "title", "unit", "quantity", "open_gap", "coverage"),
     input_schema=_VOR_INPUT_SCHEMA,
 )
 
@@ -356,7 +380,7 @@ async def _default_vor_adapter(
 
     source_label = str(args.get("_source_name") or source_path.name)
     draft = list(args.get("decisions") or [])
-    authored = bool(draft)
+    authored = "decisions" in args
     rows: list[dict[str, Any]] = _vor_rows_from_draft(draft, source_label=source_label) if authored else []
     spec_error: Exception | None = None
     if not authored and source_path.suffix.lower() in {".xlsx", ".xlsm"}:
@@ -372,7 +396,7 @@ async def _default_vor_adapter(
         rows = _vor_rows_from_draft(args.get("decisions") or [], source_label=source_label)
     if not rows and spec_error is not None:
         raise spec_error
-    if not rows:
+    if not rows and not authored:
         raise ValueError("NO_SOURCE_ROWS: source did not yield any VOR rows")
     from proxy.services.spec_to_bor_service import derive_work_for_item
 
@@ -435,10 +459,15 @@ async def _default_vor_adapter(
             requires_decision_count += 1
     progress("source_rows", 0, len(rows))
     document_issues = [dict(issue) for issue in args.get("_document_issues") or () if isinstance(issue, Mapping)]
+    if authored and not draft:
+        document_issues.append({
+            "code": "MODEL_WORK_ROWS_EMPTY",
+            "reason": "Модель явно вернула пустой список решений ВОР; работы не сформированы.",
+        })
     # A structural issue never rewrites an operation or invents installation.
     # Preserve the same authored rows and make unanswered relationships visible.
     document_issues.extend(integrity_issues)
-    draft_document = bool(args.get("_draft"))
+    draft_document = bool(args.get("_draft")) or (authored and not draft)
     if draft_document and not document_issues:
         document_issues = [{"code": "WORKBOOK_DRAFT", "reason": "Промежуточная ревизия; работа не завершена."}]
     await asyncio.to_thread(
@@ -448,7 +477,7 @@ async def _default_vor_adapter(
         title=str(args.get("question") or "Ведомость объёмов работ"),
         **({"document_issues": document_issues, "draft": draft_document} if document_issues or draft_document else {}),
     )
-    missing: list[str] = []
+    missing: list[str] = ["model_work_rows"] if authored and not draft else []
     from proxy.services.vor_result_integrity_service import vor_has_complete_derived_measure
 
     for index, row in enumerate(rows, 1):
@@ -468,7 +497,7 @@ async def _default_vor_adapter(
         "requires_decision_count": requires_decision_count,
         "missing": missing,
         "vor_source_errors": list(dict.fromkeys(source_errors)),
-        "blockers": [],
+        "blockers": ["MODEL_WORK_ROWS_EMPTY"] if authored and not draft else [],
         **({"document_issues": document_issues} if document_issues else {}),
     }
 
@@ -541,7 +570,16 @@ async def _build_workbook(
     unknown = sorted(set(args) - allowed_args)
     if unknown:
         return {**_rejected("INVALID_TOOL_ARGUMENTS", f"unknown arguments: {', '.join(unknown)}"), "tool": tool_name}
+    if artifact_kind == "vor_workbook":
+        if args.get("decisions") is None:
+            return {**_rejected(
+                "MODEL_WORK_ROWS_REQUIRED", "ВОР требует явных решений модели; исходная спецификация не заменяет работы.",
+            ), "tool": tool_name}
+        if not isinstance(args["decisions"], list) or any(not isinstance(row, Mapping) for row in args["decisions"]):
+            return {**_rejected("INVALID_TOOL_ARGUMENTS", "decisions must be an array of model-authored row objects"), "tool": tool_name}
     normalized = _normalized_args(args, allowed_args=allowed_args)
+    if artifact_kind == "vor_workbook" and not normalized["decisions"]:
+        normalized["draft"] = True
     if not normalized["attachment_id"]:
         return {**_rejected("INVALID_TOOL_ARGUMENTS", "attachment_id is required"), "tool": tool_name}
     try:
@@ -557,8 +595,7 @@ async def _build_workbook(
     ]
     if artifact_kind == "vor_workbook":
         supported = {".xlsx", ".xlsm"}
-        if draft_rows:
-            supported.update({".pdf", ".docx", ".csv", ".rtf"})
+        supported.update({".pdf", ".docx", ".csv", ".rtf"})
     else:
         supported = {".pdf", ".xlsx", ".xlsm"}
         if draft_rows:

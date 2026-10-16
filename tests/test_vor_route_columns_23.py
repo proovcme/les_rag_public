@@ -65,10 +65,11 @@ def test_vor_sheet_preserves_positions_and_marks_decisions(tmp_path: Path):
     wb.close()
 
 
-def test_default_vor_adapter_annotates_and_counts(tmp_path: Path):
+def test_explicit_empty_vor_decisions_do_not_select_the_historical_spec_reader(tmp_path: Path):
     import asyncio
 
     from proxy.services.workbook_tool_service import _default_vor_adapter
+    from proxy.services.spec_to_bor_service import rows_from_spec_xlsx
 
     spec = tmp_path / "spec.xlsx"
     wb = openpyxl.Workbook()
@@ -88,9 +89,16 @@ def test_default_vor_adapter_annotates_and_counts(tmp_path: Path):
         )
 
     result = asyncio.run(_run())
-    assert result["source_rows"] == 2
-    assert result["requires_decision_count"] >= 1
+    assert result["source_rows"] == 0
+    assert result["requires_decision_count"] == 0
+    assert result["blockers"] == ["MODEL_WORK_ROWS_EMPTY"]
 
     wb2 = openpyxl.load_workbook(out)
-    assert wb2.sheetnames == ["ВОР"]
+    assert wb2.sheetnames == ["ВОР", "Проверка"]
+    assert wb2["ВОР"].max_row == 3
     wb2.close()
+    # Historical specification utilities remain available when deliberately
+    # called; their rows must not replace the model's explicit empty decision.
+    historical = rows_from_spec_xlsx(spec)
+    assert [row["name"] for row in historical] == ["Светильник LED", "Монтаж шкафа"]
+    assert [row["qty"] for row in historical] == [24, 4]

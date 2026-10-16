@@ -1133,8 +1133,23 @@ class WorkbookResearchJobService:
                 return {"prior_rows": [dict(item) for item in payload.get("prior_rows") or ()
                                        if isinstance(item, Mapping)],
                         "message": str(note.get("message") or ""),
+                        **({"financial_feedback": dict(note["financial_feedback"])}
+                           if isinstance(note.get("financial_feedback"), Mapping) else {}),
                         **({"prior_artifact_kind": str(note["prior_artifact_kind"] or "")}
                            if "prior_artifact_kind" in note else {})}
+        return {}
+
+    def latest_financial_feedback(self, job_id: str) -> dict[str, Any]:
+        """Only the latest issued document's recorded calculator observations.
+
+        A legacy/new revision with no projection invalidates older observations;
+        this read must never fall back to an earlier book or document revision.
+        """
+        for event in reversed(self.list_events_with_lineage(job_id, "workbook_packaged")):
+            payload = event.get("payload") or {}
+            snapshot = payload.get("financial_feedback")
+            return (dict(snapshot) if payload.get("tool") == "build_lsr_workbook"
+                    and isinstance(snapshot, Mapping) else {})
         return {}
 
     @staticmethod
@@ -1298,6 +1313,7 @@ class WorkbookResearchJobService:
         parent_revision_id: str | None = None,
         price_basis: Mapping[str, Any] | None = None,
         repack_request: Mapping[str, Any] | None = None,
+        financial_projection: Sequence[Mapping[str, Any]] | None = None,
     ) -> int:
         """Durable trace of a packaged workbook revision for this job.
 
@@ -1312,18 +1328,26 @@ class WorkbookResearchJobService:
         """
         basis = _packaged_price_basis(price_basis)
         with self._connect() as conn:
-            if basis and str(tool) == "build_lsr_workbook":
+            feedback = None
+            if str(tool) == "build_lsr_workbook" and (basis or financial_projection is not None):
                 row = conn.execute(
-                    "SELECT task_context_json FROM workbook_research_jobs WHERE job_id=?",
+                    "SELECT * FROM workbook_research_jobs WHERE job_id=?",
                     (str(job_id),),
                 ).fetchone()
                 if row is not None:
-                    context = _json_object(row, "task_context_json")
-                    context["price_basis"] = basis
-                    conn.execute(
-                        "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
-                        (json.dumps(context, ensure_ascii=False), str(job_id)),
-                    )
+                    if basis:
+                        context = _json_object(row, "task_context_json")
+                        context["price_basis"] = basis
+                        conn.execute(
+                            "UPDATE workbook_research_jobs SET task_context_json=? WHERE job_id=?",
+                            (json.dumps(context, ensure_ascii=False), str(job_id)),
+                        )
+                    if financial_projection is not None:
+                        from proxy.services.lsr_financial_feedback_service import financial_feedback_snapshot
+
+                        feedback = financial_feedback_snapshot(_json_list(row, "accepted_rows_json"),
+                            financial_projection, revision_id=str(revision_id), price_basis=basis,
+                            identity=_json_object(row, "identity_json"))
             return self._append_event(
                 conn,
                 str(job_id),
@@ -1334,6 +1358,7 @@ class WorkbookResearchJobService:
                     "draft": bool(draft),
                     "parent_revision_id": str(parent_revision_id or ""),
                     "price_basis": basis,
+                    **({"financial_feedback": feedback} if feedback is not None else {}),
                     **({"repack_request": dict(repack_request)} if isinstance(repack_request, Mapping) else {}),
                 },
             )
@@ -2263,6 +2288,10 @@ class WorkbookResearchJobService:
             "message": "Пользователь явно открыл указанные исходные строки для нового исследования.",
             "decision_author": "user", "review_scope": "locators",
         })
+        if preserve_accepted and "financial_feedback" not in review_note:
+            feedback = self.latest_financial_feedback(job_id)
+            if feedback:
+                review_note["financial_feedback"] = feedback
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(

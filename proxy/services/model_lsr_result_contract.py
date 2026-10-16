@@ -903,5 +903,11 @@ def model_lsr_resource_decision_instruction() -> str:
         "unresolved с описанием пробела. labor_status/machine_status/material_status: "
         "confirmed/not_present/unresolved/rejected; confirmed и rejected требуют "
         "labor_reason/machine_reason/material_reason соответствующего компонента. "
+        "Если отдельная связанная поставка не входит в ресурсы нормы, явно укажи в resource_review "
+        "separate_supply_reviews:[{source_row,relation:'separate',reason,evidence_refs:[Qx.Hy]}]: "
+        "source_row — буквальный адрес этой поставки, reason — основание раздельного учёта, "
+        "evidence_refs — показанные полные карточки выбранной нормы. "
+        "Это решение о связи, не удаление ресурса и не подтверждение цены. Общий keep_all_confirmed "
+        "или разные шифры ресурсов сами по себе такую связь не подтверждают. "
         "Шифр, расход, единицу и ресурсное соответствие не выдумывай."
     )

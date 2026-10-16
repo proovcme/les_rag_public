@@ -1,5 +1,44 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 962 — авторский terminal ВОР/ЛСР и добор финансовых пробелов
+
+`workbook_tool_service` требует явные model decisions в canonical ВОР:
+missing/None не запускает spec-copy, явный[] остаётся пустой промежуточной
+ревизией. Исторические readers доступны отдельно. Typed schema описывает
+адресацию/роли и сохраняет дополнительные авторские поля,0/null и прежние ID.
+`model_workbook_terminal_transport_service` преобразует один literal native
+build_vor_workbook/build_lsr_workbook в существующий row carrier, не исполняя
+workbook tool. Тип берётся из декларации модели. Допустимы только attachment
+и авторские decisions; ценовая база и подтверждения не меняются top-level
+аргументами. При наличии прежних решений schema требует явные ID/revision,
+включая пустую identity для новой операции; store по-прежнему проверяет CAS.
+`model_evidence_read_service` принимает optional terminal до read dispatch;
+путь с обычным текстом не меняется. Противоречащие или смешанные результаты
+отклоняются явно, без выбора версии и дополнительного model round.
+Интеграция использует один admission/checkpoint/packaging в B0/B1 и не
+исполняет workbook tool внутри read loop. Provider finish и исходные аргументы
+записаны отдельно от технического признака завершённого carrier. Полный gate
+и установленная профессиональная квалификация кандидата ещё требуются.
+Enum содержит буквальные адреса полного каталога. Успешный read_source
+может добавить в результат новые фактически прочитанные адреса вне кадра;
+это не разрешение менять закрытые операции или расширять explicit review.
+
+`model_resource_binding_service` принимает nested separate_supply_reviews
+в resource_review: модель явно обосновывает отдельную поставку по прочитанному
+составу выбранной нормы. Код проверяет адрес/ссылки и сохраняет audit, не
+определяет отсутствие пересечения по названию или шифру. Exact exclude
+сохраняет прежний путь. `lsr_financial_feedback_service` соединяет неполные
+калькуляторные проекции с точными accepted ID; readiness включает их в
+запрошенный retry. WorkbookResearchJobService сохраняет такой feedback для
+выданной ревизии с source scope, revision/hash строки и SHA книги. Повторный
+review получает только актуальные факты; старые записи без snapshot не
+получают выдуманный результат расчёта. Дополнительных model rounds нет.
+Док↔код: ✅ [RAG flow](modules/rag-evidence-flow.md), [tool harness](ALGO-tool-harness.md).
+Регрессии: `test_model_workbook_terminal_transport_962.py`,
+`test_model_evidence_terminal_boundary_962.py`,
+`test_vor_native_terminal_workflow_962.py`, `test_lsr_supply_retry_962.py`,
+`test_lsr_native_feedback_962.py`, canonical workbook tests.
+
 ## 961 — полное чтение стандартных XLSX-примечаний
 
 `xlsx_source_metadata_service.read_xlsx_source_metadata` читает шесть печатных
@@ -16,7 +55,9 @@ Unknown/threaded/picture/malformed metadata остаются явной непо
 в uv.lock, не разрешая и не меняя зависимости. Это предотвращает изменение
 tracked lock последующим каноническим uv-run gate. Док↔код: ✅ [VERSIONING](VERSIONING.md).
 Регрессия: `test_software_versions.py`.
-Кандидат960 не устанавливался; runtime остаётся959. Приёмка961 ещё требуется.
+Кандидат960 не устанавливался. Runtime961 установлен из точного NSIS:
+полный manifest514files,395факторов, прежние задания и артефакты сохранены;
+профессиональная приёмка разных ВОР/ЛСР ещё не закрыта.
 
 ## 960 — текущий native reasoning и единый Windows bootstrap
 

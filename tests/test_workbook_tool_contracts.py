@@ -47,7 +47,7 @@ def test_chat_only_advertises_workbook_tools_with_a_real_adapter():
     assert available_chat_workbook_tools(executor_configured=False) == frozenset()
 
 
-def test_workbook_contracts_accept_plain_model_rows_without_a_domain_schema():
+def test_workbook_contracts_keep_lsr_rows_plain_and_require_authored_vor_rows():
     registry = canonical_tool_registry()
     lsr_schema = registry.require("build_lsr_workbook").contract.input_schema
     vor_schema = registry.require("build_vor_workbook").contract.input_schema
@@ -60,9 +60,63 @@ def test_workbook_contracts_accept_plain_model_rows_without_a_domain_schema():
         "additionalProperties": {"type": "object"},
     }
     assert "confirmed_data" not in lsr_schema.get("required", [])
-    assert vor_schema["properties"]["decisions"]["items"] == {"type": "object"}
-    assert "decisions" not in vor_schema.get("required", [])
+    vor_rows = vor_schema["properties"]["decisions"]
+    assert "decisions" in vor_schema["required"]
+    assert "minItems" not in vor_rows and "maxItems" not in vor_rows
+    assert vor_rows["items"]["additionalProperties"] is True
+    assert tuple(vor_rows["items"]["properties"]["row_role"]["enum"]) == (
+        "work", "material", "equipment", "resource", "unresolved", "header",
+    )
+    assert "norm_code" not in vor_rows["items"]["required"]
+    assert tuple(vor_rows["items"]["required"]) == ("source_row", "row_role", "title")
     assert "confirmed_data" not in vor_schema.get("properties", {})
+
+
+def test_vor_native_schema_accepts_header_zero_unknown_and_extra_authored_fields():
+    from proxy.services.structured_extract import validate
+
+    schema = canonical_tool_registry().require("build_vor_workbook").contract.input_schema
+    rows = [{
+        "source_row": "Исходник!R2", "row_role": role, "work_row": "",
+        "title": "Авторское решение", "unit": "" if role == "header" else "м",
+        "quantity": quantity, "open_gap": "", "coverage": "Авторский состав",
+        "operation_id": "op_known", "expected_revision": 4,
+        "custom_source_basis": {"literal": "kept", "formula": "a*b"},
+    } for role, quantity in (("header", None), ("work", 0), ("unresolved", None))]
+    assert validate({"attachment_id": "read_123456abcdef", "decisions": rows}, schema) == []
+    assert validate({"attachment_id": "read_123456abcdef", "decisions": []}, schema) == []
+    assert validate({"attachment_id": "read_123456abcdef", "decisions": [
+        {"source_row": "Sheet!R2", "row_role": "work", "title": "Saved literal decision"},
+    ]}, schema) == []
+    assert validate({"attachment_id": "read_123456abcdef"}, schema)
+    assert validate({"attachment_id": "read_123456abcdef", "decisions": None}, schema)
+    for field, value in (("row_role", "invented"), ("source_row", 2), ("quantity", {"not": "a literal"})):
+        assert validate({"attachment_id": "read_123456abcdef", "decisions": [{**rows[1], field: value}]}, schema)
+    for required in ("source_row", "row_role", "title"):
+        incomplete = {key: value for key, value in rows[1].items() if key != required}
+        assert validate({"attachment_id": "read_123456abcdef", "decisions": [incomplete]}, schema)
+
+
+def test_vor_native_schema_keeps_literal_decimal_and_existing_optional_nulls():
+    from proxy.services.structured_extract import validate
+
+    schema = canonical_tool_registry().require("build_vor_workbook").contract.input_schema
+    row = {"source_row": "S!R2", "row_role": "work", "title": "Literal decision", "quantity": "23,6",
+           "unit": None, "work_row": None, "open_gap": None, "section": None, "coverage": None,
+           "covered_by_work_id": None, "operation_id": None, "expected_revision": None}
+    assert validate({"attachment_id": "read_owned", "decisions": [row]}, schema) == []
+    assert validate({"attachment_id": "read_owned", "decisions": [{**row, "expected_revision": 1}]}, schema) == []
+    for invalid in (0, -1, "1", True):
+        assert validate({"attachment_id": "read_owned", "decisions": [{**row, "expected_revision": invalid}]}, schema)
+    for strict in ("source_row", "row_role", "title"):
+        assert validate({"attachment_id": "read_owned", "decisions": [{**row, strict: None}]}, schema)
+
+
+def test_vor_native_summary_requires_work_decisions_instead_of_specification_copy():
+    summary = canonical_tool_registry().require("build_vor_workbook").contract.summary
+    assert "model-authored" in summary
+    assert "never model decisions" not in summary
+    assert "preserves the source specification rows" not in summary
 
 
 def test_chat_workbook_capabilities_come_from_the_executor_manifest():

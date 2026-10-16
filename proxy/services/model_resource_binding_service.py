@@ -23,13 +23,101 @@ RESOURCE_BINDING_FIELDS = frozenset({
 RESOURCE_REVIEW_FIELDS = frozenset({
     "status", "reason", "labor_status", "labor_reason", "machine_status", "machine_reason",
     "material_status", "material_reason", "dominant_status", "dominant_reason",
+    "separate_supply_reviews",
 })
+
+
+def separate_supply_review_evidence_checks(
+    row: Mapping[str, Any], bindings: Mapping[str, str], cards: Mapping[str, str],
+    body_shown: Mapping[str, bool], *, first_bind: bool = True,
+    issued_alias_bindings: Mapping[str, str] | None = None,
+    global_cards: Mapping[str, str] | None = None, ambiguous_aliases: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    """Observe only pinned, delivered cards of the selected norm; choose no relation."""
+    from proxy.services.lsr_norm_quality_gate_service import ciphers_identical
+
+    review = row.get("resource_review")
+    proposals = review.get("separate_supply_reviews") if isinstance(review, Mapping) else None
+    if not isinstance(proposals, list):
+        return []
+    checks = []
+    old_bindings = row.get("_separate_supply_review_evidence_bindings")
+    old_bindings = old_bindings if isinstance(old_bindings, Mapping) else {}
+    issued = bindings if issued_alias_bindings is None else issued_alias_bindings
+    for index, proposal in enumerate(proposals):
+        refs = proposal.get("evidence_refs") if isinstance(proposal, Mapping) else None
+        valid = isinstance(refs, list) and bool(refs) and all(isinstance(ref, str) and ref.strip() for ref in refs)
+        aliases = [ref.strip().upper() for ref in refs] if valid else []
+        prior = old_bindings.get(str(index))
+        prior = prior if isinstance(prior, Mapping) else {}
+        resolved = {ref: issued[ref] for ref in aliases if issued.get(ref) and ref not in ambiguous_aliases} if first_bind else {
+            ref: identity for ref, identity in prior.items() if ref in aliases and isinstance(identity, str) and identity}
+        checks.append({
+            "index": index, "evidence_bindings": resolved,
+            "selected_norm_body_shown": bool(valid and len(resolved) == len(set(aliases)) and all(
+                body_shown.get(identity) is True and ciphers_identical(row.get("norm_code"),
+                    global_cards.get(identity) if global_cards is not None else cards.get(ref))
+                for ref, identity in resolved.items())),
+        })
+    return checks
+
+
+def _separate_supply_reviews(
+    row: Mapping[str, Any], supplies: Sequence[Mapping[str, Any]], *, review_valid: bool,
+    parent_ambiguous: bool, work_id: str,
+) -> tuple[set[str], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Validate the model's explicit relation without editing resources or prices."""
+    review = row.get("resource_review")
+    if not isinstance(review, Mapping) or "separate_supply_reviews" not in review:
+        return set(), [], []
+    proposals = review["separate_supply_reviews"]
+    audit, conflicts, resolved = [], [], set()
+    if not isinstance(proposals, list):
+        return set(), [], [{"code": "separate_supply_review_conflict", "work_id": work_id,
+                           "reason": "separate_supply_reviews must be an array", "proposal": copy.deepcopy(proposals)}]
+    locators = [item.get("source_row") for item in proposals if isinstance(item, Mapping)]
+    checks = {}
+    if isinstance(row.get("_separate_supply_review_evidence_checks"), list):
+        for check in row["_separate_supply_review_evidence_checks"]:
+            index = check.get("index") if isinstance(check, Mapping) else None
+            if isinstance(index, int) and not isinstance(index, bool) and index >= 0:
+                checks[index] = check
+    for index, proposal in enumerate(proposals):
+        entry = {"index": index, "proposal": copy.deepcopy(proposal), "status": "conflict"}
+        audit.append(entry)
+        try:
+            if not isinstance(proposal, Mapping) or set(proposal) != {"source_row", "relation", "reason", "evidence_refs"}:
+                raise ValueError("separate supply review fields are invalid")
+            locator = proposal["source_row"]
+            if not isinstance(locator, str) or not locator or locators.count(locator) != 1:
+                raise ValueError("separate supply source is missing or ambiguous")
+            if parent_ambiguous or sum(item.get("source_row") == locator for item in supplies) != 1:
+                raise ValueError("separate supply source is not a unique linked supply")
+            if proposal["relation"] != "separate" or not isinstance(proposal["reason"], str) or not proposal["reason"].strip():
+                raise ValueError("separate supply relation requires separate and a reason")
+            refs = proposal["evidence_refs"]
+            if not isinstance(refs, list) or not refs or any(not isinstance(ref, str) or not ref.strip() for ref in refs):
+                raise ValueError("separate supply evidence_refs must be a nonempty string array")
+            if not review_valid or review.get("status") not in {"keep_all_confirmed", "actions_confirmed"}:
+                raise ValueError("separate supply relation requires a resolved resource review")
+            check = checks.get(index, {})
+            if check.get("selected_norm_body_shown") is not True:
+                raise ValueError("separate supply relation lacks the pinned delivered selected norm card")
+            entry.update(status="confirmed", evidence_bindings=copy.deepcopy(check.get("evidence_bindings", {})))
+            resolved.add(locator)
+        except ValueError as error:
+            entry["reason"] = str(error)
+            conflicts.append({"code": "separate_supply_review_conflict", "work_id": work_id,
+                              "index": index, "reason": str(error), "proposal": copy.deepcopy(proposal)})
+    return resolved, audit, conflicts
 
 
 def resource_binding_conflict_note(conflict: Mapping[str, Any]) -> str:
     """Translate technical resource failures for the generated file/operator."""
     if conflict.get("code") == "separate_supply_possible_overlap":
         return "Возможное пересечение отдельной поставки с материалами нормы не разрешено; состав ресурсов сохранён."
+    if conflict.get("code") == "separate_supply_review_conflict":
+        return "Связь отдельной поставки с составом нормы не подтверждена; проверьте её адрес, обоснование и ссылки на показанную карточку нормы."
     if conflict.get("code") == "resource_binding_evidence_unverified":
         return "Источники действия над ресурсом не проверены по показанным материалам."
     reason = str(conflict.get("reason") or "")
@@ -287,21 +375,24 @@ def resource_binding_position_fields(
                             "proposal": copy.deepcopy(item)}
                 conflicts.append(conflict)
                 entry["reason"] = str(error)
+    review_valid = False
     if "resource_review" in row:
         authored_review = row["resource_review"]
         fields["resource_review"] = copy.deepcopy(authored_review)
         try:
             if not isinstance(authored_review, Mapping) or set(authored_review) - RESOURCE_REVIEW_FIELDS:
                 raise ValueError("resource_review must be a typed review object without owner or identity fields")
-            if any(not isinstance(value, str) for value in authored_review.values()):
+            scalar_review = {key: value for key, value in authored_review.items() if key != "separate_supply_reviews"}
+            if any(not isinstance(value, str) for value in scalar_review.values()):
                 raise ValueError("resource review fields must be strings")
-            review = ResourceReview(work_id=work_id, selected_by="model", **dict(authored_review))
+            review = ResourceReview(work_id=work_id, selected_by="model", **scalar_review)
             if review.status == "actions_confirmed" and not any(entry["status"] == "applied" for entry in audit):
                 raise ValueError("actions_confirmed requires a valid applied resource action")
             if review.status == "keep_all_confirmed" and row.get("resource_bindings"):
                 raise ValueError("keep_all_confirmed cannot carry resource actions")
             fields["resource_review_status"] = review.status
             fields["resource_review_reason"] = review.reason
+            review_valid = True
             for component in ("labor", "machine", "material", "dominant"):
                 if f"{component}_status" in authored_review or f"{component}_reason" in authored_review:
                     fields[f"{component}_review_status"] = getattr(review, f"{component}_status")
@@ -316,6 +407,11 @@ def resource_binding_position_fields(
         conflicts.extend({"code": "resource_review_conflict", "work_id": work_id,
                           "reason": "resource review must identify the work decision it confirms", **review}
                          for review in linked_reviews)
+    separate_sources, separate_audit, separate_conflicts = _separate_supply_reviews(
+        row, linked_supply_rows, review_valid=review_valid, parent_ambiguous=supply_parent_ambiguous, work_id=work_id)
+    if separate_audit:
+        fields["separate_supply_review_audit"] = separate_audit
+    conflicts.extend(separate_conflicts)
     materials = [copy.deepcopy(dict(resource)) for resource in norm_resources if resource.get("kind") == "material"]
     if linked_supply_rows and materials:
         unresolved = []
@@ -333,7 +429,7 @@ def resource_binding_position_fields(
                 and (entry.get("provenance") or {}).get("basis_ref") == locator
                 for entry in audit
             )
-            if not resolved:
+            if not resolved and locator not in separate_sources:
                 unresolved.append({"source_row": locator, "resource_code": code})
         if unresolved:
             conflicts.append({"code": "separate_supply_possible_overlap", "work_id": work_id,

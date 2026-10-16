@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -203,6 +204,210 @@ def _attachment(tmp_path: Path, *, ident: str = "read_123456abcdef") -> dict:
     )
 
 
+def _vor_fixture_decisions() -> list[dict]:
+    return [
+        {"source_row": "Sheet!R2", "section": "ОВ", "title": "Воздуховод", "code": "A-1",
+         "row_role": "work", "work_row": "", "unit": "м", "quantity": 12.5, "open_gap": ""},
+        {"source_row": "Sheet!R3", "section": "ОВ", "title": "Решётка", "code": "A-2",
+         "row_role": "unresolved", "work_row": "", "unit": "", "quantity": None,
+         "open_gap": "Нужны единица и объём"},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_args", [{}, {"decisions": None}])
+async def test_vor_native_missing_decisions_rejects_without_copy_or_checkpoint(tmp_path, monkeypatch, model_args):
+    from proxy.services import spec_to_bor_service
+
+    def forbidden_copy(*_args, **_kwargs):
+        raise AssertionError("a canonical VOR cannot copy source rows instead of model decisions")
+
+    monkeypatch.setattr(spec_to_bor_service, "rows_from_spec_xlsx", forbidden_copy)
+    meta = _attachment(tmp_path)
+    context = _context(tmp_path)
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], **model_args}, context)
+    assert result["status"] == "rejected"
+    assert result["code"] == "MODEL_WORK_ROWS_REQUIRED"
+    assert "artifact" not in result and "checkpoint" not in result
+    assert not list((tmp_path / "artifacts").rglob("*.xlsx"))
+
+
+@pytest.mark.asyncio
+async def test_vor_native_explicit_empty_decisions_is_auditable_empty_draft(tmp_path, monkeypatch):
+    from proxy.services import spec_to_bor_service
+
+    def forbidden_copy(*_args, **_kwargs):
+        raise AssertionError("explicit empty model decisions must stay empty")
+
+    monkeypatch.setattr(spec_to_bor_service, "rows_from_spec_xlsx", forbidden_copy)
+    monkeypatch.setattr(spec_to_bor_service, "derive_work_for_item", forbidden_copy)
+    meta = _attachment(tmp_path)
+    context = _context(tmp_path)
+    args = {"attachment_id": meta["attachment_id"], "decisions": []}
+    result = await build_vor_workbook(args, context)
+    assert result["status"] == "partial"
+    assert result["source"]["rows"] == 0
+    assert "MODEL_WORK_ROWS_EMPTY" in result["blockers"]
+    assert any(issue["code"] == "MODEL_WORK_ROWS_EMPTY" for issue in result["document_issues"])
+    revision = context.artifacts.get_revision(result["artifact"]["revision_id"])
+    assert revision.tool_calls[0]["draft"] is True
+    target = context.artifacts.resolve_path(revision.revision_id)
+    workbook = openpyxl.load_workbook(target, read_only=True, data_only=True)
+    try:
+        assert workbook["ВОР"].max_row == 3
+        assert "НЕ ЗАВЕРШЁН" in workbook["ВОР"]["A2"].value
+        assert "MODEL_WORK_ROWS_EMPTY" in [row[0] for row in workbook["Проверка"].values]
+    finally:
+        workbook.close()
+    replay = await build_vor_workbook(args, context)
+    assert replay["artifact"]["revision_id"] == revision.revision_id
+    assert replay["artifact"]["sha256"] == result["artifact"]["sha256"]
+    assert replay["document_issues"] == result["document_issues"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decisions", ["not an array", {}, ["not a row"]])
+async def test_vor_native_malformed_decision_container_does_not_generate(tmp_path, decisions):
+    meta = _attachment(tmp_path)
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": decisions}, _context(tmp_path))
+    assert result["status"] == "rejected"
+    assert result["code"] == "INVALID_TOOL_ARGUMENTS"
+    assert "checkpoint" not in result and "artifact" not in result
+
+
+@pytest.mark.asyncio
+async def test_vor_native_preserves_one_to_many_identity_revision_and_extra_fields(tmp_path, monkeypatch):
+    from proxy.services import spec_to_bor_service
+
+    def forbidden_copy(*_args, **_kwargs):
+        raise AssertionError("authored operations must not be guessed from source rows")
+
+    monkeypatch.setattr(spec_to_bor_service, "rows_from_spec_xlsx", forbidden_copy)
+    monkeypatch.setattr(spec_to_bor_service, "derive_work_for_item", forbidden_copy)
+    decisions = [
+        {"source_row": "Sheet!R2", "title": "Первая авторская операция", "row_role": "work",
+         "work_row": "", "unit": "м", "quantity": 12.5, "open_gap": "",
+         "operation_id": "op_first", "expected_revision": 4, "coverage": "Состав первой операции"},
+        {"source_row": "Sheet!R2", "title": "Вторая авторская операция", "row_role": "work",
+         "work_row": "", "unit": "м", "quantity": 12.5, "open_gap": "",
+         "operation_id": "op_second", "expected_revision": 2, "custom_basis": {"literal": "Источник"}},
+        {"source_row": "Sheet!R2", "title": "Авторский материал", "row_role": "material",
+         "work_row": "op_first", "unit": "м", "quantity": 12.5, "open_gap": "",
+         "operation_id": "", "covered_by_work_id": "op_first"},
+    ]
+    meta = _attachment(tmp_path)
+    context = _context(tmp_path)
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": decisions}, context)
+    assert result["source"]["rows"] == 3
+    stored = context.artifacts.resolve_path(result["artifact"]["revision_id"])
+    workbook = openpyxl.load_workbook(stored, read_only=True, data_only=True)
+    try:
+        audit_rows = [json.loads(row[2][6:]) for row in workbook["Решения модели"].iter_rows(min_row=4, values_only=True)]
+        assert audit_rows == decisions
+        assert [row[10] for row in workbook["ВОР"].iter_rows(min_row=4, values_only=True)] == [None, None, "op_first"]
+    finally:
+        workbook.close()
+
+
+@pytest.mark.asyncio
+async def test_vor_native_header_with_empty_unit_and_unknown_quantity_stays_header(tmp_path):
+    meta = _attachment(tmp_path)
+    context = _context(tmp_path)
+    decision = {"source_row": "Sheet!R1", "row_role": "header", "work_row": "",
+                "title": "Авторский заголовок", "unit": "", "quantity": None, "open_gap": ""}
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": [decision]}, context)
+    assert result["status"] == "complete"
+    assert result["missing"] == [] and result.get("document_issues", []) == []
+    stored = context.artifacts.resolve_path(result["artifact"]["revision_id"])
+    workbook = openpyxl.load_workbook(stored, read_only=True, data_only=True)
+    try:
+        assert workbook["ВОР"]["F4"].value is None
+        assert workbook["ВОР"]["J4"].value == "header"
+        assert json.loads(workbook["Решения модели"]["C4"].value[6:]) == decision
+    finally:
+        workbook.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quantity", [0, None])
+async def test_vor_native_zero_and_unknown_volume_are_exported_without_coercion(tmp_path, quantity):
+    source = _source_workbook(tmp_path / "source.xlsx")
+    workbook = openpyxl.load_workbook(source)
+    workbook.active["D2"] = quantity
+    workbook.save(source)
+    workbook.close()
+    meta = preserve_read_attachment(source, attachment_id="read_123456abcdef", original_name="source.xlsx", root=tmp_path / "attachments")
+    decision = {"source_row": "Sheet!R2", "row_role": "work", "work_row": "", "title": "Авторская операция",
+                "unit": "м", "quantity": quantity, "open_gap": "Объём отсутствует" if quantity is None else ""}
+    context = _context(tmp_path)
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": [decision]}, context)
+    assert ("row:1:quantity" in result["missing"]) is (quantity is None)
+    stored = context.artifacts.resolve_path(result["artifact"]["revision_id"])
+    workbook = openpyxl.load_workbook(stored, read_only=True, data_only=True)
+    try:
+        assert workbook["ВОР"]["F4"].value == quantity
+        assert json.loads(workbook["Решения модели"]["C4"].value[6:]) == decision
+    finally:
+        workbook.close()
+
+
+@pytest.mark.asyncio
+async def test_vor_native_saved_literal_row_without_optional_fields_is_unchanged_and_audited(tmp_path):
+    meta = _attachment(tmp_path)
+    context = _context(tmp_path)
+    decision = {"source_row": "Sheet!R2", "row_role": "work", "title": "Сохранённая авторская операция"}
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": [decision]}, context)
+    assert result["status"] == "partial"
+    assert result["missing"] == ["row:1:unit", "row:1:quantity"]
+    codes = {issue["code"] for issue in result["document_issues"]}
+    assert {"missing_source_quantity", "missing_source_unit", "missing_work_quantity", "missing_work_unit"} <= codes
+    stored = context.artifacts.resolve_path(result["artifact"]["revision_id"])
+    workbook = openpyxl.load_workbook(stored, read_only=True, data_only=True)
+    try:
+        assert json.loads(workbook["Решения модели"]["C4"].value[6:]) == decision
+        assert workbook["ВОР"]["F4"].value is None
+        assert "НЕ ЗАВЕРШЁН" in workbook["ВОР"]["A2"].value
+    finally:
+        workbook.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unit", ["м", None])
+async def test_vor_native_literal_decimal_and_optional_nulls_survive_schema_and_xlsx(tmp_path, unit):
+    from proxy.services.workbook_tool_service import BUILD_VOR_WORKBOOK
+
+    source = _source_workbook(tmp_path / "source.xlsx")
+    workbook = openpyxl.load_workbook(source)
+    workbook.active["D2"] = 23.6
+    workbook.save(source)
+    workbook.close()
+    meta = preserve_read_attachment(source, attachment_id="read_123456abcdef", original_name="source.xlsx", root=tmp_path / "attachments")
+    decision = {"source_row": "Sheet!R2", "row_role": "work", "title": "Авторская операция",
+                "unit": unit, "quantity": "23,6", "work_row": None, "open_gap": None,
+                "operation_id": None, "expected_revision": None, "coverage": None,
+                "section": None, "covered_by_work_id": None}
+    args = {"attachment_id": meta["attachment_id"], "decisions": [decision]}
+    # The native Broker checks this schema before calling the adapter. A direct
+    # adapter-only test would miss a transport rejection of unchanged literals.
+    assert validate_json_schema(args, BUILD_VOR_WORKBOOK.input_schema) == []
+    context = _context(tmp_path)
+    result = await build_vor_workbook(args, context)
+    assert result["status"] == ("partial" if unit is None else "complete")
+    assert result["missing"] == (["row:1:unit"] if unit is None else [])
+    stored = context.artifacts.resolve_path(result["artifact"]["revision_id"])
+    workbook = openpyxl.load_workbook(stored, read_only=True, data_only=True)
+    try:
+        assert workbook["ВОР"]["F4"].value == "23,6"
+        assert workbook["ВОР"]["F4"].data_type == "s"
+        assert json.loads(workbook["Решения модели"]["C4"].value[6:]) == decision
+        if unit is None:
+            codes = {issue["code"] for issue in result["document_issues"]}
+            assert {"missing_source_unit", "missing_work_unit"} <= codes
+            assert "НЕ ЗАВЕРШЁН" in workbook["ВОР"]["A2"].value
+    finally:
+        workbook.close()
+
+
 @pytest.mark.asyncio
 async def test_completed_replay_after_restart_keeps_calculation_snapshot_and_same_file(tmp_path):
     meta = _attachment(tmp_path)
@@ -235,7 +440,8 @@ async def test_vor_handler_preserves_source_rows_and_creates_revision(tmp_path):
     meta = _attachment(tmp_path)
     ctx = _context(tmp_path)
 
-    result = await build_vor_workbook({"attachment_id": meta["attachment_id"]}, ctx)
+    decisions = _vor_fixture_decisions()
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": decisions}, ctx)
 
     assert result["schema"] == "les.workbook_tool_result.v1"
     assert result["status"] == "complete"
@@ -251,7 +457,7 @@ async def test_vor_handler_preserves_source_rows_and_creates_revision(tmp_path):
         workbook.close()
     assert values[0][1:6] == ("ОВ", "Воздуховод", "A-1", "м", 12.5)
     assert values[1][1:6] == ("ОВ", "Решётка", "A-2", None, None)
-    assert "source.xlsx#1" in values[0][6]
+    assert "source.xlsx#Sheet!R2" in values[0][6]
     assert "file_path" not in str(result)
 
 
@@ -271,9 +477,11 @@ async def test_vor_formula_without_cached_quantity_is_a_visible_blocker(tmp_path
     )
 
     context = _context(tmp_path)
-    result = await build_vor_workbook({"attachment_id": meta["attachment_id"]}, context)
+    decision = {"source_row": "Sheet!R2", "title": "Cable", "row_role": "work", "work_row": "",
+                "unit": "m", "quantity": None, "open_gap": "Нет рассчитанного значения формулы"}
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": [decision]}, context)
 
-    assert "row:1:quantity_formula_without_cached_value" in result["missing"]
+    assert "row:1:quantity" in result["missing"]
     stored = context.artifacts.resolve_path(result["artifact"]["revision_id"])
     rendered = openpyxl.load_workbook(stored, data_only=True, read_only=True)
     try:
@@ -281,7 +489,12 @@ async def test_vor_formula_without_cached_quantity_is_a_visible_blocker(tmp_path
     finally:
         rendered.close()
     assert "R2" in row[6]
-    assert row[8] == "ТРЕБУЕТ ПЕРЕСЧЁТА ИСХОДНОГО ФАЙЛА"
+    assert row[5] is None
+    assert "Нет рассчитанного значения формулы" in row[11]
+    # The separately available historical reader retains its original formula
+    # audit; the canonical model tool does not invoke it instead of decisions.
+    from proxy.services.spec_to_bor_service import rows_from_spec_xlsx
+    assert rows_from_spec_xlsx(source)[0]["quantity_issue"] == "formula_without_cached_value"
 
 
 @pytest.mark.asyncio
@@ -467,7 +680,7 @@ async def test_retry_returns_completed_revision_without_running_adapter_twice(tm
 async def test_parent_revision_creates_correction_without_overwriting_first(tmp_path):
     meta = _attachment(tmp_path)
     ctx1 = _context(tmp_path, key="key-1")
-    first = await build_vor_workbook({"attachment_id": meta["attachment_id"]}, ctx1)
+    first = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": _vor_fixture_decisions()}, ctx1)
     first_bytes = ctx1.artifacts.read_bytes(first["artifact"]["revision_id"])
 
     ctx2 = _context(tmp_path, key="key-2", decision="decision-2")
@@ -476,6 +689,7 @@ async def test_parent_revision_creates_correction_without_overwriting_first(tmp_
             "attachment_id": meta["attachment_id"],
             "parent_revision_id": first["artifact"]["revision_id"],
             "question": "Исправленная редакция",
+            "decisions": _vor_fixture_decisions(),
         },
         ctx2,
     )
@@ -492,7 +706,7 @@ async def test_attachment_hash_drift_is_rejected_before_generation(tmp_path):
     stored = tmp_path / "attachments" / "read_123456abcdef.xlsx"
     stored.write_bytes(b"changed")
 
-    result = await build_vor_workbook({"attachment_id": meta["attachment_id"]}, _context(tmp_path))
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": _vor_fixture_decisions()}, _context(tmp_path))
 
     assert result["status"] == "rejected"
     assert result["code"] == "ATTACHMENT_INVALID"
@@ -551,7 +765,7 @@ async def test_unsupported_attachment_is_rejected_without_checkpoint(tmp_path):
     )
     ctx = _context(tmp_path)
 
-    result = await build_vor_workbook({"attachment_id": meta["attachment_id"]}, ctx)
+    result = await build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": _vor_fixture_decisions()}, ctx)
 
     assert result["status"] == "rejected"
     assert result["code"] == "UNSUPPORTED_ATTACHMENT_TYPE"

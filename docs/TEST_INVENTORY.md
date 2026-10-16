@@ -1,5 +1,38 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Регрессии962 — literal native terminal и запрет spec-copy
+
+`test_model_workbook_terminal_transport_962.py`: сохранение исходных аргументов,
+авторских строк/дополнительных полей/ID/0/null, одного источника для нескольких
+операций, отказ при duplicate JSON fields, mixed/multiple calls и двух
+противоречащих carrier-ответах. Schema сужает технические адреса, не выбирает работы.
+`test_model_evidence_terminal_boundary_962.py`: native-only/empty text/max_reads0,
+read→terminal, точность обычного текста и отсутствие лишнего чтения/упаковки/
+model continuation. RED5→GREEN63 вместе с adjacent read/native reasoning.
+Canonical workbook tests проверяют missing/None decisions до checkpoint,
+явный[] как пустой черновик, literal ID/revision и отдельный legacy reader.
+`test_vor_native_terminal_workflow_962.py`: одинаковые optional tool schemas
+в B0/B1, native-only результат после чтений, сохранение прежних ID/revision
+при обычном пересмотре и техническая остановка при противоречащих carrier,
+другом attachment или усечённом ответе. Pure transport focused: 170 passed;
+main capacity/adjacent: 273 passed; canonical workbook совместимость:
+332 passed. Это пересекающиеся точечные suites, не суммарный release гейт.
+`test_lsr_supply_retry_962.py`: отдельная поставка остаётся самостоятельной
+только по явному отношению модели с pinned/delivered выбранной карточкой.
+Общий keep_all_confirmed, разные шифры и непроверенные ссылки не снимают
+overlap. Старое exact исключение сохраняется. Финансовый retry выбирает
+неполные операции и сохраняет закрытых соседей. Immutable feedback не
+переиспользуется при другой строке/revision/источнике/книге или без её SHA.
+Nested refs имеют собственные immutable bindings при первом ходе и replay;
+повтор alias на другую карточку не меняет источник решения. Реальный XLSX
+сохраняет literal reason/refs отдельной поставки. Resource/trace/adjacent:
+301 passed.
+`test_lsr_native_feedback_962.py`: активный запрос сохраняет калькуляторную
+проекцию при упаковке; обычное замечание получает точные финансовые вопросы
+той же ревизии, а native результат обновляет прежние ID без изменения parent.
+Все пять новых файлов добавлены в CURRENT_TESTS.
+Полный frozen gate и live962 ещё требуются; unit mocks не являются приёмкой модели.
+
 ## Регрессии961 — XLSX source metadata и release version hygiene
 
 `test_xlsx_literal_metadata_961.py`:40случаев шести print parts/трёх секций,
@@ -12,7 +45,9 @@ RED39failed/1passed; private GREEN совместно с adjacent:181passed.
 
 `test_software_versions.py` проверяет синхронизацию единственной local editable
 project version в uv.lock при неизменности всех dependency records.
-REDKeyError до исправления, затем6passed. Полный gate/live961 ещё требуются.
+REDKeyError до исправления, затем6passed. Frozen961:5729passed/20skipped,
+updater312passed, все9команд rc0. Установленный mixed CSV7 и обычное уточнение
+проверены; DOCX и общая профессиональная приёмка остаются незакрытыми.
 
 ## Регрессии960 — native reasoning и Windows boot
 

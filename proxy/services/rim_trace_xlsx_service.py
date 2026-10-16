@@ -631,6 +631,17 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
             reason = str(proposal.get("reason") or "основание не указано")
             resource_lines.append(f"Решение: {action} {identity} — {status}; {reason}"
                                   + (f"; источник: {basis}" if basis else ""))
+        for audit in item.get("separate_supply_review_audit") or ():
+            if not isinstance(audit, Mapping):
+                continue
+            proposal = audit.get("proposal")
+            proposal = proposal if isinstance(proposal, Mapping) else {}
+            refs = proposal.get("evidence_refs")
+            refs = refs if isinstance(refs, list) else []
+            status = "решение модели; ссылки проверены" if audit.get("status") == "confirmed" else "требуется уточнение связи"
+            resource_lines.append(f"Отдельная поставка {proposal.get('source_row') or 'не указана'} — {status}; "
+                                  f"{proposal.get('reason') or 'основание не указано'}"
+                                  + ("; карточка: " + "; ".join(map(str, refs)) if refs else ""))
         analogue_lines = [
             str(value) for value in (item.get("analog_limitations") or ()) if str(value).strip()
         ]

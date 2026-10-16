@@ -23,6 +23,7 @@ class ModelEvidenceReadTurnResult:
     results: tuple[Any, ...]
     seen_calls: tuple[str, ...]
     native_exchanges: tuple[NativeToolExchange, ...] = ()
+    terminal_result: Any | None = None
 
 
 def evidence_read_call_identity(call: Mapping[str, Any]) -> str:
@@ -99,6 +100,7 @@ async def run_model_evidence_read_turn(
     on_read_replays: Callable | None = None,
     initial_receipts: Sequence[Mapping[str, Any]] = (),
     seen_calls: Sequence[str] = (),
+    extract_terminal: Callable | None = None,
 ) -> ModelEvidenceReadTurnResult:
     """Finish a turn only when the same model requests an evidence operation.
 
@@ -111,6 +113,9 @@ async def run_model_evidence_read_turn(
     retry with a fresh provider ID receives the saved receipt once, without a
     second read or new evidence bindings. Replays consume the same call budget;
     a further retry of that identity stops. Legacy text calls keep their guard.
+    An optional terminal extractor consumes a completed native model result
+    before read dispatch. It never executes the workbook tool or continues the
+    model; admission, persistence and packaging remain the caller's boundary.
     """
     current_text = text
     current_usage = dict(usage or {})
@@ -128,7 +133,17 @@ async def run_model_evidence_read_turn(
     # executed in this invocation are eligible; an old journal is not a cache.
     cached: dict[str, dict[str, Any]] = {}
     replayed: set[str] = set()
-    while current_text:
+    terminal_result = None
+    while True:
+        if extract_terminal is not None:
+            terminal_result = await _invoke(extract_terminal, current_text)
+            if terminal_result is not None:
+                if not isinstance(terminal_result.text, str) or not terminal_result.text:
+                    raise ValueError("native terminal transport must provide a nonempty model-result carrier")
+                current_text = terminal_result.text
+                break
+        if not current_text:
+            break
         calls = parse_calls(current_text, allowed_tools=names, max_calls=max(remaining, 1))
         if not calls:
             break
@@ -238,4 +253,5 @@ async def run_model_evidence_read_turn(
         text=current_text, usage=current_usage, extra_completion_tokens=extra_tokens,
         stop_reason=stop, receipts=tuple(receipts), results=tuple(results), seen_calls=tuple(identities),
         native_exchanges=tuple(native_exchanges),
+        terminal_result=terminal_result,
     )

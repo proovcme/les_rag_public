@@ -1,5 +1,22 @@
 # ALGO-tool-harness — controlled tools for LES
 
+## 962 — optional terminal существующих workbook tools
+
+Модель может завершить ВОР/ЛСР обычным текстом либо одним native вызовом
+соответствующего build_vor_workbook/build_lsr_workbook. В модельном маршруте
+это только literal row transport: tool не исполняется внутри read loop,
+decisions идут в прежние admission → checkpoint → расчёт → packaging.
+Смешанные вызовы, два carrier, другой attachment, усечённый provider finish
+и top-level semantic arguments отклоняются явно с исходным raw. База цен,
+подтверждения и lineage принадлежат существующему серверному контексту.
+
+Technical schema сохраняет 0/null/строки с десятичной запятой и дополнительные
+авторские поля; ID/revision и ссылки проверяются существующими guards.
+Она не выбирает роль, работу, норму, цену или коэффициент. Native schema
+не обязательна для получения результата и не подтверждает его качество.
+Интеграционные тесты входят в CURRENT_TESTS; перед приёмкой нужен живой
+установленный B0/B1 на одинаковой модели, задаче, исходнике и RAG scope.
+
 ## Candidate 0.31.184 / 912 - optional export declaration in model queries
 
 Query JSON accepts queries without an artifact_kind for source questions; explicit model vor/lsr declarations and strict invalid-metadata checks remain. Bound profile/skill and literal searches are preserved. Frozen912 offline canonical gates PASS: 4056 passed, 20 skipped, 5 warnings in 256.51s (0:04:16); mail: 66 passed, 4 warnings in 6.27s; metadata: 31 passed in 4.40s. Customer-ready false.
