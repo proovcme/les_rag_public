@@ -1,5 +1,19 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Регрессии961 — XLSX source metadata и release version hygiene
+
+`test_xlsx_literal_metadata_961.py`:40случаев шести print parts/трёх секций,
+полных classic comments/rich text/author/ref, hidden/empty cells и notes-only
+листов, exact lookup/manifest/frame context и неизменного work denominator.
+Unknown XML/text/tails/threaded comments/pictures остаются warning. Устаревшие
+955 unread assertions заменены усиленными проверками фактически прочитанного
+body/refs; никакая warning не снята без предоставления исходного содержания.
+RED39failed/1passed; private GREEN совместно с adjacent:181passed.
+
+`test_software_versions.py` проверяет синхронизацию единственной local editable
+project version в uv.lock при неизменности всех dependency records.
+REDKeyError до исправления, затем6passed. Полный gate/live961 ещё требуются.
+
 ## Регрессии960 — native reasoning и Windows boot
 
 `test_native_reasoning_frame_960.py`: 9 случаев actual B0/B1 message boundaries,

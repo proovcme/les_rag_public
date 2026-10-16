@@ -1,5 +1,16 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 961 — OOXML metadata как дословный источник
+
+`xlsx_source_metadata_service` читает print parts/classic comments из того же
+XLSX по package relationships, сохраняя literal XML/text и unsupported warnings.
+`attachment_source_catalog_service.load_tabular_source_catalog` добавляет
+`!META:` note rows, доступные обычному exact lookup/read_source; quantity/units
+из них не выводятся. `_reference_locators` в `model_source_frame_service`
+включает новые literal notes в прежний source context, а не очередь работ.
+Синхронизация release versions: `tools/sync_version_contract.py`, включая
+единственную editable `les-v2` version в uv.lock без dependency resolution.
+
 ## 960 — текущая native-цепочка и Windows запуск
 
 `chat_evidence_application_service.govern_model_read_messages` добавляет required

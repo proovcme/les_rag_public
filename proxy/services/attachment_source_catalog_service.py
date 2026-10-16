@@ -1026,6 +1026,8 @@ def load_tabular_source_catalog(
 
             workbook = openpyxl.load_workbook(file_path, data_only=False, read_only=False)
             cached_workbook = openpyxl.load_workbook(file_path, data_only=True, read_only=False)
+            from proxy.services.xlsx_source_metadata_service import read_xlsx_source_metadata
+            source_metadata = read_xlsx_source_metadata(file_path)
         except Exception:  # noqa: BLE001 - preview/catalog failure stays visible upstream
             return None
         try:
@@ -1034,17 +1036,19 @@ def load_tabular_source_catalog(
                 cached_sheet = cached_workbook[sheet]
                 sheet_id = _stable_id(source_sha256, sheet_index, sheet, prefix="sheet")
                 hidden_sheet = worksheet.sheet_state != "visible"
+                metadata = source_metadata.get(sheet, {})
+                extraction_warnings = (*extraction_warnings, *metadata.get("warnings", ()))
                 authored_audit = _is_vor_model_audit(worksheet, workbook)
                 if (not authored_audit and worksheet.cell(1, 1).value == VOR_MODEL_AUDIT_SCHEMA
                         and tuple(worksheet.cell(3, column).value for column in range(1, 4)) == VOR_MODEL_AUDIT_HEADERS):
                     extraction_warnings = (*extraction_warnings, f"vor_model_audit_invalid:{sheet}")
-                # These source parts are not represented by worksheet cells.
-                # Surface the unread scope instead of claiming full extraction;
-                # do not classify their content or invent extra work rows.
+                # Literal print metadata/comments are separate source references,
+                # never worksheet work rows. Keep warnings for unread/unsupported parts.
                 for part_name in ("oddHeader", "evenHeader", "firstHeader", "oddFooter", "evenFooter", "firstFooter"):
                     part = getattr(worksheet, part_name)
-                    if any(str(getattr(part, position).text or "").strip()
-                           for position in ("left", "center", "right")):
+                    if (part_name not in metadata.get("print_parts", ())
+                            and any(str(getattr(part, position).text or "").strip()
+                                    for position in ("left", "center", "right"))):
                         extraction_warnings = (*extraction_warnings,
                             f"xlsx_unread_content:{sheet}:{part_name}")
                 merged_ranges = tuple(worksheet.merged_cells.ranges)
@@ -1056,7 +1060,9 @@ def load_tabular_source_catalog(
                     values: list[str] = []
                     for cell in raw_cells:
                         # A comment can belong to an otherwise empty/hidden cell.
-                        has_unread_comments = has_unread_comments or getattr(cell, "comment", None) is not None
+                        has_unread_comments = has_unread_comments or (
+                            getattr(cell, "comment", None) is not None
+                            and cell.coordinate not in metadata.get("comment_coordinates", ()))
                         raw_value = cell.value
                         if raw_value in (None, ""):
                             continue
@@ -1136,6 +1142,17 @@ def load_tabular_source_catalog(
                     )
                 if has_unread_comments:
                     extraction_warnings = (*extraction_warnings, f"xlsx_unread_content:{sheet}:cell_comments")
+                for item in metadata.get("rows", ()):
+                    locator = f"{sheet}!META:{item['suffix']}"
+                    literal = json.dumps(item["body"], ensure_ascii=False, separators=(",", ":"))
+                    rows.append(CatalogRow(
+                        locator=locator, sheet=sheet, excel_row=0, values=(literal,),
+                        line=f"{locator}: {literal}", numbers=(),
+                        row_id=_stable_id(source_sha256, sheet_id, "metadata", item["suffix"], prefix="row"),
+                        sheet_id=sheet_id, row_classification="note",
+                        classification_reason="xlsx_literal_metadata", classification_confidence=1.0,
+                        hidden_sheet=hidden_sheet,
+                    ))
                 sheets.append((sheet, sheet_id, hidden_sheet, rows))
         finally:
             workbook.close()

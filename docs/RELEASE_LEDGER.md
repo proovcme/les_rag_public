@@ -1,5 +1,33 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 16.10.2026 — кандидат961: XLSX metadata и окончательная квалификация
+
+Установлен959/0.31.231/ed7b53d9, native5.1.959. Кандидат960 не устанавливался.
+На a878ccb8 основной gate:5688passed/20skipped/785.41s; updater312passed.
+Первые8команд rc0, перед9-й source-clean guard обнаружил ровно одну автоправку
+uv.lock: local editable les-v2 version0.31.231→0.31.232. Зависимости неизменны.
+Квитанция `artifacts/gates_960_qualified/receipt.json` сохранена как НЕполный gate.
+961 синхронизирует эту version в общем version-sync до gate; REDKeyError→6GREEN,
+полное равенство остальных lock records проверяется отдельно.
+
+При подготовке реального большого ВОР обнаружен общий постоянный blocker:
+9печатных footer `&Rстр. &P / &N` считались непрочитанным источником, отчего
+все318позиции получали source_extraction_incomplete даже после завершения поиска.
+961 читает literal XML/text печатных частей и classic comments как context
+notes. На exact файле SHA74233e10406caa5b87ea48cefaeea9dc4ae9dbf3d1dfc2118b853be57f47c6b3
+все439прежних rows, их поля и IDs равны;318количественных/408candidate locators
+и10листов неизменны,9новых note refs. Девять warnings закрываются фактическим
+чтением. Unsupported/threaded/picture/malformed metadata остаются неполнотой.
+Private RED39failed/1passed →181GREEN с adjacent. Независимый финальный review:
+40PASS, конкретныхP1/P2 не обнаружено. После source apply:187PASS с adjacent
+и version contract. Полный frozen gate ещё не подменяется этими проверками.
+
+961/0.31.233 ещё требует окончательного frozen gate, установленного live B0/B1,
+разных ВОР, адресного добора ЛСР и318stop/restart/continue. Один полный installer
+планируется только на окончательном SHA. Customer-ready=false.
+100% норм первого прохода не требуется по уточнению владельца; это не отменяет
+качества принятых работ/объёмов, сохранности решений и проверяемой арифметики.
+
 ## 16.10.2026 — установлен959; кандидат960: native reasoning и запуск
 
 Runtime959/0.31.231, commit `ed7b53d974c295191c457f7240773335dc569488`,

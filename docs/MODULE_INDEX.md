@@ -1,5 +1,23 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 961 — полное чтение стандартных XLSX-примечаний
+
+`xlsx_source_metadata_service.read_xlsx_source_metadata` читает шесть печатных
+header/footer частей и classic comments по OOXML relationships: полные literal
+text/XML, author и cell refs. `attachment_source_catalog_service` добавляет их
+как note references; работы, исходные ячейки, row IDs и знаменатель не меняются.
+`model_source_frame_service` показывает их в same-sheet packet и сохраняет
+контекст notes-only листов. Текст не интерпретируется как операция или инструкция.
+Unknown/threaded/picture/malformed metadata остаются явной неполнотой.
+Док↔код: ✅ [RAG evidence flow](modules/rag-evidence-flow.md).
+Регрессии: `test_xlsx_literal_metadata_961.py`, усиленный `test_xlsx_unread_metadata_955.py`.
+
+`sync_version_contract` синхронизирует также version локального editable проекта
+в uv.lock, не разрешая и не меняя зависимости. Это предотвращает изменение
+tracked lock последующим каноническим uv-run gate. Док↔код: ✅ [VERSIONING](VERSIONING.md).
+Регрессия: `test_software_versions.py`.
+Кандидат960 не устанавливался; runtime остаётся959. Приёмка961 ещё требуется.
+
 ## 960 — текущий native reasoning и единый Windows bootstrap
 
 `ContextPacket.messages` ставит текущий source/evidence frame перед native-цепочкой

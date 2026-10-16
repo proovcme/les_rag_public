@@ -239,10 +239,13 @@ def _reference_locators(rows: Sequence[CatalogRow], requested: set[str]) -> set[
     sections: dict[str, str] = {}
     references: set[str] = set()
     offered_sheets = {row.sheet for row in rows if row.locator in requested}
+    work_sheets = {row.sheet for row in rows if row.is_work_row()}
     for row in rows:
         # Match catalog_sheet_pack_lines: all same-sheet empty-quantity
         # descriptors are literal reference context, not a chosen association.
-        if row.sheet in offered_sheets and row.quantity_column_known and row.header_quantity is None:
+        if ((row.sheet in offered_sheets and row.quantity_column_known and row.header_quantity is None)
+                or row.classification_reason == "xlsx_literal_metadata"
+                and (row.sheet in offered_sheets or row.sheet not in work_sheets)):
             references.add(row.locator)
         if row.locator in requested:
             references.update(pointer for pointer in (

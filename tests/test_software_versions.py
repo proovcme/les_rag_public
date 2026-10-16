@@ -72,6 +72,20 @@ def test_version_surfaces_have_no_drift():
     assert sync_version_contract.drifted_surfaces() == []
 
 
+def test_version_surfaces_update_only_local_uv_project_metadata():
+    contract = sync_version_contract.load_contract()
+    desired = sync_version_contract.desired_surfaces({**contract, "product_version": "0.0.0"})
+    lock_path = ROOT / "uv.lock"
+    before = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    after = tomllib.loads(desired[lock_path])
+    expected = json.loads(json.dumps(before))
+    local = [package for package in expected["package"]
+             if package.get("name") == "les-v2" and package.get("source") == {"editable": "."}]
+    assert len(local) == 1
+    local[0]["version"] = "0.0.0"
+    assert after == expected, "Version synchronization must not resolve or change dependencies"
+
+
 def test_offline_python_support_matches_bundled_runtime():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))

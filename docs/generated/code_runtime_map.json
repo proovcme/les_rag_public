@@ -1286,6 +1286,7 @@
         "proxy/services/workflow_checkpoint_service.py",
         "proxy/services/workflow_plan_service.py",
         "proxy/services/xlsx_preview_service.py",
+        "proxy/services/xlsx_source_metadata_service.py",
         "proxy/smeta_core/__init__.py",
         "proxy/smeta_core/application.py",
         "proxy/smeta_core/base_registry.py",
@@ -2790,7 +2791,8 @@
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
         "proxy/services/workflow_plan_service.py",
-        "proxy/services/xlsx_preview_service.py"
+        "proxy/services/xlsx_preview_service.py",
+        "proxy/services/xlsx_source_metadata_service.py"
       ],
       "lines": 2,
       "module": "proxy.services",
@@ -3011,9 +3013,10 @@
         "tests/test_vor_review_structural_facts_953.py",
         "tests/test_workbook_repack_target.py",
         "tests/test_workbook_task_context.py",
+        "tests/test_xlsx_literal_metadata_961.py",
         "tests/test_xlsx_unread_metadata_955.py"
       ],
-      "lines": 1445,
+      "lines": 1462,
       "module": "proxy.services.attachment_source_catalog_service",
       "outbound": [
         "backend/converter.py",
@@ -3021,6 +3024,7 @@
         "proxy/__init__.py",
         "proxy/services/__init__.py",
         "proxy/services/chat_attachment_service.py",
+        "proxy/services/xlsx_source_metadata_service.py",
         "proxy/smeta_core/unit_contract.py"
       ],
       "path": "proxy/services/attachment_source_catalog_service.py",
@@ -5973,7 +5977,8 @@
         "tests/test_model_retained_norm_delivery.py",
         "tests/test_model_source_frame_service.py",
         "tests/test_norm_card_completeness_facts.py",
-        "tests/test_rtf_input_transport.py"
+        "tests/test_rtf_input_transport.py",
+        "tests/test_xlsx_literal_metadata_961.py"
       ],
       "lines": 759,
       "module": "proxy.services.model_research_tool_service",
@@ -6107,9 +6112,11 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_chat_model_source_frame.py",
         "tests/test_model_source_frame_service.py",
-        "tests/test_rtf_input_transport.py"
+        "tests/test_rtf_input_transport.py",
+        "tests/test_xlsx_literal_metadata_961.py",
+        "tests/test_xlsx_unread_metadata_955.py"
       ],
-      "lines": 343,
+      "lines": 346,
       "module": "proxy.services.model_source_frame_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8643,6 +8650,20 @@
         "proxy/services/__init__.py"
       ],
       "path": "proxy/services/xlsx_preview_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/services/attachment_source_catalog_service.py"
+      ],
+      "lines": 152,
+      "module": "proxy.services.xlsx_source_metadata_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/xlsx_source_metadata_service.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -16709,7 +16730,7 @@
     },
     {
       "inbound": [],
-      "lines": 82,
+      "lines": 96,
       "module": "tests.test_software_versions",
       "outbound": [
         "proxy/services/version_service.py",
@@ -18197,10 +18218,24 @@
     },
     {
       "inbound": [],
-      "lines": 80,
+      "lines": 278,
+      "module": "tests.test_xlsx_literal_metadata_961",
+      "outbound": [
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/model_research_tool_service.py",
+        "proxy/services/model_source_frame_service.py"
+      ],
+      "path": "tests/test_xlsx_literal_metadata_961.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 100,
       "module": "tests.test_xlsx_unread_metadata_955",
       "outbound": [
-        "proxy/services/attachment_source_catalog_service.py"
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/model_source_frame_service.py"
       ],
       "path": "tests/test_xlsx_unread_metadata_955.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -20575,7 +20610,7 @@
       "inbound": [
         "tests/test_software_versions.py"
       ],
-      "lines": 144,
+      "lines": 151,
       "module": "tools.sync_version_contract",
       "outbound": [
         "tools/__init__.py"
@@ -22859,12 +22894,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 383,
+    "product_reachable": 384,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 818,
-    "tracked_python_files": 1213,
-    "tracked_python_lines": 415639
+    "test_or_tool_only": 819,
+    "tracked_python_files": 1215,
+    "tracked_python_lines": 416130
   },
   "warnings": []
 }

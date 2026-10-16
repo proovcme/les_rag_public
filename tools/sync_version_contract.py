@@ -47,6 +47,13 @@ def desired_surfaces(contract: dict[str, object] | None = None) -> dict[Path, st
         pyproject.read_text(encoding="utf-8"), label="pyproject product version",
     )
 
+    uv_lock = ROOT / "uv.lock"
+    updates[uv_lock] = _replace(
+        r'(\[\[package\]\]\nname = "les-v2"\nversion = ")[^"]+("\nsource = \{ editable = "\." \})',
+        rf"\g<1>{product}\g<2>", uv_lock.read_text(encoding="utf-8"),
+        label="uv.lock editable project version",
+    )
+
     package = ROOT / "desktop" / "tauri" / "package.json"
     payload = json.loads(package.read_text(encoding="utf-8"))
     payload["version"] = product

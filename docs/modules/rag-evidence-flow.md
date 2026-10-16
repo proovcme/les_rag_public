@@ -1,5 +1,27 @@
 # RAG evidence flow
 
+## 961 — XLSX print metadata и classic comments прочитаны
+
+Исходный318-строчный ВОР содержал9обычных `&Rстр. &P / &N` footer. Раньше
+каталог сообщал xlsx_unread_content, а source_extraction_incomplete блокировал
+все строки независимо от завершения поиска. Теперь source reader сохраняет
+полный literal Excel print string и XML всех шести header/footer частей,
+classic comment text/runs, author и физический cell ref. Они доступны через
+точные `Лист!META:...` адреса как note references, без новых работ и чисел.
+Same-sheet packet и notes-only context получают эти же literal source rows;
+обычный read_source и manifest работают с ними без отдельного tool/маршрута.
+
+Unknown XML/text/tails, malformed relationships, threaded comments и header
+pictures сохраняют explicit warning; полного чтения для них не объявляется.
+Raw XML не исполняется и не становится пользовательской инструкцией. Никаких
+норм, количеств или предметных выводов reader не выбирает. Governor учитывает
+добавленный source context; у XLSX без metadata прежний frame byte-identical.
+
+Реплей исходного большого файла:318количественных работ/408candidate locators,
+439прежних ячеечных строк с теми же полями и IDs,9новых context notes. Девять
+warnings сняты фактическим чтением, а не игнорированием; это ещё не live ЛСР.
+Регрессии: `test_xlsx_literal_metadata_961.py`, `test_xlsx_unread_metadata_955.py`.
+
 ## 960 — текущий источник не завершает native thinking-ход
 
 При непустом строковом `reasoning_content` в типизированной native-цепочке текущего
