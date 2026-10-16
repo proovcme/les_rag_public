@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 952 — происхождение количества не утверждается подписью
+
+`bor_service.source_rows_to_vor_xlsx` при расчётном layout называет E/F
+«…в решении»: это заявленные моделью единица/количество, сверяемые с каталогом.
+Авторские значения и аудит не меняются. Док↔код: ✅ [ВОР](ALGO-spec-to-bor.md).
+Повторный intake и null/0 проверяются `test_vor_authored_measure_provenance_952.py`.
+
 ## 951 — текущий этап рядом с исходной задачей
 
 `chat_evidence_application_service.govern_model_query_messages` добавляет в копию

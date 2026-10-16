@@ -47,7 +47,7 @@ async def test_both_source_and_authored_derived_work_quantities_are_visible(
     assert not result.get("document_issues") and not result["vor_source_errors"]
     workbook = openpyxl.load_workbook(output, data_only=True)
     sheet = workbook["ВОР"]
-    assert [sheet["E3"].value, sheet["F3"].value] == ["Ед. изм. источника", "Кол-во источника"]
+    assert [sheet["E3"].value, sheet["F3"].value] == ["Ед. изм. в решении", "Кол-во в решении"]
     assert [sheet["E4"].value, sheet["F4"].value] == [source_unit, source_quantity]
     assert [sheet.cell(4, c).value for c in range(16, 20)] == [calc_unit, calculated, factor, basis]
     assert sheet["O4"].hyperlink.target == "#'Решения модели'!C4"

@@ -212,7 +212,7 @@ def source_rows_to_vor_xlsx(
     if authored_metadata:
         headers += ["ID операции", "Учтено работой", "Полное решение модели"]
     if authored_derivation:
-        headers[4:6] = ["Ед. изм. источника", "Кол-во источника"]
+        headers[4:6] = ["Ед. изм. в решении", "Кол-во в решении"]
         headers += ["Расчётная единица", "Результат расчёта", "Коэффициент перевода", "Основание расчёта"]
     sheet.append(headers)
     if authored_derivation:

@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 952 — подписи меры в экспортированном ВОР
+
+`bor_service.source_rows_to_vor_xlsx` сохраняет авторские unit/quantity в E/F
+под нейтральными подписями «…в решении» при наличии расчётных P/Q. Reader
+`attachment_source_catalog_service` и `spec_to_bor_service` используют прежние
+правила привязки колонок; новых aliases или расчётов нет.
+
 ## 951 — технический этап в обязательном query request
 
 `govern_model_query_messages` в `chat_evidence_application_service.py` создаёт

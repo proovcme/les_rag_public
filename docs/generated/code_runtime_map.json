@@ -2995,6 +2995,7 @@
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_rtf_input_transport.py",
         "tests/test_vor_audit_metadata_admission_928.py",
+        "tests/test_vor_authored_measure_provenance_952.py",
         "tests/test_vor_derived_quantity_export_949.py",
         "tests/test_vor_input_transport.py",
         "tests/test_vor_intake_integrity_928.py",
@@ -7835,6 +7836,7 @@
         "tests/test_chat_spec_to_bor_attachment.py",
         "tests/test_spec_to_bor_service.py",
         "tests/test_spec_to_bor_uncertainty.py",
+        "tests/test_vor_authored_measure_provenance_952.py",
         "tests/test_vor_qty_header_variant_25.py",
         "tests/test_vor_route_columns_23.py",
         "tests/test_workbook_tool_service.py",
@@ -8482,6 +8484,7 @@
         "tests/test_model_vor_text_transport.py",
         "tests/test_packaging_recovery_service.py",
         "tests/test_rtf_input_transport.py",
+        "tests/test_vor_authored_measure_provenance_952.py",
         "tests/test_vor_derived_quantity_export_949.py",
         "tests/test_vor_input_transport.py",
         "tests/test_vor_intake_integrity_928.py",
@@ -17308,6 +17311,19 @@
     },
     {
       "inbound": [],
+      "lines": 89,
+      "module": "tests.test_vor_authored_measure_provenance_952",
+      "outbound": [
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/spec_to_bor_service.py",
+        "proxy/services/workbook_tool_service.py"
+      ],
+      "path": "tests/test_vor_authored_measure_provenance_952.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 132,
       "module": "tests.test_vor_candidate_scope_950",
       "outbound": [
@@ -22457,9 +22473,9 @@
     "product_reachable": 382,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 796,
-    "tracked_python_files": 1190,
-    "tracked_python_lines": 410287
+    "test_or_tool_only": 797,
+    "tracked_python_files": 1191,
+    "tracked_python_lines": 410376
   },
   "warnings": []
 }
