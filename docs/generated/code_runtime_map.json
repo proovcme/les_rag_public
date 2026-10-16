@@ -3353,7 +3353,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15340,
+      "lines": 15356,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3762,6 +3762,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_sovushka_chat.py",
         "tests/test_typed_memory_projection_service.py",
+        "tests/test_vor_task_instruction_955.py",
         "tests/test_workbook_result_carrier_scope.py",
         "tools/measure_model_resource_literal_capacity.py"
       ],
@@ -5753,6 +5754,7 @@
         "tests/test_model_reasoning_control.py",
         "tests/test_model_research_evidence_actions.py",
         "tests/test_openai_compatible_transport_service.py",
+        "tests/test_vor_task_instruction_955.py",
         "tests/test_workbook_result_carrier_scope.py",
         "tests/test_workbook_task_context.py"
       ],
@@ -17580,11 +17582,13 @@
     },
     {
       "inbound": [],
-      "lines": 216,
+      "lines": 337,
       "module": "tests.test_vor_task_instruction_955",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/chat_profile_service.py",
+        "proxy/services/context_governor_service.py",
+        "proxy/services/model_execution_preset_service.py",
         "proxy/services/openai_compatible_transport_service.py",
         "proxy/services/workbook_research_job_service.py",
         "tests/test_model_rag_sheet_evidence_reads.py"
@@ -22630,7 +22634,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 806,
     "tracked_python_files": 1200,
-    "tracked_python_lines": 412232
+    "tracked_python_lines": 412369
   },
   "warnings": []
 }

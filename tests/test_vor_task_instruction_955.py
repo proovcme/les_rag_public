@@ -214,3 +214,124 @@ def test_no_applicability_feedback_without_selected_norm_and_authored_flags(norm
     assert "applicability_fields" not in payload["evidence_continuation_instruction"]
     assert row == before and retained == []
     assert "open_gap" not in payload["prior_model_decisions"][0]
+
+
+def _indexed_work(source="S!R2", operation_id="saved-parent-operation", **changes):
+    return {"source_row": source, "operation_id": operation_id, "revision": 3,
+            "row_role": "work", "title": "Сохранённая моделью работа Ω — исходное название",
+            "unit": "м²", "quantity": 12, "norm_code": "MODEL-SELECTED", "norm_status": "CONFLICT",
+            **changes}
+
+
+def _work_index(payload):
+    index = payload.get("accepted_work_index", {"columns": [], "records": []})
+    return [dict(zip(index["columns"], values, strict=True)) for values in index["records"]]
+
+
+def test_current_material_sees_exact_saved_parent_outside_its_packet_without_graph_or_quote_changes():
+    parent = _indexed_work(quantity=0)
+    material = {"source_row": "S!R15", "operation_id": "saved-material", "revision": 2,
+                "row_role": "material", "title": "Авторский материал", "quantity": None, "unit": "м²",
+                "work_row": "S!R2", "covered_by_work_id": parent["operation_id"],
+                "evidence_refs": ["Q9.H4"], "evidence_bindings": {"Q9.H4": "literal-card"}}
+    card = SimpleNamespace(content="Дословная карточка Ω\nНи название, ни количество не сокращены.",
+                           doc_name="cards", doc_id="card", meta={
+                               "global_evidence_id": "literal-card", "model_evidence_ref": "Q9.H4"})
+    full = [parent, material]
+    before = deepcopy(full)
+    payload, retained = app.model_rag_prior_page_context([material], [card], full_result_rows=full)
+    assert _work_index(payload) == [{key: parent[key] for key in payload["accepted_work_index"]["columns"]}]
+    assert payload["prior_model_decisions"][0]["quantity"] is None
+    assert payload["prior_model_decisions"][0]["work_row"] == "S!R2"
+    assert payload["previously_shown_cited_evidence"][0]["content"] == card.content
+    assert full == before and retained == [card]
+    assert "пересмотр закрытых работ" in payload["accepted_work_index_scope"]
+    assert "не является новой карточкой нормы" in payload["accepted_work_index_scope"]
+
+
+def test_work_index_is_reference_only_and_omits_current_ids_and_non_work_roles():
+    current = _indexed_work(revision=4)
+    older_same_id = _indexed_work(revision=3, title="Устаревшее название текущей операции")
+    same_anchor_other_work = _indexed_work(operation_id="another-work-at-same-source", quantity=None)
+    non_works = [_indexed_work(f"S!R{index + 20}", operation_id=f"not-work-{role}", row_role=role)
+                 for index, role in enumerate(["material", "equipment", "header", "unresolved"])]
+    payload, _ = app.model_rag_prior_page_context([current], [],
+        full_result_rows=[older_same_id, same_anchor_other_work, *non_works])
+    assert [row["operation_id"] for row in _work_index(payload)] == [same_anchor_other_work["operation_id"]]
+    assert _work_index(payload)[0]["quantity"] is None
+    assert payload["prior_model_decisions"][0]["revision"] == 4
+    assert "open_gap" not in payload["prior_model_decisions"][0]
+
+
+def test_work_index_is_absent_without_full_result_or_without_other_explicit_works():
+    row = _indexed_work()
+    for full in ([], [row], [{**row, "row_role": "material"}]):
+        payload, _ = app.model_rag_prior_page_context([row], [], full_result_rows=full)
+        assert "accepted_work_index" not in payload
+        assert "accepted_work_index_scope" not in payload
+
+
+@pytest.mark.asyncio
+async def test_fresh_later_packet_gets_accepted_work_index_even_without_same_packet_prior_rows(tmp_path, monkeypatch):
+    from tests import test_model_rag_sheet_evidence_reads as fixture
+
+    rows = [_indexed_work("S!R2", operation_id="", norm_code="", norm_status="", unit="m", quantity=12),
+            _indexed_work("S!R3", operation_id="", norm_code="", norm_status="", unit="m", quantity=3)]
+    run = await fixture._run_sheet(tmp_path, monkeypatch, reads=False, packet_count=2,
+        query_declaration=json.dumps({"artifact_kind": "vor", "queries": []}),
+        final_answer=json.dumps({"artifact_kind": "vor", "rows": rows}))
+    # The first source packet has no saved work; the next query and answer do.
+    assert "accepted_work_index" not in str(run.requests[0].messages)
+    index_payloads = []
+    for request in run.requests[2:]:
+        for message in request.messages:
+            for line in str(message["content"]).splitlines():
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict) and payload.get("accepted_work_index"):
+                    index_payloads.append(payload)
+    assert len(index_payloads) == len(run.requests) - 2, (
+        "each later query, reader call and answer needs the accepted graph, not only same-packet replay")
+    for payload in index_payloads:
+        assert payload["prior_model_decisions"] == []
+        indexed = _work_index(payload)
+        assert [row["source_row"] for row in indexed] == ["S!R2", "S!R3"]
+        assert all(row["operation_id"] for row in indexed)
+        assert [row["quantity"] for row in indexed] == [12, 3]
+    assert not run.responses
+
+
+def test_318_literal_work_index_fits_query_and_answer_governors_at_observed_131k_context():
+    from proxy.services.context_governor_service import ContextKind
+    from proxy.services.model_execution_preset_service import ModelExecutionPreset
+
+    title = 'Авторская работа Ω "дословно" по разделу, условия монтажа и расположение; ' * 4
+    full = [_indexed_work(f"Раздел {index // 32}!R{index + 2}", operation_id=f"literal-operation-{index}",
+                          title=title + str(index), quantity=0 if index == 0 else None if index == 1 else index / 10)
+            for index in range(318)]
+    before = deepcopy(full)
+    payload, _ = app.model_rag_prior_page_context([], [], full_result_rows=full)
+    preset = ModelExecutionPreset("observed-131k", "fixture", 131072, 16384, 2048,
+                                  5, 6, 6, 1, False, ("observed_backend_capacity",))
+    snapshot = {"mode": "estimator", "skill_text": _skill(), "prompt_text": "Инженер по исходным данным"}
+    source = {"requested_source_rows": ["Новый раздел!R15"], "source_quantity_cells": [
+        {"source_row": "Новый раздел!R15", "quantity": 12, "unit": "м²"}]}
+    common = dict(preset=preset, request_payload={"question": "Собери ВОР"}, required_evidence=[source, payload])
+    _, query_packet = app.govern_model_query_messages(retrieval_trace={}, purpose="query",
+        profile_prefix=app.profile_system_prompt(snapshot, strict=False, purpose="query"), **common)
+    _, answer_packet = app.govern_inference_messages(
+        profile_prefix=app.profile_system_prompt(snapshot, strict=False, purpose="workbook_result",
+                                                artifact_kind="vor"), **common)
+    for packet in (query_packet, answer_packet):
+        evidence = [obj.payload for section in packet.sections
+                    if section.kind in {ContextKind.EVIDENCE, ContextKind.CURRENT_READ_FRAME}
+                    for obj in section.objects]
+        assert evidence == [source, payload]
+        indexed = _work_index(evidence[1])
+        assert len(indexed) == 318
+        for row, original in zip(indexed, full, strict=True):
+            assert row == {key: original[key] for key in payload["accepted_work_index"]["columns"]}
+        assert not packet.omissions
+    assert full == before

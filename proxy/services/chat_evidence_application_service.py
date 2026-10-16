@@ -6425,6 +6425,13 @@ def model_rag_prior_page_context(
 ) -> tuple[dict[str, Any], list[Any]]:
     """Replay authored rows and exactly their cited cards; never choose a norm."""
     rows = model_rag_existing_operation_rows(rows, review_rows)
+    current_operation_ids = {row.get("operation_id") for row in rows if row.get("operation_id")}
+    work_index_columns = ["operation_id", "revision", "source_row", "title", "unit", "quantity",
+                          "norm_code", "norm_status"]
+    work_index_records = [[row.get(name) for name in work_index_columns]
+                          for row in full_result_rows if row.get("row_role") == "work"
+                          and (row.get("operation_id") not in current_operation_ids
+                               if row.get("operation_id") else row not in rows)]
     structural_facts = []
     vor_issues = []
     if review_rows and review_instruction and prior_artifact_kind == "vor" and full_result_rows:
@@ -6513,6 +6520,13 @@ def model_rag_prior_page_context(
             "content": chunk.content if owner == identity else _model_rag_shared_body_ref(f"global_evidence_id={owner}"),
         })
     return {
+        **({"accepted_work_index": {"columns": work_index_columns, "records": work_index_records},
+            "accepted_work_index_scope": (
+                "Это индекс ранее сохранённых работ модели того же документа вне текущих операций. "
+                "Он показывает адреса для work_row и идентификаторы для covered_by_work_id; "
+                "связь выбирает модель. Индекс не является новой карточкой нормы и не запрашивает "
+                "пересмотр закрытых работ.")}
+           if work_index_records else {}),
         **({"review_instruction": review_instruction} if review_instruction else {}),
         **({"source_conflict_origin": "application",
             "unapplied_model_proposals": [dict(item) for item in unapplied_proposals],
@@ -10921,7 +10935,8 @@ async def _execute_chat_evidence_application(
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
                                 prior_page_context.update(model_rag_research_target_context(research_job, packet))
-                                if prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals"):
+                                if (prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals")
+                                        or prior_page_context.get("accepted_work_index")):
                                     pass_evidence.append(prior_page_context)
                                 declared_queries = []
                                 query_calls = []
@@ -10987,7 +11002,8 @@ async def _execute_chat_evidence_application(
                                     source_catalog=source_catalog, unapplied_proposals=packet_source_conflict_proposals(
                                         research_job, catalog=source_catalog, packet_locators=packet))
                                 prior_page_context.update(model_rag_research_target_context(research_job, packet))
-                                if prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals"):
+                                if (prior_page_rows or prior_packet_rows or prior_page_context.get("unapplied_model_proposals")
+                                        or prior_page_context.get("accepted_work_index")):
                                     pass_evidence.append(prior_page_context)
                                 selector_evidence = pass_evidence
                                 query_text = ""
