@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 957 — адресный stop
+
+`chat_evidence_application_service.py:await_workbook_model_call` вызывает тот же
+`_sheet_pass_llm_body`, отменяя только его Task по durable stop текущегоjob.
+`workbook_research_job_service.py:run_should_stop` читает управляющие поля;
+packet-only pause не отменяет весь run. Док: [RAG evidence flow](modules/rag-evidence-flow.md).
+
 ## 956 — read-contract по объявленному типу документа
 
 `proxy/services/model_evidence_read_contract.py:model_evidence_read_instruction`

@@ -4080,6 +4080,47 @@ def sheet_pass_progress_label(
 _LIVE_SHEET_PASS_GATES: dict[str, asyncio.Event] = {}
 
 
+async def await_workbook_model_call(
+    call: Callable[[], Any], *, should_stop: Callable[[], bool] | None = None,
+    poll_seconds: float = 0.25,
+) -> Any:
+    """Cancel only this awaited model call after its durable run is stopped.
+
+    A finished response wins a simultaneous stop. The next call checks the stop
+    before invoking its factory. Packet-only guard pauses use run_should_stop,
+    not the broader should_cancel predicate. No model request is rewritten.
+    """
+    if should_stop is None:
+        return await call()
+    if await asyncio.to_thread(should_stop):
+        raise asyncio.CancelledError
+
+    async def invoke():
+        return await call()
+
+    async def watch_stop():
+        while not await asyncio.to_thread(should_stop):
+            await asyncio.sleep(poll_seconds)
+
+    model_task = asyncio.create_task(invoke())
+    stop_task = asyncio.create_task(watch_stop())
+    try:
+        await asyncio.wait((model_task, stop_task), return_when=asyncio.FIRST_COMPLETED)
+        if model_task.done():
+            return await model_task
+        # A failed durable stop read is a technical error, never a model retry.
+        await stop_task
+        raise asyncio.CancelledError
+    finally:
+        for task in (model_task, stop_task):
+            if not task.done():
+                task.cancel()
+        outcomes = await asyncio.gather(model_task, stop_task, return_exceptions=True)
+        for outcome in outcomes:
+            if isinstance(outcome, Exception):
+                raise outcome
+
+
 async def claim_or_join_sheet_pass(job_id: str) -> bool:
     """Serialize packet loops on one research job inside this process.
 
@@ -10394,7 +10435,7 @@ async def _execute_chat_evidence_application(
                     # cited by this packet, not inherit another packet's map.
                     sheet_initial_source_map = list(selector_source_map)
 
-                    async def _sheet_pass_llm(chat_body, *, purpose: str = "sheet_pass_answer",
+                    async def _sheet_pass_llm_body(chat_body, *, purpose: str = "sheet_pass_answer",
                                               inference_preset: ModelExecutionPreset | None = None,
                                               expected_connection_revision_id: str = ""):
                         nonlocal llm_model
@@ -10448,6 +10489,19 @@ async def _execute_chat_evidence_application(
                             ),
                         )
                         return text, usage
+
+                    async def _sheet_pass_llm(chat_body, *, purpose: str = "sheet_pass_answer",
+                                              inference_preset: ModelExecutionPreset | None = None,
+                                              expected_connection_revision_id: str = ""):
+                        return await await_workbook_model_call(
+                            lambda: _sheet_pass_llm_body(
+                                chat_body, purpose=purpose, inference_preset=inference_preset,
+                                expected_connection_revision_id=expected_connection_revision_id,
+                            ),
+                            should_stop=(
+                                lambda: research_job_service.run_should_stop(research_job["job_id"])
+                            ) if research_job_service is not None and research_job is not None else None,
+                        )
 
                     sheet_sys_msg = profile_system_prompt(profile_snapshot, strict=False, purpose="workbook_result") + (
                         f" {answer_form.instruction}" if answer_form.instruction else ""

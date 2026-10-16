@@ -2449,7 +2449,8 @@ class WorkbookResearchJobService:
 
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM workbook_research_jobs WHERE job_id=?", (str(job_id),)
+                "SELECT status,cancel_requested,pause_kind FROM workbook_research_jobs WHERE job_id=?",
+                (str(job_id),),
             ).fetchone()
             if row is None:
                 raise WorkbookResearchJobError("workbook research job not found")

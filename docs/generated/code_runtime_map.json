@@ -1728,6 +1728,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py",
         "tests/test_vor_no_research_query_scope.py",
+        "tests/test_workbook_model_call_cancellation.py",
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_repack_target.py"
       ],
@@ -3347,6 +3348,7 @@
         "tests/test_vor_workflow_contract_948.py",
         "tests/test_workbook_artifact_target.py",
         "tests/test_workbook_chat_refinement.py",
+        "tests/test_workbook_model_call_cancellation.py",
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_provider_binding_928.py",
         "tests/test_workbook_repack_target.py",
@@ -3354,7 +3356,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15358,
+      "lines": 15412,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -8480,6 +8482,7 @@
         "tests/test_workbook_chat_refinement.py",
         "tests/test_workbook_document_scope_integrity_928.py",
         "tests/test_workbook_gap_followup_955.py",
+        "tests/test_workbook_model_call_cancellation.py",
         "tests/test_workbook_partial_draft.py",
         "tests/test_workbook_plain_continuation.py",
         "tests/test_workbook_provider_binding_928.py",
@@ -8488,7 +8491,7 @@
         "tests/test_workbook_source_frame_identity.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 3158,
+      "lines": 3159,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -13916,6 +13919,7 @@
         "tests/test_vor_task_instruction_955.py",
         "tests/test_vor_workflow_contract_948.py",
         "tests/test_workbook_artifact_target.py",
+        "tests/test_workbook_model_call_cancellation.py",
         "tests/test_workbook_provider_binding_928.py"
       ],
       "lines": 1408,
@@ -17830,6 +17834,20 @@
         "proxy/services/workbook_research_job_service.py"
       ],
       "path": "tests/test_workbook_gap_followup_955.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 299,
+      "module": "tests.test_workbook_model_call_cancellation",
+      "outbound": [
+        "proxy/routers/chat.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/workbook_research_job_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
+      ],
+      "path": "tests/test_workbook_model_call_cancellation.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -22652,9 +22670,9 @@
     "product_reachable": 382,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 807,
-    "tracked_python_files": 1201,
-    "tracked_python_lines": 412536
+    "test_or_tool_only": 808,
+    "tracked_python_files": 1202,
+    "tracked_python_lines": 412890
   },
   "warnings": []
 }

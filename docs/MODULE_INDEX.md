@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 957 — адресная остановка выполняющегося model await
+
+`await_workbook_model_call` оборачивает прежний `_sheet_pass_llm_body` без
+изменения запроса/transport. `WorkbookResearchJobService.run_should_stop`
+отличает явную остановку от packet-only pause; проверка читает только поля
+управления. Отменённый вызов очищается до упаковки сохранённого результата.
+Ответ/stop race не теряет готовые строки; другие jobs не отменяются.
+Док↔код: ✅ [RAG evidence flow](modules/rag-evidence-flow.md).
+Регрессия: `test_workbook_model_call_cancellation.py`; installed live обязателен.
+
 ## 956 — инструкция чтения соответствует объявленному моделью документу
 
 `model_evidence_read_instruction(artifact_kind=...)` отделяет чтение исходника
