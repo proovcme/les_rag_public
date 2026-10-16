@@ -3326,6 +3326,7 @@
         "tests/test_model_vor_quantity_preservation.py",
         "tests/test_model_vor_text_transport.py",
         "tests/test_model_workbook_citation_instructions_947.py",
+        "tests/test_native_reasoning_frame_960.py",
         "tests/test_native_tool_call_diagnostics.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_notebook_study_chat_policy.py",
@@ -3348,6 +3349,7 @@
         "tests/test_vor_derived_quantity_export_949.py",
         "tests/test_vor_native_read_scope_956.py",
         "tests/test_vor_no_research_query_scope.py",
+        "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_operation_instructions_948.py",
         "tests/test_vor_review_structural_facts_953.py",
         "tests/test_vor_task_instruction_955.py",
@@ -3771,6 +3773,7 @@
         "tests/test_model_rag_grouped_evidence_service.py",
         "tests/test_model_rag_pointer_alias_replay.py",
         "tests/test_native_ollama_tool_exchange.py",
+        "tests/test_native_reasoning_frame_960.py",
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_sovushka_chat.py",
         "tests/test_typed_memory_projection_service.py",
@@ -5161,6 +5164,7 @@
         "tests/test_norm_price_identity_928.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_no_research_query_scope.py",
+        "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_operation_instructions_948.py"
       ],
       "lines": 2269,
@@ -5805,6 +5809,7 @@
         "tests/test_model_vor_export_instruction.py",
         "tests/test_model_vor_text_transport.py",
         "tests/test_vor_candidate_scope_950.py",
+        "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_operation_instructions_948.py",
         "tests/test_vor_task_instruction_955.py",
         "tests/test_workbook_artifact_target.py"
@@ -8400,6 +8405,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/workbook_tool_service.py",
         "tests/test_vor_derived_quantity_export_949.py",
+        "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_result_integrity_948.py"
       ],
       "lines": 229,
@@ -8562,6 +8568,7 @@
         "tests/test_vor_derived_quantity_export_949.py",
         "tests/test_vor_input_transport.py",
         "tests/test_vor_intake_integrity_928.py",
+        "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_route_columns_23.py",
         "tests/test_vor_workflow_contract_948.py",
         "tests/test_workbook_tool_contracts.py",
@@ -14407,6 +14414,18 @@
     },
     {
       "inbound": [],
+      "lines": 172,
+      "module": "tests.test_native_reasoning_frame_960",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/context_governor_service.py"
+      ],
+      "path": "tests/test_native_reasoning_frame_960.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 55,
       "module": "tests.test_native_tool_call_diagnostics",
       "outbound": [
@@ -17632,6 +17651,21 @@
     },
     {
       "inbound": [],
+      "lines": 143,
+      "module": "tests.test_vor_operation_basis_960",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/lsr_norm_quality_gate_service.py",
+        "proxy/services/model_lsr_result_contract.py",
+        "proxy/services/vor_result_integrity_service.py",
+        "proxy/services/workbook_tool_service.py"
+      ],
+      "path": "tests/test_vor_operation_basis_960.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 118,
       "module": "tests.test_vor_operation_instructions_948",
       "outbound": [
@@ -17790,7 +17824,9 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
+      "inbound": [
+        "tests/test_windows_native_boot_960.py"
+      ],
       "lines": 1778,
       "module": "tests.test_windows_application_update",
       "outbound": [
@@ -17821,6 +17857,20 @@
         "tools/windows_update_engine.py"
       ],
       "path": "tests/test_windows_hard_rejection_recovery_959.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 403,
+      "module": "tests.test_windows_native_boot_960",
+      "outbound": [
+        "tests/test_windows_application_update.py",
+        "tools/vps_patch_apply.py",
+        "tools/windows_runtime.py",
+        "tools/windows_update_engine.py"
+      ],
+      "path": "tests/test_windows_native_boot_960.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -20607,6 +20657,7 @@
         "tests/test_update_resilience_matrix.py",
         "tests/test_vps_patch.py",
         "tests/test_windows_application_update.py",
+        "tests/test_windows_native_boot_960.py",
         "tools/release_orchestrator.py",
         "tools/windows_release_acceptance.py"
       ],
@@ -20680,6 +20731,7 @@
     {
       "inbound": [
         "tests/test_windows_application_update.py",
+        "tests/test_windows_native_boot_960.py",
         "tools/windows_clean_install.py",
         "tools/windows_update_engine.py"
       ],
@@ -20710,6 +20762,7 @@
         "tests/test_update_resilience_matrix.py",
         "tests/test_windows_application_update.py",
         "tests/test_windows_hard_rejection_recovery_959.py",
+        "tests/test_windows_native_boot_960.py",
         "tools/vps_patch_apply.py",
         "tools/windows_release_acceptance.py"
       ],
@@ -22809,9 +22862,9 @@
     "product_reachable": 383,
     "registered_api_routes": 342,
     "runtime_support": 11,
-    "test_or_tool_only": 815,
-    "tracked_python_files": 1210,
-    "tracked_python_lines": 414921
+    "test_or_tool_only": 818,
+    "tracked_python_files": 1213,
+    "tracked_python_lines": 415639
   },
   "warnings": []
 }
