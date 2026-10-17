@@ -1,5 +1,10 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+Точка паузы17.10: установлен963, source965 не принят. Полный gate965 отменён;
+воспроизведён Windows-конфликт конкурентной atomic replace retention metadata,
+найден formula-like filename в provenance-cell ВОР. Оба дефекта ещё открыты.
+См. [контрольную точку](archive/HANDOFF_965_2026-10-17.md) и RELEASE_LEDGER.
+
 ## 965 — комплект исходников с общим возобновляемым учётом
 
 🟡 Кандидат: `chat_attachment_collection_service.create_read_attachment_collection`
