@@ -1390,7 +1390,7 @@ def collect_lsr_price_gaps(
 
 
 def _attach_catalog_facts(
-    decisions: list[dict[str, Any]], attachment_id: str
+    decisions: list[dict[str, Any]], attachment_id: str, *, catalog_override: AttachmentSourceCatalog | None = None,
 ) -> AttachmentSourceCatalog | None:
     """Stamp raw source cells/numbers so the calculator can reject silent changes.
 
@@ -1399,6 +1399,9 @@ def _attach_catalog_facts(
     calculator. A missing attachment or catalog keeps the legacy calculation path.
     """
 
+    for item in decisions:
+        # This is application provenance, never a model-authored source claim.
+        item.pop("_catalog_source_origin", None)
     if not attachment_id or not decisions:
         return
     try:
@@ -1408,7 +1411,7 @@ def _attach_catalog_facts(
             quantity_candidates,
         )
 
-        catalog = load_catalog_from_attachment_id(attachment_id)
+        catalog = catalog_override if catalog_override is not None else load_catalog_from_attachment_id(attachment_id)
     except Exception:  # noqa: BLE001 - catalog absence cannot break a rebuild
         catalog = None
     if catalog is None:
@@ -1420,6 +1423,9 @@ def _attach_catalog_facts(
             continue
         if cat_row is None:
             continue
+        origin = catalog.row_origin(cat_row.locator)
+        if origin:
+            item["_catalog_source_origin"] = origin
         item["_catalog_source_values"] = [str(value) for value in cat_row.values]
         item["_catalog_source_numbers"] = [
             float(value) for value in quantity_candidates(cat_row)
@@ -1443,6 +1449,7 @@ async def build_lsr_workbook_from_decisions(
     decisions = [dict(item) for item in (args.get("decisions") or [])]
     source_catalog = _attach_catalog_facts(
         decisions, str(args.get("attachment_id") or "").strip(),
+        catalog_override=args.get("_source_catalog"),
     )
     requested_pricebook = str(
         args.get("pricebook") or args.get("pricebook_id") or ""

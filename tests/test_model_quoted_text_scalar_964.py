@@ -88,11 +88,12 @@ def test_historical_bound_prompt_is_preserved_with_phase_specific_format_clarifi
     snapshot = {"prompt_text": original, "skill_text": "Literal skill"}
     result = profile_system_prompt(snapshot, strict=False, purpose="workbook_result", artifact_kind="vor")
     assert result.startswith(original + "\n\n")
-    assert "не запрещают формат активного контракта документа" in result
+    assert "Формат документа важнее общих правил стиля" in result
+    assert "Карты не доказательства" in result
     assert snapshot == {"prompt_text": original, "skill_text": "Literal skill"}
     ordinary = profile_system_prompt(snapshot, strict=False, purpose="source_read")
     assert ordinary.startswith(original + "\n\n")
-    assert "не запрещают формат активного контракта документа" not in ordinary
+    assert "Формат документа важнее общих правил стиля" not in ordinary
 
 
 def test_duplicate_named_text_fields_stay_raw_proposals_and_valid_sibling_survives():

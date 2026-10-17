@@ -33,6 +33,15 @@ _EFFECTIVE_FACTOR_LABELS = {
     "answer_output_tokens": "Лимит итогового ответа",
 }
 _FACTOR_PRESENTATION = {
+    "LES_CHAT_ATTACHMENT_MAX_AGE_SEC": {
+        "secret": False, "category": "chat",
+        "label": "Хранение неиспользованных вложений, секунд",
+        "help_text": (
+            "Срок временных загрузок до использования. Исходники ВОР/ЛСР "
+            "сохраняются для продолжения задания и не удаляются по этому сроку. "
+            "Положительное целое число; требуется перезапуск ЛЕС."
+        ),
+    },
     "LES_ETM_ENABLED": {
         "label": "Использовать цены ЭТМ", "secret": False, "category": "smeta",
         "help_text": "Разрешает чтение клиентского API iPRO. Заказы не отправляются; цены получаются только по явному запросу. Перезапуск не нужен.",
@@ -198,6 +207,8 @@ _FACTOR_PRESENTATION = {
     },
 }
 _EXPLICIT_FACTOR_DEFAULTS = {
+    # The source default is str(7 * 24 * 3600); AST sees the key but not that expression.
+    "LES_CHAT_ATTACHMENT_MAX_AGE_SEC": "604800",
     "LES_ETM_ENABLED": "0", "LES_ETM_LOGIN": "", "LES_ETM_PASSWORD": "",
     "LES_ETM_BASE_URL": "https://ipro.etm.ru/api/v1", "LES_ETM_TIMEOUT_SEC": "20",
     # The config accessor joins a tuple; AST discovery cannot infer that value.
@@ -243,6 +254,7 @@ _RESTART_PREFIXES = (
     "SOVUSHKA_", "PROXY_", "MLX_", "OLLAMA_", "LEMONADE_", "FREETOKEN_",
 )
 _RESTART_KEYS = {
+    "LES_CHAT_ATTACHMENT_MAX_AGE_SEC",
     "LES_CANONICAL_ACCEPTANCE_STATE_ROOT",
     "LES_CANONICAL_AGENT_ROUTE_MODE",
     "LES_DEMO_PROVIDER_OVERRIDE_ENABLED",
@@ -509,6 +521,10 @@ def update_factors(
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         if key == "LES_CHAT_SOURCE_FRAME_ROWS" and (
             not value.isascii() or not value.isdecimal() or not 0 <= int(value) <= 12
+        ):
+            raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
+        if key == "LES_CHAT_ATTACHMENT_MAX_AGE_SEC" and (
+            not value.isascii() or not value.isdecimal() or int(value) <= 0
         ):
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         normalized[key] = value

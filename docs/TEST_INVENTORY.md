@@ -1,5 +1,40 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат965 — вместимость и комплект исходников
+
+Полный964:6054passed/20skipped/9failed/814,93s. Семь отказов связаны с ростом
+служебного workbook-result текста и потерей evidence/native capacity; их
+исправление — меньший фазовый текст при прежних лимитах, без удаления карточек.
+Два устаревших fixture expectation обновляются под действующий формат профиля
+и keyword `include_retry_token` с сохранением прежних проверок данных.
+Четыре связанные suite после ремонта контекста:319passed/26,00s;
+`artifacts/live_965/context_repair.xml`. Полный965 и installed live pending.
+
+`test_attachment_collection_965.py`:39cases, с adjacent212passed/7,08s.
+Проверены точные байты/SHA, разные количества файлов/строк, trusted контейнер,
+namespace и literal cells, unread blockers, native source provenance вне frame,
+93строки/3файла без дублирования origins в model render, VOR/LSR packaging,
+источник в человекочитаемой «Проверке»,0/null, forged provenance и TTL/restart.
+Файлы с одинаковыми bytes и разными IDs сохраняются отдельно; повтор одного
+ID/alias отклоняется до фиксации parent. Библиотечный source expiry не удаляет
+успешно использованный single/collection; неверный SHA не получает pin.
+Конкурентный pin: оба reader доходят до markerFalse и записи temp, оба успешно
+завершаются, sourceSHA/bytes прежние, незавершённых временных файлов нет.
+
+`test_chat_attachment_collection_ui_965.py`:20cases, с adjacent276passed/13,76s.
+Batch ordering/session/epoch, ошибки и запрет prefix-send, автоматический parent,
+stale parent/new selection, сохранение другого чата/вкладки, оба входа истории,
+снятие uploaded без reset активной загрузки, прежние quick/index и singleton.
+Регрессии registry:7passed/5,27s; действительный TTL default604800, source,
+restart boundary и отказ нецелых/неположительных значений до записи настроек.
+Квитанции — `artifacts/live_965/attachment_collection/`. Это scoped offline
+доказательства, не установленная профессиональная приёмка.
+Дополнительная проверка11связанных attachment/source маршрутов:367passed/1failed
+(старая `_Cat` без штатных row_origin/locator),53,16s. Заглушка получила точный
+пустой single-file origin; прежние проверки неизменности model cells сохранены.
+Повтор одного исправленного случая и7registry cases:8passed/5,65s. Обе
+квитанции сохранены: `retention_adjacent.xml`, `retention_adjacent_repair.xml`.
+
 ## Регрессии964 — текстовый carrier и сохраняемая подсказка добора
 
 `test_model_quoted_text_scalar_964.py`: фактическая форма явных multiline

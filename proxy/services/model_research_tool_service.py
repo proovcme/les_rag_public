@@ -434,10 +434,13 @@ class ModelResearchToolService:
                  "source_file_id": catalog.source_file_id, "source_sha256": expected_sha,
                  "source_ref": f"{catalog.source_file_id}#{row.locator}",
                  "body_complete": True, "source_extraction_complete": catalog.extraction_complete}
+        origin = catalog.row_origin(row.locator)
+        if origin:
+            facts["source_member"] = origin
         if row.source_start is not None and row.source_end is not None:
             facts.update(source_start=row.source_start, source_end=row.source_end,
                          source_order_basis=catalog_source_order_basis((row,)))
-        chunk = _SmetaNormChunk(content=content, doc_name=catalog.original_name, score=1.0, meta={
+        chunk = _SmetaNormChunk(content=content, doc_name=str(origin.get("original_name") or catalog.original_name), score=1.0, meta={
             **facts, "doc_id": catalog.source_file_id, "source_read": True, "attachment_source_read": True,
             "content_complete": True, "body_status": "full", "minimum_evidence_body_chars": len(content),
         })

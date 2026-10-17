@@ -114,6 +114,7 @@ UNIT_TESTS += tests/test_lsr_supply_retry_962.py
 UNIT_TESTS += tests/test_lsr_native_feedback_962.py
 UNIT_TESTS += tests/test_model_query_wrapper_963.py tests/test_model_workbook_unknown_terminal_963.py tests/test_model_document_kind_availability_963.py
 UNIT_TESTS += tests/test_model_quoted_text_scalar_964.py tests/test_lsr_gap_hint_resume_964.py
+UNIT_TESTS += tests/test_attachment_collection_965.py tests/test_chat_attachment_collection_ui_965.py
 UNIT_TESTS += tests/test_unresolved_retry_routes_955.py tests/test_retry_target_projection_955.py
 UNIT_TESTS += tests/test_rim_cited_numeric_literals.py tests/test_model_warmup_service.py
 UNIT_TESTS += tests/test_meta_store_env_binding_945.py

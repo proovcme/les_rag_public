@@ -1,5 +1,28 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 965 — несколько файлов в одном задании
+
+`chat_attachment_collection_service` создаёт self-contained `.lescollection`
+только из сохранённых server read IDs. `datasets` предоставляет POST
+`/api/chat/attachment-collections`; общая граница байтов прежняя. Упорядоченный
+манифест, SHA parent/member и точные entries проверяются до чтения.
+`attachment_source_catalog_service` принимает контейнер только с доверенной
+server metadata. Каталог сохраняет отдельные namespaced locators, literal
+cells и исходные координаты; offsets разных членов не сортируются совместно.
+`model_source_frame_service` сохраняет полный audit, но не дублирует origins
+всех непоказанных строк в каждом кадре. `model_research_tool_service.read_source`
+возвращает origin конкретного члена. `workbook_tool_service` передаёт доверенный
+union catalog существующим VOR/LSR adapters; модель не может подставить его.
+Новый модуль и attachment lifecycle входят в critical runtime alignment.
+После успешного typed-чтения `chat_attachment_service` проверяет SHA и сохраняет
+retention marker: временная очистка не удаляет источник долговременного задания.
+GUI показывает действительный TTL604800 и restart; этот срок относится к
+неиспользованным загрузкам. Источник и job identity от marker не меняются.
+
+`sovushka.pages.chat` принимает upload batch, сохраняет список готовых/ошибочных
+членов по чату и автоматически получает parent перед отправкой. Неподготовленный
+остаток не теряется. Значения и решения модели не выбираются кодом.
+
 ## 964 — буквальные named-text поля и область инженерного уточнения
 
 `model_lsr_result_contract.decode_model_quoted_text_scalar` читает только

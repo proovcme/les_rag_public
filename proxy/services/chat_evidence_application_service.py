@@ -7966,10 +7966,7 @@ def profile_system_prompt(
     elif purpose == "workbook_result":
         parts.append(
             _WORKBOOK_ROW_CITATION_INSTRUCTION
-            + " Навигационные карты помогают выбрать файл, но сами по себе не подтверждают факт."
-            + " Правила профиля об обычном ответе без JSON и с Markdown не запрещают формат "
-            "активного контракта документа: строки передавай в выбранном формате этого контракта; "
-            "обычный комментарий пользователю остаётся человекочитаемым."
+            + " Карты не доказательства. Формат документа важнее общих правил стиля."
         )
     elif strict:
         parts.append(
@@ -12205,7 +12202,7 @@ async def _execute_chat_evidence_application(
                                 retrieval_trace["context_governor"]["calls"].append(
                                     context_packet_trace(read_frame, purpose="sheet_pass_evidence_read")
                                 )
-                                await _emit_row_progress("чтение карточек и цен", sheet=sheet_name, index=sheet_index)
+                                await _emit_row_progress("чтение источников", sheet=sheet_name, index=sheet_index)
                                 started = time.time()
                                 result = await _sheet_pass_llm(
                                     {**chat_body, "messages": messages}, purpose="sheet_pass_evidence_read",

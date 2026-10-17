@@ -10,12 +10,13 @@ import os
 import re
 import sqlite3
 import time
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from datetime import tzinfo as TzInfo
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from nicegui import context, ui
+from nicegui import app, context, ui
 
 from sovushka.components.charts import _html, esc
 from sovushka.safe_markup import sanitize_svg
@@ -2348,11 +2349,59 @@ def _split_pasted_context_for_payload(
     return task, context, suffix
 
 
+def new_chat_attachment_queue() -> dict[str, Any]:
+    return {"epoch": 0, "selection_revision": 0, "next_batch": 0, "batches": [], "committed": None, "committing": False, "error": ""}
+
+
+def begin_chat_attachment_batch(queue: dict, *, session_id: str, mode: str) -> dict:
+    """Reserve before reading uploads; the request's context owns every completion."""
+    queue["next_batch"] += 1
+    queue["selection_revision"] += 1
+    batch = {"number": queue["next_batch"], "mode": mode, "status": "uploading", "members": []}
+    queue["batches"].append(batch)
+    queue.update(committed=None, error="")
+    return {"queue": queue, "epoch": queue["epoch"], "batch": batch, "session_id": session_id, "mode": mode}
+
+
+def chat_attachment_batch_current(token: dict) -> bool:
+    queue = token["queue"]
+    return queue["epoch"] == token["epoch"] and any(batch is token["batch"] for batch in queue["batches"])
+
+
+def chat_attachment_commit_ids(queue: dict) -> list[str]:
+    if queue.get("committing") or any(batch.get("status") == "uploading" for batch in queue["batches"]):
+        raise ValueError("Дождитесь завершения загрузки всех выбранных файлов.")
+    if any(batch.get("status") != "ready" for batch in queue["batches"]):
+        raise ValueError("Не все выбранные файлы загружены. Повторите загрузку или явно снимите незавершённую загрузку.")
+    members = [member for batch in queue["batches"] for member in batch.get("members") or ()]
+    if not members or any(member.get("status") != "ready" for member in members):
+        raise ValueError("Не все файлы подготовлены. Повторите загрузку или явно снимите файлы с ошибкой.")
+    if any((member.get("attachment") or {}).get("mode") != "read" for member in members):
+        raise ValueError("Комплект поддерживает режим «Задать вопрос по файлу». Снимите вложения других режимов явно.")
+    ids = [str((member.get("attachment") or {}).get("attachment_id") or "") for member in members]
+    if any(not value for value in ids) or len(set(ids)) != len(ids):
+        raise ValueError("Не удалось подтвердить отдельные файлы комплекта. Повторите их загрузку.")
+    return ids
+
+
+def chat_attachment_queue_block_reason(queue: dict) -> str:
+    if not queue.get("batches"):
+        return ""
+    if queue.get("committed") and not queue.get("committing"):
+        return ""
+    return str(queue.get("error") or "Файлы ещё не готовы к отправке. Дождитесь обработки всех файлов; при ошибке повторите подготовку или снимите файл с ошибкой.")
+
+
 def _attachment_visible_text(data: dict) -> tuple[str, str, str]:
     """Текст видимого подтверждения: куда именно пойдёт файл после галочки upload."""
     name = str(data.get("name") or "файл").strip() or "файл"
     mode = str(data.get("mode") or "")
     if mode == "read":
+        collection = data.get("collection") or {}
+        if isinstance(collection, dict) and collection.get("members"):
+            names = [str(member.get("original_name") or "файл") for member in collection["members"]]
+            return (f"Прикреплён комплект: {len(names)} файлов", "; ".join(names),
+                    "📎 К следующему запросу прикреплены файлы: " + "; ".join(names) + ".")
         suffix = " · усечён" if data.get("truncated") else ""
         return (
             "Файл прикреплён к следующему сообщению",
@@ -3207,8 +3256,252 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
             # Скрепка чата: файл к следующему сообщению / быстрая сверка / индексация (W11.8)
             attach_state = {"id": None, "name": "", "mode": "", "text": ""}
+            _upload_batch_context = ContextVar("chat_attachment_upload_batch", default=None)
+            try:
+                _attachment_queues = dict(app.storage.user.get("les_chat_attachment_queues") or {})
+            except RuntimeError:
+                _attachment_queues = {}
+            for _sid, _stored in list(_attachment_queues.items()):
+                if not isinstance(_stored, dict):
+                    _attachment_queues.pop(_sid)
+                    continue
+                _stored.setdefault("selection_revision", 0)
+                if _stored.get("committing"):
+                    _stored.update(committing=False, error="Подготовка комплекта прервана. Повторите её.")
+                for _batch in _stored.get("batches") or ():
+                    if _batch.get("status") == "uploading":
+                        _batch.update(status="failed", error="Загрузка прервана. Выберите эти файлы повторно.")
+                        for _member in _batch.get("members") or ():
+                            if _member.get("status") == "uploading":
+                                _member.update(status="failed", error=_batch["error"])
 
-            async def _do_attach(e):
+            def _attachment_queue(session_id=None):
+                sid = str(state.get("session_id") or "") if session_id is None else str(session_id)
+                return _attachment_queues.setdefault(sid, new_chat_attachment_queue())
+
+            def _persist_attachment_queues(session_id=None):
+                # Persist IDs/manifest/status, never upload bytes or extracted document text.
+                sid = str(state.get("session_id") or "") if session_id is None else str(session_id)
+                saved = json.loads(json.dumps(_attachment_queue(sid), ensure_ascii=False))
+                if isinstance(saved.get("committed"), dict):
+                    saved["committed"].pop("text", None)
+                for batch in saved.get("batches") or ():
+                    for member in batch.get("members") or ():
+                        if isinstance(member.get("attachment"), dict):
+                            member["attachment"].pop("text", None)
+                current = dict(app.storage.user.get("les_chat_attachment_queues") or {})
+                current[sid] = saved
+                app.storage.user["les_chat_attachment_queues"] = current
+
+            def _render_attachment_queue():
+                queue = _attachment_queue()
+                attachment_members.clear()
+                with attachment_members:
+                    for batch in queue["batches"]:
+                        members = batch.get("members") or ()
+                        if not members:
+                            ui.label(str(batch.get("error") or "Получаю выбранные файлы…"))
+                        for index, member in enumerate(members):
+                            with ui.row().classes("w-full items-center gap-2"):
+                                status = {"uploading": "загрузка", "ready": "готов", "failed": "ошибка"}.get(member["status"], member["status"])
+                                ui.label(f"{member['name']} · {status}")
+                                action_button("Снять", icon="o_close", compact=True,
+                                    on_click=lambda _event, b=batch, i=index: _remove_attachment_member(b, i)).set_enabled(
+                                        not queue["committing"] and not any(item["status"] == "uploading" for item in queue["batches"]))
+                            if member.get("error"):
+                                ui.label(str(member["error"])).classes("sov-ui-section-detail")
+                        if not members and batch.get("status") == "failed":
+                            action_button("Снять незавершённую загрузку", compact=True,
+                                on_click=lambda _event, b=batch: _remove_attachment_member(b, None))
+                commit_attachment_btn.set_enabled(bool(queue["batches"]) and not queue["committing"])
+                commit_attachment_btn.set_visibility(bool(queue.get("error")))
+                if queue.get("error"):
+                    attach_status.set_text(queue["error"])
+
+            def _remove_attachment_member(batch, index):
+                queue = _attachment_queue()
+                if queue["committing"] or any(item["status"] == "uploading" for item in queue["batches"]):
+                    ui.notify("Дождитесь окончания загрузки или снимите весь комплект.", type="warning")
+                    return
+                if not any(item is batch for item in queue["batches"]):
+                    return
+                if index is not None:
+                    batch["members"].pop(index)
+                if not batch["members"]:
+                    queue["batches"].remove(batch)
+                queue["epoch"] += 1
+                queue["selection_revision"] += 1
+                queue.update(committed=None, error="")
+                attach_state.update(id=None)
+                # Completed browser transport entries must not consume the next
+                # selection's max-total-size; queued/inflight uploads stay intact.
+                attachment_picker.run_method("removeUploadedFiles")
+                _persist_attachment_queues()
+                _render_attachment_queue()
+                if queue["batches"]:
+                    try:
+                        chat_attachment_commit_ids(queue)
+                    except ValueError:
+                        pass
+                    else:
+                        asyncio.create_task(_commit_attachment_collection())
+
+            def _show_attached_response(d):
+                attach_state.update({"id": d.get("attachment_id"), "name": d.get("name") or "файл",
+                    "mode": d.get("mode"), "text": d.get("text") or "", "chars": d.get("chars") or 0,
+                    "rows": d.get("rows") or 0, "truncated": bool(d.get("truncated")),
+                    "dataset_name": d.get("dataset_name") or "", "collection": d.get("collection") or {}})
+                title, detail, _message = _attachment_visible_text(d)
+                attach_title.set_text(title)
+                attach_chip.set_text(detail)
+                attach_strip.set_visibility(True)
+
+            def _restore_attachment_collection():
+                _clear_attachment(notify=False, discard=False)
+                committed = _attachment_queue().get("committed")
+                if committed:
+                    _show_attached_response(committed)
+                _render_attachment_queue()
+
+            def _begin_attach_upload(_event):
+                sid = str(state.get("session_id") or "")
+                queue = _attachment_queue(sid)
+                token = begin_chat_attachment_batch(queue, session_id=sid, mode=str(attach_mode.value))
+                _upload_batch_context.set(token)
+                attach_state.update(id=None)
+                _persist_attachment_queues(sid)
+                _render_attachment_queue()
+
+            def _reject_attach_upload(_event):
+                queue = _attachment_queue()
+                queue["next_batch"] += 1
+                queue["selection_revision"] += 1
+                message = "Один или несколько выбранных файлов отклонены ограничением размера или формата. Выберите их повторно либо явно снимите незавершённую загрузку."
+                queue["batches"].append({"number": queue["next_batch"], "mode": str(attach_mode.value),
+                    "status": "failed", "members": [], "error": message})
+                queue.update(committed=None, error=message)
+                attach_state.update(id=None)
+                _persist_attachment_queues()
+                _render_attachment_queue()
+                ui.notify(message, type="warning")
+
+            async def _commit_attachment_collection(*, session_id=None):
+                sid = str(state.get("session_id") or "") if session_id is None else str(session_id)
+                queue = _attachment_queue(sid)
+                try:
+                    ids = chat_attachment_commit_ids(queue)
+                except ValueError as error:
+                    ui.notify(str(error), type="warning")
+                    return
+                epoch = queue["epoch"]
+                selection_revision = queue["selection_revision"]
+                queue.update(committing=True, error="")
+                _persist_attachment_queues(sid)
+                _render_attachment_queue()
+                try:
+                    if len(ids) == 1:
+                        d = next(member["attachment"] for batch in queue["batches"] for member in batch["members"])
+                    else:
+                        d = await api_post("/api/chat/attachment-collections", {"attachment_ids": ids})
+                    if queue["epoch"] != epoch or queue["selection_revision"] != selection_revision:
+                        return
+                    if not isinstance(d, dict) or not d.get("attachment_id") or d.get("mode") != "read":
+                        queue["error"] = last_api_error_text("Не удалось подготовить комплект. Файлы сохранены; повторите подготовку.")
+                        return
+                    if len(ids) > 1:
+                        collection = d.get("collection") or {}
+                        actual_ids = ([str(member.get("attachment_id") or "") for member in collection.get("members") or ()
+                                       if isinstance(member, dict)] if isinstance(collection, dict) else [])
+                        if actual_ids != ids or collection.get("member_count") != len(ids):
+                            queue["error"] = "Состав подготовленного комплекта не совпал с выбранными файлами. Повторите подготовку."
+                            return
+                    queue["committed"] = d
+                    if str(state.get("session_id") or "") == sid:
+                        _show_attached_response(d)
+                        attach_status.set_text("Все выбранные файлы подготовлены для следующего запроса.")
+                        attach_dialog.close()
+                        _title, _detail, chat_msg = _attachment_visible_text(d)
+                        state["chat_history"].append({"role": "system", "text": chat_msg,
+                            "meta": {"attachment": {"id": d["attachment_id"], "name": d.get("name"),
+                                "mode": "read", "collection": d.get("collection") or {}}}})
+                        with chat_column:
+                            _render_msg(state["chat_history"][-1])
+                finally:
+                    if queue["epoch"] == epoch:
+                        queue["committing"] = False
+                        _persist_attachment_queues(sid)
+                    if str(state.get("session_id") or "") == sid:
+                        _render_attachment_queue()
+                    if queue["epoch"] == epoch and queue["selection_revision"] != selection_revision:
+                        try:
+                            chat_attachment_commit_ids(queue)
+                        except ValueError:
+                            pass
+                        else:
+                            # A newly selected complete set is a new commit, never a retry of a failed request.
+                            await _commit_attachment_collection(session_id=sid)
+
+            async def _do_attach_batch(e):
+                token = _upload_batch_context.get()
+                if not isinstance(token, dict) or not chat_attachment_batch_current(token):
+                    ui.notify("Выбор файлов изменился. Повторите загрузку в нужном чате.", type="warning")
+                    return
+                queue, batch = token["queue"], token["batch"]
+                files = list(e.files)
+                batch["members"] = [{"name": str(file.name), "status": "uploading"} for file in files]
+                _persist_attachment_queues(token["session_id"])
+                if str(state.get("session_id") or "") == token["session_id"]:
+                    _render_attachment_queue()
+                if token["mode"] != "read":
+                    if len(files) != 1 or len(queue["batches"]) != 1:
+                        batch.update(status="failed", error="Несколько файлов доступны в режиме «Задать вопрос по файлу». Снимите этот выбор и выберите режим.")
+                        for member in batch["members"]:
+                            member.update(status="failed", error=batch["error"])
+                    else:
+                        from types import SimpleNamespace
+                        await _do_attach(SimpleNamespace(file=files[0]), upload_token=token)
+                    _persist_attachment_queues(token["session_id"])
+                    if str(state.get("session_id") or "") == token["session_id"]:
+                        _render_attachment_queue()
+                    return
+                for file, member in zip(files, batch["members"]):
+                    if not chat_attachment_batch_current(token):
+                        return
+                    try:
+                        content = await file.read()
+                        if not chat_attachment_batch_current(token):
+                            return
+                        if isinstance(content, str):
+                            content = content.encode("utf-8")
+                        if not content:
+                            raise ValueError("Файл пуст.")
+                        member["size"] = len(content)
+                        d = await api_post_file("/api/rag/attach", content, member["name"], params={"mode": "read"})
+                        if not chat_attachment_batch_current(token):
+                            return
+                        if not isinstance(d, dict) or not d.get("attachment_id") or d.get("mode") != "read":
+                            raise ValueError(last_api_error_text("Не удалось подготовить файл."))
+                        member.update(status="ready", attachment=d)
+                    except Exception as error:  # One visible failed member must not discard the rest of the chosen batch.
+                        if not chat_attachment_batch_current(token):
+                            return
+                        member.update(status="failed", error=str(error))
+                    _persist_attachment_queues(token["session_id"])
+                    if str(state.get("session_id") or "") == token["session_id"]:
+                        _render_attachment_queue()
+                batch["status"] = "ready" if all(member["status"] == "ready" for member in batch["members"]) else "failed"
+                _persist_attachment_queues(token["session_id"])
+                if str(state.get("session_id") or "") == token["session_id"]:
+                    _render_attachment_queue()
+                if not queue["committing"]:
+                    try:
+                        chat_attachment_commit_ids(queue)
+                    except ValueError:
+                        pass
+                    else:
+                        await _commit_attachment_collection(session_id=token["session_id"])
+
+            async def _do_attach(e, *, upload_token=None):
                 try:
                     upload = getattr(e, "file", None)
                     if upload is not None and hasattr(upload, "read"):
@@ -3226,12 +3519,38 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     if not content:
                         raise ValueError("empty upload content")
                 except Exception as error:
+                    if upload_token and not chat_attachment_batch_current(upload_token):
+                        return
+                    if upload_token and chat_attachment_batch_current(upload_token):
+                        upload_token["batch"]["status"] = "failed"
+                        for member in upload_token["batch"]["members"]:
+                            member.update(status="failed", error=str(error))
+                        _persist_attachment_queues(upload_token["session_id"])
+                    if upload_token and str(state.get("session_id") or "") != upload_token["session_id"]:
+                        return
                     attach_status.set_text(f"Не удалось прочитать файл: {error}")
                     ui.notify("Не удалось прочитать файл", type="negative")
                     return
-                attach_status.set_text(f"Загрузка «{file_name}»…")
-                add_log(f"[СКРЕПКА] {file_name} mode={attach_mode.value}")
-                d = await api_post_file("/api/rag/attach", content, file_name, params={"mode": attach_mode.value})
+                if upload_token and not chat_attachment_batch_current(upload_token):
+                    return
+                if not upload_token or str(state.get("session_id") or "") == upload_token["session_id"]:
+                    attach_status.set_text(f"Загрузка «{file_name}»…")
+                mode = upload_token["mode"] if upload_token else attach_mode.value
+                add_log(f"[СКРЕПКА] {file_name} mode={mode}")
+                d = await api_post_file("/api/rag/attach", content, file_name, params={"mode": mode})
+                if upload_token:
+                    if not chat_attachment_batch_current(upload_token):
+                        return
+                    batch = upload_token["batch"]
+                    batch["status"] = "ready" if isinstance(d, dict) and d.get("attachment_id") else "failed"
+                    for member in batch["members"]:
+                        member.update(status=batch["status"], **({"attachment": d} if batch["status"] == "ready"
+                            else {"error": last_api_error_text("Не удалось прикрепить файл")}))
+                    if batch["status"] == "ready":
+                        upload_token["queue"]["committed"] = d
+                    _persist_attachment_queues(upload_token["session_id"])
+                    if str(state.get("session_id") or "") != upload_token["session_id"]:
+                        return
                 if not isinstance(d, dict):
                     ui.notify(last_api_error_text("Не удалось прикрепить файл"), type="negative")
                     attach_status.set_text(last_api_error_text("Не удалось прикрепить файл"))
@@ -3278,9 +3597,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             with ui.dialog() as attach_dialog, ui.card().classes("sov-attach-dialog"):
                 with ui.row().classes("sov-attach-dialog__head"):
                     with ui.column().classes("sov-attach-dialog__copy"):
-                        ui.label("Добавить файл").classes("sov-attach-dialog__title")
+                        ui.label("Добавить файлы").classes("sov-attach-dialog__title")
                         ui.label(
-                            "Выберите задачу, затем файл. ЛЕС покажет результат под полем запроса."
+                            "Выберите задачу и файлы. После подготовки всего списка отправьте обычный запрос."
                         ).classes("sov-attach-dialog__intro")
                     action_button(
                         icon="o_close",
@@ -3316,16 +3635,46 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     on_change=_set_attach_mode_detail,
                 ).props("color=primary").classes("sov-attach-mode-picker")
                 attach_status = ui.label("").classes("sov-attach-status")
-                ui.upload(
-                    label="Выбрать файл",
+                attachment_limit = ui.label("Ограничение размера задаётся параметром MAX_UPLOAD_MB в настройках среды.").classes("sov-ui-section-detail")
+                attachment_members = ui.column().classes("w-full gap-2")
+                commit_attachment_btn = action_button("Повторить подготовку", icon="o_replay",
+                    on_click=lambda: asyncio.create_task(_commit_attachment_collection()), variant="secondary", compact=True)
+                attachment_picker = ui.upload(
+                    label="Выбрать файлы",
+                    multiple=True,
                     auto_upload=True,
-                    max_files=1,
-                    on_upload=_do_attach,
+                    on_begin_upload=_begin_attach_upload,
+                    on_multi_upload=_do_attach_batch,
+                    on_rejected=_reject_attach_upload,
                 ).props("flat accept=.xlsx,.xlsm,.xls,.csv,.pdf,.docx,.rtf").classes(
                     "sov-chat-file-picker"
                 )
+                action_button("Снять все выбранные файлы", icon="o_clear_all", compact=True,
+                    on_click=lambda: _clear_attachment())
 
-            def _clear_attachment(*, notify: bool = True):
+            async def _open_attach_dialog():
+                _render_attachment_queue()
+                attach_dialog.open()
+                registry = await api_get("/api/settings/runtime-registry")
+                factors = registry.get("factors") or () if isinstance(registry, dict) else ()
+                factor = next((item for item in factors if item.get("key") == "MAX_UPLOAD_MB"), {})
+                raw = str(factor.get("effective_value") or "")
+                if raw.isdecimal() and int(raw) > 0:
+                    limit = int(raw) * 1024 * 1024
+                    attachment_picker.props(f"max-file-size={limit} max-total-size={limit}")
+                    attachment_limit.set_text(f"Не более {raw} МБ на файл и суммарно на комплект. Источник: {factor.get('source') or 'настройки среды'}.")
+                else:
+                    attachment_limit.set_text("Не удалось прочитать MAX_UPLOAD_MB. Проверка размера выполняется сервером; параметр доступен в настройках среды.")
+
+            def _clear_attachment(*, notify: bool = True, discard: bool = True):
+                if discard:
+                    queue = _attachment_queue()
+                    epoch = queue["epoch"] + 1
+                    queue.clear()
+                    queue.update(new_chat_attachment_queue(), epoch=epoch)
+                    _persist_attachment_queues()
+                    attachment_picker.reset()
+                    _render_attachment_queue()
                 attach_state.clear()
                 attach_state.update({"id": None, "name": "", "mode": "", "text": ""})
                 attach_title.set_text("")
@@ -3378,6 +3727,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         'flat round dense aria-label="Снять вложение"'
                     ).classes("sov-icon-btn").tooltip("Снять вложение")
                 attach_strip.set_visibility(False)
+                _restore_attachment_collection()
 
                 # Режим только направляет модель к подходящему workflow. Подсказки объясняют
                 # ожидаемые данные, но не превращаются в шаблон ответа или keyword-gate.
@@ -3404,7 +3754,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     with ui.row().classes("sov-composer-actions"):
                         action_button(
                             icon="o_attach_file",
-                            on_click=lambda: attach_dialog.open(),
+                            on_click=_open_attach_dialog,
                             variant="secondary",
                             icon_only=True,
                             aria_label="Прикрепить файл",
@@ -4228,6 +4578,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         state["chat_history"] = msgs
         state["load_session_id"] = None
         state["session_id"] = persist_session_id(session_id)
+        _restore_attachment_collection()
         if selected_session_card["el"]:
             selected_session_card["el"].classes(remove="sov-session-card-active")
         if el:
@@ -6450,6 +6801,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         state["session_id"] = state["load_session_id"]
         state["load_session_id"] = None
         persist_session_id(state["session_id"])
+        _restore_attachment_collection()
         _render_chat_history("Сессия загружена из истории.")
         _scroll_chat_to_tail(force=True)
         asyncio.create_task(_hydrate_running_workbook_progress(from_history=True))
@@ -6510,6 +6862,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         state["chat_history"] = list(hist or [])
         persist_session_id(sid)
+        _restore_attachment_collection()
         pending = dict(state.get("chat_pending") or {})
         job = await _selected_session_workbook_research(
             job_id=str(pending.get("job_id") or ""),
@@ -6784,7 +7137,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         except Exception:
             pass
         try:
-            _clear_attachment(notify=False)
+            _clear_attachment(notify=False, discard=False)
         except Exception:
             pass
         _pending_target_files["v"] = []
@@ -6981,12 +7334,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     ):
         if _sending["v"]:
             return
+        attachment_block = chat_attachment_queue_block_reason(_attachment_queue())
+        if attachment_block:
+            _notify(attachment_block, type="warning")
+            return
         try:
             empty_state_ref["el"].set_visibility(False)
         except Exception:
             pass
         # Верификация объёмов — tool-действие: распознать скан + открыть спец-артефакт.
         if _is_verify_request(question):
+            if composer_snapshot is not None:
+                consume_lsr_resume_input(chat_input, composer_snapshot)
             await _do_verify(question)
             return
         selected_dataset_filter = (
@@ -7000,6 +7359,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         else:
             await _refresh_resource_gate()
         if _sending["v"]:
+            return
+        attachment_block = chat_attachment_queue_block_reason(_attachment_queue())
+        if attachment_block:
+            _notify(attachment_block, type="warning")
             return
         if resume_binding is not None and resume_binding != (
                 str(state.get("session_id") or ""), str(attach_state.get("id") or "")):
@@ -7279,7 +7642,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         def _apply_chat_result(d: dict) -> None:
             """Применяет финальный payload (общий для стрима и нестриминга):
             форматированный ответ, источники, вердикт, артефакт."""
-            if sent_attachment and not _preserved_attachment(d, sent_attachment):
+            if (sent_attachment and attach_state.get("id") == sent_attachment.get("id")
+                    and not _preserved_attachment(d, sent_attachment)):
                 _clear_attachment(notify=False)
             ans = d.get("answer", d.get("response", "Нет ответа"))
             srcs = d.get("sources", [])
@@ -7681,22 +8045,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _scroll_chat_to_tail()
 
     async def send_chat():
-        q = chat_input.value.strip()
+        captured = str(chat_input.value or "")
+        q = captured.strip()
         if not q:
             return
-        chat_input.value = ""
-        _update_prompt_preview()
-        await _do_send(q)
+        await _do_send(q, composer_snapshot=captured)
 
     async def send_with_form():
-        q = chat_input.value.strip()
+        captured = str(chat_input.value or "")
+        q = captured.strip()
         if not q:
             ui.notify("Введите текст запроса", type="warning")
             return
         advanced_dialog.close()
-        chat_input.value = ""
-        _update_prompt_preview()
-        await _do_send(q)
+        await _do_send(q, composer_snapshot=captured)
 
     def _html_set_artifact_mode(label: str, hint: str):
         _open_artifacts()

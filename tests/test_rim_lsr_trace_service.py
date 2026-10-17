@@ -1696,10 +1696,15 @@ def test_adapter_stamps_catalog_facts_without_rewriting_model_cells(monkeypatch)
         values = ("м.п", "30")
         numbers = (30.0,)
         excel_row = 47
+        locator = "СКС!R47"
 
     class _Cat:
         def lookup(self, _key):
             return _CatRow()
+
+        def row_origin(self, locator):
+            assert locator == "СКС!R47"
+            return {}
 
     monkeypatch.setattr(
         catalog_module, "load_catalog_from_attachment_id", lambda _aid: _Cat()

@@ -1328,7 +1328,7 @@ def test_a_new_chat_clears_the_status_the_thread_clear_cannot_reach():
         "def _clear_chat():", 1
     )[0]
     assert "lsr_stalled_row.set_visibility(False)" in reset
-    assert "_clear_attachment(notify=False)" in reset
+    assert "_clear_attachment(notify=False, discard=False)" in reset
     assert '_pending_target_files["v"] = []' in reset
     assert "_follow_placeholder" in reset
 
@@ -1359,7 +1359,9 @@ def test_chat_file_picker_uses_task_language_and_compact_uikit_surface():
     assert 'classes("sov-attach-dialog")' in source
     assert '"sov-attach-mode-detail"' in source
     assert '"sov-chat-file-picker"' in source
-    assert 'max_files=1' in source
+    assert 'multiple=True' in source and 'max_files=1' not in source
+    assert 'on_begin_upload=_begin_attach_upload' in source
+    assert 'on_multi_upload=_do_attach_batch' in source
     assert ".sov-attach-dialog" in uikit
     assert ".sov-chat-file-picker" in uikit
 
@@ -1397,7 +1399,8 @@ def test_chat_attachment_upload_uses_nicegui_file_api_not_stale_content_api():
     source = inspect.getsource(chat_page.build_chat)
     attach_block = source[source.index("async def _do_attach"):source.index("def _clear_attachment")]
 
-    assert "on_upload=_do_attach" in source
+    assert "on_multi_upload=_do_attach_batch" in source
+    assert "on_begin_upload=_begin_attach_upload" in source
     assert "lambda e: asyncio.create_task(_do_attach(e))" not in source
     assert "upload = getattr(e, \"file\", None)" in attach_block
     assert "await upload.read()" in attach_block

@@ -81,7 +81,8 @@ def test_factory_profile_conflicting_prose_rules_remain_literal_but_do_not_defin
     assert _PHASE_MARKER in messages[0]["content"]
     assert _FINAL_CITATION_RULE in messages[0]["content"]
     assert _ANSWER_CITATION_RULE not in messages[0]["content"]
-    assert 'без внутренних служебных терминов и JSON' in snapshot["prompt_text"]
+    assert 'Для обычного ответа не используй JSON без запроса пользователя' in snapshot["prompt_text"]
+    assert 'не запрещает JSON или вызов инструмента для передачи этих строк' in snapshot["prompt_text"]
     assert 'Markdown-таблицы' in snapshot["prompt_text"]
     assert "Контракт экспорта ВОР/ЛСР:" not in messages[0]["content"]
     delivered = [obj.payload for section in packet.sections

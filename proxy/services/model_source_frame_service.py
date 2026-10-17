@@ -142,6 +142,12 @@ def render_model_source_frame(frame: ModelSourceFrame) -> ModelSourceRender:
     source_index = manifest["columns"].index("source_row")
     manifest["records"] = [[record[source_index]] for record in manifest["records"]]
     manifest["columns"] = ["source_row"]
+    if "source_row_origins" in manifest:
+        origins = manifest["source_row_origins"]
+        shown = set(frame.shown_locators)
+        manifest["source_row_origins"] = [item for item in origins if item["source_row"] in shown]
+        manifest["source_row_origins_not_shown_count"] = len(origins) - len(manifest["source_row_origins"])
+        manifest["source_row_origins_not_shown_access"] = "read_source(source_row=<exact manifest address>)"
     snapshots = {item["source_row"]: item["catalog_row"]
                  for item in audit["offered_rows"] + audit["reference_rows"]}
     cells = [cell for locator in frame.shown_locators for cell in snapshots[locator]["cells"]]
@@ -275,11 +281,16 @@ def build_model_source_frame(
         if not isinstance(locator, str) or locator not in by_locator or locator in requested_set:
             raise ModelSourceFrameError("NONLITERAL_ABSENT_OR_DUPLICATE_OFFERED_LOCATOR")
         requested_set.add(locator)
-    offset_order = bool(catalog.rows) and all(row.source_start is not None for row in catalog.rows)
+    offset_order = not catalog.source_members and bool(catalog.rows) and all(row.source_start is not None for row in catalog.rows)
     rows = tuple(sorted(catalog.rows, key=lambda row: row.source_start)) if offset_order else catalog.rows
-    order_basis = catalog_source_order_basis(rows) if offset_order else "application_catalog_order"
+    order_basis = ("collection_manifest_member_order" if catalog.source_members else
+                   catalog_source_order_basis(rows) if offset_order else "application_catalog_order")
     requested = tuple(row.locator for row in rows if row.locator in requested_set)
     references_set = _reference_locators(rows, requested_set)
+    if catalog.source_members:
+        offered_members = {locator.partition("::")[0] for locator in requested_set}
+        references_set = {locator for locator in references_set
+                          if locator.partition("::")[0] in offered_members}
     references = tuple(row.locator for row in rows if row.locator in references_set)
     shown_set = requested_set | references_set
     shown = tuple(row.locator for row in rows if row.locator in shown_set)
@@ -291,6 +302,9 @@ def build_model_source_frame(
         "sheets": _literal(catalog.sheets), "extraction_complete": catalog.extraction_complete,
         "extraction_warnings": _literal(catalog.extraction_warnings),
     }
+    if catalog.source_members:
+        identity.update(source_members=_literal(catalog.source_members),
+                        source_row_origins=_literal(catalog.source_row_origins))
     metadata_types = {row.locator: _literal_types(row) for row in rows}
     catalog_sha = _sha({**identity, "rows": [snapshots[row.locator] for row in rows],
                        "source_literal_types": [metadata_types[row.locator] for row in rows]})

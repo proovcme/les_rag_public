@@ -5,6 +5,7 @@ import asyncio
 import inspect
 import json
 import re
+import zipfile
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -354,7 +355,7 @@ def _result_from_revision(
     artifact = revision.to_dict()
     if revision.tool_calls and revision.tool_calls[-1].get("draft"):
         artifact["draft"] = True
-    return {
+    result = {
         "schema": "les.workbook_tool_result.v1",
         "status": "partial" if snapshot.get("document_issues") or snapshot.get("vor_source_errors") else "complete",
         "artifact": artifact,
@@ -369,6 +370,9 @@ def _result_from_revision(
         "blockers": list(revision.blockers),
         **{key: snapshot[key] for key in _CALCULATION_SNAPSHOT_FIELDS if key in snapshot},
     }
+    if revision.tool_calls and "source_collection" in revision.tool_calls[-1]:
+        result["source"]["collection_members"] = revision.tool_calls[-1]["source_collection"]
+    return result
 
 
 async def _default_vor_adapter(
@@ -405,7 +409,9 @@ async def _default_vor_adapter(
         from proxy.services.attachment_source_catalog_service import (
             compare_model_row_to_catalog, load_tabular_source_catalog,
         )
-        catalog = await asyncio.to_thread(load_tabular_source_catalog, source_path)
+        catalog = args.get("_source_catalog")
+        if catalog is None:
+            catalog = await asyncio.to_thread(load_tabular_source_catalog, source_path)
         if catalog is None:
             source_errors.append("source_catalog_unavailable")
         else:
@@ -430,6 +436,10 @@ async def _default_vor_adapter(
                     )
                 continue
             errors = compare_model_row_to_catalog(item, catalog) if catalog is not None else ["source_catalog_unavailable"]
+            if catalog is not None and catalog.source_members:
+                origin = catalog.row_origin(str(item.get("source_row") or ""))
+                if origin:
+                    rendered["source_file"] = origin["original_name"]
             source_errors.extend(errors)
             rendered["source_audit"] = "; ".join(messages.get(error.split(":", 1)[0], "Исходные объёмы не проверены") for error in errors)
 
@@ -593,6 +603,20 @@ async def _build_workbook(
     draft_rows = [
         dict(item) for item in (normalized.get("decisions") or []) if isinstance(item, Mapping)
     ]
+    collection_catalog = None
+    if source_path.suffix.lower() == ".lescollection":
+        from proxy.services.chat_attachment_collection_service import COLLECTION_METADATA_SCHEMA
+        from proxy.services.attachment_source_catalog_service import load_tabular_source_catalog
+        if attachment_meta.get("schema") != COLLECTION_METADATA_SCHEMA:
+            return {**_rejected("ATTACHMENT_INVALID", "server collection metadata required"), "tool": tool_name}
+        try:
+            collection_catalog = await asyncio.to_thread(
+                load_tabular_source_catalog, source_path, trusted_collection_metadata=attachment_meta,
+            )
+        except (OSError, ValueError, zipfile.BadZipFile) as error:
+            return {**_rejected("ATTACHMENT_INVALID", str(error)), "tool": tool_name}
+        if artifact_kind != "vor_workbook" and not draft_rows:
+            return {**_rejected("MODEL_WORK_ROWS_REQUIRED", "collection requires explicit model decisions"), "tool": tool_name}
     if artifact_kind == "vor_workbook":
         supported = {".xlsx", ".xlsm"}
         supported.update({".pdf", ".docx", ".csv", ".rtf"})
@@ -601,7 +625,8 @@ async def _build_workbook(
         if draft_rows:
             supported.update({".docx", ".csv", ".rtf"})
     if source_path.suffix.lower() not in supported:
-        return {**_rejected("UNSUPPORTED_ATTACHMENT_TYPE", f"unsupported attachment type: {source_path.suffix}"), "tool": tool_name}
+        if collection_catalog is None:
+            return {**_rejected("UNSUPPORTED_ATTACHMENT_TYPE", f"unsupported attachment type: {source_path.suffix}"), "tool": tool_name}
 
     checkpoint = ctx.checkpoints.begin_or_resume(CheckpointBeginRequest(
         session_id=ctx.session_id,
@@ -661,8 +686,17 @@ async def _build_workbook(
             key: value for key, value in normalized.items() if key != "draft"
         }
         adapter_args = {**adapter_payload, "_source_name": str(attachment_meta["original_name"])}
+        if collection_catalog is not None:
+            adapter_args["_source_catalog"] = collection_catalog
+            adapter_args["_source_collection"] = [dict(item) for item in collection_catalog.source_members]
         if ctx.document_issues:
             adapter_args["_document_issues"] = [dict(issue) for issue in ctx.document_issues]
+        if collection_catalog is not None and not collection_catalog.extraction_complete:
+            adapter_args.setdefault("_document_issues", []).append({
+                "code": "SOURCE_EXTRACTION_INCOMPLETE",
+                "reason": "Часть файлов комплекта не прочитана полностью.",
+                "source_extraction_warnings": list(collection_catalog.extraction_warnings),
+            })
         if artifact_kind == "vor_workbook" and normalized.get("draft"):
             adapter_args["_draft"] = True
         generated = await _call_adapter(adapter, source_path, adapter_args, output_path, progress)
@@ -689,6 +723,8 @@ async def _build_workbook(
             # would price an immutable old file against today's changed books.
             "calculation_snapshot": {key: generated[key] for key in _CALCULATION_SNAPSHOT_FIELDS if key in generated},
         }
+        if collection_catalog is not None:
+            tool_call_meta["source_collection"] = [dict(item) for item in collection_catalog.source_members]
         if normalized.get("draft"):
             tool_call_meta["draft"] = True
         applied_basis = (

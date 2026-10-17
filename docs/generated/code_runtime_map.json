@@ -1051,6 +1051,7 @@
         "proxy/services/canonical_promotion_service.py",
         "proxy/services/canonical_route_service.py",
         "proxy/services/capability_broker_service.py",
+        "proxy/services/chat_attachment_collection_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/chat_capability_scope_service.py",
         "proxy/services/chat_evidence_application_service.py",
@@ -1867,6 +1868,7 @@
         "proxy/routers/filemap.py",
         "proxy/routers/mail.py",
         "proxy/routers/rag_advanced.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_attachment_sheet_accounting_942.py",
         "tests/test_candidate_acceptance_service.py",
         "tests/test_cloud_drive_service.py",
@@ -1883,7 +1885,7 @@
         "tests/test_scope_model_v21.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3842,
+      "lines": 3887,
       "module": "proxy.routers.datasets",
       "outbound": [
         "backend/converter.py",
@@ -1901,7 +1903,9 @@
         "proxy/routers/__init__.py",
         "proxy/security.py",
         "proxy/services/asbuilt_intake_service.py",
+        "proxy/services/attachment_source_catalog_service.py",
         "proxy/services/candidate_acceptance_service.py",
+        "proxy/services/chat_attachment_collection_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/cloud_drive_service.py",
         "proxy/services/context_expander_service.py",
@@ -2561,6 +2565,7 @@
         "proxy/services/canonical_promotion_service.py",
         "proxy/services/canonical_route_service.py",
         "proxy/services/capability_broker_service.py",
+        "proxy/services/chat_attachment_collection_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/chat_capability_scope_service.py",
         "proxy/services/chat_evidence_application_service.py",
@@ -2897,6 +2902,7 @@
         "proxy/services/workbook_tool_service.py",
         "tests/test_artifact_revision_service.py",
         "tests/test_artifacts_router.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
@@ -2977,7 +2983,9 @@
     {
       "inbound": [
         "proxy/routers/chat.py",
+        "proxy/routers/datasets.py",
         "proxy/services/bor_service.py",
+        "proxy/services/chat_attachment_collection_service.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_result_readiness_service.py",
         "proxy/services/lsr_source_coverage_service.py",
@@ -2987,6 +2995,7 @@
         "proxy/services/rim_lsr_trace_service.py",
         "proxy/services/vor_result_integrity_service.py",
         "proxy/services/workbook_tool_service.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_attachment_source_catalog_service.py",
         "tests/test_catalog_header_quantity_binding.py",
         "tests/test_catalog_quantity_gap_cases.py",
@@ -3022,13 +3031,14 @@
         "tests/test_xlsx_literal_metadata_961.py",
         "tests/test_xlsx_unread_metadata_955.py"
       ],
-      "lines": 1462,
+      "lines": 1496,
       "module": "proxy.services.attachment_source_catalog_service",
       "outbound": [
         "backend/converter.py",
         "backend/rtf_parser.py",
         "proxy/__init__.py",
         "proxy/services/__init__.py",
+        "proxy/services/chat_attachment_collection_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/xlsx_source_metadata_service.py",
         "proxy/smeta_core/unit_contract.py"
@@ -3210,11 +3220,32 @@
     },
     {
       "inbound": [
+        "proxy/routers/datasets.py",
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/workbook_tool_service.py",
+        "tests/test_attachment_collection_965.py"
+      ],
+      "lines": 211,
+      "module": "proxy.services.chat_attachment_collection_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py",
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/chat_attachment_service.py"
+      ],
+      "path": "proxy/services/chat_attachment_collection_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
         "proxy/routers/chat.py",
         "proxy/routers/datasets.py",
         "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/chat_attachment_collection_service.py",
         "proxy/services/smeta_chat_application_service.py",
         "proxy/services/workbook_tool_service.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_chat_attachment_service.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_spec_to_bor_attachment.py",
@@ -3228,7 +3259,7 @@
         "tests/test_workbook_provider_binding_928.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 173,
+      "lines": 208,
       "module": "proxy.services.chat_attachment_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -3381,7 +3412,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15790,
+      "lines": 15787,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4395,6 +4426,7 @@
         "sovushka/pages/chat.py",
         "tests/lsr_gold_pricebook.py",
         "tests/pricebook_probe.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_estimate_harness.py",
         "tests/test_fgis_price_fetch_service.py",
@@ -5308,6 +5340,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/workbook_research_job_service.py",
         "proxy/services/workbook_tool_service.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_fgis_pricebook_snapshot.py",
         "tests/test_finalization_defects_782.py",
         "tests/test_lsr_disguised_gaps.py",
@@ -5324,7 +5357,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 1672,
+      "lines": 1679,
       "module": "proxy.services.lsr_workbook_adapter_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6005,6 +6038,7 @@
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/model_rag_grouped_evidence_service.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_fgis_pricebook_snapshot.py",
         "tests/test_model_discovery_read_admission.py",
@@ -6031,7 +6065,7 @@
         "tests/test_rtf_input_transport.py",
         "tests/test_xlsx_literal_metadata_961.py"
       ],
-      "lines": 759,
+      "lines": 762,
       "module": "proxy.services.model_research_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6166,13 +6200,14 @@
     {
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_chat_model_source_frame.py",
         "tests/test_model_source_frame_service.py",
         "tests/test_rtf_input_transport.py",
         "tests/test_xlsx_literal_metadata_961.py",
         "tests/test_xlsx_unread_metadata_955.py"
       ],
-      "lines": 346,
+      "lines": 360,
       "module": "proxy.services.model_source_frame_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7447,6 +7482,7 @@
         "proxy/services/rim_session_xlsx_service.py",
         "proxy/smeta_core/document_workflow.py",
         "proxy/smeta_core/lsr_renderer.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_finalization_defects_782.py",
         "tests/test_lsr_labor_tariff_830.py",
         "tests/test_lsr_render_byte_determinism_943.py",
@@ -7460,7 +7496,7 @@
         "tests/test_unknown_resource_consumption.py",
         "tools/smeta_vor_finalize.py"
       ],
-      "lines": 823,
+      "lines": 840,
       "module": "proxy.services.rim_trace_xlsx_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7506,7 +7542,7 @@
         "tests/test_rtf_input_transport.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 532,
+      "lines": 548,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -8468,6 +8504,7 @@
         "proxy/routers/runtime.py",
         "proxy/services/canonical_promotion_service.py",
         "proxy/services/update_service.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_scope_model_v21.py",
         "tests/test_software_versions.py",
         "tests/test_v020_deploy_stamp_ui.py",
@@ -8478,7 +8515,7 @@
         "tools/internal_dual_deploy.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 396,
+      "lines": 398,
       "module": "proxy.services.version_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8495,6 +8532,7 @@
         "proxy/services/bor_service.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/workbook_tool_service.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_vor_derived_quantity_export_949.py",
         "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_result_integrity_948.py"
@@ -8578,6 +8616,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/model_result_packet_service.py",
         "sovushka/pages/chat.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_model_source_frame.py",
         "tests/test_equivalent_artifact_transport_953.py",
@@ -8656,6 +8695,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/model_workbook_terminal_transport_service.py",
         "proxy/services/tool_harness_service.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_model_vor_text_transport.py",
@@ -8672,7 +8712,7 @@
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 795,
+      "lines": 831,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8680,6 +8720,7 @@
         "proxy/services/artifact_revision_service.py",
         "proxy/services/attachment_source_catalog_service.py",
         "proxy/services/bor_service.py",
+        "proxy/services/chat_attachment_collection_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/packaging_recovery_service.py",
@@ -8697,6 +8738,7 @@
       "inbound": [
         "proxy/routers/chat.py",
         "proxy/services/workbook_tool_service.py",
+        "tests/test_attachment_collection_965.py",
         "tests/test_rtf_input_transport.py",
         "tests/test_vor_input_transport.py",
         "tests/test_vor_intake_integrity_928.py",
@@ -9591,6 +9633,7 @@
       "inbound": [
         "sovushka/pages/history.py",
         "sovushka_ng.py",
+        "tests/test_chat_attachment_collection_ui_965.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_lsr_gap_hint_resume_964.py",
         "tests/test_profiles_ui.py",
@@ -9601,7 +9644,7 @@
         "tests/test_verify_service.py",
         "tests/test_workbook_pending_source_progress_959.py"
       ],
-      "lines": 8039,
+      "lines": 8401,
       "module": "sovushka.pages.chat",
       "outbound": [
         "backend/rag_config.py",
@@ -9885,6 +9928,7 @@
         "sovushka/pages/verify.py",
         "sovushka/pages/volk.py",
         "sovushka_ng.py",
+        "tests/test_chat_attachment_collection_ui_965.py",
         "tests/test_chat_stream_w51.py",
         "tests/test_live_push_w52.py",
         "tests/test_sovushka_chat.py",
@@ -10414,6 +10458,31 @@
     },
     {
       "inbound": [],
+      "lines": 641,
+      "module": "tests.test_attachment_collection_965",
+      "outbound": [
+        "proxy/routers/datasets.py",
+        "proxy/services/artifact_revision_service.py",
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/chat_attachment_collection_service.py",
+        "proxy/services/chat_attachment_service.py",
+        "proxy/services/fgis_price_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
+        "proxy/services/model_research_tool_service.py",
+        "proxy/services/model_source_frame_service.py",
+        "proxy/services/rim_trace_xlsx_service.py",
+        "proxy/services/version_service.py",
+        "proxy/services/vor_result_integrity_service.py",
+        "proxy/services/workbook_research_job_service.py",
+        "proxy/services/workbook_tool_service.py",
+        "proxy/services/workflow_checkpoint_service.py"
+      ],
+      "path": "tests/test_attachment_collection_965.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 84,
       "module": "tests.test_attachment_sheet_accounting_942",
       "outbound": [
@@ -10713,6 +10782,18 @@
         "proxy/smeta_core/document_workflow.py"
       ],
       "path": "tests/test_catalog_section_fallback.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 347,
+      "module": "tests.test_chat_attachment_collection_ui_965",
+      "outbound": [
+        "sovushka/pages/chat.py",
+        "sovushka/state.py"
+      ],
+      "path": "tests/test_chat_attachment_collection_ui_965.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -14003,7 +14084,7 @@
     },
     {
       "inbound": [],
-      "lines": 227,
+      "lines": 228,
       "module": "tests.test_model_query_phase_scope",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -14119,7 +14200,7 @@
     },
     {
       "inbound": [],
-      "lines": 207,
+      "lines": 208,
       "module": "tests.test_model_quoted_text_scalar_964",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -14926,7 +15007,7 @@
     },
     {
       "inbound": [],
-      "lines": 560,
+      "lines": 566,
       "module": "tests.test_packaging_recovery_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -16103,7 +16184,7 @@
         "tests/test_lsr_rim_trace_api.py",
         "tests/test_resource_price_unit_conversion.py"
       ],
-      "lines": 2113,
+      "lines": 2118,
       "module": "tests.test_rim_lsr_trace_service",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -16328,7 +16409,7 @@
     },
     {
       "inbound": [],
-      "lines": 395,
+      "lines": 421,
       "module": "tests.test_runtime_config_registry_service",
       "outbound": [
         "proxy/services/runtime_config_registry_service.py"
@@ -17013,7 +17094,7 @@
     },
     {
       "inbound": [],
-      "lines": 3171,
+      "lines": 3174,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/config.py",
@@ -21242,6 +21323,12 @@
       "source": "proxy/routers/chat.py"
     },
     {
+      "handler": "create_chat_attachment_collection",
+      "method": "POST",
+      "path": "/api/chat/attachment-collections",
+      "source": "proxy/routers/datasets.py"
+    },
+    {
       "handler": "create_chat_attachment",
       "method": "POST",
       "path": "/api/chat/attachments",
@@ -23154,12 +23241,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 386,
-    "registered_api_routes": 342,
+    "product_reachable": 387,
+    "registered_api_routes": 343,
     "runtime_support": 11,
-    "test_or_tool_only": 829,
-    "tracked_python_files": 1227,
-    "tracked_python_lines": 419748
+    "test_or_tool_only": 831,
+    "tracked_python_files": 1230,
+    "tracked_python_lines": 421557
   },
   "warnings": []
 }

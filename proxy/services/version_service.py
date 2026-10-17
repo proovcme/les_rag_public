@@ -41,6 +41,8 @@ CREATE_NO_WINDOW = 0x08000000
 # критичные файлы, по которым ловим расхождение repo↔runtime (хэш, не полный diff).
 # v0.22: + GUI-файлы (sovushka) — иначе deploy stamp слеп к фронт-правкам и не флипается в stale.
 _CRITICAL_FILES = (
+    "proxy/services/chat_attachment_collection_service.py",
+    "proxy/services/chat_attachment_service.py",
     "backend/interface.py",
     "backend/rag_config.py",
     "backend/qdrant_adapter.py",

@@ -531,6 +531,13 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
         "Ограничения аналога", "Проверка ресурсов", "Решения по ресурсам",
         "Труд", "Машины", "Материалы", "Повторная проверка влияния",
     ]
+    member_provenance = any(
+        isinstance(item.get("source_row"), Mapping)
+        and isinstance(item["source_row"].get("_catalog_source_origin"), Mapping)
+        for item in lsr.get("row_bindings") or []
+    )
+    if member_provenance:
+        headers.extend(["Файл источника", "Исходная строка"])
     last_column = len(headers)
     ws.append(headers)
     for cell in ws[1]:
@@ -669,7 +676,7 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
         operation_id = str(projected.get("operation_id") or "")
         if operation_id:
             links.append(operation_id)
-        ws.append([
+        values = [
             item.get("row"),
             projected.get("position_no") if projected.get("position_no") else not_produced,
             item.get("work_id"),
@@ -694,7 +701,17 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
             review_line(item, "machine_review_status", "machine_review_reason"),
             review_line(item, "material_review_status", "material_review_reason"),
             review_line(item, "dominant_review_status", "dominant_review_reason"),
-        ])
+        ]
+        if member_provenance:
+            origin = model_row.get("_catalog_source_origin")
+            origin = origin if isinstance(origin, Mapping) else {}
+            values.extend([origin.get("original_name"), origin.get("original_locator")])
+        ws.append(values)
+        if member_provenance:
+            for column in (last_column - 1, last_column):
+                cell = ws.cell(ws.max_row, column)
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
     ws.append([])
     ws.append(["Общие замечания и незакрытые позиции"])
     section_row = ws.max_row

@@ -1,5 +1,30 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 965 — комплект исходников с общим возобновляемым учётом
+
+🟡 Кандидат: `chat_attachment_collection_service.create_read_attachment_collection`
+→ `datasets.create_chat_attachment_collection` → прежний единичный `attachment_id`
+и job identity. Родительский контейнер хранит точные байты оригиналов и SHA;
+временные дочерние загрузки не являются зависимостями продолжения.
+`chat_attachment_service.retain_read_attachment_for_workbook` закрепляет
+успешно прочитанный typed-источник по SHA; TTL сохраняется для неиспользованных
+загрузок. GUI показывает actual604800 и restart для существующего фактора срока.
+`load_collection_source_catalog` объединяет прежние typed adapters без изменения
+значений, с отдельными координатами файлов и исходной provenance. Native
+`read_source`, source frame и оба workbook packager используют тот же каталог.
+Неизвестный/неполностью прочитанный член остаётся в манифесте и делает extraction
+incomplete. Число файлов/строк не фиксируется; действует общий лимит байтов.
+Публичный ZIP не становится доверенным контейнером по одному расширению.
+
+UI: batch загрузка → список членов → автоматическая фиксация parent → прежняя
+отправка. Неполная/ошибочная загрузка блокирует отправку сокращённого комплекта.
+Одиночный файл сохраняет прежний путь. Полный immutable audit содержит все
+origins; model render — origins показанных строк и явный доступ к остальным.
+Точки входа: [RAG flow](modules/rag-evidence-flow.md),
+[UI kit](modules/sovushka-uikit.md). Регрессии:
+`test_attachment_collection_965`, `test_chat_attachment_collection_ui_965`.
+Установка, полный гейт и профессиональная приёмка ещё не выполнены.
+
 ## 964 — буквальные текстовые поля и единый формат документа
 
 `model_lsr_result_contract.decode_model_quoted_text_scalar` читает только

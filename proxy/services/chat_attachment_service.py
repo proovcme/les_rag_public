@@ -18,6 +18,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from backend.runtime_paths import mutable_path
 
@@ -88,6 +89,8 @@ def cleanup_expired(
     for metadata_path in base.glob("read_????????????.json"):
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata.get("retained_for_workbook") is True:
+                continue
             created_at = float(metadata.get("created_at_epoch") or metadata_path.stat().st_mtime)
             if now - created_at <= max_age_sec:
                 continue
@@ -145,7 +148,7 @@ def resolve_read_attachment(
     if metadata.get("attachment_id") != _safe_id(attachment_id):
         raise ValueError("chat attachment metadata mismatch")
     created_at = float(metadata.get("created_at_epoch") or 0)
-    if created_at <= 0 or time.time() - created_at > max_age_sec:
+    if (created_at <= 0 or time.time() - created_at > max_age_sec) and metadata.get("retained_for_workbook") is not True:
         consume_read_attachment(attachment_id, root=root)
         raise FileNotFoundError("chat attachment expired")
     stored_name = str(metadata.get("stored_name") or "")
@@ -159,12 +162,44 @@ def resolve_read_attachment(
     return file_path, dict(metadata)
 
 
-def consume_read_attachment(attachment_id: str, *, root: str | Path | None = None) -> None:
+def retain_read_attachment_for_workbook(
+    attachment_id: str, *, expected_sha256: str, root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Keep a successfully read typed source for durable workbook continuation.
+
+    Only server callers invoke this after loading the actual catalog. The exact
+    source hash is checked again; bytes and their identity are never changed.
+    """
+    if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise ValueError("invalid workbook source hash")
+    # The caller already admitted the source before catalog extraction. Crossing
+    # its TTL during that read must not delete it before this hash-verified pin.
+    _source, metadata = resolve_read_attachment(attachment_id, root=root, max_age_sec=float("inf"))
+    if metadata.get("sha256") != expected_sha256:
+        raise ValueError("workbook source hash mismatch")
+    if metadata.get("retained_for_workbook") is True:
+        return metadata
+    metadata_path, _ = _paths(attachment_id, root)
+    pending = metadata_path.with_name(metadata_path.name + f".{uuid4().hex}.retain.tmp")
+    retained = {**metadata, "retained_for_workbook": True}
+    try:
+        pending.write_text(json.dumps(retained, ensure_ascii=False, indent=2), encoding="utf-8")
+        pending.replace(metadata_path)
+    finally:
+        pending.unlink(missing_ok=True)
+    return retained
+
+
+def consume_read_attachment(
+    attachment_id: str, *, root: str | Path | None = None, force: bool = False,
+) -> None:
     metadata_path, _ = _paths(attachment_id, root)
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         metadata = {}
+    if metadata.get("retained_for_workbook") is True and not force:
+        return
     stored_name = str(metadata.get("stored_name") or "")
     if stored_name:
         file_path = (metadata_path.parent.resolve() / stored_name).resolve()

@@ -19,30 +19,30 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1227 |
-| Строк Python | 419748 |
-| PRODUCT_REACHABLE | 386 |
+| Python-файлов под git | 1230 |
+| Строк Python | 421557 |
+| PRODUCT_REACHABLE | 387 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 829 |
+| TEST_OR_TOOL_ONLY | 831 |
 | DORMANT_CANDIDATE | 1 |
-| Зарегистрированных API-маршрутов | 342 |
+| Зарегистрированных API-маршрутов | 343 |
 | Ошибок разбора | 0 |
 
 ## Крупнейшие продуктовые модули
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 15790 | 123 |
+| proxy/services/chat_evidence_application_service.py | 15787 | 123 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| sovushka/pages/chat.py | 8039 | 11 |
+| sovushka/pages/chat.py | 8401 | 12 |
 | proxy/routers/chat.py | 4931 | 57 |
 | backend/qdrant_adapter.py | 4598 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |
-| proxy/routers/datasets.py | 3842 | 19 |
+| proxy/routers/datasets.py | 3887 | 20 |
 | proxy/services/rim_lsr_trace_service.py | 3453 | 44 |
 | sovushka/styles.py | 3301 | 3 |
-| proxy/services/workbook_research_job_service.py | 3287 | 59 |
+| proxy/services/workbook_research_job_service.py | 3287 | 60 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
@@ -50,13 +50,13 @@
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
 | proxy/smeta_core/norm_browser.py | 1951 | 20 |
-| proxy/services/lsr_workbook_adapter_service.py | 1672 | 18 |
+| proxy/services/lsr_workbook_adapter_service.py | 1679 | 19 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | sovushka/pages/diag.py | 1605 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
+| proxy/services/attachment_source_catalog_service.py | 1496 | 48 |
 | proxy/routers/mail.py | 1476 | 3 |
-| proxy/services/attachment_source_catalog_service.py | 1462 | 45 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 16 |

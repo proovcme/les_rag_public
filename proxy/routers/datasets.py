@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -3607,6 +3608,50 @@ async def _prepare_read_attachment(
         "truncated": truncated,
         **extraction_facts,
     }
+
+
+class ChatAttachmentCollectionRequest(BaseModel):
+    attachment_ids: list[str] = Field(min_length=1)
+
+    model_config = {"extra": "forbid"}
+
+
+@search_router.post("/chat/attachment-collections", status_code=201)
+async def create_chat_attachment_collection(
+    request: ChatAttachmentCollectionRequest,
+    _user=Depends(require_user),
+):
+    """Bind ordered uploaded originals into one self-contained source identity."""
+    from proxy.services.chat_attachment_collection_service import (
+        AttachmentCollectionError, create_read_attachment_collection,
+    )
+    from proxy.services.attachment_source_catalog_service import load_catalog_from_attachment_id
+
+    try:
+        metadata = await asyncio.to_thread(create_read_attachment_collection,
+            request.attachment_ids, max_bytes=max_upload_bytes())
+        catalog = await asyncio.to_thread(load_catalog_from_attachment_id, metadata["attachment_id"])
+    except AttachmentCollectionError as error:
+        detail = {"code": error.code}
+        if error.max_bytes is not None:
+            detail.update(max_bytes=error.max_bytes, actual_bytes=error.actual_bytes)
+        raise HTTPException(413 if error.code == "UPLOAD_TOO_LARGE" else 422, detail) from error
+    except FileNotFoundError as error:
+        raise HTTPException(422, {"code": "COLLECTION_ATTACHMENT_MISSING"}) from error
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        raise HTTPException(409, {"code": "COLLECTION_ATTACHMENT_INVALID"}) from error
+    if catalog is None:
+        raise HTTPException(422, {"code": "COLLECTION_CATALOG_UNAVAILABLE"})
+    text = "\n".join([catalog.manifest_text(), *catalog.interleaved_row_lines()])
+    return {"attachment_id": metadata["attachment_id"], "mode": "read",
+        "name": metadata["original_name"], "chars": len(text),
+        "text": text[:_READ_ATTACH_MAX_CHARS], "truncated": len(text) > _READ_ATTACH_MAX_CHARS,
+        "source_sha256": catalog.source_file_sha256,
+        "source_extraction_complete": catalog.extraction_complete,
+        "source_extraction_warnings": list(catalog.extraction_warnings),
+        "collection": {"schema": "les.chat-attachment-collection.v1",
+                       "member_count": len(catalog.source_members),
+                       "members": [dict(item) for item in catalog.source_members]}}
 
 
 @search_router.post("/chat/attachments", status_code=201)

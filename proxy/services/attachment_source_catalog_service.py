@@ -466,6 +466,17 @@ class AttachmentSourceCatalog:
     schema: str = CATALOG_SCHEMA
     extraction_complete: bool = True
     extraction_warnings: tuple[str, ...] = ()
+    source_members: tuple[Mapping[str, Any], ...] = ()
+    source_row_origins: tuple[Mapping[str, Any], ...] = ()
+
+    def row_origin(self, locator: str) -> dict[str, Any]:
+        return next((dict(item) for item in self.source_row_origins
+                     if item.get("source_row") == locator), {})
+
+    def same_member(self, first: str, second: str) -> bool:
+        if not self.source_members:
+            return True
+        return first.partition("::")[0] == second.partition("::")[0]
 
     def manifest_text(self) -> str:
         lines = [
@@ -479,9 +490,14 @@ class AttachmentSourceCatalog:
             "## Манифест листов",
         ]
         lines.extend(f"- {name}: непустых строк {count}" for name, count in self.sheets)
+        if self.source_members:
+            lines.extend(("", "## Манифест файлов комплекта",
+                          json.dumps(list(self.source_members), ensure_ascii=False)))
         return "\n".join(lines)
 
     def interleaved_row_lines(self) -> list[str]:
+        if self.source_members:
+            return [row.line for row in self.rows]
         if self.rows and all(row.source_start is not None for row in self.rows):
             return [row.line for row in sorted(self.rows, key=lambda row: row.source_start)]
         by_sheet: dict[str, list[CatalogRow]] = {}
@@ -582,9 +598,11 @@ def catalog_sheet_pack_lines(
     )
     lines: list[str] = []
     ordered_rows = (sorted(catalog.rows, key=lambda row: row.source_start)
-                    if catalog.rows and all(row.source_start is not None for row in catalog.rows)
+                    if not catalog.source_members and catalog.rows and all(row.source_start is not None for row in catalog.rows)
                     else catalog.rows)
     for row in ordered_rows:
+        if not catalog.same_member(row.sheet, wanted):
+            continue
         if row.sheet != wanted:
             if row.classification_reason == "application_authored_decision_audit":
                 # The exported audit names the exact main-sheet row. Include
@@ -624,6 +642,7 @@ def _pdf_text_reference_rows(
 ) -> tuple[list[CatalogRow], list[CatalogRow]]:
     """Show small literal prose context; otherwise expose exact unshown scope."""
     rows = [row for row in catalog.rows if row.sheet != sheet
+            and catalog.same_member(row.sheet, sheet)
             and row.classification_reason == "pdf_text_requires_model_role"]
     size = sum(len(row.line) + 1 for row in rows)
     return (rows, []) if size <= _PDF_REFERENCE_CONTEXT_CHARS else ([], rows)
@@ -684,7 +703,11 @@ def catalog_sheet_packet_facts(
                 "count": len(omitted_pdf_references), "content_status": "not_shown",
             } if omitted_pdf_references else None),
         )
-    if visible and all(row.source_start is not None for row in visible):
+    if catalog.source_members:
+        facts["source_collection_members"] = [dict(item) for item in catalog.source_members]
+        facts["source_order_basis"] = "collection_manifest_member_order"
+        facts["source_row_origins"] = [catalog.row_origin(row.locator) for row in visible]
+    elif visible and all(row.source_start is not None for row in visible):
         facts["source_order_basis"] = catalog_source_order_basis(visible)
         facts["source_order"] = [
             {"source_row": row.locator, "source_start": row.source_start, "source_end": row.source_end}
@@ -1010,9 +1033,15 @@ def load_tabular_source_catalog(
     path: str | Path,
     *,
     original_name: str = "",
+    trusted_collection_metadata: Mapping[str, Any] | None = None,
 ) -> AttachmentSourceCatalog | None:
     file_path = Path(path)
     suffix = file_path.suffix.lower()
+    if suffix == ".lescollection":
+        from proxy.services.chat_attachment_collection_service import load_collection_source_catalog
+        if not trusted_collection_metadata:
+            return None
+        return load_collection_source_catalog(file_path, trusted_metadata=trusted_collection_metadata)
     name = original_name or file_path.name
     source_sha256 = _sha256_file(file_path)
     source_file_id = _stable_id(source_sha256, prefix="src")
@@ -1456,7 +1485,12 @@ def load_catalog_from_attachment_id(attachment_id: str) -> AttachmentSourceCatal
         path, metadata = resolve_read_attachment(ident)
     except Exception:  # noqa: BLE001 - missing attachment is a fallback, not a crash
         return None
-    return load_tabular_source_catalog(
+    catalog = load_tabular_source_catalog(
         path,
         original_name=str(metadata.get("original_name") or path.name),
+        trusted_collection_metadata=metadata,
     )
+    if catalog is not None:
+        from proxy.services.chat_attachment_service import retain_read_attachment_for_workbook
+        retain_read_attachment_for_workbook(ident, expected_sha256=catalog.source_file_sha256)
+    return catalog

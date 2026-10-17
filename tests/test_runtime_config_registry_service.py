@@ -54,6 +54,32 @@ def test_registry_reports_literal_default_as_effective_value(monkeypatch):
     assert factor["declared_default"] == "64"
 
 
+def test_attachment_lifetime_exposes_its_real_default_and_restart_boundary(monkeypatch):
+    key = "LES_CHAT_ATTACHMENT_MAX_AGE_SEC"
+    monkeypatch.delenv(key, raising=False)
+    factor = registry._factor(key, {})
+    assert factor["source"] == "default"
+    assert factor["effective_value"] == factor["declared_default"] == "604800"
+    assert factor["mutable"] is True and factor["restart_required"] is True
+    assert factor["secret"] is False and factor["danger"] is False
+    assert "неиспользованных" in factor["label"]
+    assert "не удаляются" in factor["help_text"]
+    monkeypatch.setenv(key, "86400")
+    overridden = registry._factor(key, {})
+    assert overridden["source"] == "process" and overridden["effective_value"] == "86400"
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "", "invalid", "１２"])
+def test_attachment_lifetime_rejects_values_that_would_break_next_boot(tmp_path, monkeypatch, value):
+    key = "LES_CHAT_ATTACHMENT_MAX_AGE_SEC"
+    path = tmp_path / "unused-runtime-settings.env"
+    monkeypatch.setattr(registry, "env_path", lambda: path)
+    monkeypatch.setattr(registry, "declared_env_keys", lambda: frozenset({key}))
+    with pytest.raises(registry.RuntimeConfigRegistryError, match="INVALID_VALUE"):
+        registry.update_factors({key: value})
+    assert not path.exists()
+
+
 def test_declared_runtime_factors_ignore_historical_artifact_sources(tmp_path, monkeypatch):
     active = tmp_path / "proxy" / "active.py"
     active.parent.mkdir()

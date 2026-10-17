@@ -377,7 +377,12 @@ def test_progress_transport_preserves_decisions_and_recovery_without_bulk_cards(
            "held_packet": {"queries": ["literal query"], "query_offset": 31},
            "evidence": [{"content": "full card" * 10000}],
            "query_cache": {"literal query": {"hits": ["full cached body" * 10000]}}}
-    service = SimpleNamespace(get=lambda _id: job, latest=lambda **_kw: job,
+    retry_flags = []
+    def get_job(job_id, *, include_retry_token=False):
+        assert job_id == "own"
+        retry_flags.append(include_retry_token)
+        return job
+    service = SimpleNamespace(get=get_job, latest=lambda **_kw: job,
                               list_active=lambda **_kw: [job])
     monkeypatch.setattr(chat_router, "WorkbookResearchJobService", lambda: service)
     async def read(view):
@@ -391,6 +396,7 @@ def test_progress_transport_preserves_decisions_and_recovery_without_bulk_cards(
     assert asyncio.run(read("full")) == job
     assert job["evidence"][0]["content"].startswith("full card")
     assert "literal query" in job["query_cache"]
+    assert retry_flags == ([True, False] if route == "one" else [])
 
 
 def test_repack_from_the_interface_records_the_final_document_and_closes_the_state(
