@@ -39,9 +39,18 @@ OPTIONAL_FIELDS = (
 )
 
 LSR_SOURCE_VOLUME_INSTRUCTION = (
-    "Масштаб нормы применяется один раз. quantity не дели; calc_quantity/conversion_factor "
-    "с conversion_source — обоснованный перевод (фасовка, геометрия, расход), без масштаба нормы. "
+    "Масштаб измерителя нормы код применяет один раз; не дели quantity и "
+    "не дублируй этот масштаб в calc_quantity/conversion_factor. Эти поля вместе "
+    "с conversion_source нужны для обоснованного перехода к другой физической величине "
+    "(фасовка, геометрия, расход), а не для масштаба измерителя нормы. "
 )
+
+# These names already have literal explanations in the same instruction.
+# Keep the accepted field contract intact without repeating them in its tail.
+LSR_DESCRIBED_OPTIONAL_FIELDS = frozenset({
+    "resource_bindings", "calc_unit", "calc_quantity", "conversion_factor", "conversion_source",
+    "confirmed_price", "price_kind", "price_unit", "price_source", "covered_by_work_id",
+})
 
 LSR_DERIVED_VOLUME_INSTRUCTION = (
     "Для кратности всей нормы calc_quantity/calc_unit — расчётный эквивалент, формула — conversion_source. "
@@ -955,7 +964,7 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "Адрес выбирает ровно показанный ресурс; его код/название повторять не нужно. "
         "basis_ref для сохранения/исключения указывает исходную строку или показанное основание. "
         "add/replace: resource_name/code, unit, quantity/quantity_basis. "
-        + ", ".join(field for field in OPTIONAL_FIELDS if field not in {"resource_bindings", "calc_unit"}) + "."
+        + ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS) + "."
     )
     if include_examples:
         examples = model_lsr_result_examples()

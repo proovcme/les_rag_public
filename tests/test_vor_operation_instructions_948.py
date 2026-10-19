@@ -40,21 +40,17 @@ def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(
     assert instruction.count(new_phrase) == 1
     assert old_phrase not in instruction
     assert hashlib.sha256(instruction.encode("utf-8")).hexdigest() == (
-        "3f888e45e5bacf51996388514a2c04741dfee83160d92d0a35e219a8bdb1d538"
+        "8c64fc2bd26b07eb2a3eb99b9a11cff6d61fb7585c12a05d237982acde2f83c5"
     )
     # Undo the two literal authorized967/968 additions; every other byte stays
     # pinned to the original948 contract instead of accepting a new whole text.
-    from proxy.services.model_lsr_result_contract import LSR_DERIVED_VOLUME_INSTRUCTION, LSR_SOURCE_VOLUME_INSTRUCTION
+    from proxy.services.model_lsr_result_contract import LSR_DERIVED_VOLUME_INSTRUCTION, LSR_SOURCE_VOLUME_INSTRUCTION, LSR_DESCRIBED_OPTIONAL_FIELDS, OPTIONAL_FIELDS
     assert instruction.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
     before_repetition_clarification = instruction.replace(LSR_DERIVED_VOLUME_INSTRUCTION, "", 1)
-    assert before_repetition_clarification.count(LSR_SOURCE_VOLUME_INSTRUCTION) == 1
-    before_repetition_clarification = before_repetition_clarification.replace(
-        LSR_SOURCE_VOLUME_INSTRUCTION,
-        'Масштаб измерителя нормы код применяет один раз; не дели quantity и '
-        'не дублируй этот масштаб в calc_quantity/conversion_factor. Эти поля вместе '
-        'с conversion_source нужны для обоснованного перехода к другой физической величине '
-        '(фасовка, геометрия, расход), а не для масштаба измерителя нормы. '
-        , 1)
+    current_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
+    old_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in {"resource_bindings", "calc_unit"})
+    assert before_repetition_clarification.count(current_tail) == 1
+    before_repetition_clarification = before_repetition_clarification.replace(current_tail, old_tail, 1)
     assert hashlib.sha256(before_repetition_clarification.encode("utf-8")).hexdigest() == (
         "be98cbccdebbdcbe4df6669bfe2206c0b191a5046a79c84f42d4e9ce17152918"
     )

@@ -9797,11 +9797,13 @@ async def _execute_chat_evidence_application(
                                       if tool.get("function", {}).get("name") in terminal_labels]
                     if not terminal_names:
                         return ""
-                    root_binding = ("\nКонтекст упаковки всего прикреплённого исходника: "
-                        f"attachment_id={json.dumps(str(getattr(req, 'attachment_id', '') or ''), ensure_ascii=False)}. "
-                        "Копируй этот attachment_id в итоговый вызов. ID участника комплекта в source_manifest "
-                        "обозначает происхождение строки, а не отдельный target упаковки; "
-                        "source_row и work_row сохраняй дословно.")
+                    root_binding = ""
+                    if source_catalog is not None and source_catalog.source_members:
+                        root_binding = ("\nКонтекст упаковки всего прикреплённого исходника: "
+                            f"attachment_id={json.dumps(str(getattr(req, 'attachment_id', '') or ''), ensure_ascii=False)}. "
+                            "Копируй этот attachment_id в итоговый вызов. ID участника комплекта в source_manifest "
+                            "обозначает происхождение строки, а не отдельный target упаковки; "
+                            "source_row и work_row сохраняй дословно.")
                     if len(terminal_names) != 1 or artifact_kind_declaration.get("status") != "declared":
                         return root_binding
                     terminal_name = terminal_names[0]

@@ -159,3 +159,25 @@ def test_exact_root_never_narrows_decisions_to_one_member(tmp_path):
     assert binding["root_attachment_id"] == root["attachment_id"]
     assert decoded == before
     assert any(row["quantity"] is None for row in decoded.envelope["rows"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+@pytest.mark.parametrize("declared", [False, True])
+async def test_single_file_admitted_terminal_instruction_keeps_previous_bytes(tmp_path, monkeypatch, variant, declared):
+    from tests import test_vor_native_terminal_workflow_962 as native_fixture
+
+    native_fixture._native_response(monkeypatch)
+    run = await fixture._run_sheet(tmp_path, monkeypatch, reads=False, variant=variant,
+        query_declaration=json.dumps({**({"artifact_kind": "vor"} if declared else {}),
+                                      "queries": [] if declared else ["Literal model source query"]}),
+        final_answer=native_fixture.MARKER, question="Собери ВОР")
+    assert len(run.requests) == 2 and len(run.executions) == 1
+    admitted = "\n".join(str(message.get("content", "")) for message in run.requests[1].messages)
+    previous = ("\nЕсли пользователь не задал формат ответа, завершённые строки ВОР можно передать "
+        "в build_vor_workbook через decisions. Это итоговые решения, не новый поиск и не "
+        "непосредственная упаковка. source_row и work_row — буквальные предложенные адреса; "
+        "operation_id и expected_revision сохраняй из прежних решений. Явный формат пользователя сохраняется.")
+    assert (previous in admitted) is declared
+    assert "Контекст упаковки всего прикреплённого исходника:" not in admitted
+    assert 'attachment_id="read_123456abcdef"' not in admitted

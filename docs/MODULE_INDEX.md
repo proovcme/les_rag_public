@@ -12,7 +12,10 @@ source-quantity guard; явная calc_unit/согласованность ра�
 quote quantity; видимая формула расчётного эквивалента в XLSX. Новых зависимостей,
 модельных циклов, выбора норм/кратности кодом нет. Точки входа — CODE_MAP968;
 доки — `modules/rag-evidence-flow.md`, `ALGO-lsr-assembly.md`.
-Общий gate, точная установка и live-приёмка968 ещё pending; customer-ready=false.
+После первого полного gate (6280passed/11failed) root/member hint ограничен
+комплектами, прежнее scale instruction восстановлено без повторных optional names.
+Evidence reads61 и смежные392 проверки проходят с прежними budgets/assertions.
+Повторный общий gate, точная установка и live-приёмка968 pending; customer-ready=false.
 
 ## 967 — Windows rerank, идентичность НР/СП и proof admission
 

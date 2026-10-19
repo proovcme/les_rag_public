@@ -37,8 +37,15 @@ Source0.31.240/build968/native5.1.968 также учитывает явную c
 кратность; новых предметных циклов/коэффициентных протоколов нет. Компактная
 инструкция сохраняет прежний tiny-context evidence: root25passed/4.48s,
 бюджеты/проверки карточек не ослаблены. RIM related242passed/31.58s,
-alias18passed/3.96s; независимые code reviews без найденных P1/P2.
-Общий gate, exact NSIS и installed live968 pending. Customer-ready=false.
+alias22passed/5.06s; независимые code reviews без найденных P1/P2.
+Первый frozen968 дал6280passed/11failed/20skipped за844.06s; RED сохранён в
+`artifacts/gates_968_final/`. Шесть literal-scale отказов и пять native-context
+отказов устранены: прежнее правило масштаба восстановлено, root/member hint
+только для комплекта; повторные имена полей убраны лишь из хвоста инструкции.
+Все поля, budgets и проверки evidence сохранены. Whole evidence_reads61passed/
+23.27s и12смежных suites392passed/17.07s; квитанции
+`artifacts/live_968/gate_boundary_repair/`. Повторный полный gate, exact NSIS и
+installed live968 pending. Customer-ready=false.
 
 ## 19.10.2026 — установлен966; измеренные причины для кандидата967
 

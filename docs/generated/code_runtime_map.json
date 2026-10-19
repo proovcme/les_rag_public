@@ -3421,7 +3421,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15863,
+      "lines": 15865,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5917,7 +5917,7 @@
         "tests/test_vor_task_instruction_955.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 997,
+      "lines": 1006,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -12809,7 +12809,7 @@
     },
     {
       "inbound": [],
-      "lines": 45,
+      "lines": 46,
       "module": "tests.test_lsr_derived_quantity_presentation_968",
       "outbound": [
         "proxy/services/model_lsr_result_contract.py",
@@ -18011,7 +18011,7 @@
     },
     {
       "inbound": [],
-      "lines": 161,
+      "lines": 157,
       "module": "tests.test_vor_candidate_scope_950",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -18099,7 +18099,8 @@
     {
       "inbound": [
         "tests/test_lsr_gap_hint_resume_964.py",
-        "tests/test_model_document_kind_availability_963.py"
+        "tests/test_model_document_kind_availability_963.py",
+        "tests/test_workbook_collection_terminal_binding_968.py"
       ],
       "lines": 361,
       "module": "tests.test_vor_native_terminal_workflow_962",
@@ -18150,7 +18151,7 @@
     },
     {
       "inbound": [],
-      "lines": 147,
+      "lines": 143,
       "module": "tests.test_vor_operation_instructions_948",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -18475,14 +18476,15 @@
     },
     {
       "inbound": [],
-      "lines": 161,
+      "lines": 183,
       "module": "tests.test_workbook_collection_terminal_binding_968",
       "outbound": [
         "proxy/services/model_workbook_terminal_transport_service.py",
         "proxy/services/openai_compatible_transport_service.py",
         "proxy/services/workbook_research_job_service.py",
         "tests/test_attachment_collection_965.py",
-        "tests/test_model_rag_sheet_evidence_reads.py"
+        "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_vor_native_terminal_workflow_962.py"
       ],
       "path": "tests/test_workbook_collection_terminal_binding_968.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -23409,7 +23411,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 841,
     "tracked_python_files": 1240,
-    "tracked_python_lines": 423796
+    "tracked_python_lines": 423822
   },
   "warnings": []
 }

@@ -2,7 +2,7 @@
 
 ## Кандидат968 — регрессии установленных отказов967
 
-`test_workbook_collection_terminal_binding_968.py`:18case, root/member binding
+`test_workbook_collection_terminal_binding_968.py`:22case, root/member binding
 на реальном transport→packer и B0/B1, второй файл в remaining, foreign/empty/
 ambiguous origins/SHA, неизменные raw0/null. `test_lsr_same_source_quantity_scope_968.py`:
 17case, несколько операций по одному адресу, доказанная мера, unknown/identity/
@@ -14,7 +14,17 @@ duplicate/tail guards. Один прежний fixture исправлен: ва�
 неизменные решения и обычная строка без выдуманного пересчёта.
 Root compact+snapshot+tiny-context25passed/4.48s: бюджеты и card assertions
 не ослаблены. Два прежних byte pins восстанавливаются обратными literal
-изменениями. Новые файлы включены в CURRENT_TESTS. Общий gate/live968 pending.
+изменениями. Новые файлы включены в CURRENT_TESTS.
+
+Первый frozen968:6280passed/11failed/20skipped,844.06s. Шесть отказов проверяли
+прежнюю формулировку масштаба, пять — границы native evidence/context. Исправлено:
+старая инструкция масштаба восстановлена буквально; root/member-пояснение даётся
+только комплектам, одиночный terminal instruction сохранён byte-exact. Убраны
+лишь повторные optional names из хвоста; все поля по-прежнему явно объявлены.
+Без изменения budgets/fixtures/assertions: весь evidence_reads61passed/23.27s;
+12 смежных suites392passed/17.07s, включая полный chat_evidence_application_service.
+Квитанции: `artifacts/live_968/gate_boundary_repair/`. Первый RED сохранён отдельно;
+повторный полный gate и installed live968 pending.
 
 967 V3:6202passed/20skipped/834.20s,328files/9rc0. Exact NSIS0028ff8a…,
 packaged native80236fbc…,517files; install/rollback/reinstall/EXE-only и basic
