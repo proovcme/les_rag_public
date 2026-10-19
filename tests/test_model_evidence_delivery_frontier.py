@@ -7,6 +7,7 @@ import pytest
 
 from proxy.services.chat_evidence_application_service import bind_row_evidence_ids, confirm_model_read_delivery
 from proxy.services.model_rag_grouped_evidence_service import prepare_model_read_replay
+from proxy.services.norm_card_proof_service import unread_chosen_norm_refs
 
 
 def _chunk(ref, body, **meta):
@@ -117,7 +118,11 @@ def test_confirmed_retained_body_is_available_to_citation_check_without_promotin
 
     check = bound["_evidence_check"]
     if expected_shown:
-        assert check.get("card_body_shown") is not False
+        # Raw discovery text still proves the literal cipher/resource citation;
+        # an explicitly incomplete preview does not discharge the FULL norm read.
+        assert check["card_body_shown"] is False
+        assert check["card_body_shown_basis"] == "normative_card_incomplete_preview"
+        assert unread_chosen_norm_refs([bound], chunks=[chunk]) == ["Q1.H1"]
         assert "deferred_card_refs" not in check
         assert check["citation_checkable"] is True
         assert check["code_not_in_refs"] is False

@@ -32,6 +32,15 @@ guard, product code и все assertions сохранены. RED-квитанц�
 После разделения96passed/2,77s в metadata+architecture suites,
 `artifacts/live_970/offline_targeted/metadata_arch.xml`; guard не изменялся.
 
+Frozen V2/60182971:6579passed/1failed/20skipped/908,07s. Единственное расхождение —
+старый `test_model_evidence_delivery_frontier` ожидал selected-card body=true у
+явного incomplete preview. Уточнён только этот expected verdict: citation и
+resource-code proof остаются проверяемыми, raw body/replay/bindings неизменны,
+а долг полного чтения явно сохраняется. Production-код после60182971 не менялся.
+V2 RED receipt сохранён; новый полный gate требует нового exact HEAD.
+После уточнения frontier:18passed/3,22s, два полных файла frontier+complete-card
+(`artifacts/live_970/offline_targeted/card_frontier.xml`).
+
 `test_lsr_zero_repack_history_970.py`: два случая source0 с ненулевым либо
 неизвестным соседом. Реальные registry/trusted executor/adapter/RIM/XLSX,
 bounded history и public readiness; model tripwire, изолированные attachment/

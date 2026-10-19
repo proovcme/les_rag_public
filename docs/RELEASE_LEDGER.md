@@ -52,6 +52,14 @@ positive и preview negative дают одну сумму с разной под
 product diff неизменён. RED receipt сохранён в `artifacts/gates_970_final/`.
 Точечная проверка после разделения:96passed/2,77s, metadata и architecture suites
 (`artifacts/live_970/offline_targeted/metadata_arch.xml`). Новый полный gate pending.
+Frozen V2/60182971:6579passed/1failed/20skipped/908,07s. Старый frontier-тест
+считал selected-card body=true для фактически доставленного incomplete preview.
+Его ожидание уточнено: literal citation/resource code доступны, raw body/replay
+сохраняются, полный read debt не снимается. Assertions сохранности не удалены,
+добавлены exact incomplete basis и proof-ref; production-код не менялся.
+Сохранена V2 RED-квитанция. Следующий frozen gate остаётся обязательным.
+Root frontier+complete-card:18passed/3,22s, `card_frontier.xml`; нормы/расчётный
+production diff остаётся прежним, уточнён только наблюдаемый тестовый контракт.
 
 Один реальный price-only добор существующей работы969:889,891s, HTTP200,
 новый draft `rev_89b6025d97884356b54356dca195bfd4`, SHA
