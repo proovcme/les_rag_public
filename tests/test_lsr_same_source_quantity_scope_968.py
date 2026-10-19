@@ -190,4 +190,3 @@ def test_proven_header_zero_is_not_mistaken_for_absent_source_quantity(catalog):
         [zero, invalid], sheet="S", catalog=catalog, errors=errors, artifact_kind="lsr",
     )
     assert kept == [zero] and kept[0]["quantity"] == 0
-

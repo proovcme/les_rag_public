@@ -13084,7 +13084,7 @@
     },
     {
       "inbound": [],
-      "lines": 193,
+      "lines": 192,
       "module": "tests.test_lsr_same_source_quantity_scope_968",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -23409,7 +23409,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 841,
     "tracked_python_files": 1240,
-    "tracked_python_lines": 423797
+    "tracked_python_lines": 423796
   },
   "warnings": []
 }
