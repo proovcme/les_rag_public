@@ -147,6 +147,8 @@ def delivered_refs_from_chunks(chunks: Sequence[Any]) -> set[str]:
         if not ref:
             continue
         if (meta.get("body_status") == "full"
+                and not ((meta.get("norm_code") or meta.get("norm_key"))
+                         and meta.get("normative_card_complete") is False)
                 and meta.get("model_delivery_status") in (None, "", "delivered")):
             delivered.add(ref)
     return delivered
@@ -203,6 +205,9 @@ def proof_request_message(refs: Sequence[str], rows: Sequence[Mapping[str, Any]]
             "подтверждает применимость нормы. Прочитай точные цитированные карточки "
             "перед окончательным решением.\n"
         )
+    if any((row.get("_evidence_check") or {}).get("card_body_shown_basis")
+           == "normative_card_incomplete_preview" for row in unread_chosen_norm_rows(rows)):
+        head = 'Показан обзор или неполная карточка выбранной нормы (normative_card_complete=false). Это не полная нормативная карточка. Прочитай точные ссылки ниже через read_norm_card; чтение не подтверждает применимость и не меняет выбранный шифр автоматически.\n'
     if lines:
         head += f"{lines}\n"
     if search_lines:

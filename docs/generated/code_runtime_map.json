@@ -1705,6 +1705,7 @@
         "tests/test_ks_forms_service.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_lsr_gap_hint_resume_964.py",
+        "tests/test_lsr_zero_repack_history_970.py",
         "tests/test_model_connection_chat_integration.py",
         "tests/test_model_no_source_card_read_contract.py",
         "tests/test_model_query_checkpoint_draft.py",
@@ -2904,6 +2905,7 @@
         "tests/test_artifacts_router.py",
         "tests/test_attachment_collection_965.py",
         "tests/test_live_workbook_acceptance_contract.py",
+        "tests/test_lsr_zero_repack_history_970.py",
         "tests/test_model_query_checkpoint_draft.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_vor_quantity_preservation.py",
@@ -3030,6 +3032,7 @@
         "tests/test_vor_input_transport.py",
         "tests/test_vor_intake_integrity_928.py",
         "tests/test_vor_print_template_966.py",
+        "tests/test_vor_quantitative_metadata_exclusion_970.py",
         "tests/test_vor_review_structural_facts_953.py",
         "tests/test_workbook_repack_target.py",
         "tests/test_workbook_task_context.py",
@@ -3261,11 +3264,13 @@
         "tests/test_chat_spec_to_bor_attachment.py",
         "tests/test_datasets_router.py",
         "tests/test_fgis_pricebook_snapshot.py",
+        "tests/test_lsr_zero_repack_history_970.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_rtf_input_transport.py",
         "tests/test_temporal_model_evidence_binding.py",
         "tests/test_vor_input_transport.py",
         "tests/test_vor_intake_integrity_928.py",
+        "tests/test_vor_quantitative_metadata_exclusion_970.py",
         "tests/test_workbook_provider_binding_928.py",
         "tests/test_workbook_tool_service.py"
       ],
@@ -3326,6 +3331,7 @@
         "tests/test_lsr_scheduler_starvation_824.py",
         "tests/test_lsr_uncomputed_norm_components_969.py",
         "tests/test_lsr_zero_charge_observation_969.py",
+        "tests/test_lsr_zero_repack_history_970.py",
         "tests/test_model_authored_header_roles.py",
         "tests/test_model_capability_admission_946.py",
         "tests/test_model_current_read_frame.py",
@@ -3389,6 +3395,7 @@
         "tests/test_native_reasoning_frame_960.py",
         "tests/test_native_tool_call_diagnostics.py",
         "tests/test_norm_card_cited_pointer_debt_968.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_notebook_study_chat_policy.py",
         "tests/test_packaging_recovery_service.py",
@@ -3413,6 +3420,7 @@
         "tests/test_vor_no_research_query_scope.py",
         "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_operation_instructions_948.py",
+        "tests/test_vor_quantitative_metadata_exclusion_970.py",
         "tests/test_vor_review_structural_facts_953.py",
         "tests/test_vor_task_instruction_955.py",
         "tests/test_vor_workflow_contract_948.py",
@@ -3427,7 +3435,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15896,
+      "lines": 15932,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4456,6 +4464,7 @@
         "tests/test_lsr_labor_tariff_830.py",
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_price_basis_explicit.py",
+        "tests/test_lsr_zero_repack_history_970.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_model_research_evidence_actions.py",
         "tests/test_pricebook_record_conflict.py",
@@ -4701,6 +4710,7 @@
         "tests/test_lsr_supply_retry_962.py",
         "tests/test_lsr_uncomputed_norm_components_969.py",
         "tests/test_model_price_provenance_service.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_price_identity_928.py",
         "tests/test_revision_projection_830.py",
         "tests/test_rim_cited_numeric_literals.py",
@@ -5259,6 +5269,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_model_result_resource_actions.py",
         "tests/test_model_vor_export_instruction.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_norm_price_identity_928.py",
         "tests/test_vor_candidate_scope_950.py",
@@ -6051,6 +6062,7 @@
         "tests/test_model_resource_literal_capacity.py",
         "tests/test_model_result_resource_actions.py",
         "tests/test_model_retained_norm_delivery.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_card_completeness_facts.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_nrsp_catalog_reference_967.py",
@@ -6096,6 +6108,7 @@
         "tests/test_model_resource_reference.py",
         "tests/test_model_retained_norm_delivery.py",
         "tests/test_model_source_frame_service.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_card_completeness_facts.py",
         "tests/test_rtf_input_transport.py",
         "tests/test_xlsx_literal_metadata_961.py"
@@ -6168,6 +6181,7 @@
         "tests/test_model_research_evidence_actions.py",
         "tests/test_model_resource_literal_capacity.py",
         "tests/test_model_retained_norm_delivery.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tools/measure_model_resource_literal_capacity.py"
       ],
       "lines": 44,
@@ -6334,9 +6348,10 @@
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_norm_card_cited_pointer_debt_968.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_card_proof_request_930.py"
       ],
-      "lines": 252,
+      "lines": 257,
       "module": "proxy.services.norm_card_proof_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6534,6 +6549,7 @@
         "tests/test_model_wire_token_count.py",
         "tests/test_native_ollama_tool_exchange.py",
         "tests/test_norm_card_cited_pointer_debt_968.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_pending_review_operation_identity.py",
@@ -7386,6 +7402,7 @@
         "tests/test_model_quote_dimensions_947.py",
         "tests/test_model_result_resource_code.py",
         "tests/test_money_states_23.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_price_identity_928.py",
         "tests/test_pricebook_record_conflict.py",
         "tests/test_resource_binding_provenance.py",
@@ -8588,9 +8605,10 @@
         "tests/test_attachment_collection_965.py",
         "tests/test_vor_derived_quantity_export_949.py",
         "tests/test_vor_operation_basis_960.py",
+        "tests/test_vor_quantitative_metadata_exclusion_970.py",
         "tests/test_vor_result_integrity_948.py"
       ],
-      "lines": 229,
+      "lines": 265,
       "module": "proxy.services.vor_result_integrity_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8682,6 +8700,7 @@
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_lsr_scheduler_starvation_824.py",
         "tests/test_lsr_supply_retry_962.py",
+        "tests/test_lsr_zero_repack_history_970.py",
         "tests/test_meta_store_env_binding_945.py",
         "tests/test_model_artifact_kind_authority.py",
         "tests/test_model_evidence_native_exchange.py",
@@ -8762,6 +8781,7 @@
         "tests/test_vor_input_transport.py",
         "tests/test_vor_intake_integrity_928.py",
         "tests/test_vor_operation_basis_960.py",
+        "tests/test_vor_quantitative_metadata_exclusion_970.py",
         "tests/test_vor_route_columns_23.py",
         "tests/test_vor_workflow_contract_948.py",
         "tests/test_workbook_tool_contracts.py",
@@ -10166,6 +10186,7 @@
         "tests/test_lsr_result_readiness_service.py",
         "tests/test_lsr_supply_retry_962.py",
         "tests/test_money_states_23.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_retry_target_projection_955.py",
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_stall_bound_25.py",
@@ -13231,6 +13252,22 @@
     },
     {
       "inbound": [],
+      "lines": 113,
+      "module": "tests.test_lsr_zero_repack_history_970",
+      "outbound": [
+        "proxy/routers/chat.py",
+        "proxy/services/artifact_revision_service.py",
+        "proxy/services/chat_attachment_service.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/fgis_price_service.py",
+        "proxy/services/workbook_research_job_service.py"
+      ],
+      "path": "tests/test_lsr_zero_repack_history_970.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 281,
       "module": "tests.test_mac_update",
       "outbound": [
@@ -14457,6 +14494,7 @@
         "tests/test_model_workbook_citation_instructions_947.py",
         "tests/test_native_tool_call_diagnostics.py",
         "tests/test_norm_card_cited_pointer_debt_968.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_pending_review_operation_identity.py",
         "tests/test_sheet_proof_context_admission_967.py",
@@ -14952,6 +14990,29 @@
     },
     {
       "inbound": [],
+      "lines": 233,
+      "module": "tests.test_norm_card_complete_delivery_970",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/gesn_service.py",
+        "proxy/services/lsr_norm_quality_gate_service.py",
+        "proxy/services/model_rag_grouped_evidence_service.py",
+        "proxy/services/model_research_tool_service.py",
+        "proxy/services/model_resource_reference_service.py",
+        "proxy/services/norm_card_proof_service.py",
+        "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
+        "tests/lsr_citation_support.py",
+        "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_norm_card_proof_request_930.py",
+        "tests/test_rim_lsr_trace_service.py"
+      ],
+      "path": "tests/test_norm_card_complete_delivery_970.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 76,
       "module": "tests.test_norm_card_completeness_facts",
       "outbound": [
@@ -14967,6 +15028,7 @@
         "tests/test_model_proof_artifact_kind.py",
         "tests/test_model_proof_turn_integrity.py",
         "tests/test_norm_card_cited_pointer_debt_968.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_sheet_proof_context_admission_967.py"
       ],
       "lines": 356,
@@ -16399,6 +16461,7 @@
         "tests/test_lsr_derived_quantity_presentation_968.py",
         "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_rim_trace_api.py",
+        "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_resource_price_unit_conversion.py"
       ],
       "lines": 2118,
@@ -18291,6 +18354,21 @@
         "proxy/services/spec_to_bor_service.py"
       ],
       "path": "tests/test_vor_qty_header_variant_25.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 168,
+      "module": "tests.test_vor_quantitative_metadata_exclusion_970",
+      "outbound": [
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/chat_attachment_service.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/vor_result_integrity_service.py",
+        "proxy/services/workbook_tool_service.py"
+      ],
+      "path": "tests/test_vor_quantitative_metadata_exclusion_970.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -23526,9 +23604,9 @@
     "product_reachable": 387,
     "registered_api_routes": 343,
     "runtime_support": 11,
-    "test_or_tool_only": 847,
-    "tracked_python_files": 1246,
-    "tracked_python_lines": 425647
+    "test_or_tool_only": 850,
+    "tracked_python_files": 1249,
+    "tracked_python_lines": 426238
   },
   "warnings": []
 }

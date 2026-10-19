@@ -120,12 +120,22 @@
 - [x] Совместимые numeric price measures: исходная округлённая quote до конверсии, без раннего округления переведённой цены; два калькулятора и видимые XLSX формулы/precision. HALF_UP только новой ветки; old SI/quote приоритеты сохраняются.
 - [x] norm_components сохраняется literal/deep-copy с norm_components_not_calculated и owner-operation аудитом; код не считает/не разворачивает состав. Добавочная норма запрашивается отдельной model-authored операцией с evidence.
 - [x] Четыре focused969 test files и смежные проверки включены в canonical inventory; byte pins948/950 сохраняют старые контракты точным обратным удалением новых instruction literals. Actual итоговые числа root добавляет по квитанциям.
-- [ ] Новый exact frozen969 full9 gate; canonical NSIS, actual extraction/pins, upgrade/rollback/reinstall/native-only/basic с неизменным18/18 baseline,395факторами и r12.
-- [ ] Свежие installed969 B0/B1/multifile и реальный operation-level retry; проверить сохранение закрытых операций, evidence/price basis и скачиваемых ревизий. Внутренний field-lock открытой операции не обещается.
+- [x] Новый exact frozen969 full9 gate; canonical NSIS, actual extraction/pins, upgrade/rollback/reinstall/native-only/basic с неизменным18/18 baseline,395факторами и r12. V3:6536passed/20skipped/903,76s; installed4ca27dd4, manifest517, basic9pass/1warn/0fail.
+- [x] Свежие installed969 B0/B1:277,938s/880,422s, по7строк и реальному XLSX, calculated0. B1 full trace/cache не сохраняет rerank execution witness: UNKNOWN, не PASS. Полные карточки прочитаны для стяжки и вентилятора, кабель остался preview; применимость≥90% не доказана.
+- [ ] Installed multifile и реальный operation-level retry; проверить сохранение закрытых операций, evidence/price basis и скачиваемых ревизий. Внутренний field-lock открытой операции не обещается.
 - [ ] Big318 stop/restart/plain continue и построчный контроль; затем независимая precision≥90% на проверенной разнородной выборке. Результат не объявлять готовым только по числу тестов/доставленных строк.
+
+### Task10 — 970: source-zero, полнота карточки и количественные исключения
+
+- [x] Installed969 repack прежних решений без модели: source/model/evidence/cache/old artifact сохранены; цена1000м→м в реальном XLSX11276,45. Выявлен пропущенный `charge_not_required` в history whitelist, из-за которого readiness предлагал повторный поиск для0.
+- [x] Real public repack regression RED2KeyError → минимальный whitelist fix. После корректировки fixture на actual persisted operation IDs targeted72passed/3,22s; nonzero/unknown соседи сохраняют свои gaps, replay ревизии/исходник/решения неизменны.
+- [x] Реальное explicit incomplete preview не подтверждает полное чтение выбранной нормы; прежний единственный bounded proof читает exact card. Alias только той же immutable identity, unknown legacy не переинтерпретируется, выбор нормы не меняется. Meaningful RED7failed/3passed→GREEN10passed; связанные202passed/30,49s. Финансовое усиление последнего теста ожидает отдельного root запуска.
+- [x] Количественный source, представленный только metadata без пояснения, получает вопрос `unexplained_quantitative_source_exclusion`. Роли и объёмы не исправляются кодом. RED16failed/16passed→GREEN32passed; связанные272passed/17,82s.
+- [ ] Полный frozen970 gate, точный NSIS/install и живой повтор public repack; не выдавать working-tree fix за установленный.
+- [ ] Доснять конечные B0/B1/разные ВОР/operation retry/big318 и профессиональную применимость. Preview найденного тела не принимать за полную карточку; перед новой правкой — точный flow и regression, без подмены выбора модели.
 
 ## Skill sources и самопроверка
 
 Использованы skills obra/superpowers на commit `bb92a77741419a4ab5f06e711a283343f1ada0c3`: systematic-debugging, test-driven-development, verification-before-completion, writing-plans. Они установлены в пользовательские Codex skills; инструкция пользователя об автономном исполнении имеет приоритет над общим предложением заново согласовывать план. Проверены также первичные materials anthropics/skills/docx и promptfoo assertions/evals; новых runtime dependencies не добавляем.
 
-Самопроверка: каждому требованию владельца соответствует задача; новый printable layout имеет отдельный roundtrip regression; точность не смешана с заполнением, принятый кодом шифр не считается автоматически профессионально правильным. Установлен968;969 остаётся кандидатом до нового exact full gate/install/live verification и профессиональной приёмки. История ошибок не удаляется, отложенные работы не выдаются за завершённые.
+Самопроверка: каждому требованию владельца соответствует задача; новый printable layout имеет отдельный roundtrip regression; точность не смешана с заполнением, принятый кодом шифр не считается автоматически профессионально правильным. Установлен969;970 остаётся кандидатом до нового exact full gate/install/live verification и профессиональной приёмки. История ошибок не удаляется, отложенные работы не выдаются за завершённые.

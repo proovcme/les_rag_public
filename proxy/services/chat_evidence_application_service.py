@@ -1572,6 +1572,8 @@ _HISTORY_ROW_FIELDS = (
     "applicability_substantiated", "structure_calculated",
     "known_amount_present", "position_calculated", "volume_verified",
     "prices_provided", "open_reasons",
+    # Calculator-owned source-zero observation must survive into readiness.
+    "charge_not_required",
     # § 4: an operator-confirmed price travels with the line that states which unit it
     # was multiplied by, so a later turn can correct the unit instead of re-asking.
     "price_note",
@@ -3928,6 +3930,7 @@ def bind_row_evidence_ids(
     # Whole delivered RAG bodies prove their conditions, not complete typed
     # resource consumption; exact native reads expose that separate metadata.
     delivered_norm_identities: set[str] = set()
+    explicit_norm_completeness: dict[str, set[bool]] = {}
     deferred_norm_identities: dict[str, set[str]] = {}
     # Ciphers whose own card body reached the model in this attempt.  A row that names a
     # cipher with no citation used to receive no verdict at all, and no verdict let the
@@ -3967,6 +3970,11 @@ def bind_row_evidence_ids(
             norm_identity = (normative_card_identity(meta)
                              if meta.get("norm_code") or meta.get("norm_key") else global_id)
             if body_shown:
+                # These are actual page-projection delivery facts, not the
+                # backend's resource inventory. Unknown legacy facts stay unknown.
+                complete = meta.get("normative_card_complete")
+                if (meta.get("norm_code") or meta.get("norm_key")) and type(complete) is bool:
+                    explicit_norm_completeness.setdefault(norm_identity, set()).add(complete)
                 delivered_norm_identities.add(norm_identity)
                 shown_cipher = str(meta.get("norm_code") or "") or _card_code_from_chunk(chunk)
                 shown_key = qualified_norm_key(shown_cipher) if looks_like_cipher(shown_cipher) else ""
@@ -4081,6 +4089,34 @@ def bind_row_evidence_ids(
                 evidence_check["card_body_shown_basis"] = (
                     "cipher_card_body_delivered" if row_key in delivered_cipher_keys
                     else "no_delivered_card_names_this_cipher")
+            if row_key:
+                # A whole discovery preview is not the selected complete norm
+                # card. Keep raw chunk body facts; correct only this existing
+                # selected-card verdict, shared by proof, readiness and RIM.
+                selected_ids: set[str] = set()
+                ambiguous_selected_identity = False
+                for ref, global_id in checkable_bindings.items():
+                    if not ciphers_identical(row_cipher, cards.get(ref, "")):
+                        continue
+                    typed_ids = {normative_card_identity(meta)
+                                 for meta in global_to_norm_snapshots.get(global_id, ())
+                                 if meta.get("norm_code") or meta.get("norm_key")}
+                    header_ids = {normative_card_identity(meta)
+                                  for meta in global_to_norm_snapshots.get(global_id, ())
+                                  if qualified_norm_key(str(meta.get("norm_code")
+                                                            or meta.get("norm_key") or "")) == row_key}
+                    if len(typed_ids) != 1 or typed_ids != header_ids:
+                        ambiguous_selected_identity = True
+                        break
+                    selected_ids.update(typed_ids)
+                if not ambiguous_selected_identity and len(selected_ids) == 1:
+                    complete_facts = explicit_norm_completeness.get(next(iter(selected_ids)), set())
+                    if True in complete_facts:
+                        evidence_check["card_body_shown"] = True
+                        evidence_check["card_body_shown_basis"] = "complete_normative_card_delivered"
+                    elif False in complete_facts:
+                        evidence_check["card_body_shown"] = False
+                        evidence_check["card_body_shown_basis"] = "normative_card_incomplete_preview"
             if ("card_body_shown" not in evidence_check
                     and row_cipher and looks_like_cipher(row_cipher)):
                 # A bare authored cipher identifies no norm family.  Its exact

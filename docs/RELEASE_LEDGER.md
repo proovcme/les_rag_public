@@ -1,5 +1,83 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 19.10.2026 — установлен969; рабочий кандидат970 по трём измеренным границам
+
+Установлен0.31.241/build969/native5.1.969, commit
+`4ca27dd43abb6dfc18f67725f1f02090bb096e3d`. Frozen V3:
+`artifacts/gates_969_final_v3/receipt.json`, все9команд rc0,
+6536passed/20skipped/5warnings за903,76s. Exact NSIS
+`16ea3b146f89249d255d174f325de598013cfae28712f0efb0aa4b83e9a4b4e7`,
+извлечённый native EXE `6d8df3fdab70b11467f59cf5b3421e1130bfad460254edea9b1a5cff68866ba8`.
+Полный manifest517 без расхождений; upgrade/rollback/reinstall/EXE-only приняты.
+Во всех сохранённых точках буквально равны395факторов, роли, защищённые
+FreeToken/Ollama процессы и18/18 контрольных jobs/artifacts. Второй apply:
+`artifacts/live_969/candidate_final/native_upgrade/20261019T102517149962Z/apply/accepted.json`.
+Basic smoke:9pass/1warn diagnostics_endpoint/0fail, оба реальных чата прошли,
+очередь после контроля пуста. Это установочная приёмка, не качество смет.
+
+Репак собственного968 B1 без модели занял6,891s: новая ревизия
+`rev_be01e1973e8c4a0c8a5fd52c74c7b6e6`, XLSX SHA
+`20b08fac5d4927e3c1cff529b0aa31bc7f4f20d2e7ec378e10e652c27b41574e`.
+Исходник/модельные строки/evidence/cache и старая ревизия сохранены.
+В реальном файле84м×134243,44/1000м=11276,45; нерассчитанный состав норм
+остаётся явно частичным. Но RIM/XLSX source-zero observation теряется в
+`_HISTORY_ROW_FIELDS`: public readiness ошибочно предлагает норму для0.
+Независимая квитанция —
+`artifacts/live_969/final/repack_saved968_B1/independent_audit969_zero_seam.json`.
+
+Рабочий0.31.242/build970/native5.1.970 ещё не установлен. Внесены три узкие правки:
+
+- `_HISTORY_ROW_FIELDS` сохраняет калькуляторный `charge_not_required` через
+  bounded history. Real public repack regression: RED2KeyError, targeted72passed/
+  3,22s; неизвестный исходник с авторским0 и ненулевой сосед сохраняют gaps.
+- Binder различает фактически показанный обзор и полную нормативную карточку
+  по явному bool `normative_card_complete=false`. При однозначной совпадающей
+  immutable identity сохраняется существующий долг чтения; тот же bounded proof
+  может прочесть полную карточку. Шифр/статус/объём модели не подменяются,
+  неизвестные legacy-факты не переинтерпретируются.
+- ВОР показывает `unexplained_quantitative_source_exclusion`, если доказанная
+  количественная строка без пояснения представлена только метаданными. Это вопрос
+  об исключении, не автоматическое создание работы или изменение её роли/объёма.
+
+Сохранённые targeted XML: `artifacts/live_970/offline_targeted/zero_history_v2.xml`
+(72passed), `core_adjacent.xml` (202passed/30,49s), `vor_adjacent.xml`
+(272passed/17,82s). Наборы пересекаются; их суммы не являются новым полным gate.
+Полный frozen970 gate, точный NSIS/install и установленная live-проверка pending.
+
+Для конечного сравнения профиля явно закреплены literal исторические
+prompt/skill в новых user text revisions: temperature0,6/presence0,
+query8192/answer32768/input131072, прежние datasets/остальные sampler values.
+V1 подготовка остановилась до смены подключения при обнаружении отличающегося
+текста factory reference; baseline восстановлен. V2 сохранил точные тексты и
+получил supported models/chat/streaming/tools; свежий capability snapshot
+согласовал effective input131072 с физическим окном. Новый profile27d00efd…,
+connection r13. Это контрольный, ещё не квалифицированный профиль;
+`artifacts/live_969/precision_profile_v2/apply1/activation.json`.
+На установленном969 прямой B0 завершился за277,938s:7/7 исходных строк,
+скачиваемый partial XLSX,0 окончательно подтверждённых применимых норм/
+0 полностью рассчитанных позиций, preliminary22078,05. Обычный B1 завершился
+за880,422s:7 принятых строк, job `wrj_6182b3628df245dfaa5e273b1132d369`,
+скачиваемый partial XLSX20104B SHA
+`3521d93d349170f2bec029f4ccb18479738ab1caf33d65ebb341011d9d9ff4b3`,
+revision `rev_32d5c2b372e94122a3e64e0c0078a0bd`. Норм выбрано3, модельных
+substantiated2, полностью рассчитанных позиций0/confirmed0/preliminary36894,23.
+Исходные количества сохранены; файл явно помечен PRICED_PARTIAL. Перевод цены
+1000м→м измерен в файле:84×134243,44/1000=11276,45. Незакрыты применимость,
+ресурсы/ценовые связи и финансовые вопросы; счётчик substantiated не равен
+независимо проверенной precision.
+
+Все фактические B1 calls имели собственный Governor: query8192, answer/proof/
+evidence reads32768 при input131072. Контроль завершился транспортно успешно,
+но его внешний QA rc1 — `POSITIVE_RERANK_NOT_EXERCISED`: ни полный сохранённый
+trace, ни22 записи query cache не содержат положительного rerank/RRF witness.
+Это RAG telemetry `UNKNOWN`, не PASS и не доказательство провала самого rerank.
+Квитанции/файлы сохранены в
+`artifacts/live_969/final/lsr32_comparison/{B0_DIRECT,B1_CANDIDATE}/run/`;
+независимый разбор — `independent_evidence_review.md` в каждом run.
+Точность применимости≥90% не доказана. Diverse ВОР, реальный целевой добор,
+big318 и установленный970 требуют отдельных фактических проверок.
+Публичного выпуска и готовности заказчику не объявлено.
+
 ## 19.10.2026 — установлен968; кандидат969 по измеренным live-результатам
 
 Установлен0.31.240/build968/native5.1.968, commit

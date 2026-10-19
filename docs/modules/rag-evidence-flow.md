@@ -1,5 +1,39 @@
 # RAG evidence flow
 
+## 970 — доставленная полная карточка и сохранённые наблюдения источника
+
+Поисковое тело с `body_status=full` может оставаться обзором ресурсов.
+`bind_row_evidence_ids` учитывает только явный bool `normative_card_complete`
+из фактически доставленной page projection: для единственной совпадающей
+typed/header immutable identity явный false оставляет существующий selected-row
+долг `card_body_shown=false`, basis `normative_card_incomplete_preview`.
+Raw-факт показа тела не меняется. Полное чтение той же identity через другой
+alias снимает долг; чужая редакция, конфликт identity и backend-only ресурсы
+его не подтверждают. Неизвестные/не-boolean legacy-факты сохраняют прежнюю семантику.
+
+`norm_card_proof_service.delivered_refs_from_chunks` не исключает такой обзор
+из точного чтения. Прежний единственный bounded proof предлагает `read_norm_card`,
+честно называя уже показанный текст неполной карточкой. Нового цикла, автоматической
+замены/подтверждения нормы, изменения model matches или объёма нет. Существующие
+RIM/readiness consumers получают тот же долг чтения, а не ложную полноту карточки.
+
+`safe_workbook_history_projection` сохраняет калькуляторное наблюдение
+`charge_not_required` через `_HISTORY_ROW_FIELDS`, чтобы public repack не возвращал
+доказанный исходный0 в norm/price/research gaps. Предикат исходного нуля не расширен,
+неизвестный исходник с авторским0 остаётся незакрытым. В ВОР отдельный
+`audit_vor_result_integrity` показывает `unexplained_quantitative_source_exclusion`,
+если полностью извлечённая количественная source-строка с известной мерой
+представлена только header/note/subtotal без пояснения. Вопрос виден через прежние
+document issues/readiness/XLSX, но роль и исходные строки не переписываются;
+работа из материала кодом не создаётся. Это диагностика необъяснённого исключения,
+а не профессиональное подтверждение полноты ВОР. Подробнее:
+[ЛСР](../ALGO-lsr-assembly.md), [ВОР](../ALGO-spec-to-bor.md).
+
+Targeted-регрессии970 проверены отдельно; полный frozen gate, точная установка
+и живое сравнение970 ещё не выполнены. Установленный969 B1 доставил partial XLSX,
+но полностью рассчитанных позиций0, а положительный RAG rerank не измерен в его
+сохранённом trace (`UNKNOWN`). Это не подтверждает точность подбора≥90%.
+
 ## 969 — явные добавочные операции и сохранение неподдержанного поля
 
 Общий `model_lsr_result_contract.LSR_DERIVED_VOLUME_INSTRUCTION` для direct,

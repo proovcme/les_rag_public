@@ -1,5 +1,38 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат970 — три измеренные границы документа
+
+В CURRENT_TESTS добавлены три файла970. Полный frozen gate, точный установщик
+и installed live-приёмка970 пока не выполнены; установлен969/4ca27dd4.
+
+`test_norm_card_complete_delivery_970.py`:10 случаев actual page→binder,
+неполный preview против полного native read той же immutable карточки,
+чужая редакция, противоречивый header/meta, неизвестный legacy-факт,
+подделка модельных полей и один существующий bounded proof без замены нормы.
+Первый осмысленный RED после исправления FrozenInstanceError fixture:
+7failed/3passed; после product fix10passed/2,73s. Связанные10suite:
+202passed/30,49s (`artifacts/live_970/offline_targeted/core_adjacent.xml`).
+Усиление последнего финансового теста подготовлено отдельно и ещё не проверено.
+
+`test_vor_quantitative_metadata_exclusion_970.py`:32 случая количественной
+исходной строки, оставленной только metadata без объяснения; header-bound
+единицы, ноль/отрицательное значение, aliases, sibling operations, неизвестные
+и неполные каталоги. Реальный public build→XLSX→readiness, literal authored
+решения не меняются. RED16failed/16passed; GREEN32passed/1,18s. Связанные8suite:
+272passed/17,82s (`artifacts/live_970/offline_targeted/vor_adjacent.xml`).
+
+`test_lsr_zero_repack_history_970.py`: два случая source0 с ненулевым либо
+неизвестным соседом. Реальные registry/trusted executor/adapter/RIM/XLSX,
+bounded history и public readiness; model tripwire, изолированные attachment/
+job/artifact roots и отсутствующие pricebooks. Точные persisted operation IDs,
+сохранность исходника/решений/evidence/cache и replay ревизии проверяются
+вместе с исключением только подтверждённого0 из research targets.
+Первый RED:2 KeyError charge_not_required. После минимального whitelist fix
+проверка дошла до двух неверных fixture-ожиданий literal IDs; тест исправлен
+на реально сохранённые canonical IDs. Targeted:72passed/3,22s,
+`artifacts/live_970/offline_targeted/zero_history_v2.xml`. Новая suite включена
+в CURRENT_TESTS; полный frozen gate и installed970 ещё не подтверждены.
+
 ## Кандидат969 — регрессии измеренных границ968
 
 CURRENT_TESTS содержит341 уникальный файл. Related targeted:316passed/6,29s
@@ -9,9 +42,12 @@ CURRENT_TESTS содержит341 уникальный файл. Related targete
 ownership suites (`artifacts/live_969/offline_targeted/compact_adjacent.xml`).
 Все прежние wire/input лимиты сохранены; полный V2 остаётся RED9fail и не
 используется как release-доказательство.
-Новые файлы включены в CURRENT_TESTS, но полный frozen gate/install/live969
-ещё не подтверждены. Числа последнего общего прогона и его commit добавляются
-только по actual receipt; подготовленные тесты не являются release acceptance.
+Полный frozen969 `artifacts/gates_969_final_v3/receipt.json`, commit4ca27dd4:
+все9команд rc0,6536passed/20skipped за903,76s. Точный установленный969 прошёл
+upgrade/rollback/reinstall/native-only,18/18 retention и basic smoke9pass/1warn.
+Это техническая приёмка: реальные B0/B1 выдали частичные файлы7строк,
+calculated_positions=0; точность норм≥90% не подтверждена. У B1 телеметрия
+исполнения rerank UNKNOWN, не PASS и не доказанный отказ retrieval.
 
 - `test_lsr_zero_charge_observation_969.py`: каталогом доказанный numeric0,
   смешанные zero/nonzero работы, неизвестные/bool/text/nonfinite, явный calc/

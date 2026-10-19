@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1246 |
-| Строк Python | 425647 |
+| Python-файлов под git | 1249 |
+| Строк Python | 426238 |
 | PRODUCT_REACHABLE | 387 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 847 |
+| TEST_OR_TOOL_ONLY | 850 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 343 |
 | Ошибок разбора | 0 |
@@ -32,21 +32,21 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 15896 | 128 |
+| proxy/services/chat_evidence_application_service.py | 15932 | 131 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 8408 | 12 |
-| proxy/routers/chat.py | 4931 | 57 |
+| proxy/routers/chat.py | 4931 | 58 |
 | backend/qdrant_adapter.py | 4598 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |
 | proxy/routers/datasets.py | 3887 | 20 |
-| proxy/services/rim_lsr_trace_service.py | 3716 | 50 |
+| proxy/services/rim_lsr_trace_service.py | 3716 | 51 |
 | sovushka/styles.py | 3301 | 3 |
-| proxy/services/workbook_research_job_service.py | 3287 | 62 |
+| proxy/services/workbook_research_job_service.py | 3287 | 63 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
-| proxy/services/lsr_norm_quality_gate_service.py | 2266 | 24 |
+| proxy/services/lsr_norm_quality_gate_service.py | 2266 | 25 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
 | proxy/smeta_core/norm_browser.py | 1951 | 20 |
@@ -54,7 +54,7 @@
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | sovushka/pages/diag.py | 1605 | 3 |
-| proxy/services/attachment_source_catalog_service.py | 1526 | 53 |
+| proxy/services/attachment_source_catalog_service.py | 1526 | 54 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |

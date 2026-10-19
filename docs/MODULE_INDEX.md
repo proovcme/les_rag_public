@@ -1,10 +1,38 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-## 969 — кандидат после установленного968: честный статус и расчётные границы
+## 970 — кандидат: исходный ноль, полнота карточки и исключённые строки ВОР
 
-🟡 Source0.31.241/build969/native5.1.969; установлен968/`68f71f44…`, его V4
-full gate и exact NSIS/rollback/reinstall/EXE-only приняты. Live968 B0/B1 и
-multifile ВОР — измеренные результаты с ошибками, не professional PASS.
+🟡 Source0.31.242/build970/native5.1.970; установлен969/`4ca27dd4…`:
+9 команд gate V3, NSIS, upgrade/rollback/reinstall/EXE-only и basic smoke приняты.
+Репак сохранённых решений за6,891s исправно применил цену1000м→м и сохранил
+исходник/модельные строки/evidence/cache, но выявил потерю source-zero признака
+между ответом инструмента и readiness. ✅ Код кандидата закрывает три границы:
+`chat_evidence_application_service._HISTORY_ROW_FIELDS` сохраняет наблюдение
+калькулятора `charge_not_required`; `bind_row_evidence_ids` не считает целиком
+показанный raw preview полной нормативной карточкой при явном
+`normative_card_complete=false` и оставляет существующий долг чтения, не
+подтверждая норму; `norm_card_proof_service` не исключает такой
+preview из точного добора. Полное чтение снимает долг только для той же
+однозначной immutable identity; прежние proof/RIM/readiness consumers сохранены.
+
+`vor_result_integrity_service.audit_vor_result_integrity` задаёт вопрос
+`unexplained_quantitative_source_exclusion`, когда доказанная количественная
+source-строка без пояснения представлена только метаданными. Это предупреждение
+об исключении, а не назначение работы: роли/объёмы/связи остаются модельными.
+Точки входа прежние, новых модельных циклов и зависимостей нет. Док↔код:
+[ЛСР](ALGO-lsr-assembly.md), [ВОР](ALGO-spec-to-bor.md). Новые регрессии:
+`tests/test_lsr_zero_repack_history_970.py`,
+`tests/test_norm_card_complete_delivery_970.py`,
+`tests/test_vor_quantitative_metadata_exclusion_970.py`.
+Отдельные targeted-замеры: 72 passed / 3,22 s, 202 passed и 272 passed; это не полный
+гейт. Полный gate, установка и live970 pending. Точность≥90% и customer-ready
+не заявлены.
+
+## 969 — установлен: честный статус и расчётные границы
+
+🟡 Установлен0.31.241/build969/native5.1.969/`4ca27dd4…`: frozen V3,
+6536passed/20skipped, exact NSIS/rollback/reinstall/EXE-only приняты.
+Live969 B0/B1 — измеренные частичные файлы, не professional PASS.
 ✅ Код: history follow обещает файл только по реально регистрируемому текущему
 artifact; исходный доказанный0 не создаёт начисление/долг нормы; совместимые
 числовые измерители цены пересчитываются из исходной котировки; norm_components
@@ -13,8 +41,9 @@ artifact; исходный доказанный0 не создаёт начис�
 Точки входа прежние, новых модулей/зависимостей нет. Доки:
 факт исходного нуля — `attachment_source_catalog_service.source_confirms_literal_zero_quantity`,
 [расчёт ЛСР](ALGO-lsr-assembly.md), [evidence](modules/rag-evidence-flow.md),
-[UI kit](modules/sovushka-uikit.md). Full gate/install/live969 pending;
-precision≥90% и customer-ready не подтверждены.
+[UI kit](modules/sovushka-uikit.md). B0/B1 сохранили7строк каждый;
+полностью рассчитанных позиций0. У B1 RAG telemetry UNKNOWN.
+Precision≥90%, operation retry и big318 пока не подтверждены.
 
 ## 968 — кандидат после установленных контрольных прогонов967
 

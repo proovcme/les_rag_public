@@ -153,6 +153,42 @@ def audit_vor_result_integrity(
         issue.update(extra)
         issues.append(issue)
 
+    # Explain exclusion of a literal measured source, never infer its proper
+    # professional role. Existing catalog classifications only narrow this
+    # diagnostic; they are not authority for choosing a new work operation.
+    if source_catalog is not None and getattr(source_catalog, "extraction_complete", False):
+        from proxy.services.attachment_source_catalog_service import header_bound_unit
+
+        observed_sources: set[str] = set()
+        for index, row in indexed:
+            if roles[index] != "header":
+                continue
+            source = source_catalog.lookup(row.get("source_row"))
+            if source is None or not source.is_work_row():
+                continue
+            locator = _text(source.locator)
+            if locator in observed_sources:
+                continue
+            observed_sources.add(locator)
+            members = source_targets.get(locator, set())
+            if not members or any(roles[target] != "header" for target in members):
+                continue
+            if any(_has_relationship_explanation(rows[target]) for target in members):
+                continue
+            quantity = getattr(source, "header_quantity", None)
+            unit = header_bound_unit(source)
+            if (not getattr(source, "quantity_column_known", False)
+                    or type(quantity) not in (int, float) or vor_quantity_number(quantity) is None
+                    or _text(unit) in _EMPTY_REFERENCES):
+                continue
+            report(
+                "unexplained_quantitative_source_exclusion", index, row,
+                f"В исходной строке указан объём {quantity} {unit}, но модель оставила её "
+                "только заголовком, примечанием или итогом без пояснения. "
+                "Поясните исключение из работ; исходное решение сохранено без изменения.",
+                source_locator=locator, source_value=quantity, source_unit=unit,
+            )
+
     content_rows = [(index, row) for index, row in indexed if roles[index] != "header"]
     if content_rows and not any(roles[index] == "work" for index, _row in content_rows):
         first_index, first_row = content_rows[0]
