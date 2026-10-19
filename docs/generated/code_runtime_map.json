@@ -18359,7 +18359,7 @@
     },
     {
       "inbound": [],
-      "lines": 168,
+      "lines": 175,
       "module": "tests.test_vor_quantitative_metadata_exclusion_970",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -23606,7 +23606,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 850,
     "tracked_python_files": 1249,
-    "tracked_python_lines": 426238
+    "tracked_python_lines": 426245
   },
   "warnings": []
 }

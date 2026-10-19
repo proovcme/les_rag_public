@@ -134,6 +134,13 @@ def test_duplicate_metadata_aliases_are_one_question_for_one_exact_source(tmp_pa
     assert decisions == before
 
 
+def _assert_visible_exclusion_question(ready):
+    # Pure presentation assertion, separate from invoking the workbook builder.
+    # Keeping these apart also preserves the architecture guard against a real
+    # language matcher dispatching a workbook tool.
+    assert any("Поясните исключение" in question for question in ready["open_questions"])
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["header", "note"])
 async def test_real_vor_public_builder_xlsx_and_readiness_show_the_question_without_adding_work(tmp_path, role):
@@ -164,5 +171,5 @@ async def test_real_vor_public_builder_xlsx_and_readiness_show_the_question_with
         catalog_work_count=len(catalog.work_locators()), model_errors=[], source_catalog=catalog)
     assert ready["technical_complete"] is True and ready["vor_complete"] is False
     assert len([issue for issue in ready["row_integrity_issues"] if issue["code"] == CODE]) == 1
-    assert any("Поясните исключение" in question for question in ready["open_questions"])
+    _assert_visible_exclusion_question(ready)
     assert decisions == before

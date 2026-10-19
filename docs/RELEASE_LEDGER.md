@@ -44,6 +44,29 @@ Basic smoke:9pass/1warn diagnostics_endpoint/0fail, оба реальных ча
 (272passed/17,82s). Наборы пересекаются; их суммы не являются новым полным gate.
 Полный frozen970 gate, точный NSIS/install и установленная live-проверка pending.
 
+Root усилил финансовую регрессию:10passed/3,27s, complete-card/chosen-book
+positive и preview negative дают одну сумму с разной подтверждённостью.
+Первый frozen970/263327a9 остановлен на architecture guard в новой test-функции:
+проверка текста вопроса и явный тестовый builder оказались в одном AST scope.
+Текстовая assertion отделена в чистый helper, без ослабления guard или теста;
+product diff неизменён. RED receipt сохранён в `artifacts/gates_970_final/`.
+Точечная проверка после разделения:96passed/2,77s, metadata и architecture suites
+(`artifacts/live_970/offline_targeted/metadata_arch.xml`). Новый полный gate pending.
+
+Один реальный price-only добор существующей работы969:889,891s, HTTP200,
+новый draft `rev_89b6025d97884356b54356dca195bfd4`, SHA
+`369de5ed130c7d118f804c3fc4da0190ddb15039f3a2f2c74e253de4e5df2559`.
+Все7 принятых строк, их ревизии/нормы/объёмы/ссылки и старый XLSX сохранены.
+Answered targets0, финансовый прогресс0, remaining1; job paused/packets.
+Query cache22→34. Answer: prompt49072, completion32768, finish_reason=length,
+reasoning55988chars/content0/native tool calls0. Новая ревизия собрана из прежних
+сохранённых решений; это retention-доказательство, не успешный финансовый добор.
+Подготовлен следующий ограниченный опыт с отключённым answer thinking при той же
+модели, входном контексте и reserve32768; новая profile revision обязательна,
+identity прежнего задания не подменяется. Сам опыт ещё не выполнен.
+Сырые квитанции: `artifacts/live_969/final/price_gap_retry_v3/run01/`;
+RAG measurement по-прежнему UNKNOWN, customer-ready не заявляется.
+
 Для конечного сравнения профиля явно закреплены literal исторические
 prompt/skill в новых user text revisions: temperature0,6/presence0,
 query8192/answer32768/input131072, прежние datasets/остальные sampler values.

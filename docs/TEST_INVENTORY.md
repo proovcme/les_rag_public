@@ -12,7 +12,10 @@
 Первый осмысленный RED после исправления FrozenInstanceError fixture:
 7failed/3passed; после product fix10passed/2,73s. Связанные10suite:
 202passed/30,49s (`artifacts/live_970/offline_targeted/core_adjacent.xml`).
-Усиление последнего финансового теста подготовлено отдельно и ещё не проверено.
+Усиленный финансовый тест проверен root вместе со всем файлом:10passed/3,27s
+(`artifacts/live_970/serial_verification/strong_financial.xml`). При полностью
+прочитанной карточке и выбранной книге сумма подтверждена; тот же preview
+оставляет ровно ту же сумму предварительной с единственной причиной unread.
 
 `test_vor_quantitative_metadata_exclusion_970.py`:32 случая количественной
 исходной строки, оставленной только metadata без объяснения; header-bound
@@ -20,6 +23,14 @@
 и неполные каталоги. Реальный public build→XLSX→readiness, literal authored
 решения не меняются. RED16failed/16passed; GREEN32passed/1,18s. Связанные8suite:
 272passed/17,82s (`artifacts/live_970/offline_targeted/vor_adjacent.xml`).
+
+Первый frozen970 на263327a9 остановился до pytest: runtime-map rc0,
+architecture guard увидел workbook invocation и проверку текста вопроса
+в одной test-функции. Чистая проверка текста вынесена в отдельный helper;
+guard, product code и все assertions сохранены. RED-квитанция остаётся в
+`artifacts/gates_970_final/receipt.json`; повтор требует нового exact HEAD.
+После разделения96passed/2,77s в metadata+architecture suites,
+`artifacts/live_970/offline_targeted/metadata_arch.xml`; guard не изменялся.
 
 `test_lsr_zero_repack_history_970.py`: два случая source0 с ненулевым либо
 неизвестным соседом. Реальные registry/trusted executor/adapter/RIM/XLSX,
