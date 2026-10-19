@@ -10,7 +10,7 @@
 
 **Spec:** запрос владельца19.10.2026; образец «ВОР монтаж БАП П1 13.05 (2).pdf»; AGENTS.md; ROADMAP_TO_V1.md; docs/archive/HANDOFF_965_2026-10-17.md.
 
-**Точка19.10.2026:** задачи1–4 завершены, установлен967/`bef113b7…` с full V3 и exact NSIS/EXE-only. B0/B1 и multifile — замер, **не professional PASS**.968 исправляет измеренные member/root binding, соседний source guard и derived-quantity arithmetic/presentation; frozen V2 прошёл6295tests/20skipped/9rc0. До установки выявлен ещё один разрыв: cited typed pointer при bare шифре не запускал существующее чтение. Дополнение учитывает отдельный технический долг без исправления нормы; его полный gate/install/live pending, `customer-ready=false`.
+**Точка19.10.2026:** задачи1–4 завершены, установлен967/`bef113b7…` с full V3 и exact NSIS/EXE-only. B0/B1 и multifile — замер, **не professional PASS**.968 исправляет измеренные member/root binding, соседний source guard и derived-quantity arithmetic/presentation; frozen V3 прошёл6315tests/20skipped/9rc0, включая отдельный cited-pointer read debt при bare шифре. До NSIS два fresh bootstrap отказали на PE-trampoline access error; узкий bounded retry/marker fix прошёл95tests и два real isolated working-tree bootstrap67.937/67.609s. Последующий exact gate/install/live pending, `customer-ready=false`.
 
 ## Global Constraints
 
@@ -117,4 +117,4 @@
 
 Использованы skills obra/superpowers на commit `bb92a77741419a4ab5f06e711a283343f1ada0c3`: systematic-debugging, test-driven-development, verification-before-completion, writing-plans. Они установлены в пользовательские Codex skills; инструкция пользователя об автономном исполнении имеет приоритет над общим предложением заново согласовывать план. Проверены также первичные materials anthropics/skills/docx и promptfoo assertions/evals; новых runtime dependencies не добавляем.
 
-Самопроверка: каждому требованию владельца соответствует задача; новый printable layout имеет отдельный roundtrip regression; точность не смешана с заполнением, принятый кодом шифр не считается автоматически профессионально правильным. Установлен966;967 остаётся кандидатом до exact full gate/install/live verification. История ошибок не удаляется, отложенные работы не выдаются за завершённые.
+Самопроверка: каждому требованию владельца соответствует задача; новый printable layout имеет отдельный roundtrip regression; точность не смешана с заполнением, принятый кодом шифр не считается автоматически профессионально правильным. Установлен967;968 остаётся кандидатом до exact full gate/install/live verification. История ошибок не удаляется, отложенные работы не выдаются за завершённые.

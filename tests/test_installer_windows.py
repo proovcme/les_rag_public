@@ -117,7 +117,7 @@ def test_windows_bootstrap_skips_exact_healthy_environment_and_never_implicitly_
     ).read_text(encoding="utf-8-sig")
 
     contract_check = bootstrap.index("Test-LesVenvContract")
-    sync_call = bootstrap.index("& $Uv @UvSyncArgs")
+    sync_call = bootstrap.index("Invoke-LesUvSyncWithRetry -Uv $Uv -SyncArgs $UvSyncArgs")
     assert contract_check < sync_call
     assert '$script:EnvironmentAction = "skipped"' in bootstrap
     assert '"python_environment_invalid"' in bootstrap
@@ -565,11 +565,19 @@ def test_windows_bootstrap_captures_uv_progress_without_treating_stderr_as_failu
         build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     ).read_text(encoding="utf-8-sig")
 
-    assert '$previousErrorActionPreference = $ErrorActionPreference' in bootstrap
-    assert '$ErrorActionPreference = "Continue"' in bootstrap
-    assert '$uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)' in bootstrap
-    assert '$uvSyncExitCode = $LASTEXITCODE' in bootstrap
-    assert '$ErrorActionPreference = $previousErrorActionPreference' in bootstrap
+    # Native execution moved into the shared bounded helper; bootstrap still
+    # consumes its exact exit code and all attempt outputs through redaction.
+    helper = (
+        build_windows_installer.ROOT / "installers" / "windows" / "app" / "venv-contract.ps1"
+    ).read_text(encoding="utf-8-sig")
+    assert 'Invoke-LesUvSyncWithRetry -Uv $Uv -SyncArgs $UvSyncArgs' in bootstrap
+    assert '$previousErrorActionPreference = $ErrorActionPreference' in helper
+    assert '$ErrorActionPreference = "Continue"' in helper
+    assert '$attemptOutput = @(& $Uv @SyncArgs 2>&1)' in helper
+    assert '$exitCode = $LASTEXITCODE' in helper
+    assert '$ErrorActionPreference = $previousErrorActionPreference' in helper
+    assert '$uvSyncOutput = @($uvSyncResult.Output)' in bootstrap
+    assert '$uvSyncExitCode = $uvSyncResult.ExitCode' in bootstrap
 
 
 def test_qdrant_payload_indexes_do_not_block_api_startup():
@@ -762,7 +770,7 @@ def test_windows_bootstrap_repairs_only_on_contract_or_health_failure():
     assert 'removing incomplete or broken Python environment' in text
     assert '"sync", "--locked", "--offline", "--python", $BundledPython' in text
     assert 'if ($VenvHealthy -and $VenvContractMatches)' in text
-    assert '$uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)' in text
+    assert 'Invoke-LesUvSyncWithRetry -Uv $Uv -SyncArgs $UvSyncArgs' in text
     assert 'Log "uv: $safeLine"' in text
     assert '"python_environment_invalid"' in text
 

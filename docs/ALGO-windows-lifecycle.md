@@ -44,8 +44,14 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 
 1. Persistent Python `%LOCALAPPDATA%\LES\.venv` сверяется с contract marker: SHA `uv.lock`,
    bundled Python/uv/cache, selected extra и platform. Exact marker + import probe означает
-   `environment_action=skipped`; mismatch выполняет один locked/offline sync, нездоровая среда —
-   один controlled rebuild. Все последующие `uv run` используют `--no-sync`.
+   `environment_action=skipped`; mismatch выполняет locked/offline sync, нездоровая среда —
+   controlled rebuild. Перед sync прежний marker удаляется; новый записывается только
+   после rc0 и повторной проверки импортов. `Invoke-LesUvSyncWithRetry` допускает
+   максимум3 попытки тех же аргументов лишь для совместной ошибки Windows PE resources,
+   `uv-trampoline-N.exe` и измеренного HRESULT `-2147024891`. Между попытками
+   сохраняется частичная среда; итоговая ошибка использует прежний cleanup и диагностику.
+   Другие отказы не повторяются; все attempt logs маскируют credentials.
+   Все последующие `uv run` используют `--no-sync`.
    Вложенные служебные каталоги создаются по разрешённому target persistent-state junction:
    Python под `%LOCALAPPDATA%\Programs` не выполняет `mkdir` через mount point.
    Startup-журналы и `windows-light-state.json` создаются напрямую в

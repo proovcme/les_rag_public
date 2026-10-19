@@ -337,22 +337,24 @@ if ($VenvHealthy -and $VenvContractMatches) {
   Write-Status -Phase "python" -State "running" -Message "Python-окружение уже проверено"
 } else {
   $EnvironmentWasUnhealthy = -not $VenvHealthy
+  # A previous marker cannot certify an environment after a failed repair.
+  # Keep it absent until the complete sync and the existing import smoke pass.
+  if (Test-Path -LiteralPath $VenvMarker) {
+    Remove-Item -LiteralPath $VenvMarker -Force
+  }
   if ($EnvironmentWasUnhealthy -and (Test-Path -LiteralPath $VenvPath)) {
     Log "removing incomplete or broken Python environment: $VenvPath"
     Remove-Item -LiteralPath $VenvPath -Recurse -Force
   }
-  # PowerShell 5.1 promotes native stderr to terminating records under Stop.
-  $previousErrorActionPreference = $ErrorActionPreference
-  try {
-    $ErrorActionPreference = "Continue"
-    $uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)
-    $uvSyncExitCode = $LASTEXITCODE
-  } finally {
-    $ErrorActionPreference = $previousErrorActionPreference
-  }
-  foreach ($line in $uvSyncOutput) {
-    $safeLine = [regex]::Replace([string]$line, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
-    if ($safeLine) { Log "uv: $safeLine" }
+  $uvSyncResult = Invoke-LesUvSyncWithRetry -Uv $Uv -SyncArgs $UvSyncArgs
+  $uvSyncOutput = @($uvSyncResult.Output)
+  $uvSyncExitCode = $uvSyncResult.ExitCode
+  foreach ($attempt in $uvSyncResult.AttemptResults) {
+    Log "uv attempt $($attempt.Attempt)/3 (exit $($attempt.ExitCode))"
+    foreach ($line in $attempt.Output) {
+      $safeLine = [regex]::Replace([string]$line, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
+      if ($safeLine) { Log "uv: $safeLine" }
+    }
   }
   if ($uvSyncExitCode -ne 0) {
     if ($EnvironmentWasUnhealthy -and (Test-Path -LiteralPath $VenvPath)) {

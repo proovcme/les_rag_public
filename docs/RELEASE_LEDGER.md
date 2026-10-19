@@ -62,6 +62,21 @@ RED4failed/13passed; найденный peer ambiguity-case воспроизве
 `artifacts/live_968/cited_pointer_debt/`. Повторный полный gate этого дополнения,
 точная установка и live-проверка пока pending.
 
+Frozen V3 (`0fa59a8e…`):6315passed/20skipped/844.40s,333files,9rc0.
+Canonical NSIS build не прошёл prebundle дважды (39.778/37.869s): bundled uv
+получил Windows PE resource access error `-2147024891` на temporary trampoline,
+сначала fonttools, затем distro. Оба отказа сохранены в
+`artifacts/live_968/candidate_final/installer_build/`; installed967 не менялся.
+Bootstrap дополнен узким максимум3-повтором тех же locked/offline аргументов,
+только при полной измеренной комбинации ошибки; stale marker удаляется перед
+sync, success по-прежнему требует import smoke. Никаких новых зависимостей,
+UV flags/updates или security changes. RED и related95passed/52.80s —
+`artifacts/live_968/windows_uv_sync_retry/receipt.json`. Чистый изолированный
+bootstrap выполнен дважды:67.937/67.609s, реальные зависимости и API/UI на8052/8053.
+`artifacts/live_968/bootstrap_retry_probe/` содержит SHA двух tested PS-файлов;
+это working-tree debug-only, не готовый NSIS и не installed acceptance.
+Повторный полный gate и точная установка пока pending.
+
 ## 19.10.2026 — установлен966; измеренные причины для кандидата967
 
 Установлен0.31.238/build966/native5.1.966, commit

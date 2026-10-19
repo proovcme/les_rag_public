@@ -18,6 +18,9 @@ quantity рассчитывается отдельно от нормативно
 bare шифр не определил identity, но процитированный typed pointer ещё не прочитан.
 `norm_card_proof_service` передаёт этот долг в прежний ограниченный proof-переход;
 авторский шифр и отдельная ошибка идентичности сохраняются.
+`installers/windows/app/venv-contract.ps1:Invoke-LesUvSyncWithRetry` выполняет
+те же locked/offline аргументы до3раз только при измеренном PE-trampoline HRESULT;
+`bootstrap.ps1` удаляет старый marker перед sync и маскирует каждый attempt log.
 
 ## 966 — шаблон документа и concurrent metadata
 

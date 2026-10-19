@@ -22,6 +22,16 @@ proof debt. Binder и `norm_card_proof_service` отдельно учитыва�
 `test_norm_card_cited_pointer_debt_968.py`; последующий полный gate, установка и
 live-приёмка pending; customer-ready=false.
 
+968 startup: два fresh prebundle отказа выявили Windows PE resource access error
+в bundled uv. `venv-contract.ps1:Invoke-LesUvSyncWithRetry` ограничивает повтор
+точным измеренным отказом (3 max); `bootstrap.ps1` инвалидирует stale marker до
+sync, пишет его после success/import smoke и сохраняет redacted attempts.
+Зависимости, UV, профиль модели и security settings не меняются. Новые15cases и
+две смежные suites95passed/52.80s; два clean isolated working-tree bootstrap
+прошли67.937/67.609s с реальными packaged deps/API/UI на8052/8053, без замены967.
+Это debug-проверки, не приёмка установщика; канон — `ALGO-windows-lifecycle.md`.
+Повторная точная сборка и installed live-приёмка ещё требуются.
+
 ## 967 — Windows rerank, идентичность НР/СП и proof admission
 
 🟡 Кандидат0.31.239/build967; установлен966/aca71dc1, его full V2 и exact

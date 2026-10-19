@@ -99,6 +99,44 @@ function Test-LesVenvHealth {
   }
 }
 
+function Invoke-LesUvSyncWithRetry {
+  param(
+    [Parameter(Mandatory = $true)][string]$Uv,
+    [Parameter(Mandatory = $true)][string[]]$SyncArgs
+  )
+  $allOutput = New-Object System.Collections.Generic.List[string]
+  $attemptResults = New-Object System.Collections.Generic.List[object]
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    # PowerShell 5.1 promotes native stderr to terminating records under Stop.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = "Continue"
+      $attemptOutput = @(& $Uv @SyncArgs 2>&1)
+      $exitCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $lines = @($attemptOutput | ForEach-Object { [string]$_ })
+    foreach ($line in $lines) { $allOutput.Add($line) }
+    $attemptResults.Add([pscustomobject]@{
+      Attempt = $attempt; ExitCode = $exitCode; Output = $lines
+    })
+    $detail = $lines -join "`n"
+    # Only the measured temporary-trampoline PE transaction access failure is
+    # retried. Permission/hash/network failures and other HRESULTs fail closed.
+    $transientPeFailure = (
+      $detail -match 'Failed to update Windows PE resources:[^\r\n]*uv-trampoline-\d+\.exe(?=\s|$)' -and
+      $detail -match '\(os error -2147024891\)'
+    )
+    if ($exitCode -eq 0 -or -not $transientPeFailure -or $attempt -eq 3) { break }
+    Start-Sleep -Milliseconds (250 * $attempt)
+  }
+  return [pscustomobject]@{
+    Output = $allOutput.ToArray(); ExitCode = $exitCode
+    Attempts = $attempt; AttemptResults = $attemptResults.ToArray()
+  }
+}
+
 function Write-LesVenvContractAtomically {
   param(
     [Parameter(Mandatory = $true)]$Contract,

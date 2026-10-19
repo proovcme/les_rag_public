@@ -37,6 +37,19 @@ replay и прежние qualified verdicts. RED4failed/13passed; peer ambiguity
 `artifacts/live_968/cited_pointer_debt/`; новый полный gate
 и установленная live-проверка pending, прежний зелёный V2 не подменяет их.
 
+V3:6315passed/20skipped/844.40s,333files,9rc0. Два последующих fresh installer
+prebundle завершились ошибкой bundled uv при Windows PE resources (`-2147024891`),
+до сборки NSIS; установленный967 не менялся. Новый
+`test_windows_uv_sync_retry_968.py`:15случаев actual PowerShell helper/environment
+block с fake native uv, ограничение повтора, прежние аргументы, EAP, stale marker,
+следующий запуск, redaction и import smoke. RED подтверждён; related95passed/52.80s.
+В CURRENT_TESTS также включены затронутые `test_installer_windows`,
+`test_windows_venv_contract`, `test_windows_prebundle_smoke`; их guards не удалены.
+Два чистых изолированных bootstrap со staged working-tree PS прошли67.937/67.609s:
+реальные bundled deps, API/UI на8052/8053, canonical cleanup; installed967 не менялся.
+`artifacts/live_968/bootstrap_retry_probe/` — debug-only, не installer acceptance.
+Очередной точный gate/install pending.
+
 967 V3:6202passed/20skipped/834.20s,328files/9rc0. Exact NSIS0028ff8a…,
 packaged native80236fbc…,517files; install/rollback/reinstall/EXE-only и basic
 9PASS/1WARN. Capacity обоих новых B0/B1 measured_pass, input131072/answer32768.

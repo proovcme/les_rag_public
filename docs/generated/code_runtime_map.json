@@ -12461,7 +12461,7 @@
     },
     {
       "inbound": [],
-      "lines": 818,
+      "lines": 826,
       "module": "tests.test_installer_windows",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -18460,6 +18460,15 @@
     },
     {
       "inbound": [],
+      "lines": 206,
+      "module": "tests.test_windows_uv_sync_retry_968",
+      "outbound": [],
+      "path": "tests/test_windows_uv_sync_retry_968.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 79,
       "module": "tests.test_windows_venv_contract",
       "outbound": [],
@@ -23429,9 +23438,9 @@
     "product_reachable": 387,
     "registered_api_routes": 343,
     "runtime_support": 11,
-    "test_or_tool_only": 842,
-    "tracked_python_files": 1241,
-    "tracked_python_lines": 424044
+    "test_or_tool_only": 843,
+    "tracked_python_files": 1242,
+    "tracked_python_lines": 424258
   },
   "warnings": []
 }
