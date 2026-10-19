@@ -14,6 +14,10 @@ nested extractor чата сохраняет raw и пишет binding audit, у
 quantity рассчитывается отдельно от нормативного эквивалента.
 `rim_trace_xlsx_service._xlsx_work_name` показывает существующую quantity_trace
 формулу/основание, без перерасчёта; `_position_rows` задаёт высоту этой строки.
+`bind_row_evidence_ids` отдельно записывает `unread_cited_norm_card_refs`, если
+bare шифр не определил identity, но процитированный typed pointer ещё не прочитан.
+`norm_card_proof_service` передаёт этот долг в прежний ограниченный proof-переход;
+авторский шифр и отдельная ошибка идентичности сохраняются.
 
 ## 966 — шаблон документа и concurrent metadata
 

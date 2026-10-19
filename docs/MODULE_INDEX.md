@@ -15,7 +15,12 @@ quote quantity; видимая формула расчётного эквива�
 После первого полного gate (6280passed/11failed) root/member hint ограничен
 комплектами, прежнее scale instruction восстановлено без повторных optional names.
 Evidence reads61 и смежные392 проверки проходят с прежними budgets/assertions.
-Повторный общий gate, точная установка и live-приёмка968 pending; customer-ready=false.
+V2:6295passed/20skipped/842.73s, все9команд rc0. До установки выявлен ещё один
+воспроизводимый разрыв: bare norm code оставлял непрочитанный cited pointer без
+proof debt. Binder и `norm_card_proof_service` отдельно учитывают точную
+непрочитанную ссылку, не исправляя код/identity error. Новый regression —
+`test_norm_card_cited_pointer_debt_968.py`; последующий полный gate, установка и
+live-приёмка pending; customer-ready=false.
 
 ## 967 — Windows rerank, идентичность НР/СП и proof admission
 

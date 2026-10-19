@@ -3383,6 +3383,7 @@
         "tests/test_model_workbook_terminal_transport_962.py",
         "tests/test_native_reasoning_frame_960.py",
         "tests/test_native_tool_call_diagnostics.py",
+        "tests/test_norm_card_cited_pointer_debt_968.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_notebook_study_chat_policy.py",
         "tests/test_packaging_recovery_service.py",
@@ -3421,7 +3422,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15865,
+      "lines": 15892,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -6315,9 +6316,10 @@
     {
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
+        "tests/test_norm_card_cited_pointer_debt_968.py",
         "tests/test_norm_card_proof_request_930.py"
       ],
-      "lines": 238,
+      "lines": 252,
       "module": "proxy.services.norm_card_proof_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6513,6 +6515,7 @@
         "tests/test_model_warmup_service.py",
         "tests/test_model_wire_token_count.py",
         "tests/test_native_ollama_tool_exchange.py",
+        "tests/test_norm_card_cited_pointer_debt_968.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_pending_review_operation_identity.py",
@@ -14378,6 +14381,7 @@
         "tests/test_model_vor_quantity_preservation.py",
         "tests/test_model_workbook_citation_instructions_947.py",
         "tests/test_native_tool_call_diagnostics.py",
+        "tests/test_norm_card_cited_pointer_debt_968.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_pending_review_operation_identity.py",
         "tests/test_sheet_proof_context_admission_967.py",
@@ -14858,6 +14862,21 @@
     },
     {
       "inbound": [],
+      "lines": 181,
+      "module": "tests.test_norm_card_cited_pointer_debt_968",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/norm_card_proof_service.py",
+        "proxy/services/openai_compatible_transport_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_norm_card_proof_request_930.py"
+      ],
+      "path": "tests/test_norm_card_cited_pointer_debt_968.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 76,
       "module": "tests.test_norm_card_completeness_facts",
       "outbound": [
@@ -14872,6 +14891,7 @@
       "inbound": [
         "tests/test_model_proof_artifact_kind.py",
         "tests/test_model_proof_turn_integrity.py",
+        "tests/test_norm_card_cited_pointer_debt_968.py",
         "tests/test_sheet_proof_context_admission_967.py"
       ],
       "lines": 356,
@@ -23409,9 +23429,9 @@
     "product_reachable": 387,
     "registered_api_routes": 343,
     "runtime_support": 11,
-    "test_or_tool_only": 841,
-    "tracked_python_files": 1240,
-    "tracked_python_lines": 423822
+    "test_or_tool_only": 842,
+    "tracked_python_files": 1241,
+    "tracked_python_lines": 424044
   },
   "warnings": []
 }

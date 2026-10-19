@@ -86,11 +86,15 @@ def unread_candidates(row: Mapping[str, Any], shown_by_ref: set[str]) -> list[st
     cited = [str(ref).strip().upper() for ref in (row.get("evidence_refs") or [])
              if str(ref).strip()]
     check = row.get("_evidence_check")
+    unread_cited = [str(ref).strip().upper()
+                    for ref in ((check.get("unread_cited_norm_card_refs")
+                                 if isinstance(check, Mapping) else []) or [])
+                    if str(ref).strip()]
     deferred = [str(ref).strip().upper()
                 for ref in ((check.get("deferred_card_refs") if isinstance(check, Mapping)
                              else []) or [])
                 if str(ref).strip()]
-    return [ref for ref in deferred or cited if ref not in shown_by_ref]
+    return [ref for ref in unread_cited or deferred or cited if ref not in shown_by_ref]
 
 
 def unread_chosen_norm_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
@@ -109,7 +113,8 @@ def unread_chosen_norm_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[s
         check = row.get("_evidence_check")
         if not isinstance(check, Mapping):
             continue
-        if check.get("card_body_shown") is False:
+        if (check.get("card_body_shown") is False
+                or check.get("unread_cited_norm_card_refs")):
             unread.append(row)
     return unread
 
@@ -189,6 +194,15 @@ def proof_request_message(refs: Sequence[str], rows: Sequence[Mapping[str, Any]]
         "карточки такая строка не может стать рассчитанной позицией, и цена по ней не "
         "начисляется.\n"
     )
+    if any((row.get("_evidence_check") or {}).get("unread_cited_norm_card_refs")
+           for row in unread_chosen_norm_rows(rows)):
+        head = (
+            "В цитированных ниже карточках тебе доставлены только указатели без полного "
+            "тела, состава работ, ресурсов и условий. Связь названного шифра с карточкой "
+            "остаётся отдельной проверкой: чтение указателя не исправляет шифр и не "
+            "подтверждает применимость нормы. Прочитай точные цитированные карточки "
+            "перед окончательным решением.\n"
+        )
     if lines:
         head += f"{lines}\n"
     if search_lines:

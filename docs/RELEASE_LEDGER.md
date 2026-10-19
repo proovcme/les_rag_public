@@ -47,6 +47,21 @@ alias22passed/5.06s; независимые code reviews без найденны
 `artifacts/live_968/gate_boundary_repair/`. Повторный полный gate, exact NSIS и
 installed live968 pending. Customer-ready=false.
 
+Frozen V2 (`3ef5e201…`) завершён:6295passed/20skipped/842.73s,332files,
+все9команд rc0; `artifacts/gates_968_final_v2/receipt.json`. Установщик по этой
+квитанции не собирался. Независимый разбор сохранённого B1 установил ещё один
+механический разрыв: модель процитировала qualified deferred-pointer, но вернула
+bare шифр; identity error сохранился, а `card_body_shown` остался неизвестным,
+из-за чего существующий proof-переход не запускался. Новый отдельный долг
+`unread_cited_norm_card_refs` учитывает только известную процитированную typed
+identity, ещё не показанную полностью. Шифр, статус и identity error не меняются;
+чтение остаётся действием модели в существующем ограниченном переходе.
+RED4failed/13passed; найденный peer ambiguity-case воспроизведён отдельно и
+устранён проверкой всех identities до фильтра заголовка. Финально20новых cases
+и4смежных файла:77passed/7.57s; root7suites:369passed/31.67s. Квитанции —
+`artifacts/live_968/cited_pointer_debt/`. Повторный полный gate этого дополнения,
+точная установка и live-проверка пока pending.
+
 ## 19.10.2026 — установлен966; измеренные причины для кандидата967
 
 Установлен0.31.238/build966/native5.1.966, commit

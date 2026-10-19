@@ -4081,6 +4081,33 @@ def bind_row_evidence_ids(
                 evidence_check["card_body_shown_basis"] = (
                     "cipher_card_body_delivered" if row_key in delivered_cipher_keys
                     else "no_delivered_card_names_this_cipher")
+            if ("card_body_shown" not in evidence_check
+                    and row_cipher and looks_like_cipher(row_cipher)):
+                # A bare authored cipher identifies no norm family.  Its exact
+                # cited typed pointer can still owe a read; this does not repair
+                # the cipher or the independent code_not_in_refs verdict.
+                unread_cited_refs = []
+                for ref, global_id in checkable_bindings.items():
+                    header_key = qualified_norm_key(cards.get(ref, ""))
+                    if not header_key:
+                        continue
+                    typed_ids = {
+                        normative_card_identity(meta)
+                        for meta in global_to_norm_snapshots.get(global_id, ())
+                        if meta.get("norm_code") or meta.get("norm_key")
+                    }
+                    header_ids = {
+                        normative_card_identity(meta)
+                        for meta in global_to_norm_snapshots.get(global_id, ())
+                        if qualified_norm_key(str(meta.get("norm_code")
+                                                  or meta.get("norm_key") or "")) == header_key
+                    }
+                    if (len(typed_ids) == 1 and typed_ids == header_ids
+                            and typed_ids <= deferred_norm_identities.get(global_id, set())
+                            and not typed_ids <= delivered_norm_identities):
+                        unread_cited_refs.append(ref)
+                if unread_cited_refs:
+                    evidence_check["unread_cited_norm_card_refs"] = unread_cited_refs
             payload["_evidence_check"] = evidence_check
         resource_code = str(payload.get("resource_code") or "").strip()
         if resource_code:

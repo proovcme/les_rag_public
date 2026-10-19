@@ -10,7 +10,7 @@
 
 **Spec:** запрос владельца19.10.2026; образец «ВОР монтаж БАП П1 13.05 (2).pdf»; AGENTS.md; ROADMAP_TO_V1.md; docs/archive/HANDOFF_965_2026-10-17.md.
 
-**Точка19.10.2026:** задачи1–4 завершены, установлен967/`bef113b7…` с full V3 и exact NSIS/EXE-only. B0/B1 и multifile — замер, **не professional PASS**.968 исправляет измеренные member/root binding, соседний source guard и derived-quantity arithmetic/presentation; full gate/install/live pending, `customer-ready=false`.
+**Точка19.10.2026:** задачи1–4 завершены, установлен967/`bef113b7…` с full V3 и exact NSIS/EXE-only. B0/B1 и multifile — замер, **не professional PASS**.968 исправляет измеренные member/root binding, соседний source guard и derived-quantity arithmetic/presentation; frozen V2 прошёл6295tests/20skipped/9rc0. До установки выявлен ещё один разрыв: cited typed pointer при bare шифре не запускал существующее чтение. Дополнение учитывает отдельный технический долг без исправления нормы; его полный gate/install/live pending, `customer-ready=false`.
 
 ## Global Constraints
 

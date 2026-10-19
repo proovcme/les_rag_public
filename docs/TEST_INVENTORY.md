@@ -26,6 +26,17 @@ Root compact+snapshot+tiny-context25passed/4.48s: бюджеты и card asserti
 Квитанции: `artifacts/live_968/gate_boundary_repair/`. Первый RED сохранён отдельно;
 повторный полный gate и installed live968 pending.
 
+V2:6295passed/20skipped/842.73s,332files,9rc0. До установки добавлен
+`test_norm_card_cited_pointer_debt_968.py`:20cases, реальный binder→proof helper
+и native chat seam. Bare code остаётся конфликтом, но exact cited typed pointer
+получает отдельный долг чтения. Проверены неизвестные/неоднозначные ссылки,
+разные редакции, full identity под другим alias/global hit, forged model fields,
+replay и прежние qualified verdicts. RED4failed/13passed; peer ambiguity RED1failed;
+после исправления uniqueness всех typed identities —77passed/7.57s с4смежными
+файлами; root7suites369passed/31.67s. Квитанции:
+`artifacts/live_968/cited_pointer_debt/`; новый полный gate
+и установленная live-проверка pending, прежний зелёный V2 не подменяет их.
+
 967 V3:6202passed/20skipped/834.20s,328files/9rc0. Exact NSIS0028ff8a…,
 packaged native80236fbc…,517files; install/rollback/reinstall/EXE-only и basic
 9PASS/1WARN. Capacity обоих новых B0/B1 measured_pass, input131072/answer32768.
