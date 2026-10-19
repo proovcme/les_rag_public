@@ -10,11 +10,7 @@
 
 **Spec:** запрос владельца19.10.2026; образец «ВОР монтаж БАП П1 13.05 (2).pdf»; AGENTS.md; ROADMAP_TO_V1.md; docs/archive/HANDOFF_965_2026-10-17.md.
 
-**Фактическая точка19.10.2026:** технические задачи1–4 выполнены на установленном
-966/0.31.238/native5.1.966 (`aca71dc1665e7b45971aa6948b3bb7f1d213a883`).
-B0/B1 завершены как замер, **не professional PASS**. Кандидат967 ограничен
-тремя измеренными исправлениями ниже; его полный clean gate, точный установщик
-и установленная live-приёмка пока не подтверждены. `customer-ready=false`.
+**Точка19.10.2026:** задачи1–4 завершены на установленном966/`aca71dc1…`; B0/B1 — замер, **не professional PASS**.967 — кандидат, `customer-ready=false`.
 
 ## Global Constraints
 
@@ -43,9 +39,7 @@ B0/B1 завершены как замер, **не professional PASS**. Канд
 - [x] Проверить два потока/процесса, cleanup/consume и неизменность bytes/SHA; обычный TTL неиспользованных файлов остаётся.
 - [x] Запустить связанные attachment suites с workspace-local `--basetemp`; ожидание0fail. Отдельная независимая проверка diff.
 
-Подтверждение: общий OS advisory lock, идемпотентный pin и повторная сверка
-identity/SHA. Adjacent349passed/2skipped/39.76s,
-`artifacts/live_966/retention/adjacent_final.xml`; затем полный966 V2 gate.
+Подтверждение:349passed/2skipped/39.76s, `artifacts/live_966/retention/adjacent_final.xml`, затем полный966 V2 gate.
 
 ### Task2 — читаемый шаблон ВОР и буквальное происхождение
 
@@ -59,11 +53,7 @@ identity/SHA. Adjacent349passed/2skipped/39.76s,
 - [x] Reader пропускает только строго проверенную generated presentation, соответствующую canonical rows. Изменённый/поддельный marker остаётся видимым источником либо явным blocker.
 - [x] Проверить XLSX reopen/data_only, roundtrip без дублей, несколько файлов и более30 строк. Визуально проверить сохранённый printable layout.
 
-Подтверждение: template+adjacent82passed/4.97s; related пять файлов после
-согласования прежних canonical asserts с новым active print view —124passed/6.47s.
-Все прежние raw/source/0/null проверки сохранены на листе «ВОР». Read-only render
-sample.xlsx проверен; native Excel print не заявляется. Независимый combined
-gate шести файлов —156passed/13.43s (`artifacts/live_966/independent_review.xml`).
+Подтверждение: related124passed/6.47s, все canonical raw/source/0/null asserts сохранены; independent156passed/13.43s (`artifacts/live_966/independent_review.xml`). Read-only render проверен, native Excel print не заявляется.
 
 ### Task3 — добор без потери адреса и принятых решений
 
@@ -75,9 +65,7 @@ gate шести файлов —156passed/13.43s (`artifacts/live_966/independen
 - [x] Проверить точные target operation IDs, сохранение closed-row revisions/evidence, исходного price_basis и дословного инженерного hint.
 - [x] Проверить conserving retry в связанных offline service-регрессиях: меняются только открытые/явно выбранные операции, принятые строки остаются. Отдельный живой retry перенесён в Task5 и пока не засчитан.
 
-Подтверждение: исходный RED10failed/4passed; related122passed/10.30s.
-Механическое исправление и эти регрессии завершены; они не заменяют ещё
-предстоящий installed ordinary/multifile retry с реальной моделью.
+Подтверждение: RED10failed/4passed → related122passed/10.30s. Installed ordinary/multifile retry остаётся в Task5.
 
 ### Task4 — точный проверенный Windows-кандидат
 
@@ -88,12 +76,7 @@ gate шести файлов —156passed/13.43s (`artifacts/live_966/independen
 - [x] Собрать фактический NSIS; закрепить exact installer/native/runtime manifest SHA, затем dry-run действительного `%LOCALAPPDATA%/Programs/LES`.
 - [x] Установка/откат/повторная установка/EXE-only/basic smoke: сохранить bindings,395 factors с направленной поправкой TTL,13 jobs/full cache/evidence и12 артефактов. Внешние модели не перезапускать.
 
-Подтверждение: exact clean966 `aca71dc1…`, девять команд rc0,
-325files/6171passed/20skipped/818.65s,
-`artifacts/gates_966_final_v2/receipt.json`. Предыдущий RED gate сохранён отдельно.
-Actual NSIS SHA67459e65…, packaged native SHA3ce118ce…,517 runtime files aligned.
-Upgrade/rollback/reinstall/EXE-only приняты; basic smoke9pass/1warn/0fail.
-Техническая установка не объявлена профессиональной приёмкой документов.
+Подтверждение:325files/6171passed/20skipped/818.65s, все9команд rc0 (`artifacts/gates_966_final_v2/receipt.json`); NSIS SHA67459e65…, native3ce118ce…,517files aligned. Upgrade/rollback/reinstall/EXE-only приняты, smoke9pass/1warn/0fail. Предыдущий RED сохранён отдельно.
 
 ### Task5 — профессиональная приёмка результата
 
@@ -108,56 +91,27 @@ Upgrade/rollback/reinstall/EXE-only приняты; basic smoke9pass/1warn/0fail
 - [ ] Big318 stop/restart/continue; полная построчная сверка, без потерь и ложных зелёных. Отсутствие части норм разрешено, пустая ЛСР вместо результата — нет.
 - [ ] Только после свежих доказательств итоговый вердикт: что передаётся, точные ограничения и реальные открытые вопросы. Никакой публичной публикации без отдельного указания.
 
-Замер966: B0/B1 заняли288.407s/588.344s и выдали скачиваемые XLSX с7/8 авторскими
-строками; модель выбрала1/3 кандидата нормы. Основные answer/read frames имели
-32768 generation reserve при effective/observed/cache context131072; два proof
-старта B1 не имели отдельного допуска, поэтому общий capacity verdict — unknown.
-Толщина/условия/ресурсы остаются открытыми, ≥90% применимости не доказано.
-Rerank во всех восьми B0 поисках был `disabled_by_runtime_policy`; успешная
-доставка native RRF не доказывает точный fingerprint embedding weights/index.
-Источники: `artifacts/live_966/final_v2/lsr32_comparison/`, включая независимые
-`evidence_delivery_review.md`, `retrieval_contract_review.md` и `lower_chain_addendum_967.md`
-в `B0_DIRECT/run/`. Новый rerank-on B0/B1, профессиональная оценка, diverse inputs,
-ordinary/multifile retry и big318 остаются открытыми.
+Замер966: B0/B1 —288.407s/588.344s, скачиваемые XLSX с7/8 авторскими строками,
+1/3 кандидата нормы; ≥90% применимости не доказано. Основные frames: reserve32768/context131072,
+два proof старта B1 без собственного admission → capacity unknown; rerank B0 отключён.
+Квитанции и reviews: `artifacts/live_966/final_v2/lsr32_comparison/`.
 
 ### Task6 — 967: сохранить штатную настройку общего reranker при Windows bootstrap
 
-**Files:** `tools/windows_runtime.py`; `installers/windows/start-light.ps1`;
-`tests/test_windows_reranker_bootstrap_967.py`; существующий installer contract;
-`docs/PLATFORMS.md`.
-
-- [x] Воспроизвести исходный override на реальном Python runtime_environment и изолированных штатных PowerShell helpers: RED13failed/8passed.
-- [x] Сохранить явные true/false с единым precedence: nonblank persisted GUI → nonblank process → true; не переписывать persistent bytes и остальные настройки.
-- [x] Проверить новые случаи и прежние native boot/entrypoint/installer контракты:56passed/9.07s; `artifacts/live_967/reranker_bootstrap/{red.xml,green.xml,receipt.json}`.
-- [ ] Подтвердить на установленном967 actual per-search `reranked=true`/`rerank_status=ok` и доставленный evidence; enabled/ready недостаточно.
-
-Операторы967 подготовлены только inert. Их14 jobs/14 artifacts и395 factors
-не подменяют будущий полный prepare через `?view=full`. Legacy966 rollback при
-cold boot снова может навязать process=false: strict parity не ослабляется,
-восстановление GUI true — отдельное действие root с квитанцией.
+- [x] `tools/windows_runtime.py` и `installers/windows/start-light.ps1`: явные true/false сохраняются; precedence nonblank persisted → process → true, без переписывания state. RED13failed/8passed →56passed/9.07s (`artifacts/live_967/reranker_bootstrap/`).
+- [ ] Installed per-search `reranked=true`/`rerank_status=ok` и delivered evidence; enabled/ready недостаточно. Legacy966 rollback может вернуть process=false: strict parity не ослаблять, GUI восстановление только root с receipt.
 
 ### Task7 — 967: отличать ссылку на контейнер НР/СП от canonical rule_id
 
-**Files:** `proxy/services/model_rag_grouped_evidence_service.py`;
-`proxy/services/model_lsr_result_contract.py`; `tests/test_nrsp_catalog_reference_967.py`;
-связанные lossless-render регрессии.
-
-- [x] Закрепить измеренный случай, где hash общего каталога был принят за ID правила.
-- [x] Единый marker `catalog_ref=[…] (не rule_id)` и буквальная инструкция копирования rule_id; сохранить исходные правила, ставки, условия и byte-exact восстановление.
-- [x] Проверить потерю неоднозначности и прежние контракты: green93passed/0.824s, adjacent235passed/32.176s; `artifacts/live_967/nrsp_catalog_reference/`.
-- [ ] Подтвердить правильное чтение model-authored rule_id в новой установленной live-паре; код не выбирает и не исправляет ставку вместо модели.
+- [x] `model_rag_grouped_evidence_service.py` / `model_lsr_result_contract.py`: marker `catalog_ref=[…] (не rule_id)`, буквальное копирование canonical ID, byte-exact каталог без выбора ставки кодом. Green93passed/0.824s, adjacent235passed/32.176s (`artifacts/live_967/nrsp_catalog_reference/`).
+- [ ] Подтвердить model-authored rule_id в новой установленной live-паре.
 
 ### Task8 — 967: полный proof-запрос допускается ContextGovernor до inference
 
-**Files:** `proxy/services/chat_evidence_application_service.py`;
-`tests/test_sheet_proof_context_admission_967.py`; связанные proof/native-read тесты.
-
-- [x] Воспроизвести два proof старта, которые добавляли предыдущий ответ после первичного admission; отдельно воспроизвести зависание обычного продолжения после overflow.
-- [x] Допускать весь предыдущий ответ, запрос proof и текущие карточки существующим Governor с отдельным purpose receipt, прежними резервами/инструментами и measured connection revision.
-- [x] При overflow сохранить завершённый ответ/строки и явную техническую причину; не создавать zombie pending READ/паузу, скрытую inference или новый предметный цикл. Обычное «Продолжи» проверено для обоих видов proof.
-- [x] Targeted proof gate **6 файлов /127passed/28.53s**, rc0; `artifacts/live_967/proof_context_admission/offline_receipt.json`.
-- [x] Root независимо повторил три новые suite: **31passed/12.16s**, `artifacts/live_967/root_independent_final.xml`. Это offline verification, не full release gate и не professional PASS.
-- [ ] После exact clean967 gate/install переснять B0/B1 с собственными Governor receipts каждого реально отправленного proof inference и профессионально проверить доставленные документы.
+- [x] `chat_evidence_application_service.py`: оба proof старта проходят общий admission с предыдущим ответом/карточками и отдельным Governor receipt; прежние резервы/инструменты сохраняются.
+- [x] Overflow сохраняет завершённые строки, явную техническую причину и terminal/repack; оба обычных продолжения проверены без zombie pending/паузы или скрытой inference. Targeted **6 файлов /127passed/28.53s**, rc0 (`artifacts/live_967/proof_context_admission/offline_receipt.json`).
+- [x] Root: три новые suite **31passed/12.16s** (`artifacts/live_967/root_independent_final.xml`); offline verification, не full release gate/professional PASS.
+- [ ] Exact clean967 full gate/install, затем свежий rerank-on B0/B1 с proof receipts, diverse inputs, ordinary/multifile retry и big318; проверить качество доставленных документов.
 
 ## Skill sources и самопроверка
 
