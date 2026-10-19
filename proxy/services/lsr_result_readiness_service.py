@@ -217,9 +217,13 @@ def _unbound_rows(missing: Sequence[str]) -> list[dict[str, str]]:
         text = _text(item)
         if not text.startswith("row:"):
             continue
-        parts = [part.strip() for part in text.split(":")]
-        locator = parts[1] if len(parts) > 1 else ""
-        status = parts[2] if len(parts) > 2 else ""
+        # Only the final delimiter belongs to the status. Source locators may
+        # themselves contain colons (collection member namespaces and metadata).
+        body = text[len("row:"):]
+        locator, separator, status = body.rpartition(":")
+        if not separator:
+            locator, status = body, ""
+        locator, status = locator.strip(), status.strip()
         if not locator or (locator, status) in seen:
             continue
         seen.add((locator, status))

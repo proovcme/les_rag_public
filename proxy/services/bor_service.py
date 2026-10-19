@@ -35,6 +35,185 @@ UNIT_ALIASES = {
     "л": "л", "л.": "л", "литр": "л", "литров": "л",
 }
 
+VOR_PRINT_SHEET = "Ведомость работ"
+VOR_PRINT_MARKER = "_LES_VOR_PRINT_VIEW_V1"
+
+
+def _vor_print_plan(workbook):
+    """Derive a presentation only from the complete, unchanged decision register."""
+    from proxy.services.lsr_source_coverage_service import canonicalize_row_role
+    from proxy.services.vor_result_integrity_service import vor_has_complete_derived_measure, vor_quantity_number
+
+    if "ВОР" not in workbook.sheetnames:
+        return None
+    register = workbook["ВОР"]
+    if [register.cell(3, col).value for col in (1, 2, 3, 4)] != ["№", "Раздел", "Наименование", "Код/Шифр"]:
+        return None
+    authored = {}
+    if register.max_row > 3:
+        if "Решения модели" not in workbook.sheetnames:
+            return None
+        pieces = {}
+        for target, _part, literal, *_rest in workbook["Решения модели"].iter_rows(min_row=4, values_only=True):
+            if target is not None:
+                pieces.setdefault(str(target), []).append(str(literal)[len("JSON: "):])
+        try:
+            authored = {key: json.loads("".join(value)) for key, value in pieces.items()}
+        except (ValueError, RecursionError):
+            return None
+        if set(authored) != {f"ВОР!R{index}" for index in range(4, register.max_row + 1)}:
+            return None
+    plan = [
+        {"kind": "party", "values": ["Заказчик:", None, None, "Объект:", None]},
+        {"kind": "blank", "values": []},
+        {"kind": "full", "values": ["Ген. подрядчик:"]},
+        {"kind": "title", "values": ["Ведомость объёмов работ"]},
+        {"kind": "full", "values": [register["A1"].value if register["A1"].value != "Ведомость объёмов работ" else None]},
+        {"kind": "status", "values": [register["A2"].value]},
+        {"kind": "columns", "values": ["№ пп", "Наименование", "Ед. изм.", "Кол-во", "Примечание"]},
+        {"kind": "numbers", "values": [1, 2, 3, 4, 5]},
+    ]
+    section, ordinal = "", 0
+    for index in range(4, register.max_row + 1):
+        decision = authored[f"ВОР!R{index}"]
+        role = canonicalize_row_role(decision.get("row_role"))
+        if role == "header":
+            label = register.cell(index, 3).value
+            if label and label != section:
+                plan.append({"kind": "section", "values": [label]})
+                section, ordinal = label, 0
+        if role != "work":
+            continue
+        label = register.cell(index, 2).value
+        if label and label != section:
+            plan.append({"kind": "section", "values": [label]})
+            section, ordinal = label, 0
+        ordinal += 1
+        unit, quantity = register.cell(index, 5).value, register.cell(index, 6).value
+        notes = []
+        for key in ("note", "notes", "comment", "remarks"):
+            value = decision.get(key)
+            if isinstance(value, str) and value.strip() and value not in notes:
+                notes.append(value)
+        source_note = register.cell(index, 12).value
+        if source_note and source_note not in notes:
+            notes.append(str(source_note))
+        if vor_has_complete_derived_measure(decision):
+            unit, quantity = decision["calc_unit"], vor_quantity_number(decision["calc_quantity"])
+            notes.append(str(decision["conversion_source"]))
+        if quantity is None:
+            notes.append("Объём не указан.")
+        if not unit:
+            notes.append("Единица измерения не указана.")
+        plan.append({"kind": "work", "values": [ordinal, register.cell(index, 3).value,
+                    unit, quantity, "\n".join(notes) or None], "target": f"#'ВОР'!C{index}"})
+    if not any(row["kind"] == "work" for row in plan):
+        plan.append({"kind": "status", "values": ["Работы не сформированы. См. лист «ВОР» и замечания."]})
+    plan.extend([{"kind": "blank", "values": []},
+                 {"kind": "signature", "values": ["Составил"]},
+                 {"kind": "signature", "values": ["Проверил"]}])
+    return plan
+
+
+def _vor_print_merges(plan):
+    ranges = []
+    for number, row in enumerate(plan, 1):
+        if row["kind"] == "party":
+            ranges.extend((f"A{number}:C{number}", f"D{number}:E{number}"))
+        elif row["kind"] == "signature":
+            ranges.extend((f"A{number}:B{number}", f"C{number}:E{number}"))
+        elif row["kind"] in {"full", "title", "status", "section"}:
+            ranges.append(f"A{number}:E{number}")
+    return set(ranges)
+
+
+def is_verified_vor_print_view(workbook, worksheet) -> bool:
+    """A marker alone never excludes an arbitrary or edited source worksheet."""
+    marker = workbook.defined_names.get(VOR_PRINT_MARKER)
+    if (worksheet.title != VOR_PRINT_SHEET or marker is None
+            or marker.attr_text != f"'{VOR_PRINT_SHEET}'!$A$1"):
+        return False
+    from proxy.services.attachment_source_catalog_service import _is_vor_model_audit
+
+    if ("ВОР" not in workbook.sheetnames
+            or (workbook["ВОР"].max_row > 3 and (
+                "Решения модели" not in workbook.sheetnames
+                or not _is_vor_model_audit(workbook["Решения модели"], workbook)))):
+        return False
+    plan = _vor_print_plan(workbook)
+    if (plan is None or worksheet.max_row != len(plan) or worksheet.max_column != 5
+            or {str(value) for value in worksheet.merged_cells.ranges} != _vor_print_merges(plan)):
+        return False
+    for number, row in enumerate(plan, 1):
+        expected = list(row["values"]) + [None] * (5 - len(row["values"]))
+        for column, value in enumerate(expected, 1):
+            cell = worksheet.cell(number, column)
+            target = row.get("target") if column == 2 else None
+            if (cell.value != value or cell.data_type == "f"
+                    or (cell.hyperlink.target if cell.hyperlink else None) != target):
+                return False
+    return True
+
+
+def _add_vor_print_view(workbook):
+    """Add the owner's five-column print form without moving canonical row addresses."""
+    from math import ceil
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.worksheet.page import PageMargins
+    from openpyxl.workbook.defined_name import DefinedName
+
+    plan = _vor_print_plan(workbook)
+    if plan is None:
+        return
+    view = workbook.create_sheet(VOR_PRINT_SHEET, 0)
+    for row in plan:
+        view.append(row["values"])
+    for value in _vor_print_merges(plan):
+        view.merge_cells(value)
+    thin = Side(style="thin", color="000000")
+    widths = (6, 49, 9, 11, 33)
+    for column, width in zip("ABCDE", widths, strict=True):
+        view.column_dimensions[column].width = width
+    for number, row in enumerate(plan, 1):
+        kind = row["kind"]
+        lines = 1
+        for column, value in enumerate(row["values"], 1):
+            cell = view.cell(number, column)
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
+            cell.font = Font(name="Times New Roman", size=12 if kind == "title" else 10,
+                             bold=kind in {"party", "title", "columns", "section", "status"})
+            cell.alignment = Alignment(wrap_text=True, vertical="top",
+                                       horizontal="center" if kind in {"columns", "numbers", "title"}
+                                       or (kind == "work" and column in (1, 3, 4)) else "left")
+            width = sum(widths) if kind in {"full", "title", "status", "section"} else widths[column - 1]
+            lines = max(lines, sum(max(1, ceil(len(line) / max(1, width - 1))) for line in str(value or "").split("\n")))
+        view.row_dimensions[number].height = max(16, 13 * lines + 3)
+        if kind in {"work", "section", "columns", "numbers"}:
+            for cell in view[number]:
+                cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        if kind == "section":
+            view.cell(number, 1).fill = PatternFill("solid", fgColor="F2F2F2")
+        if kind == "signature":
+            view.row_dimensions[number].height = 27
+            for column in range(3, 6):
+                view.cell(number, column).border = Border(bottom=thin)
+        if kind == "work":
+            view.cell(number, 2).hyperlink = row["target"]
+            view.cell(number, 4).number_format = "General"
+    view.freeze_panes = "A9"
+    view.sheet_view.showGridLines = False
+    view.page_setup.orientation = "portrait"
+    view.page_setup.paperSize = view.PAPERSIZE_A4
+    view.page_setup.fitToWidth, view.page_setup.fitToHeight = 1, 0
+    view.sheet_properties.pageSetUpPr.fitToPage = True
+    view.page_margins = PageMargins(left=.3, right=.3, top=.4, bottom=.4)
+    view.print_title_rows = "7:8"
+    view.print_area = f"A1:E{len(plan)}"
+    view.oddFooter.right.text = "Страница &P из &N"
+    workbook.defined_names.add(DefinedName(VOR_PRINT_MARKER, attr_text=f"'{VOR_PRINT_SHEET}'!$A$1"))
+    workbook.active = 0
+
 
 def normalize_unit(unit: str | None) -> str:
     if not unit:
@@ -304,6 +483,10 @@ def source_rows_to_vor_xlsx(
                        authored_cell(derived.get("conversion_factor"), numeric=True),
                        authored_cell(derived.get("conversion_source"))]
         sheet.append(values)
+        # Source provenance is literal text, including filenames beginning with "=".
+        source_cell = sheet.cell(sheet.max_row, 7)
+        if isinstance(source_cell.value, str):
+            source_cell.data_type = "s"
         if authored_metadata and audit_row is not None:
             sheet.cell(index + 3, 15).hyperlink = f"#'Решения модели'!C{audit_row}"
             covered = str(decision.get("covered_by_work_id") or "")
@@ -339,6 +522,8 @@ def source_rows_to_vor_xlsx(
         for row in check.iter_rows(min_row=3):
             for cell in row:
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
+    if authored_metadata or not rows:
+        _add_vor_print_view(workbook)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
     workbook.close()

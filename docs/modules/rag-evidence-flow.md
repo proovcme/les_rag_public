@@ -1,5 +1,34 @@
 # RAG evidence flow
 
+## 966 — безопасное сохранение и полный адрес пробела
+
+Для одного read attachment OS advisory lock общий для metadata readers,
+preserve, consume, cleanup и финального pin commit. На Windows используется
+msvcrt, на POSIX flock, без новых зависимостей/скрытых env факторов. Таймаут
+5s виден непосредственному вызывающему; прежняя opportunistic cleanup пропускает
+занятый источник. Persistent lockfile не удаляется конкурентно, ОС освобождает
+его при выходе процесса. После staging pin повторно сверяет текущие metadata,
+исходник и SHA; не воскрешает удалённый источник и не затирает новые metadata.
+Это исправляет воспроизведённый WinError5 при двух atomic replacements.
+
+Диагностика `row:<locator>:<status>` отделяет только последний разделитель.
+Collection namespace `read_ID::Лист!Rn` и metadata locators остаются целыми;
+причина и цель повторного поиска больше не превращаются в другой адрес.
+Модельные статусы/решения не переписываются. Существующий preserving retry
+с CAS/idle и operation identity сохраняет closed decisions и исходную книгу;
+новый механизм подбора норм не добавляется.
+
+Первый печатный view ВОР — проверяемое отображение прежнего register/audit.
+Reader исключает повторные work rows только после точной сверки versioned
+marker, всех значений, ссылок и merges. Поддельный/изменённый view остаётся
+видимым с extraction warning. Неизвестное количество остаётся неизвестным,
+явный0 — числом0. Расчётный объём берётся только из полного авторского набора.
+Новый view не выбирает монтаж из изделия и не исправляет норму/количество.
+
+Scoped retention:349passed/2skipped/39.76s; multi-file gap identity с adjacent:
+122passed/10.30s. Полный frozen gate, installer и профессиональная точность
+на установленной сборке фиксируются отдельно; customer-ready пока false.
+
 ## 965 — составной исходник без предметного объединения
 
 POST `/api/chat/attachment-collections` принимает упорядоченные уникальные IDs

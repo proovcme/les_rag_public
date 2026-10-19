@@ -1,5 +1,28 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат966 — шаблон ВОР, Windows retention, namespace добора
+
+`test_chat_attachment_retention_966.py`:12case; общая OS-lock между пятью
+lifecycle API и независимым процессом, два first pin, освобождение при crash,
+ограниченный видимый timeout, no-resurrection/current metadata и сохранность SHA.
+Исходная конкурентная регрессия965 не ослаблялась. RED WinError5 сохранён;
+13 adjacent suites349passed/2skipped/39.76s:
+`artifacts/live_966/retention/adjacent_final.xml`.
+
+`test_lsr_multifile_gap_identity_966.py`:14case; реальный генератор gaps,
+namespace `::`, Unicode/metadata/двоеточия, неизвестные/legacy статусы, повторные
+операции на общем адресе. RED10failed/4passed; GREEN с5related suites122passed,
+10.30s: `artifacts/live_966/multifile_gap_identity/`.
+
+`test_vor_print_template_966.py`: first five-column printable view, unchanged
+canonical rows/audit,0/null/derived measures, множество строк/файлов и повторный
+intake без дублей; fake/modified view сохраняется как источник с warning.
+15 новых cases с aliases/1/37/318работами; related82passed/4.97s, no deselect.
+Root combined6files156passed/13.43s: `artifacts/live_966/independent_review.xml`.
+Отдельный test в collection suite проверяет literal formula-like filename.
+Все три файла включены в CURRENT_TESTS. Полный frozen966, installed32k B0/B1,
+инженерная точность, добор и big stop/resume — отдельные обязательные доказательства.
+
 ## Кандидат965 — вместимость и комплект исходников
 
 Полный964:6054passed/20skipped/9failed/814,93s. Семь отказов связаны с ростом

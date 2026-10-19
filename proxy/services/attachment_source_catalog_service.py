@@ -604,6 +604,10 @@ def catalog_sheet_pack_lines(
         if not catalog.same_member(row.sheet, wanted):
             continue
         if row.sheet != wanted:
+            if row.classification_reason == "application_vor_print_view":
+                # A fully verified print view repeats canonical rows exactly.
+                # Do not repeat the whole document in every bounded work packet.
+                continue
             if row.classification_reason == "application_authored_decision_audit":
                 # The exported audit names the exact main-sheet row. Include
                 # all fragments for offered rows, without duplicating unrelated
@@ -1060,6 +1064,15 @@ def load_tabular_source_catalog(
         except Exception:  # noqa: BLE001 - preview/catalog failure stays visible upstream
             return None
         try:
+            from proxy.services.bor_service import VOR_PRINT_SHEET, is_verified_vor_print_view
+            print_markers = [key for key in workbook.defined_names if key.startswith("_LES_VOR_PRINT_VIEW_")]
+            verified_print_view = (
+                VOR_PRINT_SHEET in workbook.sheetnames
+                and len(print_markers) == 1
+                and is_verified_vor_print_view(workbook, workbook[VOR_PRINT_SHEET])
+            )
+            if print_markers and not verified_print_view:
+                extraction_warnings = (*extraction_warnings, f"vor_print_view_invalid:{VOR_PRINT_SHEET}")
             for sheet_index, sheet in enumerate(workbook.sheetnames):
                 worksheet = workbook[sheet]
                 cached_sheet = cached_workbook[sheet]
@@ -1145,6 +1158,10 @@ def load_tabular_source_catalog(
                     if authored_audit:
                         row_class, reason, confidence, ambiguities = (
                             "note", "application_authored_decision_audit", 1.0, (),
+                        )
+                    elif verified_print_view and sheet == VOR_PRINT_SHEET:
+                        row_class, reason, confidence, ambiguities = (
+                            "note", "application_vor_print_view", 1.0, (),
                         )
                     if row_class == "section":
                         section_context = " | ".join(value_tuple)

@@ -8,6 +8,7 @@ chat API into an arbitrary local-file reader.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import shutil
 import time
 import zipfile
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -26,6 +28,54 @@ from backend.runtime_paths import mutable_path
 DEFAULT_ROOT = Path(os.getenv("LES_CHAT_ATTACHMENT_ROOT", "storage/chat_attachments"))
 DEFAULT_MAX_AGE_SEC = int(os.getenv("LES_CHAT_ATTACHMENT_MAX_AGE_SEC", str(7 * 24 * 3600)))
 _ID_RE = re.compile(r"^read_[0-9a-f]{12}$")
+_METADATA_LOCK_TIMEOUT_SEC = 5.0
+
+
+@contextmanager
+def _attachment_metadata_lock(metadata_path: Path):
+    """Serialize readers and mutations across threads/processes on this source.
+
+    The lock file is deliberately persistent: unlinking it could let a new
+    caller lock a different inode while an earlier caller still owns the old
+    one. The OS releases the lock if the owning process exits.
+    """
+    lock_path = metadata_path.with_suffix(".lock")
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    locked = False
+    try:
+        if os.fstat(descriptor).st_size == 0:
+            os.write(descriptor, b"\0")
+        deadline = time.monotonic() + _METADATA_LOCK_TIMEOUT_SEC
+        while True:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("chat attachment metadata is busy") from exc
+                time.sleep(0.01)
+        yield
+    finally:
+        try:
+            if locked:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 def _default_root() -> Path:
@@ -88,16 +138,15 @@ def cleanup_expired(
     removed = 0
     for metadata_path in base.glob("read_????????????.json"):
         try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            if metadata.get("retained_for_workbook") is True:
-                continue
-            created_at = float(metadata.get("created_at_epoch") or metadata_path.stat().st_mtime)
-            if now - created_at <= max_age_sec:
-                continue
-            file_path = base / str(metadata.get("stored_name") or "")
-            file_path.unlink(missing_ok=True)
-            metadata_path.unlink(missing_ok=True)
-            removed += 1
+            with _attachment_metadata_lock(metadata_path):
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if metadata.get("retained_for_workbook") is True:
+                    continue
+                created_at = float(metadata.get("created_at_epoch") or metadata_path.stat().st_mtime)
+                if now - created_at <= max_age_sec:
+                    continue
+                _consume_read_attachment_unlocked(metadata_path)
+                removed += 1
         except (OSError, ValueError, json.JSONDecodeError):
             continue
     return removed
@@ -113,6 +162,15 @@ def preserve_read_attachment(
     metadata_path, bare_path = _paths(attachment_id, root)
     base = metadata_path.parent
     base.mkdir(parents=True, exist_ok=True)
+    with _attachment_metadata_lock(metadata_path):
+        return _preserve_read_attachment_unlocked(source, metadata_path=metadata_path,
+            bare_path=bare_path, attachment_id=attachment_id, original_name=original_name)
+
+
+def _preserve_read_attachment_unlocked(
+    source: str | Path, *, metadata_path: Path, bare_path: Path,
+    attachment_id: str, original_name: str,
+) -> dict[str, Any]:
     suffix = Path(original_name).suffix.lower()
     stored_path = bare_path.with_suffix(suffix)
     temp_path = stored_path.with_suffix(stored_path.suffix + ".tmp")
@@ -141,6 +199,15 @@ def resolve_read_attachment(
     max_age_sec: int = DEFAULT_MAX_AGE_SEC,
 ) -> tuple[Path, dict[str, Any]]:
     metadata_path, _ = _paths(attachment_id, root)
+    if not metadata_path.parent.is_dir():
+        raise FileNotFoundError("chat attachment not found")
+    with _attachment_metadata_lock(metadata_path):
+        return _resolve_read_attachment_unlocked(attachment_id, metadata_path, max_age_sec=max_age_sec)
+
+
+def _resolve_read_attachment_unlocked(
+    attachment_id: str, metadata_path: Path, *, max_age_sec: float,
+) -> tuple[Path, dict[str, Any]]:
     base = metadata_path.parent.resolve()
     if not metadata_path.is_file():
         raise FileNotFoundError("chat attachment not found")
@@ -149,7 +216,7 @@ def resolve_read_attachment(
         raise ValueError("chat attachment metadata mismatch")
     created_at = float(metadata.get("created_at_epoch") or 0)
     if (created_at <= 0 or time.time() - created_at > max_age_sec) and metadata.get("retained_for_workbook") is not True:
-        consume_read_attachment(attachment_id, root=root)
+        _consume_read_attachment_unlocked(metadata_path)
         raise FileNotFoundError("chat attachment expired")
     stored_name = str(metadata.get("stored_name") or "")
     file_path = (base / stored_name).resolve()
@@ -184,7 +251,18 @@ def retain_read_attachment_for_workbook(
     retained = {**metadata, "retained_for_workbook": True}
     try:
         pending.write_text(json.dumps(retained, ensure_ascii=False, indent=2), encoding="utf-8")
-        pending.replace(metadata_path)
+        with _attachment_metadata_lock(metadata_path):
+            _source, current = _resolve_read_attachment_unlocked(
+                attachment_id, metadata_path, max_age_sec=float("inf"))
+            if current.get("sha256") != expected_sha256:
+                raise ValueError("workbook source hash mismatch")
+            if current.get("retained_for_workbook") is True:
+                return current
+            # A replaced source must not inherit stale metadata from staging.
+            if current != metadata:
+                retained = {**current, "retained_for_workbook": True}
+                pending.write_text(json.dumps(retained, ensure_ascii=False, indent=2), encoding="utf-8")
+            pending.replace(metadata_path)
     finally:
         pending.unlink(missing_ok=True)
     return retained
@@ -194,6 +272,13 @@ def consume_read_attachment(
     attachment_id: str, *, root: str | Path | None = None, force: bool = False,
 ) -> None:
     metadata_path, _ = _paths(attachment_id, root)
+    if not metadata_path.parent.is_dir():
+        return
+    with _attachment_metadata_lock(metadata_path):
+        _consume_read_attachment_unlocked(metadata_path, force=force)
+
+
+def _consume_read_attachment_unlocked(metadata_path: Path, *, force: bool = False) -> None:
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

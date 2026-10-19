@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1230 |
-| Строк Python | 421557 |
+| Python-файлов под git | 1233 |
+| Строк Python | 422370 |
 | PRODUCT_REACHABLE | 387 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 831 |
+| TEST_OR_TOOL_ONLY | 834 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 343 |
 | Ошибок разбора | 0 |
@@ -50,12 +50,12 @@
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
 | proxy/smeta_core/norm_browser.py | 1951 | 20 |
-| proxy/services/lsr_workbook_adapter_service.py | 1679 | 19 |
+| proxy/services/lsr_workbook_adapter_service.py | 1679 | 20 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | sovushka/pages/diag.py | 1605 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
-| proxy/services/attachment_source_catalog_service.py | 1496 | 48 |
+| proxy/services/attachment_source_catalog_service.py | 1513 | 49 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |

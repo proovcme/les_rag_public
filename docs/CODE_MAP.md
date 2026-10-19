@@ -1,5 +1,19 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 966 — шаблон документа и concurrent metadata
+
+`bor_service._vor_print_plan` строит только отображение полных авторских решений;
+`_add_vor_print_view` добавляет5колонок перед неизменённым техническим листом.
+`is_verified_vor_print_view` сверяет versioned marker, canonical rows/audit,
+все значения/ссылки/объединения. Только совпавший view reader классифицирует
+как source note; изменённый marker/view виден с extraction warning.
+Source filename в технической ВОР имеет literal string cell type.
+`chat_attachment_service._attachment_metadata_lock` — stdlib OS lock на metadata
+одного attachment. Resolve/preserve/consume/cleanup и commit pin согласованы;
+temp staging вне lock, commit повторно проверяет текущую identity/hash.
+`lsr_result_readiness_service._unbound_rows` разбирает final status separator,
+не разрезая namespace источника из нескольких файлов.
+
 ## 965 — несколько файлов в одном задании
 
 `chat_attachment_collection_service` создаёт self-contained `.lescollection`

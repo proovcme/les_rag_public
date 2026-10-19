@@ -1,5 +1,41 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 19.10.2026 — кандидат966: шаблон ВОР, сохранность и добор
+
+Product0.31.238/build966/native5.1.966 в исходниках; установлен пока963.
+При возобновлении API8050 был недоступен, FreeToken1919 отвечал прежней
+Qwen3.6-35B-A3B-NVFP4. Прежний native963 с SHA6a308b2f… запущен штатно,
+без подмены runtime/headless или остановки внешних моделей; version963/5ffe89f3,
+aligned. Квитанция `artifacts/live_966/bootstrap963/receipt.json`.
+Полным штатным API-переопросом обновлены способности r12: CHAT/TOOLS/STREAMING/
+MODELS supported, structured_output unknown/http400; snapshot
+`cap:844a01c993304bd2ae6b08bcb9d12444`, observed19.10 03:22UTC,
+expires20.10 03:22UTC. Bindings, sampling и профили не менялись.
+
+Доказанные дефекты паузы965 закрываются узкими изменениями. Metadata lifecycle
+имеет общий OS lock между потоками/процессами, pin идемпотентен и повторно сверяет
+identity/SHA; исходный конкурентный тест не ослаблен. Final adjacent retention:
+349passed/2skipped/39.76s. У source-cell ВОР буквальный тип, без изменения имени;
+сохранён RED/GREEN formula-like filename. Readiness отделяет final status,
+не теряя collection namespace: RED10failed/4passed → related122passed/10.30s.
+
+По образцу владельца добавлен первый печатный5-колоночный лист. Canonical «ВОР»
+и все решения/audit остаются. Допустимые aliases роли работы сохраняются в view,
+0/null различаются; verified print view не становится дублем при intake и не
+размножает контекст каждого пакета. Fake/edited view остаётся видимым с warning.
+Template+adjacent82passed/4.97s, no deselect. Read-only render готовогоsample.xlsx
+проверен; native Excel print не заявляется. Реальный источник/модельные решения
+не подставлялись из шаблона. Root независимый combined gate6файлов:
+156passed/13.43s (`artifacts/live_966/independent_review.xml`).
+
+Работа ведётся по [плану](superpowers/plans/2026-10-19-engineer-documents-finalization.md),
+с Superpowers systematic-debugging/TDD/verification на pinned bb92a777…;
+skills установлены отдельно, runtime dependencies не менялись. Точность выбранных
+норм≥90% — требование для измерения, не объявленный результат. Сохранение принятых
+позиций/адресный добор используют прежний conserving workflow, нового selector нет.
+Full frozen966, exact NSIS/install, одинаковый32k B0/B1, реальный добор и big318
+ещё pending. customer-ready=false. Квитанции scopes не заменяют live quality.
+
 ## 17.10.2026 — пауза по просьбе владельца; 965 не установлен
 
 Исходники965 зафиксированы в `6ed270c6e6857ccead90e110f89c13b1068a9922`.

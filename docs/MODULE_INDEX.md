@@ -1,5 +1,22 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 966 — печатная ВОР и сохранность адресного добора
+
+🟡 Кандидат0.31.238/build966; runtime пока963, полный gate/install/live pending.
+`bor_service._add_vor_print_view` / `is_verified_vor_print_view` дают первый
+печатный лист «Ведомость работ» с5колонками по образцу владельца. Прежний «ВОР»,
+его адреса и полный аудит решений сохраняются; derived measure берётся только
+из явных полей модели. `load_tabular_source_catalog` не считает проверенное
+отображение повторными работами; marker сам по себе ничего не исключает.
+`chat_attachment_service._attachment_metadata_lock` сериализует lifecycle
+metadata между потоками/процессами, pin повторно сверяет SHA и идемпотентен.
+`lsr_result_readiness_service._unbound_rows` сохраняет полный locator с двоеточиями,
+отделяя последний status. Нормы/роли/количества кодом не выбираются.
+Док↔код: [RAG flow](modules/rag-evidence-flow.md),
+[ВОР](ALGO-spec-to-bor.md), [план](superpowers/plans/2026-10-19-engineer-documents-finalization.md).
+Новые регрессии: `test_chat_attachment_retention_966`,
+`test_lsr_multifile_gap_identity_966`, `test_vor_print_template_966`.
+
 Точка паузы17.10: установлен963, source965 не принят. Полный gate965 отменён;
 воспроизведён Windows-конфликт конкурентной atomic replace retention metadata,
 найден formula-like filename в provenance-cell ВОР. Оба дефекта ещё открыты.

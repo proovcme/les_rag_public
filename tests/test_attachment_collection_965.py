@@ -334,6 +334,44 @@ async def test_real_vor_exporter_uses_union_and_keeps_authored_zero_null_and_ori
 
 
 @pytest.mark.asyncio
+async def test_real_vor_exporter_keeps_formula_like_source_names_as_literal_provenance(tmp_path):
+    from proxy.services.workbook_tool_service import build_vor_workbook
+    _, metadata, catalog = _parent(tmp_path, [
+        _child(tmp_path, 1, name="=1+1.xlsx"),
+        _child(tmp_path, 2, name='Обычный "раздел".xlsx'),
+    ])
+    decisions = _decisions(catalog)
+    authored_before = json.dumps(decisions, ensure_ascii=False)
+    context = _workbook_context(tmp_path)
+    result = await build_vor_workbook(
+        {"attachment_id": metadata["attachment_id"], "decisions": decisions}, context)
+    assert "artifact" in result, result
+    output = context.artifacts.resolve_path(result["artifact"]["revision_id"])
+    expected = [catalog.row_origin(row["source_row"])["original_name"] + "#" + row["source_row"]
+                for row in decisions]
+    book = openpyxl.load_workbook(output, data_only=False)
+    try:
+        cells = [book["ВОР"].cell(index, 7) for index in range(4, 4 + len(decisions))]
+        assert [cell.value for cell in cells] == expected
+        assert all(cell.data_type == "s" for cell in cells)
+        assert cells[0].value.startswith("=1+1.xlsx#")
+        audit = book["Решения модели"]
+        authored = [json.loads(row[2].removeprefix("JSON: "))
+                    for row in audit.iter_rows(min_row=4, values_only=True)]
+        assert authored == decisions
+        assert [row["quantity"] for row in authored] == [0, None, 0, None]
+    finally:
+        book.close()
+    values_only = openpyxl.load_workbook(output, data_only=True)
+    try:
+        assert [values_only["ВОР"].cell(index, 7).value
+                for index in range(4, 4 + len(decisions))] == expected
+    finally:
+        values_only.close()
+    assert json.dumps(decisions, ensure_ascii=False) == authored_before
+
+
+@pytest.mark.asyncio
 async def test_real_lsr_adapter_receives_same_union_source_cells_and_explicit_price_basis(tmp_path, monkeypatch):
     from proxy.services.workbook_tool_service import build_lsr_workbook
     from proxy.services import lsr_workbook_adapter_service as adapter
