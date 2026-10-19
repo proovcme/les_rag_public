@@ -38,7 +38,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
 from proxy.services.attachment_source_catalog_service import (
     AttachmentSourceCatalog,
     compare_model_row_to_catalog,
-    header_bound_unit,
+    source_confirms_literal_zero_quantity,
     normalize_unit,
     quantities_close,
 )
@@ -2642,11 +2642,7 @@ def source_confirmed_zero_work_charge_not_required(
                             "количество", "кол-во", "объем", "объём")
     if type(quantity) not in (int, float) or not math.isfinite(quantity) or quantity != 0:
         return False
-    source = source_catalog.lookup(row.get("source_row"))
-    source_quantity = getattr(source, "header_quantity", None)
-    return bool(source is not None and source.quantity_column_known
-                and type(source_quantity) in (int, float) and math.isfinite(source_quantity)
-                and source_quantity == 0 and header_bound_unit(source)
+    return bool(source_confirms_literal_zero_quantity(source_catalog, row.get("source_row"))
                 and not compare_model_row_to_catalog(row, source_catalog))
 
 

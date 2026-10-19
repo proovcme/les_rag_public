@@ -11,6 +11,8 @@
 readiness используют одну границу. Строка и причина остаются в документе;
 charge_not_required не подтверждает норму и не объявляет позицию рассчитанной.
 Для такого исходного нуля не создаются ложные norm/price/calculation gaps.
+Сам факт исходного нуля читает `attachment_source_catalog_service.source_confirms_literal_zero_quantity`;
+каталог источника не является книгой цен. Архитектурный price-unit guard сохранён.
 
 `convert_book_price_unit` дополнен строгими совместимыми числовыми измерителями
 цены (например,1000м↔м). Общий factor равен resource_measure/book_measure×SI;

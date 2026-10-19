@@ -51,6 +51,22 @@ def _pipeline(rows, catalog):
     return trace, ready, missing, prices
 
 
+@pytest.mark.parametrize("source_quantity,expected", [(0, True), (0.0, True), (-0.0, True),
+    (1, False), (-1, False), (None, False), ("0", False), (False, False),
+    (float("nan"), False), (float("inf"), False)])
+def test_zero_fact_belongs_to_source_catalog_not_a_pricebook(tmp_path, source_quantity, expected):
+    from proxy.services.attachment_source_catalog_service import source_confirms_literal_zero_quantity
+
+    catalog = _catalog(tmp_path)
+    source = catalog.lookup("S!R2")
+    changed = replace(catalog, rows=tuple(
+        replace(row, header_quantity=source_quantity) if row is source else row for row in catalog.rows))
+    assert source_confirms_literal_zero_quantity(changed, "S!R2") is expected
+    assert source_confirms_literal_zero_quantity(changed, "S!R999") is False
+    assert source_confirms_literal_zero_quantity(None, "S!R2") is False
+    assert source_confirms_literal_zero_quantity(replace(changed, extraction_complete=False), "S!R2") is False
+
+
 @pytest.mark.parametrize("quantity", [0, 0.0, -0.0])
 def test_catalog_zero_has_no_norm_price_calculation_or_retry_debt(tmp_path, quantity):
     catalog = _catalog(tmp_path)

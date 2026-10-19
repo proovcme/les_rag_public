@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1246 |
-| Строк Python | 425573 |
+| Строк Python | 425598 |
 | PRODUCT_REACHABLE | 387 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 847 |
@@ -40,7 +40,7 @@
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |
 | proxy/routers/datasets.py | 3887 | 20 |
-| proxy/services/rim_lsr_trace_service.py | 3720 | 50 |
+| proxy/services/rim_lsr_trace_service.py | 3716 | 50 |
 | sovushka/styles.py | 3301 | 3 |
 | proxy/services/workbook_research_job_service.py | 3287 | 62 |
 | sovushka/pages/samovar.py | 2966 | 3 |
@@ -54,8 +54,8 @@
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | sovushka/pages/diag.py | 1605 | 3 |
+| proxy/services/attachment_source_catalog_service.py | 1526 | 53 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
-| proxy/services/attachment_source_catalog_service.py | 1513 | 53 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |

@@ -1409,6 +1409,19 @@ def header_bound_unit(row: CatalogRow) -> str | None:
     return next((cell.display_value for cell in row.cells if cell.column == columns[0]), "")
 
 
+def source_confirms_literal_zero_quantity(
+    catalog: AttachmentSourceCatalog | None, source_row: Any,
+) -> bool:
+    """Observe a complete source's numeric zero and known unit, without pricing."""
+    if catalog is None or not catalog.extraction_complete:
+        return False
+    source = catalog.lookup(source_row)
+    quantity = getattr(source, "header_quantity", None)
+    return bool(source is not None and source.quantity_column_known
+                and type(quantity) in (int, float) and math.isfinite(quantity)
+                and quantity == 0 and header_bound_unit(source))
+
+
 def compare_model_row_to_catalog(
     row: Mapping[str, Any],
     catalog: AttachmentSourceCatalog,

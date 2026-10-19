@@ -38,6 +38,10 @@ norm_components с явным долгом нерассчитанного сос
 и не разворачивается; code не выбирает нормы/коэффициенты. Старые quote/SI
 ветви не переписываются. Retry остаётся operation-level, без field-lock.
 
+Первый frozen969 гейт (`ad7401ec…`, `artifacts/gates_969_final/receipt.json`)
+остановился на `BOOK_PRICE_UNIT_UNCHECKED`: source-catalog lookup был принят
+статическим правилом за pricebook lookup. Source-факт перенесён в модуль
+каталога, сам guard не менялся; ранняя квитанция остаётся RED, не заменяется.
 Targeted:316passed/6,29s (`artifacts/live_969/offline_targeted/core_v2.xml`)
 и233passed/7,15s (`artifacts/live_969/offline_targeted/adjacent.xml`), наборы
 частично пересекаются. Общий frozen gate, commit, NSIS и installed969 пока

@@ -11,6 +11,7 @@ artifact; исходный доказанный0 не создаёт начис�
 сохраняется в аудит с явной неполнотой, без расчёта/разворачивания. Добавочная
 норма задаётся моделью отдельной операцией; retry остаётся operation-level.
 Точки входа прежние, новых модулей/зависимостей нет. Доки:
+факт исходного нуля — `attachment_source_catalog_service.source_confirms_literal_zero_quantity`,
 [расчёт ЛСР](ALGO-lsr-assembly.md), [evidence](modules/rag-evidence-flow.md),
 [UI kit](modules/sovushka-uikit.md). Full gate/install/live969 pending;
 precision≥90% и customer-ready не подтверждены.
