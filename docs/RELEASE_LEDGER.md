@@ -36,7 +36,13 @@ Receipt: `artifacts/live_967/rerank_activation/activation.json`.
 root3новые suite31passed/12.16s. Два настоящих продолжения после overflow
 сохраняют terminal rows без zombie pending/паузы и без скрытой inference.
 Независимый повторный review не выявил новых P1/P2; это не live приёмка.
-Полный clean gate, точный установщик,
+Full967 V2:6197passed/20skipped/5failed/833.88s. Все5отказов — старый SHA
+текста инструкции в2VOR suites после намеренного уточнения NR/SP rule_id.
+Прежний SHA сохраняется для текста после ровно одной обратной замены фразы;
+активный новый текст проверяется отдельно. Ни один предметный assertion
+не удаляется. Related3suite24passed/4.34s; product code не менялся.
+RED `artifacts/gates_967_final_v2/receipt.json` сохранён.
+Повторный clean gate, точный установщик,
 installed rerank-on B0/B1, ordinary/multifile retry и big318 ещё pending.
 customer-ready=false. Публичной публикации нет.
 

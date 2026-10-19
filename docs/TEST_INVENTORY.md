@@ -23,7 +23,14 @@ technical overflow без нового предметного решения.6ca
 паузы или pending. RED выявил обход admission и zombie continuation;
 исправленный adjacent:127passed/28.53s. Root независимые3новых suite:
 31passed/12.16s, `artifacts/live_967/root_independent_final.xml`.
-Все три файла включены в CURRENT_TESTS; full967 и installed live pending.
+Все три файла включены в CURRENT_TESTS. Full967 V2:6197passed/20skipped/
+5failed/833.88s,328files. Все5отказов — прежняя SHA инструкции в2VOR suites:
+намеренно уточнён только nr_sp_rule_id. Проверки сохраняют прежний SHA после
+ровно одной обратной замены этой фразы и дополнительно фиксируют новый SHA;
+остальные инструкции не разрешено менять. Related3suite24passed/4.34s,
+`artifacts/live_967/lsr_instruction_sha_alignment/targeted.xml`.
+Первый RED сохранён отдельно;
+повторный full gate и installed live pending.
 
 ## Кандидат966 — шаблон ВОР, Windows retention, namespace добора
 

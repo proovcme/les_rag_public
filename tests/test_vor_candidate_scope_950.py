@@ -111,7 +111,22 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
     # The compact conditional carrier is mandatory and is never cut to fit.
     # It must not duplicate the complete VOR contract in a still-undecided turn.
     assert len(instruction) < len(lsr) + 1200
+    old_phrase = "nr_sp_rule_id выбирай из карточки по известным условиям; при неизвестных — "
+    new_phrase = (
+        "nr_sp_rule_id дословно копируй из rule_id внутри каталога по известным условиям; "
+        "catalog_ref не ID правила; при неизвестных — "
+    )
+    assert lsr.count(new_phrase) == 1
+    assert old_phrase not in lsr
     assert hashlib.sha256(lsr.encode("utf-8")).hexdigest() == (
+        "be98cbccdebbdcbe4df6669bfe2206c0b191a5046a79c84f42d4e9ce17152918"
+    )
+    # Only the literal authorized967 clarification may differ from the950
+    # carrier's original byte-pinned LSR contract.
+    before_nrsp_clarification = lsr.replace(new_phrase, old_phrase, 1)
+    assert before_nrsp_clarification.count(old_phrase) == 1
+    assert new_phrase not in before_nrsp_clarification
+    assert hashlib.sha256(before_nrsp_clarification.encode("utf-8")).hexdigest() == (
         "03ae9ba8a17f55be977790a6226790a690b6406fcc890e1228fa3570c1ad7826"
     )
 

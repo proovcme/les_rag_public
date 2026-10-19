@@ -17957,7 +17957,7 @@
     },
     {
       "inbound": [],
-      "lines": 132,
+      "lines": 147,
       "module": "tests.test_vor_candidate_scope_950",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -18096,7 +18096,7 @@
     },
     {
       "inbound": [],
-      "lines": 118,
+      "lines": 133,
       "module": "tests.test_vor_operation_instructions_948",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -23340,7 +23340,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 837,
     "tracked_python_files": 1236,
-    "tracked_python_lines": 422857
+    "tracked_python_lines": 422887
   },
   "warnings": []
 }

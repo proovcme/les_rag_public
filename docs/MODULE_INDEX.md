@@ -16,7 +16,9 @@ Overflow сохраняет завершённые авторские строк
 Регрессии: `test_windows_reranker_bootstrap_967`,
 `test_nrsp_catalog_reference_967`, `test_sheet_proof_context_admission_967`.
 Док↔код: [Windows](PLATFORMS.md), [RAG flow](modules/rag-evidence-flow.md),
-[контекст](ALGO-context-memory.md). Полный967/install/live pending.
+[контекст](ALGO-context-memory.md). Full967 V2 выявил5старых prompt-SHA
+ожиданий; сохранён legacy SHA после одной обратной NR/SP замены и новый SHA.
+Related24passed, product не менялся. Повторный full967/install/live pending.
 
 ## 966 — печатная ВОР и сохранность адресного добора
 
