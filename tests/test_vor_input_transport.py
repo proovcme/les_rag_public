@@ -1,3 +1,5 @@
+import json
+
 import openpyxl
 import pytest
 from docx import Document
@@ -29,6 +31,16 @@ def _context(tmp_path):
         checkpoints=WorkflowCheckpointService(tmp_path / "checkpoints.db"),
         artifacts=ArtifactRevisionStore(tmp_path / "artifacts.db", tmp_path / "artifacts"),
     )
+
+
+def _assert_printed_vor(workbook, expected_work_values, decisions):
+    assert workbook.active.title == "Ведомость работ" and workbook.active.max_column == 5
+    printed = [values for values in workbook.active.iter_rows(min_row=9, values_only=True)
+               if isinstance(values[0], int) and not isinstance(values[0], bool)]
+    assert [(values[1], values[2], values[3]) for values in printed] == expected_work_values
+    assert workbook.active["A6"].value == workbook["ВОР"]["A2"].value
+    assert [json.loads(row[2].removeprefix("JSON: "))
+            for row in workbook["Решения модели"].iter_rows(min_row=4, values_only=True)] == decisions
 
 
 def test_pdf_catalog_bypasses_preview_cap_without_losing_later_rows(tmp_path, monkeypatch):
@@ -243,9 +255,10 @@ async def test_authored_docx_csv_vor_reaches_export_without_code_choosing_work(t
     assert result["vor_source_errors"] == []
     assert result["source"]["sha256"] == meta["sha256"]
     workbook = openpyxl.load_workbook(context.artifacts.resolve_path(result["artifact"]["revision_id"]), data_only=True)
-    assert workbook.active["G4"].value == f"{source.name}#{locator}"
-    assert workbook.active["C4"].value == decision["title"]
-    assert workbook.active["F4"].value == 0
+    assert workbook["ВОР"]["G4"].value == f"{source.name}#{locator}"
+    assert workbook["ВОР"]["C4"].value == decision["title"]
+    assert workbook["ВОР"]["F4"].value == 0
+    _assert_printed_vor(workbook, [(decision["title"], decision["unit"], 0)], [decision])
     workbook.close()
 
 
@@ -264,7 +277,10 @@ async def test_header_only_draft_cannot_hide_unread_docx_content(tmp_path):
 
     assert result["vor_source_errors"] == ["source_extraction_incomplete"]
     workbook = openpyxl.load_workbook(target, data_only=True)
-    assert "ЧЕРНОВИК" in workbook.active["A2"].value
+    assert "ЧЕРНОВИК" in workbook["ВОР"]["A2"].value
+    assert workbook["ВОР"]["C4"].value == "Заголовок"
+    assert workbook["ВОР"]["F4"].value is None
+    _assert_printed_vor(workbook, [], [{"source_row": "DOCX_TEXT!R1", "row_role": "header", "title": "Заголовок"}])
     workbook.close()
 
 
@@ -304,8 +320,10 @@ async def test_authored_header_from_empty_source_keeps_row_and_exposes_source_ga
 
     assert result["vor_source_errors"] == ["source_catalog_empty"]
     workbook = openpyxl.load_workbook(target, data_only=True)
-    assert workbook.active["C4"].value == decision["title"]
-    assert "ЧЕРНОВИК" in workbook.active["A2"].value
+    assert workbook["ВОР"]["C4"].value == decision["title"]
+    assert "ЧЕРНОВИК" in workbook["ВОР"]["A2"].value
+    assert workbook["ВОР"]["F4"].value is None
+    _assert_printed_vor(workbook, [], [decision])
     workbook.close()
 
 

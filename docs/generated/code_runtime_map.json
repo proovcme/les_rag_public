@@ -14644,7 +14644,7 @@
     },
     {
       "inbound": [],
-      "lines": 104,
+      "lines": 109,
       "module": "tests.test_model_vor_text_transport",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -16397,7 +16397,7 @@
     },
     {
       "inbound": [],
-      "lines": 300,
+      "lines": 307,
       "module": "tests.test_rtf_input_transport",
       "outbound": [
         "backend/converter.py",
@@ -17963,7 +17963,7 @@
     },
     {
       "inbound": [],
-      "lines": 332,
+      "lines": 350,
       "module": "tests.test_vor_input_transport",
       "outbound": [
         "backend/converter.py",
@@ -18574,7 +18574,7 @@
         "tests/test_model_authored_header_roles.py",
         "tests/test_model_vor_text_transport.py"
       ],
-      "lines": 1540,
+      "lines": 1566,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
         "proxy/services/artifact_revision_service.py",
@@ -23292,7 +23292,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 834,
     "tracked_python_files": 1233,
-    "tracked_python_lines": 422370
+    "tracked_python_lines": 422426
   },
   "warnings": []
 }

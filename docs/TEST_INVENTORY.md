@@ -2,6 +2,14 @@
 
 ## Кандидат966 — шаблон ВОР, Windows retention, namespace добора
 
+Первый full966:6155passed/20skipped/16failed/820.05s. Отказы — прежние
+active-sheet coordinates в4transport/workbook suites плюс их5повторов внутри
+hermeticity830. Контрактные assertions перемещены на именованный canonical ВОР,
+добавлены проверки печатного active и rawJSON; ни одна денежная/источниковая
+проверка не убрана, hermeticity suite неизменён. Related5files124passed/6.47s,
+`artifacts/live_966/print_template/active_sheet_contract_final.xml`.
+Full v2 идёт в отдельный immutable output; первый RED сохранён.
+
 `test_chat_attachment_retention_966.py`:12case; общая OS-lock между пятью
 lifecycle API и независимым процессом, два first pin, освобождение при crash,
 ограниченный видимый timeout, no-resurrection/current metadata и сохранность SHA.

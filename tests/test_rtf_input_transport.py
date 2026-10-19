@@ -1,5 +1,6 @@
 """RTF native evidence reaches upload/catalog/authored VOR without a false green."""
 import hashlib
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -264,10 +265,16 @@ async def test_authored_rtf_vor_preserves_decision_but_remains_partial_on_source
     artifact_path = context.artifacts.resolve_path(result["artifact"]["revision_id"])
     artifact_sha = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
     workbook = openpyxl.load_workbook(artifact_path, data_only=True)
-    assert "ЧЕРНОВИК" in workbook.active["A2"].value
-    assert workbook.active["C4"].value == decision["title"]
-    assert workbook.active["F4"].value == 0
-    assert workbook.active["G4"].value == f"{source.name}#{locator}"
+    assert "ЧЕРНОВИК" in workbook["ВОР"]["A2"].value
+    assert workbook["ВОР"]["C4"].value == decision["title"]
+    assert workbook["ВОР"]["F4"].value == 0
+    assert workbook["ВОР"]["G4"].value == f"{source.name}#{locator}"
+    assert json.loads(workbook["Решения модели"]["C4"].value.removeprefix("JSON: ")) == decision
+    assert workbook.active.title == "Ведомость работ" and workbook.active.max_column == 5
+    assert workbook.active["A6"].value == workbook["ВОР"]["A2"].value
+    printed = [values for values in workbook.active.iter_rows(min_row=9, values_only=True)
+               if isinstance(values[0], int) and not isinstance(values[0], bool)]
+    assert [(values[1], values[2], values[3]) for values in printed] == [(decision["title"], decision["unit"], 0)]
     workbook.close()
     assert decision == {"source_row": locator, "row_role": "work", "title": "Работа, выбранная моделью", "quantity": 0, "unit": "м"}
     replay = await workbook_service.build_vor_workbook({"attachment_id": meta["attachment_id"], "decisions": [decision]}, context)

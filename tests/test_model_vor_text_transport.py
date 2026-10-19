@@ -87,7 +87,12 @@ async def test_seven_core_vor_row_reaches_physical_workbook_and_audit_without_no
     assert result['source_rows'] == 1
     wb = openpyxl.load_workbook(target, data_only=True)
     try:
-        cells = next(wb.active.iter_rows(min_row=4, max_row=4, values_only=True))
+        cells = next(wb['ВОР'].iter_rows(min_row=4, max_row=4, values_only=True))
+        assert wb.active.title == 'Ведомость работ' and wb.active.max_column == 5
+        printed = [values for values in wb.active.iter_rows(min_row=9, values_only=True)
+                   if isinstance(values[0], int) and not isinstance(values[0], bool)]
+        assert [(values[1], values[2], values[3]) for values in printed] == [(row['title'], row['unit'], quantity)]
+        assert json.loads(wb['Решения модели']['C4'].value.removeprefix('JSON: ')) == row
         assert cells[2] == row['title'] and cells[4] == row['unit'] and cells[5] == quantity
         assert cells[9] == row['row_role'] and 'Sheet!R2' in cells[6]
         if quantity == 12.5:

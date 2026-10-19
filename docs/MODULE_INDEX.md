@@ -16,6 +16,9 @@ metadata между потоками/процессами, pin повторно 
 [ВОР](ALGO-spec-to-bor.md), [план](superpowers/plans/2026-10-19-engineer-documents-finalization.md).
 Новые регрессии: `test_chat_attachment_retention_966`,
 `test_lsr_multifile_gap_identity_966`, `test_vor_print_template_966`.
+Прежние Vor transport/workbook tests явно проверяют canonical «ВОР» и отдельно
+новый active print, сохраняя raw assertions. Первый full966 RED из-за прежнего
+active ожидания сохранён; новый exact gate отдельно в `gates_966_final_v2`.
 
 Точка паузы17.10: установлен963, source965 не принят. Полный gate965 отменён;
 воспроизведён Windows-конфликт конкурентной atomic replace retention metadata,

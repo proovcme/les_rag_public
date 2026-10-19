@@ -35,6 +35,15 @@ from proxy.services.rim_lsr_trace_service import positions_from_visible_lsr_rows
 from proxy.services.structured_extract import validate as validate_json_schema
 
 
+def _assert_printed_vor_work_values(workbook, expected):
+    assert workbook.active.title == "Ведомость работ"
+    assert workbook.active.max_column == 5
+    printed = [values for values in workbook.active.iter_rows(min_row=9, values_only=True)
+               if isinstance(values[0], int) and not isinstance(values[0], bool)]
+    assert [(values[1], values[2], values[3]) for values in printed] == expected
+    assert workbook.active["A6"].value == workbook["ВОР"]["A2"].value
+
+
 def _source_workbook(path: Path) -> Path:
     workbook = openpyxl.Workbook()
     sheet = workbook.active
@@ -452,7 +461,10 @@ async def test_vor_handler_preserves_source_rows_and_creates_revision(tmp_path):
     stored = ctx.artifacts.resolve_path(result["artifact"]["revision_id"])
     workbook = openpyxl.load_workbook(stored, data_only=True, read_only=True)
     try:
-        values = list(workbook.active.iter_rows(min_row=4, values_only=True))
+        values = list(workbook["ВОР"].iter_rows(min_row=4, values_only=True))
+        _assert_printed_vor_work_values(workbook, [(decisions[0]["title"], "м", 12.5)])
+        assert [json.loads(row[2].removeprefix("JSON: "))
+                for row in workbook["Решения модели"].iter_rows(min_row=4, values_only=True)] == decisions
     finally:
         workbook.close()
     assert values[0][1:6] == ("ОВ", "Воздуховод", "A-1", "м", 12.5)
@@ -485,7 +497,12 @@ async def test_vor_formula_without_cached_quantity_is_a_visible_blocker(tmp_path
     stored = context.artifacts.resolve_path(result["artifact"]["revision_id"])
     rendered = openpyxl.load_workbook(stored, data_only=True, read_only=True)
     try:
-        row = next(rendered.active.iter_rows(min_row=4, values_only=True))
+        row = next(rendered["ВОР"].iter_rows(min_row=4, values_only=True))
+        _assert_printed_vor_work_values(rendered, [(decision["title"], decision["unit"], None)])
+        assert json.loads(rendered["Решения модели"]["C4"].value.removeprefix("JSON: ")) == decision
+        printed = [values for values in rendered.active.iter_rows(min_row=9, values_only=True)
+                   if isinstance(values[0], int) and not isinstance(values[0], bool)]
+        assert "Нет рассчитанного значения формулы" in printed[0][4]
     finally:
         rendered.close()
     assert "R2" in row[6]
@@ -833,7 +850,11 @@ async def test_vor_can_package_exact_model_rows_from_a_pdf_without_renumbering(t
     artifact_path = ctx.artifacts.resolve_path(result["artifact"]["revision_id"])
     workbook = openpyxl.load_workbook(artifact_path, data_only=True, read_only=True)
     try:
-        values = list(workbook.active.iter_rows(min_row=4, values_only=True))
+        values = list(workbook["ВОР"].iter_rows(min_row=4, values_only=True))
+        _assert_printed_vor_work_values(workbook, [])
+        authored = json.loads(workbook["Решения модели"]["C4"].value.removeprefix("JSON: "))
+        assert authored == {"source_row": 42, "section": "ЭОМ", "title": "Прокладка кабеля",
+                            "unit": "м", "quantity": 12.5, "norm_code": "CUSTOM-NORM-A"}
     finally:
         workbook.close()
     assert values[0][1:6] == ("ЭОМ", "Прокладка кабеля", None, "м", 12.5)
@@ -860,11 +881,14 @@ async def test_vor_from_xlsx_preserves_authored_operations_and_gaps(tmp_path, mo
     assert result["source_rows"] == 2
     assert result["requires_decision_count"] == 1
     wb = openpyxl.load_workbook(target, data_only=True)
-    rows = list(wb.active.iter_rows(min_row=4, values_only=True))
+    rows = list(wb["ВОР"].iter_rows(min_row=4, values_only=True))
+    _assert_printed_vor_work_values(wb, [(decisions[0]["title"], "м", 12.5)])
+    assert [json.loads(row[2].removeprefix("JSON: "))
+            for row in wb["Решения модели"].iter_rows(min_row=4, values_only=True)] == decisions
     assert [r[2] for r in rows] == [r["title"] for r in decisions]
     assert rows[0][9] == "work" and rows[1][9:11] == ("material", "Sheet!R2")
     assert "Требуется подтвердить крепления" in rows[0][11]
-    assert "ЧЕРНОВИК" in wb.active["A2"].value
+    assert "ЧЕРНОВИК" in wb["ВОР"]["A2"].value
     wb.close()
 
 
@@ -879,9 +903,11 @@ async def test_vor_material_quantity_mismatch_is_visible_without_rewriting(tmp_p
     assert result["vor_source_errors"] == ["source_quantity_mismatch:Sheet!R2"]
     assert result["requires_decision_count"] == 1
     wb = openpyxl.load_workbook(target, data_only=True)
-    assert wb.active["F4"].value == 99 and decisions[0]["quantity"] == 99
-    assert "исходной строкой" in wb.active["L4"].value
-    assert "ТРЕБУЕТ" in wb.active["I4"].value
+    assert wb["ВОР"]["F4"].value == 99 and decisions[0]["quantity"] == 99
+    assert "исходной строкой" in wb["ВОР"]["L4"].value
+    assert "ТРЕБУЕТ" in wb["ВОР"]["I4"].value
+    _assert_printed_vor_work_values(wb, [])
+    assert json.loads(wb["Решения модели"]["C4"].value.removeprefix("JSON: ")) == decisions[0]
     wb.close()
 def test_stage_d_price_basis_period_conflict_is_explicit():
     """§8: a Q2 book must not be presented as a Q3 calculation."""
