@@ -3829,6 +3829,7 @@
         "tests/test_connection_window_budget_942.py",
         "tests/test_context_governor_service.py",
         "tests/test_context_wire_token_admission.py",
+        "tests/test_lsr_additional_norm_prompt_969.py",
         "tests/test_model_connection_chat_options.py",
         "tests/test_model_current_read_frame.py",
         "tests/test_model_discovery_read_admission.py",
@@ -5265,7 +5266,7 @@
         "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_operation_instructions_948.py"
       ],
-      "lines": 2268,
+      "lines": 2266,
       "module": "proxy.services.lsr_norm_quality_gate_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5934,7 +5935,7 @@
         "tests/test_vor_task_instruction_955.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 1009,
+      "lines": 1008,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -12798,10 +12799,11 @@
     },
     {
       "inbound": [],
-      "lines": 61,
+      "lines": 84,
       "module": "tests.test_lsr_additional_norm_prompt_969",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/context_governor_service.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
         "proxy/services/model_lsr_result_contract.py"
       ],
@@ -12849,7 +12851,7 @@
     },
     {
       "inbound": [],
-      "lines": 46,
+      "lines": 48,
       "module": "tests.test_lsr_derived_quantity_presentation_968",
       "outbound": [
         "proxy/services/model_lsr_result_contract.py",
@@ -13050,7 +13052,7 @@
     },
     {
       "inbound": [],
-      "lines": 820,
+      "lines": 829,
       "module": "tests.test_lsr_price_ownership",
       "outbound": [
         "proxy/services/gesn_service.py",
@@ -18117,7 +18119,7 @@
     },
     {
       "inbound": [],
-      "lines": 167,
+      "lines": 176,
       "module": "tests.test_vor_candidate_scope_950",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -18257,7 +18259,7 @@
     },
     {
       "inbound": [],
-      "lines": 154,
+      "lines": 163,
       "module": "tests.test_vor_operation_instructions_948",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -23526,7 +23528,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 847,
     "tracked_python_files": 1246,
-    "tracked_python_lines": 425598
+    "tracked_python_lines": 425647
   },
   "warnings": []
 }

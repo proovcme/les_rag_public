@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1246 |
-| Строк Python | 425598 |
+| Строк Python | 425647 |
 | PRODUCT_REACHABLE | 387 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 847 |
@@ -46,7 +46,7 @@
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
-| proxy/services/lsr_norm_quality_gate_service.py | 2268 | 24 |
+| proxy/services/lsr_norm_quality_gate_service.py | 2266 | 24 |
 | mlx_host.py | 2216 | 2 |
 | proxy/services/estimate_harness_service.py | 2052 | 4 |
 | proxy/smeta_core/norm_browser.py | 1951 | 20 |

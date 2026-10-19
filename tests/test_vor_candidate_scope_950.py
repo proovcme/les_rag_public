@@ -120,14 +120,23 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
     assert old_phrase not in lsr
     # Undo only969's literal explanation and optional-tail de-duplication.
     from proxy.services.model_lsr_result_contract import LSR_DESCRIBED_OPTIONAL_FIELDS, OPTIONAL_FIELDS
-    additional_rule = ("Добавочную норму верни отдельной операцией с norm_code/evidence_refs. "
-                       "norm_components — только аудит, расчёт не выполняется. ")
-    assert lsr.count(additional_rule) == 1
+    from proxy.services.model_lsr_result_contract import LSR_DERIVED_VOLUME_INSTRUCTION
+    old968_rule = (
+        "Для кратности всей нормы calc_quantity/calc_unit — расчётный эквивалент, формула — conversion_source. "
+        "Для начисляемой добавочной нормы covered_by_work_id не задавай. "
+    )
+    stale_rule = ('Если работа составная, можно добавить norm_components как JSON-список '
+                  '{"norm_code", "evidence_refs"}; иначе оставь ячейку пустой. ')
+    assert lsr.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
+    assert stale_rule not in lsr
     numeric_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
     previous_tail = ", ".join(field for field in OPTIONAL_FIELDS
                               if field not in LSR_DESCRIBED_OPTIONAL_FIELDS - {"norm_components"})
     assert lsr.count(numeric_tail) == 1
-    before_components = lsr.replace(additional_rule, "", 1).replace(numeric_tail, previous_tail, 1)
+    anchor = "Лучше честный MISSING, чем случайный шифр из выдачи."
+    assert lsr.count(anchor) == 1
+    before_components = lsr.replace(LSR_DERIVED_VOLUME_INSTRUCTION, old968_rule, 1).replace(numeric_tail, previous_tail, 1)
+    before_components = before_components.replace(anchor, stale_rule + anchor, 1)
     assert hashlib.sha256(before_components.encode("utf-8")).hexdigest() == (
         "8c64fc2bd26b07eb2a3eb99b9a11cff6d61fb7585c12a05d237982acde2f83c5"
     )
@@ -135,8 +144,8 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
     # carrier's original byte-pinned LSR contract.
     from proxy.services.model_lsr_result_contract import LSR_DERIVED_VOLUME_INSTRUCTION, LSR_SOURCE_VOLUME_INSTRUCTION, LSR_DESCRIBED_OPTIONAL_FIELDS, OPTIONAL_FIELDS
     assert lsr.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
-    before_repetition_clarification = lsr.replace(LSR_DERIVED_VOLUME_INSTRUCTION, "", 1)
-    current_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
+    before_repetition_clarification = before_components.replace(old968_rule, "", 1)
+    current_tail = previous_tail
     old_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in {"resource_bindings", "calc_unit"})
     assert before_repetition_clarification.count(current_tail) == 1
     before_repetition_clarification = before_repetition_clarification.replace(current_tail, old_tail, 1)

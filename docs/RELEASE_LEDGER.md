@@ -44,7 +44,17 @@ norm_components с явным долгом нерассчитанного сос
 каталога, сам guard не менялся; ранняя квитанция остаётся RED, не заменяется.
 Targeted:316passed/6,29s (`artifacts/live_969/offline_targeted/core_v2.xml`)
 и233passed/7,15s (`artifacts/live_969/offline_targeted/adjacent.xml`), наборы
-частично пересекаются. Общий frozen gate, commit, NSIS и installed969 пока
+частично пересекаются. V2 (`62a988e5…`, `artifacts/gates_969_final_v2/receipt.json`)
+прошёл architecture/verify и завершил test с6527passed/9failed/20skipped за900,15s:
+7 отказов вызваны увеличением инструкции в ограниченных контекстах; ещё2 —
+прежнее отрицательное ожидание для совместимых100м³↔м³ и его hermetic child.
+Компактный контракт сохраняет все4 правила и уменьшает полный LSR prompt
+относительно968 (9520→9384символов); убрана действовавшая противоречивая
+рекомендация считать norm_components. Лимиты и evidence не сокращались.
+Исправленные carriers/budgets и соседние проверки:110passed/40,28s
+(`artifacts/live_969/offline_targeted/compact_adjacent.xml`). Price ownership
+проверяет источник, factor, формулу и сумму явной конверсии, а не пропускает guard.
+Общий зелёный frozen gate, commit, NSIS и installed969 пока
 не зафиксированы этой записью. Новый полный gate, точная установка, свежие
 B0/B1/multifile, реальный добор и big318 stop/restart/continue обязательны.
 Профессиональная применимость≥90% и готовность заказчику не подтверждены;

@@ -8,6 +8,10 @@ evidence_refs для начисляемой добавочной нормы. nor
 аудитом без расчёта. Optional field остаётся допустимым; из хвоста убрано только
 повторение уже объяснённого имени. Исходные поля, scale rule, budgets и граница
 ВОР не меняются: сметная инструкция не попадает в явную ВОР.
+В `lsr_norm_quality_gate_service.lsr_result_table_instruction` удалён прежний
+противоречивый совет начислять состав через norm_components. Компактный общий
+контракт меньше968 по символам, UTF-8 и conservative JSON footprint; bounded
+read/evidence бюджеты не увеличиваются ради инструкции.
 
 `compact_estimator_draft_rows` сохраняет norm_components глубокой копией.
 RIM/readiness/financial feedback делают невычисленный состав видимым, включая

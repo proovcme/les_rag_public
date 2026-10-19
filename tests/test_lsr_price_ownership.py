@@ -733,16 +733,25 @@ def test_the_same_unit_or_a_row_without_a_unit_prices_exactly_as_before():
         assert not [flag for flag in summary["flags"] if "не применена" in str(flag)]
 
 
-def test_a_norm_factor_unit_next_to_its_plain_form_is_a_question_not_a_product():
-    """§ 8 converts with a formula written into the trace; a ×100 guess is not one."""
+def test_a_formal_book_measure_is_priced_only_with_an_explicit_conversion_trace():
+    """A compatible numeric measure has a sourced formula; no density is guessed."""
     trace = _one_material(_book(unit="100 м3"), _solvent("м3"))
     row = _resource_rows(trace)[SOLVENT]
     summary = trace["summary"]
 
-    assert row["meta"]["price_action"] == BOOK_UNIT_CONFLICT_ACTION
-    assert row["meta"]["price_book_unit"] == "100 м3"
-    assert summary["total"] == pytest.approx(0.0)
-    assert summary["full_amount"] is None
+    conversion = row["meta"]["price_unit_conversion"]
+    assert row["source"] == "fgis_current"
+    assert row["meta"]["price_action"] == ""
+    assert conversion["book_unit"] == "100 м3" and conversion["resource_unit"] == "м3"
+    assert conversion["price_owner"] == "chosen_pricebook"
+    assert conversion["book_current_price"] == SOLVENT_RATE
+    assert conversion["conversion_factor"] == 0.01
+    assert conversion["resource_current_price"] == pytest.approx(0.606)
+    assert "100 м3" in conversion["formula"] and "0.01" in conversion["formula"]
+    assert row["columns"]["7"] == 1 and row["columns"]["4"] == "м3"
+    assert row["columns"]["10"] == pytest.approx(0.606)
+    assert row["columns"]["12"] == summary["total"] == summary["full_amount"] == 0.61
+    assert summary["completeness_reasons"] == []
 
 
 def test_a_rejected_book_row_does_not_delete_the_money_the_card_already_had():

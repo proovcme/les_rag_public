@@ -42,14 +42,23 @@ def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(
     # Undo exactly the additional-operation clarification; keep the previous
     # byte pin, rather than accepting an unrelated new instruction wholesale.
     from proxy.services.model_lsr_result_contract import LSR_DESCRIBED_OPTIONAL_FIELDS, OPTIONAL_FIELDS
-    additional_rule = ("Добавочную норму верни отдельной операцией с norm_code/evidence_refs. "
-                       "norm_components — только аудит, расчёт не выполняется. ")
-    assert instruction.count(additional_rule) == 1
+    from proxy.services.model_lsr_result_contract import LSR_DERIVED_VOLUME_INSTRUCTION
+    old968_rule = (
+        "Для кратности всей нормы calc_quantity/calc_unit — расчётный эквивалент, формула — conversion_source. "
+        "Для начисляемой добавочной нормы covered_by_work_id не задавай. "
+    )
+    stale_rule = ('Если работа составная, можно добавить norm_components как JSON-список '
+                  '{"norm_code", "evidence_refs"}; иначе оставь ячейку пустой. ')
+    assert instruction.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
+    assert stale_rule not in instruction
     numeric_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
     previous_tail = ", ".join(field for field in OPTIONAL_FIELDS
                               if field not in LSR_DESCRIBED_OPTIONAL_FIELDS - {"norm_components"})
     assert instruction.count(numeric_tail) == 1
-    before_components = instruction.replace(additional_rule, "", 1).replace(numeric_tail, previous_tail, 1)
+    anchor = "Лучше честный MISSING, чем случайный шифр из выдачи."
+    assert instruction.count(anchor) == 1
+    before_components = instruction.replace(LSR_DERIVED_VOLUME_INSTRUCTION, old968_rule, 1).replace(numeric_tail, previous_tail, 1)
+    before_components = before_components.replace(anchor, stale_rule + anchor, 1)
     assert hashlib.sha256(before_components.encode("utf-8")).hexdigest() == (
         "8c64fc2bd26b07eb2a3eb99b9a11cff6d61fb7585c12a05d237982acde2f83c5"
     )
@@ -57,8 +66,8 @@ def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(
     # pinned to the original948 contract instead of accepting a new whole text.
     from proxy.services.model_lsr_result_contract import LSR_DERIVED_VOLUME_INSTRUCTION, LSR_SOURCE_VOLUME_INSTRUCTION, LSR_DESCRIBED_OPTIONAL_FIELDS, OPTIONAL_FIELDS
     assert instruction.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
-    before_repetition_clarification = instruction.replace(LSR_DERIVED_VOLUME_INSTRUCTION, "", 1)
-    current_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
+    before_repetition_clarification = before_components.replace(old968_rule, "", 1)
+    current_tail = previous_tail
     old_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in {"resource_bindings", "calc_unit"})
     assert before_repetition_clarification.count(current_tail) == 1
     before_repetition_clarification = before_repetition_clarification.replace(current_tail, old_tail, 1)

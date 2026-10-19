@@ -9,8 +9,8 @@ from proxy.services.chat_evidence_application_service import sheet_pass_question
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 
 
-ADDITIONAL_ROW_RULE = "Добавочную норму верни отдельной операцией с norm_code/evidence_refs. "
-UNCOMPUTED_COMPONENTS_RULE = "norm_components — только аудит, расчёт не выполняется. "
+ADDITIONAL_ROW_RULE = "Добавка — новая операция с norm_code/evidence_refs, без covered_by_work_id. "
+UNCOMPUTED_COMPONENTS_RULE = "norm_components — аудит без расчёта. "
 
 
 @pytest.mark.parametrize("carrier", ["shared", "direct", "sheet", "conditional"])
@@ -27,9 +27,10 @@ def test_actual_lsr_carriers_explain_additional_rows_and_literal_components(carr
     assert text.count(ADDITIONAL_ROW_RULE) == 1
     assert text.count(UNCOMPUTED_COMPONENTS_RULE) == 1
     assert "Исходные unit и quantity сохраняй" in text
-    assert "calc_quantity/calc_unit — расчётный эквивалент" in text
-    assert "формула — conversion_source" in text
-    assert "Для начисляемой добавочной нормы covered_by_work_id не задавай" in text
+    assert "Кратность: calc_quantity/calc_unit" in text
+    assert "формула: conversion_source" in text
+    assert "без covered_by_work_id" in ADDITIONAL_ROW_RULE
+    assert "можно добавить norm_components" not in text
     assert "операции оставь operation_id пустым" in text
     assert "norm_components" in contract.OPTIONAL_FIELDS
     assert "norm_components" in contract.LSR_DESCRIBED_OPTIONAL_FIELDS
@@ -37,6 +38,28 @@ def test_actual_lsr_carriers_explain_additional_rows_and_literal_components(carr
                      if field not in contract.LSR_DESCRIBED_OPTIONAL_FIELDS)
     assert "norm_components" not in tail
     assert tail + "." in text
+    # Compare the full actual carrier against its exact original968 rendering;
+    # source/budget fixtures are never enlarged to accommodate a new hint.
+    old_rule = (
+        "Для кратности всей нормы calc_quantity/calc_unit — расчётный эквивалент, формула — conversion_source. "
+        "Для начисляемой добавочной нормы covered_by_work_id не задавай. "
+    )
+    old_tail = ", ".join(field for field in contract.OPTIONAL_FIELDS
+                         if field not in contract.LSR_DESCRIBED_OPTIONAL_FIELDS - {"norm_components"})
+    previous = text.replace(contract.LSR_DERIVED_VOLUME_INSTRUCTION, old_rule, 1).replace(tail, old_tail, 1)
+    if carrier != "shared":
+        stale = ('Если работа составная, можно добавить norm_components как JSON-список '
+                 '{"norm_code", "evidence_refs"}; иначе оставь ячейку пустой. ')
+        anchor = "Лучше честный MISSING, чем случайный шифр из выдачи."
+        assert previous.count(anchor) == 1
+        previous = previous.replace(anchor, stale + anchor, 1)
+    assert len(text) <= len(previous)
+    assert len(text.encode("utf-8")) <= len(previous.encode("utf-8"))
+    from proxy.services.context_governor_service import conservative_token_estimate
+    for ensure_ascii in (False, True):
+        body = lambda value: json.dumps({"messages": [{"role": "user", "content": value}]},
+                                        ensure_ascii=ensure_ascii, sort_keys=True, separators=(",", ":"))
+        assert conservative_token_estimate(body(text)) <= conservative_token_estimate(body(previous))
 
 
 def test_vor_instruction_does_not_receive_lsr_component_or_norm_requirements():

@@ -5,6 +5,10 @@
 CURRENT_TESTS содержит341 уникальный файл. Related targeted:316passed/6,29s
 (`artifacts/live_969/offline_targeted/core_v2.xml`) и233passed/7,15s
 (`artifacts/live_969/offline_targeted/adjacent.xml`); наборы пересекаются.
+После V2 budget-regression:110passed/40,28s по carrier/actual wire/quantity/
+ownership suites (`artifacts/live_969/offline_targeted/compact_adjacent.xml`).
+Все прежние wire/input лимиты сохранены; полный V2 остаётся RED9fail и не
+используется как release-доказательство.
 Новые файлы включены в CURRENT_TESTS, но полный frozen gate/install/live969
 ещё не подтверждены. Числа последнего общего прогона и его commit добавляются
 только по actual receipt; подготовленные тесты не являются release acceptance.

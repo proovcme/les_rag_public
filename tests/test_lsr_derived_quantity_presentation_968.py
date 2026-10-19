@@ -11,12 +11,14 @@ from tests.test_rim_lsr_trace_service import _active_resource_norm
 
 def test_lsr_contract_explains_repeated_norm_without_a_second_coefficient_protocol():
     text = model_lsr_result_field_instruction()
-    assert "кратности всей нормы" in text
-    assert "расчётный эквивалент" in text
+    assert "Кратность: calc_quantity/calc_unit" in text
+    assert "формула: conversion_source" in text
     assert "calc_quantity" in text and "calc_unit" in text and "conversion_source" in text
     assert "Исходные unit и quantity сохраняй" in text
     assert "covered_by_work_id" in text
-    assert "Для начисляемой добавочной нормы" in text
+    assert "Добавка — новая операция с norm_code/evidence_refs, без covered_by_work_id" in text
+    assert "norm_components — аудит без расчёта" in text
+    assert "можно добавить norm_components" not in text
     assert all(field in text for field in OPTIONAL_FIELDS)
 
 

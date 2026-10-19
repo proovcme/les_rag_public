@@ -54,10 +54,9 @@ LSR_DESCRIBED_OPTIONAL_FIELDS = frozenset({
 })
 
 LSR_DERIVED_VOLUME_INSTRUCTION = (
-    "Для кратности всей нормы calc_quantity/calc_unit — расчётный эквивалент, формула — conversion_source. "
-    "Для начисляемой добавочной нормы covered_by_work_id не задавай. "
-    "Добавочную норму верни отдельной операцией с norm_code/evidence_refs. "
-    "norm_components — только аудит, расчёт не выполняется. "
+    "Кратность: calc_quantity/calc_unit; формула: conversion_source. "
+    "Добавка — новая операция с norm_code/evidence_refs, без covered_by_work_id. "
+    "norm_components — аудит без расчёта. "
 )
 
 
