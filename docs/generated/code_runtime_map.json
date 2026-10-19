@@ -3418,7 +3418,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15787,
+      "lines": 15821,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -4449,6 +4449,7 @@
         "tests/test_model_research_evidence_actions.py",
         "tests/test_pricebook_record_conflict.py",
         "tests/test_resource_group_proof_932.py",
+        "tests/test_sheet_proof_context_admission_967.py",
         "tests/test_smeta_chat_service.py",
         "tests/test_smeta_release_baseline.py",
         "tests/test_sovushka_chat.py",
@@ -5904,13 +5905,14 @@
         "tests/test_model_vor_text_transport.py",
         "tests/test_model_workbook_terminal_transport_962.py",
         "tests/test_model_workbook_unknown_terminal_963.py",
+        "tests/test_nrsp_catalog_reference_967.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_operation_instructions_948.py",
         "tests/test_vor_task_instruction_955.py",
         "tests/test_workbook_artifact_target.py"
       ],
-      "lines": 989,
+      "lines": 990,
       "module": "proxy.services.model_lsr_result_contract",
       "outbound": [
         "proxy/__init__.py",
@@ -6028,9 +6030,10 @@
         "tests/test_model_retained_norm_delivery.py",
         "tests/test_norm_card_completeness_facts.py",
         "tests/test_norm_card_proof_request_930.py",
+        "tests/test_nrsp_catalog_reference_967.py",
         "tools/measure_model_resource_literal_capacity.py"
       ],
-      "lines": 857,
+      "lines": 862,
       "module": "proxy.services.model_rag_grouped_evidence_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6413,7 +6416,8 @@
         "proxy/services/rim_lsr_trace_service.py",
         "proxy/smeta_core/document_workflow.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
-        "tests/test_nr_sp_service.py"
+        "tests/test_nr_sp_service.py",
+        "tests/test_nrsp_catalog_reference_967.py"
       ],
       "lines": 110,
       "module": "proxy.services.nr_sp_service",
@@ -6505,6 +6509,7 @@
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_pending_review_operation_identity.py",
+        "tests/test_sheet_proof_context_admission_967.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_native_terminal_workflow_962.py",
         "tests/test_vor_review_structural_facts_953.py",
@@ -8659,6 +8664,7 @@
         "tests/test_packaging_recovery_service.py",
         "tests/test_pending_review_operation_identity.py",
         "tests/test_pool_completion_alignment_24.py",
+        "tests/test_sheet_proof_context_admission_967.py",
         "tests/test_sovushka_chat.py",
         "tests/test_stall_bound_25.py",
         "tests/test_temporal_model_evidence_binding.py",
@@ -12438,7 +12444,7 @@
     },
     {
       "inbound": [],
-      "lines": 815,
+      "lines": 818,
       "module": "tests.test_installer_windows",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -14247,7 +14253,7 @@
     },
     {
       "inbound": [],
-      "lines": 1129,
+      "lines": 1130,
       "module": "tests.test_model_rag_grouped_evidence_service",
       "outbound": [
         "proxy/services/context_governor_service.py",
@@ -14334,6 +14340,7 @@
         "tests/test_native_tool_call_diagnostics.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_pending_review_operation_identity.py",
+        "tests/test_sheet_proof_context_admission_967.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_delivery_notice_949.py",
         "tests/test_vor_native_read_scope_956.py",
@@ -14347,7 +14354,7 @@
         "tests/test_workbook_primary_artifact_959.py",
         "tests/test_workbook_provider_binding_928.py"
       ],
-      "lines": 1408,
+      "lines": 1410,
       "module": "tests.test_model_rag_sheet_evidence_reads",
       "outbound": [
         "proxy/routers/chat.py",
@@ -14823,9 +14830,10 @@
     {
       "inbound": [
         "tests/test_model_proof_artifact_kind.py",
-        "tests/test_model_proof_turn_integrity.py"
+        "tests/test_model_proof_turn_integrity.py",
+        "tests/test_sheet_proof_context_admission_967.py"
       ],
-      "lines": 344,
+      "lines": 356,
       "module": "tests.test_norm_card_proof_request_930",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -14922,6 +14930,19 @@
         "proxy/services/nr_sp_service.py"
       ],
       "path": "tests/test_nr_sp_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 76,
+      "module": "tests.test_nrsp_catalog_reference_967",
+      "outbound": [
+        "proxy/services/model_lsr_result_contract.py",
+        "proxy/services/model_rag_grouped_evidence_service.py",
+        "proxy/services/nr_sp_service.py"
+      ],
+      "path": "tests/test_nrsp_catalog_reference_967.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -16599,6 +16620,21 @@
         "proxy/services/service_source_registry.py"
       ],
       "path": "tests/test_service_source_registry.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 163,
+      "module": "tests.test_sheet_proof_context_admission_967",
+      "outbound": [
+        "proxy/services/fgis_price_service.py",
+        "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/workbook_research_job_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_norm_card_proof_request_930.py"
+      ],
+      "path": "tests/test_sheet_proof_context_admission_967.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -18299,6 +18335,17 @@
         "tools/windows_release_acceptance.py"
       ],
       "path": "tests/test_windows_release_acceptance.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 127,
+      "module": "tests.test_windows_reranker_bootstrap_967",
+      "outbound": [
+        "tools/windows_runtime.py"
+      ],
+      "path": "tests/test_windows_reranker_bootstrap_967.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -21154,10 +21201,11 @@
       "inbound": [
         "tests/test_windows_application_update.py",
         "tests/test_windows_native_boot_960.py",
+        "tests/test_windows_reranker_bootstrap_967.py",
         "tools/windows_clean_install.py",
         "tools/windows_update_engine.py"
       ],
-      "lines": 746,
+      "lines": 753,
       "module": "tools.windows_runtime",
       "outbound": [
         "tools/__init__.py"
@@ -23290,9 +23338,9 @@
     "product_reachable": 387,
     "registered_api_routes": 343,
     "runtime_support": 11,
-    "test_or_tool_only": 834,
-    "tracked_python_files": 1233,
-    "tracked_python_lines": 422426
+    "test_or_tool_only": 837,
+    "tracked_python_files": 1236,
+    "tracked_python_lines": 422857
   },
   "warnings": []
 }

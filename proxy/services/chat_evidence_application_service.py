@@ -12169,7 +12169,49 @@ async def _execute_chat_evidence_application(
                             # The purpose and the previous authored decisions of
                             # a proof turn survive its own native READ calls.
                             sheet_proof_context: list[dict[str, Any]] = []
+                            proof_context_failure: dict[str, Any] = {}
                             pass_terminal_finish = ""
+
+                            def _record_proof_context_failure(error, *, purpose):
+                                nonlocal proof_context_failure
+                                capacity = model_read_capacity_trace(error, purpose=purpose)
+                                retrieval_trace["context_governor"]["error"] = capacity
+                                proof_context_failure = {
+                                    "schema": "les.proof-context-failure.v1",
+                                    **capacity,
+                                    "technical_failure": True,
+                                    "model_decisions_rewritten": False,
+                                    "reason": (
+                                        "Проверка источников технически приостановлена: полный предыдущий "
+                                        "ответ с запросом проверки не помещается в окно контекста модели. "
+                                        "Предыдущий ответ и строки сохранены без изменений. "
+                                        "Повторную проверку открытых позиций можно запросить отдельно."
+                                    ),
+                                }
+                                retrieval_trace["proof_context_failure"] = dict(proof_context_failure)
+                                retrieval_trace["tool_loop"]["evidence_read_stop"] = "proof_context_capacity"
+
+                            async def _start_sheet_proof(*, purpose):
+                                # Appending a prior answer after admission bypasses the
+                                # context limit. Admit the exact authored answer and
+                                # proof request together with the current read evidence.
+                                proof_messages, proof_frame, _, _ = await govern_model_read_messages_bound(
+                                    count_messages=_bound_input_token_counter(answer_execution_preset, sheet_read_tools),
+                                    preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
+                                    request_payload=question_tail, native_tools=sheet_read_tools,
+                                    source_context=[*pass_evidence, *sheet_proof_context],
+                                    admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
+                                    chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                    receipts=[*saved_read_receipts, *read_receipts],
+                                )
+                                retrieval_trace["context_governor"]["calls"].append(
+                                    context_packet_trace(proof_frame, purpose=purpose)
+                                )
+                                return await _sheet_pass_llm(
+                                    {**chat_body, "messages": proof_messages}, purpose=purpose,
+                                    inference_preset=answer_execution_preset,
+                                    expected_connection_revision_id=measured_connection_revision(proof_frame),
+                                )
 
                             async def _pause_terminal_error(error, *, purpose):
                                 nonlocal research_job
@@ -12368,16 +12410,8 @@ async def _execute_chat_evidence_application(
                                         "proof_previous_model_answer": pass_answer,
                                         "proof_request": proof_message,
                                     }]
-                                    answered, answer_usage = await _sheet_pass_llm(
-                                        {**chat_body, "messages": [
-                                            *chat_body["messages"],
-                                            {"role": "assistant", "content": pass_answer},
-                                            {"role": "user", "content": proof_message},
-                                        ]},
-                                        purpose=NORM_CARD_PROOF_PURPOSE,
-                                        expected_connection_revision_id=measured_connection_revision(
-                                            answer_packet),
-                                    )
+                                    answered, answer_usage = await _start_sheet_proof(
+                                        purpose=NORM_CARD_PROOF_PURPOSE)
                                 except CloudBudgetStop:
                                     if research_job_service is not None and research_job is not None:
                                         research_job = research_job_service.pause(
@@ -12394,6 +12428,9 @@ async def _execute_chat_evidence_application(
                                                 "norm_proof_pending": True},
                                         )
                                     raise
+                                except ContextRequiredSectionOverflow as context_error:
+                                    _record_proof_context_failure(
+                                        context_error, purpose=NORM_CARD_PROOF_PURPOSE)
                                 proof_answer_parsed = False
                                 proof_previous_answer = pass_answer
                                 if answered:
@@ -12439,9 +12476,8 @@ async def _execute_chat_evidence_application(
                                         await _pause_terminal_error(terminal_error, purpose=NORM_CARD_PROOF_PURPOSE)
                                         break
                                     except ContextRequiredSectionOverflow as context_error:
-                                        retrieval_trace["context_governor"]["error"] = (
-                                            model_read_capacity_trace(
-                                                context_error, purpose=NORM_CARD_PROOF_PURPOSE))
+                                        _record_proof_context_failure(
+                                            context_error, purpose=NORM_CARD_PROOF_PURPOSE)
                                     proved_pass = parse_model_rag_result(
                                         pass_answer, diagnostics=pass_transport_diagnostics,
                                         model_declaration=artifact_kind_declaration,
@@ -12493,7 +12529,7 @@ async def _execute_chat_evidence_application(
                                 pricebook=model_pricebook(
                                     sheet_price_basis or model_requested_price_basis),
                             )
-                            if (proof_groups and sheet_read_tools
+                            if (proof_groups and sheet_read_tools and not proof_context_failure
                                     and group_proof_attempts.get(fingerprint, 0) < 1):
                                 group_proof_attempts[fingerprint] = 1
                                 group_answered = False
@@ -12505,23 +12541,14 @@ async def _execute_chat_evidence_application(
                                         "proof_previous_model_answer": pass_answer,
                                         "proof_request": group_message,
                                     }]
-                                    group_answer, group_usage = await _sheet_pass_llm(
-                                        {**chat_body, "messages": [
-                                            *chat_body["messages"],
-                                            {"role": "assistant", "content": pass_answer},
-                                            {"role": "user", "content": group_message},
-                                        ]},
-                                        purpose=RESOURCE_GROUP_PROOF_PURPOSE,
-                                        expected_connection_revision_id=measured_connection_revision(
-                                            answer_packet),
-                                    )
+                                    group_answer, group_usage = await _start_sheet_proof(
+                                        purpose=RESOURCE_GROUP_PROOF_PURPOSE)
                                 except CloudBudgetStop:
                                     raise
                                 except ContextRequiredSectionOverflow as context_error:
                                     group_answer = ""
-                                    retrieval_trace["context_governor"]["error"] = (
-                                        model_read_capacity_trace(
-                                            context_error, purpose=RESOURCE_GROUP_PROOF_PURPOSE))
+                                    _record_proof_context_failure(
+                                        context_error, purpose=RESOURCE_GROUP_PROOF_PURPOSE)
                                 group_answer_parsed = False
                                 group_previous_answer = pass_answer
                                 group_receipts: list[dict[str, Any]] = []
@@ -12576,10 +12603,8 @@ async def _execute_chat_evidence_application(
                                         await _pause_terminal_error(terminal_error, purpose=RESOURCE_GROUP_PROOF_PURPOSE)
                                         break
                                     except ContextRequiredSectionOverflow as context_error:
-                                        retrieval_trace["context_governor"]["error"] = (
-                                            model_read_capacity_trace(
-                                                context_error,
-                                                purpose=RESOURCE_GROUP_PROOF_PURPOSE))
+                                        _record_proof_context_failure(
+                                            context_error, purpose=RESOURCE_GROUP_PROOF_PURPOSE)
                                     group_pass = parse_model_rag_result(
                                         pass_answer, diagnostics=pass_transport_diagnostics,
                                         model_declaration=artifact_kind_declaration)
@@ -12832,6 +12857,10 @@ async def _execute_chat_evidence_application(
                                 pending_result_packets = model_rag_pending_result_packets(held_payload)
                                 held_payload = model_rag_with_pending_results(held_payload, pending_result_packets)
                                 held_query_context = held_payload
+                            if proof_context_failure:
+                                held_payload = {**dict(held_payload or {}),
+                                    "proof_context_failure": dict(proof_context_failure)}
+                                held_query_context = held_payload
                             transport_pending_locators, pending_diagnostics = model_rag_pending_result_projection(pending_result_packets)
                             if pending_diagnostics or "model_result_transport_diagnostics" in retrieval_trace:
                                 retrieval_trace["model_result_transport_diagnostics"] = pending_diagnostics
@@ -12912,6 +12941,11 @@ async def _execute_chat_evidence_application(
                                 remaining = [locator for locator in remaining if locator not in settled_after]
                                 if retrieval_trace["tool_loop"]["passes"]:
                                     retrieval_trace["tool_loop"]["passes"][-1]["newly_decided"] = len(settled_after - settled_before)
+                            if proof_context_failure:
+                                # The completed previous model result stays terminal.
+                                # A failed optional proof must not create a pending
+                                # read that cannot resume past that terminal barrier.
+                                answer_parts.append(proof_context_failure["reason"])
                             # One definition of progress for the guard and for the
                             # packet pool.  Judging progress only by the strict
                             # completeness metric counted a row the model had decided

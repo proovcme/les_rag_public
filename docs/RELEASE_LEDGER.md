@@ -1,6 +1,46 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
-## 19.10.2026 — кандидат966: шаблон ВОР, сохранность и добор
+## 19.10.2026 — установлен966; измеренные причины для кандидата967
+
+Установлен0.31.238/build966/native5.1.966, commit
+`aca71dc1665e7b45971aa6948b3bb7f1d213a883`. Full V2:6171passed/20skipped,
+818.65s,325files, все9команд rc0; receipt
+`artifacts/gates_966_final_v2/receipt.json` SHA0f9d42bb….
+Фактический NSIS SHA67459e65…, packaged EXE SHA3ce118ce…;
+517 runtime files совпали. Выполнены upgrade/rollback/reinstall/EXE-only:
+13 прежних jobs и12 artifact SHA сохранены, bindings и значения395факторов
+не изменены. Basic smoke:9pass/1warn/0fail; подробная диагностика показала
+RAM pressure и отсутствие verified CRAG statistics, ошибок0.
+
+Пара B0/B1 на одной сохранённой ВОР и профиле4a9/r12:
+288.407s/588.344s, оба выдали скачиваемый XLSX,7/8 авторских строк.
+Это НЕ профессиональная приёмка: B0 выбрал1кандидата, B1 —3кандидата;
+толщина/условия/ресурсы открыты, точность≥90% не доказана. Все основные
+answer/read frames имеют32768 generation reserve, effective/observed/cache
+context131072. У B1 два дополнительных proof inference не имеют собственных
+Governor receipts: общий capacity verdict остаётся unknown, не PASS.
+Квитанции и независимые отзывы: `artifacts/live_966/final_v2/lsr32_comparison/`.
+
+Кандидат967/0.31.239/native5.1.967 ограничен тремя измеренными границами:
+Windows bootstrap навязывал RERANKER_ENABLED=false; показанный ключ контейнера
+каталога НР/СП путался с canonical rule_id; две proof-добавки дописывались
+после первичного context admission. Исправления не выбирают нормы/ставки,
+не меняют авторские решения, не добавляют новый workflow/модель/индекс.
+Для reranker сохраняется явный выбор оператора; default Windows становится true.
+Настройка на установленном966 сохранена штатным GUI-backed registry API:
+RERANKER_ENABLED=true, остальные394фактора и binding r12 прежние; model calls0.
+Receipt: `artifacts/live_967/rerank_activation/activation.json`.
+Наличие настройки не доказывает загрузку весов или успешное ранжирование.
+
+967: targeted regressions завершены. Proof adjacent127passed/28.53s;
+root3новые suite31passed/12.16s. Два настоящих продолжения после overflow
+сохраняют terminal rows без zombie pending/паузы и без скрытой inference.
+Независимый повторный review не выявил новых P1/P2; это не live приёмка.
+Полный clean gate, точный установщик,
+installed rerank-on B0/B1, ordinary/multifile retry и big318 ещё pending.
+customer-ready=false. Публичной публикации нет.
+
+## 19.10.2026 — подготовка966 до полного V2: шаблон ВОР, сохранность и добор
 
 Первый frozen966/`61b08cd2…` завершён:6155passed/20skipped/16failed,
 820.05s,325files (`artifacts/gates_966_final/receipt.json`). Все16tracebacks

@@ -8,6 +8,7 @@ from proxy.services.model_rag_grouped_evidence_service import (
     EvidenceCard,
     EvidenceGroup,
     lossless_nrsp_body,
+    nrsp_catalog_reference,
     normative_card_identity,
     plan_full_group_page,
     restore_nrsp_body,
@@ -474,7 +475,7 @@ def test_compact_read_replay_preserves_exact_catalog_bytes_and_full_resource_fie
     factored = lossless_nrsp_body(original, chunk["meta"])
     assert catalogs["literal_nrsp_catalog"][factored.catalog_id].encode("utf-8") == _catalog_text(rules).encode("utf-8")
     restored = row["content"].replace(
-        f"НР/СП: общий буквальный каталог [{factored.catalog_id}].",
+        nrsp_catalog_reference(factored.catalog_id),
         catalogs["literal_nrsp_catalog"][factored.catalog_id],
         1,
     )
@@ -801,7 +802,7 @@ def test_resource_source_projection_leaves_other_literal_occurrences_and_nrsp_un
     assert '"source_ref": {"shared_source_pointer":' in view
     assert view.endswith("Unrelated quoted source: " + card.meta["source_ref"])
     restored = _restore_resource_source_view(view, catalogs["literal_source_catalog"]).replace(
-        f"НР/СП: общий буквальный каталог [{nrsp.catalog_id}].", catalogs["literal_nrsp_catalog"][nrsp.catalog_id], 1)
+        nrsp_catalog_reference(nrsp.catalog_id), catalogs["literal_nrsp_catalog"][nrsp.catalog_id], 1)
     assert restored.encode("utf-8") == raw.encode("utf-8")
     assert catalogs["literal_nrsp_catalog"] == {nrsp.catalog_id: nrsp.catalog_text}
 

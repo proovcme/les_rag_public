@@ -672,7 +672,10 @@ def test_start_light_keeps_provider_model_and_ollama_embedding_contract_aligned(
     assert '"bge-m3:latest"' in text
     assert '$env:EMBED_BACKEND = "ollama"' in text
     assert '$env:RAG_VECTOR_SIZE = "1024"' in text
-    assert '$env:RERANKER_ENABLED = "false"' in text
+    assert '$rerankerEnabled = Get-LesDotEnvValue "RERANKER_ENABLED"' in text
+    assert '$rerankerEnabled = [string]$env:RERANKER_ENABLED' in text
+    assert '$rerankerEnabled = "true"' in text
+    assert '$env:RERANKER_ENABLED = $rerankerEnabled.Trim()' in text
     assert '$env:RERANKER_BACKEND = "sentence_transformers"' in text
     assert '$env:RERANK_MODEL' in text
 

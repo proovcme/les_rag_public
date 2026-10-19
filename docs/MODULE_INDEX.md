@@ -1,8 +1,27 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 967 — Windows rerank, идентичность НР/СП и proof admission
+
+🟡 Кандидат0.31.239/build967; установлен966/aca71dc1, его full V2 и exact
+NSIS/upgrade/rollback/reinstall/EXE-only подтверждены. Live966 выдал файлы,
+но профессиональная приёмка и общий proof-capacity gate не пройдены.
+`tools/windows_runtime.runtime_environment` и `installers/windows/start-light.ps1`
+сохраняют явный persisted/process reranker switch, Windows default=true.
+`model_rag_grouped_evidence_service.nrsp_catalog_reference` и field contract
+отделяют ссылку на контейнер от буквального ID правила; ставок код не выбирает.
+Два sheet proof перехода получают собственный допуск существующего Governor
+и trace до вызова модели; незавершённость техники не становится MISSING нормой.
+Overflow сохраняет завершённые авторские строки и упаковку, показывает
+техническую причину; не создаёт pending READ, паузу или скрытый повтор.
+Регрессии: `test_windows_reranker_bootstrap_967`,
+`test_nrsp_catalog_reference_967`, `test_sheet_proof_context_admission_967`.
+Док↔код: [Windows](PLATFORMS.md), [RAG flow](modules/rag-evidence-flow.md),
+[контекст](ALGO-context-memory.md). Полный967/install/live pending.
+
 ## 966 — печатная ВОР и сохранность адресного добора
 
-🟡 Кандидат0.31.238/build966; runtime пока963, полный gate/install/live pending.
+🟡 Установлен0.31.238/build966; full V2 и exact install подтверждены,
+live professional quality/retry/big ещё не приняты; актуальная причина выше.
 `bor_service._add_vor_print_view` / `is_verified_vor_print_view` дают первый
 печатный лист «Ведомость работ» с5колонками по образцу владельца. Прежний «ВОР»,
 его адреса и полный аудит решений сохраняются; derived measure берётся только
@@ -20,9 +39,9 @@ metadata между потоками/процессами, pin повторно 
 новый active print, сохраняя raw assertions. Первый full966 RED из-за прежнего
 active ожидания сохранён; новый exact gate отдельно в `gates_966_final_v2`.
 
-Точка паузы17.10: установлен963, source965 не принят. Полный gate965 отменён;
+Историческая точка паузы17.10: тогда установлен963, source965 не принят. Полный gate965 отменён;
 воспроизведён Windows-конфликт конкурентной atomic replace retention metadata,
-найден formula-like filename в provenance-cell ВОР. Оба дефекта ещё открыты.
+найден formula-like filename в provenance-cell ВОР. Оба дефекта закрыты в966.
 См. [контрольную точку](archive/HANDOFF_965_2026-10-17.md) и RELEASE_LEDGER.
 
 ## 965 — комплект исходников с общим возобновляемым учётом
@@ -3167,7 +3186,8 @@ measurement and browser recovery after the ongoing 856 controls remain pending.
 > **0.27.74 general RAG contract:** ordinary chat retrieval now keeps the
 > evidence returned by named dense+sparse native RRF when the optional
 > cross-encoder reranker is disabled or unavailable. The Windows/runtime default
-> is `RERANKER_ENABLED=false`; query embeddings remain on Ollama `bge-m3`, while
+> was `RERANKER_ENABLED=false` before967; the967 Windows bootstrap defaults to
+> true while preserving an explicit operator value. Query embeddings remain on Ollama `bge-m3`, while
 > Big Qwen receives the bounded evidence window and chooses any follow-up tools.
 > `make ship` and `make ship-full` enforce this through a one-query
 > `/api/rag/retrieve-debug` smoke: non-empty evidence, both Qdrant channels,

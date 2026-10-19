@@ -156,7 +156,8 @@ def runtime_environment(
         else f"http://127.0.0.1:{proxy_port}"
     )
     environment = dict(os.environ)
-    environment.update(_dotenv(state / ".env"))
+    persisted_environment = _dotenv(state / ".env")
+    environment.update(persisted_environment)
     provider = environment.get("LES_LLM_PROVIDER", "").strip() or "ollama"
     model_key = {
         "ollama": "OLLAMA_MODEL",
@@ -207,7 +208,13 @@ def runtime_environment(
                 or "bge-m3",
                 "EMBED_BACKEND": "ollama",
                 "RAG_VECTOR_SIZE": "1024",
-                "RERANKER_ENABLED": "false",
+                # GUI-persisted choice wins; inherited choices remain valid.
+                # An absent/blank choice enables the common RAG reranker.
+                "RERANKER_ENABLED": persisted_environment.get(
+                    "RERANKER_ENABLED", ""
+                ).strip()
+                or os.environ.get("RERANKER_ENABLED", "").strip()
+                or "true",
                 "RERANKER_BACKEND": "sentence_transformers",
                 "RERANK_MODEL": environment.get("RERANK_MODEL", "").strip()
                 or "BAAI/bge-reranker-v2-m3",

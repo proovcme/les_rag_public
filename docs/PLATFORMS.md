@@ -52,8 +52,14 @@ Use these names consistently in docs, install scripts and future config files:
 - The canonical Windows/Tauri bootstrap carries SHA-256-verified CPython, `uv`, the exact
   `uv.lock` and an offline Windows dependency cache. A missing or mismatched bundled payload is
   fatal; absent answer/embedding engines or Qdrant are visible warnings, never installer failures.
-- The production RAG path is named dense + BM25 sparse → native RRF → parent/context expansion.
-  Cross-encoder reranking is an optional experiment and preserves RRF evidence when unavailable.
+- The production RAG path is named dense + BM25 sparse → native RRF → common rerank →
+  parent/context expansion. Both Windows launchers (`tools/windows_runtime.py` and
+  `installers/windows/start-light.ps1`, also used by Tauri/FreeToken) resolve
+  `RERANKER_ENABLED` in this order: a nonblank GUI-persisted value loaded by the
+  existing state loader, a nonblank inherited process value, then `true`.
+  Explicit `true` and `false` choices survive bootstrap; changing the launch
+  default does not rewrite persistent settings. Actual reranker availability and
+  execution remain separately measured by retrieval diagnostics.
 
 ## Minimum Smoke
 

@@ -1614,8 +1614,9 @@ measurement and browser recovery after the ongoing 856 controls remain pending.
 > dense+sparse Qdrant native RRF as the production ranking contract. A disabled
 > or unavailable cross-encoder records `rerank.status=bypassed` and preserves
 > the RRF evidence order; it no longer blocks ordinary chat retrieval. Windows
-> defaults to `RERANKER_ENABLED=false` and uses Ollama only for `bge-m3` query
-> embeddings unless the operator explicitly enables the optional stage.
+> defaulted to `RERANKER_ENABLED=false` before967. The967 Windows bootstrap
+> preserves persisted/process values and otherwise enables the common reranker;
+> query embeddings continue to use Ollama `bge-m3`.
 > Release wiring is in `Makefile:smoke-general-native-rrf`; it runs
 > `tools/rag_golden_set.py` with `golden/general_native_rrf_release_smoke.json`
 > against the same `/api/rag/retrieve-debug` path as ordinary chat retrieval.

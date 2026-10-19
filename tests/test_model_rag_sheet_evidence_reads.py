@@ -597,7 +597,9 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         if not empty_query and budget_stop_at is None:
             raise
         result = {"error": error.detail, "status": error.status_code}
-    async def resume_same_request():
+    async def resume_same_request(*, question=None):
+        if question is not None:
+            request.req.question = question
         return await service.run_chat_evidence_application(request, runtime, service.ResponseBoundary(
             save_chat_history=lambda **row: histories.append(row) or "history-resume", token_sink=None,
             version_stamp=lambda: {}))

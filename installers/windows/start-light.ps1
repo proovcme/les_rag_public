@@ -222,7 +222,11 @@ function Set-LesOllamaEmbeddings {
   $env:EMBEDDING_MODEL = if ($env:EMBEDDING_MODEL) { $env:EMBEDDING_MODEL } else { "bge-m3" }
   $env:EMBED_BACKEND = "ollama"
   $env:RAG_VECTOR_SIZE = "1024"
-  if (-not $env:RERANKER_ENABLED) { $env:RERANKER_ENABLED = "false" }
+  # Honor the GUI-persisted choice before inherited process defaults.
+  $rerankerEnabled = Get-LesDotEnvValue "RERANKER_ENABLED"
+  if ([string]::IsNullOrWhiteSpace($rerankerEnabled)) { $rerankerEnabled = [string]$env:RERANKER_ENABLED }
+  if ([string]::IsNullOrWhiteSpace($rerankerEnabled)) { $rerankerEnabled = "true" }
+  $env:RERANKER_ENABLED = $rerankerEnabled.Trim()
   $env:RERANKER_BACKEND = "sentence_transformers"
   $env:RERANK_MODEL = if ($env:RERANK_MODEL) { $env:RERANK_MODEL } else { "BAAI/bge-reranker-v2-m3" }
 }

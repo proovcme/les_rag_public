@@ -117,6 +117,11 @@ class LosslessBody:
     catalog_text: str = ""
 
 
+def nrsp_catalog_reference(catalog_id: str) -> str:
+    """Name a shared container without presenting it as a selectable rule."""
+    return f"НР/СП: catalog_ref=[{catalog_id}] (не rule_id)."
+
+
 def lossless_nrsp_body(content: str, meta: Mapping[str, Any]) -> LosslessBody:
     """Share only the exact producer-owned block and exact ordered metadata."""
     rules = meta.get("nr_sp_candidates")
@@ -139,14 +144,14 @@ def lossless_nrsp_body(content: str, meta: Mapping[str, Any]) -> LosslessBody:
     identity = json.dumps({"text": block, "candidates": rules}, ensure_ascii=False,
                           sort_keys=True, separators=(",", ":"), default=str)
     catalog_id = "nrsp_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
-    marker = f"НР/СП: общий буквальный каталог [{catalog_id}]."
+    marker = nrsp_catalog_reference(catalog_id)
     return LosslessBody(content, content[:start] + marker + content[end:], catalog_id, block)
 
 
 def restore_nrsp_body(body: LosslessBody) -> str:
     if not body.catalog_id:
         return body.content
-    marker = f"НР/СП: общий буквальный каталог [{body.catalog_id}]."
+    marker = nrsp_catalog_reference(body.catalog_id)
     return body.content.replace(marker, body.catalog_text, 1)
 
 

@@ -1,5 +1,30 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат967 — измеренные границы установленного966
+
+966 V2 завершён:6171passed/20skipped/818.65s,325files,9commands rc0;
+exact NSIS/upgrade/rollback/reinstall/EXE-only приняты, basic9pass/1warn.
+Live B0/B1 создали файлы, но нормовая/финансовая приёмка не закрыта.
+Основные frames реально32768; два B1 proof вызова без отдельных Governor
+receipts оставляют общий capacity verdict unknown. Это не причина считать
+резерв этих вызовов доказанно16k и не основание ослаблять guard.
+
+`test_windows_reranker_bootstrap_967.py`:21case, реальные Python loader и
+изолированные штатные PS helpers, persisted/process/default и явный false.
+RED13failed/8passed → adjacent56passed/9.07s.
+`test_nrsp_catalog_reference_967.py`:4case, canonical ID и hash контейнера,
+двухправильный каталог, literal preservation, отсутствие автомаппинга.
+RED3failed/1passed → grouped93passed/0.83s; adjacent235passed/32.18s;
+context/capacity319passed/26.92s.
+`test_sheet_proof_context_admission_967.py`: собственный existing Governor
+для двух proof requests, сохранность author rows/source/evidence, явный
+technical overflow без нового предметного решения.6cases, включая два настоящих
+вторых хода «Продолжи»: прежние строки terminal/complete, без новых вызовов,
+паузы или pending. RED выявил обход admission и zombie continuation;
+исправленный adjacent:127passed/28.53s. Root независимые3новых suite:
+31passed/12.16s, `artifacts/live_967/root_independent_final.xml`.
+Все три файла включены в CURRENT_TESTS; full967 и installed live pending.
+
 ## Кандидат966 — шаблон ВОР, Windows retention, namespace добора
 
 Первый full966:6155passed/20skipped/16failed/820.05s. Отказы — прежние
@@ -8,7 +33,8 @@ hermeticity830. Контрактные assertions перемещены на им
 добавлены проверки печатного active и rawJSON; ни одна денежная/источниковая
 проверка не убрана, hermeticity suite неизменён. Related5files124passed/6.47s,
 `artifacts/live_966/print_template/active_sheet_contract_final.xml`.
-Full v2 идёт в отдельный immutable output; первый RED сохранён.
+Full V2 завершён:6171passed/20skipped/818.65s,9commands rc0;
+первый RED сохранён отдельно.
 
 `test_chat_attachment_retention_966.py`:12case; общая OS-lock между пятью
 lifecycle API и независимым процессом, два first pin, освобождение при crash,

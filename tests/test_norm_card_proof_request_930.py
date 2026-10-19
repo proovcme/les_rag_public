@@ -126,9 +126,21 @@ async def test_the_read_that_proves_the_chosen_card_is_the_models_own(tmp_path, 
     # the card was read by exact identity, by the model, not fabricated by the application
     assert run.exact_reads == [{"norm_key": "immutable-norm-b", "norm_code": NORM_CODE_B}]
     proof_turn = run.requests[2]
-    roles = [message["role"] for message in proof_turn.messages[-2:]]
-    assert roles == ["assistant", "user"], "the proof request is a message, not a tool call"
-    assert NORM_CODE_B in str(proof_turn.messages[-1]["content"])
+    # The exact prior answer and proof ask are now mandatory Governor evidence,
+    # admitted together rather than appended after the initial budget check.
+    proof_payloads = []
+    for message in proof_turn.messages:
+        assert message["role"] not in {"tool", "function"} and not message.get("tool_calls")
+        for line in str(message.get("content") or "").splitlines():
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and "proof_previous_model_answer" in payload:
+                proof_payloads.append(payload)
+    assert len(proof_payloads) == 1
+    assert proof_payloads[0]["proof_previous_model_answer"] == SECOND_NORM_ANSWER
+    assert NORM_CODE_B in proof_payloads[0]["proof_request"]
     rows = (trace.get("model_result") or {}).get("decision_rows") or []
     assert [row["_evidence_check"]["card_body_shown"] for row in rows] == [True, True]
     assert not [gap for gap in (trace.get("result_readiness") or {}).get("row_projection") or []
