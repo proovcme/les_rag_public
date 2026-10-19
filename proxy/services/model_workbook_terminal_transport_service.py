@@ -49,6 +49,61 @@ class WorkbookTerminalTransportError(ValueError):
                       "native_call_count": len(raw_calls), "assistant_visible_chars": len(assistant_content)}
 
 
+def workbook_terminal_attachment_binding(
+    terminal: WorkbookTerminalTransportResult, *, root_attachment_id: str, source_catalog,
+) -> dict[str, str]:
+    """Bind transport identity without changing authored rows or export scope.
+
+    ``source_catalog`` must be the catalog already loaded from the request's
+    verified root metadata. A member alias does not load that child or replace
+    the root: every decision must name one literal row belonging to that member
+    in the same immutable collection. Ordinary root binding stays unchanged.
+    """
+    provided = terminal.arguments.get("attachment_id")
+    source_sha = str(getattr(source_catalog, "source_file_sha256", "") or "")
+    if isinstance(root_attachment_id, str) and root_attachment_id and provided == root_attachment_id:
+        return {"provided_attachment_id": provided, "root_attachment_id": root_attachment_id,
+                "binding_kind": "request_root", "source_sha256": source_sha}
+
+    def reject():
+        raise WorkbookTerminalTransportError("WORKBOOK_TERMINAL_ATTACHMENT_MISMATCH",
+            raw_calls=terminal.raw_calls, assistant_content="")
+
+    from proxy.services.attachment_source_catalog_service import AttachmentSourceCatalog
+
+    if (not isinstance(root_attachment_id, str) or not root_attachment_id
+            or not isinstance(provided, str) or not provided
+            or not isinstance(source_catalog, AttachmentSourceCatalog)
+            or not source_catalog.source_members or len(source_sha) != 64):
+        reject()
+    members = [member for member in source_catalog.source_members
+               if member.get("attachment_id") == provided or member.get("member_key") == provided]
+    if (len(members) != 1 or members[0].get("attachment_id") != provided
+            or members[0].get("member_key") != provided):
+        reject()
+    member_sha = members[0].get("sha256")
+    if not isinstance(member_sha, str) or len(member_sha) != 64:
+        reject()
+    decisions = terminal.arguments.get("decisions")
+    if not isinstance(decisions, list) or not decisions:
+        reject()
+    prefix = provided + "::"
+    known = [row.locator for row in source_catalog.rows]
+    for row in decisions:
+        if not isinstance(row, Mapping):
+            reject()
+        locator = row.get("source_row")
+        if not isinstance(locator, str) or not locator.startswith(prefix) or known.count(locator) != 1:
+            reject()
+        origins = [origin for origin in source_catalog.source_row_origins if origin.get("source_row") == locator]
+        if (len(origins) != 1 or origins[0].get("member_key") != provided
+                or origins[0].get("attachment_id") != provided
+                or origins[0].get("source_file_sha256") != member_sha):
+            reject()
+    return {"provided_attachment_id": provided, "root_attachment_id": root_attachment_id,
+            "binding_kind": "verified_collection_member_alias", "source_sha256": source_sha}
+
+
 def _json_values(value: Any) -> bool:
     if isinstance(value, dict):
         return all(isinstance(key, str) and _json_values(item) for key, item in value.items())

@@ -560,7 +560,7 @@ def _resolve_position_coefficients(
 
 
 def _cited_conversion(row: Mapping[str, Any], source_qty: float) -> tuple[float, dict[str, Any]] | None:
-    """Packaging, section length and mass-per-meter only with an explicit source."""
+    """Use an authored derived quantity only with an explicit calculation basis."""
 
     source = str(
         row.get("conversion_source")
@@ -578,6 +578,7 @@ def _cited_conversion(row: Mapping[str, Any], source_qty: float) -> tuple[float,
             "status": "cited_calc_quantity",
             "conversion_source": source,
             "calc_quantity": float(calc),
+            **({"conversion_factor": float(factor)} if factor is not None and math.isfinite(factor) else {}),
         }
     if factor is None or not math.isfinite(factor):
         return None
@@ -2318,6 +2319,25 @@ def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, A
             "status": "missing_quantity",
             "message": "нет исходного количества для расчёта строки",
         }
+    calc = _num(row.get("calc_quantity"))
+    factor = _num(row.get("conversion_factor"))
+    if calc is not None and factor is not None:
+        expected_calc = float(raw_qty) * float(factor)
+        if not math.isfinite(expected_calc) or not quantities_close(float(calc), expected_calc):
+            return None, {
+                **base_trace,
+                "status": "needs_input",
+                "invalid_field": "calc_quantity",
+                "calc_quantity": calc,
+                "calc_unit": str(row.get("calc_unit") or "").strip(),
+                "conversion_factor": factor,
+                "expected_calc_quantity": expected_calc if math.isfinite(expected_calc) else None,
+                "conversion_source": str(row.get("conversion_source") or row.get("quantity_source") or "").strip(),
+                "message": (
+                    "calc_quantity не согласуется с исходным количеством × conversion_factor; "
+                    "проверьте оба авторских значения и основание расчёта. Исходные значения сохранены."
+                ),
+            }
     if norm is None:
         return float(raw_qty), {
             **base_trace,
@@ -2329,11 +2349,36 @@ def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, A
 
     norm_unit = str(norm.get("unit") or "")
     scale, norm_base_unit = _norm_unit_factor(norm_unit)
+    base_trace["norm_measure_factor"] = scale
     cited = _cited_conversion(row, float(raw_qty))
     physical = float(raw_qty)
     extra: dict[str, Any] = {}
     if cited is not None:
         physical, extra = cited
+        calc_unit = str(row.get("calc_unit") or "").strip()
+        if calc_unit:
+            calc_scale, calc_base = norm_measure(calc_unit)
+            calc_base = _canon_unit(calc_base)
+            extra.update({"calc_unit": calc_unit, "calc_base_unit": calc_base})
+            if not math.isfinite(calc_scale) or calc_scale <= 0:
+                return None, {
+                    **base_trace, **extra, "status": "needs_input", "norm_unit": norm_unit,
+                    "invalid_field": "calc_unit",
+                    "message": "масштаб расчётной единицы calc_unit должен быть положительным конечным числом",
+                }
+            extra["calc_measure_factor"] = calc_scale
+            si = _unit_conversion_factor(calc_base, norm_base_unit)
+            if si is None:
+                return None, {
+                    **base_trace, **extra, "status": "needs_input", "norm_unit": norm_unit,
+                    "invalid_field": "calc_unit",
+                    "message": (
+                        f"расчётная единица calc_unit {calc_unit!r} несовместима с единицей нормы {norm_unit!r}; "
+                        "уточните авторский расчёт, исходные значения сохранены"
+                    ),
+                }
+            physical = float(physical) * calc_scale * si
+            extra["si_factor"] = si
     elif not source_unit:
         return None, {
             **base_trace,
@@ -2383,15 +2428,17 @@ def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, A
             else ("unit_conversion" if scale != 1.0 else "direct_from_row")
         )
     formula = f"{raw_qty} {source_unit}".strip()
-    if extra.get("conversion_factor") is not None:
+    if cited is not None:
+        derived = extra.get("calc_quantity")
+        if derived is None:
+            derived = float(raw_qty) * float(extra["conversion_factor"])
+        derivation = f"{raw_qty:g} {source_unit}"
+        if extra.get("conversion_factor") is not None:
+            derivation += f" × {extra['conversion_factor']:g}"
         formula = (
-            f"{raw_qty} {source_unit} × {extra['conversion_factor']:g} "
-            f"/ {scale:g} = {norm_qty} ({extra.get('conversion_source')})"
-        )
-    elif extra.get("calc_quantity") is not None:
-        formula = (
-            f"calc_quantity {extra['calc_quantity']:g} / {scale:g} = {norm_qty} "
-            f"({extra.get('conversion_source')})"
+            f"{derivation} → calc_quantity {derived:g} {extra.get('calc_unit') or norm_base_unit} "
+            f"× {extra.get('calc_measure_factor', 1):g} × {extra.get('si_factor', 1):g} "
+            f"/ {scale:g} = {norm_qty:g} {norm_unit} ({extra.get('conversion_source')})"
         )
     elif extra.get("source_measure_factor") is not None:
         formula = (
@@ -2986,11 +3033,22 @@ def positions_from_visible_lsr_rows(
                     position["confirmed_price_issue"] = "position_price_kind_unknown"
                 elif price_kind == "unit_price" and book_price_unit_conflict(price_unit, source_unit):
                     conversion_row = row
-                    if _norm_unit_factor(price_unit)[1] != _norm_unit_factor((norm or {}).get("unit"))[1]:
-                        # An authored conversion to the norm's physical unit
-                        # cannot silently become a conversion to another quote.
+                    price_base = _norm_unit_factor(price_unit)[1]
+                    source_base = _norm_unit_factor(source_unit)[1]
+                    calc_unit = str(row.get("calc_unit") or "").strip()
+                    calc_to_quote = bool(calc_unit) and _unit_conversion_factor(
+                        _norm_unit_factor(calc_unit)[1], price_base,
+                    ) is not None
+                    if (
+                        _unit_conversion_factor(source_base, price_base) is not None
+                        or (price_base != _norm_unit_factor((norm or {}).get("unit"))[1] and not calc_to_quote)
+                    ):
+                        # A whole-work unit quote prices the physical source
+                        # volume, not repeated norm equivalents. Cross-dimensional
+                        # conversion still needs its authored basis in the quote's
+                        # unit; an unrelated norm conversion cannot become one.
                         conversion_row = {key: value for key, value in row.items()
-                                          if key not in {"calc_quantity", "conversion_factor", "conversion_source", "quantity_source"}}
+                                          if key not in {"calc_quantity", "calc_unit", "conversion_factor", "conversion_source", "quantity_source"}}
                     price_qty, price_qty_trace = _norm_qty_from_visible_row(conversion_row, "", {"unit": price_unit})
                     position["confirmed_price_quantity"] = price_qty
                     position["confirmed_price_quantity_trace"] = price_qty_trace

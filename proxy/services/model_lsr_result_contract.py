@@ -38,6 +38,16 @@ OPTIONAL_FIELDS = (
     "resolves_proposal_id",
 )
 
+LSR_SOURCE_VOLUME_INSTRUCTION = (
+    "Масштаб нормы применяется один раз. quantity не дели; calc_quantity/conversion_factor "
+    "с conversion_source — обоснованный перевод (фасовка, геометрия, расход), без масштаба нормы. "
+)
+
+LSR_DERIVED_VOLUME_INSTRUCTION = (
+    "Для кратности всей нормы calc_quantity/calc_unit — расчётный эквивалент, формула — conversion_source. "
+    "Для начисляемой добавочной нормы covered_by_work_id не задавай. "
+)
+
 
 def _unique_json_object(pairs):
     value = {}
@@ -907,10 +917,7 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "unit_compatible сравнивает физическую величину, а не масштаб измерителя: "
         "м и 100 м, м² и 100 м², шт и 100 шт совместимы по единице; это само по себе "
         "не подтверждает действие, объект, условия или состав. Исходные unit и quantity сохраняй. "
-        "Масштаб измерителя нормы код применяет один раз; не дели quantity и "
-        "не дублируй этот масштаб в calc_quantity/conversion_factor. Эти поля вместе "
-        "с conversion_source нужны для обоснованного перехода к другой физической величине "
-        "(фасовка, геометрия, расход), а не для масштаба измерителя нормы. "
+        + LSR_SOURCE_VOLUME_INSTRUCTION + LSR_DERIVED_VOLUME_INSTRUCTION +
         "Не копируй числовой объём работы как расход ресурса с другой единицей: "
         "площадь или длина не становится массой при смене unit. Для производного расхода "
         "используй расход из полной карточки на её измеритель либо доказанную формулу и её источник; "

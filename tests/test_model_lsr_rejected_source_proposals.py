@@ -108,7 +108,7 @@ def test_proposal_scope_accepts_only_proven_locator_aliases_without_rewriting(tm
 
 
 @pytest.mark.asyncio
-async def test_source_scoped_guard_preserves_every_refused_operation_on_the_same_source(tmp_path, monkeypatch):
+async def test_source_guard_keeps_valid_sibling_and_preserves_only_refused_operation(tmp_path, monkeypatch):
     monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "jobs.sqlite"))
     first, second = _rows(mixed=True)
     same_source = {**first, "title": "Another authored operation on the same source", "quantity": 12, "unit": "m"}
@@ -116,14 +116,23 @@ async def test_source_scoped_guard_preserves_every_refused_operation_on_the_same
     job = WorkbookResearchJobService().get(run.result["retrieval_trace"]["workbook_research_job"]["job_id"])
     assert job["status"] == "paused"
     assert "S!R2" in job["remaining"]
-    assert [row["source_row"] for row in job["accepted_rows"]] == ["S!R3"]
+    # The fixture source is S!R2 = 12 m. Its valid second operation must not
+    # inherit the first operation's 15.71 m2 mismatch merely by sharing R2.
+    assert [row["source_row"] for row in job["accepted_rows"]] == ["S!R2", "S!R3"]
+    for accepted, original in zip(job["accepted_rows"], (same_source, second), strict=True):
+        assert {key: accepted[key] for key in original} == original
+        assert accepted["operation_id"]
     proposals = app.active_source_conflict_proposals(job)
-    assert len(proposals) == 2
-    assert [item["decision"]["title"] for item in proposals] == [first["title"], same_source["title"]]
-    assert [item["decision"]["quantity"] for item in proposals] == [15.71, 12]
+    assert len(proposals) == 1
+    assert {key: proposals[0]["decision"][key] for key in first} == first
+    assert [item["decision"]["title"] for item in proposals] == [first["title"]]
+    assert [item["decision"]["quantity"] for item in proposals] == [15.71]
     assert all("source_quantity_mismatch:S!R2" in item["errors"] for item in proposals)
     assert run.executions[0][0]["args"]["draft"] is True
     assert any(issue["code"] == "MODEL_PROPOSAL_UNAPPLIED" for issue in run.executions[0][1]["document_issues"])
+    assert any(issue["code"] == "WORKBOOK_RESEARCH_INCOMPLETE"
+               and "S!R2" in issue["remaining_locators"]
+               for issue in run.executions[0][1]["document_issues"])
 
 
 @pytest.mark.asyncio

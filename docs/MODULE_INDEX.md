@@ -1,5 +1,19 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 968 — кандидат после установленных контрольных прогонов967
+
+🟡 Source0.31.240/build968/native5.1.968; установлен967/bef113b7.
+У967 полный gate6202passed/20skipped/9rc0, exact NSIS и EXE-only приняты.
+Свежие B0/B1 не прошли профессиональную приёмку; multifile ВОР остановилась
+на техническом member/root binding до принятия семи авторских решений.
+
+✅ Код: verified collection terminal alias с прежним root scope; индивидуальный
+source-quantity guard; явная calc_unit/согласованность расчётных полей и отдельный
+quote quantity; видимая формула расчётного эквивалента в XLSX. Новых зависимостей,
+модельных циклов, выбора норм/кратности кодом нет. Точки входа — CODE_MAP968;
+доки — `modules/rag-evidence-flow.md`, `ALGO-lsr-assembly.md`.
+Общий gate, точная установка и live-приёмка968 ещё pending; customer-ready=false.
+
 ## 967 — Windows rerank, идентичность НР/СП и proof admission
 
 🟡 Кандидат0.31.239/build967; установлен966/aca71dc1, его full V2 и exact

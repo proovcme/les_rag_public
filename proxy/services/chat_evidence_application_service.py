@@ -12,6 +12,7 @@ from copy import deepcopy
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -137,6 +138,7 @@ from proxy.services.model_evidence_read_contract import (
 from proxy.services.model_evidence_read_service import run_model_evidence_read_turn
 from proxy.services.model_workbook_terminal_transport_service import (
     WorkbookTerminalTransportError, build_workbook_terminal_tool_schema, decode_workbook_terminal_response,
+    workbook_terminal_attachment_binding,
 )
 from proxy.services.model_query_declaration_transport_service import (
     resolve_query_declaration_transport, govern_query_declaration_messages,
@@ -3195,13 +3197,34 @@ def sheet_pass_keep_rows(
                       f"operation_source_mismatch:{row.get('source_row')}:{row.get('operation_id')}"}
             for error in blocking
         )
-        if identity_blocked or (model_rag_row_kind(row) == "work" and _sheet_pass_row_blocked(row, blocking)):
+        if identity_blocked or (model_rag_row_kind(row) == "work" and _sheet_pass_row_blocked(
+                row, blocking, catalog=catalog)):
             continue
         kept.append(row)
     return kept
 
 
-def _sheet_pass_row_blocked(row: Mapping[str, Any], blocking_errors: Sequence[str]) -> bool:
+def _sheet_pass_row_source_measure_proven(
+    row: Mapping[str, Any], catalog: AttachmentSourceCatalog,
+) -> bool:
+    """A missing comparison error alone is not proof of an equivalent measure."""
+    source = catalog.lookup(row.get("source_row"))
+    source_quantity = getattr(source, "header_quantity", None)
+    quantity = row.get("quantity")
+    return bool(
+        source is not None and getattr(source, "quantity_column_known", False)
+        and isinstance(source_quantity, (int, float)) and not isinstance(source_quantity, bool)
+        and math.isfinite(source_quantity)
+        and header_bound_unit(source) and str(row.get("unit") or "").strip()
+        and isinstance(quantity, (int, float)) and not isinstance(quantity, bool)
+        and math.isfinite(quantity)
+        and not compare_model_row_to_catalog(row, catalog)
+    )
+
+
+def _sheet_pass_row_blocked(
+    row: Mapping[str, Any], blocking_errors: Sequence[str], *, catalog: AttachmentSourceCatalog,
+) -> bool:
     key = str(row.get("source_row") or "").strip()
     refs = {
         str(item or "").strip().upper()
@@ -3221,6 +3244,12 @@ def _sheet_pass_row_blocked(row: Mapping[str, Any], blocking_errors: Sequence[st
             "source_quantity_mismatch",
             "duplicate_source_row",
         } and rest == key:
+            # Distinct operations may share a source locator. A packet-level
+            # quantity error belongs only to the operation that actually fails
+            # the unchanged source comparison, not every sibling operation.
+            if (prefix == "source_quantity_mismatch"
+                    and _sheet_pass_row_source_measure_proven(row, catalog)):
+                continue
             return True
         if prefix == "unknown_evidence_ref" and rest.upper() in refs:
             return True
@@ -3251,11 +3280,13 @@ def sheet_pass_rejected_row_proposals(
             continue
         key = str(row.get("source_row") or "").strip()
         operation_id = str(row.get("operation_id") or "")
+        source_measure_proven = _sheet_pass_row_source_measure_proven(row, catalog)
         row_errors = [str(error) for error in errors if str(error) in {
             f"source_quantity_mismatch:{key}", f"source_unit_mismatch:{key}",
             f"duplicate_source_row:{key}", f"unknown_operation_id:{key}:{operation_id}",
             f"operation_source_mismatch:{key}:{operation_id}",
-        }]
+        } and (not str(error).startswith(("source_quantity_mismatch:", "source_unit_mismatch:"))
+               or not source_measure_proven)]
         if not row_errors:
             continue
         proposals.append({
@@ -9742,9 +9773,13 @@ async def _execute_chat_evidence_application(
                         if terminal.trace["function"] not in terminal_names:
                             raise WorkbookTerminalTransportError("WORKBOOK_TERMINAL_NOT_OFFERED",
                                 raw_calls=terminal.raw_calls, assistant_content=response.text)
-                        if terminal.arguments.get("attachment_id") != str(getattr(req, "attachment_id", "") or ""):
-                            raise WorkbookTerminalTransportError("WORKBOOK_TERMINAL_ATTACHMENT_MISMATCH",
-                                raw_calls=terminal.raw_calls, assistant_content=response.text)
+                        try:
+                            attachment_binding = workbook_terminal_attachment_binding(terminal,
+                                root_attachment_id=str(getattr(req, "attachment_id", "") or ""),
+                                source_catalog=source_catalog)
+                        except WorkbookTerminalTransportError as binding_error:
+                            raise WorkbookTerminalTransportError(binding_error.code,
+                                raw_calls=terminal.raw_calls, assistant_content=response.text) from binding_error
                         if response.finish_reason not in {"stop", "tool_calls", "function_call", "end_turn"}:
                             raise WorkbookTerminalTransportError("WORKBOOK_TERMINAL_PROVIDER_INCOMPLETE",
                                 raw_calls=terminal.raw_calls, assistant_content=response.text)
@@ -9752,7 +9787,7 @@ async def _execute_chat_evidence_application(
                         retrieval_trace.setdefault("workbook_terminal_transport", []).append({
                             **terminal.trace, "purpose": purpose, "provider_finish_reason": response.finish_reason,
                             "semantic_finish_reason": "stop", "transport_complete": True,
-                            "raw_arguments": terminal.raw_arguments})
+                            "raw_arguments": terminal.raw_arguments, "attachment_binding": attachment_binding})
                         return terminal
                     return extract
 
@@ -9760,10 +9795,17 @@ async def _execute_chat_evidence_application(
                     terminal_labels = {"build_vor_workbook": "ВОР", "build_lsr_workbook": "ЛСР"}
                     terminal_names = [tool.get("function", {}).get("name") for tool in native_tools
                                       if tool.get("function", {}).get("name") in terminal_labels]
-                    if len(terminal_names) != 1 or artifact_kind_declaration.get("status") != "declared":
+                    if not terminal_names:
                         return ""
+                    root_binding = ("\nКонтекст упаковки всего прикреплённого исходника: "
+                        f"attachment_id={json.dumps(str(getattr(req, 'attachment_id', '') or ''), ensure_ascii=False)}. "
+                        "Копируй этот attachment_id в итоговый вызов. ID участника комплекта в source_manifest "
+                        "обозначает происхождение строки, а не отдельный target упаковки; "
+                        "source_row и work_row сохраняй дословно.")
+                    if len(terminal_names) != 1 or artifact_kind_declaration.get("status") != "declared":
+                        return root_binding
                     terminal_name = terminal_names[0]
-                    return (f"\nЕсли пользователь не задал формат ответа, завершённые строки {terminal_labels[terminal_name]} можно передать "
+                    return root_binding + (f"\nЕсли пользователь не задал формат ответа, завершённые строки {terminal_labels[terminal_name]} можно передать "
                             f"в {terminal_name} через decisions. Это итоговые решения, не новый поиск и не "
                             "непосредственная упаковка. source_row и work_row — буквальные предложенные адреса; "
                             "operation_id и expected_revision сохраняй из прежних решений. Явный формат пользователя сохраняется.")

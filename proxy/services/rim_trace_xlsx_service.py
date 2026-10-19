@@ -268,10 +268,26 @@ def _save_calculated_workbook(wb, path: Path, values: dict) -> None:
 
 def _xlsx_work_name(row: dict[str, Any], value: Any) -> Any:
     source = str(value or "").strip()
-    official = str((row.get("meta") or {}).get("official_name") or "").strip()
+    meta = row.get("meta") or {}
+    official = str(meta.get("official_name") or "").strip()
     if official and source and " ".join(official.lower().split()) != " ".join(source.lower().split()):
-        return f"{official} / {source}"
-    return official or value
+        name = f"{official} / {source}"
+    else:
+        name = official or value
+    quantity = meta.get("quantity_trace") or {}
+    if not isinstance(quantity, Mapping) or quantity.get("status") not in {
+        "cited_calc_quantity", "cited_conversion_factor",
+    }:
+        return name
+    basis = str(quantity.get("conversion_source") or "").strip()
+    formula = str(quantity.get("formula") or "").strip()
+    if not basis or not formula:
+        return name
+    amount = quantity.get("source_quantity")
+    amount = format(amount, "g") if isinstance(amount, (int, float)) and not isinstance(amount, bool) else str(amount)
+    unit = str(quantity.get("source_unit") or "").strip()
+    explanation = formula if basis in formula else f"{formula}. Основание: {basis}"
+    return f"{name}\nИсходный объём: {amount} {unit}; расчётный эквивалент: {explanation}"
 
 
 def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start_r: int,
@@ -298,6 +314,12 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
                 val = _LABEL_FIX.get(str(cols[key]), cols[key]) if key == "3" else cols[key]
                 if rtype == "work" and key == "3":
                     val = _xlsx_work_name(row, val)
+                    if isinstance(val, str) and "\nИсходный объём:" in val:
+                        # Keep the cited formula readable in print as well as
+                        # in the cell editor; Excel does not reliably auto-fit
+                        # wrapped rows written by another application.
+                        lines = sum(max(1, math.ceil(len(line) / 40)) for line in val.splitlines())
+                        ws.row_dimensions[r].height = min(409, max(30, 12 * lines))
                 put(r, xc, val, font=(S["bold"] if is_group else S["small"]), num=(xc in _NUM_COLS))
         # наименование группы/итога, если в columns нет "3"
         if "3" not in cols:

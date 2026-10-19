@@ -1,5 +1,20 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 968 — комплект, независимые операции и явный расчётный объём
+
+`model_workbook_terminal_transport_service.workbook_terminal_attachment_binding`
+сверяет root либо единственный literal member с verified catalog/origins/SHA;
+nested extractor чата сохраняет raw и пишет binding audit, упаковщик берёт root.
+`_sheet_pass_row_blocked` снимает соседнюю quantity error только при доказанной
+исходной мере и успешном сравнении именно этой операции; proposal причины
+остаются индивидуальными. Identity/foreign/duplicate guards не ослабляются.
+`model_lsr_result_contract` поясняет кратность через прежние calc-поля.
+`rim_lsr_trace_service._norm_qty_from_visible_row` учитывает явную calc_unit,
+проверяет два числовых поля и переполнение; исходник не изменяется. Work quote
+quantity рассчитывается отдельно от нормативного эквивалента.
+`rim_trace_xlsx_service._xlsx_work_name` показывает существующую quantity_trace
+формулу/основание, без перерасчёта; `_position_rows` задаёт высоту этой строки.
+
 ## 966 — шаблон документа и concurrent metadata
 
 `bor_service._vor_print_plan` строит только отображение полных авторских решений;

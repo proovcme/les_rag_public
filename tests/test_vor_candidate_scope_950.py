@@ -119,11 +119,25 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
     assert lsr.count(new_phrase) == 1
     assert old_phrase not in lsr
     assert hashlib.sha256(lsr.encode("utf-8")).hexdigest() == (
+        "3f888e45e5bacf51996388514a2c04741dfee83160d92d0a35e219a8bdb1d538"
+    )
+    # Only the literal authorized967/968 clarifications may differ from the950
+    # carrier's original byte-pinned LSR contract.
+    from proxy.services.model_lsr_result_contract import LSR_DERIVED_VOLUME_INSTRUCTION, LSR_SOURCE_VOLUME_INSTRUCTION
+    assert lsr.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
+    before_repetition_clarification = lsr.replace(LSR_DERIVED_VOLUME_INSTRUCTION, "", 1)
+    assert before_repetition_clarification.count(LSR_SOURCE_VOLUME_INSTRUCTION) == 1
+    before_repetition_clarification = before_repetition_clarification.replace(
+        LSR_SOURCE_VOLUME_INSTRUCTION,
+        'Масштаб измерителя нормы код применяет один раз; не дели quantity и '
+        'не дублируй этот масштаб в calc_quantity/conversion_factor. Эти поля вместе '
+        'с conversion_source нужны для обоснованного перехода к другой физической величине '
+        '(фасовка, геометрия, расход), а не для масштаба измерителя нормы. '
+        , 1)
+    assert hashlib.sha256(before_repetition_clarification.encode("utf-8")).hexdigest() == (
         "be98cbccdebbdcbe4df6669bfe2206c0b191a5046a79c84f42d4e9ce17152918"
     )
-    # Only the literal authorized967 clarification may differ from the950
-    # carrier's original byte-pinned LSR contract.
-    before_nrsp_clarification = lsr.replace(new_phrase, old_phrase, 1)
+    before_nrsp_clarification = before_repetition_clarification.replace(new_phrase, old_phrase, 1)
     assert before_nrsp_clarification.count(old_phrase) == 1
     assert new_phrase not in before_nrsp_clarification
     assert hashlib.sha256(before_nrsp_clarification.encode("utf-8")).hexdigest() == (

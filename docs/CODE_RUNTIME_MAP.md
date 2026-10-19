@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1236 |
-| Строк Python | 422887 |
+| Python-файлов под git | 1240 |
+| Строк Python | 423797 |
 | PRODUCT_REACHABLE | 387 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 837 |
+| TEST_OR_TOOL_ONLY | 841 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 343 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 15821 | 123 |
+| proxy/services/chat_evidence_application_service.py | 15863 | 124 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 8401 | 12 |
 | proxy/routers/chat.py | 4931 | 57 |
@@ -40,9 +40,9 @@
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |
 | proxy/routers/datasets.py | 3887 | 20 |
-| proxy/services/rim_lsr_trace_service.py | 3453 | 44 |
+| proxy/services/rim_lsr_trace_service.py | 3511 | 46 |
 | sovushka/styles.py | 3301 | 3 |
-| proxy/services/workbook_research_job_service.py | 3287 | 61 |
+| proxy/services/workbook_research_job_service.py | 3287 | 62 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
@@ -55,7 +55,7 @@
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | sovushka/pages/diag.py | 1605 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
-| proxy/services/attachment_source_catalog_service.py | 1513 | 49 |
+| proxy/services/attachment_source_catalog_service.py | 1513 | 51 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | proxy/services/retrieval_service.py | 1409 | 10 |

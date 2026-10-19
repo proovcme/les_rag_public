@@ -10,7 +10,7 @@
 
 **Spec:** запрос владельца19.10.2026; образец «ВОР монтаж БАП П1 13.05 (2).pdf»; AGENTS.md; ROADMAP_TO_V1.md; docs/archive/HANDOFF_965_2026-10-17.md.
 
-**Точка19.10.2026:** задачи1–4 завершены на установленном966/`aca71dc1…`; B0/B1 — замер, **не professional PASS**.967 — кандидат, `customer-ready=false`.
+**Точка19.10.2026:** задачи1–4 завершены, установлен967/`bef113b7…` с full V3 и exact NSIS/EXE-only. B0/B1 и multifile — замер, **не professional PASS**.968 исправляет измеренные member/root binding, соседний source guard и derived-quantity arithmetic/presentation; full gate/install/live pending, `customer-ready=false`.
 
 ## Global Constraints
 

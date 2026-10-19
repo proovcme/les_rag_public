@@ -1,5 +1,45 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 19.10.2026 — установлен967; кандидат968 по измеренным отказам документов
+
+Установлен0.31.239/build967/native5.1.967, commit
+`bef113b70f4888cef5d9cdc6a1bf9efb5f11cc93`. Frozen V3:6202passed/20skipped,
+834.20s,328files,9команд rc0; `artifacts/gates_967_final_v3/receipt.json`,
+SHA31aabcea…. NSIS0028ff8a…, фактически извлечённый native80236fbc…,
+manifest517files. Upgrade/rollback/reinstall и EXE-only приняты. Откат к966
+воспроизвёл прежний rerank=false: первичный отказ сохранён; отдельное штатное
+восстановление единственного RERANKER_ENABLED=true проверено supplemental
+receipt, остальные394фактора/14jobs/14artifacts не изменились. Повторная точная
+установка967 и cold boot сохранили все395факторов. Basic9pass/1warn/0fail.
+Публичной публикации нет.
+
+Свежие B0/B1 на одном ВОР/вопросе/profile32 завершены:482.67/523.45s;
+capacity measured_pass с input131072/output32768/query8192 и собственным
+Governor для всех фактических purposes. B0 доставил8решений, но кратность35
+осталась только в пояснении; confirmed47634.02 — две поставки, а не нормативные
+работы. B1 выбрал более близкую семью стяжки с добавкой, но смешал физический
+объём и кратность, опустил семейства шифров; draft6accepted/1remaining,
+confirmed/preliminary0. Независимые отзывы и raw сохранены в
+`artifacts/live_967/final_v3/lsr32_comparison/`. Professional PASS отсутствует.
+
+Контроль двух файлов ВОР остановился до принятия7авторских строк: terminal
+назвал проверенный CSV-member вместо root комплекта. Это измеренный
+WORKBOOK_TERMINAL_ATTACHMENT_MISMATCH, не отсутствие RAG или готового текста.
+В968 root явно показан модели, verified member alias допускается технически
+без изменения решений/root job. Отдельный дефект guard отклонял валидную
+базовую операцию из-за ошибки соседней добавки на том же source_row; теперь
+исключение только при доказанной собственной мере. Identity/unknown guards
+сохранены.
+
+Source0.31.240/build968/native5.1.968 также учитывает явную calc_unit,
+согласованность двух числовых полей, overflow и отдельный quote quantity;
+формула исходного/расчётного объёма видна в XLSX. Прежние calc-поля поясняют
+кратность; новых предметных циклов/коэффициентных протоколов нет. Компактная
+инструкция сохраняет прежний tiny-context evidence: root25passed/4.48s,
+бюджеты/проверки карточек не ослаблены. RIM related242passed/31.58s,
+alias18passed/3.96s; независимые code reviews без найденных P1/P2.
+Общий gate, exact NSIS и installed live968 pending. Customer-ready=false.
+
 ## 19.10.2026 — установлен966; измеренные причины для кандидата967
 
 Установлен0.31.238/build966/native5.1.966, commit

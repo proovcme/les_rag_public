@@ -1,5 +1,26 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат968 — регрессии установленных отказов967
+
+`test_workbook_collection_terminal_binding_968.py`:18case, root/member binding
+на реальном transport→packer и B0/B1, второй файл в remaining, foreign/empty/
+ambiguous origins/SHA, неизменные raw0/null. `test_lsr_same_source_quantity_scope_968.py`:
+17case, несколько операций по одному адресу, доказанная мера, unknown/identity/
+duplicate/tail guards. Один прежний fixture исправлен: валидный sibling сохраняется,
+невалидный остаётся proposal; прочие проверки не удалены.
+`test_rim_explicit_derived_quantities_968.py`:51case, calc_unit/SI/масштаб,
+противоречие/overflow, signed/zero и quote quantity. Related242passed/31.58s.
+`test_lsr_derived_quantity_presentation_968.py`:3case, контракт, видимая формула,
+неизменные решения и обычная строка без выдуманного пересчёта.
+Root compact+snapshot+tiny-context25passed/4.48s: бюджеты и card assertions
+не ослаблены. Два прежних byte pins восстанавливаются обратными literal
+изменениями. Новые файлы включены в CURRENT_TESTS. Общий gate/live968 pending.
+
+967 V3:6202passed/20skipped/834.20s,328files/9rc0. Exact NSIS0028ff8a…,
+packaged native80236fbc…,517files; install/rollback/reinstall/EXE-only и basic
+9PASS/1WARN. Capacity обоих новых B0/B1 measured_pass, input131072/answer32768.
+Технические доказательства не заменяют профессиональную приёмку документов.
+
 ## Кандидат967 — измеренные границы установленного966
 
 966 V2 завершён:6171passed/20skipped/818.65s,325files,9commands rc0;

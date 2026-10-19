@@ -30,7 +30,7 @@ def test_only_explicit_vor_target_receives_dedicated_operation_contract():
 
 
 @pytest.mark.parametrize("kind", ["lsr", "both", "unknown", "VOR"])
-def test_existing_lsr_instruction_changes_only_authorized967_nrsp_clarification(kind):
+def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(kind):
     instruction = lsr_result_table_instruction(artifact_kind=kind)
     old_phrase = "nr_sp_rule_id выбирай из карточки по известным условиям; при неизвестных — "
     new_phrase = (
@@ -40,11 +40,25 @@ def test_existing_lsr_instruction_changes_only_authorized967_nrsp_clarification(
     assert instruction.count(new_phrase) == 1
     assert old_phrase not in instruction
     assert hashlib.sha256(instruction.encode("utf-8")).hexdigest() == (
+        "3f888e45e5bacf51996388514a2c04741dfee83160d92d0a35e219a8bdb1d538"
+    )
+    # Undo the two literal authorized967/968 additions; every other byte stays
+    # pinned to the original948 contract instead of accepting a new whole text.
+    from proxy.services.model_lsr_result_contract import LSR_DERIVED_VOLUME_INSTRUCTION, LSR_SOURCE_VOLUME_INSTRUCTION
+    assert instruction.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
+    before_repetition_clarification = instruction.replace(LSR_DERIVED_VOLUME_INSTRUCTION, "", 1)
+    assert before_repetition_clarification.count(LSR_SOURCE_VOLUME_INSTRUCTION) == 1
+    before_repetition_clarification = before_repetition_clarification.replace(
+        LSR_SOURCE_VOLUME_INSTRUCTION,
+        'Масштаб измерителя нормы код применяет один раз; не дели quantity и '
+        'не дублируй этот масштаб в calc_quantity/conversion_factor. Эти поля вместе '
+        'с conversion_source нужны для обоснованного перехода к другой физической величине '
+        '(фасовка, геометрия, расход), а не для масштаба измерителя нормы. '
+        , 1)
+    assert hashlib.sha256(before_repetition_clarification.encode("utf-8")).hexdigest() == (
         "be98cbccdebbdcbe4df6669bfe2206c0b191a5046a79c84f42d4e9ce17152918"
     )
-    # Revert exactly the literal authorized967 change; every other byte stays
-    # pinned to the original948 contract instead of accepting a new whole text.
-    before_nrsp_clarification = instruction.replace(new_phrase, old_phrase, 1)
+    before_nrsp_clarification = before_repetition_clarification.replace(new_phrase, old_phrase, 1)
     assert before_nrsp_clarification.count(old_phrase) == 1
     assert new_phrase not in before_nrsp_clarification
     assert hashlib.sha256(before_nrsp_clarification.encode("utf-8")).hexdigest() == (
