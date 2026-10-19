@@ -118,7 +118,17 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
     )
     assert lsr.count(new_phrase) == 1
     assert old_phrase not in lsr
-    assert hashlib.sha256(lsr.encode("utf-8")).hexdigest() == (
+    # Undo only969's literal explanation and optional-tail de-duplication.
+    from proxy.services.model_lsr_result_contract import LSR_DESCRIBED_OPTIONAL_FIELDS, OPTIONAL_FIELDS
+    additional_rule = ("Добавочную норму верни отдельной операцией с norm_code/evidence_refs. "
+                       "norm_components — только аудит, расчёт не выполняется. ")
+    assert lsr.count(additional_rule) == 1
+    numeric_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
+    previous_tail = ", ".join(field for field in OPTIONAL_FIELDS
+                              if field not in LSR_DESCRIBED_OPTIONAL_FIELDS - {"norm_components"})
+    assert lsr.count(numeric_tail) == 1
+    before_components = lsr.replace(additional_rule, "", 1).replace(numeric_tail, previous_tail, 1)
+    assert hashlib.sha256(before_components.encode("utf-8")).hexdigest() == (
         "8c64fc2bd26b07eb2a3eb99b9a11cff6d61fb7585c12a05d237982acde2f83c5"
     )
     # Only the literal authorized967/968 clarifications may differ from the950

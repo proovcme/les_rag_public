@@ -4421,6 +4421,8 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
         ):
             if field_name in item:
                 row[field_name] = item[field_name]
+        if "norm_components" in item:
+            row["norm_components"] = deepcopy(item["norm_components"])
         compact.append(row)
     return compact
 
@@ -7704,7 +7706,9 @@ def validate_model_rag_result_structure(
             # external RAG citation. Explicitly selected norms still do, and
             # references actually supplied by the model are always checked.
             if artifact_kind != "vor" or not _explicit_absence_value(row.get("norm_code")):
-                errors.append(f"missing_evidence_ref:{source_row}")
+                from proxy.services.rim_lsr_trace_service import source_confirmed_zero_work_charge_not_required
+                if not source_confirmed_zero_work_charge_not_required(row, source_catalog):
+                    errors.append(f"missing_evidence_ref:{source_row}")
             continue
         raw_bindings = row.get("evidence_bindings")
         bindings = (

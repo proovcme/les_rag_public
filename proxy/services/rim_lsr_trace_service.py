@@ -7,9 +7,11 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from copy import deepcopy
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from dataclasses import dataclass, replace
 from typing import Any, Mapping, Optional
 
@@ -35,6 +37,8 @@ from proxy.services.lsr_norm_quality_gate_service import (
 )
 from proxy.services.attachment_source_catalog_service import (
     AttachmentSourceCatalog,
+    compare_model_row_to_catalog,
+    header_bound_unit,
     normalize_unit,
     quantities_close,
 )
@@ -46,6 +50,19 @@ def _f(value: Any) -> float:
         return float(str(value).replace("\xa0", "").replace(" ", "").replace(",", "."))
     except (TypeError, ValueError):
         return 0.0
+
+
+def round_numeric_measure_amount(value: float) -> float:
+    """Match Excel ROUND(...,2) only for the numeric-measure price trace.
+
+    IEEE-754 finite floats need at most 309 integer decimal digits. The local
+    precision also leaves room for the two cents without changing global state.
+    """
+    if not math.isfinite(value):
+        raise ValueError("Numeric-measure amount must be finite")
+    with localcontext() as context:
+        context.prec = 340
+        return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _round(value: Any, ndigits: int = 2) -> float:
@@ -251,6 +268,16 @@ def book_price_unit_conflict(book_unit: Any, resource_unit: Any) -> str:
     right = str(resource_unit or "").strip()
     if not left or not right:
         return ""
+    # A written zero measure is not the implicit single unit. The common norm
+    # parser intentionally defaults falsy scales, so price compatibility must
+    # refuse that invalid explicit base before the existing equality check.
+    for unit_text in (left, right):
+        explicit = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s*([a-zа-яё]+[23]?)\.?",
+                                unit_text.lower().replace("²", "2").replace("³", "3"))
+        if explicit:
+            scale = _num(explicit.group(1))
+            if scale is None or not math.isfinite(scale) or scale <= 0:
+                return left
     if _norm_unit_factor(left) == _norm_unit_factor(right):
         return ""
     return left
@@ -259,10 +286,11 @@ def book_price_unit_conflict(book_unit: Any, resource_unit: Any) -> str:
 def convert_book_price_unit(
     record: Mapping[str, Any], resource_unit: Any, *, resource_code: str = "", pricebook=None,
 ) -> tuple[Mapping[str, Any], Optional[dict[str, Any]]]:
-    """Convert only explicit single SI units, with the selected book as owner.
+    """Convert strict SI pairs or compatible explicit numeric measures.
 
-    Quantities and the dimensionless index never change. The strict unit guard
-    remains strict for callers that do not actually apply this price conversion.
+    Existing single-SI rounding stays unchanged. Numeric measures preserve the
+    authoritative quoted current price before conversion and round only amounts.
+    Resource quantities, model choices and the dimensionless index never change.
     """
     aliases = {
         "кг": "кг", "kg": "кг", "килограмм": "кг", "килограмма": "кг", "килограммов": "кг",
@@ -278,35 +306,79 @@ def convert_book_price_unit(
         match = re.fullmatch(r"(?:1(?:[.,]0+)?\s*)?([a-zа-яё]+)\.?", text)
         return aliases.get(match.group(1), "") if match else ""
 
+    def numeric_measure(value: Any) -> tuple[float, str] | None:
+        # Full spelling only: no prefixes such as "м кабеля" or pack/density guesses.
+        text = str(value or "").strip().lower().replace("²", "2").replace("³", "3")
+        match = re.fullmatch(r"(?:(\d+(?:[.,]\d+)?)\s*)?([a-zа-яё]+[23]?)\.?", text)
+        if not match:
+            return None
+        scale = _num(match.group(1)) if match.group(1) else 1.0
+        base = {**aliases, "м2": "м2", "m2": "м2", "м3": "м3", "m3": "м3",
+                "л": "л", "l": "л", "шт": "шт"}.get(match.group(2), "")
+        if scale is None or not math.isfinite(scale) or scale <= 0 or not base:
+            return None
+        return float(scale), base
+
     book_unit = str(record.get("unit") or "").strip()
     target_unit = str(resource_unit or "").strip()
-    source, target = single_unit(book_unit), single_unit(target_unit)
+    book_measure, target_measure = numeric_measure(book_unit), numeric_measure(target_unit)
+    numeric_conversion = bool(book_measure and target_measure
+                              and (book_measure[0] != 1 or target_measure[0] != 1)
+                              and book_price_unit_conflict(book_unit, target_unit))
+    if numeric_conversion:
+        book_scale, source = book_measure
+        target_scale, target = target_measure
+        si_factor = _unit_conversion_factor(target, source)
+        factor = (target_scale / book_scale) * si_factor if si_factor is not None else None
+    else:
+        source, target = single_unit(book_unit), single_unit(target_unit)
+        factor = _unit_conversion_factor(target, source) if source and target else None
     # Price per resource unit needs the number of book units in that unit.
-    factor = _unit_conversion_factor(target, source) if source and target else None
-    if factor in (None, 1) or record.get("price_conflict"):
+    if (factor is None or not math.isfinite(factor) or factor <= 0
+            or (factor == 1 and not numeric_conversion) or record.get("price_conflict")):
         return record, None
     prices = {key: _num(record.get(key)) for key in ("price_current", "price_base", "price_current_eff")}
     index = _num(record.get("index"))
-    selected = prices["price_current"]
-    if selected is None and prices["price_base"] is not None and index is not None:
-        selected = prices["price_base"] * index
-    if selected is None:
-        selected = prices["price_current_eff"]
+    quote_field = ""
+    if numeric_conversion:
+        if index is not None and not math.isfinite(index):
+            return record, None
+        selected = prices["price_current"]
+        quote_field = "price_current"
+        if selected is None:
+            selected = prices["price_current_eff"]
+            quote_field = "price_current_eff"
+        if selected is None and prices["price_base"] is not None and index is not None:
+            raw_book_current = prices["price_base"] * index
+            selected = round_numeric_measure_amount(raw_book_current) if math.isfinite(raw_book_current) else None
+            quote_field = "round_book_base_x_index_2"
+    else:
+        selected = prices["price_current"]
+        if selected is None and prices["price_base"] is not None and index is not None:
+            selected = prices["price_base"] * index
+        if selected is None:
+            selected = prices["price_current_eff"]
     if selected is None or not math.isfinite(selected):
         return record, None
     converted = dict(record)
     for key, price in prices.items():
         if price is not None:
             scaled = price * factor
-            if not math.isfinite(scaled):
+            if not math.isfinite(scaled) or (numeric_conversion and price != 0 and scaled == 0):
                 return record, None
             converted[key] = scaled
     converted["unit"] = target_unit
-    resource_price = _num(converted.get("price_current"))
-    if resource_price is None and prices["price_base"] is not None and index is not None:
-        resource_price = converted["price_base"] * index
-    if resource_price is None:
-        resource_price = _num(converted.get("price_current_eff"))
+    if numeric_conversion:
+        resource_price = selected * factor
+        if not math.isfinite(resource_price) or (selected != 0 and resource_price == 0):
+            return record, None
+        converted["price_current_eff"] = resource_price
+    else:
+        resource_price = _num(converted.get("price_current"))
+        if resource_price is None and prices["price_base"] is not None and index is not None:
+            resource_price = converted["price_base"] * index
+        if resource_price is None:
+            resource_price = _num(converted.get("price_current_eff"))
     if resource_price is None or not math.isfinite(resource_price):
         return record, None
     book_name = str(getattr(pricebook, "source_name", "") or "")
@@ -317,14 +389,22 @@ def convert_book_price_unit(
     return converted, {
         "book_unit": book_unit, "resource_unit": target_unit,
         "conversion_factor": factor,
-        "formula": f"price_resource_unit = price_book_unit × {factor:g}; {book_unit} → {target_unit}",
+        "formula": (
+            f"{selected!r} × {factor!r} = {resource_price!r}; {book_unit} → {target_unit}"
+            if numeric_conversion else
+            f"price_resource_unit = price_book_unit × {factor:g}; {book_unit} → {target_unit}"
+        ),
         "price_owner": "chosen_pricebook", "resource_code": resource_code,
         "book_current_price": selected, "resource_current_price": resource_price,
         "source_ref": source_ref, "book_source_name": book_name, "book_source_sha256": book_sha,
         "region": str(getattr(pricebook, "region", "") or record.get("region") or ""),
         "quarter": str(getattr(pricebook, "quarter", "") or record.get("quarter") or ""),
+        **({"conversion_kind": "numeric_measure", "quote_field": quote_field,
+            "book_measure_factor": book_measure[0], "resource_measure_factor": target_measure[0],
+            "source_price_fields": {**prices, "index": index},
+            "rounding": "authoritative_book_quote_before_conversion; amount_only_after_conversion"}
+           if numeric_conversion else {}),
     }
-
 
 def book_unit_conflict_note(res: dict[str, Any], book_unit: str) -> str:
     """One operator-readable line naming both sides of a rejected book price.
@@ -743,6 +823,7 @@ def row_projection(binding: Mapping[str, Any]) -> dict[str, Any]:
         "norm_code": str(binding.get("code") or ""),
         "norm_status": str(binding.get("norm_status") or ""),
         **{name: readiness.get(name) for name in OPERATION_READINESS_FIELDS},
+        **({"charge_not_required": True} if binding.get("charge_not_required") is True else {}),
         "prices_provided": readiness.get("prices_provided"),
         "open_reasons": list(readiness.get("open_reasons") or []),
         # § 4: how the operator's own money became the position's sum, in the
@@ -1037,6 +1118,21 @@ def _resolve_price_trace(
             )
             book_unit_conflict = book_price_unit_conflict(rec.get("unit"), res.get("unit"))
         if rec is not None and not book_unit_conflict:
+            if unit_conversion and unit_conversion.get("conversion_kind") == "numeric_measure":
+                # A quoted current book price is already rounded in its own
+                # measure. Never promote base×index precision past that quote.
+                quote_field = unit_conversion["quote_field"]
+                source, basis = {
+                    "price_current": ("fgis_current", "split_form_col_8"),
+                    "price_current_eff": ("fgis_effective", "split_form_effective_price"),
+                    "round_book_base_x_index_2": ("fgis_base_index", "split_form_col_5_x_col_9"),
+                }[quote_field]
+                return PriceTrace(
+                    price=unit_conversion["resource_current_price"], source=source, basis=basis,
+                    column_8=_num(rec.get("price_base")), column_9=_num(rec.get("index")),
+                    column_10=unit_conversion["resource_current_price"],
+                    unit_conversion=unit_conversion,
+                )
             unit_action = (
                 "book_price_unit_unknown"
                 if res.get("requires_price_unit_provenance") and (
@@ -1215,6 +1311,31 @@ def _resource_coeff(kind: str, *, k_ozp: float, k_em: float) -> float:
     return 1.0
 
 
+def _has_uncomputed_norm_components(item: Mapping[str, Any]) -> bool:
+    """Recognize only the explicitly authored field, never coverage prose."""
+    value = item.get("norm_components")
+    return not (value is None or value == "" or (isinstance(value, list) and not value))
+
+
+def _norm_components_audit_warnings(position: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Preserve the complete unsupported value in bounded literal audit cells."""
+    if not _has_uncomputed_norm_components(position):
+        return []
+    # ASCII JSON also bounds Excel's UTF-16 units for astral source characters.
+    literal = json.dumps(position["norm_components"], ensure_ascii=True, separators=(",", ":"))
+    pieces = [literal[offset:offset + 30000] for offset in range(0, len(literal), 30000)]
+    source_row = str(position.get("source_row") or "")
+    operation_id = str(position.get("op_key") or position.get("work_id") or "")
+    return [{
+        "code": "norm_components_not_calculated", "source_row": source_row,
+        "work_id": operation_id, "fragment": index + 1, "fragments": len(pieces),
+        "reason": (
+            f"Строка {source_row}, операция {operation_id}: norm_components сохранён, но не рассчитан. "
+            f"Фрагмент {index + 1}/{len(pieces)}. JSON: " + piece
+        ),
+    } for index, piece in enumerate(pieces)]
+
+
 def build_position_trace(
     position: dict[str, Any],
     *,
@@ -1267,6 +1388,11 @@ def build_position_trace(
     labor_code_trace = gfgis.labor_code_provenance(resources)
     flags: list[str] = []
     completeness_reasons: list[str] = []
+    uncomputed_components = _has_uncomputed_norm_components(position)
+    if uncomputed_components:
+        flags.append("Состав норм norm_components сохранён, но не рассчитан; "
+                     "дополнительные начисления требуют отдельных операций и обоснованных расчётных объёмов")
+        completeness_reasons.append("norm_components_not_calculated")
     if position.get("norm_card_body_unread"):
         flags.append("Полная карточка выбранной нормы не была прочитана моделью")
         completeness_reasons.append("norm_card_body_unread")
@@ -1495,7 +1621,9 @@ def build_position_trace(
             if total_qty is not None and price.price is not None else None
         )
         if cost is not None:
-            cost = round(cost, 2)
+            cost = (round_numeric_measure_amount(cost)
+                    if price.unit_conversion and price.unit_conversion.get("conversion_kind") == "numeric_measure"
+                    else round(cost, 2))
         elif total_qty is not None and price.price is not None:
             flags.append(f"стоимость ресурса вне числового диапазона: {res.get('name', '?')}")
             completeness_reasons.append(f"resource_amount_nonfinite:{res.get('code') or res.get('name') or '?'}")
@@ -1816,11 +1944,13 @@ def build_position_trace(
             )
         )
 
-    if (resource_binding_conflicts or position.get("norm_card_body_unread")
+    if (uncomputed_components or resource_binding_conflicts or position.get("norm_card_body_unread")
             or any(reason.startswith(("quantity_missing:", "resource_amount_nonfinite:")) for reason in completeness_reasons)):
         # An attributed position price cannot hide an unapplied resource action.
         # Nor can it certify an unknown quantity in the selected composition.
         full_amount = None
+    if uncomputed_components:
+        position_total_label = "Известная стоимость позиции"
     rows.extend(
         [
             _row("group_labor", "ОТ(ЗТ)", columns={3: "ОТ(ЗТ)", 4: "чел.-ч", 7: qty_sums["labor"], 12: ozp}),
@@ -2050,7 +2180,10 @@ def build_lsr_trace(
     else:
         summary["result_status"] = "norm_selection_required"
 
-    return {"name": name or "", "sections": sections, "summary": summary}
+    component_warnings = [warning for position in positions or []
+                          for warning in _norm_components_audit_warnings(position)]
+    return {"name": name or "", "sections": sections, "summary": summary,
+            **({"warnings": component_warnings} if component_warnings else {})}
 
 
 _NEGATIVE_COVERAGE_EXACT = {
@@ -2487,6 +2620,36 @@ _SUBSTANTIATED_NORM_STATUSES = {
     "ANALOGUE_VERIFIED",
 }
 
+def source_confirmed_zero_work_charge_not_required(
+    row: Mapping[str, Any], source_catalog: AttachmentSourceCatalog | None,
+) -> bool:
+    """A plain numeric source-confirmed zero creates no charge or norm decision."""
+    if inferred_row_role(row) != "work" or _code_from_visible_row(row) or source_catalog is None:
+        return False
+    if not source_catalog.extraction_complete:
+        return False
+    # Do not erase an authored recalculation, quote, resource action or coverage
+    # relation. They keep their existing validation path even when raw qty is 0.
+    for field in ("calc_quantity", "conversion_factor", "calc_unit", "conversion_source",
+                  "quantity_source", "confirmed_price", "resource_bindings", "resource_review",
+                  "covered_by_work_id", "covered_by_operation_id"):
+        if row.get(field) not in (None, "", [], {}):
+            return False
+    components = row.get("norm_components")
+    if not (components is None or components == "" or (isinstance(components, list) and not components)):
+        return False
+    quantity = _first_value(row, "qty", "quantity", "quantity_total", "volume", "amount_qty",
+                            "количество", "кол-во", "объем", "объём")
+    if type(quantity) not in (int, float) or not math.isfinite(quantity) or quantity != 0:
+        return False
+    source = source_catalog.lookup(row.get("source_row"))
+    source_quantity = getattr(source, "header_quantity", None)
+    return bool(source is not None and source.quantity_column_known
+                and type(source_quantity) in (int, float) and math.isfinite(source_quantity)
+                and source_quantity == 0 and header_bound_unit(source)
+                and not compare_model_row_to_catalog(row, source_catalog))
+
+
 def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str, Any]:
     """Per-row split of the §6 states — never raised above what the data shows.
 
@@ -2508,7 +2671,10 @@ def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str,
         or role in {"work", "material", "equipment", "resource"}
         or (role == "unresolved" and bool(str(row.get("open_gap") or row.get("open_question") or "").strip()))
     )
-    if str(binding.get("code") or ""):
+    no_charge = binding.get("charge_not_required") is True
+    if no_charge:
+        norm_selected = None
+    elif str(binding.get("code") or ""):
         norm_selected = True
     elif (
         explicit_header
@@ -2542,7 +2708,9 @@ def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str,
                 "norm_code": str(binding.get("code") or row.get("norm_code") or ""),
             }
         )
-    if role in {"material", "equipment"} and status not in {
+    if no_charge:
+        volume_verified = True
+    elif role in {"material", "equipment"} and status not in {
         "unconfirmed_quantity", "missing_quantity",
     }:
         volume_verified: bool | None = True
@@ -2564,7 +2732,7 @@ def _row_readiness(binding: dict[str, Any], row: Mapping[str, Any]) -> dict[str,
         # heading or a resource line has none of its own, so its answer is «н/п» —
         # not the «нет» that would count it as an unfinished calculation.
         "position_calculated": (
-            bool(binding.get("position")) if role not in {"header", "resource"} else None
+            bool(binding.get("position")) if role not in {"header", "resource"} and not no_charge else None
         ),
         "prices_provided": None,
         # Task 2026-09-29 § 4: the seven questions of one operation, kept apart
@@ -2747,6 +2915,14 @@ def positions_from_visible_lsr_rows(
                 )
             )
             continue
+        if source_confirmed_zero_work_charge_not_required(row, source_catalog):
+            message = "Подтверждённый исходником объём 0; начисление не требуется."
+            bindings.append(_with_visible_identity(
+                {"row": source_row, "status": "bound", "row_role": role,
+                 "work_row": parent, "source_row": row, "charge_not_required": True,
+                 "message": message, "reason": message},
+                title=title, source_qty=source_qty, source_unit=source_unit))
+            continue
         if role in {"material", "equipment"} and not code:
             price = _num(row.get("confirmed_price"))
             if price is not None and not math.isfinite(price):
@@ -2832,6 +3008,8 @@ def positions_from_visible_lsr_rows(
                 "price_kind" in row and str(row.get("price_kind") or "").strip() != "unit_price"
                 and price_owner != "operator"
             )
+            if "norm_components" in row:
+                position["norm_components"] = deepcopy(row["norm_components"])
             positions.append(position)
             bindings.append(
                 _with_visible_identity(
@@ -3113,6 +3291,8 @@ def positions_from_visible_lsr_rows(
             )
         ):
             position["source_coefficient_overlap"] = True
+        if "norm_components" in row:
+            position["norm_components"] = deepcopy(row["norm_components"])
         positions.append(position)
         binding: dict[str, Any] = {
             "row": source_row,
@@ -3247,7 +3427,8 @@ def build_lsr_trace_from_visible_rows(
     summary["input_rows"] = len(rows or [])
     summary["bound_rows"] = len(bound["positions"])
     summary["covered_rows"] = sum(b.get("status") == "covered" for b in bound["row_bindings"])
-    summary["unbound_rows"] = max(0, len(rows or []) - len(bound["positions"]))
+    summary["charge_not_required_rows"] = sum(item.get("charge_not_required") is True for item in bound["row_bindings"])
+    summary["unbound_rows"] = max(0, len(rows or []) - len(bound["positions"]) - summary["charge_not_required_rows"])
     open_bindings = [
         item for item in bound["row_bindings"] if item.get("status") not in closed
     ]
@@ -3271,7 +3452,12 @@ def build_lsr_trace_from_visible_rows(
             "посчитан, статус NEEDS_RESEARCH сохранён".strip()
             for item in research_priced
         ]
-    if not bound["positions"]:
+    no_charge_only = any(item.get("charge_not_required") is True for item in bound["row_bindings"]) and all(
+        item.get("charge_not_required") is True or item.get("status") == "structure_accounted"
+        for item in bound["row_bindings"])
+    if no_charge_only:
+        summary.update(result_status="priced_final", amount_status="complete", full_amount=0.0)
+    elif not bound["positions"]:
         summary["result_status"] = "norm_selection_required"
     elif gap_flags(summary.get("flags") or []):
         summary["result_status"] = "priced_partial"
@@ -3385,9 +3571,11 @@ def build_lsr_trace_from_visible_rows(
                 str(reason).startswith(("quantity_missing:", "resource_amount_nonfinite:"))
                 for reason in (pos_summary.get("completeness_reasons") or [])
             )
+            components_calculated = "norm_components_not_calculated" not in (
+                pos_summary.get("completeness_reasons") or [])
             preliminary = not (
                 norm_applicability_ok and units_ok and price_ok and conflicts_ok
-                and resource_quantities_ok
+                and resource_quantities_ok and components_calculated
             )
             readiness["norm_applicability_ok"] = bool(norm_applicability_ok)
             readiness["units_ok"] = bool(units_ok)
@@ -3465,6 +3653,13 @@ def build_lsr_trace_from_visible_rows(
             binding["readiness"] = dict(target["readiness"])
             binding["position_no"] = target.get("position_no")
             binding["readiness"]["open_reasons"] = list(target["readiness"].get("open_reasons") or [])
+            if _has_uncomputed_norm_components(binding.get("source_row") or {}):
+                # The authored coverage link and the parent's confirmed money
+                # remain intact; only this child's uncomputed request stays open.
+                binding["readiness"]["structure_calculated"] = False
+                binding["readiness"]["position_calculated"] = False
+                binding["readiness"]["open_reasons"].append("norm_components_not_calculated")
+                summary.update(result_status="priced_partial", amount_status="partial", full_amount=None)
     summary["kind_counts"] = kind_counts
     summary["selected_norms"] = selected_norms
     summary["selected_norm_ciphers"] = len(selected_ciphers)
@@ -3508,4 +3703,18 @@ def build_lsr_trace_from_visible_rows(
         lsr["blockers"] = list(lsr.get("blockers") or []) + blockers
     if warnings:
         lsr["warnings"] = list(lsr.get("warnings") or []) + warnings
+    # Missing/covered/unbound main rows still own their exact authored value.
+    # Do not manufacture a position just to make this unsupported field visible.
+    for binding in bound["row_bindings"]:
+        if binding.get("position"):
+            continue
+        authored = binding.get("source_row")
+        if not isinstance(authored, Mapping):
+            continue
+        component_warnings = _norm_components_audit_warnings({
+            "source_row": binding.get("row"), "op_key": operation_identity(authored),
+            "norm_components": authored.get("norm_components"),
+        })
+        if component_warnings:
+            lsr.setdefault("warnings", []).extend(component_warnings)
     return lsr

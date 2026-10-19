@@ -1,5 +1,37 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат969 — регрессии измеренных границ968
+
+CURRENT_TESTS содержит341 уникальный файл. Related targeted:316passed/6,29s
+(`artifacts/live_969/offline_targeted/core_v2.xml`) и233passed/7,15s
+(`artifacts/live_969/offline_targeted/adjacent.xml`); наборы пересекаются.
+Новые файлы включены в CURRENT_TESTS, но полный frozen gate/install/live969
+ещё не подтверждены. Числа последнего общего прогона и его commit добавляются
+только по actual receipt; подготовленные тесты не являются release acceptance.
+
+- `test_lsr_zero_charge_observation_969.py`: каталогом доказанный numeric0,
+  смешанные zero/nonzero работы, неизвестные/bool/text/nonfinite, явный calc/
+  quote/ресурсы/норма; одна граница validator→RIM→XLSX→readiness/retry.
+- `test_resource_price_scalar_measures_969.py`: оба реальных калькулятора,
+  authoritative quote до конверсии, физическая инвариантность, большая/знаковая/
+  нулевая величина, обратимость, прежний SI/identical-unit порядок, group/manual/
+  conflict/overflow guards, actual supply→LSR и формулы/кэши XLSX. Отдельно
+  HALF_UP для cent ties новой numeric_measure ветки; старый round не заменяется.
+- `test_lsr_uncomputed_norm_components_969.py`: parser/compact deep-copy,
+  неполнота base/quoted/covered позиции, отдельные соседние операции, отсутствие
+  основной нормы, malformed literal и длинный безопасный аудит без потерь;
+  ни авторского коэффициента, ни работы код не создаёт.
+- `test_lsr_additional_norm_prompt_969.py`: explicit additional-row инструкция
+  во всех LSR carriers, прежние исходные объёмы/scale/covered правила, отсутствие
+  сметных требований в ВОР и literal roundtrip без сгенерированных операций.
+
+Смежные `test_sovushka_chat` проверяют actual nested history follow: no artifact,
+plaintext, старый файл/текущий отказ, current partial, legacy LSR и legacy VOR.
+В `test_resource_price_unit_conversion` только две совместимые числовые меры
+перенесены из отрицательных в положительные проверки общего правила.
+Исторические byte pins948/950 сохраняются через точное обратное удаление новых
+instruction literals; прежние budgets и semantic guards не ослаблены.
+
 ## Кандидат968 — регрессии установленных отказов967
 
 `test_workbook_collection_terminal_binding_968.py`:22case, root/member binding

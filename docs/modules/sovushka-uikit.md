@@ -1,5 +1,17 @@
 # UI KIT «Совушка»
 
+## 969 — history follow не обещает отсутствующий файл
+
+После восстановления завершённого ответа banner «Файл в этой сессии» допустим
+только при текущем artifact, который действительно регистрируется прежним
+download-путём: modern workbook files либо legacy XLSX для не-vor_workbook.
+Legacy downloads.xlsx у vor_workbook не считается зарегистрированным файлом.
+Plaintext, structural_error без artifact и старый файл при ошибке текущего
+ответа получают нейтральное «Ответ сервера получен». Реальный partial workbook
+с доступной ссылкой остаётся видимым. Прежние terminal complete/paused notices
+сохраняются; нового UI-компонента, API или workflow нет. Регрессии — реальные
+nested history-follow cases в `tests/test_sovushka_chat.py`.
+
 ## 965 — несколько вложений к одному запросу (кандидат)
 
 Прежняя скрепка принимает несколько файлов и показывает их имена/состояния

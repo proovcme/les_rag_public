@@ -10,7 +10,7 @@
 
 **Spec:** запрос владельца19.10.2026; образец «ВОР монтаж БАП П1 13.05 (2).pdf»; AGENTS.md; ROADMAP_TO_V1.md; docs/archive/HANDOFF_965_2026-10-17.md.
 
-**Точка19.10.2026:** задачи1–4 завершены, установлен967/`bef113b7…` с full V3 и exact NSIS/EXE-only. B0/B1 и multifile — замер, **не professional PASS**.968 исправляет измеренные member/root binding, соседний source guard и derived-quantity arithmetic/presentation; frozen V3 прошёл6315tests/20skipped/9rc0, включая отдельный cited-pointer read debt при bare шифре. До NSIS два fresh bootstrap отказали на PE-trampoline access error; узкий bounded retry/marker fix прошёл95tests и два real isolated working-tree bootstrap67.937/67.609s. Последующий exact gate/install/live pending, `customer-ready=false`.
+**Точка19.10.2026:** задачи1–4 завершены. Установлен968/`68f71f44…`: все9команд V4 и exact NSIS/rollback/reinstall/EXE-only приняты; baseline после live измерен18jobs/18artifacts. B0 не создал файл из-за structural_error; B1 доставил partial ЛСР, multifile — неполную ВОР. Ни один из этих live-результатов не является professional PASS. Source969 — кандидат0.31.241/native5.1.969 с четырьмя измеренными техническими исправлениями и explicit-operation инструкцией (Task9). Полный frozen gate/install/live969 и ≥90% профессиональной применимости ещё не подтверждены; `customer-ready=false`.
 
 ## Global Constraints
 
@@ -113,8 +113,19 @@
 - [x] Root: три новые suite **31passed/12.16s** (`artifacts/live_967/root_independent_final.xml`); offline verification, не full release gate/professional PASS.
 - [ ] Exact clean967 full gate/install, затем свежий rerank-on B0/B1 с proof receipts, diverse inputs, ordinary/multifile retry и big318; проверить качество доставленных документов.
 
+### Task9 — 969: четыре измеренные технические границы, затем новая приёмка
+
+- [x] History follow обещает файл только по текущему регистрируемому artifact; no-artifact/plaintext/legacy VOR не создают ложный banner, partial файл сохраняется.
+- [x] Source-confirmed literal0 без начисляемых действий сохраняется информационной строкой без norm/price/retry долга; неизвестные/ненулевые/авторские перерасчёты не освобождаются от проверки.
+- [x] Совместимые numeric price measures: исходная округлённая quote до конверсии, без раннего округления переведённой цены; два калькулятора и видимые XLSX формулы/precision. HALF_UP только новой ветки; old SI/quote приоритеты сохраняются.
+- [x] norm_components сохраняется literal/deep-copy с norm_components_not_calculated и owner-operation аудитом; код не считает/не разворачивает состав. Добавочная норма запрашивается отдельной model-authored операцией с evidence.
+- [x] Четыре focused969 test files и смежные проверки включены в canonical inventory; byte pins948/950 сохраняют старые контракты точным обратным удалением новых instruction literals. Actual итоговые числа root добавляет по квитанциям.
+- [ ] Новый exact frozen969 full9 gate; canonical NSIS, actual extraction/pins, upgrade/rollback/reinstall/native-only/basic с неизменным18/18 baseline,395факторами и r12.
+- [ ] Свежие installed969 B0/B1/multifile и реальный operation-level retry; проверить сохранение закрытых операций, evidence/price basis и скачиваемых ревизий. Внутренний field-lock открытой операции не обещается.
+- [ ] Big318 stop/restart/plain continue и построчный контроль; затем независимая precision≥90% на проверенной разнородной выборке. Результат не объявлять готовым только по числу тестов/доставленных строк.
+
 ## Skill sources и самопроверка
 
 Использованы skills obra/superpowers на commit `bb92a77741419a4ab5f06e711a283343f1ada0c3`: systematic-debugging, test-driven-development, verification-before-completion, writing-plans. Они установлены в пользовательские Codex skills; инструкция пользователя об автономном исполнении имеет приоритет над общим предложением заново согласовывать план. Проверены также первичные materials anthropics/skills/docx и promptfoo assertions/evals; новых runtime dependencies не добавляем.
 
-Самопроверка: каждому требованию владельца соответствует задача; новый printable layout имеет отдельный roundtrip regression; точность не смешана с заполнением, принятый кодом шифр не считается автоматически профессионально правильным. Установлен967;968 остаётся кандидатом до exact full gate/install/live verification. История ошибок не удаляется, отложенные работы не выдаются за завершённые.
+Самопроверка: каждому требованию владельца соответствует задача; новый printable layout имеет отдельный roundtrip regression; точность не смешана с заполнением, принятый кодом шифр не считается автоматически профессионально правильным. Установлен968;969 остаётся кандидатом до нового exact full gate/install/live verification и профессиональной приёмки. История ошибок не удаляется, отложенные работы не выдаются за завершённые.

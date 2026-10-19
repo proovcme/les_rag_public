@@ -39,7 +39,18 @@ def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(
     )
     assert instruction.count(new_phrase) == 1
     assert old_phrase not in instruction
-    assert hashlib.sha256(instruction.encode("utf-8")).hexdigest() == (
+    # Undo exactly the additional-operation clarification; keep the previous
+    # byte pin, rather than accepting an unrelated new instruction wholesale.
+    from proxy.services.model_lsr_result_contract import LSR_DESCRIBED_OPTIONAL_FIELDS, OPTIONAL_FIELDS
+    additional_rule = ("Добавочную норму верни отдельной операцией с norm_code/evidence_refs. "
+                       "norm_components — только аудит, расчёт не выполняется. ")
+    assert instruction.count(additional_rule) == 1
+    numeric_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
+    previous_tail = ", ".join(field for field in OPTIONAL_FIELDS
+                              if field not in LSR_DESCRIBED_OPTIONAL_FIELDS - {"norm_components"})
+    assert instruction.count(numeric_tail) == 1
+    before_components = instruction.replace(additional_rule, "", 1).replace(numeric_tail, previous_tail, 1)
+    assert hashlib.sha256(before_components.encode("utf-8")).hexdigest() == (
         "8c64fc2bd26b07eb2a3eb99b9a11cff6d61fb7585c12a05d237982acde2f83c5"
     )
     # Undo the two literal authorized967/968 additions; every other byte stays

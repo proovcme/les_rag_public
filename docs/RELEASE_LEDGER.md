@@ -1,5 +1,51 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 19.10.2026 — установлен968; кандидат969 по измеренным live-результатам
+
+Установлен0.31.240/build968/native5.1.968, commit
+`68f71f44f7803bb0bf23379bfb7a796a454bae5e`. Все9команд V4 завершены rc0:
+`artifacts/gates_968_final_v4/receipt.json`. Фактический immutable NSIS3d1eb33a…,
+извлечённый packaged EXEcf6688aa…, полный runtime manifest517files/918206f3…;
+identity — `artifacts/release_968_final/installer_identity.json`. Canonical
+upgrade/rollback/reinstall/EXE-only приняты с неизменными395факторами,16jobs и
+16artifacts. После живых прогонов отдельно измерен текущий18/18 baseline:
+`artifacts/live_968/final_v4/final_state/retained_18.json` SHA17555221….
+
+Live968: B0 за418,157s вернул8решений, но model_result structural_error,
+packaged=false, файла нет. Добавка поменяла исходный объём без доказанного
+перерасчёта. Missing evidence_refs были advisory, не причиной отказа упаковки.
+Нулевая исходная работа дополнительно выявила
+ложный технический долг нормы. B1 за781,640s доставил7строк/remaining0,
+`rev_d83d0d1b…` SHAba5f19b6…, но priced_partial: подтверждённые34999,62 относятся
+к поставке, рассчитанных полностью работ0. Заявленные40мм не следуют из
+авторского пояснения20мм+дважды5мм; norm_components не был расчётной операцией.
+Есть реальные вопросы применимости аналогов, норм/ресурсов и цен. EXACT-флаги
+и успешный transport не доказывают precision≥90%. B0/B1 receipts сохранены в
+`artifacts/live_968/final_v4/lsr32_comparison/`.
+
+Multifile ВОР за676,531s доставила27авторских строк/remaining0, revision
+`rev_be65c1cb…` SHA9e8e7a75…; модель сместила содержимое части DOCX-строк,
+хотя фактически переданный typed source frame содержал правильные адреса,
+количества и единицы. В файле13 вопросов, vor_complete=false. Квитанция —
+`artifacts/live_968/final_v4/multifile_control/ORDINARY/run/receipt.json`.
+Это измерение разных маршрутов, не профессиональная приёмка документов.
+
+Кандидат0.31.241/build969/native5.1.969 закрывает четыре технические границы:
+ложный history banner о файле; доказанный исходный0 без начисления/долга нормы;
+совместимые числовые измерители котировки без раннего округления; сохранение
+norm_components с явным долгом нерассчитанного состава. Общая инструкция
+требует от модели отдельные начисляемые операции. norm_components не считается
+и не разворачивается; code не выбирает нормы/коэффициенты. Старые quote/SI
+ветви не переписываются. Retry остаётся operation-level, без field-lock.
+
+Targeted:316passed/6,29s (`artifacts/live_969/offline_targeted/core_v2.xml`)
+и233passed/7,15s (`artifacts/live_969/offline_targeted/adjacent.xml`), наборы
+частично пересекаются. Общий frozen gate, commit, NSIS и installed969 пока
+не зафиксированы этой записью. Новый полный gate, точная установка, свежие
+B0/B1/multifile, реальный добор и big318 stop/restart/continue обязательны.
+Профессиональная применимость≥90% и готовность заказчику не подтверждены;
+публичной публикации нет. Исторические pending ниже относятся к прежним этапам.
+
 ## 19.10.2026 — установлен967; кандидат968 по измеренным отказам документов
 
 Установлен0.31.239/build967/native5.1.967, commit

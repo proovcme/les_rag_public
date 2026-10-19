@@ -298,6 +298,7 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     pp = pp_start
     by_type: dict[str, list[int]] = {}
     row_meta_by_type: dict[str, dict[str, Any]] = {}
+    scalar_price_rows: dict[int, tuple[float, float]] = {}
     for row in rows:
         cols = row.get("columns", {}) or {}
         rtype = row.get("type", "")
@@ -306,6 +307,15 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
             row_meta_by_type["position_total"] = row.get("meta") or {}
         is_group = rtype in _GROUP_TYPES
         is_total = rtype in _TOTAL_TYPES
+        conversion = (row.get("meta") or {}).get("price_unit_conversion")
+        numeric_price = (conversion if str(rtype).startswith("resource_") and isinstance(conversion, Mapping)
+                         and conversion.get("conversion_kind") == "numeric_measure" else None)
+        if numeric_price:
+            quote, factor = numeric_price.get("book_current_price"), numeric_price.get("conversion_factor")
+            if (any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+                    for value in (quote, factor)) or factor <= 0):
+                raise ValueError("Invalid numeric-measure price conversion")
+            scalar_price_rows[r] = (float(quote), float(factor))
         if rtype == "work":
             pp += 1
             put(r, 1, pp, font=S["bold"], align="center")
@@ -320,7 +330,18 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
                         # wrapped rows written by another application.
                         lines = sum(max(1, math.ceil(len(line) / 40)) for line in val.splitlines())
                         ws.row_dimensions[r].height = min(409, max(30, 12 * lines))
+                if numeric_price and key == "3":
+                    val = (f"{val}\nПриведение цены: {numeric_price.get('formula')}. "
+                           f"Цена книги за {numeric_price.get('book_unit')}; "
+                           f"источник: {numeric_price.get('book_source_name') or numeric_price.get('source_ref')}.")
+                    lines = sum(max(1, math.ceil(len(line) / 40)) for line in val.splitlines())
+                    ws.row_dimensions[r].height = min(409, max(30, 12 * lines))
                 put(r, xc, val, font=(S["bold"] if is_group else S["small"]), num=(xc in _NUM_COLS))
+                if numeric_price and xc in {5, 6, 7, 8, 9, 10, 11} and isinstance(val, (int, float)):
+                    ws.cell(row=r, column=xc).number_format = (
+                        "0.###############E+00" if val and (abs(val) < 1e-10 or abs(val) >= 1e12)
+                        else "#,##0.00#############"
+                    )
         # наименование группы/итога, если в columns нет "3"
         if "3" not in cols:
             label = row.get("label", "")
@@ -332,7 +353,13 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
     # record, while Excel recalculates after quantity/price edits.
     for rtype in ("resource_labor", "resource_machine", "resource_machinist", "resource_material"):
         for row_no in by_type.get(rtype, []):
-            if ws.cell(row=row_no, column=8).value not in (None, "") and ws.cell(row=row_no, column=9).value not in (None, ""):
+            if row_no in scalar_price_rows:
+                quote, factor = scalar_price_rows[row_no]
+                # Numeric literals come from validated calculator provenance,
+                # never a model-supplied Excel formula. H/I remain provenance;
+                # their unrounded product must not replace the source quote.
+                _set_formula(ws, row_no, 10, f"={quote!r}*{factor!r}", S["formula_values"])
+            elif ws.cell(row=row_no, column=8).value not in (None, "") and ws.cell(row=row_no, column=9).value not in (None, ""):
                 _set_formula(ws, row_no, 10, f"=ROUND(H{row_no}*I{row_no},2)", S["formula_values"])
             if all(ws.cell(row=row_no, column=column).value not in (None, "") for column in (7, 10, 11, 12)):
                 _set_formula(ws, row_no, 12, f"=ROUND(G{row_no}*J{row_no}*K{row_no},2)", S["formula_values"])
@@ -841,13 +868,13 @@ def render_lsr_xlsx(lsr: dict[str, Any], out_path: str | Path, *,
                 ws, put, S, r, idx, sec.get("total", 0), position_total_rows=section_position_totals
             )
     for binding in lsr.get("row_bindings") or []:
-        if binding.get("status") != "covered":
+        if binding.get("status") != "covered" and binding.get("charge_not_required") is not True:
             continue
         source = binding.get("source_row") or {}
         put(r, 2, binding.get("row"))
         put(r, 3, f"{source.get('title') or ''}. {binding.get('message') or ''}")
         put(r, 4, source.get("unit"))
-        put(r, 7, source.get("quantity"))
+        put(r, 7, binding.get("source_quantity") if binding.get("charge_not_required") is True else source.get("quantity"))
         ws.row_dimensions[r].height = 56
         r += 1
     _, grand_rows = _grand_summary(ws, put, S, r, summary, formula_rows=all_formula_rows)

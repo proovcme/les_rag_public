@@ -43,7 +43,11 @@ def incomplete_financial_operations(
     for item in projection:
         if not isinstance(item, Mapping) or item.get("position_calculated") is not False:
             continue
-        if item.get("row_role") in {"header", "unresolved"} or item.get("status") == "covered":
+        if item.get("row_role") in {"header", "unresolved"}:
+            continue
+        reasons = item.get("open_reasons")
+        uncomputed_components = isinstance(reasons, (list, tuple)) and "norm_components_not_calculated" in reasons
+        if item.get("status") == "covered" and not uncomputed_components:
             continue
         identity = str(item.get("operation_id") or "")
         if not identity:

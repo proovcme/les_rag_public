@@ -2736,6 +2736,116 @@ async def test_first_follow_registers_saved_download_without_reload(monkeypatch,
     assert namespace["_history_follow_lock"]["busy"] is False
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current_artifact, final_text, old_file, expects_file_notice", [
+    (None, "ЛСР не создана: structural_error", False, False),
+    ({}, "Обычный текстовый ответ", False, False),
+    (None, "ЛСР не создана: structural_error", True, False),
+    ({"artifact_kind": "lsr_workbook", "filename": "LSR_partial.xlsx",
+      "download_url": "/api/artifacts/rev-current/download", "status": "PRICED_PARTIAL"},
+     "Черновик ЛСР: неполное покрытие", False, True),
+    ({"artifact_kind": "lsr_workbook", "title": "Черновик ЛСР",
+      "downloads": {"xlsx": "/artifacts/current-partial.xlsx"}},
+     "Черновик ЛСР: неполное покрытие", False, True),
+    ({"artifact_kind": "vor_workbook", "downloads": {"xlsx": "/artifacts/unregistered-vor.xlsx"}},
+     "Черновик ВОР без зарегистрированного файла", False, False),
+], ids=["structural-error-no-file", "plaintext-no-file", "old-file-current-failure",
+        "current-partial-workbook", "current-legacy-download", "legacy-vor-not-registered"])
+async def test_jobless_follow_claims_only_the_current_turn_download(
+    monkeypatch, current_artifact, final_text, old_file, expects_file_notice,
+):
+    """Exercise the shipped nested follow and file registration after PENDING.
+
+    Baseline/direct answers need not create a durable research job. A finished
+    text payload must not imply that a new workbook exists, including when a
+    previous turn already supplied a downloadable file.
+    """
+    from sovushka import state as state_module
+
+    old_url = "/api/artifacts/rev-old/download"
+    prior = [{"role": "user", "text": "Предыдущий запрос"},
+             {"role": "ai", "text": "Прежняя ревизия", "meta": {"artifact": {
+                 "artifact_kind": "lsr_workbook", "filename": "LSR_old.xlsx",
+                 "download_url": old_url}}}] if old_file else []
+    request = {"role": "user", "text": "Собери ЛСР"}
+    pending_history = [*prior, request, {"role": "ai", "text": "", "crag": "PENDING"}]
+    current_meta = {"artifact": current_artifact}
+    if "structural_error" in final_text:
+        current_meta["retrieval_trace"] = {"model_result": {
+            "status": "structural_error", "packaged": False}}
+    final_history = [*prior, request, {"role": "ai", "text": final_text, "meta": current_meta}]
+    local_state = {"session_id": "own-session", "chat_history": [], "chat_pending": None}
+    files = {old_url: {"name": "LSR_old.xlsx", "kind": "xlsx"}} if old_file else {}
+    bubbles, stop_visibility, history_reads = [], [], []
+
+    class ChatColumn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def clear(self):
+            bubbles.clear()
+
+    def persist(pending):
+        local_state["chat_pending"] = pending
+
+    async def fetch_history():
+        history_reads.append(True)
+        return pending_history if len(history_reads) == 1 else final_history
+
+    async def fetch_job(**_):
+        return None
+
+    def forbidden(*_, **__):
+        pytest.fail("Jobless follow must not add API calls, repack, or model dispatch")
+
+    monkeypatch.setattr(state_module, "persist_chat_pending", persist)
+    namespace = dict(vars(chat_page))
+    namespace.update({
+        "state": local_state, "_file_artifacts": files, "chat_column": ChatColumn(),
+        "_history_follow_lock": {"busy": False}, "_sending": {"v": True},
+        "_follow_placeholder": {"bubble": object(), "label": object(), "eta": object()},
+        "_lsr_card_state": {}, "_last_estimator_resume": {},
+        "_smeta_approval_payloads": {}, "_smeta_approval_cards": set(),
+        "_fetch_session_history_messages": fetch_history, "_selected_session_workbook_research": fetch_job,
+        "api_get": forbidden, "_clear_file_artifacts": files.clear,
+        "_render_chat_bubble": lambda text, *_, **__: bubbles.append(text),
+        "_paint_in_progress_bubble": lambda *_: bubbles.append("progress"),
+        "_rebuild_files_artifacts_panel": lambda: None, "_notify": lambda *_, **__: None,
+        "_scroll_chat_to_tail": lambda **_: None, "_repack_lsr_from_ui": forbidden,
+        "_apply_terminal_job_plan": forbidden,
+        "stop_dialog_btn": SimpleNamespace(set_visibility=stop_visibility.append),
+    })
+    # Execute actual follow/history/registration handlers; only their UI and IO
+    # dependencies are isolated, exactly as in the adjacent terminal-job test.
+    names = {"_follow_pending_history_if_needed", "_render_chat_history", "_render_msg",
+             "_register_artifact_downloads", "_register_file_artifact"}
+    tree = ast.parse(inspect.getsource(chat_page.build_chat))
+    nodes = [node for node in ast.walk(tree)
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
+    assert {node.name for node in nodes} == names
+    exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
+                 "existing_jobless_follow_handlers", "exec"), namespace)
+    await namespace["_follow_pending_history_if_needed"]()
+
+    assert ("Сборка на сервере завершилась. Файл в этой сессии." in bubbles) is expects_file_notice
+    assert ("Ответ сервера получен." in bubbles) is (not expects_file_notice)
+    assert final_text in bubbles
+    expected_urls = {old_url} if old_file else set()
+    if expects_file_notice:
+        current_url = current_artifact.get("download_url") or current_artifact["downloads"]["xlsx"]
+        expected_urls.add(current_url)
+        assert files[current_url]["kind"] == "xlsx"
+    assert set(files) == expected_urls
+    assert local_state["chat_pending"] is None
+    assert namespace["_sending"]["v"] is False
+    assert stop_visibility == [False]
+    assert namespace["_history_follow_lock"]["busy"] is False
+    assert len(history_reads) == 3
+
+
 def test_readiness_card_points_a_finished_job_at_its_file() -> None:
     """The card's document action downloads the revision; it never re-runs."""
 

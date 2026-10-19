@@ -50,11 +50,14 @@ LSR_SOURCE_VOLUME_INSTRUCTION = (
 LSR_DESCRIBED_OPTIONAL_FIELDS = frozenset({
     "resource_bindings", "calc_unit", "calc_quantity", "conversion_factor", "conversion_source",
     "confirmed_price", "price_kind", "price_unit", "price_source", "covered_by_work_id",
+    "norm_components",
 })
 
 LSR_DERIVED_VOLUME_INSTRUCTION = (
     "Для кратности всей нормы calc_quantity/calc_unit — расчётный эквивалент, формула — conversion_source. "
     "Для начисляемой добавочной нормы covered_by_work_id не задавай. "
+    "Добавочную норму верни отдельной операцией с norm_code/evidence_refs. "
+    "norm_components — только аудит, расчёт не выполняется. "
 )
 
 

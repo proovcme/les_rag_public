@@ -91,10 +91,10 @@ def test_si_conversion_scales_raw_price_once_before_currency_rounding(price_fiel
 
 
 @pytest.mark.parametrize("book_unit,resource_unit", [
-    ("кг", "л"), ("шт", "кг"), ("м3", "100 м3"), ("кг", "100 т"),
+    ("кг", "л"), ("шт", "кг"),
     ("труб", "кг"), ("кг", "транспорт"), ("км", "м кабеля"),
 ])
-def test_non_si_or_bulk_resource_units_remain_rejected(book_unit, resource_unit):
+def test_incompatible_or_noisy_resource_units_remain_rejected(book_unit, resource_unit):
     traced, row, assembled = calculate_both(
         {"unit": book_unit, "price_current": 10, "price_current_eff": 10}, resource_unit, 1)
     assert row["columns"].get("10") is None

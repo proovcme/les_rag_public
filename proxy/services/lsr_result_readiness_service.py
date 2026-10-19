@@ -412,7 +412,15 @@ def build_lsr_result_readiness(
         _text(item.get("operation_id")) for item in row_projection
         if item.get("status") == "covered" and item.get("covered_by_operation_id")
     }
+    zero_charge_keys = {
+        (catalog_source_locator(item.get("locator"), source_catalog), _text(item.get("operation_id")))
+        for item in row_projection if item.get("charge_not_required") is True
+    }
     for row in work_rows:
+        if (catalog_source_locator(_locator(row), source_catalog), operation_identity(row)) in zero_charge_keys:
+            # The calculator observed a source-confirmed literal zero, not a
+            # selected/verified norm. Preserve the row without a norm question.
+            continue
         if operation_identity(row) in validated_covered:
             # The linked operation owns the norm question. Its gaps are still
             # counted below and its readiness is inherited by this covered row.
@@ -970,7 +978,7 @@ def build_lsr_result_readiness(
         calculation_incomplete = sum(
             1
             for item in projection_work
-            if item.get("position_calculated") is not True
+            if item.get("position_calculated") is not True and item.get("charge_not_required") is not True
         )
         counts["works_with_calculated_position"] = sum(
             1

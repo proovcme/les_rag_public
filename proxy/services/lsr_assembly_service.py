@@ -38,6 +38,7 @@ from proxy.services.rim_lsr_trace_service import (
     book_price_unit_conflict,
     book_unit_conflict_note,
     convert_book_price_unit,
+    round_numeric_measure_amount,
     price_action_label,
     price_is_attributed,
     resource_group_note,
@@ -159,7 +160,8 @@ def _resource_price(
             if conversion:
                 # Same raw-price priority and rounding as the RIM trace. The
                 # factor is applied to price exactly once, never to quantity.
-                return round(conversion["resource_current_price"], 2), "fgis"
+                return (conversion["resource_current_price"] if conversion.get("conversion_kind") == "numeric_measure"
+                        else round(conversion["resource_current_price"], 2)), "fgis"
         if rec is not None and not book_price_unit_conflict(rec.get("unit"), res.get("unit")):
             # A book row prices the шифр per the unit it states.  The РИМ trace
             # applies the same rule (`rim_lsr_trace_service`), and both engines
@@ -416,7 +418,9 @@ def compute_position(
         else:
             cost = _optional_quantity(qty * price) if qty is not None else None
             if cost is not None:
-                cost = round(cost, 2)
+                cost = (round_numeric_measure_amount(cost)
+                        if conversion and conversion.get("conversion_kind") == "numeric_measure"
+                        else round(cost, 2))
             elif qty is not None:
                 flags.append(f"стоимость ресурса вне числового диапазона: {res.get('name', '?')}")
             if src == CARD_PRICE_SOURCE:

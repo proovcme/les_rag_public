@@ -6994,14 +6994,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             persist_chat_pending(None)
             _sending["v"] = False
             stop_dialog_btn.set_visibility(False)
+            artifact = payload.get("artifact") if isinstance(payload.get("artifact"), dict) else {}
+            downloads = artifact.get("downloads") if isinstance(artifact.get("downloads"), dict) else {}
             if workbook_job_is_terminal(pending):
                 # The follow loop ends on the durable state, not on hope: a
                 # research that finished without a file must not be announced
                 # as "Файл в этой сессии" — that sentence is what sent the
                 # operator looking for a document that does not exist.
                 _render_chat_history(format_terminal_assembly_notice(pending))
-            else:
+            elif artifact_workbook_files(artifact) or (
+                artifact.get("artifact_kind") != "vor_workbook"
+                and str(downloads.get("xlsx") or "").strip()
+            ):
                 _render_chat_history("Сборка на сервере завершилась. Файл в этой сессии.")
+            else:
+                _render_chat_history("Ответ сервера получен.")
             _scroll_chat_to_tail(force=True)
         finally:
             _history_follow_lock["busy"] = False
