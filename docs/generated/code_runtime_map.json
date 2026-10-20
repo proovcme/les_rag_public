@@ -18898,7 +18898,7 @@
     },
     {
       "inbound": [],
-      "lines": 634,
+      "lines": 660,
       "module": "tests.test_windows_native_boot_960",
       "outbound": [
         "tests/test_windows_application_update.py",
@@ -23961,7 +23961,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 867,
     "tracked_python_files": 1266,
-    "tracked_python_lines": 430045
+    "tracked_python_lines": 430071
   },
   "warnings": []
 }

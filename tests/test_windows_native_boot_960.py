@@ -170,11 +170,19 @@ def _rename_error_974(winerror, message="fixture tree rename blocked"):
     return error
 
 
-def _rename_clock_974(monkeypatch):
+def _rename_clock_974(monkeypatch, *, backend_errors=None):
     clock = {"seconds": 0.0, "sleeps": []}
+    real_sleep = HARD.time.sleep
+    settled_backend_errors = 0
 
     def sleep(seconds):
+        nonlocal settled_backend_errors
         assert 0 < seconds <= 0.25
+        if backend_errors is not None and len(backend_errors) > settled_backend_errors:
+            # A virtual clock must still let a genuine Windows lock settle.
+            # Only a backend error actually handled by the retry loop waits.
+            real_sleep(min(seconds, 0.05))
+            settled_backend_errors = len(backend_errors)
         clock["sleeps"].append(seconds)
         clock["seconds"] += seconds
 
@@ -183,15 +191,18 @@ def _rename_clock_974(monkeypatch):
     return clock
 
 
-@pytest.mark.parametrize("winerror", [5, 32, 33])
-@pytest.mark.parametrize("route", ["primary", "recovery"])
+@pytest.mark.parametrize("winerror,route,backend_fault", [
+    pytest.param(error, route, None, id=f"{route}-{error}")
+    for route in ("primary", "recovery") for error in (5, 32, 33)
+] + [pytest.param(5, "primary", 32, id="primary-5-backend32")])
 def test_hard_rollback_retries_only_transient_outgoing_tree_locks_974(
-        tmp_path, monkeypatch, winerror, route):
+        tmp_path, monkeypatch, winerror, route, backend_fault):
     install, state, _job, status, events, live = installed_hard_fixture(tmp_path, monkeypatch)
     recovery = Path(status["recovery_root"])
     before_state = (state / "data/user.db").read_bytes()
     actual_replace, attempts = HARD.os.replace, []
-    clock = _rename_clock_974(monkeypatch)
+    injected_errors, backend_errors, tagged_backend_errors = [], [], []
+    clock = _rename_clock_974(monkeypatch, backend_errors=backend_errors)
     smoke_error = RuntimeError("fixture previous native health failed")
     if route == "recovery":
         healthy = HARD.wait_ready
@@ -210,8 +221,17 @@ def test_hard_rollback_retries_only_transient_outgoing_tree_locks_974(
         if outgoing:
             attempts.append((source, target))
             if len(attempts) <= 2:
+                injected_errors.append(winerror)
                 raise _rename_error_974(winerror)
-        return actual_replace(source, target)
+        try:
+            if outgoing and backend_fault is not None and not tagged_backend_errors:
+                error = _rename_error_974(backend_fault, "fixture backend tree lock")
+                tagged_backend_errors.append(error)
+                raise error
+            return actual_replace(source, target)
+        except OSError as error:
+            backend_errors.append((source, target, error, outgoing))
+            raise
 
     monkeypatch.setattr(HARD.os, "replace", replace)
     if route == "primary":
@@ -231,7 +251,13 @@ def test_hard_rollback_retries_only_transient_outgoing_tree_locks_974(
         assert not any("ACCEPTED_HARD_ROLLBACK_RECOVERY_FAILED" in note
                        for note in getattr(caught.value, "__notes__", ()))
         assert events.count("native_entry") == 2
-    assert len(attempts) == 3 and len(clock["sleeps"]) == 2
+    assert injected_errors == [winerror, winerror]
+    assert len(tagged_backend_errors) == (0 if backend_fault is None else 1)
+    assert all(getattr(error, "winerror", None) in {5, 32, 33}
+               for _source, _target, error, _outgoing in backend_errors)
+    outgoing_backend_errors = [item for item in backend_errors if item[3]]
+    assert len(attempts) == 3 + len(outgoing_backend_errors)
+    assert clock["sleeps"] == [0.05] * (2 + len(backend_errors))
     assert live == BASELINE and "generic_headless_start" not in events
     assert (state / "data/user.db").read_bytes() == before_state
 

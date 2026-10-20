@@ -20,6 +20,17 @@ Customer_ready=false; source commit/gate975 фиксируются только 
 SHA `a47ca35f2034204c8bfe4663074b0f517c43b001e0eb6165ce8ffbd284cce8f7`
 сохраняется. Повторный exact975 gate и live-проверки пока не завершены.
 
+Повтор `84e3bd0f…` также сохранён отрицательным:6858passed/20skipped/1failed,
+944.90s, `artifacts/gates_975_final_v2/receipt.json`, SHA
+`a3d81dc85ea913770f81ebb9abfba1889bb0d93bcee4e894f20f64807265132e`.
+Фикстура transient Windows rename ожидала ровно2 искусственные ошибки,
+но допустимая временная ошибка реального `os.replace` вызвала ещё один
+корректный retry. Продуктивный updater не менялся. Фикстура отдельно считает
+искусственные и наблюдённые backend-ошибки, сохраняет точные равенства
+attempts/sleeps и все проверки состояния/границ; дополнительный явный
+backend32 case проверяет этот сценарий. Реальное ожидание не более0.05s
+разрешено только при фактически обрабатываемой backend-ошибке.
+
 Фактически установлен974/`f6a281c77c42766db6076bb50f55d0414707905e`,
 0.31.246/native5.1.974. Main6741passed/20skipped, все9 gate-команд rc0:
 `artifacts/gates_974_final/receipt.json`, SHA
