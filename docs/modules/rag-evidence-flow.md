@@ -16,6 +16,9 @@ repair не запускают новый предметный ход. Явно�
 Перед financial observations берётся свежий owned snapshot с retry token;
 изменившийся baseline/event не проходит существующий CAS. Финальный resume
 проверяет expected_job_id в транзакции до retarget/update, не усыновляя чужой gate.
+Сохранный terminal `proof_context_failure` имеет технический приоритет: plain resume
+не покупает новый предметный ход при прежнем неподходящем контексте. Исходные
+967 proof-overflow регрессии сохраняют ноль новых модельных вызовов.
 Actual search reader payload сохраняется в tool_loop.results сразу после выполнения;
 cached replay помечен cached и не является свидетельством нового native RRF.
 Source976, installed diagnostic975/native974; live976 ещё не принят.

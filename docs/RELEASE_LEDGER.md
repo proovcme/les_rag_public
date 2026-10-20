@@ -39,6 +39,16 @@ Source/test изменения этого эксперимента отмене�
 Финальный contract/XLSX/plain19:80passed/33.61s; precommit documentation/map/version:
 26passed/16skipped/7.75s. После фиксации source начинается один полный976 gate;
 эти связанные результаты не объявляются полным release proof.
+Первый exact976 gate на `afb79de8dfd18624050747f1776a4ab6cd71e023` отрицателен:
+6905passed/20skipped/3failed за957.08s. Квитанция `artifacts/gates_976_final/receipt.json`,
+SHA `bb6d8ca240ac584e04162d7aaba7d65053c08dac0e9c31661dcb62d96545ca29`.
+Два случая выявили регрессию: terminal proof_context_failure не должен открывать
+новый предметный цикл на техническом resume. Этот прежний guard восстановлен;
+обе исходные проверки сохранены. Третий закреплял прежний запрет исследования
+MISSING при новом человеческом «Продолжи»; он заменён проверкой ровно одного
+нового query/result хода с прежними IDs/причинами/ценовой базой и без автоповтора.
+Добавлены packaging-only/technical-capacity negative controls. ROOT related52passed/15.31s.
+Повтор полного976 gate ещё pending; неудачный запуск не переименовывается в PASS.
 
 ## 20.10.2026 — кандидат975; установлен974, профессиональная приёмка отрицательна
 

@@ -1,4 +1,4 @@
-"""Explicit user resume can reach omitted source rows without reopening decisions."""
+"""Explicit user resume preserves decisions while reaching unseen rows or declared gaps."""
 import inspect
 import json
 
@@ -6,6 +6,7 @@ import pytest
 import test_model_rag_sheet_evidence_reads as sheet_fixture
 
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+from proxy.services.openai_compatible_transport_service import InferenceResponse
 from test_model_rag_sheet_evidence_reads import _run_sheet
 
 
@@ -50,7 +51,7 @@ async def test_new_plain_request_reaches_only_source_without_an_accepted_decisio
 
 
 @pytest.mark.asyncio
-async def test_plain_request_preserves_settled_missing_norm_decisions_without_inference(tmp_path, monkeypatch):
+async def test_plain_request_researches_settled_missing_gaps_once_and_keeps_unchanged_decisions(tmp_path, monkeypatch):
     authored_rows = [{"source_row":locator, "row_role":"work", "title":title, "unit":"m",
                       "quantity":quantity, "norm_code":"", "norm_status":"MISSING",
                       "open_gap":"no_suitable_candidate", "evidence_refs":[]}
@@ -64,8 +65,18 @@ async def test_plain_request_preserves_settled_missing_norm_decisions_without_in
     request = inspect.getclosurevars(run.resume_same_request).nonlocals["request"]
     request.req.question = "Продолжи"
     before = len(run.requests)
+    # A new human Continue explicitly reopens declared gaps. The model may
+    # truthfully return the same unresolved decision; no code invents a norm.
+    run.responses.extend([
+        InferenceResponse(text=json.dumps({"artifact_kind": "lsr", "queries": [
+            "S!R2 — Cable A further research", "S!R3 — Cable B further research"]}),
+            tool_calls=(), finish_reason="stop", usage={}),
+        InferenceResponse(text=json.dumps({"artifact_kind": "lsr", "rows": [
+            {**row, "expected_revision": row["revision"]} for row in parent["accepted_rows"]]}),
+            tool_calls=(), finish_reason="stop", usage={}),
+    ])
     result = await run.resume_same_request()
-    assert len(run.requests) == before and not run.responses
+    assert len(run.requests) == before + 2 and not run.responses
     child = store.get(result["retrieval_trace"]["workbook_research_job"]["job_id"])
     assert child["continues_job_id"] == parent["job_id"]
     assert child["accepted_rows"] == parent["accepted_rows"]

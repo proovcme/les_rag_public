@@ -40,7 +40,8 @@ def test_plain_continue_reopens_exact_open_ids_and_retains_closed_shared_source(
     assert not app.workbook_chat_review_needed("Продолжи", current)
 
 
-@pytest.mark.parametrize("blocked", ["not_owner", "non_plain", "vor", "remaining", "proof", "held", "pending", "full_ready"])
+@pytest.mark.parametrize("blocked", ["not_owner", "non_plain", "vor", "remaining", "proof", "held", "pending", "full_ready",
+                                      "proof_capacity", "packaging"])
 def test_plain_retry_does_not_replace_another_continuation_or_reopen_ready_rows(tmp_path, monkeypatch, blocked):
     store, _ = baseline(tmp_path)
     requested, child = _child(store)
@@ -55,6 +56,13 @@ def test_plain_retry_does_not_replace_another_continuation_or_reopen_ready_rows(
         child["held_packet"] = {"locators": [SOURCE], "queries": ["literal saved plan"]}
     elif blocked == "pending":
         child["task_context"]["pending_research_locators"] = [SOURCE]
+    elif blocked == "proof_capacity":
+        child["held_packet"] = {"terminal_model_result_saved": True,
+            "proof_context_failure": {"technical_failure": True, "purpose": "sheet_pass_norm_proof"}}
+    elif blocked == "packaging":
+        # Only delivery is missing; no authored norm decision is open.
+        child["accepted_rows"] = [child["accepted_rows"][0]]
+        child["document"] = {"final_revision_id": "", "draft_revision_id": "", "needs_document": True}
     elif blocked == "full_ready":
         closed = child["accepted_rows"][0]
         child["accepted_rows"] = [closed]

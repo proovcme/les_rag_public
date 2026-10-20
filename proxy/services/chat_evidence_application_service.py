@@ -918,9 +918,11 @@ def begin_plain_lsr_gap_continuation(service, job, *, identity, question,
     context = job.get("task_context") or {}
     declaration = context.get("artifact_kind_declaration") or {}
     held = job.get("held_packet") or {}
+    document = job.get("document") or {}
     if (declaration.get("status") != "declared" or declaration.get("artifact_kind") != "lsr"
             or job.get("remaining") or service.pending_research_locators(job)
-            or held.get("pending_proof") or model_rag_pending_result_packets(held)
+            or held.get("pending_proof") or held.get("proof_context_failure")
+            or model_rag_pending_result_packets(held)
             or ((held.get("locators") or held.get("queries")) and not held.get("terminal_model_result_saved"))):
         return job
     from proxy.services.lsr_financial_feedback_service import financial_feedback_for_rows
@@ -932,7 +934,6 @@ def begin_plain_lsr_gap_continuation(service, job, *, identity, question,
     fresh = service.get(job["job_id"], include_retry_token=True)
     financial = financial_feedback_for_rows(service.latest_financial_feedback(job["job_id"]), rows,
         price_basis=context.get("price_basis"), identity=job.get("identity") or {})
-    document = job.get("document") or {}
     ready = build_lsr_result_readiness(
         packaged=bool(document.get("final_revision_id") or document.get("draft_revision_id")),
         rows=rows, row_projection=[fact["projection"] for fact in financial],

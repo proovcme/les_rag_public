@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1268 |
-| Строк Python | 430741 |
+| Строк Python | 430761 |
 | PRODUCT_REACHABLE | 387 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 869 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 16264 | 143 |
+| proxy/services/chat_evidence_application_service.py | 16265 | 143 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 8408 | 12 |
 | proxy/routers/chat.py | 4931 | 60 |
