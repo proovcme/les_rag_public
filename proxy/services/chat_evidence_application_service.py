@@ -6989,7 +6989,7 @@ async def govern_model_rag_initial_messages(
     evidence_namespace="", query_offset=0,
     query_provenance=None, query_addresses=None, **context,
 ):
-    """Try one exact all-inventory view; preserve the legacy page on any non-fit.
+    """Admit literal inventory and ordered whole-card supplements within capacity.
 
     All pointer content and admitted whole previews remain literal. The original
     input/generation/safety limits and the existing native-read reserve are both
@@ -7013,6 +7013,8 @@ async def govern_model_rag_initial_messages(
     admitted = plan_full_group_page(groups, max_chars)
     if admitted.groups != list(evidence_groups):
         raise ValueError("initial evidence page changed before exact inventory admission")
+    trace.update(unshown_refs=list(admitted.unshown_refs),
+                 deferred_body_refs=list(admitted.deferred_refs))
     char_limit = max(0, int(inventory_chars_limit))
 
     async def complete_frontier(page, result, admission_budget, expected_owner=None):
@@ -7020,58 +7022,116 @@ async def govern_model_rag_initial_messages(
         complete = complete_card_frontier_page(groups, page)
         if complete is None:
             return result
-        messages, packet, *projected, result_trace = result
-        full_trace = {"status": "unchanged", "reason": "registered_char_capacity"}
+        result_trace = result[5]
+        full_trace = {"status": "unchanged", "reason": "registered_char_capacity",
+                      "supplemented_body_refs": [],
+                      "complete_card_deferred_refs": list(page.complete_card_deferred_refs)}
         result_trace["complete_card_fit"] = full_trace
-        if char_limit and complete.rendered_chars > char_limit:
-            return result
-        full_unavailable = False
+        best = result
+        probe_owner = None
+        owner_fields = ("model_id", "connection_revision_id", "model_identity_sha256")
 
-        async def full_count(messages):
-            nonlocal full_unavailable
-            count = await count_messages(messages)
-            full_unavailable = full_unavailable or count is None
-            return count
+        async def try_candidate(candidate):
+            nonlocal best, probe_owner
+            if char_limit and candidate.rendered_chars > char_limit:
+                return "registered_char_capacity"
+            full_unavailable = False
 
-        try:
-            full_messages, full_packet = await govern_inference_messages_bound(
-                count_messages=full_count, **context,
-                required_evidence=[*source_context, *complete.groups])
-        except ContextRequiredSectionOverflow as error:
-            full_trace["reason"] = ("counter_unavailable" if full_unavailable else
-                "counter_identity_changed" if "bound_counter_identity_changed" in error.token_count_source
-                else "input_capacity")
-        except CloudBudgetStop as error:
-            if not isinstance(error.__cause__, ContextRequiredWireOverflow):
-                raise
-            full_trace["reason"] = "wire_capacity"
-        else:
+            async def full_count(messages):
+                nonlocal full_unavailable, probe_owner
+                count = await count_messages(messages)
+                full_unavailable = full_unavailable or count is None
+                if count is not None:
+                    observed_owner = {key: getattr(count, key, None) for key in owner_fields}
+                    prior_binding = best[1].token_count_binding
+                    for prior in (probe_owner, expected_owner,
+                                  prior_binding if prior_binding.get("status") == "counted" else None):
+                        if (prior and all(observed_owner.get(key) == prior.get(key)
+                                          for key in ("model_id", "connection_revision_id"))
+                                and prior.get("model_identity_sha256")
+                                and observed_owner.get("model_identity_sha256")
+                                and observed_owner["model_identity_sha256"] != prior["model_identity_sha256"]):
+                            # The revision can stay unchanged after a backend
+                            # reload. Its old counted wire is no longer safe.
+                            raise ModelTransportError("TOKEN_COUNT_MODEL_CHANGED")
+                    if probe_owner is None:
+                        probe_owner = observed_owner
+                return count
+
+            try:
+                full_messages, full_packet = await govern_inference_messages_bound(
+                    count_messages=full_count, **context,
+                    required_evidence=[*source_context, *candidate.groups])
+            except ContextRequiredSectionOverflow as error:
+                return ("counter_unavailable" if full_unavailable else
+                    "counter_identity_changed" if "bound_counter_identity_changed" in error.token_count_source
+                    else "input_capacity")
+            except CloudBudgetStop as error:
+                if not isinstance(error.__cause__, ContextRequiredWireOverflow):
+                    raise
+                return "wire_capacity"
             binding = full_packet.token_count_binding
-            owner_fields = ("model_id", "connection_revision_id", "model_identity_sha256")
+            packet = best[1]
             if binding.get("status") != "counted":
-                full_trace["reason"] = binding.get("reason") or "counter_unavailable"
-            elif (packet.token_count_binding.get("status") == "counted"
+                return ("counter_unavailable" if full_unavailable else "counter_identity_changed"
+                    if binding.get("reason") == "bound_counter_identity_changed"
+                    else binding.get("reason") or "counter_unavailable")
+            if (packet.token_count_binding.get("status") == "counted"
                   and any(binding.get(key) != packet.token_count_binding.get(key) for key in owner_fields)):
-                full_trace["reason"] = "counter_identity_changed"
-            elif expected_owner and any(binding.get(key) != expected_owner.get(key) for key in owner_fields):
-                full_trace["reason"] = "counter_identity_changed"
-            elif full_packet.included_tokens + trace["native_read_reserved_tokens"] > min(
+                return "counter_identity_changed"
+            if expected_owner and any(binding.get(key) != expected_owner.get(key) for key in owner_fields):
+                return "counter_identity_changed"
+            if probe_owner and any(binding.get(key) != probe_owner.get(key) for key in owner_fields):
+                return "counter_identity_changed"
+            if full_packet.included_tokens + trace["native_read_reserved_tokens"] > min(
                     full_packet.input_budget_tokens, admission_budget):
-                full_trace["reason"] = ("native_read_reserve" if full_packet.included_tokens
+                return ("native_read_reserve" if full_packet.included_tokens
                     + trace["native_read_reserved_tokens"] > full_packet.input_budget_tokens
                     else "initial_compatibility_headroom")
-            else:
-                projected = _model_rag_page_projection(complete, hits, evidence_namespace=evidence_namespace)
-                full_trace.update(status="expanded", reason="bound_whole_wire_fit",
-                                  input_tokens=full_packet.included_tokens,
-                                  initial_admission_budget_tokens=admission_budget,
-                                  preserved_body_refs=list(complete.body_refs))
-                result_trace.update(status="expanded", reason="bound_whole_wire_fit",
-                    inventory_before=len(admitted.inventory_refs), inventory_after=len(complete.inventory_refs),
-                    preserved_body_refs=list(complete.body_refs), input_tokens=full_packet.included_tokens,
-                    input_budget_tokens=full_packet.input_budget_tokens)
-                return full_messages, full_packet, *projected, result_trace
-        return result
+            projected = _model_rag_page_projection(candidate, hits, evidence_namespace=evidence_namespace)
+            supplemented = [ref for ref in page.body_refs
+                            if candidate.body_by_ref[ref] != page.body_by_ref[ref]]
+            reason = ("bound_whole_wire_fit" if candidate.body_by_ref == complete.body_by_ref
+                      else "bound_prefix_wire_fit")
+            full_trace.update(status="expanded", reason=reason,
+                input_tokens=full_packet.included_tokens,
+                initial_admission_budget_tokens=admission_budget,
+                preserved_body_refs=list(candidate.body_refs), supplemented_body_refs=supplemented,
+                complete_card_deferred_refs=list(candidate.complete_card_deferred_refs))
+            result_trace.update(status="expanded", reason=reason,
+                inventory_before=len(admitted.inventory_refs), inventory_after=len(candidate.inventory_refs),
+                preserved_body_refs=list(candidate.body_refs), input_tokens=full_packet.included_tokens,
+                input_budget_tokens=full_packet.input_budget_tokens,
+                unshown_refs=list(candidate.unshown_refs), deferred_body_refs=list(candidate.deferred_refs))
+            best = full_messages, full_packet, *projected, result_trace
+            return None
+
+        failure = await try_candidate(complete)
+        if failure is None:
+            return best
+        full_trace["reason"] = failure
+        if failure not in {"registered_char_capacity", "input_capacity", "wire_capacity",
+                           "native_read_reserve", "initial_compatibility_headroom"}:
+            return best
+        full_trace.update(full_candidate_reason=failure, stop_reason=failure)
+        # Every candidate adds the next immutable card unit to the same page.
+        # The complete candidate was already refused; never retry it or skip a
+        # refused earlier unit in favour of a smaller later card.
+        for prefix_units in range(1, len(page.body_refs)):
+            candidate = complete_card_frontier_page(groups, page, prefix_units=prefix_units)
+            if candidate is None:
+                full_trace["stop_reason"] = "unsafe_full_candidate"
+                break
+            if candidate.body_by_ref == complete.body_by_ref:
+                break
+            full_trace["attempted_prefix_units"] = prefix_units
+            failure = await try_candidate(candidate)
+            if failure is not None:
+                if full_trace["status"] == "unchanged":
+                    full_trace["reason"] = failure
+                full_trace["stop_reason"] = failure
+                break
+        return best
 
     async def complete_original_frontier(expected_owner=None):
         result = unchanged()
@@ -7131,7 +7191,8 @@ async def govern_model_rag_initial_messages(
     trace.update(status="expanded", reason="bound_whole_wire_fit",
                  inventory_before=len(admitted.inventory_refs), inventory_after=len(expanded.inventory_refs),
                  preserved_body_refs=list(admitted.body_refs), input_tokens=packet.included_tokens,
-                 input_budget_tokens=packet.input_budget_tokens)
+                 input_budget_tokens=packet.input_budget_tokens,
+                 unshown_refs=list(expanded.unshown_refs), deferred_body_refs=list(expanded.deferred_refs))
     return await complete_frontier(expanded, (messages, packet, *projected, trace), admission_budget)
 
 
@@ -12126,7 +12187,8 @@ async def _execute_chat_evidence_application(
                                     page_trace = retrieval_trace["grouped_model_evidence_pages"][-1]
                                     page_trace["exact_inventory_fit"] = inventory_fit
                                     if inventory_fit["status"] == "expanded":
-                                        page_trace.update(inventory_hit_count=len(model_evidence_chunks), unshown_refs=[])
+                                        page_trace.update(inventory_hit_count=len(model_evidence_chunks),
+                                            unshown_refs=list(inventory_fit["unshown_refs"]))
                                         # 929 measured the divergence this closes: the page was
                                         # re-planned after these numbers were written, so the
                                         # trace kept counting bodies that were never rendered.
@@ -13842,7 +13904,9 @@ async def _execute_chat_evidence_application(
                                 context = "\n\n".join(model_rag_evidence_groups)
                                 grouped_trace.update(query_count=len(model_rag_evidence_groups),
                                     hit_count=len(model_evidence_chunks), inventory_hit_count=len(model_evidence_chunks),
-                                    unshown_hit_count=0, rendered_chars=len(context),
+                                    unshown_hit_count=len(inventory_fit["unshown_refs"]),
+                                    unshown_refs=list(inventory_fit["unshown_refs"]),
+                                    deferred_body_refs=list(omitted_evidence_refs), rendered_chars=len(context),
                                     group_ids=[f"Q{index}" for index in range(1,len(model_rag_evidence_groups)+1)])
                                 answer_source_map = _model_rag_source_map(model_evidence_chunks)
                                 selector_source_map = answer_source_map

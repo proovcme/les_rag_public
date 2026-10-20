@@ -1,5 +1,15 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 971 — ограниченное дополнение карточек и видимый предел evidence
+
+`model_rag_grouped_evidence_service.complete_card_frontier_page(prefix_units=…)`
+→ `chat_evidence_application_service.govern_model_rag_initial_messages`
+→ прежний bound ContextGovernor → фактические B0/B1 delivery trace.
+Порядок/identity и raw previews сохраняются; новых inference/candidate ranking нет.
+`runtime_config_registry_service` показывает и сохраняет положительный
+`RAG_MODEL_CONTEXT_CHARS` (default120000), `_local_context_budget` читает его
+для следующего запроса. Ни профиль, ни фактический default не увеличиваются.
+
 ## 968 — комплект, независимые операции и явный расчётный объём
 
 `model_workbook_terminal_transport_service.workbook_terminal_attachment_binding`

@@ -458,13 +458,16 @@ def inventory_expansion_page(groups: Sequence[EvidenceGroup], admitted: Evidence
     return replace(expanded, complete_card_deferred_refs=list(admitted.complete_card_deferred_refs))
 
 
-def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: EvidencePage) -> EvidencePage | None:
+def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: EvidencePage,
+                                *, prefix_units: int | None = None) -> EvidencePage | None:
     """Supplement the same shown frontier with complete, identity-bound typed bodies.
 
     The old whole preview is a literal prefix. No identity or deferred body is
     added, removed, or chosen here; complete-wire admission belongs to the caller.
     Missing work composition remains a separate delivery fact; it must not
     withhold an otherwise complete, source-bound resource body.
+    An optional prefix counts immutable card identities in admitted body order;
+    every already-shared alias of that identity travels in the same unit.
     """
     from proxy.services.model_research_tool_service import _full_norm_card_content, norm_preview_metadata
 
@@ -506,6 +509,20 @@ def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: Evide
                                           preview_content=None, preview_meta=None)
     if not upgraded:
         return None
+    if prefix_units is not None:
+        units: dict[str, list[str]] = {}
+        for ref in admitted.body_refs:
+            if ref in upgraded:
+                identity = (normative_card_identity(admitted.meta_by_ref[ref])
+                            or admitted.shared_refs.get(ref, ref))
+                units.setdefault(identity, []).append(ref)
+        selected = {ref for unit in list(units.values())[:max(0, int(prefix_units))] for ref in unit}
+        if not selected:
+            return None
+        for ref in upgraded - selected:
+            replacements[ref] = replace(replacements[ref], content=admitted.body_by_ref[ref],
+                                        meta=admitted.meta_by_ref[ref])
+        upgraded = selected
     # The expanded inventory exposes all empty query groups; a partial legacy
     # page only exposes those within its existing whole-group prefix.
     include_empty = any(not group.cards and index >= admitted.included_count

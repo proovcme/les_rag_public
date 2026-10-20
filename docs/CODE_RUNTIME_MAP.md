@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1249 |
-| Строк Python | 426250 |
+| Python-файлов под git | 1251 |
+| Строк Python | 426706 |
 | PRODUCT_REACHABLE | 387 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 850 |
+| TEST_OR_TOOL_ONLY | 852 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 343 |
 | Ошибок разбора | 0 |
@@ -32,10 +32,10 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 15932 | 131 |
+| proxy/services/chat_evidence_application_service.py | 15996 | 132 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 8408 | 12 |
-| proxy/routers/chat.py | 4931 | 58 |
+| proxy/routers/chat.py | 4931 | 59 |
 | backend/qdrant_adapter.py | 4598 | 29 |
 | sovushka/uikit/tokens.py | 4290 | 2 |
 | sovushka/pages/documents.py | 3976 | 3 |

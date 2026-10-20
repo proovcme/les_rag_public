@@ -1,5 +1,29 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 971 — кандидат: целые карточки в пределах прежнего бюджета
+
+🟡 Source0.31.243/build971/native5.1.971; установлен970/`2ae092da…`.
+Базис970 подтверждён exact installer/native/manifest, все9 команд gate V3
+завершены rc0 (6580passed/20skipped), installed smoke9pass/1known warning.
+Это технический базис: профессиональная приёмка ВОР/ЛСР не пройдена.
+
+`model_rag_grouped_evidence_service.complete_card_frontier_page(prefix_units=…)`
+дополняет исходный показ префиксом целых immutable карточек. Все aliases одной
+identity дополняются вместе. `govern_model_rag_initial_messages` сначала пробует
+весь прежний кандидат; при отказе по вместимости проверяет префиксы в исходном
+порядке, сохраняет последний проверенный wire и останавливается при первом
+отказе. Прежние input/output/native-read reserves, identity, raw previews,
+inventory и deferred/unshown порядок сохраняются. Нет новых inference или
+выбора нормы кодом. Обе активные проекции B0/B1 используют фактический unshown.
+Детали: [поток evidence](modules/rag-evidence-flow.md).
+
+`runtime_config_registry_service` регистрирует действующий
+`RAG_MODEL_CONTEXT_CHARS=120000` с русским описанием и применением со следующего
+запроса. Новый визуальный компонент не вводится; фактический default не увеличен.
+Проверки: `test_model_partial_card_supplement_971.py`,
+`test_rag_evidence_budget_registry_971.py`. Полный frozen971 gate/install/live pending.
+Точность норм≥90% и customer-ready не заявлены.
+
 ## 970 — кандидат: исходный ноль, полнота карточки и исключённые строки ВОР
 
 🟡 Source0.31.242/build970/native5.1.970; установлен969/`4ca27dd4…`:

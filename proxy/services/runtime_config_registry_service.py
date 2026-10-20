@@ -33,6 +33,16 @@ _EFFECTIVE_FACTOR_LABELS = {
     "answer_output_tokens": "Лимит итогового ответа",
 }
 _FACTOR_PRESENTATION = {
+    "RAG_MODEL_CONTEXT_CHARS": {
+        "label": "Предел текста найденных карточек, символов",
+        "help_text": (
+            "Верхний предел текста найденных источников для OpenAI-совместимого маршрута, включая локальные "
+            "подключения этого типа. Положительное целое число. Окно модели "
+            "и резерв ответа проверяются отдельно. Полная карточка не обрезается. "
+            "Действует со следующего запроса, перезапуск не нужен."
+        ),
+        "category": "models",
+    },
     "LES_CHAT_ATTACHMENT_MAX_AGE_SEC": {
         "secret": False, "category": "chat",
         "label": "Хранение неиспользованных вложений, секунд",
@@ -215,6 +225,8 @@ _EXPLICIT_FACTOR_DEFAULTS = {
     "RAG_UPLOAD_SUFFIXES": ",".join(DEFAULT_RAG_UPLOAD_SUFFIXES),
     "LES_CHAT_SOURCE_FRAME_ROWS": "0",
     "LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS": "",
+    # The router reads this via _env_int; literal getenv discovery cannot see it.
+    "RAG_MODEL_CONTEXT_CHARS": "120000",
     # Web factors are read through an injected Mapping; numeric admission
     # factors use the shared _env_float helper. AST discovery cannot infer
     # either default from a literal os.getenv call.
@@ -387,7 +399,8 @@ def _factor(key: str, dotenv: dict[str, str]) -> dict[str, Any]:
         "danger": danger,
         "danger_label": "Danger" if danger else "",
         "mutable": not read_only,
-        "restart_required": key in _RESTART_KEYS or key.startswith(_RESTART_PREFIXES),
+        "restart_required": key != "RAG_MODEL_CONTEXT_CHARS" and (
+            key in _RESTART_KEYS or key.startswith(_RESTART_PREFIXES)),
         "registry_state": "explicit" if key in _DANGER_KEYS or key in _READ_ONLY_KEYS else "auto",
     }
 
@@ -519,6 +532,10 @@ def update_factors(
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         if key == "LES_CLOUD_TURN_TOKEN_BUDGET" and (not value.isascii() or not value.isdecimal()):
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
+        if key == "RAG_MODEL_CONTEXT_CHARS" and (
+            not value.isascii() or not value.isdecimal() or int(value) <= 0
+        ):
+            raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         if key == "LES_CHAT_SOURCE_FRAME_ROWS" and (
             not value.isascii() or not value.isdecimal() or not 0 <= int(value) <= 12
         ):
@@ -538,7 +555,7 @@ def update_factors(
             {
                 "key": key,
                 "value": "***" if _is_secret(key) else value,
-                "restart_required": key.startswith(_RESTART_PREFIXES),
+                "restart_required": key != "RAG_MODEL_CONTEXT_CHARS" and key.startswith(_RESTART_PREFIXES),
             }
             for key, value in sorted(normalized.items())
         ],

@@ -1,5 +1,30 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат971 — ограниченное дополнение evidence
+
+В CURRENT_TESTS добавлены `test_model_partial_card_supplement_971.py` и
+`test_rag_evidence_budget_registry_971.py`. Первый проверяет целые префиксы,
+атомарные aliases, ceiling/native reserve, отсутствие пропуска первого
+непоместившегося тела, смену/недоступность счётчика после валидного wire и
+фактические B0/B1 trace updates. Root RED8failed/1,65s; усиленный набор с двумя
+предыдущими frontier-suite —42passed/5,22s.
+
+Реестр проверяется через snapshot/save и настоящий `_local_context_budget`,
+с изолированными Unicode/spaces путями. Root RED7failed/38,92s, смежные56passed/
+108,59s; после независимой проверки GUI запрещает0 из-за семантики обычного
+renderer. Последующая проверка положительного ограничения обязательна.
+Независимая проверка добавила два воспроизведённых RED: GUI0 скрывал бы ordinary
+evidence, а смена loaded-model hash при неизменной revision могла оставить
+устаревший counted wire. Квитанция `independent_review_red.xml` содержит2failed;
+оба случая исправлены: итоговые51passed/48,87s
+(`artifacts/live_970/diagnostic971/independent_review_green01.xml`).
+Полный frozen971 gate, installer и installed live пока pending.
+
+Базис970: `artifacts/gates_970_final_v3/receipt.json`, все9 команд rc0,
+6580passed/20skipped; exact970 установлен. Его живые файлы остаются частичными.
+Диагностические короткие вызовы Qwen с полными карточками не являются
+release-доказательством: source fidelity и ≥90% применимости не подтверждены.
+
 ## Кандидат970 — три измеренные границы документа
 
 В CURRENT_TESTS добавлены три файла970. Полный frozen gate, точный установщик

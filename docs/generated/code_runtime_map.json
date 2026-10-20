@@ -1717,6 +1717,7 @@
         "tests/test_packaging_recovery_service.py",
         "tests/test_profile_resolver.py",
         "tests/test_public_provider_setup.py",
+        "tests/test_rag_evidence_budget_registry_971.py",
         "tests/test_reasoning_answer.py",
         "tests/test_request_idempotency_service.py",
         "tests/test_route_and_runtime_v17.py",
@@ -3354,6 +3355,7 @@
         "tests/test_model_output_diagnostics_tracking.py",
         "tests/test_model_output_observability_959.py",
         "tests/test_model_packet_document_context_954.py",
+        "tests/test_model_partial_card_supplement_971.py",
         "tests/test_model_partial_inventory_complete_frontier.py",
         "tests/test_model_price_provenance_service.py",
         "tests/test_model_proof_artifact_kind.py",
@@ -3435,7 +3437,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15932,
+      "lines": 15996,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -6054,6 +6056,7 @@
         "tests/test_model_initial_complete_card_frontier.py",
         "tests/test_model_initial_inventory_exact_fit.py",
         "tests/test_model_norm_evidence_ref_reads.py",
+        "tests/test_model_partial_card_supplement_971.py",
         "tests/test_model_partial_inventory_complete_frontier.py",
         "tests/test_model_rag_grouped_evidence_service.py",
         "tests/test_model_rag_norm_body_markers.py",
@@ -6068,7 +6071,7 @@
         "tests/test_nrsp_catalog_reference_967.py",
         "tools/measure_model_resource_literal_capacity.py"
       ],
-      "lines": 862,
+      "lines": 879,
       "module": "proxy.services.model_rag_grouped_evidence_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7610,10 +7613,11 @@
         "tests/test_etm_source_workflow.py",
         "tests/test_model_query_reasoning.py",
         "tests/test_model_reasoning_control.py",
+        "tests/test_rag_evidence_budget_registry_971.py",
         "tests/test_rtf_input_transport.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 548,
+      "lines": 565,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -13878,6 +13882,7 @@
     {
       "inbound": [
         "tests/test_model_initial_schema_reserve_928.py",
+        "tests/test_model_partial_card_supplement_971.py",
         "tests/test_model_partial_inventory_complete_frontier.py"
       ],
       "lines": 218,
@@ -13897,6 +13902,7 @@
       "inbound": [
         "tests/test_model_initial_complete_card_frontier.py",
         "tests/test_model_initial_schema_reserve_928.py",
+        "tests/test_model_partial_card_supplement_971.py",
         "tests/test_model_partial_inventory_complete_frontier.py"
       ],
       "lines": 219,
@@ -13911,7 +13917,9 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
+      "inbound": [
+        "tests/test_model_partial_card_supplement_971.py"
+      ],
       "lines": 129,
       "module": "tests.test_model_initial_schema_reserve_928",
       "outbound": [
@@ -14073,6 +14081,21 @@
         "tests/test_model_rag_sheet_evidence_reads.py"
       ],
       "path": "tests/test_model_packet_document_context_954.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 310,
+      "module": "tests.test_model_partial_card_supplement_971",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/model_rag_grouped_evidence_service.py",
+        "tests/test_model_initial_complete_card_frontier.py",
+        "tests/test_model_initial_inventory_exact_fit.py",
+        "tests/test_model_initial_schema_reserve_928.py"
+      ],
+      "path": "tests/test_model_partial_card_supplement_971.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -15881,6 +15904,18 @@
         "tools/rag_eval_report.py"
       ],
       "path": "tests/test_rag_eval_report.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 48,
+      "module": "tests.test_rag_evidence_budget_registry_971",
+      "outbound": [
+        "proxy/routers/chat.py",
+        "proxy/services/runtime_config_registry_service.py"
+      ],
+      "path": "tests/test_rag_evidence_budget_registry_971.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -23606,9 +23641,9 @@
     "product_reachable": 387,
     "registered_api_routes": 343,
     "runtime_support": 11,
-    "test_or_tool_only": 850,
-    "tracked_python_files": 1249,
-    "tracked_python_lines": 426250
+    "test_or_tool_only": 852,
+    "tracked_python_files": 1251,
+    "tracked_python_lines": 426706
   },
   "warnings": []
 }
