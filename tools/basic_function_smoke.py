@@ -19,11 +19,14 @@ import json
 import os
 import sys
 import time
+from uuid import uuid4
 
 import httpx
 
 
-DEFAULT_CHAT_TIMEOUT = 90.0
+# The assigned transport defaults to 300s; leave bounded HTTP/response overhead.
+# An operator can explicitly calibrate this finite budget with --chat-timeout.
+DEFAULT_CHAT_TIMEOUT = 360.0
 
 
 def _r(name, severity, status, t0, reason="", evidence=None):
@@ -159,8 +162,9 @@ def indexing_chat_warning(name: str) -> dict:
     )
 
 
-def _chat(c, base, question, *, timeout: float):
-    resp = c.post(f"{base}/api/chat", json={"question": question}, timeout=timeout)
+def _chat(c, base, question, *, timeout: float, session_id: str | None = None):
+    session_id = session_id or "basic-smoke-" + uuid4().hex
+    resp = c.post(f"{base}/api/chat", json={"question": question, "session_id": session_id}, timeout=timeout)
     return resp
 
 
@@ -182,11 +186,12 @@ def _incomplete_answer(payload: dict, answer: str) -> bool:
 
 def check_chat_glossary(c, base, *, timeout: float):
     t0 = time.monotonic()
+    session_id = "basic-smoke-glossary-" + uuid4().hex
     try:
-        resp = _chat(c, base, "что такое ОЖР", timeout=timeout)
+        resp = _chat(c, base, "что такое ОЖР", timeout=timeout, session_id=session_id)
         if resp.status_code == 503:
             return _r("chat_glossary", "P0", "warn", t0, f"memory-guard (транзиент): {resp.json().get('detail','')[:80]}",
-                      {"http": 503})
+                      {"http": 503, "session_id": session_id})
         d = resp.json()
         ans = (d.get("answer") or "").strip()
         status = d.get("crag_status") or d.get("status") or ""
@@ -194,7 +199,7 @@ def check_chat_glossary(c, base, *, timeout: float):
         channel = str(route.get("channel") or "")
         has_version = _has_version_trace(d)
         ev = {"http": resp.status_code, "answer_len": len(ans), "status": status,
-              "channel": channel, "version_info": has_version}
+              "channel": channel, "version_info": has_version, "session_id": session_id}
         if resp.status_code != 200:
             return _r("chat_glossary", "P0", "fail", t0, f"http={resp.status_code}: {str(d)[:80]}", ev)
         if not ans:
@@ -211,17 +216,22 @@ def check_chat_glossary(c, base, *, timeout: float):
                 ev,
             )
         return _r("chat_glossary", "P0", "pass", t0, "", ev)
+    except httpx.TimeoutException as e:
+        return _r("chat_glossary", "P0", "fail", t0, f"{type(e).__name__}: {e}", {
+            "session_id": session_id, "chat_timeout_seconds": timeout, "chat_probe_stop": True,
+            "cancellation_status": "UNCONFIRMED", "server_completion_status": "UNKNOWN"})
     except Exception as e:
-        return _r("chat_glossary", "P0", "fail", t0, f"{type(e).__name__}: {e}")
+        return _r("chat_glossary", "P0", "fail", t0, f"{type(e).__name__}: {e}", {"session_id": session_id})
 
 
 def check_chat_project_noscope(c, base, *, timeout: float):
     """Проектный вопрос без scope идёт model-first, но никогда не в glossary."""
     t0 = time.monotonic()
+    session_id = "basic-smoke-project-" + uuid4().hex
     try:
-        resp = _chat(c, base, "расскажи про котельную на лесном 64", timeout=timeout)
+        resp = _chat(c, base, "расскажи про котельную на лесном 64", timeout=timeout, session_id=session_id)
         if resp.status_code == 503:
-            return _r("chat_project_noscope", "P1", "warn", t0, "memory-guard (транзиент)", {"http": 503})
+            return _r("chat_project_noscope", "P1", "warn", t0, "memory-guard (транзиент)", {"http": 503, "session_id": session_id})
         d = resp.json()
         ans = (d.get("answer") or "").strip()
         status = d.get("crag_status") or d.get("status") or ""
@@ -229,7 +239,7 @@ def check_chat_project_noscope(c, base, *, timeout: float):
         channel = str(route.get("channel") or "")
         has_version = _has_version_trace(d)
         ev = {"http": resp.status_code, "answer_len": len(ans), "status": status,
-              "channel": channel, "version_info": has_version}
+              "channel": channel, "version_info": has_version, "session_id": session_id}
         if resp.status_code != 200:
             return _r("chat_project_noscope", "P1", "fail", t0, f"http={resp.status_code}", ev)
         if channel == "glossary" or not has_version:
@@ -240,8 +250,12 @@ def check_chat_project_noscope(c, base, *, timeout: float):
         if not ans and status not in ("MISSING", "BLOCKED", "NO_DATA", "NEEDS_CLARIFICATION"):
             return _r("chat_project_noscope", "P1", "fail", t0, "ни ответа, ни честного MISSING/clarification", ev)
         return _r("chat_project_noscope", "P1", "pass", t0, "", ev)
+    except httpx.TimeoutException as e:
+        return _r("chat_project_noscope", "P1", "fail", t0, f"{type(e).__name__}: {e}", {
+            "session_id": session_id, "chat_timeout_seconds": timeout, "chat_probe_stop": True,
+            "cancellation_status": "UNCONFIRMED", "server_completion_status": "UNKNOWN"})
     except Exception as e:
-        return _r("chat_project_noscope", "P1", "fail", t0, f"{type(e).__name__}: {e}")
+        return _r("chat_project_noscope", "P1", "fail", t0, f"{type(e).__name__}: {e}", {"session_id": session_id})
 
 
 def failures(results, severity):
@@ -269,7 +283,7 @@ def main() -> int:
         "--chat-timeout",
         type=float,
         default=DEFAULT_CHAT_TIMEOUT,
-        help="отдельный конечный budget одного chat check (калиброван для локального 9B на Mac Mini)",
+        help="конечный HTTP budget одного chat check; калибруется явно под назначенную модель, не отменяет серверную генерацию",
     )
     args = ap.parse_args()
     if args.http_timeout <= 0 or args.chat_timeout <= 0:
@@ -290,8 +304,15 @@ def main() -> int:
             results.append(indexing_chat_warning("chat_glossary"))
             results.append(indexing_chat_warning("chat_project_noscope"))
         else:
-            results.append(check_chat_glossary(c, base, timeout=args.chat_timeout))
-            results.append(check_chat_project_noscope(c, base, timeout=args.chat_timeout))
+            glossary = check_chat_glossary(c, base, timeout=args.chat_timeout)
+            results.append(glossary)
+            if glossary.get("evidence", {}).get("chat_probe_stop"):
+                results.append(_r("chat_project_noscope", "P1", "warn", time.monotonic(),
+                    "Проба не запускалась: предыдущий запрос истёк, завершение сервера не подтверждено", {
+                        "executed": False, "blocked_by_session_id": glossary["evidence"]["session_id"],
+                        "cancellation_status": "UNCONFIRMED", "server_completion_status": "UNKNOWN"}))
+            else:
+                results.append(check_chat_project_noscope(c, base, timeout=args.chat_timeout))
         # UI достижим
         t0 = time.monotonic()
         try:

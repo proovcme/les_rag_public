@@ -241,14 +241,17 @@ def evaluate_response(
         if missing_channels:
             failures.append("missing retrieval channels: " + ", ".join(sorted(missing_channels)))
         rerank = trace.get("rerank") if isinstance(trace.get("rerank"), dict) else {}
-        if str(rerank.get("status") or "") != "bypassed":
-            failures.append(f"rerank_status={rerank.get('status') or '-'} != bypassed")
-        if str(rerank.get("reason") or "") != "disabled":
-            failures.append(f"rerank_reason={rerank.get('reason') or '-'} != disabled")
-        if str(rerank.get("preserved_order") or "") != "native_rrf":
-            failures.append(
-                f"preserved_order={rerank.get('preserved_order') or '-'} != native_rrf"
-            )
+        # Native RRF describes candidate retrieval before the optional reranker.
+        # Applied reranking may reorder them; explicit disabled bypass keeps RRF order.
+        if str(rerank.get("status") or "") != "applied":
+            if str(rerank.get("status") or "") != "bypassed":
+                failures.append(f"rerank_status={rerank.get('status') or '-'} != bypassed")
+            if str(rerank.get("reason") or "") != "disabled":
+                failures.append(f"rerank_reason={rerank.get('reason') or '-'} != disabled")
+            if str(rerank.get("preserved_order") or "") != "native_rrf":
+                failures.append(
+                    f"preserved_order={rerank.get('preserved_order') or '-'} != native_rrf"
+                )
 
     if failures:
         return GoldenResult(case.id, False, "; ".join(failures), elapsed, len(chunks), top_score, sources)

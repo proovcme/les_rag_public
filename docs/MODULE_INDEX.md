@@ -1,5 +1,19 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 976 — адресный добор обычным сообщением
+
+✅ Doc↔source: `chat_evidence_application_service.begin_plain_lsr_gap_continuation`
+вызывается только после owner claim и использует существующий `reopen_locators`
+с preserve_accepted и точными IDs. Pending proof/held/source очередь не заменяется;
+price-only targets требуют совпадения issued snapshot/строки/источника/книги.
+Прежний5-match/citation контракт аналогов не меняется;
+`rim_lsr_trace_service` отражает предварительные позиции в агрегате partial;
+`rim_trace_xlsx_service` показывает дробный объём без изменения денег.
+Фактический search reader payload сохраняется в tool_loop trace.
+Детали: [evidence flow](modules/rag-evidence-flow.md), [ЛСР](ALGO-lsr-assembly.md).
+🟡 Source976; runtime975/native974 — диагностический patch. Related continuation155passed;
+полный gate/install/live976 ещё pending. Customer_ready=false.
+
 ## 975 — кандидат: текущая READ-фаза и сохранный pending proof
 
 ✅ Doc↔candidate source: `ContextGovernor`/`ContextPacket` — required `PHASE_INSTRUCTION`;

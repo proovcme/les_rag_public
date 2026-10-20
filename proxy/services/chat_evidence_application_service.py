@@ -909,6 +909,68 @@ def model_packaging_record_arguments(
     }
 
 
+def begin_plain_lsr_gap_continuation(service, job, *, identity, question,
+                                     owns_sheet_pass=False, source_catalog=None):
+    """One owned human continuation queues exact open operations, retaining every baseline."""
+    if (not owns_sheet_pass or not isinstance(job, Mapping) or not job.get("accepted_rows")
+            or not service.is_plain_continuation(identity, {"original_question": str(question or "")})):
+        return job
+    context = job.get("task_context") or {}
+    declaration = context.get("artifact_kind_declaration") or {}
+    held = job.get("held_packet") or {}
+    if (declaration.get("status") != "declared" or declaration.get("artifact_kind") != "lsr"
+            or job.get("remaining") or service.pending_research_locators(job)
+            or held.get("pending_proof") or model_rag_pending_result_packets(held)
+            or ((held.get("locators") or held.get("queries")) and not held.get("terminal_model_result_saved"))):
+        return job
+    from proxy.services.lsr_financial_feedback_service import financial_feedback_for_rows
+    from proxy.services.rim_lsr_trace_service import source_confirmed_zero_work_charge_not_required
+
+    rows = list(job["accepted_rows"])
+    # Pin before reading the issued financial observations: a newer packaging
+    # event during that read must invalidate the eventual preserving reopen.
+    fresh = service.get(job["job_id"], include_retry_token=True)
+    financial = financial_feedback_for_rows(service.latest_financial_feedback(job["job_id"]), rows,
+        price_basis=context.get("price_basis"), identity=job.get("identity") or {})
+    document = job.get("document") or {}
+    ready = build_lsr_result_readiness(
+        packaged=bool(document.get("final_revision_id") or document.get("draft_revision_id")),
+        rows=rows, row_projection=[fact["projection"] for fact in financial],
+        source_catalog=source_catalog, catalog_locators=(source_catalog.work_locators()
+            if source_catalog is not None else [row.get("source_row") for row in rows]),
+        job_status=str(job.get("status") or ""))
+    wanted = {research_source_key(source, source_catalog) for source in ready["research_locators"]}
+    selected = []
+    for operation_id in ready["research_operation_ids"]:
+        matches = [row for row in rows if row.get("operation_id") == operation_id
+                   and research_source_key(row.get("source_row"), source_catalog) in wanted]
+        if len(matches) == 1 and not source_confirmed_zero_work_charge_not_required(matches[0], source_catalog):
+            selected.append(matches[0])
+    if not selected:
+        return job
+    sources = list(dict.fromkeys(row["source_row"] for row in selected))
+    if any(fresh.get(key) != job.get(key) for key in (
+            "accepted_rows", "remaining", "held_packet", "task_context", "identity", "status",
+            "query_cache", "evidence")):
+        raise HTTPException(409, detail={"code": "WORKBOOK_CONTINUATION_STATE_CHANGED",
+            "message": "Состояние задания изменилось. Обновите карточку результата и продолжите из неё."})
+    retry_state = fresh["retry_state_sha256"]
+    try:
+        service.reopen_locators(job["job_id"], sources, preserve_accepted=True,
+            operation_ids=[row["operation_id"] for row in selected], expected_retry_state=retry_state,
+            chat_review={"message": str(question), "decision_author": "user", "review_scope": "operations",
+                "request_sha256": hashlib.sha256(str(question).encode("utf-8")).hexdigest()})
+        return service.begin_or_resume(identity, expected_job_id=job["job_id"])
+    except WorkbookResearchJobError as error:
+        if str(error) == "WORKBOOK_CONTINUATION_JOB_CHANGED":
+            raise HTTPException(409, detail={"code": str(error),
+                "message": "У документа есть более новый ход. Обновите карточку результата и продолжите его."}) from error
+        if str(error) == "research state changed; refresh the result card":
+            raise HTTPException(409, detail={"code": "WORKBOOK_CONTINUATION_STATE_CHANGED",
+                "message": "Состояние задания изменилось. Обновите карточку результата и продолжите из неё."}) from error
+        raise
+
+
 def workbook_chat_review_needed(question, job, events=()) -> bool:
     """Only a plain resume can reuse a finished document without hearing the remark."""
     if not isinstance(job, Mapping) or not job.get("continues_job_id") or not job.get("accepted_rows"):
@@ -11252,6 +11314,23 @@ async def _execute_chat_evidence_application(
                     if live_job_id:
                         owns_sheet_pass = await claim_or_join_sheet_pass(live_job_id)
                     try:
+                      if owns_sheet_pass and research_job_service is not None and research_job is not None:
+                        reopened = begin_plain_lsr_gap_continuation(research_job_service, research_job,
+                            identity=research_identity, question=req.question, owns_sheet_pass=True,
+                            source_catalog=source_catalog)
+                        if reopened is not research_job:
+                            research_job = reopened
+                            review_context = workbook_chat_review_context(research_job_service, research_job)
+                            review_prior_rows = list(review_context.get("prior_rows") or [])
+                            review_instruction = str(review_context.get("message") or "")
+                            review_prior_artifact_kind = str(review_context.get("prior_artifact_kind") or "")
+                            explicit_reopened_locators.update(
+                                WorkbookResearchJobService.pending_research_locators(research_job))
+                            terminal_packet_locators.difference_update(explicit_reopened_locators)
+                            session_accepted_start = len(research_settled_source_keys(
+                                accumulated_rows, source_catalog, research_job)
+                                - source_conflict_locators(research_job, source_catalog)
+                                & set(source_catalog.work_locators()))
                       if not owns_sheet_pass:
                         logger.info(
                             "[SHEET_PASS] joined live job=%s; skip duplicate packet loop",
@@ -11930,6 +12009,7 @@ async def _execute_chat_evidence_application(
                                                 },
                                             }
                                         )
+                                        retrieval_trace["tool_loop"].setdefault("results", []).append(pass_tools[-1])
                                         append_actual_search(
                                             retrieval_trace,
                                             cached=True,
@@ -11940,6 +12020,8 @@ async def _execute_chat_evidence_application(
                                         {"tool": "search_sources", "args": {"q": query}}
                                     )
                                     pass_tools.append(research_result.payload)
+                                    # Retain the executed reader's measurement before a blocked result or later interruption.
+                                    retrieval_trace["tool_loop"].setdefault("results", []).append(research_result.payload)
                                     if model_search_result_blocks_packet(
                                         research_result.payload
                                     ):

@@ -1,4 +1,5 @@
 import json
+import pytest
 
 from tools import rag_golden_set as golden
 
@@ -200,6 +201,43 @@ def test_native_rrf_gate_checks_successful_trace():
     assert failed.ok is False
     assert "retrieval_status=degraded != ok" in failed.detail
     assert "fusion=dense is not native RRF" in failed.detail
+
+
+def test_native_rrf_gate_accepts_applied_rerank_without_requiring_native_final_order():
+    case = golden.GoldenCase(id="native-reranked", question="q", min_chunks=1)
+    response = {
+        "chunks": [{"score": 0.8, "doc_name": "source.pdf", "preview": "evidence"}],
+        "retrieval_trace": {
+            "status": "ok", "mode": "qdrant_native_hybrid+parent_card", "fusion": "rrf",
+            "retrieval_channels": ["dense", "qdrant_sparse"],
+            "rerank": {"status": "applied", "provider": "cross_encoder", "preserved_order": "reranked"},
+        },
+    }
+    assert golden.evaluate_response(case, response, require_native_rrf=True).ok is True
+
+
+@pytest.mark.parametrize("changed", [
+    {"status": "degraded"}, {"mode": "legacy_dense"},
+    {"fusion": "dense"}, {"retrieval_channels": ["dense"]},
+])
+def test_applied_rerank_cannot_hide_a_broken_native_rrf_trace(changed):
+    trace = {"status": "ok", "mode": "qdrant_native_hybrid", "fusion": "rrf",
+             "retrieval_channels": ["dense", "qdrant_sparse"], "rerank": {"status": "applied"}, **changed}
+    result = golden.evaluate_response(golden.GoldenCase(id="broken-native", question="q"), {
+        "chunks": [{"score": 0.8, "preview": "evidence"}], "retrieval_trace": trace}, require_native_rrf=True)
+    assert result.ok is False
+
+
+@pytest.mark.parametrize("rerank", [
+    {"status": "deferred"}, {"status": "error"}, {"status": "ok"}, {},
+    {"status": "bypassed", "reason": "unavailable", "preserved_order": "native_rrf"},
+])
+def test_native_rrf_gate_still_rejects_incomplete_or_unavailable_rerank(rerank):
+    trace = {"status": "ok", "mode": "qdrant_native_hybrid", "fusion": "rrf",
+             "retrieval_channels": ["dense", "qdrant_sparse"], "rerank": rerank}
+    result = golden.evaluate_response(golden.GoldenCase(id="broken-rerank", question="q"), {
+        "chunks": [{"score": 0.8, "preview": "evidence"}], "retrieval_trace": trace}, require_native_rrf=True)
+    assert result.ok is False
 
 
 def test_native_rrf_release_gate_requires_channels_and_reranker_bypass():

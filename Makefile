@@ -62,6 +62,7 @@ UNIT_TESTS += tests/test_model_current_read_frame.py tests/test_model_current_re
 UNIT_TESTS += tests/test_model_phase_instruction_975.py tests/test_model_index_context_975.py tests/test_model_query_ownership_975.py
 UNIT_TESTS += tests/test_model_result_carrier_975.py tests/test_model_result_carrier_edges_975.py tests/test_pending_proof_checkpoint_975.py
 UNIT_TESTS += tests/test_safe_held_query_resume_975.py tests/test_safe_held_query_edges_975.py tests/test_safe_held_query_unknown_sheet_975.py
+UNIT_TESTS += tests/test_lsr_candidate_confirmation_976.py tests/test_plain_lsr_gap_continuation_976.py
 UNIT_TESTS += tests/test_chat_model_source_frame.py tests/test_chat_research_read_deadline.py tests/test_model_query_phase_scope.py tests/test_model_query_resume_scope.py tests/test_model_source_frame_service.py tests/test_workbook_source_frame_identity.py
 UNIT_TESTS += tests/test_rtf_parser.py tests/test_rtf_input_transport.py tests/test_lsr_measure_scale_instruction.py tests/test_model_result_decorated_headers.py
 UNIT_TESTS += tests/test_model_exact_card_read_policy.py tests/test_model_retained_norm_delivery.py tests/test_smeta_retained_norm_hydration.py tests/test_vor_no_research_query_scope.py

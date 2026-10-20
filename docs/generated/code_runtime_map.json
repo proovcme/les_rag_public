@@ -3413,6 +3413,7 @@
         "tests/test_packaging_recovery_service.py",
         "tests/test_pending_proof_checkpoint_975.py",
         "tests/test_pending_review_operation_identity.py",
+        "tests/test_plain_lsr_gap_continuation_976.py",
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_proof_role_identity_972.py",
         "tests/test_resource_binding_provenance.py",
@@ -3451,7 +3452,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 16182,
+      "lines": 16264,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5279,6 +5280,7 @@
         "proxy/services/rim_trace_xlsx_service.py",
         "tests/lsr_citation_support.py",
         "tests/test_lsr_additional_norm_prompt_969.py",
+        "tests/test_lsr_candidate_confirmation_976.py",
         "tests/test_lsr_measure_scale_instruction.py",
         "tests/test_lsr_norm_applicability.py",
         "tests/test_lsr_norm_gap_reasons_830.py",
@@ -5332,6 +5334,7 @@
         "proxy/routers/chat.py",
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_finalization_defects_782.py",
+        "tests/test_lsr_candidate_confirmation_976.py",
         "tests/test_lsr_disguised_gaps.py",
         "tests/test_lsr_multifile_gap_identity_966.py",
         "tests/test_lsr_norm_applicability.py",
@@ -6125,6 +6128,7 @@
         "tests/test_model_partial_inventory_complete_frontier.py",
         "tests/test_model_query_failure_job_lifecycle.py",
         "tests/test_model_query_metadata_transport.py",
+        "tests/test_model_query_ownership_975.py",
         "tests/test_model_query_packet_failure_boundary.py",
         "tests/test_model_query_table_transport.py",
         "tests/test_model_rag_grouped_evidence_service.py",
@@ -7430,6 +7434,7 @@
         "tests/test_fsem_machinist_service.py",
         "tests/test_gesn_seed_is_test_only_830.py",
         "tests/test_gesn_service.py",
+        "tests/test_lsr_candidate_confirmation_976.py",
         "tests/test_lsr_derived_quantity_presentation_968.py",
         "tests/test_lsr_disguised_gaps.py",
         "tests/test_lsr_group_resource_specificity.py",
@@ -7469,7 +7474,7 @@
         "tests/test_unknown_resource_consumption.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 3727,
+      "lines": 3731,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7594,6 +7599,7 @@
         "proxy/smeta_core/lsr_renderer.py",
         "tests/test_attachment_collection_965.py",
         "tests/test_finalization_defects_782.py",
+        "tests/test_lsr_candidate_confirmation_976.py",
         "tests/test_lsr_derived_quantity_presentation_968.py",
         "tests/test_lsr_labor_tariff_830.py",
         "tests/test_lsr_numeric_string_zero_972.py",
@@ -8771,6 +8777,7 @@
         "tests/test_packaging_recovery_service.py",
         "tests/test_pending_proof_checkpoint_975.py",
         "tests/test_pending_review_operation_identity.py",
+        "tests/test_plain_lsr_gap_continuation_976.py",
         "tests/test_pool_completion_alignment_24.py",
         "tests/test_proof_role_identity_pipeline_972.py",
         "tests/test_safe_held_query_edges_975.py",
@@ -8801,7 +8808,7 @@
         "tests/test_workbook_source_frame_identity.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 3367,
+      "lines": 3372,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -10234,6 +10241,7 @@
     {
       "inbound": [
         "tests/test_finalization_defects_782.py",
+        "tests/test_lsr_candidate_confirmation_976.py",
         "tests/test_lsr_disguised_gaps.py",
         "tests/test_lsr_multifile_gap_identity_966.py",
         "tests/test_lsr_readiness_transport.py",
@@ -10671,7 +10679,7 @@
     },
     {
       "inbound": [],
-      "lines": 226,
+      "lines": 283,
       "module": "tests.test_basic_function_smoke",
       "outbound": [
         "tools/basic_function_smoke.py"
@@ -12940,6 +12948,22 @@
     },
     {
       "inbound": [],
+      "lines": 118,
+      "module": "tests.test_lsr_candidate_confirmation_976",
+      "outbound": [
+        "proxy/services/lsr_norm_quality_gate_service.py",
+        "proxy/services/lsr_result_readiness_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
+        "proxy/services/rim_trace_xlsx_service.py",
+        "tests/lsr_citation_support.py",
+        "tests/test_rim_lsr_trace_service.py"
+      ],
+      "path": "tests/test_lsr_candidate_confirmation_976.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 595,
       "module": "tests.test_lsr_candidate_query_service",
       "outbound": [
@@ -13341,7 +13365,8 @@
     },
     {
       "inbound": [
-        "tests/test_lsr_numeric_string_zero_972.py"
+        "tests/test_lsr_numeric_string_zero_972.py",
+        "tests/test_plain_lsr_gap_continuation_976.py"
       ],
       "lines": 234,
       "module": "tests.test_lsr_zero_charge_observation_969",
@@ -14421,14 +14446,16 @@
     },
     {
       "inbound": [],
-      "lines": 69,
+      "lines": 155,
       "module": "tests.test_model_query_ownership_975",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_candidate_query_service.py",
+        "proxy/services/model_research_tool_service.py",
         "proxy/services/runtime_config_registry_service.py",
         "proxy/services/workbook_research_job_service.py",
-        "tests/test_chat_model_source_frame.py"
+        "tests/test_chat_model_source_frame.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
       ],
       "path": "tests/test_model_query_ownership_975.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -14675,6 +14702,7 @@
         "tests/test_model_query_failure_job_lifecycle.py",
         "tests/test_model_query_generation_limit_boundary.py",
         "tests/test_model_query_metadata_transport.py",
+        "tests/test_model_query_ownership_975.py",
         "tests/test_model_query_packet_failure_boundary.py",
         "tests/test_model_query_phase_request_951.py",
         "tests/test_model_query_phase_scope.py",
@@ -14694,6 +14722,7 @@
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_pending_proof_checkpoint_975.py",
         "tests/test_pending_review_operation_identity.py",
+        "tests/test_plain_lsr_gap_continuation_976.py",
         "tests/test_proof_role_identity_pipeline_972.py",
         "tests/test_safe_held_query_edges_975.py",
         "tests/test_safe_held_query_resume_975.py",
@@ -15671,6 +15700,21 @@
     },
     {
       "inbound": [],
+      "lines": 216,
+      "module": "tests.test_plain_lsr_gap_continuation_976",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/workbook_research_job_service.py",
+        "tests/test_lsr_zero_charge_observation_969.py",
+        "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_workbook_gap_followup_955.py"
+      ],
+      "path": "tests/test_plain_lsr_gap_continuation_976.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 169,
       "module": "tests.test_pool_completion_alignment_24",
       "outbound": [
@@ -16195,7 +16239,7 @@
     },
     {
       "inbound": [],
-      "lines": 239,
+      "lines": 277,
       "module": "tests.test_rag_golden_set",
       "outbound": [
         "tools/rag_golden_set.py"
@@ -16758,6 +16802,7 @@
       "inbound": [
         "tests/lsr_gold_pricebook.py",
         "tests/test_fsem_machinist_service.py",
+        "tests/test_lsr_candidate_confirmation_976.py",
         "tests/test_lsr_derived_quantity_presentation_968.py",
         "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_rim_trace_api.py",
@@ -16878,7 +16923,7 @@
       "inbound": [
         "tests/test_lsr_render_byte_determinism_943.py"
       ],
-      "lines": 563,
+      "lines": 603,
       "module": "tests.test_rim_trace_xlsx",
       "outbound": [
         "proxy/routers/lsr.py",
@@ -19054,6 +19099,7 @@
     {
       "inbound": [
         "tests/test_lsr_gap_hint_resume_964.py",
+        "tests/test_plain_lsr_gap_continuation_976.py",
         "tests/test_unresolved_retry_routes_955.py"
       ],
       "lines": 262,
@@ -19637,7 +19683,7 @@
       "inbound": [
         "tests/test_basic_function_smoke.py"
       ],
-      "lines": 337,
+      "lines": 358,
       "module": "tools.basic_function_smoke",
       "outbound": [
         "proxy/services/model_output_protocol_service.py",
@@ -21004,7 +21050,7 @@
         "tools/measure_weak_retry.py",
         "tools/qwen_baseline.py"
       ],
-      "lines": 361,
+      "lines": 364,
       "module": "tools.rag_golden_set",
       "outbound": [
         "tools/__init__.py"
@@ -23959,9 +24005,9 @@
     "product_reachable": 387,
     "registered_api_routes": 343,
     "runtime_support": 11,
-    "test_or_tool_only": 867,
-    "tracked_python_files": 1266,
-    "tracked_python_lines": 430071
+    "test_or_tool_only": 869,
+    "tracked_python_files": 1268,
+    "tracked_python_lines": 430741
   },
   "warnings": []
 }

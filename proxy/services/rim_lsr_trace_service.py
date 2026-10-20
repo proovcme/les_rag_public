@@ -3502,6 +3502,7 @@ def build_lsr_trace_from_visible_rows(
     calculated_positions = 0
     confirmed_amount = 0.0
     preliminary_amount = 0.0
+    has_preliminary_positions = False
     for binding in bound["row_bindings"]:
         source_row = binding.get("row")
         model_row = binding.get("source_row")
@@ -3641,6 +3642,7 @@ def build_lsr_trace_from_visible_rows(
                 if key in pos_summary:
                     binding[key] = pos_summary[key]
             if preliminary:
+                has_preliminary_positions = True
                 preliminary_amount = round(preliminary_amount + amount, 2)
             else:
                 confirmed_amount = round(confirmed_amount + amount, 2)
@@ -3690,6 +3692,8 @@ def build_lsr_trace_from_visible_rows(
     ]
     summary["confirmed_amount"] = confirmed_amount
     summary["preliminary_amount"] = preliminary_amount
+    if has_preliminary_positions and summary.get("result_status") == "priced_final":
+        summary.update(result_status="priced_partial", amount_status="partial", full_amount=None)
     if conflict_locators:
         summary["flags"] = list(summary.get("flags") or []) + [
             f"строка {locator}: двойной учёт одного предмета в ролях material и "

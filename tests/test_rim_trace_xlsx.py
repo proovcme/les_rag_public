@@ -183,6 +183,46 @@ def _closed_trace():
 
 
 
+@pytest.mark.parametrize("renderer", ["position", "lsr"])
+@pytest.mark.parametrize("quantity,resource_quantity,resource_amount", [
+    (0.375, 4.8525, 2426.25),
+    (0.000125, 0.001618, 0.81),
+])
+def test_fractional_work_quantities_remain_visible_without_changing_money(
+    tmp_path, renderer, quantity, resource_quantity, resource_amount,
+):
+    from copy import deepcopy
+    from openpyxl import load_workbook
+
+    position = _position(qty=quantity, resources=_resources())
+    trace = (rim.build_position_trace(position, pricebook=_Book()) if renderer == "position"
+             else rim.build_lsr_trace([position], pricebook=_Book()))
+    before = deepcopy(trace)
+    render = rim_xlsx.render_trace_xlsx if renderer == "position" else rim_xlsx.render_lsr_xlsx
+    path = render(trace, tmp_path / "fractional.xlsx")
+    formulas = load_workbook(path, read_only=True, data_only=False)
+    cached = load_workbook(path, read_only=True, data_only=True)
+    try:
+        ws, values = formulas.worksheets[0], cached.worksheets[0]
+        work = next(row[0].row for row in ws.iter_rows() if row[1].value == CODE)
+        resource = next(row[0].row for row in ws.iter_rows() if row[1].value == "1-100-25")
+        for column in (5, 7):
+            assert ws.cell(work, column).value == quantity
+            assert values.cell(work, column).value == quantity
+            assert ws.cell(work, column).number_format == "#,##0.00#############"
+        # The existing calculator rounds resource consumption to six decimals;
+        # the renderer must preserve that result, including the cached money.
+        assert values.cell(resource, 7).value == resource_quantity
+        assert ws.cell(resource, 7).number_format == "#,##0.00#############"
+        assert ws.cell(resource, 10).number_format == "#,##0.00"
+        assert ws.cell(resource, 12).number_format == "#,##0.00"
+        assert values.cell(resource, 12).value == resource_amount
+    finally:
+        formulas.close()
+        cached.close()
+    assert trace == before
+
+
 def test_closed_position_is_named_by_the_completed_form(tmp_path):
     """Закрытая позиция подписывается «Всего по позиции», черновик — нет.
 

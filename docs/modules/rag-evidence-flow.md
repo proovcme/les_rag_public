@@ -1,5 +1,25 @@
 # RAG evidence flow
 
+## 976 — обычный «Продолжи» открывает только объявленные пробелы
+
+После owner claim `begin_plain_lsr_gap_continuation` распознаёт прежний plain resume
+и model-declared LSR с принятыми решениями. Если текущих unfinished source/held/proof
+или pending-operation targets нет, readiness и совместимые observations последнего
+выданного расчёта задают точные operation IDs. Существующий preserving reopen сохраняет
+все принятые строки/evidence/cache/ценовую базу и ставит только эти IDs в очередь.
+Закрытый сосед общего source не становится разрешённой целью. Financial feedback
+проверяется по прежним revision/SHA/source scope/book SHA; stale не переигрывается.
+Исходный literal zero не запускает подбор. Полный результат, ВОР и packaging-only
+repair не запускают новый предметный ход. Явное инженерное замечание сохраняет
+прежний review path; незакрытый новый ответ не начинает автоматический повтор.
+Модель сама формулирует запросы и меняет только адресованные решения.
+Перед financial observations берётся свежий owned snapshot с retry token;
+изменившийся baseline/event не проходит существующий CAS. Финальный resume
+проверяет expected_job_id в транзакции до retarget/update, не усыновляя чужой gate.
+Actual search reader payload сохраняется в tool_loop.results сразу после выполнения;
+cached replay помечен cached и не является свидетельством нового native RRF.
+Source976, installed diagnostic975/native974; live976 ещё не принят.
+
 ## 975 — текущая READ-фаза, авторство запросов и сохранный proof
 
 Кандидат0.31.247/build975/native5.1.975, не установлен. Фактически установлен974

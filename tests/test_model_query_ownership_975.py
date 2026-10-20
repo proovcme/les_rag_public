@@ -67,3 +67,89 @@ def test_registered_old_switch_discloses_the_inactive_production_boundary(monkey
         assert "истор" in text and ("неактив" in text or "не используется" in text)
     finally:
         registry.declared_env_defaults.cache_clear()
+
+
+def _observe_execution_payloads(monkeypatch):
+    """Observe the actual typed-reader boundary, not policy flags or hit metadata."""
+    import copy
+    from dataclasses import replace
+    from proxy.services.model_research_tool_service import ModelResearchToolService
+
+    original = ModelResearchToolService.execute
+    observed = []
+
+    async def execute(self, call):
+        result = await original(self, call)
+        if call.get("tool") != "search_sources":
+            return result
+        trace = {**(result.retrieval_trace or {}), "returned_candidates": len(result.chunks),
+                 "reranked": True, "rerank_status": "applied", "rerank_deferred": False,
+                 "measurement_id": "owned-reader-result-" + str(len(observed) + 1)}
+        payload = {**result.payload, "trace": trace}
+        observed.append(copy.deepcopy(payload))
+        return replace(result, payload=payload, retrieval_trace=trace)
+
+    monkeypatch.setattr(ModelResearchToolService, "execute", execute)
+    return observed
+
+
+def _assert_execution_projection(actual, expected):
+    keys = ("schema", "tool", "operation", "inputs", "status", "trace")
+    assert [{k: row.get(k) for k in keys} for row in actual] == [
+        {k: row.get(k) for k in keys} for row in expected]
+    assert [row["result"]["count"] for row in actual] == [row["result"]["count"] for row in expected]
+    assert [[hit["content"] for hit in row["result"]["hits"]] for row in actual] == [
+        [hit["content"] for hit in row["result"]["hits"]] for row in expected]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B1_CANDIDATE", "B0_DIRECT"])
+async def test_model_query_execution_trace_retains_reader_measurement_without_changing_queries(
+        tmp_path, monkeypatch, variant):
+    observed = _observe_execution_payloads(monkeypatch)
+    run = await _run_frame(tmp_path, monkeypatch, cap=2, reads=False, variant=variant,
+        question=QUESTION, query_declaration=json.dumps({"artifact_kind": "lsr", "queries": QUERIES}),
+        final_answer=json.dumps({"artifact_kind": "lsr", "rows": ROWS}))
+    assert run.queries == QUERIES and len(run.requests) == 2 and not run.responses
+    assert all("owned-reader-result-" not in str(request.messages) for request in run.requests)
+    assert len(observed) == len(QUERIES)
+    _assert_execution_projection(run.result["retrieval_trace"]["tool_loop"].get("results", []), observed)
+    if variant == "B1_CANDIDATE":
+        job = WorkbookResearchJobService().get(run.result["retrieval_trace"]["workbook_research_job"]["job_id"])
+        for actual, authored in zip(job["accepted_rows"], ROWS, strict=True):
+            assert {key: actual[key] for key in authored} == authored
+
+
+@pytest.mark.asyncio
+async def test_sheet_query_trace_accumulates_execution_results_across_packets(tmp_path, monkeypatch):
+    from tests.test_model_rag_sheet_evidence_reads import _run_sheet
+
+    observed = _observe_execution_payloads(monkeypatch)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, packet_count=2)
+    assert run.queries == run.declared_queries and len(observed) == 4
+    assert len(run.requests) == 8 and not run.responses
+    assert all("owned-reader-result-" not in str(request.messages) for request in run.requests)
+    _assert_execution_projection(run.result["retrieval_trace"]["tool_loop"].get("results", []), observed)
+
+
+@pytest.mark.asyncio
+async def test_cached_query_result_is_visible_without_inventing_fresh_rrf_or_rerank(tmp_path, monkeypatch):
+    original = WorkbookResearchJobService.begin_or_resume
+
+    def begin(self, identity, **kwargs):
+        job = original(self, identity, **kwargs)
+        return self.record_search_cache(job["job_id"], {QUERIES[0]: []},
+                                        cache_contract="smeta_literal_query_v1")
+
+    monkeypatch.setattr(WorkbookResearchJobService, "begin_or_resume", begin)
+    observed = _observe_execution_payloads(monkeypatch)
+    run = await _run_frame(tmp_path, monkeypatch, cap=2, reads=False,
+        question=QUESTION, query_declaration=json.dumps({"artifact_kind": "lsr", "queries": QUERIES}),
+        final_answer=json.dumps({"artifact_kind": "lsr", "rows": ROWS}))
+    assert run.queries == QUERIES[1:] and len(run.requests) == 2 and not run.responses
+    results = run.result["retrieval_trace"]["tool_loop"].get("results", [])
+    assert len(results) == 2
+    assert results[0] == {"schema": "les_tool_result_v1", "tool": "search_sources",
+                          "status": "missing", "result": {"count": 0, "cached": True}}
+    _assert_execution_projection(results[1:], observed)
+    assert len(observed) == 1, "only a real reader call can supply execution measurement"

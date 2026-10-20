@@ -86,7 +86,7 @@ def _make_put(ws, S: dict[str, Any]):
         cell = ws.cell(row=r, column=c, value=v)
         cell.font = font or S["small"]
         if num and isinstance(v, (int, float)):
-            cell.number_format = "#,##0.00"
+            cell.number_format = "#,##0.00#############" if c in {5, 6, 7} else "#,##0.00"
             cell.alignment = Alignment(horizontal="right")
         else:
             cell.alignment = Alignment(horizontal=align, vertical="top", wrap_text=(c == 3))

@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 
 import pytest
+import httpx
+from tools import basic_function_smoke as smoke
 
 from tools.basic_function_smoke import (
     DEFAULT_CHAT_TIMEOUT,
@@ -20,8 +22,8 @@ from tools.basic_function_smoke import (
 )
 
 
-def test_default_chat_timeout_covers_local_9b_release_probe():
-    assert DEFAULT_CHAT_TIMEOUT == 90.0
+def test_default_chat_timeout_leaves_overhead_after_the_assigned_transport_default():
+    assert DEFAULT_CHAT_TIMEOUT == 360.0
 
 
 def _mk(name, severity, status):
@@ -73,11 +75,66 @@ def test_chat_uses_explicit_bounded_timeout():
 
     client = Client()
     _chat(client, "http://example.test", "вопрос", timeout=12.5)
+    session_id = client.call[1]["json"]["session_id"]
+    assert session_id.startswith("basic-smoke-")
 
     assert client.call == (
         "http://example.test/api/chat",
-        {"json": {"question": "вопрос"}, "timeout": 12.5},
+        {"json": {"question": "вопрос", "session_id": session_id}, "timeout": 12.5},
     )
+    _chat(client, "http://example.test", "вопрос", timeout=12.5)
+    assert client.call[1]["json"]["session_id"] != session_id
+
+
+@pytest.mark.parametrize("check", [check_chat_glossary, check_chat_project_noscope])
+def test_chat_timeout_records_owned_session_and_never_claims_cancellation(check):
+    class Client:
+        def __init__(self):
+            self.calls = []
+        def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            raise httpx.ReadTimeout("bounded probe timeout")
+    client = Client()
+    result = check(client, "http://example.test", timeout=12.5)
+    assert result["status"] == "fail" and len(client.calls) == 1
+    evidence = result["evidence"]
+    assert evidence["session_id"] == client.calls[0][1]["json"]["session_id"]
+    assert evidence["session_id"].startswith("basic-smoke-")
+    assert evidence["chat_timeout_seconds"] == 12.5 and evidence["chat_probe_stop"] is True
+    assert evidence["cancellation_status"] == "UNCONFIRMED"
+    assert evidence["server_completion_status"] == "UNKNOWN"
+
+
+def test_main_does_not_queue_second_model_probe_after_an_unconfirmed_timeout(tmp_path, monkeypatch):
+    class Client:
+        def __init__(self):
+            self.calls = []
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            raise httpx.ReadTimeout("bounded probe timeout")
+    client = Client()
+    monkeypatch.setattr(smoke.httpx, "Client", lambda **kwargs: client)
+    monkeypatch.setattr(smoke.httpx, "get", lambda *args, **kwargs: _Response(200, {}))
+    for name in ("check_version", "check_health", "check_simple", "check_diagnostics", "check_scope"):
+        monkeypatch.setattr(smoke, name, lambda *args, **kwargs: _mk("other", "P0", "pass"))
+    monkeypatch.setattr(smoke, "check_indexing_state", lambda *args, **kwargs: (_mk("index", "P0", "pass"), False))
+    def forbidden_second(*args, **kwargs):
+        pytest.fail("A timed-out probe must not enqueue another model request")
+    monkeypatch.setattr(smoke, "check_chat_project_noscope", forbidden_second)
+    output = tmp_path / "smoke.json"
+    monkeypatch.setattr(smoke.sys, "argv", ["basic_function_smoke", "--json", str(output), "--chat-timeout", "12.5"])
+    assert smoke.main() == 1
+    assert len(client.calls) == 1 and client.calls[0][1]["timeout"] == 12.5
+    import json
+    saved = json.loads(output.read_text(encoding="utf-8"))
+    skipped = next(row for row in saved["results"] if row["name"] == "chat_project_noscope")
+    assert skipped["evidence"]["executed"] is False
+    assert skipped["evidence"]["blocked_by_session_id"] == client.calls[0][1]["json"]["session_id"]
+    assert skipped["evidence"]["cancellation_status"] == "UNCONFIRMED"
 
 
 class _Response:

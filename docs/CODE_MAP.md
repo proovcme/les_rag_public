@@ -1,5 +1,16 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 976 — plain continuation → существующая очередь открытых операций
+
+`claim_or_join_sheet_pass` → owner-only `begin_plain_lsr_gap_continuation` →
+`build_lsr_result_readiness` + совместимый `financial_feedback_for_rows` →
+`reopen_locators(preserve_accepted=True, operation_ids=…)` → прежний model query/read/result.
+Не подменяет активный held/proof пакет и не пересматривает закрытого соседа общего source.
+Прежний applicability contract сохраняется; итоговый trace отражает partial-позиции.
+`rim_trace_xlsx_service._make_put` использует отдельный формат чисел количества.
+Фактические свежие и cached результаты sheet search добавляются в общий tool_loop trace.
+Source976; диагностически установлен975/native974; full976/install/live pending.
+
 ## 975 — READ-фаза, model-owned queries и durable proof
 
 `ContextKind.PHASE_INSTRUCTION` → `ContextGovernor.pack` / `ContextPacket.as_messages`

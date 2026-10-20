@@ -786,6 +786,7 @@ class WorkbookResearchJobService:
     def begin_or_resume(
         self, identity: WorkbookResearchIdentity, *, task_context: Mapping[str, Any] | None = None,
         source_locators: Sequence[str] | None = None,
+        expected_job_id: str = "",
     ) -> dict[str, Any]:
         digest = identity.digest()
         identity_json = json.dumps(identity.payload(), ensure_ascii=False, sort_keys=True)
@@ -803,6 +804,10 @@ class WorkbookResearchJobService:
                     matched_id = str(row["job_id"])
                     row = self._latest_compatible_continuation(conn, row, identity)
                     retargeted = str(row["job_id"]) != matched_id
+            if expected_job_id and (row is None or str(row["job_id"]) != expected_job_id):
+                # An already claimed producer must not adopt another lineage's
+                # gate or reset a newer run while resuming its exact owned job.
+                raise WorkbookResearchJobError("WORKBOOK_CONTINUATION_JOB_CHANGED")
             if row is None:
                 self._assert_continuation_compatible(conn, identity, task_context)
                 job_id = f"wrj_{uuid4().hex}"

@@ -1,5 +1,22 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат976 — обычное продолжение и честная готовность
+
+`test_plain_lsr_gap_continuation_976`: exact shared-source operation IDs,
+preserved accepted/evidence/cache/price basis, owner claim, held/proof/unfinished
+priority, zero/VOR/ready guards, current vs stale financial snapshots и реальный
+producer с двумя новыми model calls без автоматического цикла. ROOT RED16→GREEN16;
+related continuation155passed/37.19s.
+`test_lsr_candidate_confirmation_976` + прежний `test_lsr_norm_applicability`: открытый
+match не закрывает применимость; положительный5yes candidate сохраняет активный
+контракт; тот же шифр/расчёт, partial aggregate при неподтверждённой позиции.
+Дополнительные owner/CAS случаи проверяют newer lineage и изменившийся snapshot;
+никакой unclaimed job не может стать продолжением уже занятого producer.
+`test_rim_trace_xlsx`: дробные0.375/0.000125, исходные/cached числа и денежный формат.
+`test_model_query_ownership_975`: фактические reader measurements и honest cache replay.
+RRF/basic smoke регрессии — в прежних test_rag_golden_set/test_basic_function_smoke.
+363 файла CURRENT_TESTS (два добавлены, прежние не удалены); full976/live pending.
+
 ## Кандидат975 — фазовый контекст, carrier и сохранное возобновление
 
 `test_model_phase_instruction_975`/`test_model_index_context_975`: required READ-фаза,

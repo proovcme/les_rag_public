@@ -1,5 +1,45 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 20.10.2026 — кандидат976: обычное продолжение открытых операций
+
+Source0.31.248/build976/native5.1.976. Установлен диагностический runtime975/
+`9abe92443ae80a59923ccf273597369ba660050e`, native остаётся974; это не установка976.
+Полный975 gate:6860passed/20skipped,9команд rc0,
+`artifacts/gates_975_final_v3/receipt.json` SHA
+`31e92335f2d3ffd04ce1a9b9ed3db9d79ee1395c7af6192bdab2cb4e94938412`.
+Ordinary CSV7 ЛСР скачана за209.891s, все7решений сохранены, книга СПб3кв2026
+точная, но0полных позиций/0подтверждённых рублей; B0 также0полных.
+Обычное «Продолжи» за6.578s только переупаковало строки без вызова модели;
+это измеренный дефект, не успешный добор. Multifile ВОР27 остановлена владельцем
+контроля после1226.938s с7принятыми/20оставшимися и доступным черновиком.
+
+976 после owner claim использует существующий preserving-reopen по точным
+operation IDs из readiness/совместимых financial observations. Принятые строки,
+evidence, цены и ID сохраняются; текущие proof/held/unfinished пакеты имеют приоритет.
+Это один новый человеческий ход, без автоматического повторения открытого ответа.
+Предварительный расчёт сохраняется, агрегат остаётся partial при открытой
+применимости любой позиции. XLSX показывает дробные объёмы
+без изменения денежного округления. В trace сохраняется фактический reader result.
+Инструмент RRF smoke принимает applied rerank после native RRF; basic smoke
+изолирует сессии и не запускает второй запрос после неподтверждённого тайм-аута.
+ROOT RED16→GREEN16 для plain continuation; related155passed/37.19s;
+related расчёта/RAG191passed/1skipped/51.61s; XLSX/applicability61passed/29.76s.
+Полный976 gate, установка и живой добор ещё pending; customer_ready=false.
+Ни технические проверки, ни native-tool microprobe не доказывают точность норм≥90%.
+Финальная peer-проверка добавила exact owned-job pin до любого retarget/resume,
+свежий baseline и existing CAS перед preserving reopen; stale выдаёт409 до inference.
+ROOT owner regressions RED2→related130passed/10.50s; финальный related108passed/33.51s.
+Предложение безусловно считать ANALOGUE_CANDIDATE неподтверждённым отклонено:
+активный контракт требует этот токен и запрещает *_VERIFIED. Прежний5-match/citation
+контракт сохранён; новая регрессия защищает допустимый подтверждённый аналог.
+Отдельное5-строчное расширение инструкции добавочных норм не включено: measured
+related5failed/148passed выявил вытеснение evidence на прежних малых wire budgets.
+Source/test изменения этого эксперимента отменены целиком, старые capacity tests
+и их бюджеты сохранены; отрицательный receipt — offline_976/green_adjustment_instruction.xml.
+Финальный contract/XLSX/plain19:80passed/33.61s; precommit documentation/map/version:
+26passed/16skipped/7.75s. После фиксации source начинается один полный976 gate;
+эти связанные результаты не объявляются полным release proof.
+
 ## 20.10.2026 — кандидат975; установлен974, профессиональная приёмка отрицательна
 
 Source-кандидат0.31.247/build975/native5.1.975 реализует required READ phase,

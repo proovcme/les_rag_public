@@ -1,0 +1,216 @@
+"""A new human Continue uses the existing exact-operation gap queue, never a model verdict."""
+from copy import deepcopy
+from dataclasses import replace
+import hashlib
+import json
+
+import pytest
+
+from proxy.services import chat_evidence_application_service as app
+from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+from tests.test_workbook_gap_followup_955 import baseline, identity, SOURCE
+
+
+def _child(store):
+    requested = identity(store, "Продолжи")
+    return requested, store.begin_or_resume(requested, task_context={"original_question": "Продолжи"})
+
+
+def _continue(store, job, requested, *, owner=True, question="Продолжи", catalog=None):
+    return app.begin_plain_lsr_gap_continuation(store, job, identity=requested, question=question,
+        owns_sheet_pass=owner, source_catalog=catalog)
+
+
+def test_plain_continue_reopens_exact_open_ids_and_retains_closed_shared_source(tmp_path):
+    store, original = baseline(tmp_path)
+    requested, child = _child(store)
+    before = deepcopy(child)
+    current = _continue(store, child, requested)
+    expected = {row["operation_id"] for row in before["accepted_rows"][1:]}
+    assert store.pending_research_operation_ids(current) == expected
+    assert store.pending_research_locators(current) == {SOURCE, "Другой лист!R9"}
+    assert current["accepted_rows"] == before["accepted_rows"]
+    assert current["evidence"] == before["evidence"] and current["query_cache"] == before["query_cache"]
+    assert current["task_context"]["price_basis"] == before["task_context"]["price_basis"]
+    assert current["continues_job_id"] == original["job_id"]
+    note = store.list_events(current["job_id"], "locators_reopened")[-1]["payload"]
+    assert note["preserve_accepted"] is True and set(note["research_operation_ids"]) == expected
+    assert note["chat_review"]["message"] == "Продолжи" and note["chat_review"]["review_scope"] == "operations"
+    assert {row["operation_id"] for row in note["prior_rows"]} == expected
+    assert not app.workbook_chat_review_needed("Продолжи", current)
+
+
+@pytest.mark.parametrize("blocked", ["not_owner", "non_plain", "vor", "remaining", "proof", "held", "pending", "full_ready"])
+def test_plain_retry_does_not_replace_another_continuation_or_reopen_ready_rows(tmp_path, monkeypatch, blocked):
+    store, _ = baseline(tmp_path)
+    requested, child = _child(store)
+    child = deepcopy(child)
+    if blocked == "vor":
+        child["task_context"]["artifact_kind_declaration"]["artifact_kind"] = "vor"
+    elif blocked == "remaining":
+        child["remaining"] = [SOURCE]
+    elif blocked == "proof":
+        child["held_packet"] = {"locators": [SOURCE], "pending_proof": {"purpose": "norm"}}
+    elif blocked == "held":
+        child["held_packet"] = {"locators": [SOURCE], "queries": ["literal saved plan"]}
+    elif blocked == "pending":
+        child["task_context"]["pending_research_locators"] = [SOURCE]
+    elif blocked == "full_ready":
+        closed = child["accepted_rows"][0]
+        child["accepted_rows"] = [closed]
+    question = "Проверь весь документ" if blocked == "non_plain" else "Продолжи"
+    if blocked == "non_plain":
+        requested = identity(store, question)
+    before = deepcopy(child)
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("this request must not mutate the existing operation queue")
+    monkeypatch.setattr(store, "reopen_locators", forbidden)
+    assert _continue(store, child, requested, owner=blocked != "not_owner", question=question) is child
+    assert child == before
+
+
+def _price_only(tmp_path):
+    store, original = baseline(tmp_path)
+    rows = deepcopy(original["accepted_rows"])
+    rows[1].update(row_role="material", norm_code="", norm_status="", resource_code="owned-material",
+                   open_gap="Exact current-book price is still missing.")
+    rows[2].update(norm_code="MODEL-CLOSED", norm_status="EXACT_VERIFIED", open_gap="")
+    current = store.replace_accepted_rows(original["job_id"], rows)
+    material = current["accepted_rows"][1]
+    store.record_packaging(current["job_id"], tool="build_lsr_workbook", revision_id="owned-price-only",
+        draft=False, price_basis=current["task_context"]["price_basis"], financial_projection=[{
+            "operation_id": material["operation_id"], "locator": material["source_row"],
+            "row_role": "material", "status": "bound", "position_calculated": False,
+            "open_reasons": ["price_missing"]}])
+    requested, child = _child(store)
+    return store, requested, child, material["operation_id"]
+
+
+@pytest.mark.parametrize("stale", [None, "row_revision", "row_sha", "source_scope", "pricebook_sha"])
+def test_only_matching_price_projection_can_reopen_the_exact_material_operation(tmp_path, monkeypatch, stale):
+    store, requested, child, material_id = _price_only(tmp_path)
+    before = deepcopy(child)
+    snapshot = deepcopy(store.latest_financial_feedback(child["job_id"]))
+    assert len(snapshot["records"]) == 1
+    if stale == "row_revision": snapshot["records"][0]["revision"] += 1
+    elif stale == "row_sha": snapshot["records"][0]["row_sha256"] = "e" * 64
+    elif stale == "source_scope": snapshot["source_scope"]["source_sha256"] = "f" * 64
+    elif stale == "pricebook_sha": snapshot["price_basis"]["pricebook_sha256"] = "d" * 64
+    monkeypatch.setattr(store, "latest_financial_feedback", lambda _job: snapshot)
+    current = _continue(store, child, requested)
+    assert current["accepted_rows"] == before["accepted_rows"]
+    assert current["evidence"] == before["evidence"] and current["query_cache"] == before["query_cache"]
+    if stale is None:
+        assert store.pending_research_operation_ids(current) == {material_id}
+        assert store.pending_research_locators(current) == {SOURCE}
+    else:
+        assert current is child and not store.pending_research_operation_ids(current)
+
+
+def test_source_confirmed_zero_is_not_a_new_norm_research_target(tmp_path, monkeypatch):
+    from tests.test_lsr_zero_charge_observation_969 import _catalog, _row
+    store, _ = baseline(tmp_path)
+    requested, child = _child(store)
+    child = deepcopy(child)
+    child["accepted_rows"] = [_row("0")]
+    child["held_packet"] = {}
+    catalog = _catalog(tmp_path)
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("source-confirmed zero needs neither a new norm nor a new charge")
+    monkeypatch.setattr(store, "reopen_locators", forbidden)
+    assert _continue(store, child, requested, catalog=catalog) is child
+
+
+def test_owned_plain_continue_never_adopts_or_resumes_a_newer_unclaimed_job(tmp_path):
+    store, _ = baseline(tmp_path)
+    requested, child = _child(store)
+    newer = store.begin_or_resume(identity(store, "Уточнение инженера к документу"))
+    store.pause(newer["job_id"], phase="operator")
+    before = deepcopy(store.get(newer["job_id"]))
+    events = store.list_events(newer["job_id"])
+    with pytest.raises(app.HTTPException) as error:
+        _continue(store, child, requested)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "WORKBOOK_CONTINUATION_JOB_CHANGED"
+    assert store.get(newer["job_id"]) == before
+    assert store.list_events(newer["job_id"]) == events
+
+
+def test_stale_owned_snapshot_cannot_replace_a_newer_operation_queue(tmp_path):
+    store, _ = baseline(tmp_path)
+    requested, child = _child(store)
+    material = child["accepted_rows"][1]
+    fresh = store.reopen_locators(child["job_id"], [SOURCE], preserve_accepted=True,
+        operation_ids=[material["operation_id"]])
+    before = deepcopy(fresh)
+    events = store.list_events(child["job_id"])
+    with pytest.raises(app.HTTPException) as error:
+        _continue(store, child, requested)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "WORKBOOK_CONTINUATION_STATE_CHANGED"
+    assert store.get(child["job_id"]) == before
+    assert store.list_events(child["job_id"]) == events
+
+
+def test_new_issued_revision_invalidates_price_targets_read_from_an_older_snapshot(tmp_path, monkeypatch):
+    store, requested, child, _ = _price_only(tmp_path)
+    old = deepcopy(store.latest_financial_feedback(child["job_id"]))
+    original_rows = deepcopy(child["accepted_rows"])
+    def supersede(_job):
+        store.record_packaging(child["job_id"], tool="build_lsr_workbook", revision_id="new-price-observation",
+            draft=False, price_basis=child["task_context"]["price_basis"], financial_projection=[])
+        return old
+    monkeypatch.setattr(store, "latest_financial_feedback", supersede)
+    with pytest.raises(app.HTTPException) as error:
+        _continue(store, child, requested)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "WORKBOOK_CONTINUATION_STATE_CHANGED"
+    assert not store.list_events(child["job_id"], "locators_reopened")
+    assert store.get(child["job_id"])["accepted_rows"] == original_rows
+
+
+@pytest.mark.asyncio
+async def test_actual_plain_chat_continuation_dispatches_a_bounded_turn_and_preserves_operation_ids(tmp_path, monkeypatch):
+    from tests import test_model_rag_sheet_evidence_reads as fixture
+    original_begin = WorkbookResearchJobService.begin_or_resume
+    original_reopen = WorkbookResearchJobService.reopen_locators
+    state = {}
+    original_question = "Собери ЛСР; Санкт-Петербург, 3 квартал 2026"
+    authored = [{"source_row": f"S!R{index}", "row_role": "work", "title": title, "unit": "m",
+        "quantity": quantity, "norm_code": "", "norm_status": "MISSING", "evidence_refs": [],
+        "gap_reason": "insufficient_source_data", "open_gap": "Literal model reason remains unchanged."}
+        for index, title, quantity in [(2, "Cable A", 12), (3, "Cable B", 3)]]
+    def begin(self, incoming, **kwargs):
+        if not state:
+            parent_identity = replace(incoming, question_sha256=hashlib.sha256(original_question.encode()).hexdigest())
+            parent = original_begin(self, parent_identity, source_locators=["S!R2", "S!R3"],
+                task_context={"original_question": original_question})
+            parent = self.record_packet(parent["job_id"], sheet="S", packet_locators=["S!R2", "S!R3"],
+                accepted_rows=authored, evidence=[], remaining=[],
+                held_packet={"locators": ["S!R2", "S!R3"], "terminal_model_result_saved": True})
+            self.record_artifact_kind(parent["job_id"], declaration=app.decode_model_artifact_kind("artifact_kind: lsr"))
+            self.finish(parent["job_id"], status="complete")
+            self.record_packaging(parent["job_id"], tool="build_lsr_workbook", revision_id="owned-before", draft=False)
+            state.update(store=self, parent=deepcopy(self.get(parent["job_id"])), reopens=[])
+        return original_begin(self, incoming, **kwargs)
+    def reopen(self, job_id, *args, **kwargs):
+        assert job_id in app._LIVE_SHEET_PASS_GATES, "claim must precede mutation of this running child"
+        state["reopens"].append((job_id, deepcopy(kwargs)))
+        return original_reopen(self, job_id, *args, **kwargs)
+    def final(_requests):
+        return json.dumps({"artifact_kind": "lsr", "rows": [
+            {**row, "operation_id": saved["operation_id"], "expected_revision": saved["revision"]}
+            for row, saved in zip(authored, state["parent"]["accepted_rows"], strict=True)]})
+    monkeypatch.setattr(WorkbookResearchJobService, "begin_or_resume", begin)
+    monkeypatch.setattr(WorkbookResearchJobService, "reopen_locators", reopen)
+    run = await fixture._run_sheet(tmp_path, monkeypatch, reads=False, question="Продолжи",
+        query_declaration=json.dumps({"artifact_kind": "lsr", "queries": ["S!R2 — Cable A", "S!R3 — Cable B"]}),
+        final_answer=final)
+    assert len(run.requests) == 2 and not run.responses and run.queries == ["S!R2 — Cable A", "S!R3 — Cable B"]
+    assert len(state["reopens"]) == 1, "a still-open result must not start another automatic research cycle"
+    job = state["store"].get(run.result["retrieval_trace"]["workbook_research_job"]["job_id"])
+    assert len(job["accepted_rows"]) == 2
+    assert {row["operation_id"] for row in job["accepted_rows"]} == {
+        row["operation_id"] for row in state["parent"]["accepted_rows"]}
+    assert [row["gap_reason"] for row in job["accepted_rows"]] == [row["gap_reason"] for row in authored]
+    assert [row["norm_status"] for row in job["accepted_rows"]] == ["MISSING", "MISSING"]
