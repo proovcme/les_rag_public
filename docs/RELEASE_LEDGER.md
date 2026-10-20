@@ -1,5 +1,36 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 20.10.2026 — установлен971; кандидат972 по измеренным причинам
+
+Установлен0.31.243/build971/native5.1.971.0, commit
+`b619030d25252ce18184207fb8b1f7b7feb911a2`. Все9frozen-команд rc0:
+6599passed/20skipped/5warnings, основной pytest963,09s. NSIS SHA
+`4bda31aa968158df0e159f1cd357dff50e4e6da1eab6b66425aa6f954313c8eb`,
+извлечённый из NSIS native SHA
+`e5b04c9de60d1984d47dcaeb870478acaee1a82c96a0c69fb11b4f919fe11346`.
+517файлов aligned; upgrade/rollback/reinstall/EXE-only сохранили21jobs/26artifacts,
+настройки и внешние модельные процессы. Installed smoke9pass/1known warning.
+
+Live971 small7: B1 —614,078s,8операций на7исходных строках,
+artifact `rev_2e39e9504236449a9aa68d383febfa8e`; B0 —174,656s,7операций,
+artifact `rev_30706bd6af3d4f7ca8b59f4058b0539c`. Оба скачаны с совпадением SHA,
+estimate_complete=false, fully calculated0/confirmed0. У B1 показаны23полных
+нормативных aliases/15unique identities; кабель/вентилятор выбраны из pointers.
+Три answer/proof вызова предлагали readers, но модель чтений не запросила.
+RRF/rerank execution telemetry UNKNOWN. Независимая проверка:
+`artifacts/live_971/comparison/pair01/independent_review/`. Ни90% точности,
+ни positive small gate, ни customer-ready не заявлены; big318 не пройден.
+
+972/0.31.244/native5.1.972 — ещё не установленный кандидат. Исправляет
+безадресную смену роли в proof, потерю numeric0 в upload preview и отказ
+zero-charge для допустимой числовой строки при доказанном нуле исходника.
+Root RED: proof4failed/7passed, extension3функциональных регрессии и1уточнение
+служебной metadata в тесте; zero8failed/36passed. GREEN related114passed/4,65s,
+pipeline1passed/2,20s. Авторские шифры/количество/роли не переписываются.
+Полный972 gate/installer/installed live pending. Эти исправления не являются
+квалификацией модели или подтверждением применимости выбранных норм.
+
+
 ## 20.10.2026 — установлен970; кандидат971 по измеренной границе evidence
 
 Фактически установлен0.31.242/build970/native5.1.970, commit

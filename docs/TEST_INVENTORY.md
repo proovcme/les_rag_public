@@ -1,5 +1,24 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат972 — proof identity и передача нуля
+
+В CURRENT_TESTS добавлены `test_proof_role_identity_972.py`,
+`test_proof_role_identity_pipeline_972.py`, `test_attachment_zero_preview_972.py`,
+`test_lsr_numeric_string_zero_972.py`. Покрыты неоднозначная смена роли/unknown ID,
+literal proposal/raw и durable pending, частичный proof, явное новое пустое ID,
+несколько операций на одном source; настоящий XLSX в3раскладках колонок;
+точные numeric-string-zero, underflow±1e-999999, неизвестный/ненулевой источник,
+boolean/произвольный текст, прежние charge/resource guards, pipeline/retry/XLSX.
+Старый969 negative«0» заменён произвольным текстом; допустимые числовые строки
+теперь имеют отдельные positive/negative проверки, source-type guard сохранён.
+
+Root RED: proof4failed/7passed; extension3функциональных failed и1неверное
+ожидание служебной evidence_bindings; zero8failed/36passed. GREEN related
+114passed/4,65s и pipeline1passed/2,20s. Полный972 gate/install/live pending.
+Frozen971:6599passed/20skipped,9команд rc0. Его оба installed small7 файла
+профессиональную приёмку не прошли. Это отдельная граница от зелёных тестов.
+
+
 ## Кандидат971 — ограниченное дополнение evidence
 
 В CURRENT_TESTS добавлены `test_model_partial_card_supplement_971.py` и

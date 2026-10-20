@@ -1,5 +1,17 @@
 # RAG evidence flow
 
+## 972 — адресность изменений proof
+
+`rows_after_proof_round` сохраняет неупомянутые решения. Известный operation_id
+адресует ту же исходную строку; без ID допустимо прежнее однозначное совпадение
+source/role. Отсутствующий или неизвестный ID при смене роли на прежнем source
+не доказывает новую операцию: literal row/raw answer сохраняются как
+`MODEL_PROOF_UPDATE_IDENTITY_AMBIGUOUS` через существующие diagnostics → held
+pending → durable unapplied proposal. Прежняя операция не удаляется. Явный
+`operation_id:""` объявляет новую операцию даже при совпадении source/role.
+Регрессия и pipeline — `test_proof_role_identity_972.py`,
+`test_proof_role_identity_pipeline_972.py`. Gate/install/live972 pending.
+
 ## 971 — префикс целых карточек вместо отказа от всего дополнения
 
 `complete_card_frontier_page` сохраняет прежний полный кандидат по умолчанию.

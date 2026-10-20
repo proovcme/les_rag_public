@@ -1872,6 +1872,7 @@
         "proxy/routers/rag_advanced.py",
         "tests/test_attachment_collection_965.py",
         "tests/test_attachment_sheet_accounting_942.py",
+        "tests/test_attachment_zero_preview_972.py",
         "tests/test_candidate_acceptance_service.py",
         "tests/test_cloud_drive_service.py",
         "tests/test_csv_literal_boundaries_955.py",
@@ -3001,12 +3002,14 @@
         "proxy/services/workbook_tool_service.py",
         "tests/test_attachment_collection_965.py",
         "tests/test_attachment_source_catalog_service.py",
+        "tests/test_attachment_zero_preview_972.py",
         "tests/test_catalog_header_quantity_binding.py",
         "tests/test_catalog_quantity_gap_cases.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_csv_literal_boundaries_955.py",
         "tests/test_docx_empty_notes_948.py",
         "tests/test_lsr_candidate_query_service.py",
+        "tests/test_lsr_numeric_string_zero_972.py",
         "tests/test_lsr_result_readiness_service.py",
         "tests/test_lsr_same_source_quantity_scope_968.py",
         "tests/test_lsr_source_coverage_service.py",
@@ -3403,6 +3406,7 @@
         "tests/test_packaging_recovery_service.py",
         "tests/test_pending_review_operation_identity.py",
         "tests/test_pool_completion_alignment_24.py",
+        "tests/test_proof_role_identity_972.py",
         "tests/test_resource_binding_provenance.py",
         "tests/test_resource_group_proof_932.py",
         "tests/test_revision_projection_830.py",
@@ -3437,7 +3441,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 15996,
+      "lines": 16008,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -6253,6 +6257,7 @@
       "inbound": [
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_attachment_collection_965.py",
+        "tests/test_attachment_zero_preview_972.py",
         "tests/test_chat_model_source_frame.py",
         "tests/test_model_source_frame_service.py",
         "tests/test_rtf_input_transport.py",
@@ -6557,6 +6562,7 @@
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_openai_compatible_transport_service.py",
         "tests/test_pending_review_operation_identity.py",
+        "tests/test_proof_role_identity_pipeline_972.py",
         "tests/test_sheet_proof_context_admission_967.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_native_terminal_workflow_962.py",
@@ -7396,6 +7402,7 @@
         "tests/test_lsr_group_resource_specificity.py",
         "tests/test_lsr_labor_tariff_830.py",
         "tests/test_lsr_norm_applicability.py",
+        "tests/test_lsr_numeric_string_zero_972.py",
         "tests/test_lsr_price_ownership.py",
         "tests/test_lsr_readiness_transport.py",
         "tests/test_lsr_rim_trace_api.py",
@@ -7429,7 +7436,7 @@
         "tests/test_unknown_resource_consumption.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 3716,
+      "lines": 3727,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7556,6 +7563,7 @@
         "tests/test_finalization_defects_782.py",
         "tests/test_lsr_derived_quantity_presentation_968.py",
         "tests/test_lsr_labor_tariff_830.py",
+        "tests/test_lsr_numeric_string_zero_972.py",
         "tests/test_lsr_render_byte_determinism_943.py",
         "tests/test_lsr_supply_retry_962.py",
         "tests/test_lsr_uncomputed_norm_components_969.py",
@@ -8727,6 +8735,7 @@
         "tests/test_packaging_recovery_service.py",
         "tests/test_pending_review_operation_identity.py",
         "tests/test_pool_completion_alignment_24.py",
+        "tests/test_proof_role_identity_pipeline_972.py",
         "tests/test_sheet_proof_context_admission_967.py",
         "tests/test_sovushka_chat.py",
         "tests/test_stall_bound_25.py",
@@ -10584,6 +10593,19 @@
         "proxy/services/attachment_source_catalog_service.py"
       ],
       "path": "tests/test_attachment_source_catalog_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 97,
+      "module": "tests.test_attachment_zero_preview_972",
+      "outbound": [
+        "proxy/routers/datasets.py",
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/model_source_frame_service.py"
+      ],
+      "path": "tests/test_attachment_zero_preview_972.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -13038,6 +13060,20 @@
     },
     {
       "inbound": [],
+      "lines": 209,
+      "module": "tests.test_lsr_numeric_string_zero_972",
+      "outbound": [
+        "proxy/services/attachment_source_catalog_service.py",
+        "proxy/services/rim_lsr_trace_service.py",
+        "proxy/services/rim_trace_xlsx_service.py",
+        "tests/test_lsr_zero_charge_observation_969.py"
+      ],
+      "path": "tests/test_lsr_numeric_string_zero_972.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 167,
       "module": "tests.test_lsr_packet_integrity",
       "outbound": [
@@ -13239,8 +13275,10 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
-      "lines": 232,
+      "inbound": [
+        "tests/test_lsr_numeric_string_zero_972.py"
+      ],
+      "lines": 234,
       "module": "tests.test_lsr_zero_charge_observation_969",
       "outbound": [
         "proxy/services/attachment_source_catalog_service.py",
@@ -14522,6 +14560,7 @@
         "tests/test_norm_card_complete_delivery_970.py",
         "tests/test_norm_card_proof_request_930.py",
         "tests/test_pending_review_operation_identity.py",
+        "tests/test_proof_role_identity_pipeline_972.py",
         "tests/test_sheet_proof_context_admission_967.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_delivery_notice_949.py",
@@ -15054,6 +15093,7 @@
         "tests/test_model_proof_turn_integrity.py",
         "tests/test_norm_card_cited_pointer_debt_968.py",
         "tests/test_norm_card_complete_delivery_970.py",
+        "tests/test_proof_role_identity_pipeline_972.py",
         "tests/test_sheet_proof_context_admission_967.py"
       ],
       "lines": 356,
@@ -15661,6 +15701,31 @@
         "proxy/services/prompt_registry_service.py"
       ],
       "path": "tests/test_prompt_registry_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 200,
+      "module": "tests.test_proof_role_identity_972",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py"
+      ],
+      "path": "tests/test_proof_role_identity_972.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 75,
+      "module": "tests.test_proof_role_identity_pipeline_972",
+      "outbound": [
+        "proxy/services/openai_compatible_transport_service.py",
+        "proxy/services/workbook_research_job_service.py",
+        "tests/test_model_rag_sheet_evidence_reads.py",
+        "tests/test_norm_card_proof_request_930.py"
+      ],
+      "path": "tests/test_proof_role_identity_pipeline_972.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -23641,9 +23706,9 @@
     "product_reachable": 387,
     "registered_api_routes": 343,
     "runtime_support": 11,
-    "test_or_tool_only": 852,
-    "tracked_python_files": 1251,
-    "tracked_python_lines": 426706
+    "test_or_tool_only": 856,
+    "tracked_python_files": 1255,
+    "tracked_python_lines": 427312
   },
   "warnings": []
 }

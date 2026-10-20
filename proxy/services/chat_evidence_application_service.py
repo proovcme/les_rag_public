@@ -421,6 +421,12 @@ def rows_after_proof_round(*, parsed_rows: Sequence[Mapping[str, Any]],
 
     The unread rows keep their own ``norm_card_body_unread`` gap here, because the rows are rebound
     through ``bind_row_evidence_ids`` only when the new answer actually carries them.
+
+    A missing operation ID can update a unique source/role match. A changed role on an existing
+    source does not establish whether the model revised or added an operation: preserve the
+    earlier operations and retain that literal proposal as an identity diagnostic. An unknown
+    nonblank ID on an existing source likewise establishes no update address. An explicitly empty
+    string ID declares a new operation, including when its source and role already exist.
     """
     rows = [dict(row) for row in parsed_rows if isinstance(row, Mapping)]
     if not rows:
@@ -435,19 +441,25 @@ def rows_after_proof_round(*, parsed_rows: Sequence[Mapping[str, Any]],
         key = (str(row.get("source_row") or "").strip(), model_rag_row_kind(row))
         if key[0]:
             by_source_role.setdefault(key, []).append(index)
+    previous_sources = {source for source, _role in by_source_role}
     replacements: dict[int, dict[str, Any]] = {}
     additions: list[dict[str, Any]] = []
     seen_operations: set[str] = set()
     applied = False
     for row in rows:
         operation = str(row.get("operation_id") or "").strip()
+        explicit_new = ("operation_id" in row and isinstance(row["operation_id"], str)
+                        and not row["operation_id"].strip())
         key = (str(row.get("source_row") or "").strip(), model_rag_row_kind(row))
-        matches = by_operation.get(operation, []) if operation else by_source_role.get(key, [])
+        matches = ([] if explicit_new else
+                   by_operation.get(operation, []) if operation else by_source_role.get(key, []))
         # A proof reply is an update to named operations, not a replacement of
         # every other source decision. An ambiguous update cannot choose which
         # operation disappears; keep the previous packet and its visible ask.
         ambiguous = (len(matches) > 1 or (matches and matches[0] in replacements)
-                     or bool(operation and operation in seen_operations))
+                     or bool(operation and operation in seen_operations)
+                     or (not explicit_new and not matches
+                         and key[0] in previous_sources))
         if matches and operation and key[0] != str(merged[matches[0]].get("source_row") or "").strip():
             ambiguous = True
         if operation:

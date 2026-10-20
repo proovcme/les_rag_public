@@ -73,6 +73,7 @@ UNIT_TESTS += tests/test_model_authored_header_roles.py
 UNIT_TESTS += tests/test_model_initial_inventory_exact_fit.py tests/test_model_query_repair_context.py tests/test_model_initial_complete_card_frontier.py
 UNIT_TESTS += tests/test_model_partial_inventory_complete_frontier.py
 UNIT_TESTS += tests/test_model_partial_card_supplement_971.py tests/test_rag_evidence_budget_registry_971.py
+UNIT_TESTS += tests/test_proof_role_identity_972.py tests/test_proof_role_identity_pipeline_972.py tests/test_attachment_zero_preview_972.py tests/test_lsr_numeric_string_zero_972.py
 UNIT_TESTS += tests/test_model_discovery_read_admission.py
 UNIT_TESTS += tests/test_etm_supplier_service.py tests/test_etm_source_workflow.py tests/test_kac_service.py tests/test_kac_web_service.py tests/test_kac_pdf_service.py
 INTEGRATION_TESTS += tests/test_model_query_checkpoint_draft.py

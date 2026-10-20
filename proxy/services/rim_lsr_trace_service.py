@@ -11,7 +11,7 @@ import json
 import math
 import re
 from copy import deepcopy
-from decimal import Decimal, ROUND_HALF_UP, localcontext
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from dataclasses import dataclass, replace
 from typing import Any, Mapping, Optional
 
@@ -2623,7 +2623,7 @@ _SUBSTANTIATED_NORM_STATUSES = {
 def source_confirmed_zero_work_charge_not_required(
     row: Mapping[str, Any], source_catalog: AttachmentSourceCatalog | None,
 ) -> bool:
-    """A plain numeric source-confirmed zero creates no charge or norm decision."""
+    """An exact numeric source-confirmed zero creates no charge or norm decision."""
     if inferred_row_role(row) != "work" or _code_from_visible_row(row) or source_catalog is None:
         return False
     if not source_catalog.extraction_complete:
@@ -2640,7 +2640,18 @@ def source_confirmed_zero_work_charge_not_required(
         return False
     quantity = _first_value(row, "qty", "quantity", "quantity_total", "volume", "amount_qty",
                             "количество", "кол-во", "объем", "объём")
-    if type(quantity) not in (int, float) or not math.isfinite(quantity) or quantity != 0:
+    if isinstance(quantity, str):
+        literal = quantity.strip()
+        if re.fullmatch(r"[+-]?(?:[0-9]+(?:[.,][0-9]*)?|[.,][0-9]+)(?:[eE][+-]?[0-9]+)?", literal) is None:
+            return False
+        try:
+            exact_quantity = Decimal(literal.replace(",", "."))
+        except InvalidOperation:
+            return False
+        # Float underflow must never make an exact nonzero decimal a zero.
+        if not exact_quantity.is_finite() or not exact_quantity.is_zero():
+            return False
+    elif type(quantity) not in (int, float) or not math.isfinite(quantity) or quantity != 0:
         return False
     return bool(source_confirms_literal_zero_quantity(source_catalog, row.get("source_row"))
                 and not compare_model_row_to_catalog(row, source_catalog))

@@ -3390,7 +3390,7 @@ _READ_ATTACH_MAX_CHARS = int(os.getenv("RAG_ATTACH_READ_MAX_CHARS", "18000"))
 
 
 def _compact_cell(value: Any, *, max_len: int = 240) -> str:
-    text = " ".join(str(value or "").replace("\u00a0", " ").split())
+    text = " ".join(str(value if value is not None else "").replace("\u00a0", " ").split())
     if len(text) > max_len:
         return text[: max_len - 1].rstrip() + "…"
     return text

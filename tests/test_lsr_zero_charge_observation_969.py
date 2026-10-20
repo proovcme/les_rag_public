@@ -114,7 +114,9 @@ def test_mixed_source_retries_only_nonzero_operation_without_hiding_its_sign(tmp
     assert rows == before and trace["row_bindings"][1]["source_quantity"] == other_quantity
 
 
-@pytest.mark.parametrize("quantity", [None, False, "0", float("nan"), float("inf")])
+# Exact numeric strings follow the quantity contract and are covered in 972;
+# arbitrary text still cannot establish a source-confirmed zero exemption.
+@pytest.mark.parametrize("quantity", [None, False, "0шт", "zero", float("nan"), float("inf")])
 def test_unknown_boolean_text_and_nonfinite_are_not_a_literal_zero_exemption(tmp_path, quantity):
     trace, ready, _, _ = _pipeline([_row(quantity)], _catalog(tmp_path))
     assert not trace["row_projection"][0].get("charge_not_required")

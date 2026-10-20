@@ -1,5 +1,26 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 972 — рабочий кандидат: адресность proof и буквальный ноль
+
+🟡 Source0.31.244/build972/native5.1.972; установлен971/`b619030d…`.
+971 прошёл9frozen-команд (6599passed/20skipped), exact NSIS,
+upgrade/rollback/reinstall/EXE-only с сохранением21jobs/26artifacts.
+Live small7 B0/B1 доставили файлы, но профессиональную приёмку не прошли:
+полностью рассчитанных позиций0, подтверждённая сумма0. Customer-ready=false.
+
+✅ Код↔док: `chat_evidence_application_service.rows_after_proof_round`
+сохраняет безадресную смену роли на прежнем source как literal proposal;
+известный operation_id адресует обновление, явный пустой ID объявляет новую
+операцию. Работы/материалы на одном source не удаляются и не сливаются.
+`datasets._compact_cell` сохраняет numeric0 в preview; `rim_lsr_trace_service`
+проверяет строковый числовой0 точно через Decimal и только при доказанном
+нуле исходника, сохраняя все прежние ограничения. Новых inference и выбора
+норм кодом нет. Доки: [evidence](modules/rag-evidence-flow.md),
+[ВОР](ALGO-spec-to-bor.md), [ЛСР](ALGO-lsr-assembly.md).
+Регрессии: четыре новых972 файла в CURRENT_TESTS. Root related114passed и
+отдельный pipeline1passed; полный972 gate/install/live pending.
+
+
 ## 971 — кандидат: целые карточки в пределах прежнего бюджета
 
 🟡 Source0.31.243/build971/native5.1.971; установлен970/`2ae092da…`.
