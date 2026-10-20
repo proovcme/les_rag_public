@@ -147,6 +147,7 @@ from proxy.services.model_query_declaration_transport_service import (
 from proxy.services.norm_card_proof_service import (
     PROOF_PURPOSE as NORM_CARD_PROOF_PURPOSE,
     proof_budget as norm_card_proof_budget,
+    proof_native_read_contract,
     proof_request_message as norm_card_proof_request_message,
     record_proof_request as record_norm_card_proof_request,
     unread_chosen_norm_refs as norm_card_proof_reads_needed,
@@ -2064,6 +2065,7 @@ def govern_inference_messages(
     request_payload: Any,
     shortlist: Sequence[Any] = (),
     native_tools: Sequence[Any] = (),
+    tool_choice: str | Mapping[str, Any] | None = None,
     checkpoint: Sequence[ContextObject] = (),
     working_memory: Sequence[ContextObject] = (),
     evidence: Sequence[Any] = (),
@@ -2123,6 +2125,9 @@ def govern_inference_messages(
         conservative_token_estimate(json.dumps(list(native_tools), ensure_ascii=False, sort_keys=True)) + 2
         if native_tools and count_messages_tokens is None else 0
     )
+    if tool_choice is not None and count_messages_tokens is None:
+        external_tokens += conservative_token_estimate(
+            json.dumps({"tool_choice": tool_choice}, ensure_ascii=False, sort_keys=True)) + 2
     governed_preset = replace(preset, input_token_limit=max(0, preset.input_token_limit - external_tokens))
     try:
         packet = ContextGovernor(governed_preset).pack(
@@ -9465,7 +9470,7 @@ async def _execute_chat_evidence_application(
                         transport=model_connection_transport(client, connection_secret_store),
                     )
 
-                def _cloud_message_admission(preset, native_tools):
+                def _cloud_message_admission(preset, native_tools, tool_choice=None):
                     transport = getattr(bound_runner, "transport", None)
                     can_fit = getattr(transport, "cloud_request_fits", None)
                     connection = (getattr(active_model_result, "connection", None) or resolved_connection)
@@ -9476,14 +9481,14 @@ async def _execute_chat_evidence_application(
 
                     def admit(messages):
                         return can_fit(connection, InferenceRequest(
-                            messages=messages, tools=native_tools,
+                            messages=messages, tools=native_tools, tool_choice=tool_choice,
                             max_output_tokens=preset.generation_reserve_tokens,
                             temperature=profile_temperature(profile_snapshot, fallback=_env_float("CHAT_TEMPERATURE", 0.2)),
                             reasoning_enabled=preset.reasoning_enabled,
                         ))
                     return admit
 
-                def _bound_input_token_counter(preset, native_tools):
+                def _bound_input_token_counter(preset, native_tools, tool_choice=None):
                     transport = getattr(bound_runner, "transport", None)
                     counter = getattr(transport, "count_input_tokens", None)
                     connection = (getattr(active_model_result, "connection", None) or resolved_connection)
@@ -9492,7 +9497,7 @@ async def _execute_chat_evidence_application(
 
                     async def count(messages):
                         result = await counter(connection, InferenceRequest(
-                            messages=messages, tools=native_tools,
+                            messages=messages, tools=native_tools, tool_choice=tool_choice,
                             max_output_tokens=preset.generation_reserve_tokens,
                             temperature=profile_temperature(profile_snapshot, fallback=_env_float("CHAT_TEMPERATURE", 0.2)),
                             reasoning_enabled=preset.reasoning_enabled,
@@ -9532,6 +9537,7 @@ async def _execute_chat_evidence_application(
                             ),
                             temperature=body.get("temperature"),
                             tools=tuple(body.get("tools") or ()),
+                            tool_choice=body.get("tool_choice"),
                             response_format=body.get("response_format"),
                             reasoning_enabled=call_preset.reasoning_enabled,
                         )
@@ -9595,6 +9601,8 @@ async def _execute_chat_evidence_application(
                                 "response_format": inference_request.response_format,
                                 "reasoning_enabled": inference_request.reasoning_enabled,
                             }
+                            if inference_request.tool_choice is not None:
+                                canonical_frame["tool_choice"] = inference_request.tool_choice
                             execution["canonical_request_sha256"] = hashlib.sha256(json.dumps(
                                 canonical_frame, ensure_ascii=False, sort_keys=True,
                                 separators=(",", ":"), allow_nan=False,
@@ -9615,6 +9623,9 @@ async def _execute_chat_evidence_application(
                                     separators=(",", ":"), allow_nan=False,
                                 ).encode("utf-8")).hexdigest(),
                             }
+                            if inference_request.tool_choice is not None:
+                                execution["canonical_native_tools"]["requested_tool_choice"] = (
+                                    inference_request.tool_choice)
                         execution["native_tool_call_identities"] = [
                             {"call_id": raw.get("id"),
                              "tool": str((raw.get("function") or {}).get("name") or ""),
@@ -12354,6 +12365,8 @@ async def _execute_chat_evidence_application(
                             # The purpose and the previous authored decisions of
                             # a proof turn survive its own native READ calls.
                             sheet_proof_context: list[dict[str, Any]] = []
+                            sheet_proof_purpose = ""
+                            sheet_norm_proof_plan = None
                             proof_context_failure: dict[str, Any] = {}
                             pass_terminal_finish = ""
 
@@ -12376,16 +12389,53 @@ async def _execute_chat_evidence_application(
                                 retrieval_trace["proof_context_failure"] = dict(proof_context_failure)
                                 retrieval_trace["tool_loop"]["evidence_read_stop"] = "proof_context_capacity"
 
+                            def _sheet_proof_read_contract(purpose, receipts, *, planned_refs=None):
+                                if (purpose != NORM_CARD_PROOF_PURPOSE
+                                        or canonical_execution_mode is not CanonicalRouteMode.ACTIVE
+                                        or artifact_kind_declaration.get("artifact_kind") != "lsr"):
+                                    return {"tools": sheet_read_tools, "tool_choice": None,
+                                            "planned_refs": tuple(planned_refs or ())}
+                                connection = (getattr(active_model_result, "connection", None)
+                                              or resolved_connection)
+                                options = getattr(getattr(connection, "capability_snapshot", None),
+                                                  "transport_options", {}) or {}
+                                supported = options.get("chat_protocol") != "native_chat_v1"
+                                contract = proof_native_read_contract(
+                                    pass_rows, purpose=purpose, native_tools=sheet_read_tools,
+                                    admitted_refs=model_research_tools.admitted_norm_references(),
+                                    chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                    receipts=receipts, planned_refs=planned_refs,
+                                    max_refs=norm_card_proof_budget(configured=_env_int(
+                                        "LES_LSR_NORM_CARD_PROOF_READS", 6)))
+                                if contract["tool_choice"] is not None:
+                                    retrieval_trace.setdefault("norm_card_native_read_contracts", []).append({
+                                        "purpose": purpose, "planned_refs": list(contract["planned_refs"]),
+                                        "pending_refs": list(contract["tools"][0]["function"]["parameters"]
+                                                             ["properties"]["evidence_ref"]["enum"]),
+                                        "status": "requested" if supported else "unsupported_native_chat_protocol",
+                                        "requested_tool_choice": contract["tool_choice"] if supported else None,
+                                        "actual_read_proof": "native_call_and_receipt_required",
+                                    })
+                                    if not supported:
+                                        contract.update(tools=sheet_read_tools, tool_choice=None)
+                                return contract
+
                             async def _start_sheet_proof(*, purpose):
+                                nonlocal sheet_proof_purpose, sheet_norm_proof_plan
+                                sheet_proof_purpose = purpose
+                                contract = _sheet_proof_read_contract(
+                                    purpose, [*saved_read_receipts, *read_receipts])
+                                sheet_norm_proof_plan = contract["planned_refs"]
+                                tools, choice = contract["tools"], contract["tool_choice"]
                                 # Appending a prior answer after admission bypasses the
                                 # context limit. Admit the exact authored answer and
                                 # proof request together with the current read evidence.
                                 proof_messages, proof_frame, _, _ = await govern_model_read_messages_bound(
-                                    count_messages=_bound_input_token_counter(answer_execution_preset, sheet_read_tools),
+                                    count_messages=_bound_input_token_counter(answer_execution_preset, tools, choice),
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
-                                    request_payload=question_tail, native_tools=sheet_read_tools,
+                                    request_payload=question_tail, native_tools=tools, tool_choice=choice,
                                     source_context=[*pass_evidence, *sheet_proof_context],
-                                    admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
+                                    admit_messages=_cloud_message_admission(answer_execution_preset, tools, choice),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                     receipts=[*saved_read_receipts, *read_receipts],
                                 )
@@ -12393,7 +12443,8 @@ async def _execute_chat_evidence_application(
                                     context_packet_trace(proof_frame, purpose=purpose)
                                 )
                                 return await _sheet_pass_llm(
-                                    {**chat_body, "messages": proof_messages}, purpose=purpose,
+                                    {**chat_body, "messages": proof_messages, "tools": tools,
+                                     **({"tool_choice": choice} if choice is not None else {})}, purpose=purpose,
                                     inference_preset=answer_execution_preset,
                                     expected_connection_revision_id=measured_connection_revision(proof_frame),
                                 )
@@ -12416,13 +12467,17 @@ async def _execute_chat_evidence_application(
 
                             async def _continue_sheet_reads(receipts, _results, native_exchanges):
                                 nonlocal t_llm, research_job
+                                contract = _sheet_proof_read_contract(
+                                    sheet_proof_purpose, [*saved_read_receipts, *read_receipts, *receipts],
+                                    planned_refs=sheet_norm_proof_plan)
+                                tools, choice = contract["tools"], contract["tool_choice"]
                                 messages, read_frame, inventory_refs, body_refs = await govern_model_read_messages_bound(
-                                    count_messages=_bound_input_token_counter(answer_execution_preset, sheet_read_tools),
+                                    count_messages=_bound_input_token_counter(answer_execution_preset, tools, choice),
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
-                                    request_payload=question_tail, native_tools=sheet_read_tools,
+                                    request_payload=question_tail, native_tools=tools, tool_choice=choice,
                                     native_exchanges=native_exchanges,
                                     source_context=[*pass_evidence, *sheet_proof_context],
-                                    admit_messages=_cloud_message_admission(answer_execution_preset, sheet_read_tools),
+                                    admit_messages=_cloud_message_admission(answer_execution_preset, tools, choice),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                     receipts=[*saved_read_receipts, *receipts],
                                 )
@@ -12432,7 +12487,9 @@ async def _execute_chat_evidence_application(
                                 await _emit_row_progress("чтение источников", sheet=sheet_name, index=sheet_index)
                                 started = time.time()
                                 result = await _sheet_pass_llm(
-                                    {**chat_body, "messages": messages}, purpose="sheet_pass_evidence_read",
+                                    {**chat_body, "messages": messages, "tools": tools,
+                                     **({"tool_choice": choice} if choice is not None else {})},
+                                    purpose="sheet_pass_evidence_read",
                                     expected_connection_revision_id=measured_connection_revision(read_frame),
                                 )
                                 t_llm += time.time() - started
@@ -12689,6 +12746,7 @@ async def _execute_chat_evidence_application(
                                     attempt=proof_read_attempts[fingerprint],
                                     answer_parsed=proof_answer_parsed,
                                 )
+                                sheet_proof_purpose, sheet_norm_proof_plan = "", None
                                 logger.warning(
                                     "[NORM_PROOF] sheet=%s packet=%s unread_rows=%s "
                                     "unread_refs=%s model_reads_after_request=%s answered=%s",

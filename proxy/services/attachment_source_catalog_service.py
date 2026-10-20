@@ -207,7 +207,8 @@ class CatalogRow:
     hidden_sheet: bool = False
     header_quantity: float | None = None
     quantity_column_known: bool = False
-    # ``(column, governing header label)`` for the cells of this row, kept as data
+    # ``(column, governing header label)`` including known empty source fields,
+    # kept as data
     # next to the labelled ``line``.  A consumer that must tell a subject-matter
     # column from a service column (totals, money, numbering) needs the label as a
     # field, not re-parsed out of the ``"<value> [<label>]"`` text.
@@ -367,12 +368,22 @@ def _bind_column_headers(rows: Sequence[CatalogRow]) -> list[CatalogRow]:
         a fallback to another number in the row;
       * no proven quantity column (missing or ambiguous header) -> the row stays
         ambiguous with the legacy candidate set.
+
+    Governing labels also preserve an ordinary empty unit cell as a known blank.
+    Merged continuations have no independent literal value: inheritance is not
+    resolved here, so their missing-cell binding stays unknown as before.
     """
 
     headers: dict[int, str] = {}
     quantity_col: int | None = None
+    merged_spans: set[tuple[int, int, int, int]] = set()
     bound: list[CatalogRow] = []
     for row in rows:
+        for cell in row.cells:
+            if cell.merged_range:
+                from openpyxl.utils.cell import range_boundaries
+
+                merged_spans.add(range_boundaries(cell.merged_range))
         if row.row_classification == "header":
             candidate = _header_labels_from_row(row)
             if _has_text_header(candidate):
@@ -385,7 +396,14 @@ def _bind_column_headers(rows: Sequence[CatalogRow]) -> list[CatalogRow]:
             continue
         parts: list[str] = []
         header_quantity: float | None = None
-        labels: dict[int, str] = {}
+        present_columns = {cell.column for cell in row.cells}
+        labels = {
+            column: label for column, label in headers.items()
+            if column in present_columns or not any(
+                left <= column <= right and top <= row.excel_row <= bottom
+                for left, top, right, bottom in merged_spans
+            )
+        }
         for cell in row.cells:
             label = headers.get(cell.column, "")
             number = _cell_number(cell)

@@ -1,5 +1,28 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат973 — явное чтение выбранной карточки
+
+`test_optional_tool_choice_transport_973.py`: optional typed tool_choice,
+неизменённый None wire, exact count/complete/stream parity, изоляция входного
+dict, неверные/неизвестные функции до HTTP, явный отказ unsupported native
+Ollama без fallback. Root RED36failed по отсутствующему полю, затем GREEN
+152passed/1,90s вместе с прежними transport/token-count/native regressions.
+`test_explicit_norm_proof_read_973.py`:23 случая selected/admitted identity,
+чужой edition/alias/base/key, frozen budget, missing/conflict consumption,
+legacy whitespace без повторного чтения, count/cloud/wire parity, complete
+previous answer, ignored choice/native_chat/default и conservative/exact budget.
+Root RED по отсутствующему контракту/передаче; дополнительный alias и legacy
+no-repeat RED устранены до общего related275passed/36,26s.
+967 budget regression теперь сравнивает неизменный полный input envelope
+(messages+provider schema/choice reserve): меньшая schema не равна прежнему
+message-only allowance. Отдельный capacity-edge тест ловит потерю choice bytes.
+В прежнем catalog-файле добавлены4 проверки XLSX blank/headerless/merged:
+Root2failed/1passed до правки и отдельный merged control1passed на прежнем коде;
+catalog/header/quote/VOR structural related105passed/5,16s после правки.
+Полный973 gate/install/live pending; CURRENT_TESTS содержит352 файла.
+Настоящий локальный transport-probe728/32 доказал только нативный вызов
+конкретного reader; применимость нормы и качество документов он не проверял.
+
 ## Кандидат972 — proof identity и передача нуля
 
 В CURRENT_TESTS добавлены `test_proof_role_identity_972.py`,
@@ -14,7 +37,8 @@ boolean/произвольный текст, прежние charge/resource guar
 
 Root RED: proof4failed/7passed; extension3функциональных failed и1неверное
 ожидание служебной evidence_bindings; zero8failed/36passed. GREEN related
-114passed/4,65s и pipeline1passed/2,20s. Полный972 gate/install/live pending.
+114passed/4,65s и pipeline1passed/2,20s. Полный972 gate:6663passed/20skipped,
+5warnings, все9 команд rc0; отдельная установка972 не выполнялась.
 Frozen971:6599passed/20skipped,9команд rc0. Его оба installed small7 файла
 профессиональную приёмку не прошли. Это отдельная граница от зелёных тестов.
 

@@ -536,3 +536,92 @@ def test_own_source_id_alias_keeps_pdf_text_role_and_row_collision(monkeypatch, 
     assert service.coverage_errors([
         {"source_row": f"{catalog.source_file_id}!R2"},
     ], catalog) == ["source_coverage_incomplete:1/2"]
+
+
+@pytest.mark.parametrize(
+    "headers,source_values,quantity_column,unit_column",
+    [
+        (["Наименование", "Ед. изм.", "Кол-во"],
+         ["Работа с маркером м", None, 7], 3, 2),
+        (["Кол-во", "Наименование", "Ед. изм."],
+         [7, "Работа с маркером м", None], 1, 3),
+    ],
+    ids=["blank-middle-unit", "blank-trailing-unit"],
+)
+def test_xlsx_known_blank_unit_cannot_be_confirmed_from_subject_text(
+    tmp_path, headers, source_values, quantity_column, unit_column,
+):
+    """A literal blank under the unit header is not a unit in another cell.
+
+    The proposed unit deliberately occurs in the subject text. This checks
+    source-field provenance only; it does not select a professional unit/norm.
+    """
+    path = _write_sheet(tmp_path, [headers, source_values])
+    source_bytes = path.read_bytes()
+    catalog = service.load_tabular_source_catalog(path)
+    source = catalog.lookup("Лист1!R2")
+    proposal = {"source_row": "Лист1!R2", "quantity": 7, "unit": "м"}
+    original_proposal = dict(proposal)
+    original_catalog = repr(catalog)
+
+    assert source.quantity_column_known and source.header_quantity == 7
+    assert service.quantity_candidates(source) == (7.0,)
+    assert service.compare_model_row_to_catalog(proposal, catalog) == [
+        "source_unit_mismatch:Лист1!R2",
+    ]
+    assert service.header_bound_unit(source) == ""
+    assert dict(source.column_headers)[unit_column] == headers[unit_column - 1]
+    assert dict(source.column_headers)[quantity_column] == headers[quantity_column - 1]
+    packet = service.catalog_sheet_packet_facts(catalog, "Лист1", [source.locator])
+    quantity_cell = next(item for item in packet["source_quantity_cells"]
+                         if item["source_row"] == source.locator)
+    assert quantity_cell == {
+        "source_row": source.locator, "quantity_column_known": True,
+        "quantity": 7, "unit": "",
+    }
+    assert proposal == original_proposal
+    assert repr(catalog) == original_catalog
+    assert path.read_bytes() == source_bytes
+
+
+def test_xlsx_absent_unit_header_stays_unknown_without_invented_binding(tmp_path):
+    """No governing unit header remains UNKNOWN, rather than a proven blank."""
+    path = _write_sheet(tmp_path, [
+        ["Наименование", "Кол-во"], ["Работа с маркером м", 7],
+    ])
+    catalog = service.load_tabular_source_catalog(path)
+    source = catalog.lookup("Лист1!R2")
+    assert source.quantity_column_known and source.header_quantity == 7
+    assert service.header_bound_unit(source) is None
+    packet = service.catalog_sheet_packet_facts(catalog, "Лист1", [source.locator])
+    quantity_cell = next(item for item in packet["source_quantity_cells"]
+                         if item["source_row"] == source.locator)
+    assert quantity_cell["unit"] is None
+
+
+def test_xlsx_merged_unit_continuation_does_not_become_a_literal_blank(tmp_path):
+    """An unresolved merge continuation is distinct from a physical blank."""
+    from openpyxl import load_workbook
+
+    path = _write_sheet(tmp_path, [
+        ["Наименование", "Ед. изм.", "Кол-во"],
+        ["Первая работа", "шт", 2],
+        ["Работа с маркером м", None, 7],
+    ])
+    workbook = load_workbook(path)
+    workbook.active.merge_cells("B2:B3")
+    workbook.save(path)
+    workbook.close()
+    source_bytes = path.read_bytes()
+
+    catalog = service.load_tabular_source_catalog(path)
+    anchor, continuation = catalog.lookup("Лист1!R2"), catalog.lookup("Лист1!R3")
+    assert service.header_bound_unit(anchor) == "шт"
+    assert next(cell for cell in anchor.cells if cell.column == 2).merged_range == "B2:B3"
+    assert continuation.quantity_column_known and continuation.header_quantity == 7
+    assert service.header_bound_unit(continuation) is None
+    packet = service.catalog_sheet_packet_facts(catalog, "Лист1", [continuation.locator])
+    facts = next(item for item in packet["source_quantity_cells"]
+                 if item["source_row"] == continuation.locator)
+    assert facts["unit"] is None
+    assert path.read_bytes() == source_bytes

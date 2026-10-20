@@ -1,5 +1,19 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 973 — явный proof-read без подмены решения
+
+`ModelResearchToolService.admitted_norm_references` →
+`norm_card_proof_service.proof_native_read_contract` → прежние
+`_start_sheet_proof` / `_continue_sheet_reads` → общий Governor/count/cloud
+admission → `InferenceRequest.tool_choice` → существующий transport.
+Поле optional; None сохраняет wire. Факт запроса инструмента не доказывает
+чтение или применимость. План selected/admitted refs ограничен существующим
+бюджетом и не повторяет уже попытанные карточки. Вне нормативного proof LSR
+форсирования нет; native_chat ограничение видно в trace.
+`attachment_source_catalog_service._bind_column_headers` дополнительно
+сохраняет governing labels пустых физических полей без новых ячеек; exact
+merged-continuation сохраняет прежний UNKNOWN, без наследования единицы.
+
 ## 971 — ограниченное дополнение карточек и видимый предел evidence
 
 `model_rag_grouped_evidence_service.complete_card_frontier_page(prefix_units=…)`

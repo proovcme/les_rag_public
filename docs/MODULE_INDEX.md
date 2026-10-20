@@ -1,5 +1,29 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 973 — рабочий кандидат: явное чтение выбранной карточки
+
+🟡 Source0.31.245/build973/native5.1.973; установлен971/`b619030d…`.
+972/`c6b63511…` имеет полный зелёный gate:6663passed/20skipped,9команд rc0,
+но отдельно не устанавливался. Его исправления входят в973.
+Customer-ready=false; точность норм≥90% и большой ВОР не приняты.
+
+✅ `openai_compatible_transport_service.InferenceRequest.tool_choice` —
+необязательный явный контракт: None сохраняет прежний wire, неверная/чужая
+функция отклоняется до HTTP, OpenAI count/complete/stream передают одинаковый
+выбор. Native Ollama отклоняет неподдерживаемый явный выбор до HTTP.
+Root RED36failed, related GREEN152passed. Подключение к существующему
+нормативному proof реализовано только для ACTIVE + model-declared LSR:
+`proof_native_read_contract` использует собственные selected/admitted ссылки,
+глобальную привязку и immutable identity фактических chunks. План до6ссылок
+не растёт; любая попытка чтения потребляет ссылку, после чего возвращаются
+обычные tools. Requested choice отдельно от actual call/receipt/body proof.
+Native_chat сохраняет прежний optional-путь с явной диагностикой ограничения.
+`attachment_source_catalog_service._bind_column_headers` сохраняет заголовок
+над физически пустой unit-ячейкой; отсутствие заголовка и неразрешённое
+продолжение merged unit остаются UNKNOWN. Единица кодом не выбирается.
+Root related275passed/36,26s и catalog105passed/5,16s; full gate/install/live pending. План:
+[явное чтение](superpowers/plans/2026-10-20-explicit-norm-proof-read.md).
+
 ## 972 — рабочий кандидат: адресность proof и буквальный ноль
 
 🟡 Source0.31.244/build972/native5.1.972; установлен971/`b619030d…`.
@@ -18,7 +42,8 @@ Live small7 B0/B1 доставили файлы, но профессиональ
 норм кодом нет. Доки: [evidence](modules/rag-evidence-flow.md),
 [ВОР](ALGO-spec-to-bor.md), [ЛСР](ALGO-lsr-assembly.md).
 Регрессии: четыре новых972 файла в CURRENT_TESTS. Root related114passed и
-отдельный pipeline1passed; полный972 gate/install/live pending.
+отдельный pipeline1passed; полный972 gate6663passed/20skipped, все9команд rc0.
+Отдельной установки972 не было; изменения входят в973.
 
 
 ## 971 — кандидат: целые карточки в пределах прежнего бюджета

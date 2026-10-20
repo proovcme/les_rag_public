@@ -1,5 +1,35 @@
 # RAG evidence flow
 
+## 973 — обязательный native READ в прежнем нормативном proof
+
+Только ACTIVE и объявленная моделью ЛСР могут получить явный tool_choice
+в уже существующем единственном раунде `sheet_pass_norm_proof`.
+`ModelResearchToolService.admitted_norm_references()` копирует уже допущенные
+reader-пойнтеры; `proof_native_read_contract` проверяет собственную цитату
+выбранной строки, полный qualified cipher, issued global binding, trusted
+snapshot и единственную immutable identity фактических связанных chunks.
+Неизвестная ссылка, другая редакция/база и неоднозначный alias не форсируются.
+
+План фиксируется в пределах прежнего proof budget (до6). Схема
+`read_norm_card` требует literal evidence_ref из оставшегося плана; настоящий
+вызов всё равно создаёт модель, исполняет его прежний read loop. Любая actual
+попытка, включая missing/conflict и допустимый legacy selector с пробелами,
+потребляет ту же карточку без изменения raw receipt. После попыток возвращается
+исходный набор tools и None. Нового внешнего цикла или автоматического выбора
+нормы, чтения, вердикта, количества и цены нет.
+
+Одинаковые tools/choice проходят bound count, cloud admission, Governor и
+typed `_post_llm`; при неизвестном счётчике conservative reserve включает
+также choice payload. Canonical digest включает непустой choice; trace
+`requested_tool_choice` и `norm_card_native_read_contracts` не заменяет actual
+native IDs/receipts/body delivery. Если provider игнорирует choice, непрочитанный
+долг сохраняется. Native `native_chat_v1` оставляет прежний optional proof и
+явную `unsupported_native_chat_protocol`; transport не теряет неподдерживаемый
+явный выбор молча. None/default, VOR, запросы поиска и resource proof прежние.
+
+Root:23 proof/budget/default случаев и36 transport случаев; related275passed.
+Installed effect и профессиональная приёмка пока не доказаны.
+
 ## 972 — адресность изменений proof
 
 `rows_after_proof_round` сохраняет неупомянутые решения. Известный operation_id
@@ -10,7 +40,8 @@ source/role. Отсутствующий или неизвестный ID при 
 pending → durable unapplied proposal. Прежняя операция не удаляется. Явный
 `operation_id:""` объявляет новую операцию даже при совпадении source/role.
 Регрессия и pipeline — `test_proof_role_identity_972.py`,
-`test_proof_role_identity_pipeline_972.py`. Gate/install/live972 pending.
+`test_proof_role_identity_pipeline_972.py`. Full972 gate6663passed/20skipped;
+отдельная установка972 не выполнялась, изменения входят в973.
 
 ## 971 — префикс целых карточек вместо отказа от всего дополнения
 

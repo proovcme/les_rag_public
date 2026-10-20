@@ -43,8 +43,12 @@ The rule implemented here keeps both halves:
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+from proxy.services.lsr_norm_quality_gate_service import ciphers_identical, qualified_norm_key
+from proxy.services.model_rag_grouped_evidence_service import normative_card_identity
 
 READ_TOOL = "read_norm_card"
 WORK_ROLE = "work"
@@ -152,6 +156,102 @@ def delivered_refs_from_chunks(chunks: Sequence[Any]) -> set[str]:
                 and meta.get("model_delivery_status") in (None, "", "delivered")):
             delivered.add(ref)
     return delivered
+
+
+def proof_native_read_contract(rows, *, purpose, native_tools, admitted_refs,
+                               chunks=(), receipts=(), planned_refs=None,
+                               max_refs=MAX_PROOF_REFS_PER_PACKET) -> dict[str, Any]:
+    """Require only a read of an already selected, cited, admitted exact card.
+
+    This describes the next native request; it executes nothing and makes no
+    applicability decision. Every actual attempted read consumes its planned
+    pointer, including a missing/conflicting read. A frozen plan never grows.
+    """
+    result = {"tools": list(native_tools), "tool_choice": None,
+              "planned_refs": tuple(planned_refs or ())}
+    if purpose != PROOF_PURPOSE or max_refs <= 0:
+        return result
+    pointers = {}
+    for pointer in admitted_refs:
+        if isinstance(pointer, Mapping) and isinstance(pointer.get("evidence_ref"), str):
+            pointers.setdefault(pointer["evidence_ref"], []).append(pointer)
+    eligible = []
+    identities = set()
+    for row in unread_chosen_norm_rows(rows):
+        check = row.get("_evidence_check") or {}
+        key = qualified_norm_key(row.get("norm_code"))
+        if (not key or check.get("normative_snapshot_conflict") is True
+                or (check.get("norm_key") and qualified_norm_key(check["norm_key"]) != key)):
+            continue
+        bindings = row.get("evidence_bindings") or {}
+        for ref in unread_candidates(row, delivered_refs_from_chunks(chunks)):
+            matches = pointers.get(ref, ())
+            if len(matches) != 1 or ref not in (row.get("evidence_refs") or ()):
+                continue
+            pointer = matches[0]
+            identity = pointer.get("normative_card_identity")
+            pointer_key = qualified_norm_key(pointer.get("norm_key"))
+            bound_identities = {
+                normative_card_identity(meta)
+                for chunk in chunks
+                if isinstance(meta := (chunk.get("meta", {}) if isinstance(chunk, Mapping)
+                                       else getattr(chunk, "meta", {})), Mapping)
+                and meta.get("model_evidence_ref") == ref
+                and meta.get("global_evidence_id") == bindings.get(ref)
+                and ciphers_identical(row.get("norm_code"), meta.get("norm_code"))
+            }
+            if (not identity or not pointer.get("global_evidence_id")
+                    or bound_identities != {identity}
+                    or bindings.get(ref) != pointer["global_evidence_id"]
+                    or not ciphers_identical(row.get("norm_code"), pointer.get("norm_code"))
+                    or (pointer_key and pointer_key != key)
+                    or (check.get("normative_base_sha256") and
+                        check["normative_base_sha256"] != pointer.get("normative_base_sha256"))):
+                continue
+            if identity not in identities:
+                eligible.append(ref)
+                identities.add(identity)
+    if planned_refs is None:
+        result["planned_refs"] = tuple(eligible[:min(MAX_PROOF_REFS_PER_PACKET, max_refs)])
+    attempted = set()
+    for receipt in receipts:
+        call = receipt.get("call") or {}
+        args = call.get("args") or {}
+        if call.get("tool") != READ_TOOL or not isinstance(args, Mapping):
+            continue
+        ref = args.get("evidence_ref")
+        if isinstance(ref, str):
+            attempted.add(ref)
+        legacy = {name: args[name].strip() for name in ("norm_key", "norm_code")
+                  if isinstance(args.get(name), str)}
+        legacy_valid = ("evidence_ref" not in args and all(
+            name not in args or bool(legacy.get(name)) for name in ("norm_key", "norm_code")))
+        # A provider may use a legacy exact selector despite the narrowed schema.
+        # Its actual attempt still consumes that same immutable planned card.
+        for candidate in result["planned_refs"]:
+            matches = pointers.get(candidate, ())
+            if len(matches) != 1:
+                continue
+            pointer = matches[0]
+            if (legacy_valid and any(legacy.values())
+                    and all(not legacy.get(name) or legacy[name] == pointer.get(name)
+                            for name in ("norm_key", "norm_code"))):
+                attempted.add(candidate)
+            attempted_pointers = pointers.get(ref, ()) if isinstance(ref, str) else ()
+            if any(item.get("normative_card_identity") == pointer.get("normative_card_identity")
+                   for item in attempted_pointers):
+                attempted.add(candidate)
+    pending = [ref for ref in result["planned_refs"] if ref in eligible and ref not in attempted]
+    reader = next((item for item in native_tools
+                   if (item.get("function") or {}).get("name") == READ_TOOL), None)
+    if pending and reader is not None:
+        reader = deepcopy(reader)
+        reader["function"]["parameters"] = {
+            "type": "object", "properties": {"evidence_ref": {"type": "string", "enum": pending}},
+            "required": ["evidence_ref"], "additionalProperties": False,
+        }
+        result.update(tools=[reader], tool_choice={"type": "function", "function": {"name": READ_TOOL}})
+    return result
 
 
 def proof_request_message(refs: Sequence[str], rows: Sequence[Mapping[str, Any]],

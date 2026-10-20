@@ -1,5 +1,38 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 20.10.2026 — кандидат973: явное чтение уже выбранной нормы
+
+Установлен по-прежнему971/`b619030d…`; профессиональная готовность не принята.
+972/`c6b63511…` завершил все9 канонических команд с rc0:
+6663passed/20skipped/5warnings за974,44s. Gate receipt SHA
+`d4976aa0e6795da0ef6b83faf443158c63422cc0f6e66726071f76db0b722a04`.
+972 не устанавливается отдельно: исправления адресности proof и нуля входят
+в следующий единый кандидат973/0.31.245/native5.1.973.
+
+Проверка сохранённых971 evidence уточнила наблюдение RRF: B0 имеет10
+фактических native-RRF/rerank исполнений, B1 остаётся UNKNOWN; это исправление
+частного audit parser, исходные квитанции не изменялись. См. append-only
+`independent_review/rrf_posthoc01.json` SHA
+`07ee99933820774956f4e60016b5341285ede90461ad1c152a39f73f8d00e98b`.
+
+Локальный транспортный probe на той же Qwen/r14 с физическимKV131072
+получил ровно один настоящий `read_norm_card(evidence_ref=Q16.H1)`:
+728input/32output, finish=tool_calls. Эта ссылка взята из собственного
+предыдущего решения модели, тело карточки в probe не передавалось и инструмент
+не исполнялся. Квитанция SHA
+`3f2b99423fd5c9bbb06cb6aee90dfdac32e189c2d60590921c90c8778ded78b3`.
+Это только измерение поддержки явного tool_choice, не доказательство качества.
+Физическое окно128K после stop/start FreeToken сохранилось.
+
+973 реализует optional typed tool_choice только в прежнем ограниченном proof
+непрочитанной нормы: selected/admitted immutable refs, bounded plan6, actual
+failed attempts без повторов, original tools после плана, одинаковый запрос
+в count/admission/Governor/dispatch. Requested выбор не объявляется actual READ.
+Также сохранена известная пустая XLSX unit-ячейка; headerless и unresolved
+merged остаются UNKNOWN. Авторские нормы/объёмы/вердикты код не выбирает и
+не меняет. Root related275passed/36,26s и catalog105passed/5,16s.
+Полный973 gate, exact installer и installed live pending.
+
 ## 20.10.2026 — установлен971; кандидат972 по измеренным причинам
 
 Установлен0.31.243/build971/native5.1.971.0, commit
@@ -27,7 +60,8 @@ zero-charge для допустимой числовой строки при д�
 Root RED: proof4failed/7passed, extension3функциональных регрессии и1уточнение
 служебной metadata в тесте; zero8failed/36passed. GREEN related114passed/4,65s,
 pipeline1passed/2,20s. Авторские шифры/количество/роли не переписываются.
-Полный972 gate/installer/installed live pending. Эти исправления не являются
+Полный972 gate завершён:6663passed/20skipped, все9 команд rc0. Отдельная
+установка972 не выполнялась; изменения включаются в973. Эти исправления не являются
 квалификацией модели или подтверждением применимости выбранных норм.
 
 

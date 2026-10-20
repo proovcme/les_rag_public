@@ -8,6 +8,7 @@ import unicodedata
 import json
 import re
 import hashlib
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
@@ -297,6 +298,10 @@ class ModelResearchToolService:
             doc_name = str(raw.get("doc_name") or meta.get("doc_name") or "").strip()
             if dataset in self._dataset_ids and doc_id and self._document_allowed(doc_name):
                 self._shown_documents[doc_id] = (dataset, doc_name)
+
+    def admitted_norm_references(self) -> tuple[dict[str, Any], ...]:
+        """Copy only exact pointers already admitted by the delivery boundary."""
+        return tuple(deepcopy(row) for row in self._shown_norm_refs)
 
     @staticmethod
     def _admitted_norm_reference(raw, meta, navigation) -> bool:

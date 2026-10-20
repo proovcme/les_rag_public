@@ -78,6 +78,7 @@ class InferenceRequest:
     tools: Sequence[Mapping[str, Any]] = ()
     response_format: Mapping[str, Any] | None = None
     reasoning_enabled: bool = False
+    tool_choice: str | Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.reasoning_enabled, bool):
@@ -88,6 +89,21 @@ class InferenceRequest:
         object.__setattr__(self, "tools", tuple(dict(item) for item in self.tools))
         if self.response_format is not None:
             object.__setattr__(self, "response_format", dict(self.response_format))
+        choice = self.tool_choice
+        declared_names = {function["name"] for tool in self.tools
+                          if isinstance(function := tool.get("function"), Mapping)
+                          and isinstance(function.get("name"), str) and function["name"].strip()}
+        if isinstance(choice, str):
+            if choice not in {"auto", "none", "required"} or (choice == "required" and not declared_names):
+                raise ValueError("INVALID_TOOL_CHOICE")
+        elif choice is not None:
+            if (not isinstance(choice, Mapping) or set(choice) != {"type", "function"}
+                    or choice.get("type") != "function" or not isinstance(choice.get("function"), Mapping)
+                    or set(choice["function"]) != {"name"}
+                    or not isinstance(choice["function"]["name"], str)
+                    or choice["function"]["name"] not in declared_names):
+                raise ValueError("INVALID_TOOL_CHOICE")
+            object.__setattr__(self, "tool_choice", {"type": "function", "function": {"name": choice["function"]["name"]}})
 
 
 @dataclass(frozen=True)
@@ -373,6 +389,12 @@ class OpenAICompatibleTransport:
             connection.capability_snapshot.transport_options.get("max_output_field", "max_tokens")
         )
 
+    @staticmethod
+    def _require_tool_choice_protocol(connection: ResolvedModelConnection, request: InferenceRequest) -> None:
+        if (connection.capability_snapshot.transport_options.get("chat_protocol") == "native_chat_v1"
+                and request.tool_choice not in (None, "auto")):
+            raise ModelTransportError("TOOL_CHOICE_UNSUPPORTED_NATIVE_CHAT")
+
     def _chat_body(
         self,
         connection: ResolvedModelConnection,
@@ -380,6 +402,7 @@ class OpenAICompatibleTransport:
         *,
         stream: bool,
     ) -> dict[str, Any]:
+        self._require_tool_choice_protocol(connection, request)
         messages = [dict(item) for item in request.messages]
         system_messages = [item for item in messages if item.get("role") == "system"]
         conversation = [item for item in messages if item.get("role") != "system"]
@@ -400,6 +423,11 @@ class OpenAICompatibleTransport:
         if request.tools:
             self._require(connection, CapabilityName.TOOLS)
             body["tools"] = [dict(item) for item in request.tools]
+        if (request.tool_choice is not None
+                and connection.capability_snapshot.transport_options.get("chat_protocol") != "native_chat_v1"):
+            choice = request.tool_choice
+            body["tool_choice"] = ({"type": "function", "function": dict(choice["function"])}
+                                   if isinstance(choice, Mapping) else choice)
         if request.response_format is not None:
             self._require(connection, CapabilityName.STRUCTURED_OUTPUT)
             body["response_format"] = dict(request.response_format)
@@ -660,6 +688,7 @@ class OpenAICompatibleTransport:
         A missing/failed/unsupported counter leaves the conservative governor
         intact. It cannot authorize a larger context or change model evidence.
         """
+        self._require_tool_choice_protocol(connection, request)
         self._token_count_last_attempt = {
             "status": "fallback", "source": "conservative_estimator",
             "model_id": connection.model_id, "connection_revision_id": connection.revision_id,
@@ -738,6 +767,7 @@ class OpenAICompatibleTransport:
         connection: ResolvedModelConnection,
         request: InferenceRequest,
     ) -> InferenceResponse:
+        self._require_tool_choice_protocol(connection, request)
         self._require(connection, CapabilityName.CHAT_COMPLETIONS)
         if (
             connection.capability_snapshot.transport_options.get("chat_protocol")

@@ -80,7 +80,12 @@ async def test_proof_actual_request_has_own_governed_budget_and_literal_context(
     assert frame["generation_reserve_tokens"] == 8192
     initial_frame = next(item for item in trace["context_governor"]["calls"]
                          if item["purpose"] == "sheet_pass_answer")
-    assert frame["input_budget_tokens"] == initial_frame["input_budget_tokens"]
+    # The bound norm proof can expose a narrower reader schema. Its message
+    # allowance changes by that actual wire payload; the full input envelope
+    # (messages plus provider tool/choice bytes) must stay exactly the same.
+    assert (frame["input_budget_tokens"] + frame.get("native_tools_reserved_tokens", 0)
+            == initial_frame["input_budget_tokens"]
+            + initial_frame.get("native_tools_reserved_tokens", 0))
     assert frame["included_tokens"] <= frame["input_budget_tokens"]
     proof = _proof_payloads(frame)
     assert len(proof) == 1 and proof[0]["proof_previous_model_answer"] == answer
