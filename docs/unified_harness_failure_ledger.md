@@ -1,5 +1,23 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 20.10.2026 —973: main suite зелёная, Windows updater блокирует выпуск
+
+Основной exact973 pytest:6726passed/20skipped. Исходный gate и его append-only
+продолжение сохранили WinError5 в двух разных hard-rollback тестах на одном
+directory `os.replace`; `test-updater` имеетrc1, полного release PASS нет.
+Если первый rename уже убрал текущий install в candidate, а второй не
+завершился, старый флаг swapped ещё false: обычный smoke-recovery не закрывает
+эту промежуточную filesystem-границу. Кандидат974 — bounded повтор только временных
+Windows locks и транзакционное восстановление перенесённого candidate при
+отказе второго rename, с сохранением исходной/recovery ошибки и прежних
+native/PID/identity guards. Регрессии добавляются в существующий native-boot
+test-файл: ROOT RED9failed/4passed →GREEN13passed, первоначальный updater325passed/
+20,41s. Два peer-review случая drift во время паузы дали RED2failed; после
+post-sleep проверки final related99passed/2,48s, включая15новых случаев.
+Полный974 gate и installed acceptance pending.
+Фактически установлен971;972/973 не устанавливались. Это release/tooling
+blocker, не измерение качества норм или нового installed ordinary документа.
+
 ## 20.10.2026 — 971: выбранные pointers без чтения, кандидат973
 
 Оба small7-файла971 доставлены, но профессиональную приёмку не прошли:

@@ -1,5 +1,31 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 20.10.2026 — кандидат974: Windows rollback rename;973 gate остановлен
+
+Source-кандидат —0.31.246/build974/native5.1.974. Фактически
+установлен по-прежнему971/`b619030d…`/0.31.243/native5.1.971.0; отдельной
+установки972 или973 не было. Customer-ready и профессиональная приёмка не приняты.
+
+На exact973/`fd974b1b2601e4819213432d62fa35b28b21b6e5` основной pytest:
+6726passed/20skipped; это не полный release gate. Исходный
+`artifacts/gates_973_final/receipt.json` и его append-only продолжение
+`artifacts/gates_973_final_v1/receipt.json` сохраняют rc1 у `test-updater`:
+WinError5 повторился в двух разных rollback-тестах на том же `os.replace`
+каталога приложения. Продолжение переиспользовало успешные записи, не является
+вторым прогоном основной suite. Нельзя повышать973 до all9rc0/installer-ready.
+
+974 вводит ограниченный повтор временного Windows rename и восстановление
+перенесённого candidate, если второй rename не завершился, в прежнем
+`tools/windows_update_engine.py` без изменения native/PID/identity guards.
+Регрессии расширяют существующий `test_windows_native_boot_960.py`: ROOT
+RED9failed/4passed →GREEN13passed; первоначальный updater325passed/20,41s.
+Peer review добавил два filesystem-drift случая во время паузы: RED2failed;
+после post-sleep проверки final related99passed/2,48s по native-boot и
+Windows application suites, включая15новых случаев. Полный974 gate,
+exact installer/rollback/reapply/native-only и малый installed ordinary/B0
+контроль pending. Замороженный частный ordinary973 оператор и
+его квитанции не переименовываются и не переиспользуются как доказательство974.
+
 ## 20.10.2026 — кандидат973: явное чтение уже выбранной нормы
 
 Установлен по-прежнему971/`b619030d…`; профессиональная готовность не принята.
@@ -31,7 +57,9 @@ failed attempts без повторов, original tools после плана, �
 Также сохранена известная пустая XLSX unit-ячейка; headerless и unresolved
 merged остаются UNKNOWN. Авторские нормы/объёмы/вердикты код не выбирает и
 не меняет. Root related275passed/36,26s и catalog105passed/5,16s.
-Полный973 gate, exact installer и installed live pending.
+Основной973 pytest завершён6726passed/20skipped; полный gate остановлен
+Windows updater-отказом, описанным в записи974 выше. Exact installer и
+installed live973 не выполнены.
 
 ## 20.10.2026 — установлен971; кандидат972 по измеренным причинам
 

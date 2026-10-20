@@ -163,6 +163,237 @@ def test_accepted_hard_rollback_preserves_native_health_and_identity_guards(tmp_
     assert (install / "runtime/old-code.txt").read_text() == "old"
 
 
+def _rename_error_974(winerror, message="fixture tree rename blocked"):
+    error = PermissionError(message) if winerror in {5, 32, 33} else OSError(message)
+    if winerror is not None:
+        error.winerror = winerror
+    return error
+
+
+def _rename_clock_974(monkeypatch):
+    clock = {"seconds": 0.0, "sleeps": []}
+
+    def sleep(seconds):
+        assert 0 < seconds <= 0.25
+        clock["sleeps"].append(seconds)
+        clock["seconds"] += seconds
+
+    monkeypatch.setattr(HARD, "time", SimpleNamespace(
+        monotonic=lambda: clock["seconds"], sleep=sleep))
+    return clock
+
+
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+@pytest.mark.parametrize("route", ["primary", "recovery"])
+def test_hard_rollback_retries_only_transient_outgoing_tree_locks_974(
+        tmp_path, monkeypatch, winerror, route):
+    install, state, _job, status, events, live = installed_hard_fixture(tmp_path, monkeypatch)
+    recovery = Path(status["recovery_root"])
+    before_state = (state / "data/user.db").read_bytes()
+    actual_replace, attempts = HARD.os.replace, []
+    clock = _rename_clock_974(monkeypatch)
+    smoke_error = RuntimeError("fixture previous native health failed")
+    if route == "recovery":
+        healthy = HARD.wait_ready
+
+        def health(**kwargs):
+            if kwargs["expected_commit"] == "a" * 40:
+                raise smoke_error
+            return healthy(**kwargs)
+
+        monkeypatch.setattr(HARD, "wait_ready", health)
+
+    def replace(source, target):
+        source, target = Path(source), Path(target)
+        outgoing = source == install and (
+            target.name.startswith("LES.candidate-rollback-") if route == "primary" else target == recovery)
+        if outgoing:
+            attempts.append((source, target))
+            if len(attempts) <= 2:
+                raise _rename_error_974(winerror)
+        return actual_replace(source, target)
+
+    monkeypatch.setattr(HARD.os, "replace", replace)
+    if route == "primary":
+        result = HARD.rollback_accepted_hard_update(install=install, state=state,
+            recovery_root=recovery, expected_target_commit="b" * 40)
+        assert result["state"] == "rolled_back"
+        assert (install / "runtime/old-code.txt").read_bytes() == b"old"
+        assert not recovery.exists()
+        assert events == ["stop", "stop", "native_entry", "health"]
+    else:
+        with pytest.raises(RuntimeError) as caught:
+            HARD.rollback_accepted_hard_update(install=install, state=state,
+                recovery_root=recovery, expected_target_commit="b" * 40)
+        assert caught.value is smoke_error
+        assert (install / "runtime/new-code.txt").read_bytes() == b"new"
+        assert (recovery / "runtime/old-code.txt").read_bytes() == b"old"
+        assert not any("ACCEPTED_HARD_ROLLBACK_RECOVERY_FAILED" in note
+                       for note in getattr(caught.value, "__notes__", ()))
+        assert events.count("native_entry") == 2
+    assert len(attempts) == 3 and len(clock["sleeps"]) == 2
+    assert live == BASELINE and "generic_headless_start" not in events
+    assert (state / "data/user.db").read_bytes() == before_state
+
+
+def test_hard_rollback_terminal_first_rename_is_bounded_and_preserves_both_trees_974(
+        tmp_path, monkeypatch):
+    install, state, _job, status, events, _live = installed_hard_fixture(tmp_path, monkeypatch)
+    recovery = Path(status["recovery_root"])
+    actual_replace, attempts = HARD.os.replace, []
+    error = _rename_error_974(5)
+    clock = _rename_clock_974(monkeypatch)
+
+    def replace(source, target):
+        if Path(source) == install:
+            attempts.append((Path(source), Path(target)))
+            raise error
+        return actual_replace(source, target)
+
+    monkeypatch.setattr(HARD.os, "replace", replace)
+    with pytest.raises(PermissionError) as caught:
+        HARD.rollback_accepted_hard_update(install=install, state=state,
+            recovery_root=recovery, expected_target_commit="b" * 40)
+    assert caught.value is error
+    assert len(attempts) > 1 and 5 <= clock["seconds"] <= 5.25
+    assert (install / "runtime/new-code.txt").read_bytes() == b"new"
+    assert (recovery / "runtime/old-code.txt").read_bytes() == b"old"
+    assert all(not target.exists() for _source, target in attempts)
+    assert events == ["stop"]
+
+
+def test_hard_rollback_terminal_second_rename_restores_the_same_candidate_974(
+        tmp_path, monkeypatch):
+    install, state, _job, status, events, _live = installed_hard_fixture(tmp_path, monkeypatch)
+    recovery = Path(status["recovery_root"])
+    actual_replace, moves = HARD.os.replace, []
+    error = _rename_error_974(87, "fixture replacement rename rejected")
+    clock = _rename_clock_974(monkeypatch)
+
+    def replace(source, target):
+        source, target = Path(source), Path(target)
+        moves.append((source, target))
+        if source == recovery and target == install:
+            raise error
+        return actual_replace(source, target)
+
+    monkeypatch.setattr(HARD.os, "replace", replace)
+    with pytest.raises(OSError) as caught:
+        HARD.rollback_accepted_hard_update(install=install, state=state,
+            recovery_root=recovery, expected_target_commit="b" * 40)
+    assert caught.value is error and clock["sleeps"] == []
+    assert (install / "runtime/new-code.txt").read_bytes() == b"new"
+    assert (recovery / "runtime/old-code.txt").read_bytes() == b"old"
+    archived = moves[0][1]
+    assert moves == [(install, archived), (recovery, install), (archived, install)]
+    assert not archived.exists() and events == ["stop"]
+
+
+@pytest.mark.parametrize("winerror", [None, 87], ids=["posix-permission", "other-windows-error"])
+def test_hard_rollback_nonretryable_first_error_is_not_delayed_or_replaced_974(
+        tmp_path, monkeypatch, winerror):
+    install, state, _job, status, _events, _live = installed_hard_fixture(tmp_path, monkeypatch)
+    recovery = Path(status["recovery_root"])
+    error = PermissionError("fixture POSIX permission") if winerror is None else _rename_error_974(winerror)
+    actual_replace, attempts = HARD.os.replace, []
+    clock = _rename_clock_974(monkeypatch)
+
+    def replace(source, target):
+        if Path(source) == install:
+            attempts.append((Path(source), Path(target)))
+            raise error
+        return actual_replace(source, target)
+
+    monkeypatch.setattr(HARD.os, "replace", replace)
+    with pytest.raises(OSError) as caught:
+        HARD.rollback_accepted_hard_update(install=install, state=state,
+            recovery_root=recovery, expected_target_commit="b" * 40)
+    assert caught.value is error and len(attempts) == 1 and clock["sleeps"] == []
+    assert (install / "runtime/new-code.txt").read_bytes() == b"new"
+    assert (recovery / "runtime/old-code.txt").read_bytes() == b"old"
+
+
+@pytest.mark.parametrize("changed", ["target-appears", "source-disappears"])
+@pytest.mark.parametrize("when", ["at-failure", "during-sleep"])
+def test_hard_rollback_does_not_retry_across_changed_filesystem_preconditions_974(
+        tmp_path, monkeypatch, changed, when):
+    install, state, _job, status, _events, _live = installed_hard_fixture(tmp_path, monkeypatch)
+    recovery = Path(status["recovery_root"])
+    actual_replace, attempts = HARD.os.replace, []
+    parked = install.with_name("LES.externally-moved-fixture")
+    error = _rename_error_974(32)
+    _rename_clock_974(monkeypatch)
+
+    def change_filesystem(source, target):
+        if changed == "target-appears":
+            target.mkdir()
+            (target / "foreign.txt").write_bytes(b"foreign directory must survive")
+        else:
+            actual_replace(source, parked)
+
+    def replace(source, target):
+        source, target = Path(source), Path(target)
+        if source == install:
+            attempts.append((source, target))
+            if when == "at-failure":
+                change_filesystem(source, target)
+            raise error
+        return actual_replace(source, target)
+
+    if when == "during-sleep":
+        advance_clock = HARD.time.sleep
+
+        def sleep(seconds):
+            advance_clock(seconds)
+            change_filesystem(*attempts[-1])
+
+        monkeypatch.setattr(HARD.time, "sleep", sleep)
+    monkeypatch.setattr(HARD.os, "replace", replace)
+    with pytest.raises(OSError) as caught:
+        HARD.rollback_accepted_hard_update(install=install, state=state,
+            recovery_root=recovery, expected_target_commit="b" * 40)
+    assert caught.value is error and len(attempts) == 1
+    if changed == "target-appears":
+        assert (install / "runtime/new-code.txt").read_bytes() == b"new"
+        assert (attempts[0][1] / "foreign.txt").read_bytes() == b"foreign directory must survive"
+    else:
+        assert not install.exists() and (parked / "runtime/new-code.txt").read_bytes() == b"new"
+    assert (recovery / "runtime/old-code.txt").read_bytes() == b"old"
+
+
+def test_hard_rollback_failed_second_move_and_repair_keep_both_trees_and_original_error_974(
+        tmp_path, monkeypatch):
+    install, state, _job, status, events, _live = installed_hard_fixture(tmp_path, monkeypatch)
+    recovery = Path(status["recovery_root"])
+    actual_replace, moves = HARD.os.replace, []
+    original = _rename_error_974(87, "fixture replacement rename rejected")
+    repair_error = _rename_error_974(87, "fixture repair rename blocked")
+    _rename_clock_974(monkeypatch)
+
+    def replace(source, target):
+        source, target = Path(source), Path(target)
+        moves.append((source, target))
+        if source == recovery and target == install:
+            raise original
+        if source != install and target == install:
+            raise repair_error
+        return actual_replace(source, target)
+
+    monkeypatch.setattr(HARD.os, "replace", replace)
+    with pytest.raises(OSError) as caught:
+        HARD.rollback_accepted_hard_update(install=install, state=state,
+            recovery_root=recovery, expected_target_commit="b" * 40)
+    assert caught.value is original
+    notes = getattr(caught.value, "__notes__", ())
+    assert any("fixture repair rename blocked" in note for note in notes)
+    archived = moves[0][1]
+    assert not install.exists()
+    assert (archived / "runtime/new-code.txt").read_bytes() == b"new"
+    assert (recovery / "runtime/old-code.txt").read_bytes() == b"old"
+    assert moves == [(install, archived), (recovery, install), (archived, install)]
+    assert events == ["stop"]
+
+
 @pytest.mark.parametrize("target_ready", [True, False])
 def test_hard_rollback_recovery_returns_candidate_with_no_generic_boot(tmp_path, monkeypatch, target_ready):
     install, state, job, status, events, live = installed_hard_fixture(tmp_path, monkeypatch)

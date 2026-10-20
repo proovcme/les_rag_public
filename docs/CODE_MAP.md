@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 974 — ограниченный rename и восстановление при отказе второго переноса
+
+`rollback_accepted_hard_update` → `_swap_application_trees` →
+`_replace_tree_with_retry`: Windows5/32/33, не более5с; исходный каталог должен
+существовать, целевой отсутствовать до и после50мс ожидания. Второй отказ
+возвращает первый перенесённый каталог; при неудаче возврата сохраняются обе
+ошибки и сами каталоги. Тот же helper обслуживает recovery после smoke-отказа.
+Native/PID/commit guards и остальные маршруты не изменены.
+
 ## 973 — явный proof-read без подмены решения
 
 `ModelResearchToolService.admitted_norm_references` →

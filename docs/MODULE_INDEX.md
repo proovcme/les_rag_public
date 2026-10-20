@@ -1,5 +1,19 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 974 — кандидат: сохранный откат при временной блокировке Windows
+
+✅ `tools/windows_update_engine._replace_tree_with_retry` повторяет только
+WinError5/32/33 до5с, проверяет существование исходного и отсутствие целевого
+каталога до и после ожидания. `_swap_application_trees` возвращает первый
+перенесённый каталог, если второй перенос отказал; исходная ошибка сохраняется,
+ошибка восстановления добавляется отдельно. Оба вызова прежнего accepted
+rollback/recovery используют эту границу без изменения native/PID guards.
+Root RED9failed/4passed, дополнительный race RED2failed; related99passed/2,48s.
+🟡 Source0.31.246/build974/native5.1.974; installed971/`b619030d…`.
+973 main:6726passed/20skipped, но два updater-отказа; полного PASS/установки973 нет.
+Полный974 gate, exact installer и профессиональный live pending; customer-ready=false.
+Канон: [Windows release](RELEASE_PROCEDURE.md).
+
 ## 973 — рабочий кандидат: явное чтение выбранной карточки
 
 🟡 Source0.31.245/build973/native5.1.973; установлен971/`b619030d…`.

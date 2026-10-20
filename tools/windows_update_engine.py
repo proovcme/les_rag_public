@@ -77,6 +77,39 @@ def write_status(path: Path, **values: Any) -> None:
     )
 
 
+def _replace_tree_with_retry(source: Path, target: Path) -> None:
+    """Retry a blocked Windows tree move without replacing an appeared target."""
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except OSError as error:
+            if (
+                getattr(error, "winerror", None) not in {5, 32, 33}
+                or not source.is_dir()
+                or target.exists()
+                or time.monotonic() >= deadline
+            ):
+                raise
+            time.sleep(0.05)
+            if not source.is_dir() or target.exists() or time.monotonic() >= deadline:
+                raise
+
+
+def _swap_application_trees(current: Path, archive: Path, replacement: Path) -> None:
+    """Put the current tree back if installing its replacement fails."""
+    _replace_tree_with_retry(current, archive)
+    try:
+        _replace_tree_with_retry(replacement, current)
+    except Exception as original_error:
+        try:
+            _replace_tree_with_retry(archive, current)
+        except Exception as restore_error:
+            original_error.add_note("APPLICATION_TREE_RESTORE_FAILED: " + str(restore_error))
+        raise
+
+
 def validate_boundary(install_root: Path, state_root: Path) -> tuple[Path, Path]:
     install = install_root.resolve()
     state = state_root.resolve()
@@ -1083,8 +1116,7 @@ def rollback_accepted_hard_update(
         stop_runtime(current_runtime, state, log_root)
         stop_desktop()
         _detach_state_junctions(current_runtime)
-        os.replace(install, candidate)
-        os.replace(recovery, install)
+        _swap_application_trees(install, candidate, recovery)
         swapped = True
         restored_runtime = runtime_root(install)
         stop_runtime(restored_runtime, state, log_root)
@@ -1114,8 +1146,7 @@ def rollback_accepted_hard_update(
                 stop_runtime(runtime_root(install), state, log_root)
                 stop_desktop()
                 _detach_state_junctions(runtime_root(install))
-                os.replace(install, recovery)
-                os.replace(candidate, install)
+                _swap_application_trees(install, recovery, candidate)
                 restored_target = runtime_root(install)
                 stop_runtime(restored_target, state, log_root)
                 recovery_task = start_desktop(install, "accepted-hard-rollback-recovery", log_root)

@@ -1,5 +1,25 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат974 — регрессии Windows rollback rename
+
+В существующий `test_windows_native_boot_960.py` добавляются случаи временных
+WinError5/32/33 в primary/recovery rename, ограниченного постоянного отказа,
+неповторяемой ошибки, изменившихся filesystem preconditions и второго rename
+с успешным либо неуспешным возвратом candidate. Проверки сохраняют original
+exception, отдельную recovery note и прежние native/PID/identity guards.
+Новых test-файлов нет. ROOT RED9failed/4passed →GREEN13passed; первоначальный
+updater325passed/20,41s. Peer review добавил2 случая filesystem drift во время
+retry sleep: оба дали RED; после post-sleep проверки final related99passed/2,48s
+по native-boot и Windows application suites, включая15новых случаев.
+Полный974 gate/install/live не подтверждены; ранний updater325 не объявляется
+повторным полным прогоном после последней post-sleep правки.
+
+Exact973 main suite завершена6726passed/20skipped, но `test-updater` вернулrc1
+в исходном gate и append-only продолжении: два разных rollback-теста встретили
+WinError5 в том же directory `os.replace`. Успешная main suite не заменяет
+updater gate и не подтверждает установку. Фактически установлен971;972/973
+отдельно не устанавливались. Профессиональный ordinary/B0 gate ещё открыт.
+
 ## Кандидат973 — явное чтение выбранной карточки
 
 `test_optional_tool_choice_transport_973.py`: optional typed tool_choice,
@@ -19,7 +39,8 @@ message-only allowance. Отдельный capacity-edge тест ловит п�
 В прежнем catalog-файле добавлены4 проверки XLSX blank/headerless/merged:
 Root2failed/1passed до правки и отдельный merged control1passed на прежнем коде;
 catalog/header/quote/VOR structural related105passed/5,16s после правки.
-Полный973 gate/install/live pending; CURRENT_TESTS содержит352 файла.
+Основной973 pytest:6726passed/20skipped; полный gate остановлен в updater,
+install/live не выполнены. CURRENT_TESTS973 содержит352 файла.
 Настоящий локальный transport-probe728/32 доказал только нативный вызов
 конкретного reader; применимость нормы и качество документов он не проверял.
 
