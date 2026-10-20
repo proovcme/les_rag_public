@@ -12,6 +12,14 @@ ROOT: related625passed/87.53s; полного exact975 gate,
 собранного/установленного975 и installed professional comparison ещё нет.
 Customer_ready=false; source commit/gate975 фиксируются только после фактических проверок.
 
+Первый frozen975 gate (`784a0146…`) остановился на основном pytest:
+6858passed/20skipped/1failed за943.65s. Единственный отказ — старое ожидание
+полного enum в `test_sovushka_chat`: отсутствовал новый `phase_instruction`.
+Ожидание синхронизировано без изменения продуктивного кода, удаления или
+ослабления проверок; отрицательная квитанция `artifacts/gates_975_final/receipt.json`
+SHA `a47ca35f2034204c8bfe4663074b0f517c43b001e0eb6165ce8ffbd284cce8f7`
+сохраняется. Повторный exact975 gate и live-проверки пока не завершены.
+
 Фактически установлен974/`f6a281c77c42766db6076bb50f55d0414707905e`,
 0.31.246/native5.1.974. Main6741passed/20skipped, все9 gate-команд rc0:
 `artifacts/gates_974_final/receipt.json`, SHA

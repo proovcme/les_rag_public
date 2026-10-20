@@ -1899,6 +1899,7 @@ def test_chat_prompt_uses_canonical_typed_context_order():
         "checkpoint",
         "working_memory",
         "dialogue",
+        "phase_instruction",
         "terminal_request",
     ]
     assert "working_memory=answer_working_memory" in source
