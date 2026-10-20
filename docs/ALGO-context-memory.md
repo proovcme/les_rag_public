@@ -1,5 +1,19 @@
 # ALGO-context-memory — память чата и паспорт датасета
 
+## Кандидат975 — текущая READ-фаза и durable proof
+
+`PHASE_INSTRUCTION` — один required непустой литерал read-задачи, не evidence/финализация.
+Без native reasoning он следует после данных, иначе перед неизменённой текущей
+assistant/tool цепочкой. Совмещение с `TERMINAL_REQUEST` отклоняется, None сохраняет wire.
+Phase/frame/exchanges проходят общие exact/cloud/conservative guards;
+`replay.required` с shared catalogs сохраняется. Переполнение видно до model call.
+
+Pending checkpoint хранит public answer, literal evidence/IDs, scope и preset.
+Новый человеческий resume продолжает proof без query/answer и прежней private native
+цепочки; scope/preset mismatch останавливается технически. Только actual call/receipt
+и delivered body доказывают чтение, не checkpoint/requested choice.
+Candidate975 ещё не установлен и не подтверждён профессиональной live-приёмкой.
+
 <!-- candidate939-proof-kind-sampling:v1 -->
 ## 939: необязательные sampling controls
 
@@ -100,9 +114,10 @@ installed live877 pending.
 не биллинг провайдера и не уже измеренная экономия кандидата877.
 
 Канонический кандидат больше не обрезает prompt независимыми строковыми лимитами.
-Все производители отдают типизированные объекты девяти видов: profile prefix,
-tool shortlist, request, evidence, source map, tool exchange, checkpoint,
-working memory и dialogue. `ContextGovernor` сначала резервирует generation и
+Все производители отдают типизированные объекты из `ContextKind`: profile prefix,
+tool shortlist, request, evidence/current read frame, source map, tool exchange,
+checkpoint, working memory, dialogue, phase instruction и terminal request.
+`ContextGovernor` сначала резервирует generation и
 safety budget, затем сохраняет обязательные объекты и упаковывает остальные в
 этом фиксированном порядке.
 

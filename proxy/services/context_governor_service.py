@@ -23,6 +23,7 @@ class ContextKind(str, Enum):
     CHECKPOINT = "checkpoint"
     WORKING_MEMORY = "working_memory"
     DIALOGUE = "dialogue"
+    PHASE_INSTRUCTION = "phase_instruction"
     TERMINAL_REQUEST = "terminal_request"
 
 
@@ -189,7 +190,7 @@ class ContextPacket:
                       if not isinstance(item.payload, NativeToolExchange))
             for section in self.sections
             if section.kind not in (ContextKind.PROFILE_PREFIX, ContextKind.CURRENT_READ_FRAME,
-                                    ContextKind.TERMINAL_REQUEST)
+                                    ContextKind.PHASE_INSTRUCTION, ContextKind.TERMINAL_REQUEST)
         ]
         user_sections = [text for text in user_sections if text]
         messages: list[dict[str, Any]] = []
@@ -201,17 +202,26 @@ class ContextPacket:
                                   if section.kind == ContextKind.CURRENT_READ_FRAME)
         current_chain = [item.payload for section in self.sections for item in section.objects
                          if isinstance(item.payload, NativeToolExchange)]
-        before_native = (bool(current_frame) and any(isinstance(exchange.reasoning_content, str) and exchange.reasoning_content.strip()
-                                 for exchange in current_chain)
+        has_native_reasoning = any(isinstance(exchange.reasoning_content, str) and exchange.reasoning_content.strip()
+                                   for exchange in current_chain)
+        before_native = (bool(current_frame) and has_native_reasoning
                          and not any(section.kind == ContextKind.TERMINAL_REQUEST for section in self.sections))
+        phase = "\n".join(section.render() for section in self.sections
+                          if section.kind == ContextKind.PHASE_INSTRUCTION)
         if before_native:
             messages.append({"role": "user", "content": current_frame})
+        # This is the current application read request, not finalization. Keep
+        # it before a reasoning-bearing native chain of the same user turn.
+        if phase and has_native_reasoning:
+            messages.append({"role": "user", "content": phase})
         for section in self.sections:
             for item in section.objects:
                 if isinstance(item.payload, NativeToolExchange):
                     messages.extend(item.payload.as_messages())
         if current_frame and not before_native:
             messages.append({"role": "user", "content": current_frame})
+        if phase and not has_native_reasoning:
+            messages.append({"role": "user", "content": phase})
         for section in self.sections:
             if section.kind == ContextKind.TERMINAL_REQUEST:
                 messages.append({"role": "user", "content": section.render()})
@@ -276,8 +286,18 @@ class ContextGovernor:
             - int(self.preset.safety_reserve_tokens),
         )
         ordered = sorted(candidates, key=lambda candidate: _PACKING_RANK[candidate.kind])
+        phase_candidates = [candidate for candidate in ordered if candidate.kind == ContextKind.PHASE_INSTRUCTION]
+        if phase_candidates and any(candidate.kind == ContextKind.TERMINAL_REQUEST for candidate in ordered):
+            raise ValueError("phase instruction and terminal request cannot be combined")
+        if len(phase_candidates) > 1:
+            raise ValueError("phase instruction must be one required literal instruction")
         native_ids: set[str] = set()
         for candidate in ordered:
+            if candidate.kind == ContextKind.PHASE_INSTRUCTION:
+                if (not candidate.required or len(candidate.objects) != 1
+                        or not isinstance(candidate.objects[0].payload, str)
+                        or not candidate.objects[0].payload.strip()):
+                    raise ValueError("phase instruction must be one required nonempty literal instruction")
             if candidate.kind == ContextKind.TERMINAL_REQUEST:
                 if (not candidate.required or len(candidate.objects) != 1
                         or not isinstance(candidate.objects[0].payload, str)

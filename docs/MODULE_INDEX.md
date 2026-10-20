@@ -1,5 +1,23 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 975 — кандидат: текущая READ-фаза и сохранный pending proof
+
+✅ Doc↔candidate source: `ContextGovernor`/`ContextPacket` — required `PHASE_INSTRUCTION`;
+`_start_sheet_proof`/`_continue_sheet_reads` — тот же counted phase/tools/choice.
+`model_rag_prior_page_context` — index-only новый пакет; `decode_model_result_rows` —
+JSON после заголовка с прежними ambiguity guards. Все новые active queries модельные.
+`record_held_query_admission` — совместимый cache replay либо model redeclare;
+`record_pending_proof` — public answer/chunks/IDs и scope/preset до первого proof-await;
+последующие actual reads сохраняет прежний `record_evidence_read`,
+новый человеческий resume только proof без старой native цепочки и query/answer.
+Канон: [evidence flow](modules/rag-evidence-flow.md), [context](ALGO-context-memory.md).
+
+🟡 Source0.31.247/build975/native5.1.975: related625passed/87.53s —
+связанные проверки, не полный gate/install/live975. Установлен974/`f6a281c7…`:
+main6741passed/20skipped, все9 gate-команд rc0; rollback/reapply/native EXE-only
+приняты. Профессиональные974 controls отрицательны; customer_ready=false.
+Ниже сохранены исторические статусы подготовки предыдущих кандидатов.
+
 ## 974 — кандидат: сохранный откат при временной блокировке Windows
 
 ✅ `tools/windows_update_engine._replace_tree_with_retry` повторяет только

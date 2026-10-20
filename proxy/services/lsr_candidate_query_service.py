@@ -1,9 +1,10 @@
-"""Systematic candidate retrieval queries for the estimator sheet-pass (ADR-16).
+"""Historical candidate-query helpers (ADR-16); inactive in production chat.
 
 Division of labour fixed by ``docs/ADR-16-systematic-candidate-retrieval.md``:
-code guarantees systematic candidate *collection*, the model decides which norm
-applies, and the user supplies genuinely missing data.  This module owns the only
-place where a retrieval query may be authored by code in the active estimate path.
+originally allowed code-authored candidate collection. The current chat contract
+requires every executed search query to be authored by the model. These helpers
+remain for historical receipts and direct compatibility tests only; no switch
+reactivates them in the production sheet-pass.
 
 Two provenances are produced here and nowhere else:
 
@@ -55,9 +56,9 @@ _MIN_GROUNDED_TOKEN_CHARS = 4
 
 
 def system_candidate_queries_enabled() -> bool:
-    """GUI-visible switch; ``on`` by default, see ``_FACTOR_PRESENTATION``."""
+    """Historical GUI-visible switch; inactive in chat and ``off`` by default."""
 
-    raw = os.getenv("LES_LSR_SYSTEM_CANDIDATE_QUERIES", "on").strip().casefold()
+    raw = os.getenv("LES_LSR_SYSTEM_CANDIDATE_QUERIES", "off").strip().casefold()
     return raw not in {"0", "off", "false", "no", "disabled"}
 
 

@@ -206,7 +206,8 @@ def test_packet_resolves_locators_from_the_catalog() -> None:
     assert candidate_queries_for_packet(_Catalog(), sheet="СКС", locators=[]) == []
 
 
-def test_scope_is_the_estimator_turn_only() -> None:
+def test_scope_is_the_estimator_turn_only(monkeypatch) -> None:
+    monkeypatch.setenv("LES_LSR_SYSTEM_CANDIDATE_QUERIES", "on")
     assert candidate_queries_enabled_for_turn({"mode": "estimator"}) is True
     assert candidate_queries_enabled_for_turn({"mode": "agent"}) is False
     assert candidate_queries_enabled_for_turn(None) is False

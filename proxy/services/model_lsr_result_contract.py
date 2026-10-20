@@ -337,7 +337,18 @@ def decode_model_result_rows(raw: str, *, diagnostics: list[dict] | None = None)
                     index += 1
                 continue
             if segment[index] not in "{[":
-                break
+                # A result may follow a human-readable heading. Only advance
+                # to the next line: never extract a JSON example inside prose
+                # or promote the body of an unfinished Markdown fence.
+                if segment[index:].startswith("```"):
+                    break
+                next_line = segment.find("\n", index)
+                if next_line < 0:
+                    break
+                index = next_line + 1
+                while index < len(segment) and segment[index].isspace():
+                    index += 1
+                continue
             try:
                 _value, end = decoder.raw_decode(segment, index)
             except (ValueError, TypeError):

@@ -1,5 +1,19 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 975 — READ-фаза, model-owned queries и durable proof
+
+`ContextKind.PHASE_INSTRUCTION` → `ContextGovernor.pack` / `ContextPacket.as_messages`
+→ прежний bound count/cloud/wire; `_start_sheet_proof`/`_continue_sheet_reads` передают
+literal proof_request отдельно от данных. `model_rag_prior_page_context` — index-only
+новый пакет; `decode_model_result_rows` — JSON после целой commentary line с прежними guards.
+Active `_execute_chat_evidence_application` не вызывает system candidate helper;
+`_model_only_query_provenance` сохраняет модельное авторство. Held replay — только
+полный совместимый кэш, иначе model redeclare с audit. `record_pending_proof` сохраняет
+public answer/evidence/IDs; новый человеческий resume — только proof без query/answer
+и старой native цепочки, с scope/preset/stale-ID/actual-read checks.
+Кандидат0.31.247/build975/native5.1.975; full gate/install/live975 pending.
+Установлен974/`f6a281c7…`; отрицательные professional controls не заменены offline GREEN.
+
 ## 974 — ограниченный rename и восстановление при отказе второго переноса
 
 `rollback_accepted_hard_update` → `_swap_application_trees` →
@@ -2060,7 +2074,7 @@ projection под тем же alias; при rollback старый FTS восст
 | Детерминированную маршрутизацию | `proxy/services/deterministic_policy_service.py`, `glossary_chat_service.py`, `project_registry_chat_service.py` |
 | Подготовку документов (sidecar) | `proxy/services/sidecar_ops_service.py` + `doc_extract_service.py` |
 | Поток чата/ответа | `proxy/routers/chat.py` (request/scope/route/tools) → `proxy/services/chat_evidence_application_service.py` (retrieval/evidence/model/sources/trace) → `answer_contract_service` |
-| Систематический сбор кандидатов норм на сметном пути (ADR-16) | `proxy/services/lsr_candidate_query_service.py` — единственное место активного сметного пути, где поисковый запрос пишет код: на sheet-pass собирает `original` (дословный исходный текст строки каталога) и `derived` (тот же текст плюс явно представленные в исходнике атрибуты — заголовок раздела листа и написанный в ячейке шифр), механически сверяет каждый токен с собственными строками запроса и отбрасывает запрос вместо «исправления»; `system_candidate_queries_enabled()`/`system_candidate_query_cap()` читают `LES_LSR_SYSTEM_CANDIDATE_QUERIES` (default `on`) и `LES_LSR_SYSTEM_CANDIDATE_MAX` (default `24`) → `proxy/services/chat_evidence_application_service.py` исполняет их тем же `search_sources`, метит `query_provenance`, пишет trace `system_candidate_queries`/`dropped_ungrounded`, не запускает их в `B0_DIRECT` и вне сметного профиля. Норму код не выбирает: `docs/ADR-16-systematic-candidate-retrieval.md` |
+| Происхождение запросов и held replay | `proxy/services/chat_evidence_application_service.py` исполняет все новые active queries только от модели; `_model_only_query_provenance` сохраняет происхождение `model`. `record_held_query_admission` фиксирует проверку прежнего плана: полный совместимый cache replay либо новая декларация модели, без автоматического поиска по старому плану и без расширения неизвестного scope. `proxy/services/lsr_candidate_query_service.py` сохранён как исторический compatibility helper и в активном пути975 не вызывается; старые GUI-факторы не включают его. История — `docs/ADR-16-systematic-candidate-retrieval.md`. |
 | Продолжение того же документа (ревизия ЛСР/ВОР) | `proxy/services/workbook_tool_service.py`::`_packaging_parent` — единственное место, где выбирается родитель `ArtifactRevisionRequest`: явный `parent_revision_id` (`explicit`) → `workflow_checkpoint_service.last_completed_revision(session_id, attachment_id, tool_name)` (`session_lineage`) → первая revision (`first_revision`); отсутствующий в artifact-store родитель и недоступное хранилище возвращают `None` с источником `parent_missing_from_store`/`checkpoint_store_unavailable` и не блокируют доставку. Источник решения пишется в `tool_calls[].parent_revision_source`. Модель и имя файла родителя не выбирают; `tools/architecture_contract_gate.py`::`DOCUMENT_LINEAGE_UNOWNED` это закрепляет; `docs/ADR-16-systematic-candidate-retrieval.md`, `tests/test_workbook_tool_service.py`, `tests/test_architecture_contract_gate.py` |
 | Индексацию/эмбеддинги | `backend/qdrant_adapter.py` + `backend/rag_config.py` (профили) |
 | Операторские заметки/память чата/датасета | `proxy/services/context_memory_service.py`, `proxy/services/notebook_service.py`, `proxy/services/prompt_registry_service.py`, `proxy/services/memory_service.py` |

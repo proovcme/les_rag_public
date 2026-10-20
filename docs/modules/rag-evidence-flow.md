@@ -1,5 +1,41 @@
 # RAG evidence flow
 
+## 975 — текущая READ-фаза, авторство запросов и сохранный proof
+
+Кандидат0.31.247/build975/native5.1.975, не установлен. Фактически установлен974
+на `f6a281c77c42766db6076bb50f55d0414707905e`; его профессиональные small controls
+отрицательны. Полный gate/install/live975 ещё не принят; customer_ready=false.
+
+`PHASE_INSTRUCTION` — обязательный буквальный текущий `proof_request`, отдельный
+от evidence и `TERMINAL_REQUEST`. Без native reasoning он идёт после данных;
+при текущей reasoning-цепочке — перед неизменёнными assistant/tool сообщениями
+того же хода. None сохраняет wire. Счётчик, cloud admission и консервативный
+fallback учитывают ту же фазу; phase не подтверждает чтение или применимость.
+
+Пустой `prior_model_decisions` с `accepted_work_index` обозначает новый пакет,
+а не следующую страницу прежних строк. Same-packet replay и явный review
+различаются только служебной инструкцией; строки, цитаты, IDs и ревизии буквальны.
+Один самостоятельный unfenced JSON object/array после заголовка читается без
+переписывания строк; inline-пример и незакрытый fence не становятся carrier.
+Duplicate/multiple/incomplete guards и отсутствие target → packaging pending сохранены.
+
+Active sheet-pass больше не вызывает `_execute_system_candidate_queries`.
+Все новые запросы модельные; `_model_only_query_provenance` явно метит их.
+Старые helpers/default-off факторы сохранены как неактивная история.
+Held query replay допускается только из полного совместимого кэша для проверенной
+области; cache miss требует новой декларации модели, не исполнения старого плана.
+`record_held_query_admission` сохраняет прежний план и disposition; неизвестная
+область останавливается технически, не расширяется молча.
+
+`record_pending_proof` сохраняет завершённый публичный ответ, literal chunks/IDs,
+request, scope и preset до первого proof-await. Последующие фактические чтения
+сохраняет прежний `record_evidence_read`. Старый private
+reasoning/native chain не checkpoint-ится. Новый явный человеческий ход продолжает
+только сохранённую proof-стадию, без повторного query/answer и старой native истории;
+source/dataset/profile/model/frame/preset несовместимость не меняет сохранённые строки.
+Requested choice, actual native call/receipt и delivered body остаются разными фактами.
+ROOT: related625passed/87.53s; это связанный прогон, не full975 gate/install/live.
+
 ## 973 — обязательный native READ в прежнем нормативном proof
 
 Только ACTIVE и объявленная моделью ЛСР могут получить явный tool_choice
@@ -2334,9 +2370,9 @@ B1 удержал malformed proposals и не выдал XLSX. Клиентск�
 
 Обычный чат и model-authored estimate используют один принцип: модель сама формулирует запросы и
 пишет итог, код только выполняет retrieval, сохраняет provenance и механически исполняет
-разрешённый постпроцессинг. На сметном пути к запросам модели добавляется гарантированный системный
-сбор кандидатов (ADR-16, см. ниже); он не отнимает у модели ни выбора нормы, ни решения о
-применимости. Дополнительного planner/model-review шага и JSON-протокола между моделью и RAG нет.
+разрешённый постпроцессинг. С кандидата975 системные запросы не добавляются;
+исключение ADR-16 сохранено ниже только как история. Дополнительного обязательного
+planner/model-review шага и JSON-плана как допуска к RAG нет.
 
 ## Активный поток
 
@@ -2382,21 +2418,21 @@ public error boundary отдельно от реальной недоступн�
    Legacy vocabulary не добавляет доменные шаблоны по source locator/изделию.
    С 845 результаты поиска в durable query_cache имеют технический contract:
    smeta_literal_query_v1 / shared_native_query_v1. Старый либо несовместимый
-   кэш, включая пустую выдачу, не подменяет новый поиск. На продолжении held
-   queries исполняются исходными формулировками через текущий reader без
-   нового модельного планирования; offset/addresses остаются прежними.
-   Envelope хранит прежнюю выдачу в superseded для аудита. Accepted rows,
-   cited evidence, operation revisions и immutable файлы не переписываются.
-   Отказ инфраструктуры при обновлении кэша — техническая pause,
-   search_cache_refresh_blocked, а не MISSING нормы.
-   Модель получает карточки собственного запроса и дополнительных literal
-   original/derived запросов ADR-16; code-chosen query paraphrases отсутствуют.
+   кэш, включая пустую выдачу, не разрешает исполнить прежний запрос заново.
+   С975 полный совместимый held-кэш восстанавливается без поиска с прежними
+   offset/addresses и авторством; иначе модель объявляет новые запросы ровно
+   для сохранённого пакета. Неизвестная область — техническая pause.
+   `record_held_query_admission` сохраняет исходный план в append-only ledger.
+   Envelope хранит прежнюю выдачу в superseded при фактическом обновлении.
+   Accepted rows, cited evidence, operation revisions и immutable файлы не переписываются.
+   Модель получает карточки собственного запроса; новых кодовых
+   original/derived групп в активном пути нет.
 3. Для model-authored запросов каждая группа сохраняется независимо как `Qx.Hy`.
    С 843 инструкция не запрещает модели переформулировать изделие в
    обоснованный поисковый запрос по монтажной операции. Дословное исполнение
    относится к готовому запросу модели, а не к запрету её профессионального
-   связывания; original/derived builders по-прежнему ограничены исходными
-   словами ADR-16. Итог допускает таблицу, обычные подписанные поля или
+   связывания; original/derived builders сохранены только как исторические
+   compatibility helpers. Итог допускает таблицу, обычные подписанные поля или
    необязательный JSON; одна условная схема полей применяется ко всем примерам.
    Начиная с 840 sheet-pass резервирует не только заголовки, но
    обязательное содержимое ВСЕХ карточек запроса (typed prefix либо 400
@@ -2558,7 +2594,17 @@ unread images/textboxes/embedded content отмечаются source_extraction_
 requested_source_rows. RTF/ZIP не поддержаны этим workbook-путём; пустой ВОР
 получает NO_SOURCE_ROWS до создания файла.
 
-## Происхождение поисковых запросов (ADR-16)
+## Происхождение поисковых запросов
+
+Текущий candidate975 исполняет только новые запросы модели и явно передаёт
+`query_provenance=model` в evidence builders. Старые группы/кэш не удаляются и
+не переименовываются в новые модельные решения. Replay полного совместимого
+held-кэша — не новый поиск; cache miss возвращает декларацию запроса модели.
+Три GUI-фактора ADR-16 исторические и не включают active candidate collection.
+
+### Историческое поведение ADR-16 / кандидатов950–951
+
+Ниже сохранено прежнее исключение и его границы; это не разрешение для975.
 
 Каждая исполненная поисковая группа несёт `query_provenance` — в заголовке группы и в trace:
 
@@ -2803,8 +2849,8 @@ Reader ответа и gate закрытых статусов перечитыв
 - `proxy/services/chat_evidence_application_service.py`
 - `proxy/services/model_answer_table_service.py` — один формат таблицы решения для
   reader и quality gate; снимает только оформление строки, смысл ячеек не трогает.
-- `proxy/services/lsr_candidate_query_service.py` — автор `original`/`derived` запросов сметного
-  sheet-pass (ADR-16); норму не выбирает и решение модели не подменяет.
+- `proxy/services/lsr_candidate_query_service.py` — исторические literal `original`/`derived`
+  builders и compatibility tests; в активном sheet-pass975 не вызывается.
 - `proxy/services/lsr_source_coverage_service.py` — покрытие по всем ролям
   локатора; last-write одной роли больше не закрывает и не ломает пакет.
 - `proxy/services/lsr_result_readiness_service.py`

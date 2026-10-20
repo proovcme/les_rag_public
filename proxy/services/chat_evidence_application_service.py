@@ -2076,6 +2076,7 @@ def govern_inference_messages(
     native_exchanges: Sequence[NativeToolExchange] = (),
     dialogue: Sequence[Any] = (),
     terminal_instruction: str | None = None,
+    phase_instruction: str | None = None,
     evidence_kind: ContextKind = ContextKind.EVIDENCE,
     admit_messages=None,
     count_messages_tokens=None,
@@ -2117,6 +2118,9 @@ def govern_inference_messages(
             required=True,
         ),
         ContextCandidate(ContextKind.DIALOGUE, _context_objects("dialogue", dialogue)),
+        *([ContextCandidate(ContextKind.PHASE_INSTRUCTION,
+                            (ContextObject("request:read-phase", phase_instruction),), required=True)]
+          if phase_instruction is not None else []),
         *([ContextCandidate(ContextKind.TERMINAL_REQUEST,
                             (ContextObject("request:terminal-phase", terminal_instruction),), required=True)]
           if terminal_instruction is not None else []),
@@ -6322,6 +6326,12 @@ def _model_only_query_provenance(
     return provenance
 
 
+def pending_proof_execution_preset(preset: Any) -> dict[str, Any]:
+    """Public capacity binding for a completed answer awaiting its proof."""
+    return {key: getattr(preset, key) for key in (
+        "input_token_limit", "generation_reserve_tokens", "safety_reserve_tokens", "reasoning_enabled")}
+
+
 async def _execute_system_candidate_queries(
     *,
     catalog: AttachmentSourceCatalog | None,
@@ -6880,9 +6890,14 @@ def model_rag_prior_page_context(
         "previously_shown_cited_evidence": cited_evidence,
         "prior_result_structural_facts": structural_facts,
         "evidence_continuation_instruction": (
-            "Это следующая страница уже найденных карточек для тех же строк. "
+            ("Это сохранённые операции, предложенные для явного пересмотра текущего пакета, и их источники. "
+             if review_rows else
+             "Это сохранённые операции текущего пакета и их источники. " if rows else
+             "Это новый пакет исходных строк: в prior_model_decisions нет сохранённых операций этого пакета. "
+             "accepted_work_index содержит работы вне текущих операций и не просит воспроизводить их. ")
+            +
             "prior_model_decisions — сохранённые операции модели и их цитаты; "
-            "новые карточки относятся к той же текущей области исходника. "
+            "карточки относятся к показанной текущей области исходника; индекс работ её не расширяет. "
             "operation_id из prior_model_decisions принадлежит прежней операции; "
             "expected_revision при её изменении равен показанному revision. "
             "У новой операции operation_id ещё пустой: идентификаторы и ревизии назначает приложение. "
@@ -11256,6 +11271,21 @@ async def _execute_chat_evidence_application(
                             if isinstance(item, Mapping)
                         ]
                         sheet_pass_names = ()
+                      elif ((stored_held.get("queries") or stored_held.get("pending_proof"))
+                            and str(stored_held.get("sheet") or "") not in sheet_pass_names):
+                        # A foreign/unknown saved sheet is a technical scope error,
+                        # never permission to substitute another source packet.
+                        if research_job_service is not None and research_job is not None:
+                            research_job_service.record_held_query_admission(
+                                research_job["job_id"], held_packet=stored_held,
+                                disposition="invalid_scope", cache_contract=str(
+                                    getattr(model_research_tools, "cache_contract", "") or ""))
+                            research_job = research_job_service.pause(research_job["job_id"],
+                                phase="held_query_scope_invalid", held_packet=stored_held)
+                        retrieval_trace["held_query_admission"] = {
+                            "disposition": "invalid_scope", "fresh_search_authorized": False}
+                        run_stop_kinds.append("held_query_scope_invalid")
+                        sheet_pass_names = ()
                       for sheet_index, sheet_name in enumerate(sheet_pass_names, start=1):
                         if research_job_service is not None and research_job is not None:
                             research_job = research_job_service.get(research_job["job_id"])
@@ -11361,43 +11391,82 @@ async def _execute_chat_evidence_application(
                         locator_research_round: dict[str, int] = {}
                         inner = 0
                         deferred_query_hits: list[tuple[str, Sequence[Any]]] = []
+                        redeclare_packet: list[str] = []
                         held_packet: list[str] = []
                         evidence_query_offset = model_rag_next_query_offset(sheet_pass_evidence_chunks)
                         held_query_context: dict[str, Any] = {}
+                        pending_proof_replay: dict[str, Any] = {}
                         if (
                             str(stored_held.get("sheet") or "") == sheet_name
-                            and stored_held.get("queries")
+                            and (stored_held.get("queries") or stored_held.get("pending_proof"))
                         ):
-                            held_packet = [
-                                locator
-                                for locator in (stored_held.get("locators") or [])
-                                if source_catalog.lookup(locator) is not None
-                            ]
+                            raw_held_locators = list(stored_held.get("locators") or [])
+                            held_packet = [locator for locator in raw_held_locators
+                                           if source_catalog.lookup(locator) is not None
+                                           and source_catalog.lookup(locator).sheet == sheet_name]
                             held_query_context = dict(stored_held)
-                            deferred_query_hits, refreshed_cache, refresh_blocked = await restore_or_refresh_held_query_hits(
-                                [
-                                    str(item)
-                                    for item in (stored_held.get("queries") or [])
-                                    if str(item).strip()
-                                ],
-                                sheet_query_cache,
-                                model_research_tools=model_research_tools,
-                                retrieval_trace=retrieval_trace,
-                                hits_per_query=retrieval_limits["model_evidence_k"],
+                            saved_proof = stored_held.get("pending_proof") or {}
+                            if saved_proof:
+                                saved_scope = saved_proof.get("scope") or {}
+                                scope_matches = (saved_scope.get("locators") == held_packet
+                                    and saved_scope.get("packet_id") == row_packet_id(
+                                        source_catalog, sheet=sheet_name, locators=held_packet)
+                                    and all(saved_scope.get(key, "") == (research_job or {}).get("identity", {}).get(key, "")
+                                            for key in ("source_sha256", "dataset_ids", "profile_revision_id",
+                                                        "model_connection_revision_id", "source_frame_contract_sha256")))
+                                preset_matches = saved_proof.get("execution_preset") == pending_proof_execution_preset(answer_execution_preset)
+                                if not scope_matches or not preset_matches:
+                                    reason = "pending_proof_scope_changed" if not scope_matches else "pending_proof_preset_changed"
+                                    retrieval_trace["pending_proof_resume"] = {"status": reason, "technical_failure": True}
+                                    run_stop_kinds.append(reason)
+                                    if research_job_service is not None and research_job is not None:
+                                        research_job = research_job_service.pause(research_job["job_id"],
+                                            phase=reason, held_packet=stored_held)
+                                    break
+                                pending_proof_replay = dict(saved_proof)
+                                deferred_query_hits = [(query, tuple(research_hit_from_record(record) for record in records))
+                                                       for query, records in saved_proof["query_hits"]]
+                                evidence_query_offset = int(stored_held.get("query_offset") or 0)
+                                stored_held = {}
+                            else:
+                                pending_proof_replay = {}
+                        if held_query_context and not pending_proof_replay:
+                            stored_held = held_query_context
+                            held_queries = [str(item) for item in stored_held["queries"] if str(item).strip()]
+                            cache_contract = str(getattr(model_research_tools, "cache_contract", "") or "")
+                            deferred_query_hits = restore_query_hits_from_cache(
+                                held_queries, sheet_query_cache, cache_contract=cache_contract,
                             )
-                            if refreshed_cache and research_job_service is not None and research_job is not None:
-                                research_job = research_job_service.record_search_cache(
-                                    research_job["job_id"], refreshed_cache, context=dict(stored_held),
-                                    cache_contract=str(getattr(model_research_tools, "cache_contract", "") or ""))
-                            if refresh_blocked:
-                                retrieval_trace["search_cache_refresh"] = {"status": refresh_blocked, "technical_failure": True}
-                                run_stop_kinds.append("search_cache_refresh_blocked")
+                            cached_complete = bool(cache_contract and held_queries
+                                and len(deferred_query_hits) == len(held_queries))
+                            scope_valid = bool(held_packet and held_packet == raw_held_locators)
+                            disposition = ("invalid_scope" if not scope_valid else
+                                           "cache_replay" if cached_complete else "model_redeclare")
+                            if research_job_service is not None and research_job is not None:
+                                research_job_service.record_held_query_admission(
+                                    research_job["job_id"], held_packet=stored_held,
+                                    disposition=disposition, cache_contract=cache_contract)
+                            retrieval_trace["held_query_admission"] = {
+                                "disposition": disposition, "fresh_search_authorized": False}
+                            if not scope_valid:
+                                run_stop_kinds.append("held_query_scope_invalid")
                                 if research_job_service is not None and research_job is not None:
-                                    research_job = research_job_service.pause(research_job["job_id"], phase="search_cache_refresh_blocked")
+                                    research_job = research_job_service.pause(research_job["job_id"],
+                                        phase="held_query_scope_invalid", held_packet=stored_held)
                                 break
-                            evidence_query_offset = int(stored_held.get("query_offset") or 0)
+                            if cached_complete:
+                                # Cache reuse does not establish previously unknown authorship.
+                                original_provenance = dict(stored_held.get("query_provenance") or {})
+                                held_query_context["query_provenance"] = {
+                                    query: original_provenance.get(query) or "unknown" for query in held_queries}
+                                evidence_query_offset = int(stored_held.get("query_offset") or 0)
+                            else:
+                                # Never refresh an old plan on the model's behalf.
+                                # Redeclare this exact source packet before scheduling later work.
+                                deferred_query_hits = []
+                                redeclare_packet = list(held_packet)
                             stored_held = {}
-                        while remaining or deferred_query_hits:
+                        while remaining or deferred_query_hits or redeclare_packet or pending_proof_replay:
                             if research_job_service is not None and research_job is not None:
                                 research_job = research_job_service.get(research_job["job_id"])
                                 run_stops, cancelled_now, stop_kind = research_run_stopped(
@@ -11420,7 +11489,9 @@ async def _execute_chat_evidence_application(
                                     break
                             reuse_hits = list(deferred_query_hits)
                             deferred_query_hits = []
-                            if reuse_hits:
+                            resuming_proof = dict(pending_proof_replay)
+                            pending_proof_replay = {}
+                            if reuse_hits or resuming_proof:
                                 packet = [
                                     locator
                                     for locator in held_packet
@@ -11441,6 +11512,10 @@ async def _execute_chat_evidence_application(
                                 offered_locators.update(packet)
                                 fingerprint = tuple(packet)
                                 packet_attempts.setdefault(fingerprint, 1)
+                                if resuming_proof:
+                                    packet_attempts[fingerprint] = int(resuming_proof.get("packet_attempt") or 1)
+                                    if resuming_proof["purpose"] == RESOURCE_GROUP_PROOF_PURPOSE:
+                                        proof_read_attempts[fingerprint] = 1
                                 inner += 1
                                 cited_before = structurally_complete_source_keys(
                                     accumulated_rows, source_catalog
@@ -11496,7 +11571,7 @@ async def _execute_chat_evidence_application(
                                 held_packet = []
                                 evidence_query_offset = model_rag_next_query_offset(sheet_pass_evidence_chunks)
                                 prior_page_chunks = []
-                                packet = adaptive_row_packet(
+                                packet = redeclare_packet or adaptive_row_packet(
                                     remaining,
                                     generation_reserve_tokens=(
                                         answer_execution_preset.generation_reserve_tokens
@@ -11505,6 +11580,8 @@ async def _execute_chat_evidence_application(
                                     offer_counts=offer_counts,
                                     **({"source_frame_rows": source_frame_rows} if initial_source_frame is not None else {}),
                                 )
+                                redeclaring_held = bool(redeclare_packet)
+                                redeclare_packet = []
                                 if not packet:
                                     break
                                 offered_locators.update(packet)
@@ -11576,6 +11653,10 @@ async def _execute_chat_evidence_application(
                                     research_round=packet_round,
                                 )
                                 query_directive = query_base_instruction
+                                if redeclaring_held:
+                                    query_directive += (
+                                        "\nСохранённый поисковый план не разрешает новый поиск. "
+                                        "Составь собственные запросы для этого же пакета исходных строк.")
                                 query_phase = "declare"
                                 query_rejected_attempt = None
                                 query_first_source_packet = None
@@ -11826,7 +11907,7 @@ async def _execute_chat_evidence_application(
                                 any_sheet_queries = True
                                 pass_hits: list[tuple[str, Sequence[Any]]] = []
                                 pass_tools: list[dict[str, Any]] = []
-                                pass_query_provenance: dict[str, str] = {}
+                                pass_query_provenance = _model_only_query_provenance(model_queries)
                                 search_blocked = False
                                 search_block_status = ""
                                 cache_updates: dict[str, list[dict[str, Any]]] = {}
@@ -11889,39 +11970,6 @@ async def _execute_chat_evidence_application(
                                         search_block_status,
                                     )
                                     break
-                                # Missing a declaration is not an LSR choice. A
-                                # review may retain a saved VOR while the new
-                                # model query lists only literal searches; do
-                                # not add estimate candidates on that basis.
-                                # All model queries above still execute intact.
-                                candidate_added = 0 if not (
-                                    artifact_kind_declaration.get("status") == "declared"
-                                    and artifact_kind_declaration.get("artifact_kind") == "lsr"
-                                ) else await _execute_system_candidate_queries(
-                                    catalog=source_catalog,
-                                    sheet=sheet_name,
-                                    packet=packet,
-                                    profile_snapshot=profile_snapshot,
-                                    comparative_variant=comparative_variant,
-                                    model_research_tools=model_research_tools,
-                                    model_queries=model_queries,
-                                    pass_hits=pass_hits,
-                                    pass_tools=pass_tools,
-                                    sheet_query_cache=sheet_query_cache,
-                                    cache_updates=cache_updates,
-                                    query_provenance=pass_query_provenance,
-                                    retrieval_trace=retrieval_trace,
-                                    hits_per_query=int(
-                                        retrieval_limits["model_evidence_k"]
-                                    ),
-                                    query_addresses=pass_query_addresses,
-                                )
-                                if candidate_added:
-                                    logger.info(
-                                        "[SHEET_PASS] system candidates sheet=%s added=%s",
-                                        sheet_name,
-                                        candidate_added,
-                                    )
                                 if (
                                     cache_updates
                                     and research_job_service is not None
@@ -11997,7 +12045,7 @@ async def _execute_chat_evidence_application(
                             except ContextRequiredSectionOverflow as context_error:
                                 retrieval_trace["context_governor"]["error"] = model_read_capacity_trace(
                                     context_error, purpose="sheet_pass_source_frame")
-                                pending_page = model_rag_evidence_page_state(
+                                pending_page = dict(held_query_context) if resuming_proof else model_rag_evidence_page_state(
                                     sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
                                     query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
@@ -12060,7 +12108,7 @@ async def _execute_chat_evidence_application(
                                 sheet=sheet_name,
                                 index=sheet_index,
                             )
-                            if not included_hits and leftover_query_hits:
+                            if not included_hits and leftover_query_hits and not resuming_proof:
                                 # Preserve a query that cannot fit even one page.
                                 # Capacity is a technical pause, never NO_NORM.
                                 held_query_context = model_rag_evidence_page_state(
@@ -12112,6 +12160,29 @@ async def _execute_chat_evidence_application(
                                     query_provenance=pass_query_provenance,
                                     query_addresses=pass_query_addresses,
                                 )
+                            if resuming_proof:
+                                # Reuse the evidence the completed answer actually saw.
+                                # Re-projecting the frozen search under today's page cap
+                                # can give the same Q alias a different pointer/body ID.
+                                saved_pairs = {(item["evidence_ref"], item["global_evidence_id"])
+                                               for item in resuming_proof["admitted_evidence_refs"]}
+                                model_evidence_chunks = [chunk for chunk in sheet_pass_evidence_chunks
+                                    if (str(chunk.meta.get("model_evidence_ref") or ""),
+                                        str(chunk.meta.get("global_evidence_id") or "")) in saved_pairs]
+                                restored_pairs = {(str(chunk.meta.get("model_evidence_ref") or ""),
+                                                   str(chunk.meta.get("global_evidence_id") or ""))
+                                                  for chunk in model_evidence_chunks}
+                                if restored_pairs != saved_pairs:
+                                    run_stop_kinds.append("pending_proof_evidence_missing")
+                                    retrieval_trace["pending_proof_resume"] = {
+                                        "status": "pending_proof_evidence_missing", "technical_failure": True}
+                                    if research_job_service is not None and research_job is not None:
+                                        research_job = research_job_service.pause(research_job["job_id"],
+                                            phase="pending_proof_evidence_missing")
+                                    break
+                                leftover_names = set(resuming_proof.get("leftover_queries") or ())
+                                leftover_query_hits = [(query, hits) for query, hits in pass_hits if query in leftover_names]
+                                omitted_now = []
                             page_body_deferred = list(omitted_now)
                             included_refs = set(model_rag_query_hit_refs(
                                 included_hits, hits_per_query=retrieval_limits["model_evidence_k"],
@@ -12184,7 +12255,7 @@ async def _execute_chat_evidence_application(
                                     tool_exchange=[],
                                     dialogue=[session_block] if session_block else [],
                                 )
-                                if saved_read_chunks:
+                                if saved_read_chunks or resuming_proof:
                                     messages, answer_packet, resumed_inventory_refs, resumed_body_refs = await govern_model_read_messages_bound(
                                         count_messages=_bound_input_token_counter(answer_execution_preset, sheet_read_tools),
                                         **initial_context, source_context=pass_evidence,
@@ -12245,12 +12316,12 @@ async def _execute_chat_evidence_application(
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], phase="cloud_token_budget",
-                                        held_packet=model_rag_evidence_page_state(
+                                        held_packet=(dict(held_query_context) if resuming_proof else model_rag_evidence_page_state(
                                             sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
                                             query_offset=evidence_query_offset,
                                             query_provenance=pass_query_provenance,
                                             query_addresses=pass_query_addresses,
-                                            pending_result_packets=pending_result_packets),
+                                            pending_result_packets=pending_result_packets)),
                                     )
                                 raise
                             except ContextRequiredSectionOverflow as context_error:
@@ -12261,7 +12332,7 @@ async def _execute_chat_evidence_application(
                                     sheet_name,
                                     context_error.code,
                                 )
-                                pending_page = model_rag_evidence_page_state(
+                                pending_page = dict(held_query_context) if resuming_proof else model_rag_evidence_page_state(
                                     sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
                                     query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
@@ -12277,7 +12348,7 @@ async def _execute_chat_evidence_application(
                             model_research_tools.register_shown_norm_cards(model_evidence_chunks)
                             retrieval_trace["context_governor"]["calls"].append(
                                 context_packet_trace(
-                                    answer_packet, purpose="sheet_pass_answer"
+                                    answer_packet, purpose=("pending_proof_saved_answer_context" if resuming_proof else "sheet_pass_answer")
                                 )
                             )
                             source_incomplete_locators = locators_missing_from_text(
@@ -12299,16 +12370,25 @@ async def _execute_chat_evidence_application(
                                 "tools": sheet_read_tools,
                             }
                             t_llm_call = time.time()
-                            pass_answer, usage = await _sheet_pass_llm(chat_body,
-                                expected_connection_revision_id=measured_connection_revision(answer_packet))
+                            if resuming_proof:
+                                pass_answer = resuming_proof["proof_previous_model_answer"]
+                                usage = {"finish_reason": resuming_proof["finish_reason"], "completion_tokens": 0}
+                                retrieval_trace["pending_proof_resume"] = {
+                                    "status": "replaying_completed_answer", "purpose": resuming_proof["purpose"],
+                                    "initial_answer_called": False, "search_called": False}
+                            else:
+                                pass_answer, usage = await _sheet_pass_llm(chat_body,
+                                    expected_connection_revision_id=measured_connection_revision(answer_packet))
                             t_llm += time.time() - t_llm_call
-                            record_source_frame_delivery(retrieval_trace, pass_source_frame, purpose="sheet_answer")
+                            if not resuming_proof:
+                                record_source_frame_delivery(retrieval_trace, pass_source_frame, purpose="sheet_answer")
                             model_delivered_source_locators.update(
                                 set(packet) - set(source_incomplete_locators)
                             )
-                            confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
-                                                        saved_read_receipts,
-                                                        inventory_refs=resumed_inventory_refs, body_refs=resumed_body_refs)
+                            if not resuming_proof:
+                                confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                                            saved_read_receipts,
+                                                            inventory_refs=resumed_inventory_refs, body_refs=resumed_body_refs)
                             model_research_tools.register_shown_norm_cards([*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks])
                             replayed_ids = {str(c.meta.get("global_evidence_id") or "") for c in model_evidence_chunks}
                             for chunk in [*prior_page_chunks, *saved_read_chunks]:
@@ -12421,8 +12501,37 @@ async def _execute_chat_evidence_application(
                                 return contract
 
                             async def _start_sheet_proof(*, purpose):
-                                nonlocal sheet_proof_purpose, sheet_norm_proof_plan
+                                nonlocal sheet_proof_purpose, sheet_norm_proof_plan, research_job
                                 sheet_proof_purpose = purpose
+                                # Save the completed public answer BEFORE counting/admission or
+                                # another model await. No row is admitted and no ID is assigned.
+                                if research_job_service is not None and research_job is not None:
+                                    identity = research_job.get("identity") or {}
+                                    held = model_rag_evidence_page_state(
+                                        sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
+                                        query_offset=evidence_query_offset, query_provenance=pass_query_provenance,
+                                        query_addresses=pass_query_addresses, pending_result_packets=pending_result_packets)
+                                    held["packet_id"] = read_packet_id
+                                    proof_evidence = [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks]
+                                    held["pending_proof"] = {
+                                        "schema": "les.pending-workbook-proof.v1", "purpose": purpose,
+                                        "scope": {"packet_id": read_packet_id, "locators": list(packet),
+                                                  **{key: identity.get(key, "") for key in (
+                                                      "source_sha256", "dataset_ids", "profile_revision_id",
+                                                      "model_connection_revision_id", "source_frame_contract_sha256")}},
+                                        "execution_preset": pending_proof_execution_preset(answer_execution_preset),
+                                        **sheet_proof_context[-1], "finish_reason": last_finish or "stop", "attempt": 1,
+                                        "packet_attempt": packet_attempts[fingerprint],
+                                        "query_hits": [[query, [durable_research_hit(hit) for hit in hits]] for query, hits in pass_hits],
+                                        "admitted_evidence_refs": [
+                                            {"evidence_ref": str(chunk.meta.get("model_evidence_ref") or ""),
+                                             "global_evidence_id": str(chunk.meta.get("global_evidence_id") or "")}
+                                            for chunk in proof_evidence if chunk.meta.get("global_evidence_id")],
+                                        "source_incomplete_locators": list(source_incomplete_locators),
+                                        "leftover_queries": [query for query, _hits in leftover_query_hits],
+                                    }
+                                    research_job = research_job_service.record_pending_proof(research_job["job_id"],
+                                        held_packet=held, evidence=[durable_evidence_record(chunk) for chunk in proof_evidence])
                                 contract = _sheet_proof_read_contract(
                                     purpose, [*saved_read_receipts, *read_receipts])
                                 sheet_norm_proof_plan = contract["planned_refs"]
@@ -12430,10 +12539,11 @@ async def _execute_chat_evidence_application(
                                 # Appending a prior answer after admission bypasses the
                                 # context limit. Admit the exact authored answer and
                                 # proof request together with the current read evidence.
-                                proof_messages, proof_frame, _, _ = await govern_model_read_messages_bound(
+                                proof_messages, proof_frame, proof_inventory, proof_bodies = await govern_model_read_messages_bound(
                                     count_messages=_bound_input_token_counter(answer_execution_preset, tools, choice),
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail, native_tools=tools, tool_choice=choice,
+                                    phase_instruction=sheet_proof_context[-1]["proof_request"],
                                     source_context=[*pass_evidence, *sheet_proof_context],
                                     admit_messages=_cloud_message_admission(answer_execution_preset, tools, choice),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
@@ -12442,12 +12552,15 @@ async def _execute_chat_evidence_application(
                                 retrieval_trace["context_governor"]["calls"].append(
                                     context_packet_trace(proof_frame, purpose=purpose)
                                 )
-                                return await _sheet_pass_llm(
+                                proof_result = await _sheet_pass_llm(
                                     {**chat_body, "messages": proof_messages, "tools": tools,
                                      **({"tool_choice": choice} if choice is not None else {})}, purpose=purpose,
                                     inference_preset=answer_execution_preset,
                                     expected_connection_revision_id=measured_connection_revision(proof_frame),
                                 )
+                                confirm_model_read_delivery([*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                                    [*saved_read_receipts, *read_receipts], inventory_refs=proof_inventory, body_refs=proof_bodies)
+                                return proof_result
 
                             async def _pause_terminal_error(error, *, purpose):
                                 nonlocal research_job
@@ -12455,13 +12568,16 @@ async def _execute_chat_evidence_application(
                                 run_stop_kinds.append("workbook_terminal_transport_invalid")
                                 retrieval_trace["tool_loop"]["evidence_read_stop"] = "workbook_terminal_transport_invalid"
                                 if research_job_service is not None and research_job is not None:
+                                    pending_held = dict(research_job.get("held_packet") or {})
+                                    pending_terminal_proof = (purpose in {NORM_CARD_PROOF_PURPOSE, RESOURCE_GROUP_PROOF_PURPOSE}
+                                                              and bool(pending_held.get("pending_proof")))
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
                                         phase="workbook_terminal_transport_invalid",
-                                        held_packet={**model_rag_evidence_page_state(
+                                        held_packet={**(pending_held if pending_terminal_proof else model_rag_evidence_page_state(
                                             sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
                                             query_offset=evidence_query_offset, query_provenance=pass_query_provenance,
-                                            query_addresses=pass_query_addresses, pending_result_packets=pending_result_packets),
+                                            query_addresses=pass_query_addresses, pending_result_packets=pending_result_packets)),
                                             "model_read_pending": True, "terminal_transport_error": error.code},
                                     )
 
@@ -12475,6 +12591,8 @@ async def _execute_chat_evidence_application(
                                     count_messages=_bound_input_token_counter(answer_execution_preset, tools, choice),
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail, native_tools=tools, tool_choice=choice,
+                                    phase_instruction=(sheet_proof_context[-1]["proof_request"]
+                                                       if sheet_proof_purpose else None),
                                     native_exchanges=native_exchanges,
                                     source_context=[*pass_evidence, *sheet_proof_context],
                                     admit_messages=_cloud_message_admission(answer_execution_preset, tools, choice),
@@ -12641,8 +12759,11 @@ async def _execute_chat_evidence_application(
                                 proof_refs, pass_rows,
                                 max_refs=norm_card_proof_budget(configured=_env_int(
                                     "LES_LSR_NORM_CARD_PROOF_READS", 6)))
-                            if (proof_unread_rows and proof_message and sheet_read_tools
-                                    and proof_read_attempts.get(fingerprint, 0) < 1):
+                            resume_norm_proof = resuming_proof.get("purpose") == NORM_CARD_PROOF_PURPOSE
+                            if resume_norm_proof:
+                                proof_message = resuming_proof["proof_request"]
+                            if ((proof_unread_rows and proof_message and sheet_read_tools
+                                    and proof_read_attempts.get(fingerprint, 0) < 1) or resume_norm_proof):
                                 proof_read_attempts[fingerprint] = 1
                                 proof_receipts: list[dict[str, Any]] = []
                                 answered = ""
@@ -12660,14 +12781,7 @@ async def _execute_chat_evidence_application(
                                             research_job["job_id"],
                                             remaining=list(dict.fromkeys([*remaining, *packet])),
                                             phase="cloud_token_budget",
-                                            held_packet={**model_rag_evidence_page_state(
-                                                sheet=sheet_name, packet=packet,
-                                                leftover_query_hits=pass_hits,
-                                                query_offset=evidence_query_offset,
-                                                query_provenance=pass_query_provenance,
-                                                query_addresses=pass_query_addresses,
-                                                pending_result_packets=pending_result_packets),
-                                                "norm_proof_pending": True},
+                                            held_packet=dict(research_job.get("held_packet") or {}),
                                         )
                                     raise
                                 except ContextRequiredSectionOverflow as context_error:
@@ -12772,14 +12886,16 @@ async def _execute_chat_evidence_application(
                                 pricebook=model_pricebook(
                                     sheet_price_basis or model_requested_price_basis),
                             )
-                            if (proof_groups and sheet_read_tools and not proof_context_failure
-                                    and group_proof_attempts.get(fingerprint, 0) < 1):
+                            resume_group_proof = resuming_proof.get("purpose") == RESOURCE_GROUP_PROOF_PURPOSE
+                            if ((proof_groups and sheet_read_tools and not proof_context_failure
+                                    and group_proof_attempts.get(fingerprint, 0) < 1) or resume_group_proof):
                                 group_proof_attempts[fingerprint] = 1
                                 group_answered = False
                                 group_answer = ""
                                 group_usage: dict[str, Any] = {}
                                 try:
-                                    group_message = resource_group_proof_request_message(proof_groups)
+                                    group_message = (resuming_proof["proof_request"] if resume_group_proof else
+                                                     resource_group_proof_request_message(proof_groups))
                                     sheet_proof_context = [{
                                         "proof_previous_model_answer": pass_answer,
                                         "proof_request": group_message,
@@ -13413,7 +13529,7 @@ async def _execute_chat_evidence_application(
                         if live_job_id and owns_sheet_pass:
                             release_sheet_pass(live_job_id)
                     if (not any_sheet_queries and not accumulated_rows and not research_cancelled
-                            and not terminal_packet_locators and not pending_result_packets):
+                            and not terminal_packet_locators and not pending_result_packets and not run_stop_kinds):
                         query_outputs = retrieval_trace.get("model_query_outputs") or []
                         failed_query_output = query_outputs[-1] if query_outputs else {}
                         query_empty_code = model_query_empty_failure_code(failed_query_output)

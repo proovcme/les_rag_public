@@ -1390,6 +1390,71 @@ class WorkbookResearchJobService:
             merged[key] = value
         return list(merged.values())
 
+    def record_pending_proof(
+        self, job_id: str, *, held_packet: Mapping[str, Any],
+        evidence: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Save a completed answer before proof, without admitting its operations.
+
+        Only the completed public answer and literal evidence are checkpointed.
+        A later human continuation starts the pending proof with saved reads;
+        previous-turn native protocol/reasoning is never serialized here.
+        """
+        pending = held_packet.get("pending_proof")
+        allowed = {"schema", "purpose", "scope", "execution_preset", "proof_previous_model_answer",
+                   "proof_request", "finish_reason", "attempt", "packet_attempt", "query_hits",
+                   "admitted_evidence_refs", "source_incomplete_locators", "leftover_queries"}
+        if (not isinstance(pending, Mapping) or set(pending) - allowed
+                or pending.get("schema") != "les.pending-workbook-proof.v1"
+                or pending.get("purpose") not in {"sheet_pass_norm_proof", "sheet_pass_resource_group_proof"}
+                or any(not isinstance(pending.get(key), str) or not pending[key].strip()
+                       for key in ("proof_previous_model_answer", "proof_request", "finish_reason"))):
+            raise WorkbookResearchJobError("PENDING_PROOF_FIELDS_INVALID")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM workbook_research_jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
+                raise WorkbookResearchJobError("workbook research job not found")
+            identity = _json_object(row, "identity_json")
+            scope = pending.get("scope") or {}
+            if (not isinstance(scope, Mapping)
+                    or scope.get("packet_id") != held_packet.get("packet_id")
+                    or scope.get("locators") != held_packet.get("locators")
+                    or not scope.get("locators")
+                    or any(scope.get(key, "") != identity.get(key, "") for key in (
+                        "source_sha256", "dataset_ids", "profile_revision_id", "model_connection_revision_id",
+                        "source_frame_contract_sha256"))):
+                raise WorkbookResearchJobError("PENDING_PROOF_SCOPE_CHANGED")
+            previous_held = _json_object(row, "held_packet_json")
+            previous = previous_held.get("pending_proof") or {}
+            if previous and previous.get("scope") != scope:
+                raise WorkbookResearchJobError("PENDING_PROOF_SCOPE_CHANGED")
+            if previous and previous.get("execution_preset") != pending.get("execution_preset"):
+                raise WorkbookResearchJobError("PENDING_PROOF_PRESET_CHANGED")
+            if str(row["status"]) in TERMINAL_STATUSES:
+                return self._row(row)
+            saved = _json_list(row, "evidence_json")
+            by_id = {str(item.get("global_evidence_id") or ""): item for item in saved}
+            for item in evidence:
+                value = dict(item)
+                identity_key = str(value.get("global_evidence_id") or "")
+                if identity_key and identity_key not in by_id:
+                    saved.append(value)
+                    by_id[identity_key] = value
+                elif identity_key:
+                    _promote_evidence_delivery(by_id[identity_key], value)
+            held = _merge_held_packet(previous_held, held_packet)
+            conn.execute("UPDATE workbook_research_jobs SET held_packet_json=?,evidence_json=?,"
+                         "updated_at=CURRENT_TIMESTAMP WHERE job_id=?",
+                         (json.dumps(held, ensure_ascii=False), json.dumps(saved, ensure_ascii=False), job_id))
+            self._append_event(conn, job_id, "pending_proof_checkpoint", {
+                "packet_id": scope["packet_id"], "locators": list(scope["locators"]),
+                "purpose": pending["purpose"], "attempt": pending.get("attempt"),
+                "answer_sha256": hashlib.sha256(pending["proof_previous_model_answer"].encode("utf-8")).hexdigest(),
+                "source_rows_marked_done": 0, "decision_author": "model",
+            })
+        return self.get(job_id)
+
     def record_evidence_read(
         self, job_id: str, *, packet_id: str,
         evidence: Sequence[Mapping[str, Any]],
@@ -1970,6 +2035,21 @@ class WorkbookResearchJobService:
                 json.dumps(dict(decision), ensure_ascii=False, default=str),
             ),
         )
+
+    def record_held_query_admission(
+        self, job_id: str, *, held_packet: Mapping[str, Any],
+        disposition: str, cache_contract: str,
+    ) -> None:
+        """Retain the literal old plan before a replay or a new model declaration."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT job_id FROM workbook_research_jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
+                raise WorkbookResearchJobError("workbook research job not found")
+            self._append_event(conn, job_id, "held_query_admission", {
+                "held_packet": dict(held_packet), "disposition": str(disposition),
+                "cache_contract": str(cache_contract), "fresh_search_authorized": False,
+            })
 
     def record_search_cache(
         self,

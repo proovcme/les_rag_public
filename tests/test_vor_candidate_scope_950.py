@@ -26,7 +26,7 @@ def _vor_rows():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("query_kind", [None, "vor", "lsr"])
-async def test_natural_review_of_saved_vor_adds_estimate_candidates_only_after_explicit_lsr(
+async def test_natural_review_of_saved_vor_keeps_only_model_queries_for_every_kind(
     tmp_path, monkeypatch, query_kind,
 ):
     """Exercise real durable review, query execution and document packaging."""
@@ -62,18 +62,14 @@ async def test_natural_review_of_saved_vor_adds_estimate_candidates_only_after_e
     ])
     result = await run.resume_same_request()
     queries = run.queries[old_queries:]
-    assert queries[:2] == LITERAL_QUERIES, "literal searches must execute without rewriting"
-    assert (len(queries) > 2) is (query_kind == "lsr")
+    assert queries == LITERAL_QUERIES, "literal model searches must execute without additions or rewriting"
     trace = result["retrieval_trace"]
     assert trace["chat_refinement"]["status"] == "reviewing"
     assert trace["artifact_target"]["artifact_kind"] == final_kind
     assert run.executions[-1][0]["tool"] == "build_" + final_kind + "_workbook"
     assert not run.responses, "the application must not start another semantic model cycle"
     assert store.get(original_job_id)["accepted_rows"] == old_rows
-    if query_kind != "lsr":
-        assert not trace.get("system_candidate_queries", {}).get("sheets")
-    else:
-        assert trace["system_candidate_queries"]["sheets"]["S"]["queries_authored_by_code"] > 0
+    assert not trace.get("system_candidate_queries", {}).get("sheets")
 
 
 @pytest.mark.asyncio

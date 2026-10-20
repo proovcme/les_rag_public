@@ -110,6 +110,26 @@ def test_declared_runtime_factors_ignore_historical_artifact_sources(tmp_path, m
         registry.declared_env_keys.cache_clear()
 
 
+def test_declared_defaults_ignore_bundled_installer_runtime(tmp_path, monkeypatch):
+    active = tmp_path / "proxy" / "active.py"
+    active.parent.mkdir()
+    active.write_text('os.getenv("LES_BUNDLED_CONFLICT", "current")\n', encoding="utf-8")
+    bundled = tmp_path / "desktop/tauri/src-tauri/resources/runtime/proxy/old.py"
+    bundled.parent.mkdir(parents=True)
+    bundled.write_text('os.getenv("LES_BUNDLED_CONFLICT", "stale")\n'
+                       'os.getenv("LES_BUNDLED_REMOVED", "old")\n', encoding="utf-8")
+    monkeypatch.setattr(registry, "_ROOT", tmp_path)
+    registry.declared_env_defaults.cache_clear()
+    registry.declared_env_keys.cache_clear()
+    try:
+        defaults = registry.declared_env_defaults()
+        assert defaults["LES_BUNDLED_CONFLICT"] == "current"
+        assert "LES_BUNDLED_REMOVED" not in defaults
+    finally:
+        registry.declared_env_defaults.cache_clear()
+        registry.declared_env_keys.cache_clear()
+
+
 def test_cloud_turn_budget_is_visible_numeric_not_secret(monkeypatch):
     monkeypatch.delenv("LES_CLOUD_TURN_TOKEN_BUDGET", raising=False)
     registry.declared_env_defaults.cache_clear()

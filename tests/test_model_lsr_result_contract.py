@@ -187,10 +187,12 @@ def test_incomplete_json_retains_full_original_transport_and_is_not_repaired(raw
 
 
 @pytest.mark.parametrize("prefix", ["Prose artifact_kind: vor\n", "```json\nartifact_kind: vor\n"])
-def test_nonstandalone_or_inside_fence_transport_does_not_become_a_json_prefix(prefix):
+def test_nonstandalone_or_inside_fence_transport_never_declares_document_kind(prefix):
     raw = prefix + json.dumps({"rows": [TRANSPORT_ROW]}) + ("\n```" if prefix.startswith("```") else "")
 
-    assert contract.decode_model_result_rows(raw) is None
+    assert contract.decode_model_result_rows(raw) == (None if prefix.startswith("```") else [TRANSPORT_ROW])
+    target = contract.decode_model_artifact_kind(raw)
+    assert target["status"] == "missing" and target["artifact_kind"] == ""
 
 
 def test_transport_between_two_results_keeps_ambiguity_and_original_bytes():

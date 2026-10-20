@@ -508,6 +508,36 @@ def _has_workbook_call(function: ast.AST) -> bool:
     return False
 
 
+def _active_query_ownership_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
+    """Historical helpers must never author queries in the active chat subtree."""
+    if relative != "proxy/services/chat_evidence_application_service.py":
+        return
+    forbidden = {"_execute_system_candidate_queries", "restore_or_refresh_held_query_hits", "candidate_queries_for_packet",
+                 "candidate_queries_for_rows", "merge_candidate_queries"}
+    aliases = set(forbidden)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            aliases.update(item.asname or item.name for item in node.names if item.name in forbidden)
+    # Follow simple callable aliases as well as direct and dotted calls.
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, (ast.Name, ast.Attribute)):
+                name = node.value.id if isinstance(node.value, ast.Name) else node.value.attr
+                if name in aliases:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id not in aliases:
+                            aliases.add(target.id)
+                            changed = True
+    for scope in ast.walk(tree):
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and scope.name == "_execute_chat_evidence_application":
+            for call in ast.walk(scope):
+                if isinstance(call, ast.Call) and _call_name(call).split(".")[-1] in aliases:
+                    yield ArchitectureViolation("ACTIVE_CODE_AUTHORED_QUERY", relative, call.lineno,
+                        "active chat must execute only model-authored search queries")
+
+
 def _adr16_violations(relative: str, tree: ast.AST) -> Iterable[ArchitectureViolation]:
     """ADR-16 boundaries: who may author a query, and what may bind a price book."""
 
@@ -1889,6 +1919,7 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
     except SyntaxError:
         return
 
+    yield from _active_query_ownership_violations(relative, tree)
     yield from _adr16_violations(relative, tree)
     yield from _document_lineage_violations(relative, tree)
     yield from _continuation_lineage_violations(relative, tree)

@@ -1,5 +1,36 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 20.10.2026 — кандидат975; установлен974, профессиональная приёмка отрицательна
+
+Source-кандидат0.31.247/build975/native5.1.975 реализует required READ phase,
+правдивый index-only label, самостоятельный JSON после заголовка, retirement
+кодовых поисковых запросов, безопасный held cache/redeclare/audit и durable
+pending proof с public answer/evidence/IDs. Явный новый человеческий resume
+продолжает proof без query/answer и старой native reasoning-цепочки;
+scope/preset/stale identity и фактическое чтение проверяются отдельно.
+ROOT: related625passed/87.53s; полного exact975 gate,
+собранного/установленного975 и installed professional comparison ещё нет.
+Customer_ready=false; source commit/gate975 фиксируются только после фактических проверок.
+
+Фактически установлен974/`f6a281c77c42766db6076bb50f55d0414707905e`,
+0.31.246/native5.1.974. Main6741passed/20skipped, все9 gate-команд rc0:
+`artifacts/gates_974_final/receipt.json`, SHA
+`36a51153510bd270c6c32a19c0f9aa6018e470a803ec68987cb841050282f50d`.
+Exact install/rollback/reapply/native EXE-only приняты; accepted apply
+`artifacts/live_974/candidate_final/native_upgrade/20261020T072655054876Z/apply/accepted.json`,
+SHA `687c49f80f5922921106e1eb5715eb51d46768ad7c35bffc668ca394a49b8ce0`;
+installed basis SHA `fba9d566eb90420b988a5306ee13cbc5ae39394039d15c701102dc2cde27ead7`.
+
+Профессиональный974 gate не принят. Ordinary multifile ВОР сохраняет потерю/подмену
+работ и повторные scopes; ordinary small7 ЛСР имеет0 полных позиций и0 подтверждённой
+суммы. Первый B0 small7 вернул валидный unfenced JSON7rows после заголовка,
+но reader объявил unstructured и не доставил XLSX. Independent review сохранены
+в `artifacts/live_974/ordinary/multifile_vor/run01/independent_review01`,
+`artifacts/live_974/ordinary/small7_lsr/run01/run/independent_review01` и
+`artifacts/live_974/ordinary/small7_b0/run01/run/independent_decode_review01`;
+это не ≥90%/customer-ready.
+Старые974/973 записи ниже описывают подготовку до accepted974 и не переписываются.
+
 ## 20.10.2026 — кандидат974: Windows rollback rename;973 gate остановлен
 
 Source-кандидат —0.31.246/build974/native5.1.974. Фактически

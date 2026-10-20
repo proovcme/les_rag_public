@@ -1,5 +1,20 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат975 — фазовый контекст, carrier и сохранное возобновление
+
+`test_model_phase_instruction_975`/`test_model_index_context_975`: required READ-фаза,
+None-wire/native chain, budgets и index-only scope; `test_model_result_carrier_975`/
+`test_model_result_carrier_edges_975`: JSON после заголовка и прежние ambiguity guards.
+`test_model_query_ownership_975`/architecture: active system-query call запрещён.
+`test_safe_held_query_{resume,edges,unknown_sheet}_975`: cache replay/redeclare/unknown scope.
+`test_pending_proof_checkpoint_975`: public checkpoint до/после actual read, pause,
+явный человеческий resume только proof, scope/preset/stale/actual-read guards.
+ROOT: related625passed/87.53s после изменений кода; это не full975 gate/install/live.
+
+Installed974: main6741passed/20skipped и все9 gate-команд rc0, accepted install,
+rollback/reapply и native EXE-only. Профессиональные ВОР/ЛСР controls отрицательны;
+упаковка/структурные checks не означают customer-ready. Старые статусы ниже исторические.
+
 ## Кандидат974 — регрессии Windows rollback rename
 
 В существующий `test_windows_native_boot_960.py` добавляются случаи временных
@@ -1340,9 +1355,10 @@ and a fresh `JobService` creates its SQLite file directly under state `data`.
   (`model_search_result_blocks_packet`). Конверсия единиц только с источником
   и без угадывания габарита из названия — `test_rim_lsr_trace_service`.
 
-- ADR-16 (сметный путь): систематический сбор кандидатов кодом — `test_lsr_candidate_query_service`
+- Исторический ADR-16: literal candidate helpers — `test_lsr_candidate_query_service`
   (дословная композиция из ячеек, drop-if-ungrounded, происхождение
-  `original`/`derived`/`model`, лимит = interrupted/deferred, а не «нормы нет»);
+  `original`/`derived`/`model`, compatibility прямого helper; в active chat975
+  системные запросы не исполняются, старые квитанции сохранены);
   применижность нормы — `test_lsr_norm_applicability` (`EXACT` от модели ≠
   подтверждённая применимость, `norm_code` с evidence другого шифра не закрывает
   готовность, `ANALOGUE_CANDIDATE` без обоснования остаётся черновиком);

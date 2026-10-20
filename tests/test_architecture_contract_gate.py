@@ -13,6 +13,28 @@ def _codes(root: Path) -> set[str]:
     return {item.code for item in scan_architecture(root)}
 
 
+def test_rejects_active_code_query_producers_even_under_disabled_branch(tmp_path: Path) -> None:
+    _write(tmp_path, "proxy/services/chat_evidence_application_service.py", '''
+from proxy.services.lsr_candidate_query_service import candidate_queries_for_packet as build
+async def _execute_chat_evidence_application():
+    if False:
+        await _execute_system_candidate_queries()
+        build()
+        legacy.merge_candidate_queries()
+''')
+    assert "ACTIVE_CODE_AUTHORED_QUERY" in _codes(tmp_path)
+
+
+def test_allows_historical_query_helper_without_active_chat_caller(tmp_path: Path) -> None:
+    _write(tmp_path, "proxy/services/chat_evidence_application_service.py", '''
+async def _execute_system_candidate_queries():
+    return candidate_queries_for_packet()
+async def _execute_chat_evidence_application():
+    return model_queries
+''')
+    assert "ACTIVE_CODE_AUTHORED_QUERY" not in _codes(tmp_path)
+
+
 def test_rejects_parallel_estimate_workbook_name(tmp_path: Path) -> None:
     _write(
         tmp_path,

@@ -7,6 +7,7 @@ import time
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import openpyxl
 import pytest
@@ -2597,14 +2598,14 @@ def test_governed_inference_trace_exposes_exact_evidence_but_not_private_memory(
     )
 
     assert [section.kind for section in packet.sections] == [
-        kind for kind in ContextKind if kind is not ContextKind.CURRENT_READ_FRAME
+        kind for kind in ContextKind if kind not in {ContextKind.CURRENT_READ_FRAME, ContextKind.PHASE_INSTRUCTION}
     ]
     assert [message["role"] for message in messages] == ["system", "user", "user"]
     assert messages[-1]["content"] == "bound final phase"
     trace = service.context_packet_trace(packet, purpose="answer")
     assert trace["purpose"] == "answer"
     assert [section["kind"] for section in trace["sections"]] == [
-        kind.value for kind in ContextKind if kind is not ContextKind.CURRENT_READ_FRAME
+        kind.value for kind in ContextKind if kind not in {ContextKind.CURRENT_READ_FRAME, ContextKind.PHASE_INSTRUCTION}
     ]
     assert "hidden" not in json.dumps(trace)
     evidence = next(section for section in trace["sections"] if section["kind"] == "evidence")
@@ -5330,6 +5331,7 @@ class _Adr16Tools:
         )
 
 
+@patch.dict("os.environ", {"LES_LSR_SYSTEM_CANDIDATE_QUERIES": "on"})
 def _run_adr16(*, variant="B1_CANDIDATE", mode="estimator", status="ok", tools=None,
                model_queries=("кабель NYM",), cache=None):
     catalog = _adr16_catalog()
@@ -5510,6 +5512,7 @@ def _adr16_two_row_catalog():
     return SimpleNamespace(rows=rows, source_file_id="f1", original_name="СКС.xlsx")
 
 
+@patch.dict("os.environ", {"LES_LSR_SYSTEM_CANDIDATE_QUERIES": "on"})
 def _adr16_packet(trace: dict, *, catalog, packet: list[str], tools=None) -> dict:
     """Run one packet of system candidates into an existing retrieval trace."""
 
