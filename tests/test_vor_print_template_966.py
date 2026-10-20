@@ -10,6 +10,10 @@ import pytest
 
 from proxy.services.attachment_source_catalog_service import catalog_sheet_pack_lines, load_tabular_source_catalog
 from proxy.services.bor_service import source_rows_to_vor_xlsx
+from proxy.routers import chat
+from proxy.services.openai_compatible_transport_service import InferenceResponse
+from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+from tests.test_model_rag_sheet_evidence_reads import _run_sheet
 
 
 def _render(tmp_path, decisions, **kwargs):
@@ -182,5 +186,89 @@ def test_existing_work_role_aliases_are_presented_without_rewriting_raw_decision
             ("Авторская операция", 2.5)]
         assert book["ВОР"]["J4"].value == role
         assert json.loads(book["Решения модели"]["C4"].value.removeprefix("JSON: ")) == decisions[0]
+    finally:
+        book.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("latest", "missing_original"), [
+    ("Продолжи", False),
+    ("Продолжи", True),
+    ("Перепроверь связи материалов с работами по замечанию инженера", False),
+], ids=["plain-original-title", "legacy-no-original-fallback", "nonplain-message-unchanged"])
+async def test_actual_vor_resume_print_title_does_not_replace_latest_audit_message_977(
+        tmp_path, monkeypatch, latest, missing_original):
+    original = "Собери ВОР для объекта 'Ω'"
+    rows = [
+        {"source_row": source, "row_role": "work", "title": title,
+         "unit": "m", "quantity": quantity}
+        for source, title, quantity in (("S!R2", "Cable A", 12), ("S!R3", "Cable B", 3))
+    ]
+    run = await _run_sheet(
+        tmp_path, monkeypatch, reads=False, question=original,
+        query_declaration=json.dumps({"artifact_kind": "vor", "queries": []}),
+        final_answer=json.dumps({"artifact_kind": "vor", "rows": rows}),
+    )
+    store = WorkbookResearchJobService()
+    job_id = run.result["retrieval_trace"]["workbook_research_job"]["job_id"]
+    before = store.get(job_id)
+    assert before["task_context"]["original_question"] == original
+    old_rows = deepcopy(before["accepted_rows"])
+    calls_before = len(run.requests)
+    executions_before = len(run.executions)
+    contexts = []
+    executor = chat._execute_chat_workbook_tool
+
+    async def capture_context(call, context, progress):
+        contexts.append(deepcopy(context))
+        return await executor(call, context, progress)
+
+    monkeypatch.setattr(chat, "_execute_chat_workbook_tool", capture_context)
+    missing_observed = []
+    if missing_original:
+        getter = WorkbookResearchJobService.get
+
+        def legacy_snapshot(self, current_id, **kwargs):
+            snapshot = getter(self, current_id, **kwargs)
+            snapshot = deepcopy(snapshot)
+            snapshot["task_context"].pop("original_question", None)
+            missing_observed.append(current_id)
+            return snapshot
+
+        monkeypatch.setattr(WorkbookResearchJobService, "get", legacy_snapshot)
+    if latest != "Продолжи":
+        # This is the existing natural review path, not a new header workflow.
+        reviewed = [{**row, "expected_revision": row["revision"]} for row in old_rows]
+        run.responses.extend([
+            InferenceResponse(text='{"artifact_kind":"vor","queries":[]}',
+                              tool_calls=(), finish_reason="stop", usage={}),
+            InferenceResponse(text=json.dumps({"artifact_kind": "vor", "rows": reviewed}),
+                              tool_calls=(), finish_reason="stop", usage={}),
+        ])
+    result = await run.resume_same_request(question=latest)
+    assert len(run.requests) - calls_before == (0 if latest == "Продолжи" else 2)
+    assert not run.responses
+    resumed = run.executions[executions_before:]
+    assert len(resumed) == 1
+    call, payload = resumed[0]
+    expected = original if latest == "Продолжи" and not missing_original else latest
+    assert call["tool"] == "build_vor_workbook"
+    assert call["args"]["question"] == expected
+    assert contexts[0]["question"] == latest
+    assert result["artifact"]["resume"]["question"] == latest
+    if missing_original:
+        assert missing_observed, "the fallback must exercise an absent original field"
+    fields = ("source_row", "row_role", "title", "unit", "quantity", "operation_id")
+    assert [{key: row.get(key) for key in fields} for row in call["args"]["decisions"]] == [
+        {key: row.get(key) for key in fields} for row in old_rows]
+    # Working copies share a minute-based filename. Inspect the exact delivered
+    # immutable revision, never an older checkpoint's identically named copy.
+    from hashlib import sha256
+    output = next(tmp_path.rglob(payload["artifact"]["revision_id"] + ".xlsx"))
+    assert sha256(output.read_bytes()).hexdigest() == payload["artifact"]["sha256"]
+    book = openpyxl.load_workbook(output, data_only=False)
+    try:
+        assert book["Ведомость работ"]["A5"].value == expected
+        assert book["ВОР"]["A1"].value == expected
     finally:
         book.close()

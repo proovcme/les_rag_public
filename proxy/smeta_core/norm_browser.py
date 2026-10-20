@@ -1138,7 +1138,10 @@ def _rerank_cards(
             ).rerank(
                 query,
                 chunks,
-                top_k=min(limit, len(cards)),
+                # RRF needs the measured rank of the whole input pool. Keeping
+                # only the visible head invents the remaining CE order from the
+                # original retrieval order and can erase every CE head result.
+                top_k=len(cards) if fuse_with_input else min(limit, len(cards)),
             )
         )
         order = [

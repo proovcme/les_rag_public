@@ -30,8 +30,15 @@ async def test_model_declared_type_scopes_actual_native_read_frames_without_chan
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant, query_declaration=query,
         final_answer=json.dumps({"artifact_kind": "vor", "rows": authored}) if kind == "vor" else None)
     assert len(run.requests) == 4 and not run.responses
-    if variant == "B1_CANDIDATE":
-        assert calls[0] == "", "initial pre-query scope cannot guess a document type"
+    initial_query = run.requests[0]
+    query_shown = "\n".join(str(message.get("content") or "") for message in initial_query.messages)
+    reader_names = {tool["function"]["name"] for tool in model_evidence_read_tool_schemas()}
+    query_tool_names = {tool["function"]["name"] for tool in initial_query.tools}
+    assert not query_tool_names.intersection(reader_names | {"build_vor_workbook", "build_lsr_workbook"})
+    assert all(model_evidence_read_instruction(artifact_kind=scope) not in query_shown
+               for scope in ("", "vor", "lsr")), "query declaration must not get a premature reader scope"
+    assert "S!R2" in query_shown and "S!R3" in query_shown
+    assert "Собери ЛСР; ВОР не создавай" in query_shown
     assert calls[-1] == kind
     expected = model_evidence_read_instruction(artifact_kind=kind)
     for request in run.requests[1:]:

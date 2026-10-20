@@ -108,6 +108,16 @@ async def test_pointer_only_norm_choice_is_sent_back_once_without_a_second_guess
 @pytest.mark.asyncio
 @pytest.mark.parametrize("variant", ["B1_CANDIDATE"])
 async def test_the_read_that_proves_the_chosen_card_is_the_models_own(tmp_path, monkeypatch, variant):
+    from proxy.services import chat_evidence_application_service as app
+
+    phase_requests = []
+    original_phase = app.norm_card_proof_request_message
+    def observe_phase(*args, **kwargs):
+        literal = original_phase(*args, **kwargs)
+        if literal:
+            phase_requests.append(literal)
+        return literal
+    monkeypatch.setattr(app, "norm_card_proof_request_message", observe_phase)
     run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant=variant,
                            group_char_budget=7000, distinct_norms=True,
                            final_answer=SECOND_NORM_ANSWER,
@@ -126,8 +136,8 @@ async def test_the_read_that_proves_the_chosen_card_is_the_models_own(tmp_path, 
     # the card was read by exact identity, by the model, not fabricated by the application
     assert run.exact_reads == [{"norm_key": "immutable-norm-b", "norm_code": NORM_CODE_B}]
     proof_turn = run.requests[2]
-    # The exact prior answer and proof ask are now mandatory Governor evidence,
-    # admitted together rather than appended after the initial budget check.
+    # The whole previous answer is required data; the exact generated proof ask
+    # has one trusted PHASE owner and is not duplicated inside evidence.
     proof_payloads = []
     for message in proof_turn.messages:
         assert message["role"] not in {"tool", "function"} and not message.get("tool_calls")
@@ -138,9 +148,21 @@ async def test_the_read_that_proves_the_chosen_card_is_the_models_own(tmp_path, 
                 continue
             if isinstance(payload, dict) and "proof_previous_model_answer" in payload:
                 proof_payloads.append(payload)
-    assert len(proof_payloads) == 1
-    assert proof_payloads[0]["proof_previous_model_answer"] == SECOND_NORM_ANSWER
-    assert NORM_CODE_B in proof_payloads[0]["proof_request"]
+    assert proof_payloads == [{"proof_previous_model_answer": SECOND_NORM_ANSWER}]
+    assert len(phase_requests) == 1 and NORM_CODE_B in phase_requests[0]
+    phase_message = {"role": "user", "content": phase_requests[0]}
+    assert proof_turn.messages[-1] == phase_message
+    assert sum(message == phase_message for message in proof_turn.messages) == 1
+    phase_sections = [section for frame in trace["context_governor"]["calls"]
+                      if frame["purpose"] == "sheet_pass_norm_proof"
+                      for section in frame["sections"] if section["kind"] == "phase_instruction"]
+    assert len(phase_sections) == 1 and phase_sections[0]["items"] == 1
+    assert len(run.requests) == 4 and not run.responses
+    continuation = run.requests[-1]
+    assert sum(message == phase_message for message in continuation.messages) == 1
+    assert any(message["role"] == "tool" and message.get("tool_call_id") ==
+               _native("read_norm_card", evidence_ref="Q2.H1")["id"]
+               for message in continuation.messages)
     rows = (trace.get("model_result") or {}).get("decision_rows") or []
     assert [row["_evidence_check"]["card_body_shown"] for row in rows] == [True, True]
     assert not [gap for gap in (trace.get("result_readiness") or {}).get("row_projection") or []

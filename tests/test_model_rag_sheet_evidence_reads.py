@@ -1250,8 +1250,21 @@ async def test_duplicate_json_alias_partial_draft_is_narrowly_classified(tmp_pat
     assert len(run.requests) == 8 and not run.responses
     if unknown_diagnostic:
         assert proposal["code"] == "MODEL_RESULT_UNKNOWN_TRANSPORT_FAILURE"
-        assert run.result["retrieval_trace"]["model_result"]["packaged"] is False
-        assert run.executions == []
+        trace = run.result["retrieval_trace"]
+        assert trace["model_result"]["packaged"] is True
+        assert len(run.executions) == 1
+        call, payload = run.executions[0]
+        assert call["args"]["draft"] is True and payload["artifact"]["draft"] is True
+        assert payload["status"] == "partial"
+        assert call["args"]["decisions"] == job["accepted_rows"]
+        assert all(row["source_row"] != "S!R2" for row in call["args"]["decisions"])
+        diagnostic = next(item for item in trace["model_result_transport_diagnostics"]
+                          if item["code"] == "MODEL_RESULT_UNKNOWN_TRANSPORT_FAILURE")
+        assert any(issue["code"] == "MODEL_RESULT_UNKNOWN_TRANSPORT_FAILURE"
+                   and issue.get("diagnostic") == diagnostic
+                   for issue in payload["document_issues"])
+        assert any(issue["code"] == "MODEL_PROPOSAL_UNAPPLIED" and issue["proposal"] == proposal
+                   for issue in payload["document_issues"])
     else:
         assert proposal["code"] == "MODEL_RESULT_JSON_DUPLICATE_FIELD_ALIAS"
         assert run.result["retrieval_trace"]["model_result"]["packaged"] is True

@@ -130,6 +130,61 @@ def test_unknown_nonblank_id_on_an_existing_source_is_retained_as_a_proposal(rol
     assert diagnostics[0]["operation_id"] == "op_unknown"
 
 
+@pytest.mark.parametrize("revision_field", ["expected_revision", "base_revision"])
+def test_proof_omitted_revision_expectation_survives_until_transactional_admission(revision_field):
+    from proxy.services.model_result_packet_service import admit_model_result_packet
+
+    previous = _row(operation="op_work", quantity="2")
+    previous.pop("revision")  # The terminal schema requires expected_revision, not revision.
+    previous[revision_field] = 1
+    proposed = _row(quantity="7", title="Literal proof update")
+
+    rows, parsed, diagnostics = _apply([previous], [proposed])
+
+    assert parsed and diagnostics == []
+    assert rows[0]["operation_id"] == "op_work"
+    assert rows[0].get(revision_field) == 1
+    current = {**previous, "revision": 2, "quantity": "9", "title": "Newer admitted decision"}
+    admission = admit_model_result_packet(
+        rows, packet_locators=["S!R10"], prior_operations=[current])
+
+    assert admission.accepted_rows == []
+    assert len(admission.unapplied_proposals) == 1
+    assert admission.unapplied_proposals[0]["reason"] == "operation_revision_mismatch"
+    assert admission.unapplied_proposals[0]["decision"] == rows[0]
+
+
+@pytest.mark.parametrize(("previous_field", "revision_field"), [
+    ("expected_revision", "expected_revision"), ("base_revision", "base_revision"),
+    ("expected_revision", "base_revision"), ("base_revision", "expected_revision"),
+])
+def test_proof_explicit_wrong_revision_expectation_is_not_replaced_by_the_previous_one(
+        previous_field, revision_field):
+    from proxy.services.model_result_packet_service import admit_model_result_packet
+
+    previous = _row(operation="op_work", quantity="2")
+    previous.pop("revision")
+    previous[previous_field] = 1
+    proposed = _row(quantity="7", title="Literal proof with a wrong revision")
+    proposed[revision_field] = 2
+
+    rows, parsed, diagnostics = _apply([previous], [proposed])
+
+    assert parsed and diagnostics == []
+    assert rows[0]["operation_id"] == "op_work"
+    assert rows[0][revision_field] == 2
+    if previous_field != revision_field:
+        assert previous_field not in rows[0], "an inherited field must not shadow the explicit expectation"
+    current = {**previous, "revision": 1}
+    admission = admit_model_result_packet(
+        rows, packet_locators=["S!R10"], prior_operations=[current])
+
+    assert admission.accepted_rows == []
+    assert len(admission.unapplied_proposals) == 1
+    assert admission.unapplied_proposals[0]["reason"] == "operation_revision_mismatch"
+    assert admission.unapplied_proposals[0]["decision"] == rows[0]
+
+
 def test_initial_work_and_material_on_one_source_remain_two_authored_operations():
     proposed = [_row(quantity="2"), _row(role="material", quantity="8", title="Separate material")]
 

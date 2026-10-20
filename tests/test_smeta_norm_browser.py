@@ -665,6 +665,36 @@ def test_reranker_is_fused_with_original_rrf_instead_of_erasing_it(monkeypatch):
     assert {item["norm_code"] for item in ranked[:3]} & {"GOOD-1", "GOOD-2"}
 
 
+def test_reranker_fusion_uses_every_measured_rank_not_a_synthetic_tail(monkeypatch):
+    from proxy.smeta_core import norm_browser
+    monkeypatch.setenv("RERANKER_ENABLED", "true")
+    monkeypatch.setenv("LES_SMETA_NORM_RERANK", "true")
+    cards = [{"norm_code": f"N-{i:02d}", "title": str(i)} for i in range(24)]
+    requested = []
+
+    class Result:
+        def __init__(self, index):
+            self.metadata = {"index": index}
+
+    class ReversedReranker:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def rerank(self, _query, chunks, top_k):
+            requested.append((len(chunks), top_k))
+            return [Result(index) for index in reversed(range(len(chunks)))][:top_k]
+
+    monkeypatch.setattr(norm_browser, "select_reranker_cls", lambda: ReversedReranker)
+    ranked, used, status = norm_browser._rerank_cards("query", cards, limit=6)
+
+    assert requested == [(24, 24)], "fusion needs the actual order of all scored candidates"
+    assert used is True and status == "ok"
+    assert len(ranked) == 6
+    assert "N-23" in {card["norm_code"] for card in ranked}
+    assert "N-00" in {card["norm_code"] for card in ranked}
+    assert ranked == norm_browser._rrf_cards(cards, list(reversed(cards)), limit=6)
+
+
 def test_reranker_timeout_falls_back_and_preserves_raw_order(monkeypatch):
     from proxy.smeta_core import norm_browser
     monkeypatch.setenv("RERANKER_ENABLED", "true")

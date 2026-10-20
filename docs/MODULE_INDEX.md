@@ -1,5 +1,49 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 977 — сохранённый checkpoint при ошибке нового обновления
+
+✅ Doc↔candidate source: paused ЛСР с accepted rows получает промежуточный файл
+только при непустом catalog SHA и точном совпадении attachment/source identity.
+Existing saved-draft path передаёт exporter только durable accepted rows;
+`workbook_document_issues` сохраняет ошибки, literal raw/proposals и remaining.
+Identity/citation guards не ослаблены; новых model calls и предметных циклов нет.
+Удалена только перезаписанная до dispatch инициализация `sheet_sys_msg`;
+действующий declaration-scoped prompt и `set_price_basis` сохранены.
+Регрессии: существующий `test_workbook_partial_draft.py`, включая accepted-only draft,
+no accepted checkpoint, foreign source и прежние false-green controls.
+Детали: [evidence flow](modules/rag-evidence-flow.md).
+`rim_trace_xlsx_service` отделяет компактный формат E–G от денежного округления
+и price conversion H–K, сохраняя raw/formulas/trace. Детали: [ЛСР](ALGO-lsr-assembly.md).
+При plain-продолжении печатный title ВОР наследует literal original_question;
+audit/resume message остаётся текущим. Proof merge сохраняет прежний expected/base
+revision, когда новый ответ не передал ни одного из этих полей; явное ожидание
+не заменяется. Старый ID/revision и проверка admission остаются действующими.
+ROOT targeted delivery/quantity:43passed/34.55s; related proof/packet/RIM/XLSX:
+263passed/74.79s. Это не полный977 gate.
+Header/delivery/XLSX:61passed/36.33s; CAS/header/packet/pending-proof:79passed/12.87s.
+В `_start_sheet_proof`/`_continue_sheet_reads` та же literal `proof_request`
+имеет одного владельца — required PHASE_INSTRUCTION; повтор в evidence-data удалён.
+Полный прежний ответ, native chain и durable pending proof сохранены.
+ROOT RED3failed/33passed → related59passed/6.70s; не полный gate/quality PASS.
+Парный reasoning-on B0_DIRECT976 завершён; обе ветви профессионально не приняты.
+Read-only RAG977:49818typed/dense/sparse; manifest fingerprint имеет профильный
+дрейф (728beb…:0points, ec5dc1…:49818). У8sampled карточек dense cosine1/sparse equal;
+ANN/exact top50 совпали, но top6 исходных коротких запросов остаётся слабым.
+Это не отсутствие нормативной базы; exact применимость fan20-03-002-04
+при неизвестных типе/массе не доказана. Факты и evidence paths — в [ledger](RELEASE_LEDGER.md).
+`norm_browser._rerank_cards` перед повторным RRF получает полный measured CE order;
+visible limit, исходный fusion/fallback и model ownership сохраняются.
+Общий reverse-order regression RED1 → related49passed/2.65s.
+Четыре staged literal запроса не подтвердили профессиональную готовность ни
+исходной выдачи, ни простого union/pure-CE варианта. Эти варианты не включены.
+Детали и границы измерения: [evidence flow](modules/rag-evidence-flow.md).
+Первый полный offline977 сохранил7устаревших contract ожиданий и6919passed/20skipped;
+production-код не менялся при migration этих assertions. Exact phase/checkpoint:
+72passed/15.20s; saved draft/actual scope:76passed/28.42s. Первый отрицательный
+receipt сохранён; повторный полный gate — `artifacts/offline_977/canonical02/receipt.json`.
+🟡 Кандидат977 поверх exact installed976; installed/live977 не проводились.
+Техническая доставка не подтверждает нормы, цены или customer readiness.
+
 ## 976 — адресный добор обычным сообщением
 
 ✅ Doc↔source: `chat_evidence_application_service.begin_plain_lsr_gap_continuation`
@@ -11,8 +55,9 @@ price-only targets требуют совпадения issued snapshot/стро�
 `rim_trace_xlsx_service` показывает дробный объём без изменения денег.
 Фактический search reader payload сохраняется в tool_loop trace.
 Детали: [evidence flow](modules/rag-evidence-flow.md), [ЛСР](ALGO-lsr-assembly.md).
-🟡 Source976; runtime975/native974 — диагностический patch. Related continuation155passed;
-полный gate/install/live976 ещё pending. Customer_ready=false.
+🟡 Exact976/f6c31aa4 установлен: full gate_v2 —6910passed/20skipped,9команд rc0;
+NSIS install/smoke/rollback/reinstall accepted=true. Ordinary live-добор остаётся
+профессионально незавершённым; customer_ready=false. История подготовки ниже — не новый PASS.
 
 ## 975 — кандидат: текущая READ-фаза и сохранный pending proof
 

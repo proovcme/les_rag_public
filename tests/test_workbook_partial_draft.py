@@ -1,4 +1,6 @@
 """Actual chat/repack boundaries retain accepted rows without claiming a final document."""
+from copy import deepcopy
+import json
 from pathlib import Path
 
 import pytest
@@ -7,7 +9,9 @@ from openpyxl import load_workbook
 from proxy.routers import chat
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from proxy.services.chat_evidence_application_service import workbook_document_issues
-from test_model_rag_sheet_evidence_reads import _run_sheet
+from proxy.services.openai_compatible_transport_service import InferenceResponse
+from test_model_rag_sheet_evidence_reads import NORM_CODE, NORM_CODE_B, _run_sheet
+from tests.test_norm_card_proof_request_930 import SECOND_NORM_ANSWER
 
 
 def _assert_draft(payload, readiness, root: Path, raw_line: str):
@@ -104,3 +108,134 @@ async def test_model_tool_arguments_cannot_supply_document_integrity_metadata(tm
     assert rejected["status"] not in {"complete", "partial"}
     assert not rejected.get("artifact")
     assert len(run.requests) == 4
+
+
+async def _ambiguous_proof_draft_977(tmp_path, monkeypatch):
+    # The existing real sheet pipeline receives an authentic unknown-ID proof
+    # update. The merge guard must retain it as a proposal, not price its norm.
+    proposed = {
+        "source_row": "S!R2", "row_role": "work",
+        "operation_id": "unissued-proof-operation",
+        "title": "Literal unaccepted priced-work proposal",
+        "unit": "m", "quantity": 12, "norm_code": NORM_CODE,
+        "evidence_refs": ["Q1.H1"], "coverage": "Literal proposed replacement",
+    }
+    raw = json.dumps({"artifact_kind": "lsr", "rows": [proposed]}, ensure_ascii=False)
+    run = await _run_sheet(
+        tmp_path, monkeypatch, reads=False, group_char_budget=7000,
+        distinct_norms=True, final_answer=SECOND_NORM_ANSWER,
+        proof_replies=[InferenceResponse(
+            text=raw, tool_calls=(), finish_reason="stop", usage={})],
+    )
+    return run, proposed, raw
+
+
+@pytest.mark.asyncio
+async def test_identity_rejected_proof_delivers_only_accepted_checkpoint_as_draft_977(
+        tmp_path, monkeypatch):
+    run, proposed, raw = await _ambiguous_proof_draft_977(tmp_path, monkeypatch)
+    trace = run.result["retrieval_trace"]
+    store = WorkbookResearchJobService()
+    job = store.get(trace["workbook_research_job"]["job_id"])
+    before = deepcopy(job)
+    assert job["status"] == "paused" and job["remaining"]
+    assert len(run.requests) == 3 and not run.responses, "packaging must not buy another model call"
+    assert len(job["accepted_rows"]) == 2
+    assert all(row["norm_code"] == NORM_CODE_B for row in job["accepted_rows"])
+    assert all(row["operation_id"] != proposed["operation_id"] for row in job["accepted_rows"])
+    diagnostics = trace["model_result_transport_diagnostics"]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "MODEL_PROOF_UPDATE_IDENTITY_AMBIGUOUS"
+    assert diagnostics[0]["proposal"] == proposed and diagnostics[0]["raw_answer"] == raw
+    assert len(job["unapplied_proposals"]) == 1
+    assert job["unapplied_proposals"][0]["proposal"] == proposed
+    assert job["unapplied_proposals"][0]["raw_answer"] == raw
+
+    assert len(run.executions) == 1, "a rejected new update must not suppress the saved draft"
+    call, payload = run.executions[0]
+    assert call["args"]["decisions"] == job["accepted_rows"]
+    assert call["args"]["draft"] is True
+    assert "document_issues" not in call["args"]
+    assert payload["status"] == "partial" and payload["artifact"]["draft"] is True
+    assert payload["pricing_status"] == "priced_partial" and payload["confirmed_amount"] == 0
+    projection = json.dumps(payload["row_projection"], ensure_ascii=False)
+    assert proposed["operation_id"] not in projection and NORM_CODE not in projection
+    issues = payload["document_issues"]
+    assert any(issue["code"] == "MODEL_PROOF_UPDATE_IDENTITY_AMBIGUOUS" for issue in issues)
+    assert any(issue["code"] == "MODEL_PROPOSAL_UNAPPLIED"
+               and issue["proposal"] == job["unapplied_proposals"][0] for issue in issues)
+    readiness = run.result["artifact"]["result_readiness"]
+    assert readiness["technical_complete"] is False and readiness["estimate_complete"] is False
+    assert readiness["document_issues"][:len(issues)] == issues
+    assert readiness["document_issues"][len(issues):] == [
+        {"code": "normative_generation_conflict", "locator": locator,
+         "message": "поколение процитированной нормы не воспроизведено для расчёта; авторский выбор сохранён"}
+        for locator in ("S!R2", "S!R3")
+    ]
+    meta = trace["model_result"]
+    assert meta["status"] == "structural_error" and meta["packaged"] is True
+    assert meta["transport_diagnostics"] == diagnostics
+
+    output = next(tmp_path.rglob(payload["artifact"]["filename"]))
+    workbook = load_workbook(output, data_only=False)
+    try:
+        visible = "\n".join(str(cell.value) for sheet in workbook
+                            for row in sheet for cell in row if cell.value is not None)
+        assert "РАСЧЁТ НЕ ЗАВЕРШЁН" in visible
+        assert "MODEL_PROOF_UPDATE_IDENTITY_AMBIGUOUS" in visible
+        assert proposed["operation_id"] in visible and proposed["title"] in visible
+    finally:
+        workbook.close()
+    after = store.get(job["job_id"])
+    for field in ("status", "accepted_rows", "remaining", "unapplied_proposals", "held_packet", "identity"):
+        assert after[field] == before[field], "rendering must not admit or rewrite the pending update"
+
+
+@pytest.mark.asyncio
+async def test_no_accepted_checkpoint_cannot_be_packaged_as_saved_draft_977(tmp_path, monkeypatch):
+    rows = [
+        {"source_row": source, "row_role": "work", "title": title,
+         "unit": "m", "quantity": 999, "norm_code": "MISSING",
+         "open_gap": "Literal unaccepted quantity proposal"}
+        for source, title in (("S!R2", "Cable A"), ("S!R3", "Cable B"))
+    ]
+    raw = json.dumps({"artifact_kind": "lsr", "rows": rows}, ensure_ascii=False)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, final_answer=raw)
+    trace = run.result["retrieval_trace"]
+    job = WorkbookResearchJobService().get(trace["workbook_research_job"]["job_id"])
+    assert job["status"] == "paused" and job["accepted_rows"] == []
+    assert len(job["unapplied_proposals"]) == 2 and len(job["remaining"]) == 2
+    assert run.executions == [] and not run.result.get("artifact")
+    assert trace["model_result"]["status"] == "structural_error"
+    assert trace["model_result"]["packaged"] is False
+    assert len(run.requests) == 2 and not run.responses
+
+
+@pytest.mark.asyncio
+async def test_saved_draft_cannot_borrow_accepted_rows_from_another_source_identity_977(
+        tmp_path, monkeypatch):
+    # Corrupt only the trusted snapshot handed back at the paused boundary.
+    # The real durable rows/source remain unchanged; no foreign-scope rows may
+    # reach the exporter even if an earlier stage returned the wrong snapshot.
+    original_get = WorkbookResearchJobService.get
+    mismatches = []
+
+    def foreign_snapshot(self, job_id, **kwargs):
+        current = original_get(self, job_id, **kwargs)
+        if current.get("status") == "paused" and current.get("unapplied_proposals"):
+            current = deepcopy(current)
+            mismatches.append(current["identity"]["source_sha256"])
+            current["identity"]["source_sha256"] = "0" * 64
+        return current
+
+    monkeypatch.setattr(WorkbookResearchJobService, "get", foreign_snapshot)
+    run, _proposed, _raw = await _ambiguous_proof_draft_977(tmp_path, monkeypatch)
+    assert mismatches and all(value != "0" * 64 for value in mismatches)
+    trace = run.result["retrieval_trace"]
+    durable = original_get(WorkbookResearchJobService(), trace["workbook_research_job"]["job_id"])
+    assert durable["accepted_rows"] and durable["unapplied_proposals"]
+    assert durable["identity"]["source_sha256"] != "0" * 64
+    assert run.executions == [] and not run.result.get("artifact")
+    assert trace["model_result"]["status"] == "structural_error"
+    assert trace["model_result"]["packaged"] is False
+    assert len(run.requests) == 3 and not run.responses

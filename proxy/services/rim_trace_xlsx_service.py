@@ -86,7 +86,9 @@ def _make_put(ws, S: dict[str, Any]):
         cell = ws.cell(row=r, column=c, value=v)
         cell.font = font or S["small"]
         if num and isinstance(v, (int, float)):
-            cell.number_format = "#,##0.00#############" if c in {5, 6, 7} else "#,##0.00"
+            quantity_format = ("0.00##########E+00" if v and (abs(v) < 1e-6 or abs(v) >= 1e10)
+                               else "#,##0.00##########")
+            cell.number_format = quantity_format if c in {5, 6, 7} else "#,##0.00"
             cell.alignment = Alignment(horizontal="right")
         else:
             cell.alignment = Alignment(horizontal=align, vertical="top", wrap_text=(c == 3))
@@ -337,7 +339,7 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
                     lines = sum(max(1, math.ceil(len(line) / 40)) for line in val.splitlines())
                     ws.row_dimensions[r].height = min(409, max(30, 12 * lines))
                 put(r, xc, val, font=(S["bold"] if is_group else S["small"]), num=(xc in _NUM_COLS))
-                if numeric_price and xc in {5, 6, 7, 8, 9, 10, 11} and isinstance(val, (int, float)):
+                if numeric_price and xc in {8, 9, 10, 11} and isinstance(val, (int, float)):
                     ws.cell(row=r, column=xc).number_format = (
                         "0.###############E+00" if val and (abs(val) < 1e-10 or abs(val) >= 1e12)
                         else "#,##0.00#############"

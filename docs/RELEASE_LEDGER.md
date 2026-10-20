@@ -1,9 +1,122 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 20.10.2026 — подготовка977; exact976 установлен, live-добор остаётся отрицательным
+
+Установлен exact0.31.248/build976/native5.1.976.0,
+commit `f6c31aa44b08975330ee48fed6548127f4dfdc85`.
+Полный976 gate_v2:6910passed/20skipped, все9канонических команд rc0;
+`artifacts/gates_976_final_v2/receipt.json` SHA
+`9c2b59ed93247462ed7330e7eadd0b0a99304a9708b17c68fa25fa30aa513481`.
+Exact NSIS SHA `ec6e1f2bc83c78552bf926ce6ccf97fc5ac7bc36dc0f24306dd49e05fa0b8024`.
+Полный install/smoke/rollback/reinstall принят: accepted=true,
+`artifacts/live_976/candidate_final/native_full01/acceptance.json` SHA
+`9790b0cc30d8c2eadce0292bc4bce5f41621aea38f88efd4b830e8e0cc65915b`.
+ROOT подтвердил runtime byte parity516files и сохранение436runtime factors.
+Packaged native сравнивается с native из NSIS, не с loose Cargo PE.
+
+Ordinary plain Continue ЛСР976 завершился примерно за320с:5model calls,
+cache8→21, прежние7accepted сохранены, remaining6/status paused.
+Текущий artifact отсутствовал: MODEL_PROOF_UPDATE_IDENTITY_AMBIGUOUS
+блокировал упаковку. Новая citation Q22.H1 привязалась корректно; отдельное
+missing_evidence_ref описывало прежнюю строку после отказа stale revision.
+Public evidence: `artifacts/live_976/gap_continue/run01/final.json` SHA
+`3ef9b75200306bb5a9471cb1ec8bcc56ae6887cdf2839876e08155625b1e82d9`,
+`job_after.json` SHA `b3b7446ce12a3f0238d1d2d048eec6eb3f0e24ccb183eea011150013113907e1`.
+Старая artifact revision не объявляется новым файлом с новыми proposals.
+
+Candidate977 разделяет ошибку нового update и saved-draft eligibility: paused ЛСР может выдать
+durable accepted checkpoint при ошибке нового update, если attachment/source SHA
+точно совпадают. Raw/proposals и ошибки остаются в аудите; непринятые нормы,
+количества и деньги не становятся принятыми. Новых inference/research loops нет.
+Удалены только перезаписывавшиеся до dispatch generic sheet prompt/price append;
+реальный declaration-scoped prompt и binding price basis сохранены.
+ROOT targeted delivery/quantity:43passed/34.55s,
+`artifacts/offline_977/green_delivery_quantity_v2.xml`.
+Related proof/packet/RIM/XLSX:263passed/74.79s,
+`artifacts/offline_977/related_delivery_proof_xlsx.xml`.
+Формат E–G исправлен без изменения чисел и расчёта; price conversion H–K сохранён.
+Plain-продолжение ВОР сохраняет original_question в печатном title; audit/resume
+содержит последнее сообщение. Proof merge не теряет прежнее expected/base revision
+при их omission и не подменяет явно переданное ожидание. Header/delivery/XLSX:
+61passed/36.33s; CAS/header/packet/pending-proof:79passed/12.87s.
+Proof-context cleanup убирает повторное вложение `proof_request` в evidence-data;
+та же literal инструкция остаётся единственной required PHASE_INSTRUCTION.
+Полный предыдущий ответ, actual native chain, tools/choice и durable pending proof
+сохранены; новая предметная инструкция или модельный цикл не добавлены.
+ROOT RED3failed/33passed → related59passed/6.70s:
+`artifacts/offline_977/{red_proof_context,green_proof_context_v2}.xml`.
+Это проверка одной границы контекста, не полный977 gate и не live quality PASS.
+
+Multifile976 Continue:547.078s,22accepted из27, финально paused/remaining5,
+file SHA `4b60064e5d40d8db832ada76cf03ca40673f4f925e99249719e4f84601599cfa`.
+Промежуточный remaining0 не является финальной полнотой. ROOT открыл read-only
+preview листа «Ведомость работ»; aggregation/coverage исходных слоёв не подтверждены.
+Контроль reasoning-on976: тот же исходный CSV SHA c40b5976…, original question,
+Qwen35B/r14, отдельный неактивированный profile374466c8…;590.985s/4calls,
+7accepted/0remaining, файл SHA `a5f200717d39a2e5472bac9c30ae472d4e650f60f65e3df1bdae1d3612441c83`.
+Выбрана1норма,0подтверждённых применимостей/0полных позиций/0подтверждённых рублей;
+preliminary21890.04. Прочитаны2конкретные цены native read_resource_price.
+Это отрицательный профессиональный результат, не квалификация модели или speedup.
+Outgoing provider HTTP не захвачен; наблюдаются effective reasoning и count/wire hashes.
+Public receipts: `artifacts/live_976/reasoning_comparison/original_small7_on01`.
+Парный B0_DIRECT на том же profile/source/task завершён:314.219s/2calls,
+7строк,2выбранные нормы,0полных позиций/0подтверждённых рублей;
+preliminary20540.43, файл SHA
+`ba0c7f6e33b1a5199339776c3311d4e0b16dcbba65fdd6e22ef74d33c14e7edd`.
+Public receipts: `artifacts/live_976/reasoning_comparison/original_small7_on01_b0_direct`.
+Оба результата профессионально не квалифицированы. Различие предварительных сумм,
+запросов и наборов кандидатов само по себе не доказывает потери evidence harness.
+
+Read-only RAG977: typed база/index/dense/sparse содержат49818карточек;
+active/indexed SHA совпадают. Выявлен профильный дрейф manifest fingerprint:
+ожидаемый `728bebc80fce4c32a4564f43786afabc510334fa` имеет0points,
+сохранённый `ec5dc115da2ff7e4322ee49f7c2d4cc1bad92bcb` —49818.
+Для8выборочных карточек fresh/stored dense cosine=1 и sparse exact equal;
+это не проверка всех векторов. ANN/exact top50 совпали в трёх контрольных запросах.
+При этом top6 по исходным коротким запросам профессионально слаб:
+это не отсутствие базы и не доказанная порча sampled embeddings.
+Карточка20-03-002-04 присутствует, но неизвестные тип/масса исходного вентилятора
+не позволяют объявить её доказанно применимой. Индекс/запросы не исправлялись.
+Evidence: `artifacts/retrieval_977/{parity01,vector01,vector_exact01,replay02}`.
+Stage probe с установленным Python/cross-encoder:
+`artifacts/retrieval_977/stages02_installed_python`, четыре literal запроса,
+без генеративной модели и изменения runtime. Предшествующий `stages01` на workspace
+Python вернул fallback без установленного reranker; это не положительный контроль.
+Candidate977 сохраняет полный измеренный CE order до повторного RRF вместо
+искусственного хвоста; RED1 → related49passed/2.65s,
+`artifacts/offline_977/{red_rerank_order,green_rerank_order}.xml`.
+Измеренный full-order/union контроль не доказал достаточного качества норм;
+production union/pure-CE и переиндексация не включались. Installed976 не изменён.
+В original model fan query native50 содержит осевое семейство на28/43местах;
+outer RRF с typed/FTS переносит их на55/85 и отсекает до CE. При clean source
+query/limit6 семейства нет уже в native24/typed24. Это разные границы потери;
+одна правка CE order их не закрывает.
+Общий RAG имеет658points/dense/sparse/compatible, но generation contract/FTS marker653.
+Source-аудит подтверждает static-counter seam после incremental indexing;
+происхождение пяти дополнительных points не классифицировано. Navigation dry-run
+не нашёл per-file deltas и ничего не менял; его source_collection — migration
+comparator, не иной target поиска. Evidence: `artifacts/retrieval_977/general01`.
+
+Первый полный offline977:6919passed/7failed/20skipped, source неизменен во время
+гейта; version/compile/collect/map/architecture rc0, execution остановлен на test.
+Все7отказов относятся к прежним ожиданиям duplicate PHASE, dead init spy или запрета
+сохранного draft при unknown transport. Тесты обновлены с сохранением exact phase,
+native identity/checkpoint и явной ошибки/сырого непринятого предложения;
+production-код после первого полного прогона не менялся.
+ROOT proof/checkpoint migration72passed/15.20s; draft/scope76passed/28.42s.
+Первоначальный отрицательный receipt сохранён: `artifacts/offline_977/canonical01`.
+Итог повторного полного offline gate: `artifacts/offline_977/canonical02/receipt.json`.
+977 не установлен и не проходил installed live acceptance; customer_ready=false.
+Это не исправление профессиональных ошибок выбора норм и не приёмка≥90%.
+
 ## 20.10.2026 — кандидат976: обычное продолжение открытых операций
 
-Source0.31.248/build976/native5.1.976. Установлен диагностический runtime975/
-`9abe92443ae80a59923ccf273597369ba660050e`, native остаётся974; это не установка976.
+Source0.31.248/build976/native5.1.976 установлен exact NSIS на f6c31aa4;
+фактические gate/install и отрицательный live976 указаны в записи977 выше.
+
+### История подготовки976 до принятого exact installer
+
+Следующие записи описывают прежние candidate-этапы и сохраняют их отрицательные receipts.
 Полный975 gate:6860passed/20skipped,9команд rc0,
 `artifacts/gates_975_final_v3/receipt.json` SHA
 `31e92335f2d3ffd04ce1a9b9ed3db9d79ee1395c7af6192bdab2cb4e94938412`.

@@ -1,5 +1,98 @@
 # RAG evidence flow
 
+## 977 — сохранённый черновик отделён от ошибки нового model result
+
+Ошибка свежего model update не делает ранее принятый checkpoint недоступным.
+Для paused model-declared ЛСР с accepted rows existing saved-draft path требует
+непустой catalog SHA и совпадения сохранённых attachment_id/source_sha256
+с текущим вложением. Условие больше не зависит от списка carrier/quantity ошибок.
+Отсутствие accepted rows или другой source не разрешают такую упаковку.
+
+Exporter получает только durable accepted_rows, draft=true и trusted document_issues.
+Новые предложения с неоднозначным ID, stale revision или неподтверждённой citation
+остаются неприменёнными: literal raw/diagnostics доступны в аудите, нормы/объёмы
+не подставляются в расчёт. Прежний saved-model evidence identity guard и проверки
+исполнителя сохранены. Работа/parent/роль/open_gap кодом не назначаются.
+model_result может остаться structural_error/unstructured при packaged=true:
+это промежуточный документ, не успешный профессиональный результат.
+Partial/readiness и ошибки не исчезают; непринятые предложения не создают
+confirmed money. Packaging не меняет accepted IDs/remaining/held proposals
+и не запускает модель, поиск или proof. Отдельный no-model
+`POST /api/chat/repack-lsr` использует тот же принятый checkpoint.
+
+Удалена мёртвая generic-инициализация sheet_sys_msg и дописывание price basis,
+которые полностью перезаписывались declaration-scoped prompt до dispatch.
+Действующая передача price basis через model_research_tools.set_price_basis
+сохранена. Это не изменение фактически отправленного evidence или инструкции.
+
+Observed976 plain Continue:5model calls, cache8→21, accepted7 сохранены,
+remaining6/paused; текущий файл не создан из-за identity ошибки нового proof.
+Цитирование новой карточки было корректным; сообщение missing_evidence_ref
+относилось к сохранённой старой строке после отказа в обновлении её ревизии.
+ROOT targeted977:43passed/34.55s
+(`artifacts/offline_977/green_delivery_quantity_v2.xml`).
+Related proof/packet/RIM/XLSX:263passed/74.79s
+(`artifacts/offline_977/related_delivery_proof_xlsx.xml`).
+Existing `tests/test_workbook_partial_draft.py` проверяет authentic rejected proof,
+accepted-only draft, literal audit, no extra calls/no unaccepted norm money,
+no accepted checkpoint и foreign source. Полный offline gate977 фиксируется
+в `artifacts/offline_977/canonical02/receipt.json`; installed/live977 не выполнялись.
+
+При единственном адресуемом proof update старые expected_revision/base_revision
+сохраняются, если модель не передала ни одного из этих полей. Иначе прежнее
+ожидание не добавляется поверх явного нового, даже если новое неверно.
+Это предотвращает потерю stale-revision проверки после proof merge; ошибочное
+ожидание по-прежнему остаётся неприменённым предложением, а не исправляется кодом.
+Регрессии в `test_proof_role_identity_972.py` вызывают тот же packet admission
+с более новой текущей ревизией и проверяют отказ, включая cross-field ожидания.
+
+Печатная форма ВОР при распознанном plain-продолжении получает literal
+task_context.original_question, с fallback на текущий текст для старого checkpoint.
+Полный workbook_model_question не является title: в нём есть технический контекст.
+Execution audit и artifact.resume.question сохраняют последнее сообщение.
+`test_vor_print_template_966.py` проверяет actual producer и SHA точной доставленной
+ревизии XLSX; рабочая копия с совпадающим минутным filename не является её заменой.
+Header/delivery/XLSX:61passed/36.33s; CAS/header/packet/proof:79passed/12.87s.
+
+В norm/resource proof и последующих native reads literal `proof_request` больше
+не дублируется в evidence-data. Его единственный dispatch-владелец — existing
+required PHASE_INSTRUCTION. `proof_previous_model_answer` остаётся полным;
+оригинальный pending proof сохраняет обе строки до dispatch, поэтому resume
+не восстанавливает инструкцию из урезанной проекции. Native exchanges, tools,
+wire/count/cloud admission и возможность чтения тех же карточек не меняются.
+Existing actual-producer регрессии: RED3failed/33passed → related59passed/6.70s;
+это не доказательство live-ускорения или профессионального качества.
+
+### 977 — полный измеренный порядок перед повторным RRF
+
+`norm_browser._rerank_cards` при `fuse_with_input=True` запрашивает порядок
+всего уже оцениваемого пула, а не только visible topK. Иначе добавленный из
+исходной выдачи хвост получает вымышленные CE ranks и способен вытеснить
+все действительно возвращённые CE topK при повторном RRF. Для текущего
+SentenceTransformer число оцениваемых пар не увеличивается: он и прежде
+оценивал весь пул до усечения ответа. Сохраняются прежний RRF, размер выдачи,
+typed/native каналы, fallback и право модели выбрать или отклонить карточку.
+Pure catalog mode без fusion сохраняет прежний topK. Частичный ответ backend
+по-прежнему дополняется существующим fallback; исправление не объявляет его
+полным measured order. Регрессия строит общий reverse-order пример из24карт,
+не использует шифры или предметные признаки конкретного раздела.
+ROOT RED1 → related49passed/2.65s; не live qualification.
+
+Read-only staged control: четыре literal запроса, тот же bge-m3/Ollama и
+установленный локальный cross-encoder. Сняты typed/native/outer RRF до cap,
+current partial-CE fusion, full measured CE и варианты union. Полный порядок
+устраняет техническую потерю ranks, но в этом контроле не закрывает качество
+подбора. Расширенный union/pure CE также не является универсальным улучшением;
+они остаются диагностикой и не включаются в production. Workspace Python без
+reranker дал отдельный fallback-контроль, не выданный за успешный rerank.
+Evidence: `artifacts/retrieval_977/stages02_installed_python` и отдельный `stages01`.
+
+Для original model fan query native50 содержит осевые28/43; outer RRF с FTS
+переносит их на55/85 и обрезает до50 перед CE. Full measured order на том же
+обрезанном pool восстановить их не может. В clean query/limit6 их нет уже
+в native24/typed24. Эти незакрытые ограничения нельзя называть отсутствием базы,
+доказанной применимостью другого шифра или доказанной неспособностью одной LLM.
+
 ## 976 — обычный «Продолжи» открывает только объявленные пробелы
 
 После owner claim `begin_plain_lsr_gap_continuation` распознаёт прежний plain resume
@@ -21,7 +114,8 @@ repair не запускают новый предметный ход. Явно�
 967 proof-overflow регрессии сохраняют ноль новых модельных вызовов.
 Actual search reader payload сохраняется в tool_loop.results сразу после выполнения;
 cached replay помечен cached и не является свидетельством нового native RRF.
-Source976, installed diagnostic975/native974; live976 ещё не принят.
+Exact976/f6c31aa4 установлен; техническая NSIS-приёмка пройдена.
+Ordinary live976 не подтвердил профессиональную полноту; customer_ready=false.
 
 ## 975 — текущая READ-фаза, авторство запросов и сохранный proof
 

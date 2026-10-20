@@ -482,6 +482,10 @@ def rows_after_proof_round(*, parsed_rows: Sequence[Mapping[str, Any]],
             for field in ("operation_id", "revision", "revision_origin"):
                 if field in merged[index]:
                     row[field] = merged[index][field]
+            if not any(field in row for field in ("expected_revision", "base_revision")):
+                for field in ("expected_revision", "base_revision"):
+                    if field in merged[index]:
+                        row[field] = merged[index][field]
             replacements[index] = row
         else:
             additions.append(row)
@@ -11059,13 +11063,6 @@ async def _execute_chat_evidence_application(
                             ) if research_job_service is not None and research_job is not None else None,
                         )
 
-                    sheet_sys_msg = profile_system_prompt(profile_snapshot, strict=False, purpose="workbook_result") + (
-                        f" {answer_form.instruction}" if answer_form.instruction else ""
-                    )
-                    sheet_read_tools = model_evidence_read_tool_schemas()
-                    sheet_sys_msg += "\n" + model_evidence_read_instruction()
-                    if req.output_directive and req.output_directive.strip():
-                        sheet_sys_msg += " " + req.output_directive.strip()
                     research_job_service: WorkbookResearchJobService | None = None
                     research_job: dict[str, Any] | None = None
                     attachment_id = str(getattr(req, "attachment_id", "") or "")
@@ -11189,9 +11186,6 @@ async def _execute_chat_evidence_application(
                         document_basis=dict((research_job or {}).get("task_context") or {}).get("price_basis"),
                     )
                     model_research_tools.set_price_basis(sheet_price_basis)
-                    sheet_sys_msg += "\nЗакреплённая ценовая база задания: " + json.dumps(
-                        sheet_price_basis, ensure_ascii=False
-                    )
                     answer_parts: list[str] = [review_notice] if review_notice else []
                     any_sheet_queries = False
                     last_finish = ""
@@ -12627,7 +12621,10 @@ async def _execute_chat_evidence_application(
                                     preset=answer_execution_preset, profile_prefix=sheet_sys_msg,
                                     request_payload=question_tail, native_tools=tools, tool_choice=choice,
                                     phase_instruction=sheet_proof_context[-1]["proof_request"],
-                                    source_context=[*pass_evidence, *sheet_proof_context],
+                                    source_context=[*pass_evidence,
+                                        *({key: value for key, value in context.items()
+                                           if key != "proof_request"}
+                                          for context in sheet_proof_context)],
                                     admit_messages=_cloud_message_admission(answer_execution_preset, tools, choice),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                     receipts=[*saved_read_receipts, *read_receipts],
@@ -12677,7 +12674,10 @@ async def _execute_chat_evidence_application(
                                     phase_instruction=(sheet_proof_context[-1]["proof_request"]
                                                        if sheet_proof_purpose else None),
                                     native_exchanges=native_exchanges,
-                                    source_context=[*pass_evidence, *sheet_proof_context],
+                                    source_context=[*pass_evidence,
+                                        *({key: value for key, value in context.items()
+                                           if key != "proof_request"}
+                                          for context in sheet_proof_context)],
                                     admit_messages=_cloud_message_admission(answer_execution_preset, tools, choice),
                                     chunks=[*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
                                     receipts=[*saved_read_receipts, *receipts],
@@ -15386,11 +15386,12 @@ async def _execute_chat_evidence_application(
                             and artifact_kind_declaration.get("artifact_kind") == "vor"
                             and artifact_kind_declaration.get("authority") in {"query", "result"}
                             or packaging_tools == ["build_lsr_workbook"]
-                            and all(str(error) in {"MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH", "MODEL_RESULT_SOURCE_LOCATOR_MISSING",
-                                                  "MODEL_RESULT_JSON_DUPLICATE_FIELD", "MODEL_RESULT_JSON_DUPLICATE_FIELD_ALIAS",
-                                                  "MODEL_RESULT_TEXT_DUPLICATE_FIELD"}
-                                    or str(error).startswith(("source_quantity_unconfirmed:", "source_quantity_mismatch:"))
-                                    for error in model_result_blocking_errors)
+                            # New updates remain rejected. Render only this
+                            # source's already accepted, durable checkpoint.
+                            and source_catalog is not None
+                            and bool(source_catalog.source_file_sha256)
+                            and (research_job.get("identity") or {}).get("attachment_id") == attachment_id
+                            and (research_job.get("identity") or {}).get("source_sha256") == source_catalog.source_file_sha256
                         )
                     )
                     packaged_source_locators = cited_source_row_keys(
@@ -15524,12 +15525,20 @@ async def _execute_chat_evidence_application(
                             if model_requested_price_basis.get("pricebook_sha256"):
                                 inherited_basis.update({key: value for key, value in
                                     document_price_basis_arguments(model_requested_price_basis).items() if value})
+                            packaging_question = str(req.question or "")
+                            if (packaging_tool == "build_vor_workbook"
+                                    and research_job_service is not None and research_job is not None
+                                    and research_job_service.is_plain_continuation(
+                                        research_identity, {"original_question": packaging_question})):
+                                packaging_question = str(
+                                    (research_job.get("task_context") or {}).get("original_question")
+                                    or packaging_question)
                             workbook_call = {
                                 "tool": packaging_tool,
                                 "args": workbook_packaging_args(
                                     packaging_tool=packaging_tool,
                                     attachment_id=attachment_id,
-                                    question=str(req.question or ""),
+                                    question=packaging_question,
                                     decisions=(
                                         durable_packaging_rows or model_result_rows
                                     ),

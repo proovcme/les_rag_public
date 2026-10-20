@@ -101,8 +101,10 @@ async def test_proof_actual_request_has_own_governed_budget_and_literal_context(
             if isinstance(item, dict) and "proof_previous_model_answer" in item:
                 wire_payloads.append(item)
     assert wire_payloads == proof, "the budget receipt must describe the dispatched literal proof"
-    assert "read_norm_card" in proof[0]["proof_request"] if kind == "norm" else \
-        "fixture-resource-0" in proof[0]["proof_request"]
+    phase = request.messages[-1]
+    assert phase["role"] == "user"
+    assert "read_norm_card" in phase["content"] if kind == "norm" else \
+        "fixture-resource-0" in phase["content"]
     if kind == "resource_group":
         assert "fixture-resource-21" in str(request.messages), "proof retains the actually read full card"
     assert not run.responses

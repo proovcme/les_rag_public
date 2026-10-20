@@ -1,5 +1,26 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 20.10.2026 —977: потери shortlist и metadata drift, OPEN
+
+Installed976/f6c31aa4: typed/named norm index49818, active/base SHA совпадают.
+Manifest ожидает profile=qwen fingerprint728beb…, все49818points имеют
+legacy ec5dc1… при bge-m3/Ollama/1024. На8карточках fresh/stored dense cosine1
+и sparse exact equal; ANN/exact top50 совпали в трёх контролях. Это не доказательство
+порчи всех векторов и не основание для полного реиндекса или metadata-only PASS.
+Общий RAG:658points против653в generation contract/FTS marker, static-counter seam
+после incremental indexing. Происхождение дополнительных5points не установлено;
+dry-run navigation repair не нашёл кандидатов и ничего не менял.
+
+Staged retrieval на четырёх literal запросах с установленным cross-encoder:
+original fan native50 включает осевые карточки на28/43, outer FTS/native RRF
+переносит на55/85 и отсекает до CE. Для clean query/limit6 их нет уже в native24.
+Ни отсутствие базы, ни единственная вина LLM этим не доказаны. Candidate977
+устраняет отдельную потерю CE ranks: получает полный измеренный порядок до
+повторного fusion. Он не закрывает upstream cap/качество меню.
+Смена union/pure-CE не принята; query hardcodes/выбор норм кодом/reindex не добавлены.
+Evidence: `artifacts/retrieval_977/{parity01,vector01,vector_exact01,stages02_installed_python,general01}`.
+Оба reasoning-on B0/B1 small7 остаются профессионально не приняты; customer_ready=false.
+
 ## 20.10.2026 —973: main suite зелёная, Windows updater блокирует выпуск
 
 Основной exact973 pytest:6726passed/20skipped. Исходный gate и его append-only

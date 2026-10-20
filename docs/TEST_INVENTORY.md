@@ -1,5 +1,36 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат977 — сохранённый файл, ожидание ревизии и печатная форма
+
+Расширены существующие файлы; новый test profile/framework не добавлен.
+`test_workbook_partial_draft`: authentic unknown-ID proof → accepted-only draft,
+literal raw/audit сохранены; no accepted checkpoint/foreign source не упаковываются.
+`test_proof_role_identity_972`: omitted expected/base revision не теряется перед
+packet admission; stale update и явно неверное/cross-field ожидание отклоняются.
+`test_vor_print_template_966`: actual VOR producer→plain resume, original title,
+legacy fallback, unchanged nonplain correction/audit и точная SHA delivered revision.
+`test_rim_trace_xlsx`: compact E–G, decimal/scientific boundaries/zero/signs,
+сохранённые значения/формулы/денежные суммы и numeric price conversion H–K.
+ROOT RED→GREEN:43passed/34.55s; related263passed/74.79s;
+header/delivery/XLSX61passed/36.33s; CAS/header/packet/proof79passed/12.87s.
+`test_model_phase_instruction_975` и `test_sheet_proof_context_admission_967`:
+одна trusted PHASE_INSTRUCTION вместо дублирования в evidence-data, полный прежний
+ответ/карточки/native chain, unchanged wire/count admission и durable pending proof.
+ROOT RED3failed/33passed → related59passed/6.70s.
+`test_smeta_norm_browser`: весь measured CE ranking запрашивается перед fusion,
+reverse-order24-card control сохраняет CE-head и native-head без вымышленных ranks.
+ROOT RED1 → related49passed/2.65s; существующие partial/failure/runtime-policy
+controls сохранены. Staged live retrieval не квалифицирован по качеству норм.
+Существующие930/pending975, model_rag_sheet_evidence_reads и native_read_scope956
+проверяют новый контракт actual PHASE/checkpoint и exact accepted-only draft,
+включая сохранённый unknown transport/raw proposal. Dead init spy заменён
+проверкой реально отправленного query frame без преждевременных reader/terminal
+обязательств; literal source/question и все прежние реальные read tool schemas сохранены.
+Первый полный977:6919passed/7failed/20skipped; эти7ожиданий мигрированы без
+дальнейшей правки production-кода. ROOT related72passed/15.20s и76passed/28.42s.
+Повторный полный gate — `artifacts/offline_977/canonical02/receipt.json`;
+installed/live977 не выполнялись. Fixtures не доказывают качество норм.
+
 ## Кандидат976 — обычное продолжение и честная готовность
 
 `test_plain_lsr_gap_continuation_976`: exact shared-source operation IDs,
@@ -15,7 +46,9 @@ match не закрывает применимость; положительны
 `test_rim_trace_xlsx`: дробные0.375/0.000125, исходные/cached числа и денежный формат.
 `test_model_query_ownership_975`: фактические reader measurements и honest cache replay.
 RRF/basic smoke регрессии — в прежних test_rag_golden_set/test_basic_function_smoke.
-363 файла CURRENT_TESTS (два добавлены, прежние не удалены); full976/live pending.
+363 файла CURRENT_TESTS (два добавлены, прежние не удалены); полный976:
+6910passed/20skipped,9команд rc0. Exact installer976 принят; live-документы
+профессионально незавершены, что не заменяется технической приёмкой.
 
 ## Кандидат975 — фазовый контекст, carrier и сохранное возобновление
 

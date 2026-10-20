@@ -209,17 +209,101 @@ def test_fractional_work_quantities_remain_visible_without_changing_money(
         for column in (5, 7):
             assert ws.cell(work, column).value == quantity
             assert values.cell(work, column).value == quantity
-            assert ws.cell(work, column).number_format == "#,##0.00#############"
+            assert ws.cell(work, column).number_format == "#,##0.00##########"
         # The existing calculator rounds resource consumption to six decimals;
         # the renderer must preserve that result, including the cached money.
         assert values.cell(resource, 7).value == resource_quantity
-        assert ws.cell(resource, 7).number_format == "#,##0.00#############"
+        assert ws.cell(resource, 7).number_format == "#,##0.00##########"
         assert ws.cell(resource, 10).number_format == "#,##0.00"
         assert ws.cell(resource, 12).number_format == "#,##0.00"
         assert values.cell(resource, 12).value == resource_amount
     finally:
         formulas.close()
         cached.close()
+    assert trace == before
+
+
+def test_saved_quantity_display_does_not_round_numeric_origin_977(tmp_path):
+    """Compact decimal/scientific views preserve saved numbers and money precision."""
+    from openpyxl import load_workbook
+
+    fixed = "#,##0.00##########"
+    scientific = "0.00##########E+00"
+    cases = [
+        (0.375, fixed),
+        (0.000001618, fixed),
+        (0.19 * 0.375, fixed),
+        (0.375000000000123, fixed),
+        (1e-12, scientific),
+        (1e12, scientific),
+        (0.0, fixed),
+        (1e-6, fixed),
+        (1e10, scientific),
+        (-1e-12, scientific),
+        (-1e12, scientific),
+    ]
+    wb, ws, _styles, put = rim_xlsx._new_sheet()
+    for row, (quantity, _format) in enumerate(cases, 1):
+        for column in (5, 6, 7):
+            assert put(row, column, quantity, num=True).value == quantity
+        for column in (10, 12):
+            put(row, column, 123.456789, num=True)
+    output = tmp_path / "quantity display 977.xlsx"
+    wb.save(output)
+    wb.close()
+    saved = load_workbook(output, read_only=True, data_only=False)
+    try:
+        sheet = saved.worksheets[0]
+        for row, (quantity, expected_format) in enumerate(cases, 1):
+            for column in (5, 6, 7):
+                cell = sheet.cell(row, column)
+                assert cell.data_type == "n"
+                # XLSX float serialization may differ by one binary ULP;
+                # this excludes quantizing values to the display precision.
+                assert cell.value == pytest.approx(quantity, rel=1e-15, abs=0)
+                if quantity:
+                    assert cell.value != 0
+                assert cell.number_format == expected_format
+            for column in (10, 12):
+                assert sheet.cell(row, column).value == 123.456789
+                assert sheet.cell(row, column).number_format == "#,##0.00"
+    finally:
+        saved.close()
+
+
+def test_numeric_price_conversion_keeps_quantity_view_separate_977(tmp_path):
+    """A price-measure override cannot restore noisy quantity formatting."""
+    from copy import deepcopy
+    from openpyxl import load_workbook
+
+    class MeasureBook(_Book):
+        def lookup(self, code):
+            record = super().lookup(code)
+            if code == "01.7.15.06-0111":
+                record.update(unit="1000 т", price_current=90_000_000.0,
+                              price_current_eff=90_000_000.0,
+                              source_ref="owned-test-book#nails")
+            return record
+
+    trace = rim.build_position_trace(_position(resources=_resources()), pricebook=MeasureBook())
+    detail = next(row for row in trace["rows"] if row["columns"].get("2") == "01.7.15.06-0111")
+    assert detail["meta"]["price_unit_conversion"]["conversion_kind"] == "numeric_measure"
+    before = deepcopy(trace)
+    output = rim_xlsx.render_trace_xlsx(trace, tmp_path / "quantity beside scalar price.xlsx")
+    formulas = load_workbook(output, read_only=True, data_only=False)
+    values = load_workbook(output, read_only=True, data_only=True)
+    try:
+        sheet, cached = formulas.worksheets[0], values.worksheets[0]
+        row = next(row[0].row for row in sheet.iter_rows() if row[1].value == "01.7.15.06-0111")
+        assert cached.cell(row, 7).value == 0.0015
+        assert sheet.cell(row, 7).number_format == "#,##0.00##########"
+        assert sheet.cell(row, 10).data_type == "f"
+        assert cached.cell(row, 10).value == 90_000.0
+        assert cached.cell(row, 12).value == 135.0
+        assert sheet.cell(row, 12).number_format == "#,##0.00"
+    finally:
+        formulas.close()
+        values.close()
     assert trace == before
 
 

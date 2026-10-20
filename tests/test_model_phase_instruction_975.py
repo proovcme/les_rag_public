@@ -209,11 +209,18 @@ def test_cloud_refusal_of_required_phase_is_visible_instead_of_omitting_it_975()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind,purpose", [("norm", "sheet_pass_norm_proof"),
-                                         ("resource_group", "sheet_pass_resource_group_proof")])
+@pytest.mark.parametrize("kind,purpose,native_reads", [
+    ("norm", "sheet_pass_norm_proof", False),
+    ("resource_group", "sheet_pass_resource_group_proof", False),
+    ("norm", "sheet_pass_norm_proof", True),
+])
 async def test_actual_sheet_proof_uses_its_existing_literal_request_as_separate_required_phase_975(
-        tmp_path, monkeypatch, kind, purpose):
-    counted, cloud_checked = [], []
+        tmp_path, monkeypatch, kind, purpose, native_reads):
+    from proxy.services.workbook_research_job_service import WorkbookResearchJobService
+    from tests.test_model_rag_sheet_evidence_reads import NORM_CODE, NORM_CODE_B
+    from tests.test_explicit_norm_proof_read_973 import _native_read
+
+    counted, cloud_checked, built_phases, saved_pending = [], [], [], []
     original_runner = app.BoundModelChatRunner
     def runner(*, resolver, transport):
         async def count(selected, request):
@@ -229,24 +236,75 @@ async def test_actual_sheet_proof_uses_its_existing_literal_request_as_separate_
     is_group = kind == "resource_group"
     if is_group:
         _group_book(monkeypatch)
+    builder_name = ("resource_group_proof_request_message" if is_group
+                    else "norm_card_proof_request_message")
+    original_builder = getattr(app, builder_name)
+    def observe_phase(*args, **kwargs):
+        literal = original_builder(*args, **kwargs)
+        if literal:
+            built_phases.append(literal)
+        return literal
+    monkeypatch.setattr(app, builder_name, observe_phase)
+    original_pending = WorkbookResearchJobService.record_pending_proof
+    def observe_pending(self, job_id, **kwargs):
+        saved_pending.append(deepcopy(kwargs["held_packet"]["pending_proof"]))
+        return original_pending(self, job_id, **kwargs)
+    monkeypatch.setattr(WorkbookResearchJobService, "record_pending_proof", observe_pending)
+
     answer = WORK_ANSWER if is_group else SECOND_NORM_ANSWER
+    if native_reads:
+        answer = ("artifact_kind: lsr\n\n"
+            "| source_row | row_role | title | unit | quantity | norm_code | resource_code | evidence_refs |\n"
+            "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+            f"| S!R2 | work | Literal A | m | 12 | {NORM_CODE} | — | Q1.H1 |\n"
+            f"| S!R3 | work | Literal B | m | 3 | {NORM_CODE_B} | — | Q2.H1 |")
+    replies = ([InferenceResponse(text="", tool_calls=(_native_read("Q1.H1", "proof-A"),),
+                                  finish_reason="tool_calls", usage={}),
+                InferenceResponse(text="", tool_calls=(_native_read("Q2.H1", "proof-B"),),
+                                  finish_reason="tool_calls", usage={})] if native_reads else [])
+    replies.append(InferenceResponse(text=answer, tool_calls=(), finish_reason="stop", usage={}))
     run = await _run_sheet(tmp_path, monkeypatch, reads=is_group, distinct_norms=not is_group,
         group_char_budget=None if is_group else 7000, final_answer=answer, wire_budget_bytes=300000,
-        proof_replies=[InferenceResponse(text=answer, tool_calls=(), finish_reason="stop", usage={})])
-    frames = [frame for frame in run.result["retrieval_trace"]["context_governor"]["calls"] if frame["purpose"] == purpose]
-    assert len(frames) == 1 and not run.responses
-    proof = _proof_payloads(frames[0])
-    assert len(proof) == 1 and proof[0]["proof_previous_model_answer"] == answer
-    phases = [section for section in frames[0]["sections"] if section["kind"] == "phase_instruction"]
-    assert len(phases) == 1 and phases[0]["items"] == 1
-    request = run.requests[-1]
-    assert request.messages[-1] == {"role": "user", "content": proof[0]["proof_request"]}, (
-        "derive the phase from the existing proof context, never a gold answer; "
-        "its trusted phase section need not expose literal text in the public trace")
-    dispatched = _request_projection(request)
-    assert dispatched in counted and dispatched in cloud_checked
-    assert request.max_output_tokens == 8192
-    assert all(section["kind"] != "terminal_request" for section in frames[0]["sections"])
+        native_reasoning="SYNTHETIC_CURRENT_NATIVE_CHAIN_977" if native_reads else None,
+        proof_replies=replies)
+    frames = [frame for frame in run.result["retrieval_trace"]["context_governor"]["calls"]
+              if _proof_payloads(frame)]
+    proof_requests = run.requests[-len(replies):]
+    assert len(frames) == len(proof_requests) == len(replies) and not run.responses
+    assert frames[0]["purpose"] == purpose and len(built_phases) == 1
+    literal_phase = built_phases[0]
+    assert len(saved_pending) == 1
+    assert saved_pending[0]["proof_request"] == literal_phase
+    assert saved_pending[0]["proof_previous_model_answer"] == answer
+    for frame, request in zip(frames, proof_requests):
+        assert _proof_payloads(frame) == [{"proof_previous_model_answer": answer}], (
+            "the prior answer remains complete data; the phase instruction has one trusted owner")
+        phases = [section for section in frame["sections"] if section["kind"] == "phase_instruction"]
+        assert len(phases) == 1 and phases[0]["items"] == 1
+        assert sum(message == {"role": "user", "content": literal_phase}
+                   for message in request.messages) == 1
+        dispatched = _request_projection(request)
+        assert dispatched in counted and dispatched in cloud_checked
+        assert request.max_output_tokens == 8192
+        assert all(section["kind"] != "terminal_request" for section in frame["sections"])
+        assert json.dumps(answer, ensure_ascii=False) in "\n".join(
+            str(message.get("content") or "") for message in request.messages)
+    assert proof_requests[0].messages[-1] == {"role": "user", "content": literal_phase}
+    if native_reads:
+        for request in proof_requests[1:]:
+            phase_index = next(index for index, message in enumerate(request.messages)
+                               if message == {"role": "user", "content": literal_phase})
+            native_indices = [index for index, message in enumerate(request.messages)
+                              if message["role"] in {"assistant", "tool"}]
+            assert native_indices and phase_index < min(native_indices)
+        final_messages = proof_requests[-1].messages
+        assert {message.get("tool_call_id") for message in final_messages
+                if message["role"] == "tool"} == {"proof-A", "proof-B"}
+        assert "fixture-resource-21" in str(final_messages)
+        assert any(message.get("reasoning_content") == "SYNTHETIC_CURRENT_NATIVE_CHAIN_977"
+                   for message in final_messages if message["role"] == "assistant")
+    elif is_group:
+        assert "fixture-resource-21" in str(proof_requests[0].messages)
     initial = next(frame for frame in run.result["retrieval_trace"]["context_governor"]["calls"]
                    if frame["purpose"] == "sheet_pass_answer")
     assert all(section["kind"] != "phase_instruction" for section in initial["sections"])

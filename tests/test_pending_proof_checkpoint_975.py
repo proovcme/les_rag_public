@@ -282,7 +282,18 @@ async def test_actual_completed_answer_resumes_only_its_pending_proof_after_paus
     assert pending, "the complete original answer must be durable before the next proof await"
     assert before["accepted_rows"] == [] and run.executions == []
     assert pending["proof_previous_model_answer"] == answer and pending["finish_reason"] == "stop"
-    assert pending["proof_request"] == _proof_payload(interrupted)["proof_request"]
+    assert isinstance(pending["proof_request"], str) and pending["proof_request"]
+    assert _proof_payload(interrupted) == {"proof_previous_model_answer": answer}
+    phase_message = {"role": "user", "content": pending["proof_request"]}
+    assert sum(message == phase_message for message in interrupted.messages) == 1
+    if after_read:
+        phase_index = next(index for index, message in enumerate(interrupted.messages)
+                           if message == phase_message)
+        native_indices = [index for index, message in enumerate(interrupted.messages)
+                          if message["role"] in {"assistant", "tool"}]
+        assert native_indices and phase_index < min(native_indices)
+    else:
+        assert interrupted.messages[-1] == phase_message
     assert pending["purpose"] == ("sheet_pass_resource_group_proof" if kind == "resource_group" else "sheet_pass_norm_proof")
     assert pending["scope"]["locators"] == ["S!R2", "S!R3"]
     for field in ("source_sha256", "dataset_ids", "profile_revision_id", "model_connection_revision_id"):
@@ -303,7 +314,9 @@ async def test_actual_completed_answer_resumes_only_its_pending_proof_after_paus
     assert run.queries == queries_before, "no fresh search or query model turn is allowed for this pending packet"
     assert len(seen) == requests_before + 1, "one existing pending proof, no initial answer or extra automatic proof loop"
     resumed_request = seen[-1]
-    assert _proof_payload(resumed_request)["proof_previous_model_answer"] == answer
+    assert _proof_payload(resumed_request) == {"proof_previous_model_answer": answer}
+    assert resumed_request.messages[-1] == phase_message
+    assert sum(message == phase_message for message in resumed_request.messages) == 1
     assert not any(message.get("role") in {"assistant", "tool"} for message in resumed_request.messages)
     assert OPAQUE not in str(resumed_request.messages)
     assert (resumed_request.max_output_tokens, resumed_request.temperature, resumed_request.reasoning_enabled) == (
