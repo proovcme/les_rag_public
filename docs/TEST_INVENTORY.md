@@ -1,5 +1,39 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## 983 — реклама существующих структурных полей
+
+`test_model_result_packet_service`:30новых случаев application-owned CAS,
+scope, raw audit, literal поля, race, несколько операций одного адреса,
+restart/invalid snapshot, идемпотентность и прежний strict manual admission.
+ROOT selected19RED/1positive→48ownerGREEN/0.50s (добавлен один outside-packet
+duplicate identity RED). Phase975:11новых integration cases; после исправления
+test lifecycle/actual child lookup meaningful RED6failed/5positive. Полный
+связный owner4:219passed/14.88s, включая B0 marker, настоящую паузу, legacy,
+restart/CAS и параллельную редакцию. Counts пересекаются; installed live pending.
+Legacy source aliases:3RED→51ownerGREEN/0.64s, включая реальный store CAS и
+отклонение foreign alias. Новый служебный текст дал required wire overflow
+в прежнем positive54000; лимит/тест не менялись. Исключена no-op инструкция
+для empty snapshot:2RED→GREEN, оба baseline/candidate сохраняют transport audit.
+Wire54000positive и50000negative —5targetedGREEN/3.66s вместе сno-op.
+Phase975 final43passed/13.73s; source не изменён после этого прогона.
+`test_model_lsr_result_contract`:3перечня ВОР обязаны включать обоснование,
+связь включения и evidence. `test_model_workbook_terminal_transport_962`:
+7optional calc/resource полей объявлены,2real validate/decode варианта
+сохраняют source quantity, расчёт и вложенные literal решения. ROOT RED:
+10failed/2positive→177relatedGREEN/5.33s. Полный gate/live pending.
+Прежние SHA инструкций ЛСР сохранены: перед сравнением снимается только
+точный разрешённый delta перечня ВОР с count1, старые7поля остаются префиксом.
+
+## 982 — фактический полный gate и установленная проверка
+
+Main7091passed/20skipped/949.32s; один updater fixture WinError5 устранён
+повторным измерением неизменённого теста и полного328passed updater. Стандартные
+gate/artifact/acceptance receipts находятся в `artifacts/release_982_control/`.
+Exact NSIS принят install→rollback→reinstall,98runtime files aligned.
+Ordinary CSV/DOCX/LSR/B0 receipts и независимые физические проверки —
+`artifacts/live_982/`. Техническая доставка измерена; professional PASS нет.
+Подробные причины и восстановление исходной настройки: RELEASE_LEDGER.
+
 ## 982 — proof-local identity и действительный XLSX
 
 Existing canonical owners: `test_model_proof_turn_integrity.py` — новые8cases

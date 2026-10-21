@@ -126,7 +126,10 @@ from proxy.services.workbook_research_job_service import (
     WorkbookResearchJobError, WorkbookResearchJobService, source_conflict_resolutions,
     is_plain_continuation_question,
 )
-from proxy.services.model_result_packet_service import admit_model_result_packet
+from proxy.services.model_result_packet_service import (
+    admit_model_result_packet, bind_model_result_revisions,
+    capture_model_revision_snapshot, model_revision_snapshot_valid,
+)
 from proxy.services.model_lsr_result_contract import (
     MATCH_FIELDS, model_lsr_result_field_instruction, decode_model_artifact_kind,
     decode_model_query_envelope, update_model_artifact_kind,
@@ -6429,6 +6432,36 @@ def pending_proof_execution_preset(preset: Any) -> dict[str, Any]:
         "input_token_limit", "generation_reserve_tokens", "safety_reserve_tokens", "reasoning_enabled")}
 
 
+def model_revision_checkpoint_fields(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The optional pair distinguishes legacy proof transport from a saved base."""
+    return ({"revision_transport": "application_snapshot_v1", "model_revision_snapshot": deepcopy(snapshot)}
+            if snapshot is not None else {})
+
+
+def model_revision_snapshot_from_checkpoint(state, *, packet_id, packet_locators):
+    if not {"revision_transport", "model_revision_snapshot"}.intersection(state):
+        return None
+    snapshot = state.get("model_revision_snapshot")
+    if (state.get("revision_transport") != "application_snapshot_v1"
+            or not model_revision_snapshot_valid(snapshot, packet_id=packet_id, packet_locators=packet_locators)):
+        raise ValueError("MODEL_REVISION_SNAPSHOT_INVALID")
+    return deepcopy(snapshot)
+
+
+def model_revision_transport_context() -> dict[str, str]:
+    return {"revision_transport": "application_snapshot_v1", "revision_transport_instruction": (
+        "Служебную ревизию приложение связывает с исходным снимком. Верни точные operation_id и source_row; "
+        "expected_revision/base_revision/revision необязательны. Предметные поля определяешь ты.")}
+
+
+def bind_model_packet_revisions(rows, snapshot, trace, *, canonicalize_locator=None):
+    bound, metadata = bind_model_result_revisions(rows, snapshot, canonicalize_locator=canonicalize_locator)
+    receipt = {"origin": "application", "packet_id": snapshot["packet_id"],
+               "snapshot_schema": snapshot["schema"], "bindings": metadata}
+    trace.setdefault("model_revision_bindings", []).append(receipt)
+    return bound, receipt
+
+
 async def _execute_system_candidate_queries(
     *,
     catalog: AttachmentSourceCatalog | None,
@@ -6824,16 +6857,21 @@ def model_rag_evidence_page_state(
     leftover_query_hits: Sequence[tuple[str, Sequence[Any]]], query_offset: int,
     query_provenance: Mapping[str, str], query_addresses: Mapping[str, Sequence[str]],
     pending_result_packets: Sequence[Mapping[str, Any]] = (),
+    revision_snapshot: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Durable transport cursor, independent of the model's professional verdict."""
     queries = [str(query) for query, _hits in leftover_query_hits if str(query).strip()]
     if not queries:
-        return model_rag_with_pending_results({}, pending_result_packets)
+        state = model_revision_checkpoint_fields(revision_snapshot)
+        if state:
+            state.update(sheet=sheet, locators=list(packet))
+        return model_rag_with_pending_results(state, pending_result_packets)
     return model_rag_with_pending_results({
         "sheet": sheet, "locators": list(packet), "queries": queries,
         "query_offset": query_offset,
         "query_provenance": {q: query_provenance.get(q, "model") for q in queries},
         "query_addresses": {q: list(query_addresses.get(q, ())) for q in queries},
+        **model_revision_checkpoint_fields(revision_snapshot),
     }, pending_result_packets)
 
 
@@ -10987,6 +11025,7 @@ async def _execute_chat_evidence_application(
                 answer_execution_preset = model_rag_answer_execution_preset(
                     execution_preset, model_rag=model_driven_retrieval,
                 )
+                direct_model_revision_snapshot = None
                 retrieval_trace["model_execution_profile"]["answer_output_tokens"] = (
                     answer_execution_preset.diagnostics()["answer_output_tokens"]
                 )
@@ -12110,6 +12149,29 @@ async def _execute_chat_evidence_application(
                                     )
                                 tool_results_for_model = pass_tools
                                 model_rag_query_hits = pass_hits
+                            revision_packet_id = row_packet_id(source_catalog, sheet=sheet_name, locators=packet)
+                            revision_state = resuming_proof if resuming_proof else held_query_context
+                            canonicalize_revision_locator = lambda value: (
+                                source_catalog.lookup(value).locator if source_catalog.lookup(value) else value)
+                            try:
+                                model_revision_snapshot = model_revision_snapshot_from_checkpoint(
+                                    revision_state, packet_id=revision_packet_id, packet_locators=packet)
+                                if (model_revision_snapshot is None and not resuming_proof
+                                        and not {"revision_transport", "model_revision_snapshot"}.intersection(revision_state)):
+                                    # Use exactly the prior set already offered above,
+                                    # never a latest lookup after an authored reply.
+                                    model_revision_snapshot = capture_model_revision_snapshot(
+                                        prior_page_context.get("prior_model_decisions") or (),
+                                        packet_id=revision_packet_id, packet_locators=packet,
+                                        canonicalize_locator=canonicalize_revision_locator)
+                            except ValueError:
+                                run_stop_kinds.append("model_revision_snapshot_invalid")
+                                if research_job_service is not None and research_job is not None:
+                                    research_job = research_job_service.pause(research_job["job_id"],
+                                        phase="model_revision_snapshot_invalid", held_packet=held_query_context)
+                                break
+                            if model_revision_snapshot is not None and model_revision_snapshot["operations"]:
+                                pass_evidence.append(model_revision_transport_context())
                             leftover_query_hits: list[tuple[str, Sequence[Any]]] = []
                             included_hits: list[tuple[str, Sequence[Any]]] = []
                             result_artifact_kind = (str(artifact_kind_declaration.get("artifact_kind") or "")
@@ -12168,7 +12230,7 @@ async def _execute_chat_evidence_application(
                                     query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
                                     query_addresses=pass_query_addresses,
-                                    pending_result_packets=pending_result_packets)
+                                    pending_result_packets=pending_result_packets, revision_snapshot=model_revision_snapshot)
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
@@ -12235,7 +12297,7 @@ async def _execute_chat_evidence_application(
                                     query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
                                     query_addresses=pass_query_addresses,
-                                    pending_result_packets=pending_result_packets)
+                                    pending_result_packets=pending_result_packets, revision_snapshot=model_revision_snapshot)
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
@@ -12439,7 +12501,7 @@ async def _execute_chat_evidence_application(
                                             query_offset=evidence_query_offset,
                                             query_provenance=pass_query_provenance,
                                             query_addresses=pass_query_addresses,
-                                            pending_result_packets=pending_result_packets)),
+                                            pending_result_packets=pending_result_packets, revision_snapshot=model_revision_snapshot)),
                                     )
                                 raise
                             except ContextRequiredSectionOverflow as context_error:
@@ -12455,7 +12517,7 @@ async def _execute_chat_evidence_application(
                                     query_offset=evidence_query_offset,
                                     query_provenance=pass_query_provenance,
                                     query_addresses=pass_query_addresses,
-                                    pending_result_packets=pending_result_packets)
+                                    pending_result_packets=pending_result_packets, revision_snapshot=model_revision_snapshot)
                                 if research_job_service is not None and research_job is not None:
                                     research_job = research_job_service.pause(
                                         research_job["job_id"], remaining=list(dict.fromkeys([*remaining, *packet])),
@@ -12647,7 +12709,8 @@ async def _execute_chat_evidence_application(
                                     held = model_rag_evidence_page_state(
                                         sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
                                         query_offset=evidence_query_offset, query_provenance=pass_query_provenance,
-                                        query_addresses=pass_query_addresses, pending_result_packets=pending_result_packets)
+                                        query_addresses=pass_query_addresses, pending_result_packets=pending_result_packets,
+                                        revision_snapshot=model_revision_snapshot)
                                     held["packet_id"] = read_packet_id
                                     proof_evidence = [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks]
                                     held["pending_proof"] = {
@@ -12657,6 +12720,7 @@ async def _execute_chat_evidence_application(
                                                       "source_sha256", "dataset_ids", "profile_revision_id",
                                                       "model_connection_revision_id", "source_frame_contract_sha256")}},
                                         "execution_preset": pending_proof_execution_preset(answer_execution_preset),
+                                        **model_revision_checkpoint_fields(model_revision_snapshot),
                                         **sheet_proof_context[-1], "finish_reason": last_finish or "stop", "attempt": 1,
                                         "proof_rows": pass_rows,
                                         "proof_operation_identities": proof_operation_identities,
@@ -12719,7 +12783,8 @@ async def _execute_chat_evidence_application(
                                         held_packet={**(pending_held if pending_terminal_proof else model_rag_evidence_page_state(
                                             sheet=sheet_name, packet=packet, leftover_query_hits=pass_hits,
                                             query_offset=evidence_query_offset, query_provenance=pass_query_provenance,
-                                            query_addresses=pass_query_addresses, pending_result_packets=pending_result_packets)),
+                                            query_addresses=pass_query_addresses, pending_result_packets=pending_result_packets,
+                                            revision_snapshot=model_revision_snapshot)),
                                             "model_read_pending": True, "terminal_transport_error": error.code},
                                     )
 
@@ -12799,7 +12864,7 @@ async def _execute_chat_evidence_application(
                                             query_offset=evidence_query_offset,
                                             query_provenance=pass_query_provenance,
                                             query_addresses=pass_query_addresses,
-                                            pending_result_packets=pending_result_packets),
+                                            pending_result_packets=pending_result_packets, revision_snapshot=model_revision_snapshot),
                                             "model_read_pending": True, "read_stop": "cloud_token_budget"},
                                     )
                                 raise
@@ -12819,7 +12884,7 @@ async def _execute_chat_evidence_application(
                                             query_offset=evidence_query_offset,
                                             query_provenance=pass_query_provenance,
                                             query_addresses=pass_query_addresses,
-                                            pending_result_packets=pending_result_packets),
+                                            pending_result_packets=pending_result_packets, revision_snapshot=model_revision_snapshot),
                                             "model_read_pending": True, "read_stop": read_stop},
                                     )
                                 break
@@ -13152,6 +13217,11 @@ async def _execute_chat_evidence_application(
                                 )
                             from proxy.services.proof_operation_identity_service import restore_proof_operations
                             pass_rows = restore_proof_operations(pass_rows, proof_operation_identities)
+                            revision_binding_receipt = None
+                            if model_revision_snapshot is not None and isinstance(pass_rows, list):
+                                pass_rows, revision_binding_receipt = bind_model_packet_revisions(
+                                    pass_rows, model_revision_snapshot, retrieval_trace,
+                                    canonicalize_locator=canonicalize_revision_locator)
                             expanded_packet = model_read_result_packet_locators(
                                 packet, rows=pass_rows, receipts=read_receipts, catalog=source_catalog,
                                 existing_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
@@ -13441,6 +13511,7 @@ async def _execute_chat_evidence_application(
                                     held_packet=held_payload,
                                     unapplied_proposals=[*admission.unapplied_proposals, *pass_transport_diagnostics,
                                                         *source_conflict_proposals],
+                                    model_revision_bindings=revision_binding_receipt,
                                     enforce_packet_scope=True,
                                     canonicalize_locator=lambda value: (
                                         source_catalog.lookup(value).locator if source_catalog.lookup(value) else value
@@ -14059,6 +14130,15 @@ async def _execute_chat_evidence_application(
                             source_catalog=source_catalog,
                             source_frame=initial_source_frame,
                         )
+                        if workbook_carrier_required and source_catalog is not None:
+                            direct_locators = list(source_catalog.work_locators())
+                            # The direct baseline has no research-job operation
+                            # ledger. Its offered update set is therefore empty.
+                            direct_model_revision_snapshot = capture_model_revision_snapshot((),
+                                packet_id=row_packet_id(source_catalog, sheet="", locators=direct_locators),
+                                packet_locators=direct_locators)
+                            if direct_model_revision_snapshot["operations"]:
+                                fixed_model_rag_evidence.append(model_revision_transport_context())
                         _, fixed_packet = govern_inference_messages(
                             preset=answer_execution_preset,
                             profile_prefix=sys_msg,
@@ -14759,6 +14839,11 @@ async def _execute_chat_evidence_application(
                             answer, diagnostics=retrieval_trace.setdefault("model_result_transport_diagnostics", []),
                             model_declaration=artifact_kind_declaration,
                         )
+                        if (direct_model_revision_snapshot is not None and parsed_model_result is not None
+                                and isinstance(parsed_model_result[1], list)):
+                            direct_rows, _ = bind_model_packet_revisions(
+                                parsed_model_result[1], direct_model_revision_snapshot, retrieval_trace)
+                            parsed_model_result = (parsed_model_result[0], direct_rows)
                         expected_format_locators = (
                             list(source_catalog.work_locators())
                             if source_catalog is not None

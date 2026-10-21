@@ -1,5 +1,17 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 21.10.2026 —982 hint: техническая revision остановила исправление
+
+`artifacts/live_982/hint01/independent_audit.json`: во всех9контекстах у
+стяжки/кабеля revision1; модель вернула expected2. Старый CAS корректно
+сохранил прежние решения, но инженерный сценарий не исправил файл. Добавочная
+quantity150 без исходной37.5/calc-fields — отдельная предметная ошибка,
+которую транспорт не исправляет. Книга цен сохранилась;0полных позиций.
+Candidate983 переносит техническую CAS-привязку в application snapshot до
+ответа, без выбора ID по названию/source и без изменений предметных полей.
+Pure owner48passed; active pause/race/contract219passed. Installed gate pending. Это не объявление
+полного исправления ЛСР или профессиональной готовности.
+
 ## 21.10.2026 —982 source: новые операции размножались внутри proof
 
 Installed981 engineer hint, `artifacts/live_981/hint01/`: raw terminal8rows

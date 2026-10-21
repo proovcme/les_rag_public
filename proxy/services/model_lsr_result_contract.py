@@ -15,6 +15,10 @@ BASE_FIELDS = (
     "source_row", "row_role", "work_row", "title", "unit", "quantity",
     "norm_code", "norm_status", "open_gap", "evidence_refs",
 )
+VOR_RESULT_FIELDS = (
+    "source_row", "row_role", "work_row", "title", "unit", "quantity", "open_gap",
+    "coverage", "covered_by_work_id", "evidence_refs",
+)
 MATCH_FIELDS = (
     "action_match", "object_match", "condition_match", "unit_compatible",
     "composition_covers",
@@ -867,7 +871,7 @@ def model_vor_result_field_instruction() -> str:
         "Соблюдай формат пользователя; иначе предпочти компактный JSON "
         '{"artifact_kind":"vor","rows":[...]}. Допустимы Markdown или текст с теми же полями; '
         "вне JSON объяви artifact_kind: vor отдельной строкой. "
-        "Поля строки: source_row, row_role, work_row, title, unit, quantity, open_gap. "
+        "Поля строки: " + ", ".join(VOR_RESULT_FIELDS) + ". "
         "row_role: work, material, equipment, resource, header или unresolved. "
         "Роль определяешь ты по смыслу исходной позиции: ГОСТ, марка или артикул сами по себе "
         "не превращают названную работу в материал. work — технологическая операция; "
@@ -922,7 +926,7 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "(в корне JSON либо отдельной строкой); это тип результата, не тип исходника. "
         "В Markdown сохраняй объявленные "
         "ячейки, включая пустые, и экранируй | внутри значения. "
-        "Поля ВОР: source_row, row_role, work_row, title, unit, quantity, open_gap. "
+        "Поля ВОР: " + ", ".join(VOR_RESULT_FIELDS) + ". "
         "Для ВОР нормы, цены и поля norm_code/norm_status не обязательны. "
         "Не ставь MISSING и не меняй известную работу на unresolved лишь из-за отсутствия нормы или цены. "
         "Исходные основания ВОР укажи через source_row; evidence_refs добавляй, когда ссылаешься на показанное основание. "

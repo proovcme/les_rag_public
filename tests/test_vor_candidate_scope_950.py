@@ -13,7 +13,10 @@ from proxy.services.model_lsr_result_contract import model_vor_result_field_inst
 from proxy.services.openai_compatible_transport_service import InferenceResponse
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from tests import test_model_rag_sheet_evidence_reads as fixture
-from tests.test_vor_operation_instructions_948 import _strip_authorized_supply_match_980_delta
+from tests.test_vor_operation_instructions_948 import (
+    _strip_authorized_supply_match_980_delta,
+    _strip_authorized_vor_field_list_delta,
+)
 
 
 LITERAL_QUERIES = ["[S!R2] Cable A literal [variant Ω]", '"S!R3 Cable B literal"']
@@ -92,7 +95,8 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
                                               remaining_clause="\nREMAINING_PACKET")
     vor = model_vor_result_field_instruction()
     lsr = lsr_result_table_instruction(artifact_kind="lsr")
-    previous_lsr = _strip_authorized_supply_match_980_delta(lsr)
+    previous_lsr = _strip_authorized_vor_field_list_delta(
+        _strip_authorized_supply_match_980_delta(lsr))
     assert instruction.startswith("CURRENT_PACKET\n") and instruction.endswith("\nREMAINING_PACKET")
     assert instruction.count("CURRENT_PACKET") == instruction.count("REMAINING_PACKET") == 1
     assert "Тип документа определяешь ты" in instruction
@@ -100,6 +104,7 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
     vor_section = instruction.split("КОНТРАКТ ВОР — только при artifact_kind: vor\n", 1)[1].split(
         "\nКОНЕЦ КОНТРАКТА ВОР", 1)[0]
     for field in ("source_row", "row_role", "work_row", "title", "unit", "quantity", "open_gap",
+                  "coverage", "covered_by_work_id", "evidence_refs",
                   "calc_quantity", "calc_unit", "conversion_source"):
         assert field in vor_section
     assert "не являются условиями создания ВОР" in vor_section

@@ -23,6 +23,7 @@ from proxy.services.model_answer_table_service import (
 )
 from proxy.services.model_lsr_result_contract import (
     MATCH_FIELDS,
+    VOR_RESULT_FIELDS,
     model_lsr_result_field_instruction,
     model_vor_result_field_instruction,
 )
@@ -1849,7 +1850,7 @@ def lsr_result_table_instruction(
             "чтение/объяснение — без типа и строк документа. "
             "Один контракт; отсутствие декларации в запросном ходе не означает выбор ЛСР.\n\n"
             "КОНТРАКТ ВОР — только при artifact_kind: vor\n"
-            "source_row, row_role, work_row, title, unit, quantity, open_gap. Явная работа остаётся работой, "
+            + ", ".join(VOR_RESULT_FIELDS) + ". Явная работа остаётся работой, "
             "даже с ГОСТ. Материал: обоснованная работа-родитель либо вопрос; не автоматический монтаж. "
             "Неясная технология в строке с объёмом — не header. Работы/объёмы — из исходника; "
             "включение — с обоснованием покрытия. unit/quantity сохраняй; неизвестное — null, ноль — 0. "

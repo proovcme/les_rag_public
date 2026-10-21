@@ -1,5 +1,25 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 983 — согласованность advertised полей ВОР/ЛСР
+
+✅ Doc↔source: `model_result_packet_service` — immutable application revision snapshot и
+transport-only binding точного operation_id/source. Pure helper51passed;
+`chat_evidence_application_service` захватывает показанный prior до ответа,
+сохраняет пару в pre-admission held/pending и привязывает CAS один раз после
+proof. `workbook_research_job_service` проверяет пару и записывает raw audit
+отдельным событием.219related passed; installed journey ещё pending.
+Пустой snapshot не добавляет модели ненужных инструкций ревизии; прежние
+wire budget guards сохранены. Legacy aliases сравниваются тем же каталогом.
+Прямой admission/storeCAS не ослаблены; предметные поля остаются literal.
+✅ Doc↔source: `model_lsr_result_contract.VOR_RESULT_FIELDS` задаёт одинаковый
+перечень исходных полей, связей и обоснований в трёх активных инструкциях.
+`model_workbook_terminal_transport_service.build_workbook_terminal_tool_schema`
+описывает существующие optional calc_quantity/calc_unit/conversion_factor/
+conversion_source и resource_code/resource_bindings/resource_review. Literal
+decoder, required, расчёт и модельный выбор не изменены. Док: [model result](ADR-15-model-rag-result.md).
+🟡 Source983; installed982/afd07ff9 принят технически, профессионально не готов.
+Точные измерения/отклонённые настройки: [RELEASE_LEDGER](RELEASE_LEDGER.md).
+
 ## 982 — кандидат: адрес непринятой операции между proof rounds
 
 ✅ Doc↔source: `proof_operation_identity_service` выдаёт отдельные временные

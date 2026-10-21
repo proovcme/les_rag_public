@@ -7,11 +7,25 @@ import pytest
 
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 from proxy.services.model_lsr_result_contract import (
+    VOR_RESULT_FIELDS,
     decode_model_artifact_kind,
     decode_model_result_rows,
     model_lsr_result_field_instruction,
     model_vor_result_field_instruction,
 )
+
+
+def _strip_authorized_vor_field_list_delta(instruction):
+    """Reverse only the three added VOR fields before checking old LSR bytes."""
+    previous_fields = ("source_row", "row_role", "work_row", "title", "unit", "quantity", "open_gap")
+    added_fields = ("coverage", "covered_by_work_id", "evidence_refs")
+    assert VOR_RESULT_FIELDS[:len(previous_fields)] == previous_fields
+    assert VOR_RESULT_FIELDS[len(previous_fields):] == added_fields
+    current = "Поля ВОР: " + ", ".join(previous_fields + added_fields) + ". "
+    previous = "Поля ВОР: " + ", ".join(previous_fields) + ". "
+    assert instruction.count(current) == 1
+    assert instruction.count(previous) == 0
+    return instruction.replace(current, previous, 1)
 
 
 def _strip_authorized_supply_match_980_delta(instruction):
@@ -58,7 +72,8 @@ def test_only_explicit_vor_target_receives_dedicated_operation_contract():
 @pytest.mark.parametrize("kind", ["lsr", "both", "unknown", "VOR"])
 def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(kind):
     instruction = lsr_result_table_instruction(artifact_kind=kind)
-    previous_instruction = _strip_authorized_supply_match_980_delta(instruction)
+    previous_instruction = _strip_authorized_vor_field_list_delta(
+        _strip_authorized_supply_match_980_delta(instruction))
     old_phrase = "nr_sp_rule_id выбирай из карточки по известным условиям; при неизвестных — "
     new_phrase = (
         "nr_sp_rule_id дословно копируй из rule_id внутри каталога по известным условиям; "

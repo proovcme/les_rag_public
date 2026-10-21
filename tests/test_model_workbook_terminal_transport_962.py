@@ -254,6 +254,74 @@ def test_native_lsr_schema_exposes_typed_supply_resource_match_without_requiring
     assert not set(row.get("required", [])) & {"action_match", "object_match", "condition_match", "composition_covers"}
 
 
+@pytest.mark.parametrize("field,types", [
+    ("calc_quantity", {"number", "string", "null"}),
+    ("calc_unit", {"string", "null"}),
+    ("conversion_factor", {"number", "string", "null"}),
+    ("conversion_source", {"string", "null"}),
+    ("resource_code", {"string", "null"}),
+    ("resource_bindings", {"array", "object", "string", "null"}),
+    ("resource_review", {"object", "string", "null"}),
+])
+def test_native_lsr_schema_advertises_existing_optional_calculation_and_resource_fields(field, types):
+    from proxy.services.model_workbook_terminal_transport_service import build_workbook_terminal_tool_schema
+    from proxy.services.structured_extract import validate
+
+    params = build_workbook_terminal_tool_schema(["S!R2"], artifact_kind="lsr")["function"]["parameters"]
+    row = params["properties"]["decisions"]["items"]
+    # The model must see these existing fields in the native interface, rather
+    # than having to invent additional properties from the prose contract.
+    assert field in row["properties"]
+    advertised = row["properties"][field]
+    assert set(advertised["type"]) == types
+    assert isinstance(advertised.get("description"), str) and advertised["description"].strip()
+    assert field not in row["required"]
+    assert all(field not in clause.get("then", {}).get("required", []) for clause in row.get("allOf", []))
+    assert row["additionalProperties"] is True
+    minimal = {"source_row": "S!R2", "row_role": "work", "title": "Literal undecided operation"}
+    assert validate({"attachment_id": "read_owned", "decisions": [minimal]}, params) == []
+
+
+@pytest.mark.parametrize("representation", ["mapping", "string"])
+def test_native_lsr_optional_calculation_and_resource_decisions_remain_literal(representation):
+    from proxy.services.model_lsr_result_contract import MATCH_FIELDS
+    from proxy.services.model_workbook_terminal_transport_service import build_workbook_terminal_tool_schema
+    from proxy.services.structured_extract import validate
+
+    authored = {
+        "source_row": "S!R2", "row_role": "work", "work_row": None, "title": "Literal model operation",
+        "unit": "m²", "quantity": "23,6", "norm_code": "MODEL_CARD_CODE", "norm_status": "NEEDS_RESEARCH",
+        "open_gap": "Literal unresolved condition", "evidence_refs": ["Q2.H3"],
+        "coverage": "Literal model applicability", **{field: "unknown" for field in MATCH_FIELDS},
+        "calc_quantity": 70.8, "calc_unit": "m²", "conversion_factor": 3,
+        "conversion_source": "Literal model formula: 23.6 × 3 = 70.8; Q2.H3",
+        "resource_code": "LITERAL_RESOURCE_CODE",
+        "resource_bindings": [{
+            "action": "replace", "target_resource_ref": "Q2.H3#resource=4",
+            "resource_code": "LITERAL_SELECTED_CODE", "resource_name": "Literal model resource",
+            "unit": "kg", "quantity_basis": "target_norm", "reason": "Literal model basis",
+            "source_refs": ["Q2.H3", "Q4.H1"], "additional_model_fact": {"literal": "preserve me"},
+        }],
+        "resource_review": {
+            "status": "unresolved", "reason": "Literal model resource debt",
+            "labor_status": "confirmed", "labor_reason": "Literal labor basis",
+            "material_status": "unresolved", "material_reason": "Literal material debt",
+            "additional_model_fact": {"literal": None},
+        },
+        "other_professional_field": {"literal": [0, False, None, "unchanged"]},
+    }
+    arguments = {"attachment_id": "read_owned", "decisions": [authored]}
+    before = deepcopy(arguments)
+    params = build_workbook_terminal_tool_schema(["S!R2"], artifact_kind="lsr")["function"]["parameters"]
+    assert validate(arguments, params) == []
+    native_arguments = json.dumps(arguments, ensure_ascii=False) if representation == "string" else arguments
+    result = decode_workbook_terminal_response(
+        [call(native_arguments, name="build_lsr_workbook")], artifact_kind="lsr")
+    assert result.envelope == {"artifact_kind": "lsr", "rows": [authored]}
+    assert result.arguments == before and arguments == before
+    assert decode_model_result_rows(result.text) == [authored]
+
+
 @pytest.mark.parametrize("declared,actual", [("lsr", "vor"), ("vor", "lsr")])
 def test_known_native_function_cannot_override_model_declared_document_kind(declared, actual):
     native = [call({"decisions": rows()}, name=f"build_{actual}_workbook")]

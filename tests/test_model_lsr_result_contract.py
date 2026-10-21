@@ -6,6 +6,19 @@ from proxy.services import model_lsr_result_contract as contract
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 
 
+@pytest.mark.parametrize("instruction,marker", [
+    (contract.model_vor_result_field_instruction, "Поля строки: "),
+    (contract.model_lsr_result_field_instruction, "Поля ВОР: "),
+    (lsr_result_table_instruction, "КОНТРАКТ ВОР — только при artifact_kind: vor\n"),
+])
+def test_advertised_vor_fields_include_authored_scope_and_parent_evidence(instruction, marker):
+    # The model must be offered structured fields for the justification and
+    # relationships required by the same instruction, not only prose after rows.
+    fields = instruction().split(marker, 1)[1].split(". ", 1)[0].split(", ")
+    assert {"source_row", "row_role", "work_row", "title", "unit", "quantity",
+            "open_gap", "coverage", "covered_by_work_id", "evidence_refs"} <= set(fields)
+
+
 @pytest.mark.parametrize("instruction_factory", [
     contract.model_lsr_result_field_instruction,
     lsr_result_table_instruction,

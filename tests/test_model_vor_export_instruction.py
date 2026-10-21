@@ -12,6 +12,8 @@ from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instru
 
 
 VOR_CORE = ("source_row", "row_role", "work_row", "title", "unit", "quantity", "open_gap")
+VOR_PROOF_FIELDS = ("coverage", "covered_by_work_id", "evidence_refs")
+VOR_FIELDS = VOR_CORE + VOR_PROOF_FIELDS
 LSR_REQUIRED = ("source_row", "row_role", "work_row", "title", "unit", "quantity",
                 "norm_code", "norm_status", "open_gap", "evidence_refs")
 
@@ -24,7 +26,7 @@ def _declared_fields(instruction, kind):
 @pytest.mark.parametrize("factory", [contract.model_lsr_result_field_instruction, lsr_result_table_instruction])
 def test_shared_export_instruction_keeps_vor_core_separate_from_required_lsr_fields(factory):
     instruction = factory()
-    assert _declared_fields(instruction, "ВОР") == VOR_CORE
+    assert _declared_fields(instruction, "ВОР") == VOR_FIELDS == contract.VOR_RESULT_FIELDS
     assert _declared_fields(instruction, "ЛСР") == LSR_REQUIRED == contract.BASE_FIELDS
     assert "Для ВОР нормы, цены и поля norm_code/norm_status не обязательны" in instruction
     assert "Не ставь MISSING и не меняй известную работу на unresolved лишь из-за отсутствия нормы или цены" in instruction
@@ -82,7 +84,7 @@ async def test_actual_model_declared_export_wire_contains_conditional_common_con
         assert "Нормы и цены для ВОР не обязательны" in messages
     else:
         assert shared in messages
-        assert _declared_fields(shared, "ВОР") == VOR_CORE
+        assert _declared_fields(shared, "ВОР") == VOR_FIELDS == contract.VOR_RESULT_FIELDS
         assert _declared_fields(shared, "ЛСР") == LSR_REQUIRED
         assert "Для ВОР нормы и цены не являются условием создания работ и объёмов" in messages
     assert "LITERAL READ PROFILE Ω" in messages and "LITERAL READ SKILL Ω" in messages

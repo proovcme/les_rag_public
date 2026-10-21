@@ -86,6 +86,25 @@ def test_completed_answer_is_durable_before_proof_without_status_ids_or_counter_
     assert resumed["accepted_rows"] == before["accepted_rows"]
 
 
+@pytest.mark.parametrize("damage", ["marker_only", "snapshot_only", "invalid_snapshot"])
+def test_pending_model_revision_protocol_and_snapshot_are_an_atomic_valid_pair_983(tmp_path, damage):
+    store, _, before = _job(tmp_path)
+    pending = _checkpoint(before)
+    pending["revision_transport"] = "application_snapshot_v1"
+    pending["model_revision_snapshot"] = {"schema": "les.model-revision-snapshot.v1",
+        "packet_id": pending["scope"]["packet_id"], "packet_locators": ["S!R3"], "operations": []}
+    if damage == "marker_only":
+        pending.pop("model_revision_snapshot")
+    elif damage == "snapshot_only":
+        pending.pop("revision_transport")
+    else:
+        pending["model_revision_snapshot"]["packet_id"] = "foreign-packet"
+    with pytest.raises(WorkbookResearchJobError, match="PENDING_PROOF_FIELDS_INVALID"):
+        _writer(store)(before["job_id"], held_packet=_held(pending), evidence=[EVIDENCE])
+    assert store.get(before["job_id"])["held_packet"] == before["held_packet"]
+    assert store.get(before["job_id"])["accepted_rows"] == before["accepted_rows"]
+
+
 @pytest.mark.parametrize("field,value", [("packet_id", "another-packet"), ("locators", ["S!R2"]),
     ("source_sha256", "b" * 64), ("dataset_ids", ["another-selected-dataset"]),
     ("profile_revision_id", "profile:r2"), ("model_connection_revision_id", "conn:r2")])
@@ -209,6 +228,231 @@ def _proof_payload(request):
             if isinstance(value, dict) and "proof_previous_model_answer" in value:
                 return value
     return None
+
+
+async def _revision_snapshot_review(tmp_path, monkeypatch):
+    """Use the real owned job and a human requeue, not a fake admission result."""
+    kind = "vor"
+    initial = json.dumps({"artifact_kind": kind, "rows": [
+        {"source_row": "S!R2", "row_role": "work", "title": "Original operation A", "unit": "m",
+         "quantity": 12, "coverage": "Original model source basis A", "open_gap": ""},
+        {"source_row": "S!R3", "row_role": "work", "title": "Original operation B", "unit": "m",
+         "quantity": 3, "coverage": "Original model source basis B", "open_gap": ""},
+    ]})
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False,
+        query_declaration=json.dumps({"artifact_kind": kind, "queries": []}), final_answer=initial)
+    store = WorkbookResearchJobService()
+    job_id = run.result["retrieval_trace"]["workbook_research_job"]["job_id"]
+    before = deepcopy(store.get(job_id)["accepted_rows"])
+    assert len(before) == 2 and all(row["revision"] == 1 for row in before)
+    store.reopen_locators(job_id, [row["source_row"] for row in before], preserve_accepted=True,
+        operation_ids=[row["operation_id"] for row in before], chat_review={
+            "message": "Engineer requested a new model review of these exact operations.",
+            "decision_author": "user", "review_scope": "locators", "prior_artifact_kind": kind})
+    authored = app.parse_model_rag_result(initial)[1]
+    by_source = {row["source_row"]: row for row in before}
+    for row in authored:
+        row.update(operation_id=by_source[row["source_row"]]["operation_id"], expected_revision=2)
+    authored[0]["coverage"] = "Literal revised model basis, not an application confirmation"
+    return run, store, job_id, before, authored, kind
+
+
+def _revision_binding_audit(result, store, job_id, operation_id):
+    wrappers = result["retrieval_trace"].get("model_revision_bindings", [])
+    matching = [(wrapper, item) for wrapper in wrappers for item in wrapper["bindings"]
+                if item["operation_id"] == operation_id]
+    assert len(matching) == 1
+    wrapper, item = matching[0]
+    assert wrapper["origin"] == "application" and wrapper["packet_id"]
+    assert wrapper["snapshot_schema"] == "les.model-revision-snapshot.v1"
+    assert item["snapshot_revision"] == 1
+    assert item["authored_revision_fields"] == {"expected_revision": 2}
+    events = [event["payload"] for event in store.list_events(job_id, "model_revision_bindings")
+              if any(entry["operation_id"] == operation_id and entry["authored_revision_fields"]
+                     for entry in event["payload"]["bindings"])]
+    assert events == [wrapper], "one durable application event per bound packet, not one event per field"
+    return item
+
+
+@pytest.mark.asyncio
+async def test_model_transport_binds_authored_future_revision_to_the_offered_snapshot_983(tmp_path, monkeypatch):
+    run, store, job_id, before, authored, kind = await _revision_snapshot_review(
+        tmp_path, monkeypatch)
+    raw = json.dumps({"artifact_kind": kind, "rows": authored}, ensure_ascii=False)
+    frozen = deepcopy(authored)
+    run.responses.extend([
+        InferenceResponse(text=json.dumps({"artifact_kind": kind, "queries": []}), tool_calls=(), finish_reason="stop", usage={}),
+        InferenceResponse(text=raw, tool_calls=(), finish_reason="stop", usage={}),
+    ])
+    calls = len(run.requests)
+    result = await run.resume_same_request(question="Продолжи")
+    assert "revision_transport_instruction" in str(run.requests[-1].messages)
+    current = store.get(result["retrieval_trace"]["workbook_research_job"]["job_id"])
+    assert current["continues_job_id"] == job_id and not current["unapplied_proposals"]
+    assert store.get(job_id)["accepted_rows"] == before
+    assert len(run.requests) == calls + 2 and not run.responses
+    assert [row["operation_id"] for row in current["accepted_rows"]] == [row["operation_id"] for row in before]
+    assert [row["revision"] for row in current["accepted_rows"]] == [2, 1]
+    for actual, decision in zip(current["accepted_rows"], authored, strict=True):
+        assert {key: actual[key] for key in decision if key != "expected_revision"} == {
+            key: value for key, value in decision.items() if key != "expected_revision"}
+    assert app.parse_model_rag_result(raw)[1] == frozen and authored == frozen
+    _revision_binding_audit(result, store, current["job_id"], before[0]["operation_id"])
+    assert "application_snapshot_v1" in str(run.requests[-1].messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_fresh_packet_keeps_snapshot_transport_without_irrelevant_revision_instruction_983(tmp_path, monkeypatch, variant):
+    rows = [
+        {"source_row": "S!R2", "row_role": "work", "title": "Direct literal operation A", "unit": "m",
+         "quantity": 12, "coverage": "Literal source basis A", "operation_id": "", "expected_revision": 2},
+        {"source_row": "S!R3", "row_role": "work", "title": "Direct literal operation B", "unit": "m",
+         "quantity": 3, "coverage": "Literal source basis B", "operation_id": "", "expected_revision": 2},
+    ]
+    raw = json.dumps({"artifact_kind": "vor", "rows": rows}, ensure_ascii=False)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant=variant,
+        query_declaration='{"artifact_kind":"vor","queries":[]}', final_answer=raw)
+    assert len(run.requests) == 2 and len(run.executions) == 1 and not run.responses
+    if variant == "B0_DIRECT":
+        assert "workbook_research_job" not in run.result["retrieval_trace"]
+    else:
+        assert run.result["retrieval_trace"]["workbook_research_job"]["job_id"]
+    assert "revision_transport_instruction" not in str(run.requests[-1].messages)
+    for actual, authored in zip(run.executions[0][0]["args"]["decisions"], rows, strict=True):
+        fields = set(authored) if variant == "B0_DIRECT" else set(authored) - {"operation_id", "expected_revision"}
+        assert {key: actual[key] for key in fields} == {key: authored[key] for key in fields}
+    wrappers = run.result["retrieval_trace"].get("model_revision_bindings", [])
+    assert len(wrappers) == 1 and wrappers[0]["origin"] == "application"
+    assert wrappers[0]["snapshot_schema"] == "les.model-revision-snapshot.v1" and wrappers[0]["bindings"] == []
+    assert app.parse_model_rag_result(raw)[1] == rows
+
+
+@pytest.mark.asyncio
+async def test_model_revision_binding_does_not_adopt_a_concurrent_store_revision_983(tmp_path, monkeypatch):
+    run, store, job_id, before, authored, kind = await _revision_snapshot_review(tmp_path, monkeypatch)
+    concurrent = {**before[0], "coverage": "Concurrent operator decision must survive"}
+    active_ids = []
+    original_begin = WorkbookResearchJobService.begin_or_resume
+    def observe_begin(self, identity, **kwargs):
+        current = original_begin(self, identity, **kwargs)
+        if current.get("continues_job_id") == job_id:
+            active_ids.append(current["job_id"])
+        return current
+    monkeypatch.setattr(WorkbookResearchJobService, "begin_or_resume", observe_begin)
+    def complete_after_concurrent_change():
+        # Observe the actual returned job; timestamp-tied latest() is not a
+        # reliable way to identify the current child in this fast fixture.
+        assert active_ids
+        active = store.get(active_ids[-1])
+        assert active["continues_job_id"] == job_id
+        store.record_revision(active["job_id"], operation_id=before[0]["operation_id"], decision=concurrent,
+                              base_revision=1, origin="operator")
+        return InferenceResponse(text=json.dumps({"artifact_kind": kind, "rows": authored}),
+                                 tool_calls=(), finish_reason="stop", usage={})
+    run.responses.extend([
+        InferenceResponse(text=json.dumps({"artifact_kind": kind, "queries": []}), tool_calls=(), finish_reason="stop", usage={}),
+        complete_after_concurrent_change,
+    ])
+    result = await run.resume_same_request(question="Продолжи")
+    current = store.get(result["retrieval_trace"]["workbook_research_job"]["job_id"])
+    assert current["continues_job_id"] == job_id and store.get(job_id)["accepted_rows"] == before
+    target = next(row for row in current["accepted_rows"] if row["operation_id"] == before[0]["operation_id"])
+    assert target["revision"] == 2 and target["coverage"] == concurrent["coverage"]
+    assert before[0]["operation_id"] in store.pending_research_operation_ids(current)
+    assert any(proposal["reason"] == "operation_revision_mismatch" for proposal in current["unapplied_proposals"])
+    _revision_binding_audit(result, store, current["job_id"], before[0]["operation_id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["unknown_id", "foreign_source"])
+async def test_model_snapshot_transport_never_repairs_an_unowned_operation_address_983(tmp_path, monkeypatch, damage):
+    run, store, job_id, before, authored, kind = await _revision_snapshot_review(tmp_path, monkeypatch)
+    if damage == "unknown_id":
+        authored[0]["operation_id"] = "op_not_offered_to_this_model"
+        reason = "unknown_operation_id"
+    else:
+        authored[0].update(source_row="S!R3", quantity=3)
+        reason = "operation_source_mismatch"
+    raw = json.dumps({"artifact_kind": kind, "rows": authored})
+    run.responses.extend([
+        InferenceResponse(text=json.dumps({"artifact_kind": kind, "queries": []}), tool_calls=(), finish_reason="stop", usage={}),
+        InferenceResponse(text=raw, tool_calls=(), finish_reason="stop", usage={}),
+    ])
+    result = await run.resume_same_request(question="Продолжи")
+    current = store.get(result["retrieval_trace"]["workbook_research_job"]["job_id"])
+    assert current["continues_job_id"] == job_id and store.get(job_id)["accepted_rows"] == before
+    assert current["accepted_rows"] == before
+    assert any(proposal["reason"] == reason and
+               {key: proposal["decision"][key] for key in authored[0]} == authored[0]
+               for proposal in current["unapplied_proposals"])
+
+
+@pytest.mark.asyncio
+async def test_actual_pending_proof_keeps_the_same_model_revision_snapshot_after_restart_983(tmp_path, monkeypatch):
+    # Reuse the existing unread-card proof journey. Replaying already-read
+    # group cards would correctly need no proof and would test a false lifecycle.
+    run, store, paused_at, _, _, raw = await _pause_during_proof(tmp_path, monkeypatch, "norm")
+    pending = paused_at["held_packet"]["pending_proof"]
+    assert pending["proof_previous_model_answer"] == raw
+    assert pending.get("revision_transport") == "application_snapshot_v1"
+    snapshot = pending.get("model_revision_snapshot")
+    assert snapshot and snapshot["schema"] == "les.model-revision-snapshot.v1"
+    assert snapshot["packet_id"] == pending["scope"]["packet_id"]
+    assert snapshot["packet_locators"] == pending["scope"]["locators"]
+    assert snapshot["operations"] == [], "this proven fresh proof journey has no prior durable operations"
+    store = WorkbookResearchJobService(store.db_path)
+    assert store.get(paused_at["job_id"])["held_packet"]["pending_proof"]["model_revision_snapshot"] == snapshot
+    calls, queries = len(run.requests), list(run.queries)
+    resumed = await run.resume_same_request(question="Продолжи это же задание по тому же прикреплённому документу.")
+    current = store.get(resumed["retrieval_trace"]["workbook_research_job"]["job_id"])
+    assert run.queries == queries and len(run.requests) == calls + 1 and not run.responses
+    assert len(current["accepted_rows"]) == 2 and all(row["revision"] == 1 for row in current["accepted_rows"])
+    assert not current["unapplied_proposals"] and "pending_proof" not in current["held_packet"]
+    assert snapshot["operations"] == []
+    assert "revision_transport_instruction" not in str(run.requests[-1].messages)
+
+
+@pytest.mark.parametrize("concurrent_after_pause", [False, True])
+def test_durable_pending_snapshot_binds_its_old_base_instead_of_latest_after_restart_983(tmp_path, concurrent_after_pause):
+    from proxy.services.model_result_packet_service import bind_model_result_revisions
+
+    store, identity, before = _job(tmp_path)
+    previous = before["accepted_rows"][0]
+    authored = {**PRIOR, "operation_id": previous["operation_id"], "expected_revision": 2,
+                "coverage": "Literal changed model decision"}
+    frozen = deepcopy(authored)
+    snapshot = {"schema": "les.model-revision-snapshot.v1", "packet_id": "owned-packet-S-R2",
+        "packet_locators": ["S!R2"], "operations": [
+            {"operation_id": previous["operation_id"], "source_row": "S!R2", "revision": 1}]}
+    pending = _checkpoint(before)
+    pending["scope"].update(packet_id="owned-packet-S-R2", locators=["S!R2"])
+    pending.update(revision_transport="application_snapshot_v1", model_revision_snapshot=deepcopy(snapshot),
+        proof_previous_model_answer=json.dumps({"artifact_kind": "lsr", "rows": [authored]}))
+    held = _held(pending)
+    held.update(packet_id="owned-packet-S-R2", locators=["S!R2"])
+    _writer(store)(before["job_id"], held_packet=held, evidence=[EVIDENCE])
+    store.pause(before["job_id"])
+    store = WorkbookResearchJobService(store.db_path)
+    if concurrent_after_pause:
+        store.record_revision(before["job_id"], operation_id=previous["operation_id"],
+            decision={**PRIOR, "coverage": "Concurrent operator decision while paused"}, base_revision=1, origin="operator")
+    resumed = store.begin_or_resume(identity, source_locators=["S!R2", "S!R3"])
+    restored = resumed["held_packet"]["pending_proof"]
+    assert restored["model_revision_snapshot"] == snapshot
+    bound, audit = bind_model_result_revisions([authored], restored["model_revision_snapshot"])
+    assert authored == frozen and bound[0]["expected_revision"] == 1
+    assert audit[0]["authored_revision_fields"] == {"expected_revision": 2}
+    current = store.record_packet(before["job_id"], sheet="S", packet_locators=["S!R2"], accepted_rows=bound,
+        evidence=[EVIDENCE], remaining=["S!R3"], enforce_packet_scope=True)
+    actual = current["accepted_rows"][0]
+    assert actual["operation_id"] == previous["operation_id"] and actual["revision"] == 2
+    if concurrent_after_pause:
+        assert actual["coverage"] == "Concurrent operator decision while paused"
+        assert any(item["reason"] == "operation_revision_mismatch" for item in current["unapplied_proposals"])
+    else:
+        assert actual["coverage"] == authored["coverage"] and not current["unapplied_proposals"]
+    assert actual["quantity"] == previous["quantity"] == 12
 
 
 @pytest.mark.asyncio

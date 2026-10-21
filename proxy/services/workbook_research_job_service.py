@@ -1423,7 +1423,8 @@ class WorkbookResearchJobService:
         allowed = {"schema", "purpose", "scope", "execution_preset", "proof_previous_model_answer",
                    "proof_request", "finish_reason", "attempt", "packet_attempt", "query_hits",
                    "admitted_evidence_refs", "source_incomplete_locators", "leftover_queries",
-                   "proof_rows", "proof_operation_identities", "proof_operation_identity"}
+                   "proof_rows", "proof_operation_identities", "proof_operation_identity",
+                   "revision_transport", "model_revision_snapshot"}
         if (not isinstance(pending, Mapping) or set(pending) - allowed
                 or pending.get("schema") != "les.pending-workbook-proof.v1"
                 or pending.get("purpose") not in {"sheet_pass_norm_proof", "sheet_pass_resource_group_proof"}
@@ -1448,12 +1449,22 @@ class WorkbookResearchJobService:
                         "source_sha256", "dataset_ids", "profile_revision_id", "model_connection_revision_id",
                         "source_frame_contract_sha256"))):
                 raise WorkbookResearchJobError("PENDING_PROOF_SCOPE_CHANGED")
+            revision_fields = {"revision_transport", "model_revision_snapshot"}.intersection(pending)
+            if revision_fields:
+                from proxy.services.model_result_packet_service import model_revision_snapshot_valid
+                if (len(revision_fields) != 2 or pending.get("revision_transport") != "application_snapshot_v1"
+                        or not model_revision_snapshot_valid(pending.get("model_revision_snapshot"),
+                            packet_id=scope["packet_id"], packet_locators=scope["locators"])):
+                    raise WorkbookResearchJobError("PENDING_PROOF_FIELDS_INVALID")
             previous_held = _json_object(row, "held_packet_json")
             previous = previous_held.get("pending_proof") or {}
             if previous and previous.get("scope") != scope:
                 raise WorkbookResearchJobError("PENDING_PROOF_SCOPE_CHANGED")
             if previous and previous.get("execution_preset") != pending.get("execution_preset"):
                 raise WorkbookResearchJobError("PENDING_PROOF_PRESET_CHANGED")
+            if previous and any(previous.get(key) != pending.get(key)
+                                for key in ("revision_transport", "model_revision_snapshot")):
+                raise WorkbookResearchJobError("PENDING_PROOF_REVISION_SNAPSHOT_CHANGED")
             if str(row["status"]) in TERMINAL_STATUSES:
                 return self._row(row)
             saved = _json_list(row, "evidence_json")
@@ -1547,6 +1558,7 @@ class WorkbookResearchJobService:
         remaining: Sequence[str] = (),
         held_packet: Mapping[str, Any] | None = None,
         unapplied_proposals: Sequence[Mapping[str, Any]] = (),
+        model_revision_bindings: Mapping[str, Any] | None = None,
         enforce_packet_scope: bool = False,
         canonicalize_locator: Callable[[Any], Any] | None = None,
     ) -> dict[str, Any]:
@@ -1559,6 +1571,15 @@ class WorkbookResearchJobService:
                 raise WorkbookResearchJobError("workbook research job not found")
             if str(row["status"]) in TERMINAL_STATUSES:
                 return self._row(row)
+            if model_revision_bindings is not None:
+                if (set(model_revision_bindings) != {"origin", "packet_id", "snapshot_schema", "bindings"}
+                        or model_revision_bindings.get("origin") != "application"
+                        or model_revision_bindings.get("snapshot_schema") != "les.model-revision-snapshot.v1"
+                        or not isinstance(model_revision_bindings.get("packet_id"), str)
+                        or not model_revision_bindings["packet_id"]
+                        or not isinstance(model_revision_bindings.get("bindings"), list)):
+                    raise WorkbookResearchJobError("MODEL_REVISION_BINDINGS_INVALID")
+                self._append_event(conn, job_id, "model_revision_bindings", dict(model_revision_bindings))
             existing_rows = json.loads(str(row["accepted_rows_json"]))
             migrated = self._ensure_operation_ids(str(job_id), existing_rows)
             review_operations = {str(item["operation_id"]): item

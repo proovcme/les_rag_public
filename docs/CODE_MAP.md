@@ -1,5 +1,20 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 983 — один перечень ВОР и явная native schema ЛСР
+
+`model_lsr_result_contract.VOR_RESULT_FIELDS` → dedicated/shared/conditional
+VOR instructions. `build_workbook_terminal_tool_schema` → optional derived
+volume/resource properties → прежний literal decoder/admission. Никакого
+выбора родителя, нормы, ресурса или коэффициента эти изменения не выполняют.
+`model_result_packet_service.capture_model_revision_snapshot` → immutable
+packet snapshot; `bind_model_result_revisions` → technical CAS + raw audit →
+прежние admission/transaction checks. Snapshot не обновляется после ответа.
+`chat_evidence_application_service.model_revision_snapshot_from_checkpoint`
+восстанавливает только сохранённую atomic pair; отсутствующая legacy pair не
+создаётся заново после completed proof. `record_packet(model_revision_bindings=...)`
+записывает отдельный application event в той же transaction.
+Installed982/afd07ff9 и professional FAIL зафиксированы в RELEASE_LEDGER.
+
 ## 981 — модельный result type перед финансовым proof
 
 `update_model_artifact_kind(..., phase="result")` → актуальная

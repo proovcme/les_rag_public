@@ -262,6 +262,40 @@ def build_workbook_terminal_tool_schema(
         row_properties["evidence_refs"] = {"type": ["string", "array", "null"], "items": {"type": "string"}}
         for name in MATCH_FIELDS:
             row_properties[name] = {"type": ["string", "null"], "enum": ["yes", "no", "unknown", "", None]}
+        # Advertise fields already accepted by the literal result transport.
+        # They remain optional; neither the schema nor the decoder derives a
+        # volume, selects a resource or restricts additional professional facts.
+        row_properties.update({
+            "calc_quantity": {
+                "type": ["number", "string", "null"],
+                "description": "Derived quantity; original quantity stays literal. Code applies the norm scale.",
+            },
+            "calc_unit": {
+                "type": ["string", "null"],
+                "description": "Physical unit of calc_quantity.",
+            },
+            "conversion_factor": {
+                "type": ["number", "string", "null"],
+                "description": "Exact scalar: quantity * conversion_factor = calc_quantity.",
+            },
+            "conversion_source": {
+                "type": ["string", "null"],
+                "description": "Shown formula and source for derived quantity/repetition.",
+            },
+            "resource_code": {
+                "type": ["string", "null"],
+                "description": "Exact model-selected resource code from cited evidence.",
+            },
+            "resource_bindings": {
+                "type": ["array", "object", "string", "null"],
+                "items": {"type": "object", "additionalProperties": True},
+                "description": "Actions add/replace/exclude/reuse with target, quantity basis, reason and refs; see row contract.",
+            },
+            "resource_review": {
+                "type": ["object", "string", "null"],
+                "description": "Review status, component reasons and separate_supply_reviews; see row contract.",
+            },
+        })
         row_properties["nr_sp_rule_id"] = {"type": ["string", "null"]}
         row_properties["supply_resource_match"] = {
             "type": ["object", "null"], "additionalProperties": False,

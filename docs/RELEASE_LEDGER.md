@@ -1,5 +1,87 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 — candidate983: модельные решения и техническая версия сохранения
+
+Source0.31.255/build983/native5.1.983; installed982/afd07ff9 сохраняется.
+Обычный model transport связывает техническую expected_revision с неизменным
+application snapshot, захваченным до ответа. Только точный выбранный моделью
+operation_id и тот же source; предметные поля не меняются. Исходные authored
+revision/base/expected сохраняются в audit. Ручной API и транзакционный CAS
+не меняются: изменение durable revision после snapshot должно отклонить запись.
+Pure helper ROOT19RED/1manual-positive→51ownerGREEN/0.64s с отдельным
+duplicate-ID RED→GREEN. Active integration RED6failed/5positive; исправленное
+получение actual owned job в race fixture отдельно снято до implementation.
+Общий related:219passed/14.88s (`artifacts/offline_983/revision_integration_green01.xml`).
+Pause/restart использует тот же snapshot, legacy pair-absent сохраняет старый
+контракт; marker/snapshot атомарны. Raw audit — trace и отдельный durable event.
+Полный gate и установленная проверка pending. Это новый транспортный контракт, прежний
+guard982 корректно отклонял authored2 при snapshot1.
+Legacy alias (R2/S!R2) использует прежний catalog canonicalizer для внутренних
+сравнений; source_row результата остаётся literal.3aliasRED→51ownerGREEN.
+Broader owner5:282passed/1failed — новый служебный текст вытеснил required
+native exchange при прежнем wire54000. Лимит/старый тест не менялись: удалено
+новое объяснение ревизий для empty-update snapshot (backend snapshot/audit
+сохраняются). No-op2RED→GREEN, прежние wire54000positive/50000negative PASS.
+Краткие новые schema descriptions не повторяют полный неизменённый контракт.
+Phase975 final43passed/13.73s; прошлый broader283passed/1новое obsolete marker
+assertion скорректировано для empty snapshot. Полный canonical gate pending.
+Краткие перечни ВОР теперь включают уже поддерживаемые coverage,
+covered_by_work_id/evidence_refs; native terminal ЛСР описывает существующие
+optional calc/resource поля. Новых required, tools, предметных решений,
+расчётов или циклов нет. ROOT RED10failed/2positive→177relatedGREEN/5.33s;
+counts пересекаются с219related. Полный gate и live pending.
+Это устраняет несогласованность интерфейса, но улучшение профессионального
+выбора пока не измерено. customer_ready=false.
+
+## 21.10.2026 — exact982 установлен; профессиональная приёмка не пройдена
+
+Installed0.31.254/build982/native5.1.982: `afd07ff963b907e19cec44ef87b9b550f5e19f4e`.
+Main7091passed/20skipped/949.32s. Затем updater327passed/1failed из-за
+WinError5 на os.replace fixture release-state.json; изолированно1passed,
+полный updater328passed/22.23s. Повторное prepare использовало только
+подтверждённый успешный main с неизменным source/log SHA, остальные гейты
+выполнены заново; это отражено в `artifacts/release_982_control/gates/`.
+NSIS498162240bytes, SHA256
+`5f453bc322120d6fc334510ff14db47bbd462888d78168be2202f114093a0c89`.
+Exact install→rollback→reinstall принят стандартным receipt
+`artifacts/release_982_control/artifacts/e309c7c75e055c4eb111594b/acceptance/1527837e424049ec963299e18a740d51.json`;
+runtime aligned/98files. Публичной публикации нет.
+
+Живые ordinary controls `artifacts/live_982/`:
+- `repack_hint981_01`: без модели;7решений/288числовых и формульных ячеек
+  сохранены,8пояснений supply-match читаемы. Только технический PASS.
+- `vor_csv01`:62.859s/7calls,3правильные работы и связи поставок; лишний вопрос
+  об уже подтверждённом нуле. Документ честно не завершён.
+- `vor_docx01`:707.734s/8calls,20адресов учтены, но часть отделки подменена,
+  включение операций не обосновано. RAG513.051s CE при19авторских запросах;
+  дубликатов запросов от harness не найдено. Семантическая потеря не транспортная.
+- `lsr_ordinary01`:411.765s/3calls,7решений,PRICED_PARTIAL,0полных позиций.
+  Добавочная норма без основы/кратности; неподтверждённые ресурсные коды.
+  `lsr_b0_01` на той же модели/задании/вложении завершился length32768,
+  структурно незавершённым JSON и без документа; профессионального PASS нет.
+
+SQLite quick_check/FK и named dense+bm25_sparse Qdrant проверены отдельно:
+49818норм/504891ресурс; признаков повреждения не найдено. Происхождение книги
+СПбIIIкв2026 подтверждено локальным source receipt2026-q3 и исходным XLSX SHA;
+book SHA `2425685924b1dc695ae28bd4d8440e3f3c094449521e4056fb75e360638a7bc2`.
+Ранее отсутствие provenance предполагалось ошибочно; источник найден.
+
+Unqualified precise controls: full-thinking query исчерпал8192 без ответа;
+hybrid ответил, но3связи материалов остались пусты уже в авторском JSON.
+Парсер их не удалял. Настройка не квалифицирована. Shared answer role возвращён
+на исходный r14, binding57 (`precise_rollback01`); прежние отдельные test-chat
+bindings сохранены как след эксперимента, глобальный профиль не активировался.
+Query8192/answer+proof32768 подтверждены actual calls; скрытый8K лимит итогового
+ответа не обнаружен. TTL capability normal chat уже переопрашивает штатно.
+`queue.llm_waiting` означает занятые слоты, не число ожидающих запросов.
+`hint01`:730.672s/9calls,7accepted/2remaining, файл038a1f22…291dd6.
+Те же R3/R7 revision1 сохранены: модель вернула expected2 при показанном1
+во всех9contexts. Новые base/cable нормы остались unapplied; добавка quantity150
+вместо source37.5 без calc-fields отклонена отдельно. Книга наследуется exact;
+денежный результат не улучшился:0полных/0confirmed,46841.62предварительно.
+Неподтверждённые прямые поставки и НР/СП вентилятора остаются открыты.
+Независимая сверка: `hint01/independent_audit.json`. Customer readiness false.
+
 ## 21.10.2026 — candidate982: proof identity и объяснение предварительной цены
 
 Source0.31.254/build982/native5.1.982; installed exact981/fd17b383 не менялся.

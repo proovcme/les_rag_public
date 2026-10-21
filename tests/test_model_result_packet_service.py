@@ -1,6 +1,7 @@
 """Packet ownership is structural; professional decisions stay model-authored."""
 
 import copy
+import json
 
 import pytest
 
@@ -184,3 +185,314 @@ def test_store_scope_uses_catalog_alias_without_changing_authored_locator(tmp_pa
                                 canonicalize_locator=lambda value: "S!R2" if value == "R2" else str(value))
     assert job["accepted_rows"][0]["source_row"] == "R2"
     assert job["unapplied_proposals"] == []
+
+
+def _revision_snapshot():
+    return {
+        "schema": "les.model-revision-snapshot.v1", "packet_id": "packet_owned",
+        "packet_locators": ["S!R2"],
+        "operations": [{"operation_id": "op_known", "source_row": "S!R2", "revision": 1}],
+    }
+
+
+def test_capture_model_revision_snapshot_is_packet_scoped_literal_and_restart_stable():
+    from proxy.services.model_result_packet_service import (
+        capture_model_revision_snapshot,
+        model_revision_snapshot_valid,
+    )
+
+    prior = [{"operation_id": "op_known", "source_row": "S!R2", "revision": 1,
+              "title": "Literal old operation", "quantity": "2"},
+             {"operation_id": "op_outside", "source_row": "S!R3", "revision": 4},
+             {"source_row": "S!R2", "title": "No durable operation ID"}]
+    original = copy.deepcopy(prior)
+    snapshot = capture_model_revision_snapshot(prior, packet_id="packet_owned", packet_locators=["S!R2"])
+
+    assert snapshot == _revision_snapshot() and prior == original
+    assert model_revision_snapshot_valid(snapshot, packet_id="packet_owned", packet_locators=["S!R2"])
+    assert not model_revision_snapshot_valid(snapshot, packet_id="packet_other", packet_locators=["S!R2"])
+    assert not model_revision_snapshot_valid(snapshot, packet_id="packet_owned", packet_locators=["S!R3"])
+    restarted = json.loads(json.dumps(snapshot))
+    assert restarted == snapshot and model_revision_snapshot_valid(restarted)
+    prior[0]["revision"] = 2
+    assert snapshot["operations"][0]["revision"] == 1, "a later durable read cannot move the captured base"
+
+
+@pytest.mark.parametrize("authored_revision_fields", [
+    {"expected_revision": 2}, {"base_revision": "2"}, {"revision": 2},
+    {"revision": 8, "base_revision": 3, "expected_revision": 2},
+    {"revision": None, "base_revision": False, "expected_revision": "literal wrong CAS"},
+    {},
+])
+def test_model_transport_binds_only_cas_to_immutable_snapshot_and_audits_literal_fields(authored_revision_fields):
+    from proxy.services.model_result_packet_service import bind_model_result_revisions
+
+    authored = {
+        "source_row": "S!R2", "operation_id": "op_known", "row_role": "work",
+        "title": "Literal revised operation", "quantity": "37,5", "unit": "м²",
+        "norm_code": "LITERAL_MODEL_CODE", "norm_status": "NEEDS_RESEARCH",
+        "calc_quantity": 150, "calc_unit": "м²", "conversion_source": "37.5 × 4; literal basis",
+        "coverage": "Literal model coverage", "evidence_refs": ["Q9.H2"],
+        "work_row": "S!R8", "covered_by_work_id": None,
+        "resource_bindings": [{"action": "replace", "resource_code": "literal-resource",
+                               "source_refs": ["Q9.H2"], "extra": {"raw": [None, False, 0]}}],
+        "resource_review": {"status": "unresolved", "reason": "Literal resource debt"},
+        "extra_professional_field": {"raw": [False, 0, None]},
+        **authored_revision_fields,
+    }
+    original, snapshot = copy.deepcopy(authored), _revision_snapshot()
+    snapshot_before = copy.deepcopy(snapshot)
+
+    bound, audit = bind_model_result_revisions([authored], snapshot)
+
+    expected = {key: value for key, value in original.items()
+                if key not in {"revision", "base_revision", "expected_revision"}}
+    expected["expected_revision"] = 1
+    assert bound == [expected] and authored == original and snapshot == snapshot_before
+    assert len(audit) == 1
+    assert {key: audit[0][key] for key in (
+        "action", "source_row", "operation_id", "snapshot_revision", "authored_revision_fields")} == {
+            "action": "bound_to_snapshot", "source_row": "S!R2", "operation_id": "op_known",
+            "snapshot_revision": 1, "authored_revision_fields": authored_revision_fields,
+        }
+    prior = {"source_row": "S!R2", "operation_id": "op_known", "revision": 1, "quantity": 2}
+    admission = admit_model_result_packet(bound, packet_locators=["S!R2"], prior_operations=[prior])
+    assert admission.accepted_rows == bound and admission.unapplied_proposals == []
+    bound[0]["resource_bindings"][0]["extra"]["raw"].append("caller edit")
+    assert authored == original, "binding must deep-copy nested professional decisions"
+
+
+def test_model_snapshot_binding_still_rejects_a_concurrent_durable_revision():
+    from proxy.services.model_result_packet_service import bind_model_result_revisions
+
+    authored = {"source_row": "S!R2", "operation_id": "op_known", "expected_revision": 2,
+                "row_role": "work", "title": "Literal changed work", "quantity": 99}
+    bound, _audit = bind_model_result_revisions([authored], _revision_snapshot())
+    concurrent = {"source_row": "S!R2", "operation_id": "op_known", "revision": 2,
+                  "row_role": "work", "title": "Newer committed work", "quantity": 4}
+
+    admission = admit_model_result_packet(bound, packet_locators=["S!R2"], prior_operations=[concurrent])
+
+    assert bound[0]["expected_revision"] == 1
+    assert admission.accepted_rows == []
+    assert admission.unapplied_proposals[0]["reason"] == "operation_revision_mismatch"
+    assert admission.unapplied_proposals[0]["decision"] == bound[0]
+
+
+@pytest.mark.parametrize("change", [
+    {"operation_id": "op_unknown"}, {"source_row": "S!R3"},
+    {"operation_id": ""}, {"operation_id": None},
+])
+def test_model_revision_binding_does_not_guess_unknown_foreign_or_new_operations(change):
+    from proxy.services.model_result_packet_service import bind_model_result_revisions
+
+    authored = {"source_row": "S!R2", "operation_id": "op_known", "expected_revision": 2,
+                "base_revision": "literal", "revision": 8, "title": "Same title is not an identity",
+                "norm_code": "SAME_CODE", **change}
+    original = copy.deepcopy(authored)
+
+    bound, audit = bind_model_result_revisions([authored], _revision_snapshot())
+
+    assert bound == [original] and audit == [] and authored == original
+
+
+def test_model_revision_binding_does_not_assign_identity_to_a_row_without_operation_id():
+    from proxy.services.model_result_packet_service import bind_model_result_revisions
+
+    authored = {"source_row": "S!R2", "expected_revision": 8, "title": "Known title", "quantity": 2}
+    bound, audit = bind_model_result_revisions([authored], _revision_snapshot())
+    assert bound == [authored] and "operation_id" not in bound[0] and audit == []
+
+
+def test_model_snapshot_keeps_two_operations_on_the_same_source_independent():
+    from proxy.services.model_result_packet_service import (
+        bind_model_result_revisions,
+        capture_model_revision_snapshot,
+    )
+
+    prior = [{"source_row": "S!R2", "operation_id": "op_a", "revision": 1, "title": "Same"},
+             {"source_row": "S!R2", "operation_id": "op_b", "revision": 4, "title": "Same"}]
+    snapshot = capture_model_revision_snapshot(prior, packet_id="packet_owned", packet_locators=["S!R2"])
+    authored = [{"source_row": "S!R2", "operation_id": "op_b", "expected_revision": 5, "title": "Same"},
+                {"source_row": "S!R2", "operation_id": "op_a", "expected_revision": 2, "title": "Same"}]
+
+    bound, audit = bind_model_result_revisions(authored, snapshot)
+
+    assert [(row["operation_id"], row["expected_revision"]) for row in bound] == [("op_b", 4), ("op_a", 1)]
+    assert [(item["operation_id"], item["snapshot_revision"]) for item in audit] == [("op_b", 4), ("op_a", 1)]
+
+
+def test_model_snapshot_uses_existing_mechanical_source_key_without_rewriting_literal_source():
+    from proxy.services.model_result_packet_service import bind_model_result_revisions
+
+    authored = {"source_row": "LOCATOR:s!r2", "operation_id": "op_known", "expected_revision": 2,
+                "title": "Literal source address preserved"}
+
+    bound, audit = bind_model_result_revisions([authored], _revision_snapshot())
+
+    assert bound == [{**authored, "expected_revision": 1}]
+    assert audit[0]["source_row"] == authored["source_row"]
+
+
+@pytest.mark.parametrize("invalid", [
+    None, {},
+    {"schema": "other"}, {"packet_id": ""}, {"packet_locators": "S!R2"},
+    {"operations": [{"operation_id": "op_known", "source_row": "S!R2", "revision": True}]},
+    {"operations": [{"operation_id": "op_known", "source_row": "S!R2", "revision": "1"}]},
+    {"operations": [{"operation_id": "op_known", "source_row": "S!R2", "revision": 0}]},
+    {"operations": [{"operation_id": "", "source_row": "S!R2", "revision": 1}]},
+    {"operations": [{"operation_id": "op_known", "source_row": "S!R3", "revision": 1}]},
+    {"operations": [{"operation_id": "op_known", "source_row": "S!R2", "revision": 1},
+                    {"operation_id": "op_known", "source_row": "S!R2", "revision": 2}]},
+])
+def test_model_revision_snapshot_invalid_state_fails_closed(invalid):
+    from proxy.services.model_result_packet_service import (
+        bind_model_result_revisions,
+        model_revision_snapshot_valid,
+    )
+
+    snapshot = ({**_revision_snapshot(), **invalid} if isinstance(invalid, dict) and invalid else invalid)
+    original = copy.deepcopy(snapshot)
+    assert not model_revision_snapshot_valid(snapshot)
+    with pytest.raises(ValueError):
+        bind_model_result_revisions([{"source_row": "S!R2", "operation_id": "op_known"}], snapshot)
+    assert snapshot == original
+
+
+@pytest.mark.parametrize("change", [{"revision": 2}, {"source_row": "S!R3"}])
+def test_capture_rejects_inconsistent_duplicate_operation_identity(change):
+    from proxy.services.model_result_packet_service import capture_model_revision_snapshot
+
+    prior = {"source_row": "S!R2", "operation_id": "op_known", "revision": 1}
+    with pytest.raises(ValueError):
+        capture_model_revision_snapshot([prior, {**prior, **change}], packet_id="packet_owned",
+                                        packet_locators=["S!R2", "S!R3"])
+
+
+def test_capture_rejects_inconsistent_duplicate_identity_even_outside_the_requested_packet():
+    from proxy.services.model_result_packet_service import capture_model_revision_snapshot
+
+    prior = [{"source_row": "S!R2", "operation_id": "op_known", "revision": 1},
+             {"source_row": "S!R3", "operation_id": "op_known", "revision": 2}]
+    original = copy.deepcopy(prior)
+
+    with pytest.raises(ValueError):
+        capture_model_revision_snapshot(prior, packet_id="packet_owned", packet_locators=["S!R2"])
+
+    assert prior == original, "scope filtering must not hide an inconsistent committed identity"
+
+
+def test_model_revision_binding_is_repeatable_and_already_bound_rows_are_idempotent():
+    from proxy.services.model_result_packet_service import bind_model_result_revisions
+
+    authored = [{"source_row": "S!R2", "operation_id": "op_known", "expected_revision": 2, "quantity": 9}]
+    snapshot = _revision_snapshot()
+    first, first_audit = bind_model_result_revisions(authored, snapshot)
+    repeated, repeated_audit = bind_model_result_revisions(authored, snapshot)
+    rebound, _rebound_audit = bind_model_result_revisions(first, snapshot)
+    assert repeated == first == rebound
+    assert repeated_audit == first_audit
+    assert authored[0]["expected_revision"] == 2 and snapshot == _revision_snapshot()
+
+
+def test_direct_manual_admission_keeps_literal_stale_revision_rejected_without_transport_binding():
+    prior = {"source_row": "S!R2", "operation_id": "op_known", "revision": 1, "quantity": 2}
+    manual = {"source_row": "S!R2", "operation_id": "op_known", "expected_revision": 2, "quantity": 9}
+
+    admission = admit_model_result_packet([manual], packet_locators=["S!R2"], prior_operations=[prior])
+
+    assert admission.accepted_rows == []
+    assert admission.unapplied_proposals[0]["reason"] == "operation_revision_mismatch"
+    assert admission.unapplied_proposals[0]["decision"] == manual
+
+
+def _catalog_alias_locator(value):
+    return {"R2": "S!R2", "R3": "S!R3"}.get(value, value)
+
+
+@pytest.mark.parametrize("model_source", ["R2", "S!R2"])
+def test_model_snapshot_catalog_alias_preserves_literal_source_and_real_store_cas(tmp_path, model_source):
+    from proxy.services.model_result_packet_service import (
+        bind_model_result_revisions,
+        capture_model_revision_snapshot,
+    )
+
+    store = WorkbookResearchJobService(tmp_path / "snapshot-alias.sqlite")
+    job = _begin(store)
+    job = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2"],
+        accepted_rows=[{"source_row": "R2", "row_role": "work", "title": "Literal old work",
+                        "quantity": 2, "unit": "м"}], evidence=[], enforce_packet_scope=True,
+        canonicalize_locator=_catalog_alias_locator,
+    )
+    prior = copy.deepcopy(job["accepted_rows"][0])
+    assert prior["source_row"] == "R2" and prior["revision"] == 1
+    snapshot = capture_model_revision_snapshot(
+        [prior], packet_id="packet_owned", packet_locators=["S!R2"],
+        canonicalize_locator=_catalog_alias_locator,
+    )
+    assert snapshot["operations"] == [{"operation_id": prior["operation_id"],
+                                       "source_row": "S!R2", "revision": 1}]
+    assert prior["source_row"] == "R2", "only the internal mechanical snapshot uses canonical source addresses"
+    authored = {**prior, "source_row": model_source, "quantity": 9, "expected_revision": 2,
+                "coverage": "Literal revised subject fields"}
+    original = copy.deepcopy(authored)
+
+    bound, audit = bind_model_result_revisions(
+        [authored], snapshot, canonicalize_locator=_catalog_alias_locator,
+    )
+
+    assert authored == original and bound[0]["source_row"] == model_source
+    assert bound[0]["expected_revision"] == 1 and "revision" not in bound[0]
+    assert bound[0]["quantity"] == 9 and bound[0]["coverage"] == authored["coverage"]
+    assert audit[0]["source_row"] == model_source
+    assert audit[0]["authored_revision_fields"] == {"revision": 1, "expected_revision": 2}
+    admission = admit_model_result_packet(
+        bound, packet_locators=["S!R2"], prior_operations=[prior],
+        canonicalize_locator=_catalog_alias_locator,
+    )
+    assert admission.accepted_rows == bound and admission.unapplied_proposals == []
+    updated = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2"], accepted_rows=bound,
+        evidence=[], enforce_packet_scope=True, canonicalize_locator=_catalog_alias_locator,
+    )
+    assert len(updated["accepted_rows"]) == 1
+    assert updated["accepted_rows"][0]["operation_id"] == prior["operation_id"]
+    assert updated["accepted_rows"][0]["source_row"] == model_source
+    assert updated["accepted_rows"][0]["quantity"] == 9
+    assert updated["accepted_rows"][0]["revision"] == 2
+    assert updated["unapplied_proposals"] == []
+
+
+def test_model_snapshot_catalog_canonicalizer_does_not_repair_foreign_alias(tmp_path):
+    from proxy.services.model_result_packet_service import (
+        bind_model_result_revisions,
+        capture_model_revision_snapshot,
+    )
+
+    store = WorkbookResearchJobService(tmp_path / "snapshot-foreign-alias.sqlite")
+    job = _begin(store)
+    job = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2"],
+        accepted_rows=[{"source_row": "R2", "row_role": "work", "quantity": 2}],
+        evidence=[], enforce_packet_scope=True, canonicalize_locator=_catalog_alias_locator,
+    )
+    prior = copy.deepcopy(job["accepted_rows"][0])
+    snapshot = capture_model_revision_snapshot(
+        [prior], packet_id="packet_owned", packet_locators=["S!R2"],
+        canonicalize_locator=_catalog_alias_locator,
+    )
+    authored = {**prior, "source_row": "R3", "quantity": 99, "expected_revision": 2}
+
+    bound, audit = bind_model_result_revisions(
+        [authored], snapshot, canonicalize_locator=_catalog_alias_locator,
+    )
+
+    assert bound == [authored] and audit == []
+    updated = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2"], accepted_rows=bound,
+        evidence=[], enforce_packet_scope=True, canonicalize_locator=_catalog_alias_locator,
+    )
+    assert updated["accepted_rows"] == [prior]
+    assert updated["unapplied_proposals"][0]["reason"] == "operation_source_mismatch"
+    assert updated["unapplied_proposals"][0]["decision"] == authored
