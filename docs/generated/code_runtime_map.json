@@ -3457,7 +3457,7 @@
         "tests/test_workbook_task_context.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 16439,
+      "lines": 16449,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -5862,6 +5862,7 @@
         "tests/test_model_exact_card_read_policy.py",
         "tests/test_model_norm_evidence_ref_reads.py",
         "tests/test_model_phase_instruction_975.py",
+        "tests/test_pending_proof_checkpoint_975.py",
         "tests/test_vor_native_read_scope_956.py",
         "tests/test_vor_task_instruction_955.py"
       ],
@@ -5981,6 +5982,7 @@
         "tests/test_model_workbook_terminal_transport_962.py",
         "tests/test_model_workbook_unknown_terminal_963.py",
         "tests/test_nrsp_catalog_reference_967.py",
+        "tests/test_pending_proof_checkpoint_975.py",
         "tests/test_vor_candidate_scope_950.py",
         "tests/test_vor_operation_basis_960.py",
         "tests/test_vor_operation_instructions_948.py",
@@ -6256,11 +6258,12 @@
         "tests/test_model_evidence_read_contract.py",
         "tests/test_model_result_decorated_headers.py",
         "tests/test_model_result_packet_service.py",
+        "tests/test_model_workbook_terminal_transport_962.py",
         "tests/test_pending_proof_checkpoint_975.py",
         "tests/test_proof_role_identity_972.py",
         "tests/test_vor_native_terminal_workflow_962.py"
       ],
-      "lines": 255,
+      "lines": 294,
       "module": "proxy.services.model_result_packet_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6372,7 +6375,7 @@
         "tests/test_model_workbook_unknown_terminal_963.py",
         "tests/test_workbook_collection_terminal_binding_968.py"
       ],
-      "lines": 359,
+      "lines": 377,
       "module": "proxy.services.model_workbook_terminal_transport_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7035,6 +7038,7 @@
         "proxy/services/workbook_research_job_service.py",
         "tests/test_lsr_same_source_quantity_scope_968.py",
         "tests/test_model_proof_turn_integrity.py",
+        "tests/test_model_workbook_terminal_transport_962.py",
         "tests/test_pending_proof_checkpoint_975.py"
       ],
       "lines": 160,
@@ -8262,6 +8266,7 @@
         "tests/test_extract_service.py",
         "tests/test_lsr_price_basis_continuation.py",
         "tests/test_model_workbook_terminal_transport_962.py",
+        "tests/test_pending_proof_checkpoint_975.py",
         "tests/test_structured_extract.py",
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py",
@@ -8867,7 +8872,7 @@
         "tests/test_workbook_source_frame_identity.py",
         "tests/test_workbook_task_context.py"
       ],
-      "lines": 3411,
+      "lines": 3419,
       "module": "proxy.services.workbook_research_job_service",
       "outbound": [
         "proxy/__init__.py",
@@ -14198,14 +14203,15 @@
         "tests/test_model_result_carrier_edges_975.py",
         "tests/test_model_workbook_terminal_transport_962.py"
       ],
-      "lines": 364,
+      "lines": 396,
       "module": "tests.test_model_lsr_result_contract",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/lsr_norm_quality_gate_service.py",
         "proxy/services/model_lsr_result_contract.py",
         "proxy/services/model_workbook_terminal_transport_service.py",
-        "proxy/smeta_core/contracts.py"
+        "proxy/smeta_core/contracts.py",
+        "tests/test_model_rag_sheet_evidence_reads.py"
       ],
       "path": "tests/test_model_lsr_result_contract.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -14784,6 +14790,7 @@
         "tests/test_model_index_context_975.py",
         "tests/test_model_inline_field_records.py",
         "tests/test_model_lsr_rejected_source_proposals.py",
+        "tests/test_model_lsr_result_contract.py",
         "tests/test_model_output_diagnostics_tracking.py",
         "tests/test_model_packet_document_context_954.py",
         "tests/test_model_phase_instruction_975.py",
@@ -15005,7 +15012,7 @@
       "inbound": [
         "tests/test_model_source_conflict_resume_947.py"
       ],
-      "lines": 498,
+      "lines": 713,
       "module": "tests.test_model_result_packet_service",
       "outbound": [
         "proxy/services/model_result_packet_service.py",
@@ -15217,13 +15224,15 @@
     },
     {
       "inbound": [],
-      "lines": 410,
+      "lines": 528,
       "module": "tests.test_model_workbook_terminal_transport_962",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/context_governor_service.py",
         "proxy/services/model_lsr_result_contract.py",
+        "proxy/services/model_result_packet_service.py",
         "proxy/services/model_workbook_terminal_transport_service.py",
+        "proxy/services/proof_operation_identity_service.py",
         "proxy/services/structured_extract.py",
         "proxy/services/workbook_tool_service.py",
         "tests/test_model_lsr_result_contract.py"
@@ -15765,14 +15774,17 @@
     },
     {
       "inbound": [],
-      "lines": 715,
+      "lines": 848,
       "module": "tests.test_pending_proof_checkpoint_975",
       "outbound": [
         "proxy/routers/chat.py",
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/model_evidence_read_contract.py",
+        "proxy/services/model_lsr_result_contract.py",
         "proxy/services/model_result_packet_service.py",
         "proxy/services/openai_compatible_transport_service.py",
         "proxy/services/proof_operation_identity_service.py",
+        "proxy/services/structured_extract.py",
         "proxy/services/workbook_research_job_service.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
         "tests/test_norm_card_proof_request_930.py",
@@ -24129,7 +24141,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 870,
     "tracked_python_files": 1270,
-    "tracked_python_lines": 435400
+    "tracked_python_lines": 435973
   },
   "warnings": []
 }

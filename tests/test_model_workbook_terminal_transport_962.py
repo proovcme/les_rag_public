@@ -31,6 +31,124 @@ def call(arguments, name="build_vor_workbook", call_id="provider_call"):
     return {"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
 
 
+def test_mixed_proof_schema_requires_revision_only_for_committed_identity_984():
+    from proxy.services.model_workbook_terminal_transport_service import build_workbook_terminal_tool_schema
+    from proxy.services.structured_extract import validate
+
+    params = build_workbook_terminal_tool_schema(
+        ["S!R2"], ["op_committed"], artifact_kind="lsr", attachment_id="read_owned",
+        require_operation_identity=True, proof_operation_ids=["proof_op_issued"],
+    )["function"]["parameters"]
+    row = {"source_row": "S!R2", "row_role": "work", "title": "Literal operation",
+           "quantity": 12, "unit": "m", "operation_id": "proof_op_issued"}
+    arguments = {"attachment_id": "read_owned", "decisions": [row]}
+    assert validate(arguments, params) == [], "uncommitted proof has no durable revision to invent"
+    assert validate({**arguments, "decisions": [{**row, "operation_id": ""}]}, params) == []
+    committed = {**row, "operation_id": "op_committed"}
+    assert validate({**arguments, "decisions": [committed]}, params)
+    assert validate({**arguments, "decisions": [{**committed, "expected_revision": 3}]}, params) == []
+    assert validate({**arguments, "decisions": [{**committed, "expected_revision": 0}]}, params)
+
+
+def test_native_lsr_annotations_distinguish_source_operation_identity_and_same_unit_multiplicity():
+    from proxy.services.model_workbook_terminal_transport_service import build_workbook_terminal_tool_schema
+
+    tool = build_workbook_terminal_tool_schema(["S!R2"], ["op_prior"], artifact_kind="lsr")
+    row = tool["function"]["parameters"]["properties"]["decisions"]["items"]
+    properties = row["properties"]
+    source = properties["source_row"].get("description", "").casefold()
+    identity = properties["operation_id"].get("description", "").casefold()
+    quantity = properties["quantity"].get("description", "").casefold()
+    derived = properties["calc_quantity"].get("description", "").casefold()
+    assert "repeat" in source and "operation_id" in source
+    assert "once" in identity and "result" in identity
+    assert "empty" in identity and "additional" in identity
+    assert "preserve" in quantity and "source" in quantity and "calc_quantity" in quantity
+    assert "multiplicity" in derived and "same" in derived and "unit" in derived
+    # Advertising the distinction must preserve the literal optional carriers.
+    assert properties["operation_id"]["enum"] == ["", "op_prior", None]
+    assert properties["source_row"]["enum"] == ["S!R2"]
+    assert "calc_quantity" not in row["required"]
+    assert set(properties["calc_quantity"]["type"]) == {"number", "string", "null"}
+    assert row["additionalProperties"] is True
+
+
+def test_staged_proof_schema_extends_only_result_identity_and_retains_durable_parent_scope_984():
+    from proxy.services.model_workbook_terminal_transport_service import build_workbook_terminal_tool_schema
+    from proxy.services.proof_operation_identity_service import stage_proof_operations
+    from proxy.services.structured_extract import validate
+
+    anchors, durable = ["S!R2", "S!R3"], ["op_prior"]
+    staged, issued = stage_proof_operations([
+        {"source_row": "S!R2", "row_role": "work", "title": "Literal additional operation",
+         "operation_id": "", "quantity": 12, "unit": "m"},
+    ])
+    proof_ids = tuple(issued)
+    before = deepcopy((anchors, durable, staged, issued))
+    default = build_workbook_terminal_tool_schema(anchors, durable, artifact_kind="lsr", attachment_id="read_owned")
+    assert build_workbook_terminal_tool_schema(anchors, durable, artifact_kind="lsr", attachment_id="read_owned",
+        proof_operation_ids=()) == default
+    tool = build_workbook_terminal_tool_schema(anchors, durable, artifact_kind="lsr", attachment_id="read_owned",
+        proof_operation_ids=proof_ids)
+    params = tool["function"]["parameters"]
+    original_row = default["function"]["parameters"]["properties"]["decisions"]["items"]
+    row = params["properties"]["decisions"]["items"]
+    properties, original_properties = row["properties"], original_row["properties"]
+    assert "enum" not in original_properties["covered_by_work_id"], "default/B0 parent contract is unchanged"
+    assert [value for value in properties["operation_id"]["enum"] if value not in issued] == original_properties["operation_id"]["enum"]
+    assert set(proof_ids) <= set(properties["operation_id"]["enum"])
+    assert "proof_unissued" not in properties["operation_id"]["enum"]
+    assert properties["work_row"] == original_properties["work_row"]
+    assert properties["covered_by_work_id"] == {
+        **original_properties["covered_by_work_id"], "enum": properties["work_row"]["enum"],
+    }
+    expected_row = deepcopy(original_row)
+    expected_row["properties"]["operation_id"]["enum"] = properties["operation_id"]["enum"]
+    expected_row["properties"]["covered_by_work_id"] = properties["covered_by_work_id"]
+    assert row == expected_row, "no other field type, required flag or professional contract changes"
+    for field in ("work_row", "covered_by_work_id"):
+        for parent in ("S!R2", "op_prior", "", None):
+            args = {"attachment_id": "read_owned", "decisions": [{**staged[0], field: parent}]}
+            assert validate(args, params) == []
+        for parent in (*proof_ids, "proof_unissued"):
+            args = {"attachment_id": "read_owned", "decisions": [{**staged[0], field: parent}]}
+            assert validate(args, params)
+    assert (anchors, durable, staged, issued) == before
+
+
+@pytest.mark.parametrize("known", [True, False], ids=["issued", "unknown"])
+def test_staged_native_address_roundtrip_restores_only_owned_ids_before_admission_984(known):
+    from proxy.services.model_workbook_terminal_transport_service import build_workbook_terminal_tool_schema
+    from proxy.services.proof_operation_identity_service import restore_proof_operations, stage_proof_operations
+    from proxy.services.model_result_packet_service import admit_model_result_packet
+    from proxy.services.structured_extract import validate
+
+    authored = {"source_row": "S!R2", "row_role": "work", "title": "Literal additional operation",
+                "operation_id": "", "quantity": 12, "unit": "m"}
+    staged, issued = stage_proof_operations([authored])
+    returned = deepcopy(staged[0])
+    if not known:
+        returned["operation_id"] = "proof_unissued"
+    args = {"attachment_id": "read_owned", "decisions": [returned]}
+    params = build_workbook_terminal_tool_schema(["S!R2"], ["op_prior"], artifact_kind="lsr",
+        attachment_id="read_owned", proof_operation_ids=tuple(issued))["function"]["parameters"]
+    errors = validate(args, params)
+    assert (errors == []) is known
+    result = decode_workbook_terminal_response([call(args, name="build_lsr_workbook")], artifact_kind="lsr")
+    assert result.envelope["rows"] == [returned]  # Transport itself does not guess or repair an ID.
+    restored = restore_proof_operations(result.envelope["rows"], issued)
+    admission = admit_model_result_packet(restored, packet_locators=["S!R2"], prior_operations=[
+        {"source_row": "S!R2", "operation_id": "op_prior", "revision": 1},
+    ])
+    if known:
+        assert restored == [authored]
+        assert admission.accepted_rows == [authored] and not admission.unapplied_proposals
+    else:
+        assert restored == [returned] and not admission.accepted_rows
+        assert admission.unapplied_proposals[0]["reason"] == "unknown_operation_id"
+        assert admission.unapplied_proposals[0]["decision"] == returned
+
+
 @pytest.mark.parametrize("representation", ["string", "mapping", "typed_native"])
 def test_literal_rows_arguments_quotes_unknowns_and_one_to_many_survive(representation):
     arguments = {"attachment_id": "read_owned", "decisions": rows()}

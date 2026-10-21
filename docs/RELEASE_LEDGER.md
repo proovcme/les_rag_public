@@ -1,5 +1,59 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 — exact983 установлен; candidate984: атомарность операций
+
+Установлен `259302774927f8556500778a4516b680212845a1`, product0.31.255/
+build983/native5.1.983, aligned98. Окончательный frozen gate983:
+7208 passed/20 skipped/5 warnings, 948.38s; updater328 passed/22.78s;
+architecture/version/map/verify/public-check прошли. Точный NSIS498165082bytes,
+SHA `6563249d833f82c09eac40261fbf68ef6c80fd57581db82dfaa28794d7792b9c`.
+Receipt: `artifacts/release_983_control/artifacts/8985dc725ea92e07a368ef52/`;
+acceptance `a6a73b0281b7463ca2b6f69f24839b7a` accepted17:17:37UTC после
+install→rollback→reinstall. Runtime/data не удалялись, публикации не было.
+
+Живые контроли `artifacts/live_983/`, тот же r14/Qwen35B/131072:
+
+- `hint01`:719.875s/5calls, draftrev3 скачан, SHA совпал. Книга наследуется,
+  новые revision_mismatch отсутствуют. Snapshot raw expected2→captured1
+  подтверждён. Но одна ID была передана как work/material и получила две
+  последовательные revisions; предметные исправления не закрыты. 0 полных
+  позиций/0 подтверждено/46841.62 предварительно; R3/R7 остались открыты.
+- `lsr_ordinary01`:593.766s/6calls. Обе нормы стяжки показаны и сохранены,
+  две поставки имеют вычисленные цены; полностью рассчитанных работ0,
+  подтверждено0, предварительно93930.07. Добавочная кратность лишь в coverage;
+  смесьR5 отсутствует уже в модельном ответе. Две операцииR3 не удалось
+  однозначно обновить в proof. Physical XLSX проверен независимо.
+- `lsr_b0_01`:247.953s/2calls, те же source/question/profile. Все7 исходных
+  адресов сохранены; кабельная норма ближе исходнику, но для стяжки/вентилятора
+  ссылки Q1.H0/Q3.H0 не существуют. Полных позиций0/подтверждено0/
+  предварительно5712.97. Успешного baseline здесь нет; различия генераций
+  сами по себе не доказывают ухудшение harness.
+
+Новый exact-code reader этими live controls не использован. Наличие инструмента
+и его offline tests не объявляется живым подтверждением его применения.
+Профессиональная готовность983 не пройдена, customer_ready=false.
+
+Source0.31.256/build984/native5.1.984: механический batch guard отвергает все
+различающиеся literal варианты непустой ID до scope/CAS/source-resolution/
+pending. Они остаются raw proposals, прежняя операция не перезаписывается;
+валидный сосед принимается. ROOT RED39failed/184passed включал34 новых
+identity-negative/idempotence и5 contract cases; batch GREEN87passed/1.25s.
+Отдельно доказано противоречие proof schema: текст показывает выданные opaque
+IDs, native enum их не содержит. ROOT actual wire/restart/factory RED:
+5failed/116passed/15.32s. Исправление идёт в существующем factory без нового
+ID/цикла/профессионального выбора. Общий focused GREEN273passed/17.95s.
+ROOT дополнительно воспроизвёл смешанный proof: uncommitted строка требовала
+expected_revision, хотя постоянной ревизии ещё нет. Новый1RED/0.43s устранён
+условной обязательностью только durable ID; прежний norm allOf сохранён.
+Расширенный related635passed/1failed выявил +84UTF8bytes в общем message
+контракте при прежнем54k wire budget. Бюджет, evidence и тесты сохранены;
+повторы текста сокращены, общий контракт имеет ровно прежний983 размер.
+54k positive/50k negative и scale keeper:8passed/3.60s. Related повтор:
+641passed/48.60s (`artifacts/offline_984/related_green02.xml`), включая прежние
+7500-token positive delivery и actual native terminal roundtrip. Полный
+984 gate/installer/live ещё pending. Независимый source review не нашёл новых
+actionableP1/P2; это не приёмка профессионального результата.
+
 ## 21.10.2026 — candidate983: модельные решения и техническая версия сохранения
 
 Source0.31.255/build983/native5.1.983; installed982/afd07ff9 сохраняется.

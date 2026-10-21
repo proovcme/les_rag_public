@@ -174,6 +174,59 @@ def bind_model_result_revisions(
     return bound, audit
 
 
+def _append_unapplied_proposal(
+    result: PacketAdmission, decision: dict[str, Any], reason: str,
+    packet_locators: Sequence[str],
+) -> None:
+    operation_id = str(decision.get("operation_id") or "").strip()
+    proposal = {
+        "schema": "les.model-result-unapplied-proposal.v1",
+        "reason": reason,
+        "source_row": decision.get("source_row"),
+        "operation_id": operation_id,
+        "packet_locators": list(packet_locators),
+        "decision": decision,
+    }
+    encoded = json.dumps(proposal, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    proposal["proposal_id"] = "proposal_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+    result.unapplied_proposals.append(proposal)
+    result.diagnostics.append(
+        f"unapplied_model_proposal:{reason}:{decision.get('source_row') or ''}:{operation_id}"
+    )
+
+
+def admit_model_operation_batch(
+    rows: Sequence[Mapping[str, Any]], *, packet_locators: Sequence[str],
+) -> PacketAdmission:
+    """Reject every conflicting version of an ID before any admission filtering.
+
+    Identity uniqueness is independent of source scope and CAS. Compare the full
+    canonical JSON, including provenance and revision fields; subject-only hashes
+    and Python equality (where False == 0) cannot establish literal equality.
+    Missing/empty IDs continue to denote independent, unassigned operations.
+    """
+    decisions = [copy.deepcopy(dict(item)) for item in rows if isinstance(item, Mapping)]
+    fingerprints: dict[str, set[str]] = {}
+    for decision in decisions:
+        operation_id = str(decision.get("operation_id") or "").strip()
+        if operation_id:
+            fingerprints.setdefault(operation_id, set()).add(json.dumps(
+                decision, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
+            ))
+    conflicting = {operation_id for operation_id, payloads in fingerprints.items() if len(payloads) > 1}
+    result = PacketAdmission()
+    seen: set[str] = set()
+    for decision in decisions:
+        operation_id = str(decision.get("operation_id") or "").strip()
+        if operation_id in conflicting:
+            _append_unapplied_proposal(result, decision, "conflicting_operation_id", packet_locators)
+        elif not operation_id or operation_id not in seen:
+            result.accepted_rows.append(decision)
+            if operation_id:
+                seen.add(operation_id)
+    return result
+
+
 def admit_model_result_packet(
     rows: Sequence[Mapping[str, Any]],
     *,
@@ -194,17 +247,16 @@ def admit_model_result_packet(
         canonical = canonicalize_locator(value) if canonicalize_locator is not None else value
         return _locator_key(canonical)
 
+    result = admit_model_operation_batch(rows, packet_locators=packet_locators)
+    batch_rows = result.accepted_rows
+    result.accepted_rows = []
     owned = {key(value) for value in packet_locators if key(value)}
     prior_by_id = {
         str(row.get("operation_id") or "").strip(): row
         for row in prior_operations
         if isinstance(row, Mapping) and str(row.get("operation_id") or "").strip()
     }
-    result = PacketAdmission()
-    for item in rows:
-        if not isinstance(item, Mapping):
-            continue
-        decision = copy.deepcopy(dict(item))
+    for decision in batch_rows:
         source = key(decision.get("source_row"))
         operation_id = str(decision.get("operation_id") or "").strip()
         reason = ""
@@ -238,18 +290,5 @@ def admit_model_result_packet(
         if not reason:
             result.accepted_rows.append(decision)
             continue
-        proposal = {
-            "schema": "les.model-result-unapplied-proposal.v1",
-            "reason": reason,
-            "source_row": decision.get("source_row"),
-            "operation_id": operation_id,
-            "packet_locators": list(packet_locators),
-            "decision": decision,
-        }
-        encoded = json.dumps(proposal, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-        proposal["proposal_id"] = "proposal_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
-        result.unapplied_proposals.append(proposal)
-        result.diagnostics.append(
-            f"unapplied_model_proposal:{reason}:{decision.get('source_row') or ''}:{operation_id}"
-        )
+        _append_unapplied_proposal(result, decision, reason, packet_locators)
     return result

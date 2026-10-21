@@ -230,6 +230,139 @@ def _proof_payload(request):
     return None
 
 
+def _assert_staged_terminal_schema_matches_proof_context(request, *, expected_ids=None):
+    from proxy.services.model_evidence_read_contract import model_evidence_read_tool_schemas
+    from proxy.services.structured_extract import validate
+
+    payload = _proof_payload(request)
+    assert payload is not None
+    operations = payload["proof_operation_identity"]["operations"]
+    issued = {row["operation_id"] for row in operations if row["identity_status"] == "uncommitted"}
+    durable = {row["operation_id"] for row in operations if row["identity_status"] == "committed"}
+    assert issued and all(identifier.startswith("proof_") for identifier in issued)
+    if expected_ids is not None:
+        assert issued == expected_ids
+    readers = model_evidence_read_tool_schemas()
+    assert list(request.tools[:len(readers)]) == readers
+    terminals = [tool for tool in request.tools if tool["function"]["name"] == "build_lsr_workbook"]
+    assert len(terminals) == 1
+    params = terminals[0]["function"]["parameters"]
+    row = params["properties"]["decisions"]["items"]
+    assert issued | durable <= set(row["properties"]["operation_id"]["enum"])
+    for field in ("work_row", "covered_by_work_id"):
+        assert issued.isdisjoint(row["properties"][field].get("enum", []))
+        for identifier in issued:
+            authored = {"source_row": operations[0]["source_row"], "row_role": "work",
+                        "title": "Literal independent operation", "operation_id": "",
+                        "expected_revision": None, field: identifier}
+            args = {"attachment_id": params["properties"]["attachment_id"]["enum"][0],
+                    "decisions": [authored]}
+            assert validate(args, params), "a proof address must not become a parent reference"
+    return issued
+
+
+@pytest.mark.asyncio
+async def test_actual_norm_proof_terminal_advertises_staged_ids_before_and_after_native_read_984(tmp_path, monkeypatch):
+    from tests.test_model_rag_sheet_evidence_reads import RESOURCE_A
+
+    # A mismatched citation needs proof without forcing an unrelated admitted
+    # pointer read. The provider chooses one real price read in that same turn.
+    answer = SECOND_NORM_ANSWER.replace("Q2.H1", "Q1.H1")
+    read = _native("read_resource_price", code=RESOURCE_A)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, distinct_norms=True,
+        group_char_budget=7000, final_answer=answer, proof_replies=[
+            InferenceResponse(text="", tool_calls=(read,), finish_reason="tool_calls", usage={}),
+            InferenceResponse(text=answer, tool_calls=(), finish_reason="stop", usage={}),
+        ])
+    proof_requests = [request for request in run.requests if _proof_payload(request) is not None]
+    assert len(run.requests) == 4 and len(proof_requests) == 2 and not run.responses
+    ids = _assert_staged_terminal_schema_matches_proof_context(proof_requests[0])
+    _assert_staged_terminal_schema_matches_proof_context(proof_requests[1], expected_ids=ids)
+    assert any(message.get("tool_call_id") == read["id"] for message in proof_requests[1].messages)
+
+
+@pytest.mark.asyncio
+async def test_actual_proof_native_terminal_captures_and_restores_the_advertised_addresses_984(tmp_path, monkeypatch):
+    from proxy.services.model_lsr_result_contract import MATCH_FIELDS
+    from proxy.services.structured_extract import validate
+
+    captured, authored = [], []
+    original = app.BoundModelChatRunner.complete
+
+    async def observe(self, **kwargs):
+        request = kwargs["request"]
+        if _proof_payload(request) is not None:
+            captured.append(request)
+        return await original(self, **kwargs)
+
+    monkeypatch.setattr(app.BoundModelChatRunner, "complete", observe)
+    answer = SECOND_NORM_ANSWER.replace("Q2.H1", "Q1.H1")
+
+    def native_proof_reply():
+        request = captured[-1]
+        payload = _proof_payload(request)
+        issued_rows = payload["proof_operation_identity"]["operations"]
+        rows = deepcopy(app.parse_model_rag_result(answer)[1])
+        for row, identity in zip(rows, issued_rows, strict=True):
+            assert row["source_row"] == identity["source_row"]
+            row.update(operation_id=identity["operation_id"], work_row=row["source_row"],
+                       norm_status="NEEDS_RESEARCH", open_gap="Literal unresolved proof condition",
+                       coverage="Literal model source basis", nr_sp_rule_id="",
+                       **{field: "unknown" for field in MATCH_FIELDS})
+        args = {"attachment_id": "read_123456abcdef", "decisions": rows}
+        terminal = next(tool for tool in request.tools if tool["function"]["name"] == "build_lsr_workbook")
+        assert validate(args, terminal["function"]["parameters"]) == []
+        authored.extend(deepcopy(rows))
+        return InferenceResponse(text="", tool_calls=(_native("build_lsr_workbook", **args),),
+                                 finish_reason="tool_calls", usage={})
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, distinct_norms=True,
+        group_char_budget=7000, final_answer=answer, proof_replies=[native_proof_reply])
+    assert len(run.requests) == 3 and len(captured) == 1 and not run.responses
+    ids = _assert_staged_terminal_schema_matches_proof_context(captured[0])
+    terminal_trace = [item for item in run.result["retrieval_trace"]["workbook_terminal_transport"]
+                      if item["purpose"] == "sheet_pass_norm_proof"]
+    assert len(terminal_trace) == 1 and terminal_trace[0]["transport_complete"] is True
+    assert {row["operation_id"] for row in json.loads(terminal_trace[0]["raw_arguments"])["decisions"]} == ids
+    job = WorkbookResearchJobService().get(run.result["retrieval_trace"]["workbook_research_job"]["job_id"])
+    assert len(job["accepted_rows"]) == 2 and not job["unapplied_proposals"]
+    for actual, returned in zip(job["accepted_rows"], authored, strict=True):
+        assert actual["operation_id"] not in ids and actual["revision"] == 1
+        assert {field: actual[field] for field in returned if field != "operation_id"} == {
+            field: value for field, value in returned.items() if field != "operation_id"}
+
+
+@pytest.mark.asyncio
+async def test_actual_pending_proof_terminal_reuses_issued_ids_after_restart_984(tmp_path, monkeypatch):
+    run, store, before, seen, interrupted, _ = await _pause_during_proof(tmp_path, monkeypatch, "resource_group")
+    ids = _assert_staged_terminal_schema_matches_proof_context(interrupted)
+    pending = before["held_packet"]["pending_proof"]
+    assert set(pending["proof_operation_identities"]) == ids
+    assert before["accepted_rows"] == []
+    resumed = await run.resume_same_request(question="Продолжи это же задание по тому же прикреплённому документу.")
+    _assert_staged_terminal_schema_matches_proof_context(seen[-1], expected_ids=ids)
+    assert _proof_payload(seen[-1]) == _proof_payload(interrupted)
+    current = WorkbookResearchJobService(store.db_path).get(resumed["retrieval_trace"]["workbook_research_job"]["job_id"])
+    assert len(current["accepted_rows"]) == 2
+    assert all(row["operation_id"] not in ids for row in current["accepted_rows"])
+    assert "pending_proof" not in current["held_packet"] and not run.responses
+
+
+@pytest.mark.asyncio
+async def test_direct_baseline_does_not_invent_staged_proof_or_remove_native_read_carriers_984(tmp_path, monkeypatch):
+    from proxy.services.model_evidence_read_contract import model_evidence_read_tool_schemas
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant="B0_DIRECT", distinct_norms=True,
+        group_char_budget=7000, final_answer=SECOND_NORM_ANSWER)
+    assert len(run.requests) == 2 and not run.responses
+    assert not any(_proof_payload(request) for request in run.requests)
+    readers = model_evidence_read_tool_schemas()
+    assert list(run.requests[-1].tools[:len(readers)]) == readers
+    terminal = next(tool for tool in run.requests[-1].tools if tool["function"]["name"] == "build_lsr_workbook")
+    identity = terminal["function"]["parameters"]["properties"]["decisions"]["items"]["properties"]["operation_id"]
+    assert not any(isinstance(value, str) and value.startswith("proof_") for value in identity["enum"])
+
+
 async def _revision_snapshot_review(tmp_path, monkeypatch):
     """Use the real owned job and a human requeue, not a fake admission result."""
     kind = "vor"

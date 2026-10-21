@@ -1,5 +1,21 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## 984 — batch identity и согласованность proof schema
+
+`test_model_result_packet_service`:36 новых cases, ROOT RED до production;
+87 passed после изменения. Проверены оба порядка конфликтов, различия только
+provenance/пояснения/revision, JSON0≠false, scope False/True, valid сосед,
+replay/restart, pending/source conflicts, ID padding и source aliases.
+Общий/native контракт имеет5 новых RED; focused GREEN273passed/17.95s.
+`test_pending_proof_checkpoint_975` и native factory: actual proof/read/resume
+RED5failed/116passed, выданные IDs отсутствуют в operation enum. Default/B0
+keeper не вводит отсутствующий bounded proof. Mixed committed/uncommitted
+schema1RED устранён; прежние54k positive/50k negative и scale keeper8passed
+без повышения лимита или ослабления проверок.
+Related повтор с прежними wire/7500-token positives:641passed/48.60s;
+полный frozen984 gate ещё pending. Профессиональное качество
+установленной983 проверено отдельно и не принято; см. RELEASE_LEDGER.
+
 ## 983 — реклама существующих структурных полей
 
 Все17модулей, использующих shared result instruction:5obsolete inclusion

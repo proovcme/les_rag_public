@@ -1591,6 +1591,14 @@ class WorkbookResearchJobService:
                 if isinstance(item, Mapping) and item.get("operation_id")
             }
             proposals = [dict(item) for item in unapplied_proposals if isinstance(item, Mapping)]
+            from proxy.services.model_result_packet_service import admit_model_operation_batch
+
+            # One ID cannot carry two different literal decisions in one batch,
+            # even for trusted callers that do not request packet-scope checks.
+            # Resolve this before source proposals or pending replies can close.
+            identity_admission = admit_model_operation_batch(accepted_rows, packet_locators=packet_locators)
+            accepted_rows = identity_admission.accepted_rows
+            proposals.extend(identity_admission.unapplied_proposals)
             if enforce_packet_scope:
                 from proxy.services.model_result_packet_service import _locator_key, admit_model_result_packet
 

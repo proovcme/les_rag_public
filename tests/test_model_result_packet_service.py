@@ -496,3 +496,218 @@ def test_model_snapshot_catalog_canonicalizer_does_not_repair_foreign_alias(tmp_
     assert updated["accepted_rows"] == [prior]
     assert updated["unapplied_proposals"][0]["reason"] == "operation_source_mismatch"
     assert updated["unapplied_proposals"][0]["decision"] == authored
+
+
+@pytest.mark.parametrize("change", [
+    {"row_role": "material"},
+    {"title": "Другая самостоятельная операция"},
+    {"norm_code": "ГЭСН11-01-011-02"},
+    {"quantity": 150},
+    {"revision": 2},
+    {"expected_revision": 2},
+    {"evidence_refs": ["Q2.H2"]},
+    {"coverage": "Другое обоснование того же решения"},
+    {"open_gap": "Остался конкретный нерешённый вопрос"},
+    {"resource_bindings": [{"resource_slot": 3, "selected_resource_code": "literal-B"}]},
+    {"engineer_basis": {"literal": ["другое основание", 0, None]}},
+    {"engineer_basis": {"literal": ["полное основание", False, None]}},
+])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_conflicting_same_operation_id_preserves_both_raw_proposals_without_picking_a_subject(change, reverse):
+    prior = {"source_row": "S!R2", "operation_id": "op_known", "revision": 1,
+             "row_role": "work", "title": "Исходная операция", "quantity": 37.5, "unit": "м2"}
+    first = {**prior, "expected_revision": 1, "title": "Предложенная операция",
+             "norm_code": "ГЭСН11-01-011-01", "evidence_refs": ["Q1.H1"],
+             "coverage": "Буквальное обоснование выбранной операции", "open_gap": None,
+             "resource_bindings": [{"resource_slot": 3, "selected_resource_code": "literal-A"}],
+             "engineer_basis": {"literal": ["полное основание", 0, None]}}
+    second = {**copy.deepcopy(first), **copy.deepcopy(change)}
+    assert json.dumps(first, ensure_ascii=False, sort_keys=True) != json.dumps(second, ensure_ascii=False, sort_keys=True)
+    authored = [second, first] if reverse else [first, second]
+    untouched = copy.deepcopy(authored)
+    old = copy.deepcopy(prior)
+
+    admission = admit_model_result_packet(authored, packet_locators=["S!R2"], prior_operations=[prior])
+
+    assert admission.accepted_rows == []
+    assert len(admission.unapplied_proposals) == 2
+    assert [proposal["reason"] for proposal in admission.unapplied_proposals] == ["conflicting_operation_id"] * 2
+    assert [proposal["decision"] for proposal in admission.unapplied_proposals] == untouched
+    assert json.dumps([proposal["decision"] for proposal in admission.unapplied_proposals], ensure_ascii=False, sort_keys=True) == json.dumps(untouched, ensure_ascii=False, sort_keys=True)
+    assert len({proposal["proposal_id"] for proposal in admission.unapplied_proposals}) == 2
+    assert len(admission.diagnostics) == 2
+    assert prior == old and authored == untouched
+    assert all(proposal["decision"] is not row for proposal, row in zip(admission.unapplied_proposals, authored))
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("enforce_packet_scope", [False, True])
+def test_store_identity_collision_rejects_all_conflicting_versions_but_commits_unrelated_id(tmp_path, reverse, enforce_packet_scope):
+    path = tmp_path / "collision.sqlite"
+    store = WorkbookResearchJobService(path)
+    job = _begin(store)
+    job = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2", "S!R3"], evidence=[], enforce_packet_scope=True,
+        accepted_rows=[
+            {"source_row": "S!R2", "row_role": "work", "title": "Исходная работа", "unit": "м2", "quantity": 37.5},
+            {"source_row": "S!R3", "row_role": "work", "title": "Независимая работа", "unit": "м", "quantity": 4},
+        ],
+    )
+    old, neighbor = copy.deepcopy(job["accepted_rows"])
+    first = {**old, "expected_revision": 1, "title": "Первое предложение", "quantity": 50,
+             "evidence_refs": ["Q1.H1"], "coverage": "Буквальное первое основание",
+             "resource_bindings": [{"resource_slot": 3, "selected_resource_code": "literal-A"}]}
+    second = {**copy.deepcopy(first), "row_role": "material", "coverage": "Буквальное второе основание"}
+    good = {**neighbor, "expected_revision": 1, "quantity": 8, "coverage": "Принятое независимое основание"}
+    conflicts = [second, first] if reverse else [first, second]
+    authored = [conflicts[0], good, conflicts[1]]
+    untouched = copy.deepcopy(authored)
+
+    admission = admit_model_result_packet(
+        authored, packet_locators=["S!R2", "S!R3"], prior_operations=[old, neighbor],
+    )
+    kwargs = dict(sheet="S", packet_locators=["S!R2", "S!R3"], accepted_rows=authored,
+                  evidence=[], enforce_packet_scope=enforce_packet_scope)
+    updated = store.record_packet(job["job_id"], **kwargs)
+    by_id = {row["operation_id"]: row for row in updated["accepted_rows"]}
+    assert len(by_id) == 2
+    assert by_id[old["operation_id"]] == old
+    assert by_id[neighbor["operation_id"]]["quantity"] == 8
+    assert by_id[neighbor["operation_id"]]["revision"] == 2
+    assert [proposal["decision"] for proposal in updated["unapplied_proposals"]] == conflicts
+    assert {proposal["reason"] for proposal in updated["unapplied_proposals"]} == {"conflicting_operation_id"}
+    assert [revision["revision"] for revision in store.list_revisions(job["job_id"], old["operation_id"])] == [1]
+    assert [revision["revision"] for revision in store.list_revisions(job["job_id"], neighbor["operation_id"])] == [1, 2]
+    assert authored == untouched
+    assert admission.accepted_rows == [good]
+    assert [proposal["decision"] for proposal in admission.unapplied_proposals] == conflicts
+
+    restarted = WorkbookResearchJobService(path)
+    repeated = restarted.record_packet(job["job_id"], **kwargs)
+    restored = WorkbookResearchJobService(path).get(job["job_id"])
+    assert repeated["accepted_rows"] == updated["accepted_rows"] == restored["accepted_rows"]
+    assert repeated["unapplied_proposals"] == updated["unapplied_proposals"] == restored["unapplied_proposals"]
+    assert [revision["revision"] for revision in restarted.list_revisions(job["job_id"], old["operation_id"])] == [1]
+    assert [revision["revision"] for revision in restarted.list_revisions(job["job_id"], neighbor["operation_id"])] == [1, 2]
+    checkpoint = [event for event in restarted.events_after(job["job_id"]) if event["event"] == "packet_checkpoint"][-1]
+    assert checkpoint["data"]["new_revisions"] == 0
+
+
+@pytest.mark.parametrize("enforce_packet_scope", [False, True])
+def test_identical_known_id_duplicates_are_idempotent_in_admission_and_durable_store(tmp_path, enforce_packet_scope):
+    store = WorkbookResearchJobService(tmp_path / "identical-collision.sqlite")
+    job = _begin(store)
+    job = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2"], evidence=[], enforce_packet_scope=True,
+        accepted_rows=[{"source_row": "S!R2", "row_role": "work", "title": "Работа", "quantity": 2}],
+    )
+    old = copy.deepcopy(job["accepted_rows"][0])
+    authored = {**old, "expected_revision": 1, "quantity": 9, "extra_literal": {"nested": [False, "как есть"]}}
+    duplicates = [authored, copy.deepcopy(authored)]
+
+    admission = admit_model_result_packet(duplicates, packet_locators=["S!R2"], prior_operations=[old])
+
+    assert admission.accepted_rows == [authored]
+    assert admission.unapplied_proposals == []
+    kwargs = dict(sheet="S", packet_locators=["S!R2"], accepted_rows=duplicates,
+                  evidence=[], enforce_packet_scope=enforce_packet_scope)
+    first = store.record_packet(job["job_id"], **kwargs)
+    repeated = store.record_packet(job["job_id"], **kwargs)
+    assert first["accepted_rows"] == repeated["accepted_rows"]
+    assert first["accepted_rows"][0]["quantity"] == 9
+    assert first["accepted_rows"][0]["revision"] == 2
+    assert first["accepted_rows"][0]["extra_literal"] == authored["extra_literal"]
+    assert repeated["unapplied_proposals"] == []
+    assert [revision["revision"] for revision in store.list_revisions(job["job_id"], old["operation_id"])] == [1, 2]
+
+
+@pytest.mark.parametrize("enforce_packet_scope", [False, True])
+def test_empty_operation_ids_allow_distinct_new_operations_on_one_source(tmp_path, enforce_packet_scope):
+    authored = [
+        {"source_row": "S!R2", "operation_id": "", "row_role": "work", "title": "Подготовка", "quantity": 7},
+        {"source_row": "S!R2", "operation_id": "", "row_role": "work", "title": "Монтаж", "quantity": 7},
+    ]
+    admission = admit_model_result_packet(authored, packet_locators=["S!R2"])
+    assert admission.accepted_rows == authored
+    assert admission.unapplied_proposals == []
+    store = WorkbookResearchJobService(tmp_path / "empty-identities.sqlite")
+    job = _begin(store)
+
+    saved = store.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"], accepted_rows=authored,
+                                evidence=[], enforce_packet_scope=enforce_packet_scope)
+
+    assert [row["title"] for row in saved["accepted_rows"]] == [row["title"] for row in authored]
+    assert len({row["operation_id"] for row in saved["accepted_rows"]}) == 2
+    assert all(row["operation_id"] and row["revision"] == 1 for row in saved["accepted_rows"])
+    assert saved["unapplied_proposals"] == []
+
+
+@pytest.mark.parametrize("enforce_packet_scope", [False, True])
+def test_conflicting_id_cannot_complete_pending_research_or_resolve_a_source_proposal(tmp_path, enforce_packet_scope):
+    store = WorkbookResearchJobService(tmp_path / "collision-pending.sqlite")
+    job = _begin(store)
+    job = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2"], evidence=[], enforce_packet_scope=True,
+        accepted_rows=[{"source_row": "S!R2", "row_role": "work", "title": "Исходная работа", "quantity": 12}],
+    )
+    old = copy.deepcopy(job["accepted_rows"][0])
+    source_proposal = {
+        "proposal_id": "pending-source-proposal", "code": "MODEL_RESULT_SOURCE_CONFLICT",
+        "decision": {**copy.deepcopy(old), "quantity": 15.71, "coverage": "Сохранённое необработанное основание"},
+    }
+    job = store.record_packet(job["job_id"], sheet="S", packet_locators=["S!R2"], accepted_rows=[],
+                              evidence=[], unapplied_proposals=[source_proposal], enforce_packet_scope=True)
+    reopened = store.reopen_locators(job["job_id"], ["S!R2"], preserve_accepted=True,
+                                     operation_ids=[old["operation_id"]])
+    assert store.pending_research_operation_ids(reopened) == {old["operation_id"]}
+    assert store.pending_research_locators(reopened) == {"S!R2"}
+    first = {**old, "expected_revision": 1, "quantity": 15.71,
+             "resolves_proposal_id": source_proposal["proposal_id"], "coverage": "Первая новая версия"}
+    second = {**copy.deepcopy(first), "row_role": "material", "coverage": "Другая новая версия"}
+
+    saved = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2"], accepted_rows=[first, second], evidence=[],
+        enforce_packet_scope=enforce_packet_scope,
+    )
+
+    assert saved["accepted_rows"] == [old]
+    assert store.pending_research_operation_ids(saved) == {old["operation_id"]}
+    assert store.pending_research_locators(saved) == {"S!R2"}
+    assert "S!R2" in saved["remaining"]
+    assert source_proposal["proposal_id"] not in saved["task_context"].get("resolved_source_conflict_proposal_ids", [])
+    assert any(proposal == source_proposal for proposal in saved["unapplied_proposals"])
+    collisions = [proposal for proposal in saved["unapplied_proposals"]
+                  if proposal.get("reason") == "conflicting_operation_id"]
+    assert [proposal["decision"] for proposal in collisions] == [first, second]
+    assert [revision["revision"] for revision in store.list_revisions(job["job_id"], old["operation_id"])] == [1]
+
+
+@pytest.mark.parametrize("enforce_packet_scope", [False, True])
+def test_operation_id_padding_and_catalog_source_alias_do_not_hide_a_packet_collision(tmp_path, enforce_packet_scope):
+    store = WorkbookResearchJobService(tmp_path / "collision-alias.sqlite")
+    job = _begin(store)
+    job = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2"], evidence=[], enforce_packet_scope=True,
+        accepted_rows=[{"source_row": "S!R2", "row_role": "work", "title": "Исходная работа", "quantity": 12}],
+    )
+    old = copy.deepcopy(job["accepted_rows"][0])
+    first = {**old, "operation_id": " " + old["operation_id"] + " ", "source_row": "R2",
+             "expected_revision": 1, "title": "Первое предложение"}
+    second = {**old, "expected_revision": 1, "title": "Второе предложение"}
+    authored = [first, second]
+    admission = admit_model_result_packet(
+        authored, packet_locators=["S!R2"], prior_operations=[old], canonicalize_locator=_catalog_alias_locator,
+    )
+    assert admission.accepted_rows == []
+    assert [proposal["reason"] for proposal in admission.unapplied_proposals] == ["conflicting_operation_id"] * 2
+    assert [proposal["decision"] for proposal in admission.unapplied_proposals] == authored
+
+    saved = store.record_packet(
+        job["job_id"], sheet="S", packet_locators=["S!R2"], accepted_rows=authored, evidence=[],
+        enforce_packet_scope=enforce_packet_scope, canonicalize_locator=_catalog_alias_locator,
+    )
+
+    assert saved["accepted_rows"] == [old]
+    assert [proposal["decision"] for proposal in saved["unapplied_proposals"]] == authored
+    assert {proposal["reason"] for proposal in saved["unapplied_proposals"]} == {"conflicting_operation_id"}
+    assert [revision["revision"] for revision in store.list_revisions(job["job_id"], old["operation_id"])] == [1]

@@ -6,6 +6,38 @@ from proxy.services import model_lsr_result_contract as contract
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 
 
+def _assert_unambiguous_operation_and_volume_contract(instruction):
+    assert "source_row может повторяться" in instruction
+    assert "непустой operation_id — один раз в результате" in instruction
+    assert "дополнительной операции" in instruction and "operation_id пустым" in instruction
+    assert "кратность той же физической величины" in instruction
+    assert "Исходные unit и quantity сохраняй" in instruction
+    assert "Кратность: calc_quantity/calc_unit" in instruction
+    assert "формула: conversion_source" in instruction
+    assert "нужны для обоснованного перехода к другой физической величине" not in instruction
+
+
+@pytest.mark.parametrize("instruction_factory", [
+    contract.model_lsr_result_field_instruction,
+    lsr_result_table_instruction,
+])
+def test_result_contract_separates_repeatable_sources_single_operation_ids_and_derived_volume(instruction_factory):
+    # These are transport semantics, not a preferred norm, operation or quantity.
+    # One source can support another operation without changing its source volume.
+    _assert_unambiguous_operation_and_volume_contract(instruction_factory())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["B0_DIRECT", "B1_CANDIDATE"])
+async def test_both_actual_answer_routes_advertise_the_same_operation_and_volume_contract(tmp_path, monkeypatch, variant):
+    from tests.test_model_rag_sheet_evidence_reads import _run_sheet
+
+    run = await _run_sheet(tmp_path, monkeypatch, reads=False, variant=variant)
+    assert len(run.requests) == 2 and not run.responses
+    answer_wire = "\n".join(str(message.get("content") or "") for message in run.requests[1].messages)
+    _assert_unambiguous_operation_and_volume_contract(answer_wire)
+
+
 def test_undecided_document_instruction_advertises_shared_vor_fields_only_once():
     # Repeating the same field list in both nested contracts consumes the
     # evidence budget without offering the model another field or decision.

@@ -230,7 +230,7 @@ def build_vor_terminal_tool_schema(
 def build_workbook_terminal_tool_schema(
     source_rows: Sequence[str], shown_operation_ids: Sequence[str] = (), *, artifact_kind: str,
     attachment_id: str | None = None, require_operation_identity: bool = False,
-    technical_only: bool = False,
+    technical_only: bool = False, proof_operation_ids: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Project exact known identifiers onto the existing canonical tool schema."""
     from proxy.services.workbook_tool_service import BUILD_LSR_WORKBOOK, BUILD_VOR_WORKBOOK
@@ -241,7 +241,8 @@ def build_workbook_terminal_tool_schema(
 
     anchors = list(dict.fromkeys(source_rows))
     operation_ids = list(dict.fromkeys(shown_operation_ids))
-    if any(not isinstance(item, str) or not item for item in (*anchors, *operation_ids)):
+    proof_ids = list(dict.fromkeys(proof_operation_ids))
+    if any(not isinstance(item, str) or not item for item in (*anchors, *operation_ids, *proof_ids)):
         raise ValueError("schema identifiers must be nonempty literal strings")
     canonical = contract.public_payload()["input_schema"]
     # Keep the ordinary execution contract unchanged. Native terminal arguments
@@ -259,6 +260,7 @@ def build_workbook_terminal_tool_schema(
     if artifact_kind == "lsr":
         for name in BASE_FIELDS:
             row_properties.setdefault(name, {"type": ["string", "null"]})
+        row_properties["quantity"]["description"] = "Preserve source quantity; derived volume goes in calc_quantity."
         row_properties["evidence_refs"] = {"type": ["string", "array", "null"], "items": {"type": "string"}}
         for name in MATCH_FIELDS:
             row_properties[name] = {"type": ["string", "null"], "enum": ["yes", "no", "unknown", "", None]}
@@ -268,7 +270,7 @@ def build_workbook_terminal_tool_schema(
         row_properties.update({
             "calc_quantity": {
                 "type": ["number", "string", "null"],
-                "description": "Derived physical quantity.",
+                "description": "Derived volume, including multiplicity in the same physical unit.",
             },
             "calc_unit": {
                 "type": ["string", "null"],
@@ -317,6 +319,7 @@ def build_workbook_terminal_tool_schema(
             "then": {"required": list(dict.fromkeys([*BASE_FIELDS, *SELECTED_NORM_FIELDS]))},
         }]
     row_properties.setdefault("source_row", {"type": "string"})["enum"] = anchors
+    row_properties["source_row"]["description"] = "Source locator; may repeat for distinct operation_id."
     row_properties.setdefault("row_role", {"type": "string", "enum": list(VOR_ROW_ROLES)})
     work_property = row_properties.setdefault("work_row", {"type": "string"})
     work_references = list(dict.fromkeys(["", *anchors, *operation_ids]))
@@ -324,12 +327,27 @@ def build_workbook_terminal_tool_schema(
         work_references.append(None)
     work_property["enum"] = work_references
     operation_property = row_properties.setdefault("operation_id", {"type": ["string", "null"]})
-    operation_property["enum"] = ["", *operation_ids]
+    operation_property["description"] = "Shown ID once per result; empty for additional operations."
+    operation_property["enum"] = ["", *dict.fromkeys([*operation_ids, *proof_ids])]
     if "null" in operation_property.get("type", []):
         operation_property["enum"].append(None)
+    if proof_ids:
+        covered_property = row_properties.setdefault("covered_by_work_id", {"type": ["string", "null"]})
+        covered_property["enum"] = [value for value in work_references if value is not None]
+        if "null" in covered_property.get("type", []):
+            covered_property["enum"].append(None)
     row_properties.setdefault("expected_revision", {"type": "integer", "minimum": 1})
     row["required"] = list(dict.fromkeys([*row.get("required", []), "source_row", "row_role", "title",
-        *(["operation_id", "expected_revision"] if require_operation_identity else [])]))
+        *(["operation_id"] if require_operation_identity else []),
+        *(["expected_revision"] if require_operation_identity and not proof_ids else [])]))
+    if proof_ids and require_operation_identity:
+        row["required"] = [field for field in row["required"] if field != "expected_revision"]
+        if operation_ids:
+            row.setdefault("allOf", []).append({
+                "if": {"required": ["operation_id"],
+                       "properties": {"operation_id": {"enum": operation_ids}}},
+                "then": {"required": ["expected_revision"]},
+            })
     schema["required"] = list(dict.fromkeys([*schema.get("required", []), "decisions"]))
     if attachment_id is not None:
         if not isinstance(attachment_id, str) or not attachment_id:

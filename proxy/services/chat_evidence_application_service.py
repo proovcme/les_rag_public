@@ -10029,7 +10029,7 @@ async def _execute_chat_evidence_application(
                 canonical_shadow_recorded = False
                 tool_loop_enabled = bool(profile_tools)
 
-                def _with_workbook_terminal(read_tools, *, frame=None, prior_rows=()):
+                def _with_workbook_terminal(read_tools, *, frame=None, prior_rows=(), proof_operation_ids=()):
                     kind = artifact_kind_declaration.get("artifact_kind")
                     if (canonical_execution_mode is not CanonicalRouteMode.ACTIVE
                             or source_catalog is None):
@@ -10058,6 +10058,7 @@ async def _execute_chat_evidence_application(
                         anchors, old_ids, artifact_kind=value,
                         attachment_id=str(getattr(req, "attachment_id", "") or ""),
                         require_operation_identity=bool(prior_rows),
+                        proof_operation_ids=proof_operation_ids,
                         technical_only=artifact_kind_declaration.get("status") != "declared") for value in kinds)]
 
                 def _terminal_extractor(native_tools, *, purpose):
@@ -12684,7 +12685,7 @@ async def _execute_chat_evidence_application(
 
                             async def _start_sheet_proof(*, purpose):
                                 nonlocal sheet_proof_purpose, sheet_norm_proof_plan, research_job
-                                nonlocal pass_rows, proof_operation_identities
+                                nonlocal pass_rows, proof_operation_identities, sheet_read_tools
                                 from proxy.services.proof_operation_identity_service import (
                                     proof_operation_context,
                                     stage_proof_operations,
@@ -12698,9 +12699,18 @@ async def _execute_chat_evidence_application(
                                         proof_operation_identities = dict(saved_ids)
                                 pass_rows, proof_operation_identities = stage_proof_operations(
                                     pass_rows, proof_operation_identities)
-                                sheet_proof_context[-1]["proof_operation_identity"] = proof_operation_context(
+                                staged_identity_context = proof_operation_context(
                                     pass_rows, proof_operation_identities,
                                     model_rag_existing_operation_rows(accumulated_rows, review_prior_rows))
+                                sheet_proof_context[-1]["proof_operation_identity"] = staged_identity_context
+                                # Only issued, same-source proof addresses may expand result IDs;
+                                # the durable prior set still owns every parent-reference enum.
+                                sheet_read_tools = _with_workbook_terminal(
+                                    model_evidence_read_tool_schemas(), frame=pass_source_frame,
+                                    prior_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
+                                    proof_operation_ids=[operation["operation_id"]
+                                        for operation in staged_identity_context["operations"]
+                                        if operation["identity_status"] == "uncommitted"])
                                 # Save the completed public answer BEFORE counting/admission or
                                 # another model await. No row or durable ID/revision is admitted.
                                 # Only issued proof-local addresses survive this checkpoint.

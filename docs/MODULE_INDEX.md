@@ -1,5 +1,28 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 984 — однозначность результата и адреса bounded proof
+
+✅ Doc↔source: `model_result_packet_service.admit_model_operation_batch`
+проверяет полное canonical JSON всех вариантов непустой ID до scope/CAS.
+Различающиеся варианты сохраняются proposals; буквальный дубль идемпотентен;
+пустые ID самостоятельных операций не группируются. `record_packet` применяет
+ту же границу до разрешения source conflicts и pending research при обоих
+режимах scope. ROOT: 87 passed. Общий result/native контракт различает
+повторяемый source_row, однократную ID и производный объём при неизменном
+исходном количестве. Док: [ADR-15](ADR-15-model-rag-result.md).
+
+✅ Doc↔source: `build_workbook_terminal_tool_schema(proof_operation_ids=())`
+и `_start_sheet_proof` согласуют уже выданные адреса с result-ID enum после
+stage/resume. Родительские ссылки остаются durable; в смешанном proof revision
+нужна только сохранённой операции. Native reads/fallback/extractor используют
+тот же набор. Actual wire/restart/factory RED подтверждён; related273 passed,
+отдельный mixed RED устранён. Default/B0 не получают нового proof цикла.
+Прежний54k positive/50k negative wire budget и scale keeper:8 passed после
+сокращения повторов в тексте, без изменения evidence или лимита.
+Installed983/25930277 технически принят точным установщиком; профессиональные
+ordinary/B0/hint не приняты. Source984 ещё не установлен. Факты и ограничения:
+[RELEASE_LEDGER](RELEASE_LEDGER.md).
+
 ## 983 — согласованность advertised полей ВОР/ЛСР
 
 ✅ Doc↔source: `ModelResearchToolService._read_norm_card` допускает отдельный

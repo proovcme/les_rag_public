@@ -44,9 +44,8 @@ OPTIONAL_FIELDS = (
 
 LSR_SOURCE_VOLUME_INSTRUCTION = (
     "Масштаб измерителя нормы код применяет один раз; не дели quantity и "
-    "не дублируй этот масштаб в calc_quantity/conversion_factor. Эти поля вместе "
-    "с conversion_source нужны для обоснованного перехода к другой физической величине "
-    "(фасовка, геометрия, расход), а не для масштаба измерителя нормы. "
+    "не дублируй этот масштаб в calc_quantity/conversion_factor. "
+    "conversion_source: кратность той же физической величины либо перевод к другой физической величине. "
 )
 
 # These names already have literal explanations in the same instruction.
@@ -986,7 +985,8 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False, includ
         "неизменённые строки prior_model_decisions повторять не обязательно. При явном пересмотре верни "
         "все предложенные прежние операции, включая неизменённые с дословными предметными полями, "
         "прежним operation_id и expected_revision из показанного revision. Изменение "
-        "нормы/пояснения — пересмотр прежней операции, дополнительная работа — новая. "
+        "нормы/пояснения — пересмотр прежней операции. source_row может повторяться для дополнительной операции; "
+        "непустой operation_id — один раз в результате. "
         "Не объявляй неприменимые необязательные колонки. Дополнительно: "
         "resource_bindings: JSON-массив action=add/replace/exclude/reuse, "
         "target_resource_code/name либо target_resource_ref=Qx.Hy#resource=N "
