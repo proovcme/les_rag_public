@@ -1,5 +1,16 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Пауза21.10: полный984 GREEN, следующий regression ещё не исполнен
+
+Frozenf018e687:7257passed/20skipped/5warnings/951.59s, updater328passed/22.72s;
+точный установщик технически принят. Ordinary/B0 real files профессионально
+не приняты; ВОР-контроль остановлен владельцем и возобновляем.
+`test_completed_proof_output_retention_985.py`:16предложенных случаев
+(literal raw/scope/issuedIDs/durablepending/unchangeddraft +empty/length/native/
+readstop/context-negative). Независимо просмотрены, **не запускались**; это
+не RED/GREEN evidence. Production985 ещё отсутствует. Первый следующий шаг:
+ROOT targeted RED с локальным basetemp, см. план/RELEASE_LEDGER.
+
 ## 984 — batch identity и согласованность proof schema
 
 `test_model_result_packet_service`:36 новых cases, ROOT RED до production;

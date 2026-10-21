@@ -1,5 +1,59 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 — пауза владельца; exact984 установлена, профессиональная приёмка не пройдена
+
+Установлена0.31.256/build984/native5.1.984, commit
+`f018e68733c3b912ca3054acb16abb59fdd984eb`, aligned98. Свежий полный gate:
+7257 passed/20 skipped/5 warnings/951.59s, updater328 passed/22.72s;
+architecture/active-baseline/version/map/verify/public-check прошли.
+Artifact `b72b362abfe7ece348ca9d09`, acceptance
+`7d9609be5ea1490193b710ef2f5bb10e` accepted19:33:58UTC: install984→rollback983→
+reinstall984. NSIS505486008bytes/SHA
+`7f74c4c47b60b9f872ea32e5348cdb73ba7ecf4071137d287c311b3a8162ea13`.
+Receipt: `artifacts/release_984_baseline_v2/accept_console01/0_accept.log`.
+Физически установлен baseline v2/c2711b3b… с прежними нормами и книгами СПбII/III,
+МоскваIIIкв2026. Это приёмка на persistent user state, не clean-room/new-index.
+Публичного выпуска не было.
+
+Контроли Qwen35B/r14/131072, explicit style-only profile
+`user:profile:estimator:0fc8f534-ed7d-4b6e-a9c4-7c9379612572`:
+
+- `artifacts/live_984/lsr_style01`:6calls/547.953s, XLSX18946bytes/
+  SHA8ae96a16…,7source addresses сохранены,0полных работ/0confirmed/
+  47310.47предварительно. `complete/0remaining` означает учёт строк, не готовую
+  ЛСР. Последний ресурсный proof: stop/5936chars/2370tokens,
+  answer_parsed=false; его raw утрачен, сохранены предыдущие7решений.
+  Actual context содержит7proof IDs; отсутствия ID на wire этот контроль не показал.
+- `artifacts/live_984/lsr_style_b0_01`:тот же source/task/profile/attachment,
+  2calls/275.11s,0полных/0confirmed/64820.85предварительно. Неверные условия
+  кабельной нормы, незавершённая коррекция толщины и цены. Для выбранной нормы
+  дополнительно виден fsem_aggregate_discrepancy. Успешного baseline, ухудшенного
+  harness, этой парой не доказано; запросы/выбранные карточки различались.
+- `artifacts/live_984/vor_docx_style01`:контроль остановлен по просьбе владельца,
+  4calls/428.453s; итогового файла нет. Job
+  `wrj_7df8fa32df7b4dd4bb4a2d88a6456b49`, session
+  `vor984-docx-style-20261021`, paused/resumable,0accepted/20remaining.
+  Его пригодность не оценена как завершённый опыт.
+
+Глобальный профиль7d99… и подключениеr14 не менялись. Thinking-кандидат только
+подготовлен инертным оператором, не опубликован/не запускался.
+
+**Следующий первый переход:** не терять завершённый нераспознанный proof.
+В обеих ветвях `rows_after_proof_round` сейчас возвращает прежние строки без
+raw diagnostic при пустом parsed_rows. Минимальный согласованный путь:
+literal raw/purpose/packet/small issued-ID map → существующие transport diagnostics
+→ durable pending/unapplied proposals/paused, без новых LLM calls и выбора норм.
+Не добавлять decoder alias `decisions` без фактического потерянного ответа.
+План: [сохранение proof](superpowers/plans/2026-10-21-preserve-unparsed-proof.md).
+`tests/test_completed_proof_output_retention_985.py`:16случаев подготовлены,
+**ещё не запускались**, production985/версия985 не реализованы.
+Первый следующий запуск — ROOT RED этого файла, затем минимальное исправление.
+
+Пауза подтверждена `artifacts/checkpoint_984_20261021/receipt.json`:
+active_chat_jobs=0, llm_waiting=0, provider_active=0; runtime984 aligned.
+Pending test SHA `81f0f7ebf4a74eca9a867a79247299ba57f350182b19c0ad6ba886762509cb70`.
+Checkpoint — точка возобновления, customer_ready=false, не финальная сдача.
+
 ## 21.10.2026 — первый полный gate984 остановил выпуск; проверен состав baseline
 
 Frozen `0a392d77`: architecture/active-baseline/version/map/verify прошли;

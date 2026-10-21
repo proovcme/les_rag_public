@@ -1,5 +1,17 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## Пауза21.10: установлен984; следующий дефект — сохранение unparsed proof
+
+✅ Exact984/f018e687 принят технически, aligned98; полный gate7257passed,
+updater328passed. Baseline v2 физически доставлен с тремя книгами. 🟡 Живые
+ordinary/B0 не прошли профессиональную приёмку; ВОР-контроль приостановлен.
+`rows_after_proof_round` сохраняет прежние решения, но при нераспознанном
+завершённом тексте не сохраняет новый raw. Подготовлены16неисполненных тестов985;
+production не менялся. Использовать существующую transport-pending очередь,
+не добавлять предметные циклы/автозаполнение ссылок. Точный checkpoint и next:
+[RELEASE_LEDGER](RELEASE_LEDGER.md),
+[план](superpowers/plans/2026-10-21-preserve-unparsed-proof.md).
+
 ## 984 — однозначность результата и адреса bounded proof
 
 ✅ Doc↔source: `model_result_packet_service.admit_model_operation_batch`

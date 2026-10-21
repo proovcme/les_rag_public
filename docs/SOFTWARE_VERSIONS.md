@@ -1,5 +1,15 @@
 # Версии программного контура ЛЕС
 
+## Пауза21.10: установлен exact0.31.256/984
+
+Native5.1.984, deployedf018e687, aligned98. Полные offline gates и exact
+install→rollback983→reinstall984 прошли. В установленном baseline v2 находятся
+СПбII/III и МоскваIIIкв2026; canonical normDB не менялась. Qwen35B/r14 и
+глобальный7d99профиль прежние;0fc8style-клон использован только явно в QA.
+Профессиональные ordinary/B0 не прошли, VOR job paused/resumable. Версия985
+не поднята, production985 не реализована: подготовлен план/test-only regression
+на потерю unparsed proof. Подробности и точка продолжения — RELEASE_LEDGER.
+
 ## Кандидат 0.31.256 / 984; установлен exact 0.31.255 / 983
 
 Installed983/native5.1.983, commit25930277, aligned98 файлов. Точный NSIS
