@@ -1,5 +1,16 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Подготовка PR21.10: первый отдельный RED985
+
+`test_completed_proof_output_retention_985.py`:16 случаев впервые исполнены,
+**12failed/4passed/4.73s**. Десять TypeError относятся к ещё не добавленным
+параметрам merge helper, два integration failures — к отсутствующей диагностике
+в norm/resource proof. Четыре keeper-проверки прошли. Это тестовый транспорт,
+не новый живой прогон. Лог: `artifacts/pr984/pending985-red.xml`.
+Файл включён в черновой PR как следующий RED; в `CURRENT_TESTS` пока не входит.
+Production985 и GREEN этого набора отсутствуют. Frozen9847257passed ниже —
+отдельный ранее выполненный gate исходного кода `f018e687`.
+
 ## Пауза21.10: полный984 GREEN, следующий regression ещё не исполнен
 
 Frozenf018e687:7257passed/20skipped/5warnings/951.59s, updater328passed/22.72s;

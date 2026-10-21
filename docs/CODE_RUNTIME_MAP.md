@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1270 |
-| Строк Python | 436052 |
+| Python-файлов под git | 1271 |
+| Строк Python | 436267 |
 | PRODUCT_REACHABLE | 388 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 870 |
+| TEST_OR_TOOL_ONLY | 871 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 343 |
 | Ошибок разбора | 0 |
@@ -32,7 +32,7 @@
 
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
-| proxy/services/chat_evidence_application_service.py | 16449 | 144 |
+| proxy/services/chat_evidence_application_service.py | 16449 | 145 |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 8416 | 13 |
 | proxy/routers/chat.py | 4940 | 62 |
@@ -41,7 +41,7 @@
 | sovushka/pages/documents.py | 3976 | 3 |
 | proxy/routers/datasets.py | 3887 | 21 |
 | proxy/services/rim_lsr_trace_service.py | 3753 | 53 |
-| proxy/services/workbook_research_job_service.py | 3419 | 74 |
+| proxy/services/workbook_research_job_service.py | 3419 | 75 |
 | sovushka/styles.py | 3301 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2464 | 17 |
