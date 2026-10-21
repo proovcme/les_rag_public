@@ -1,5 +1,25 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 21.10.2026 —979: роль выпала из добора, header дублировался в полном evidence
+
+Свежий ordinary976 доставил7строк/0confirmed за312.781s. Readiness исключал
+из research IDs именно unresolved/MISSING работы; `classify_norm_gap` игнорировал
+их роль. Candidate979 сохраняет их как role_unresolved с прежними stable IDs,
+не назначая work/norm. Измеренный initial answer60016tokens содержал11upgrades:
+каждый preview дополнялся full с повторным producer header/НРСП. Exact header
+теперь разделяется с неизменённым preview; полный suffix и differing-header
+fallback сохранены, предыдущая lossless NRSP-факторизация вновь применима.
+ROOT RED prefix3failed/2passed и role4failed → related270passed/12.44s.
+`artifacts/offline_979/green_related02.xml`; профессиональный quality PASS pending.
+
+978canonical gates/installer прошли, installed acceptance failed до завершения
+цикла: изолированный оператор не передал USERNAME в scheduled desktop restart.
+Прежний976 восстановлен/aligned98. Исходный оператор/attempt сохранены;
+следующая версия adapter сохраняет только необходимые Windows identity keys
+без печати значений и проверяет их до запуска. Базы/индексы не менялись.
+Точная Qdrant-карточка ГЭСНм08-02-147-01 присутствует, fresh dense cosine1;
+причиной её отсутствия в top50 не является пропавший point этой карточки.
+
 ## 21.10.2026 —978: pre-CE truncation устранён в candidate; качество OPEN
 
 После measured native50 outer typed/native cap выбрасывал карточки до reranker;

@@ -1,5 +1,28 @@
 # RAG evidence flow
 
+## 979 — полная карточка без повторного producer header
+
+`complete_card_frontier_page` сохраняет все прежние проверки принадлежности,
+SHA preview, exact hydration, resource completeness и inventory. Если preview
+и full буквально начинаются полным producer header `_norm_card_content` без
+обзора ресурсов, этот header передаётся один раз. Неизменённый preview и
+буквальный suffix full сохраняют все сведения, включая уникальные детали
+preview. Header+suffix восстанавливает full побайтно. При отличающемся шифре,
+названии или другом поле header остаётся прежний полный append.
+Raw metadata, resources, количества/нулевые значения, цены и refs не меняются;
+прежнее НР/СП factoring снова видит один каталог на карточку и разделяет его
+между карточками без удаления вариантов. Это представление evidence, не выбор
+профессионального содержания и не новый поиск.
+
+Измеренный baseline976:7строк,5calls/312.781s; initial answer60016tokens,
+11upgraded cards/171resources,12309повторных символов header (5009НР/СП),
+19complete bodies deferred. `artifacts/live_978/baseline976_ordinary01/final.json`.
+Точечная карточка ГЭСНм08-02-147-01 найдена в Qdrant в единственном экземпляре;
+fresh bge-m3 dense cosine1. Её отсутствие в короткой выдаче не объясняется
+отсутствующим point или несовпадением проверенного dense vector.
+ROOT RED3failed/2fallback passed. Installed979, экономия токенов и качество
+документа ещё не подтверждены. Базы/индексы/manifest не меняются.
+
 ## 978 — retrieval depth не зависит от visible topK
 
 `browse_norms_many` сохраняет прежние literal model queries, native Qdrant

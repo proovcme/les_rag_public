@@ -7,6 +7,7 @@ import json
 import pytest
 
 from proxy.services import chat_evidence_application_service as app
+from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from tests.test_workbook_gap_followup_955 import baseline, identity, SOURCE
 
@@ -43,6 +44,61 @@ def test_plain_continue_reopens_exact_open_ids_and_retains_closed_shared_source(
     assert note["chat_review"]["message"] == question and note["chat_review"]["review_scope"] == "operations"
     assert {row["operation_id"] for row in note["prior_rows"]} == expected
     assert not app.workbook_chat_review_needed(question, current)
+
+
+@pytest.mark.parametrize("norm_status", [
+    pytest.param("MISSING", id="missing-norm-status"), pytest.param("", id="role-only-gap"),
+])
+def test_unresolved_roles_stay_in_readiness_retry_ids_without_becoming_work(tmp_path, norm_status):
+    _store, original = baseline(tmp_path)
+    rows = deepcopy(original["accepted_rows"])
+    for row in rows[1:]:
+        row.update(row_role="unresolved", norm_code="", norm_status=norm_status,
+                   gap_reason="no_suitable_candidate",
+                   open_gap="Literal model reason: the available cards do not justify a decision.")
+    before = deepcopy(rows)
+    expected = {row["operation_id"] for row in rows[1:]}
+
+    ready = build_lsr_result_readiness(
+        packaged=True, rows=rows, catalog_locators=[SOURCE, "Другой лист!R9"],
+        catalog_work_count=2, job_status="complete", pricing_status="priced_partial",
+        price_basis=original["task_context"]["price_basis"],
+    )
+
+    assert set(ready["research_operation_ids"]) == expected
+    assert set(ready["research_locators"]) == {SOURCE, "Другой лист!R9"}
+    assert rows[0]["operation_id"] not in ready["research_operation_ids"]
+    assert ready["counts"]["works"] == 1 and ready["counts"]["unresolved"] == 2
+    assert ready["estimate_complete"] is False
+    assert "resume" in {item["id"] for item in ready["actions"]}
+    assert rows == before
+
+
+def test_gap_resume_retains_unresolved_roles_norm_choices_and_closed_sibling(tmp_path):
+    store, original = baseline(tmp_path)
+    rows = deepcopy(original["accepted_rows"])
+    for row in rows[1:]:
+        # A saved cipher also survives while its operation role is unresolved.
+        row.update(row_role="unresolved", norm_status="MISSING", gap_reason="no_suitable_candidate",
+                   open_gap="Literal model reason: the available cards do not justify a decision.")
+    store.replace_accepted_rows(original["job_id"], rows)
+    requested, child = _child(store, "Добери нормы")
+    before = deepcopy(child)
+    expected = {row["operation_id"] for row in before["accepted_rows"][1:]}
+
+    current = _continue(store, child, requested, question="Добери нормы")
+
+    assert store.pending_research_operation_ids(current) == expected
+    assert store.pending_research_locators(current) == {SOURCE, "Другой лист!R9"}
+    assert current["accepted_rows"] == before["accepted_rows"]
+    assert current["accepted_rows"][0] == before["accepted_rows"][0]
+    assert all(row["row_role"] == "unresolved" for row in current["accepted_rows"][1:])
+    assert current["evidence"] == before["evidence"] and current["query_cache"] == before["query_cache"]
+    assert current["task_context"]["price_basis"] == before["task_context"]["price_basis"]
+    assert current["continues_job_id"] == original["job_id"]
+    note = store.list_events(current["job_id"], "locators_reopened")[-1]["payload"]
+    assert note["preserve_accepted"] is True and set(note["research_operation_ids"]) == expected
+    assert {row["operation_id"] for row in note["prior_rows"]} == expected
 
 
 @pytest.mark.parametrize("question", [
@@ -153,6 +209,42 @@ def test_source_confirmed_zero_is_not_a_new_norm_research_target(tmp_path, monke
         pytest.fail("source-confirmed zero needs neither a new norm nor a new charge")
     monkeypatch.setattr(store, "reopen_locators", forbidden)
     assert _continue(store, child, requested, catalog=catalog) is child
+
+
+def test_mixed_zero_and_unresolved_resume_only_returns_the_unresolved_operation(tmp_path):
+    from tests.test_lsr_zero_charge_observation_969 import _catalog, _row
+
+    store = WorkbookResearchJobService(tmp_path / "zero and unresolved.sqlite")
+    original = store.begin_or_resume(identity(store), task_context={
+        "original_question": "Собери ЛСР, Санкт-Петербург, 3 квартал 2026",
+        "price_basis": {"requested_region": "Санкт-Петербург", "requested": "3 квартал 2026"},
+    })
+    zero = _row("0")
+    unresolved = {**_row(1, 3), "row_role": "unresolved", "norm_status": "MISSING",
+                  "gap_reason": "no_suitable_candidate", "open_gap": "Literal model gap remains open."}
+    store.record_packet(original["job_id"], sheet="S", packet_locators=["S!R2", "S!R3"],
+        accepted_rows=[zero, unresolved], evidence=[{"global_evidence_id": "literal-source", "content": "Source"}],
+        remaining=[], held_packet={"locators": ["S!R2", "S!R3"], "terminal_model_result_saved": True})
+    store.record_artifact_kind(original["job_id"], declaration={"status": "declared", "artifact_kind": "lsr",
+        "declarations": ["lsr"], "errors": [], "authority": "result"})
+    store.finish(original["job_id"], status="complete")
+    store.record_packaging(original["job_id"], tool="build_lsr_workbook", revision_id="before-zero-gap-resume",
+        draft=False, price_basis={"actual_book": "sankt-peterburg_3kv2026", "pricebook_sha256": "b" * 64,
+                                  "match": "exact"})
+    requested, child = _child(store, "Добери нормы")
+    before = deepcopy(child)
+    catalog = _catalog(tmp_path, quantities=(0, 1))
+    # The store assigns its durable IDs at record_packet, before any resume.
+    saved = {row["source_row"]: row["operation_id"] for row in before["accepted_rows"]}
+
+    current = _continue(store, child, requested, question="Добери нормы", catalog=catalog)
+
+    assert store.pending_research_operation_ids(current) == {saved["S!R3"]}
+    assert store.pending_research_locators(current) == {"S!R3"}
+    assert saved["S!R2"] not in store.pending_research_operation_ids(current)
+    assert current["accepted_rows"] == before["accepted_rows"]
+    assert current["evidence"] == before["evidence"]
+    assert current["task_context"]["price_basis"] == before["task_context"]["price_basis"]
 
 
 def test_owned_plain_continue_never_adopts_or_resumes_a_newer_unclaimed_job(tmp_path):

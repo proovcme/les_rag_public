@@ -49,3 +49,30 @@
 - [ ] Если качества недостаточно, определить следующий первый сломанный переход по фактам, без новых orchestration loops.
 - [ ] Согласованно обновить версию, MODULE_INDEX/module doc/ledger и test inventory; выполнить канонические gates.
 - [ ] Только после gate собрать exact installer и проверить установленный baseline/candidate/rollback и обычные ВОР/ЛСР. Customer-ready только по доставленным проверенным документам.
+
+### Измеренная граница 978 и два следующих исправления
+
+Коммит `22f577d1`: canonical verify/test/updater/public и сборка exact installer прошли
+(6956 passed / 20 skipped; updater328 passed). Установка не принята: изолированный
+оператор не передал Windows USERNAME, поэтому desktop restart и restart после
+rollback отказали. Прежний976 восстановлен, API подтвердил aligned98. Receipt и
+неудачная попытка неизменны;978 не объявляется установленным или готовым.
+
+Свежий обычный baseline976 (`artifacts/live_978/baseline976_ordinary01`) доставил
+7 строк за312.781s,5model calls, но0complete/0confirmed. Книга цен сохранена.
+Два воспроизводимых технических дефекта следующей узкой правки:
+
+- [x] RED4 → unresolved role с открытым решением не исчезает из research IDs.
+  Возвращать модели вопрос о роли и норме, не назначать work и не менять её решение.
+  Нулевой объём, подтверждённое покрытие, закрытые соседи, evidence/cache/pricebasis
+  и CAS сохраняются.
+- [x] RED3/2fallback passed → upgrade preview/full не повторяет их точный общий leading-line prefix.
+  Исходный preview сохраняется; полный typed body восстанавливается байт-в-байт из
+  общего prefix и добавленного suffix. Все отличающиеся сведения и ресурсы сохраняются.
+  Живой trace:11upgrades,12309повторных символов, из них5009НР/СП; initial answer60016tokens.
+  ROOT related270passed/12.44s; установленная проверка ещё не выполнена.
+- [ ] Focused related gates, независимый review, version/docs/ledger/map, canonical
+  gates и exact artifact acceptance с исправленным окружением оператора.
+- [ ] Установленный candidate и direct baseline на тех же source/question/profile/
+  connection; скачанный файл и добор незакрытых решений. Качество и производительность
+  измерять отдельно. Полное покрытие и90% точности по этим seam-тестам не заявлять.

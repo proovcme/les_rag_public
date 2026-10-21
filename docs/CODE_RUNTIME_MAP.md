@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1268 |
-| Строк Python | 431654 |
+| Строк Python | 431902 |
 | PRODUCT_REACHABLE | 387 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 869 |
@@ -61,7 +61,7 @@
 | proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 16 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
-| proxy/services/smeta_artifact_service.py | 1242 | 4 |
+| proxy/services/lsr_result_readiness_service.py | 1252 | 20 |
 
 ## Сметный монолит: фактические потребители
 

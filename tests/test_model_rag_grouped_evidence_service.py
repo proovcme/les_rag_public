@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -1128,3 +1129,130 @@ def test_read_replay_required_retained_body_uses_full_view_without_mutating_raw(
     assert row["source_sha256"] == original["meta"]["source_sha256"]
     assert plan.optional == plan.optional_body_refs == []
     assert chunk == original
+
+
+def _complete_supplement_fixture(*, rules=True, count=1, changed_preview_line=None):
+    """Verified producer bodies; the preview also carries its own unique fact."""
+    import proxy.services.model_rag_grouped_evidence_service as grouped
+    from proxy.services.model_research_tool_service import (
+        _norm_card_content, _norm_search_chunk, norm_preview_metadata,
+    )
+
+    cards = []
+    for index in range(1, count + 1):
+        resource = {"kind": "material", "code": f"r-{index}",
+                    "name": 'Полный ресурс «А» с "кавычками" и е\u0301',
+                    "unit": "м³", "per_unit": 0, "price": 123.45,
+                    "source_ref": f"immutable-resource-{index}"}
+        literal = {"norm_key": f"literal-key-{index}", "norm_code": f"literal-code-{index}",
+                   "title": f'Дословное наименование «{index}»', "measure_unit": "100 м²",
+                   "edition": "literal edition", "source_ref": f"immutable-norm-{index}",
+                   "source_sha256": "d" * 64,
+                   "work_steps": ["первая операция", "вторая операция; условие из источника"],
+                   "resource_preview": [{"kind": "material", "code": f"preview-{index}",
+                                         "name": f"Уникальная подробность только обзора {index}",
+                                         "unit": "м"}],
+                   "resources": [resource], "resource_count": 1,
+                   "resources_returned": 1, "resources_complete": True, "hydration_status": "ok"}
+        if rules:
+            literal["nr_sp_candidates"] = _rules()
+        chunk = _norm_search_chunk(literal, score=1, matched_before_cap=count)
+        meta = dict(chunk.meta)
+        preview = _norm_card_content(meta)
+        if changed_preview_line is not None:
+            old, new = changed_preview_line
+            preview = preview.replace(old, new, 1)
+            meta["hydration_preview_sha256"] = hashlib.sha256(preview.encode("utf-8")).hexdigest()
+        cards.append(EvidenceCard(f"Q1.H{index}", f"[Q1.H{index} | literal]",
+                                  normative_card_identity(meta), chunk.content, meta,
+                                  preview, norm_preview_metadata(meta)))
+    groups = [EvidenceGroup("unchanged literal model query", cards)]
+    previews = [EvidenceGroup(groups[0].header, [
+        replace(card, content=card.preview_content, meta=card.preview_meta,
+                preview_content=None, preview_meta=None) for card in cards])]
+    admitted = grouped._render(previews, {card.ref for card in cards}, 1)
+    return groups, admitted
+
+
+@pytest.mark.parametrize("rules", [False, True])
+def test_complete_supplement_shares_exact_header_but_keeps_original_preview_and_full_resource_bytes(rules):
+    import proxy.services.model_rag_grouped_evidence_service as grouped
+    from proxy.services.model_research_tool_service import _norm_card_content
+    from proxy.services.model_resource_reference_service import shown_resource_record
+
+    groups, admitted = _complete_supplement_fixture(rules=rules)
+    original = copy.deepcopy(groups)
+    card, = groups[0].cards
+    shared = _norm_card_content({**card.meta, "resource_preview": []}) + "\n"
+    assert card.preview_content.startswith(shared) and card.content.startswith(shared)
+    suffix = card.content[len(shared):]
+
+    page = grouped.complete_card_frontier_page(groups, admitted)
+
+    assert page is not None and groups == original
+    body = page.body_by_ref[card.ref]
+    assert body.startswith(card.preview_content)
+    assert body.count(shared) == 1
+    assert body.endswith(suffix)
+    restored = shared + body[-len(suffix):]
+    assert restored.encode("utf-8") == card.content.encode("utf-8")
+    assert "Уникальная подробность только обзора 1" in body
+    assert page.inventory_refs == admitted.inventory_refs and page.body_refs == admitted.body_refs
+    assert page.pointer_by_ref == admitted.pointer_by_ref and page.shared_refs == admitted.shared_refs
+    assert page.unshown_refs == admitted.unshown_refs and page.deferred_refs == admitted.deferred_refs
+    assert page.meta_by_ref[card.ref] == card.meta
+    expected = {key: value for key, value in card.meta["resources"][0].items() if key != "resource_slot"}
+    assert shown_resource_record(card.meta, body, 1) == expected
+    assert shown_resource_record(card.meta, body, 1)["per_unit"] == 0
+    assert shown_resource_record(card.meta, body, 1)["price"] == 123.45
+    assert card_delivery_facts(card.meta, raw_body_shown=True, displayed_body=body)["normative_card_complete"]
+    if rules:
+        assert body.count(_catalog_text(_rules())) == 1
+
+
+@pytest.mark.parametrize("changed_preview_line", [
+    ("Шифр: literal-code-1", "Шифр: different-literal-header"),
+    ("Наименование: Дословное наименование «1»", "Наименование: different-literal-header"),
+])
+def test_complete_supplement_differing_headers_keep_both_literal_bodies(changed_preview_line):
+    import proxy.services.model_rag_grouped_evidence_service as grouped
+
+    groups, admitted = _complete_supplement_fixture(changed_preview_line=changed_preview_line)
+    original = copy.deepcopy(groups)
+    card, = groups[0].cards
+
+    page = grouped.complete_card_frontier_page(groups, admitted)
+
+    assert page is not None and groups == original
+    expected = (card.preview_content + "\n\nAdditional complete typed body; "
+                "the original preview above is preserved:\n" + card.content)
+    assert page.body_by_ref[card.ref].encode("utf-8") == expected.encode("utf-8")
+    assert page.inventory_refs == admitted.inventory_refs and page.pointer_by_ref == admitted.pointer_by_ref
+    assert page.meta_by_ref[card.ref] == card.meta
+
+
+def test_complete_supplement_enables_once_per_card_nrsp_and_shared_cross_card_catalog():
+    import proxy.services.model_rag_grouped_evidence_service as grouped
+    from proxy.services.model_resource_reference_service import shown_resource_record
+
+    groups, admitted = _complete_supplement_fixture(count=2)
+    original = copy.deepcopy(groups)
+
+    page = grouped.complete_card_frontier_page(groups, admitted)
+
+    assert page is not None and groups == original
+    assert page.body_refs == ["Q1.H1", "Q1.H2"] and page.shared_refs == {}
+    catalog = _catalog_text(_rules())
+    for card in groups[0].cards:
+        raw = page.body_by_ref[card.ref]
+        assert raw.startswith(card.preview_content)
+        assert raw.count(catalog) == 1
+        factored = lossless_nrsp_body(raw, page.meta_by_ref[card.ref])
+        assert factored.catalog_id and factored.catalog_text == catalog
+        assert restore_nrsp_body(factored).encode("utf-8") == raw.encode("utf-8")
+        assert card_delivery_facts(card.meta, raw_body_shown=True,
+                                   displayed_body=factored.content)["normative_card_complete"]
+        expected = {key: value for key, value in card.meta["resources"][0].items() if key != "resource_slot"}
+        assert shown_resource_record(card.meta, factored.content, 1) == expected
+    assert "\n\n".join(page.groups).count(catalog) == 1
+    assert page.meta_by_ref == {card.ref: card.meta for card in groups[0].cards}

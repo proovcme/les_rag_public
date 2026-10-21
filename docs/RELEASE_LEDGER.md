@@ -1,5 +1,35 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 — candidate979 после свежего отрицательного baseline976
+
+Source0.31.251/build979/native5.1.979; установлен и восстановлен976,
+commit `f6c31aa44b08975330ee48fed6548127f4dfdc85`, aligned98.
+978 (`22f577d1`) прошёл canonical gates:6956passed/20skipped, updater328passed,
+architecture/smoke/public rc0. Exact installer SHA
+`5a7d79e18aae059a18b271bf8b92b49a4e66fc23c1c6daff9bf0e65930adacf5`.
+Приёмка `68904dd1313a4b608fcbcccd40d494e3` failed: оператор отбросил USERNAME
+из дочернего Windows environment; start-desktop и rollback restart отказали.
+976 повторно запущен штатным installed executable, API подтверждает alignment.
+Immutable receipt сохранён: `artifacts/release_978_control/`.
+
+Свежий ordinary976: `artifacts/live_978/baseline976_ordinary01`,312.781s/5calls,
+7accepted/0remaining, SHA скачанного XLSX
+`d3b30a7d6b1a35634a636c7233a1162cbf2a284c394f5ec73b81cee1af8f1ff5`.
+0complete/0confirmed, preliminary19418.39; цена/книга не потеряны. Модель
+изменила40мм на20мм, смешала назначение материала/нормы; кабель и вентилятор
+остались unresolved/MISSING. Профессиональная приёмка не пройдена.
+
+979 исправляет две доказанные технические границы: unresolved role больше
+не теряется из точной gap queue; upgrade preview/full не дублирует точный
+producer header и не блокирует прежнее lossless factoring НР/СП. Роли/нормы,
+все факты/ресурсы и принятые решения не выбираются и не меняются кодом.
+ROOT RED prefix3failed/2fallback passed, role4failed → related270passed/12.44s.
+Precommit verify/architecture4commands rc0,6985tests collected/53.51s:
+`artifacts/offline_979/verify_precommit01/receipt.json`. Полный canonical/install
+проверяются отдельно. Нового index/DB/manifest/migration нет.
+`customer_ready=false`; точность90%, полнота, скорость и универсальность
+этими техническими тестами не объявляются.
+
 ## 21.10.2026 — candidate978: полный bounded union до rerank; installed976
 
 Source0.31.250/build978/native5.1.978. Установлен0.31.248/build976,
@@ -38,8 +68,9 @@ Precommit canonical verify/architecture:4commands rc0,6976tests collected;
 повтор использует существующие зависимости (`UV_NO_SYNC=1`), без установки пакетов.
 Оба source controls
 с установленными dependencies не являются installed candidate acceptance.
-Полный978 gate и installed cycle
-ещё не выполнены. `customer_ready=false`.
+Полный978 gate выполнен (6956passed/20skipped, updater328passed), exact installer
+собран. Installed cycle failed на окружении desktop restart; подробности
+выше. `customer_ready=false`.
 
 Повторная проверка прежнего money trace976 не выявила потери выбранной книги:
 в обоих B0/B1 match=exact/sankt-peterburg_3kv2026. Две фактические цены песка/

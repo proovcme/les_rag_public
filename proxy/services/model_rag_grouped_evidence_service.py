@@ -469,7 +469,9 @@ def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: Evide
     An optional prefix counts immutable card identities in admitted body order;
     every already-shared alias of that identity travels in the same unit.
     """
-    from proxy.services.model_research_tool_service import _full_norm_card_content, norm_preview_metadata
+    from proxy.services.model_research_tool_service import (
+        _full_norm_card_content, _norm_card_content, norm_preview_metadata,
+    )
 
     cards = [card for group in groups for card in group.cards]
     refs = [card.ref for card in cards]
@@ -502,7 +504,19 @@ def complete_card_frontier_page(groups: Sequence[EvidenceGroup], admitted: Evide
                                            displayed_body=card.content).get("normative_resources_status") != "complete"
                     or inventory_pointer(card, full=True) != admitted.pointer_by_ref[card.ref]):
                 return None
-            content += "\n\nAdditional complete typed body; the original preview above is preserved:\n" + card.content
+            shared = _norm_card_content({**card.meta, "resource_preview": []})
+            if (shared and (content == shared or content.startswith(shared + "\n"))
+                    and card.content.startswith(shared + "\n")):
+                # The whole producer header is already literal above. Keep
+                # every preview-only fact and append the exact full-body suffix;
+                # shared + suffix restores the original full UTF-8 body.
+                content += ("\n\nAdditional complete typed body; its complete producer header "
+                            "is shared with the original preview above, including shared catalogs; "
+                            "the following literal suffix completes that same typed body:\n"
+                            + card.content[len(shared):])
+            else:
+                content += ("\n\nAdditional complete typed body; the original preview above is preserved:\n"
+                            + card.content)
             meta = card.meta
             upgraded.add(card.ref)
         replacements[card.ref] = replace(card, content=content, meta=meta,

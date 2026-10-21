@@ -1,5 +1,22 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат979 — полные карточки и добор неопределённых решений
+
+Existing `test_model_rag_grouped_evidence_service` проверяет точный общий
+header, сохранение уникального preview и полных ресурсов/цен/нулей/Unicode,
+byte-exact восстановление full, несовпадающие headers и прежнее НР/СП factoring
+с действующими resource/fidelity checks. ROOT RED3failed/2passed.
+Existing `test_plain_lsr_gap_continuation_976` проверяет unresolved role с/без
+norm status: точные readiness/retry IDs, сохранение выбранного шифра, closed
+соседа на том же адресе, evidence/cache/книги и исключение source-confirmed zero.
+ROOT RED4failed → related270passed/12.44s (`green_related02.xml`). Tests не
+назначают role=work и не служат приёмкой норм. Первый related run269passed/1failed
+выявил неверное ожидание входного alias ID в новом zero fixture; проверка
+исправлена на durable ID из сохранённого checkpoint, равенство всех строк до/после
+продолжения сохраняется. Product-код после этого не менялся.
+Доказательства: `artifacts/offline_979/`; полный candidate gate и installed
+user journey выполняются отдельно. Новый test profile не добавлен.
+
 ## Кандидат978 — найденные кандидаты доходят до reranker
 
 Existing `test_smeta_norm_browser` проверяет непересекающиеся50+50карточек,
@@ -13,7 +30,10 @@ related GREEN78passed/3.38s:
 `artifacts/offline_978/green_ce_order_related.xml`. Крупный test profile не добавлен.
 Independent probe lookup RED1 после реальных normalized keys → related
 norm/core/action callers228passed/20.91s (`green_final_related.xml`).
-Полный978 gate/installed live не выполнены; эти тесты не доказывают применимость.
+Полный978 gate:6956passed/20skipped; updater328passed. Exact installer собран,
+но installed acceptance отказала при desktop restart из-за USERNAME,
+не переданного локальным оператором. Runtime976 восстановлен/aligned98;
+профессиональная применимость не подтверждена.
 Existing ownership/held tests проверяют oldv1 empty/card → fresh literal search,
 currentv2 replay и archived cache без потери авторских решений/дополнительного
 model cycle. Existing gap/refinement tests проверяют finite aliases, exact IDs,

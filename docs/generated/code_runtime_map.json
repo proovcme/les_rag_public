@@ -5346,13 +5346,14 @@
         "tests/test_lsr_zero_charge_observation_969.py",
         "tests/test_money_states_23.py",
         "tests/test_norm_price_identity_928.py",
+        "tests/test_plain_lsr_gap_continuation_976.py",
         "tests/test_retry_target_projection_955.py",
         "tests/test_revision_projection_830.py",
         "tests/test_rim_lsr_trace_service.py",
         "tests/test_stall_bound_25.py",
         "tests/test_unresolved_retry_routes_955.py"
       ],
-      "lines": 1238,
+      "lines": 1252,
       "module": "proxy.services.lsr_result_readiness_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6098,7 +6099,7 @@
         "tests/test_nrsp_catalog_reference_967.py",
         "tools/measure_model_resource_literal_capacity.py"
       ],
-      "lines": 879,
+      "lines": 893,
       "module": "proxy.services.model_rag_grouped_evidence_service",
       "outbound": [
         "proxy/__init__.py",
@@ -14635,7 +14636,7 @@
     },
     {
       "inbound": [],
-      "lines": 1130,
+      "lines": 1258,
       "module": "tests.test_model_rag_grouped_evidence_service",
       "outbound": [
         "proxy/services/context_governor_service.py",
@@ -15710,10 +15711,11 @@
     },
     {
       "inbound": [],
-      "lines": 250,
+      "lines": 342,
       "module": "tests.test_plain_lsr_gap_continuation_976",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/lsr_result_readiness_service.py",
         "proxy/services/workbook_research_job_service.py",
         "tests/test_lsr_zero_charge_observation_969.py",
         "tests/test_model_rag_sheet_evidence_reads.py",
@@ -24025,7 +24027,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 869,
     "tracked_python_files": 1268,
-    "tracked_python_lines": 431654
+    "tracked_python_lines": 431902
   },
   "warnings": []
 }

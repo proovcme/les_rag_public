@@ -1,5 +1,21 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 979 — сохранный полный контекст и очередь неопределённых решений
+
+✅ Doc↔candidate source: `complete_card_frontier_page` разделяет только точный
+producer header preview/full той же проверенной карточки. Preview остаётся
+буквальным prefix; все отличающиеся факты и полный typed suffix сохраняются.
+При несовпадении заголовков остаются оба тела. НР/СП вновь допускает прежнее
+lossless cross-card factoring; identities/frontier/guards не ослаблены.
+`classify_norm_gap` возвращает неопределённую роль модели в прежнюю очередь
+исследования, не назначая работу и не выбирая норму. Stable IDs, закрытые
+соседи, evidence, книга и исключения подтверждённого нуля/покрытия сохранены.
+Точки и ограничения: [evidence flow](modules/rag-evidence-flow.md),
+[ЛСР](ALGO-lsr-assembly.md). ROOT RED: prefix3failed/2fallback passed, role4failed;
+related270passed/12.44s, включая полные source/proof/zero/retry contracts.
+Кандидат и установленный продукт различаются: runtime976 восстановлен после
+ошибки окружения оператора при приёмке978; customer_ready=false.
+
 ## 978 — сохранение найденных кандидатов до rerank
 
 ✅ Doc↔candidate source: `norm_browser.browse_norms_many` использует независимый

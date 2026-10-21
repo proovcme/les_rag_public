@@ -241,11 +241,15 @@ def classify_norm_gap(row: Mapping[str, Any]) -> str:
     """Why this model row is not a closed professional selection."""
 
     role = inferred_row_role(row)
-    if role in {"material", "equipment", "resource", "unresolved"}:
+    if role in {"material", "equipment", "resource"}:
         return ""
     if canonicalize_row_role(row.get("row_role")) == "header":
         # A heading is accounted as structure; it never requires a mounting norm.
         return ""
+    if role == "unresolved":
+        # The model has not decided what this row represents. Keep it open for
+        # another model pass without assigning a work role or a norm in code.
+        return "role_unresolved"
     status = _norm_status(row)
     code = _norm_code(row)
     if status in _OPEN_STATUSES or code.casefold() in _ABSENT_CODES:
@@ -429,7 +433,13 @@ def build_lsr_result_readiness(
         if not kind:
             continue
         locator = _locator(row)
-        if kind == "conflict":
+        if kind == "role_unresolved":
+            action = (
+                "Назначение позиции пока не определено"
+                f"{_own_words(row)}. Опишите её назначение в чате или нажмите "
+                "«Продолжить незакрытые строки» для повторной проверки."
+            )
+        elif kind == "conflict":
             action = (
                 f"Проверьте применимость выбранного шифра {_norm_code(row) or 'без кода'} "
                 f"для строки {locator}; код его не подменяет."
@@ -996,6 +1006,10 @@ def build_lsr_result_readiness(
         counts["works_projected"] = len(projection_work)
         counts["works_counted"] = works_total
     gap_states = {
+        "role_unresolved": {
+            "count": sum(1 for g in norm_gaps if g.get("kind") == "role_unresolved"),
+            "meaning": "Назначение позиции пока не определено; требуется уточнение или повторная проверка.",
+        },
         "norm_missing": {
             "count": sum(
                 1 for g in norm_gaps
