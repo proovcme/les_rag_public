@@ -1,5 +1,18 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 —981 main PASS, updater остановил порядок test profile
+
+Frozen981/fa3f56af:version/runtime-map/verify/architecture/active-baseline rc0,
+main7057passed/20skipped/5warnings за940.66s. Затем updater327passed/1failed
+за22.53s: `test_current_make_fallback_contains_the_new_canonical_contract_tests`
+требует sorted unique список. Новое добавление CURRENT_TESTS после `$(sort …)`
+сохраняло весь набор, но нарушало сортировку. Оно перенесено в существующий
+SMETA_DOCUMENT_TESTS, который уже входит в этот sort. Проверка и состав набора
+не ослаблены, production Python/модельный маршрут не менялись.
+Prepare остановился до installer; installed979 сохранён. Лог:
+`artifacts/release_981_control/prepare_console01/2_prepare.log`.
+Следующий frozen gate обязателен; main PASS не подменяет весь release PASS.
+
 ## 21.10.2026 — candidate981: финансовая проверка только для итоговой ЛСР
 
 Source0.31.253/build981/native5.1.981, calculation contract0.7. Installed979

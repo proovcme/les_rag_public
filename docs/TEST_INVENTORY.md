@@ -1,5 +1,14 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## 981 — полный основной gate и сортировка profile
+
+`artifacts/release_981_control/prepare_console01/2_prepare.log`: main7057passed/
+20skipped/940.66s. Updater327passed/1failed: строгая sorted-unique проверка
+канонического набора обнаружила appended CURRENT_TESTS вне sort. Тот же новый
+файл включён через SMETA_DOCUMENT_TESTS внутри прежнего sort; ни один тест
+не исключён, assertion не менялся. Production-код после main PASS не менялся.
+Новый полный gate/installer/live pending, installed979 не обновлён.
+
 ## Кандидат981 — отделение финансового proof от ВОР
 
 `test_model_artifact_kind_authority`: две query proposals vor/lsr → итоговая

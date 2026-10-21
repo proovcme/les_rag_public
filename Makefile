@@ -140,7 +140,7 @@ UNIT_TESTS += tests/test_model_capability_admission_946.py tests/test_model_lsr_
 CURRENT_TESTS ?= $(sort $(UNIT_TESTS) $(INTEGRATION_TESTS) $(RAG_CORE_TESTS) $(FOCUS_TESTS) $(MEMORY_TESTS) $(SMETA_DOCUMENT_TESTS) $(MODEL_CONNECTION_TESTS) tests/test_code_runtime_map.py tests/test_documentation_contract.py tests/test_test_profiles.py tests/test_software_versions.py)
 LEGACY_ARCHITECTURE_TESTS ?= tests/test_construction_harness.py tests/test_resource_cost_v05.py tests/test_resource_cost_v06.py tests/test_unified_adapters_v09.py tests/test_unified_async_v10.py tests/test_unified_construction_harness.py tests/test_unified_construction_v04.py tests/test_unified_filebody_v12.py tests/test_unified_live_v07.py tests/test_unified_operational_v08.py tests/test_unified_real_v11.py
 ARTEL_TESTS := $(wildcard tests/test_artel*.py)
-CURRENT_TESTS += tests/test_lsr_repack_calculation_contract_980.py
+SMETA_DOCUMENT_TESTS += tests/test_lsr_repack_calculation_contract_980.py
 ARCHITECTURE_EXCLUDED_TESTS := $(LEGACY_ARCHITECTURE_TESTS) $(ARTEL_TESTS)
 ARCHITECTURE_IGNORE_ARGS := $(foreach test,$(ARCHITECTURE_EXCLUDED_TESTS),--ignore=$(test))
 LES_RELEASE_IGNORE_ARGS := $(ARCHITECTURE_IGNORE_ARGS)
