@@ -2,6 +2,25 @@
 
 ## 983 — реклама существующих структурных полей
 
+Новый exact-code контракт: `test_smeta_exact_norm_card` — require_generation
+19RED/14positive→33GREEN; настоящая SQLite, полный ресурсный состав, manifest
+и bytes до/после, прежний explicit pin. `test_model_research_evidence_actions`
+проверяет literal-code/no-search, source/generation, scope и прежние pointer
+отказы. `test_model_evidence_read_contract` — новая карточка prepared→delivered
+с собственной ссылкой; чтение само по себе не admitted evidence.
+Первый полный test983:7147passed/2failed/20skipped. Оба отказа — прежние
+7500token handoff, поля не удалялись/лимит не повышался: удалён только повтор
+списка ВОР в nested LSR. Новые assertions проверяют ровно один общий список и
+сохранение остальных байтов shared contract. Related374passed/27.33s;
+новый full frozen gate и installed live ещё pending.
+Cross-generation2RED/1positive→3GREEN; expanded related518passed/2assertion
+failures из-за объявленной дедупликации. Только exact duplicated-line
+expectations согласованы с новым контрактом, остальные байты и все поля
+сравниваются строго. Targeted correction14passed/2.27s; full gate pending.
+Review P2 presentation aliases:3RED плюс отдельный shown-source-bypass RED;
+165relatedGREEN/3.35s, включая старые ref/pointer guards. Полная identity
+не заменяет source/generation check; raw selector не переписывается.
+
 `test_model_result_packet_service`:30новых случаев application-owned CAS,
 scope, raw audit, literal поля, race, несколько операций одного адреса,
 restart/invalid snapshot, идемпотентность и прежний strict manual admission.
@@ -15,7 +34,7 @@ Legacy source aliases:3RED→51ownerGREEN/0.64s, включая реальный
 в прежнем positive54000; лимит/тест не менялись. Исключена no-op инструкция
 для empty snapshot:2RED→GREEN, оба baseline/candidate сохраняют transport audit.
 Wire54000positive и50000negative —5targetedGREEN/3.66s вместе сno-op.
-Phase975 final43passed/13.73s; source не изменён после этого прогона.
+Phase975 на этом этапе43passed/13.73s; последующие изменения проверяются заново.
 `test_model_lsr_result_contract`:3перечня ВОР обязаны включать обоснование,
 связь включения и evidence. `test_model_workbook_terminal_transport_962`:
 7optional calc/resource полей объявлены,2real validate/decode варианта

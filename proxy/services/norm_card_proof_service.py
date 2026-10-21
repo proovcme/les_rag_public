@@ -282,9 +282,8 @@ def proof_request_message(refs: Sequence[str], rows: Sequence[Mapping[str, Any]]
                             f"{READ_TOOL} с этим evidence_ref")
             continue
         names = ", ".join(dict.fromkeys(cited)) if cited else "ни одной карточки не цитировано"
-        searchable.append(f"- {locator}: шифр {cipher}, ссылки в строке: {names} — найди норму "
-                          f"через search_sources и прочитай её карточку через {READ_TOOL} "
-                          "целиком")
+        searchable.append(f"- {locator}: шифр {cipher}, ссылки в строке: {names} — прочитай полную карточку "
+                          f"через {READ_TOOL} с norm_code; если точный шифр не найден, ищи через search_sources")
     if not (readable or searchable):
         return ""
     lines = "\n".join(dict.fromkeys(readable))

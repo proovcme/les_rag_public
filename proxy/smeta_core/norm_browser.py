@@ -420,12 +420,15 @@ def read_norm_card_exact(
     norm_code: str = "",
     base_path: str | Path | None = None,
     expected_base_sha256: str = "",
+    require_generation: bool = False,
 ) -> dict[str, Any]:
     """Read one literal identity and all its resources; never search for a substitute.
 
     The caller owns the model-visible pointer registry. This reader only verifies
     that any supplied key and display code identify the same immutable base row.
     A legacy schema or inconsistent stored count stays visible as incomplete.
+    A new literal-code read may require the passed RAG generation; existing
+    callers with an explicit immutable pin keep their original contract.
     """
     key = str(norm_key or "").strip()
     code = str(norm_code or "").strip()
@@ -452,12 +455,30 @@ def read_norm_card_exact(
     if not path.exists():
         result["missing"] = ["normative base unavailable"]
         return result
+    generation_manifest_path: Path | None = None
+    generation_manifest_bytes: bytes | None = None
+    if require_generation and not expected_base_sha256:
+        generation_manifest_path = _rag_manifest_path(path)
+        try:
+            generation_manifest_bytes = generation_manifest_path.read_bytes()
+            manifest = json.loads(generation_manifest_bytes)
+        except (OSError, ValueError):
+            result.update(status="source_unverified", missing=["RAG normative base generation manifest is unavailable"])
+            return result
+        generation = str(manifest.get("base_sha256") or "") if isinstance(manifest, dict) else ""
+        if not isinstance(manifest, dict) or manifest.get("status") != "passed" or not re.fullmatch(r"[0-9a-f]{64}", generation):
+            result.update(status="source_unverified", missing=["RAG normative base generation SHA is unavailable"])
+            return result
+        expected_base_sha256 = generation
     if expected_base_sha256:
         try:
             if _actual_base_sha256(path) != expected_base_sha256:
-                result.update(status="conflict", missing=["normative base differs from shown generation"])
+                result.update(status="source_unverified" if generation_manifest_path is not None else "conflict",
+                              missing=["normative base differs from shown generation"])
                 return result
         except OSError:
+            if generation_manifest_path is not None:
+                result["status"] = "source_unverified"
             result["missing"] = ["normative base identity is unreadable"]
             return result
     conn = _connect_base_readonly(path)
@@ -474,6 +495,14 @@ def read_norm_card_exact(
         except OSError:
             return {**result, "status": "conflict", "card": None,
                     "missing": ["normative base identity became unreadable"]}
+        if generation_manifest_path is not None:
+            try:
+                if generation_manifest_path.read_bytes() != generation_manifest_bytes:
+                    return {**result, "status": "conflict", "card": None,
+                            "missing": ["RAG normative generation manifest changed during exact card read"]}
+            except OSError:
+                return {**result, "status": "conflict", "card": None,
+                        "missing": ["RAG normative generation manifest became unreadable"]}
         if result.get("card") is not None:
             result["card"].update(normative_base_sha256=expected_base_sha256,
                                   source_hash_basis="normative_sqlite_base_bytes")

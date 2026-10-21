@@ -20,6 +20,8 @@ LSR_REQUIRED = ("source_row", "row_role", "work_row", "title", "unit", "quantity
 
 def _declared_fields(instruction, kind):
     marker = f"Поля {kind}: "
+    if kind == "ВОР" and marker not in instruction:
+        marker = "КОНТРАКТ ВОР — только при artifact_kind: vor\n"
     return tuple(instruction.split(marker, 1)[1].split(". ", 1)[0].split(", "))
 
 

@@ -2,6 +2,15 @@
 
 ## 983 — согласованность advertised полей ВОР/ЛСР
 
+✅ Doc↔source: `ModelResearchToolService._read_norm_card` допускает отдельный
+буквальный полный norm_code в нормативном профиле; `read_norm_card_exact` с
+require_generation проверяет passed manifest/actual SQLite bytes и возвращает
+полный ресурсный состав. Показанные pointers сохраняют source/generation guards;
+новая карточка проходит обычный evidence delivery. Док: [ADR-15](ADR-15-model-rag-result.md).
+Unknown artifact wrapper показывает общий список ВОР один раз; повтор служебных
+полей не вытесняет evidence при прежних лимитах. Это технические границы,
+не подтверждение профессиональной применимости.
+
 ✅ Doc↔source: `model_result_packet_service` — immutable application revision snapshot и
 transport-only binding точного operation_id/source. Pure helper51passed;
 `chat_evidence_application_service` захватывает показанный prior до ответа,

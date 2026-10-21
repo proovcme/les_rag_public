@@ -358,6 +358,17 @@ class ModelResearchToolService:
         pointers = [row for row in self._shown_norm_cards
                     if (not key or row["norm_key"] == key) and (not code or row["norm_code"] == code)]
         if len(pointers) != 1:
+            if not pointers and set(args) == {"norm_code"} and self._smeta_norm_retrieve is not None:
+                from proxy.smeta_core.norm_browser import _FULL_CODE_RE
+                if _FULL_CODE_RE.fullmatch(args["norm_code"]):
+                    from proxy.services.lsr_norm_quality_gate_service import ciphers_identical
+                    equivalent = [row for row in self._shown_norm_cards if ciphers_identical(row["norm_code"], code)]
+                    if len(equivalent) == 1:
+                        return await self._read_norm_pointer(equivalent[0], args)
+                    if equivalent:
+                        return self._missing("read_norm_card", "exact code identifies multiple shown norm pointers",
+                                             status="conflict")
+                    return await self._read_norm_pointer(None, args)
             missing = self._missing("read_norm_card", "exact pointer must identify one previously shown norm card",
                                     status="conflict" if pointers or (key and code) else "missing")
             options = [dict(row) for row in self._shown_norm_navigation
@@ -369,12 +380,23 @@ class ModelResearchToolService:
         return await self._read_norm_pointer(pointers[0], args)
 
     async def _read_norm_pointer(self, pointer, args, *, verify_source=False) -> ModelResearchToolResult:
+        literal_code_read = pointer is None
+        known_generations = {value for shown in self._shown_norm_cards
+                             for name in ("normative_base_sha256", "retained_normative_base_sha256")
+                             for value in [shown.get(name)]
+                             if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)} if literal_code_read else set()
+        if len(known_generations) > 1:
+            return self._missing("read_norm_card", "shown norms identify multiple normative base generations",
+                                 status="conflict")
         reader = self._norm_card_reader
         if reader is None:
             from proxy.smeta_core.norm_browser import read_norm_card_exact
             reader = read_norm_card_exact
-        read_args = {"norm_key": pointer["norm_key"], "norm_code": pointer["norm_code"]}
-        expected_generation = pointer.get("normative_base_sha256") or pointer.get("retained_normative_base_sha256")
+        requested_code = args["norm_code"] if literal_code_read else pointer["norm_code"]
+        read_args = ({"norm_code": requested_code, "require_generation": True} if literal_code_read
+                     else {"norm_key": pointer["norm_key"], "norm_code": requested_code})
+        expected_generation = ((pointer.get("normative_base_sha256") or pointer.get("retained_normative_base_sha256"))
+                               if pointer is not None else next(iter(known_generations), None))
         if expected_generation and self._norm_card_reader is None:
             read_args["expected_base_sha256"] = expected_generation
         result = await asyncio.to_thread(reader, **read_args)
@@ -383,17 +405,28 @@ class ModelResearchToolService:
             payload = dict(result)
             payload.update({"tool": "read_norm_card", "decision_required_from_model": True})
             return ModelResearchToolResult(payload=payload)
-        if str(card.get("norm_code") or "") != pointer["norm_code"] or (
-            pointer["norm_key"] and str(card.get("norm_key") or "") != pointer["norm_key"]
+        from proxy.services.lsr_norm_quality_gate_service import ciphers_identical
+        code_matches = (ciphers_identical(card.get("norm_code"), requested_code) if literal_code_read
+                        else str(card.get("norm_code") or "") == requested_code)
+        if not code_matches or (
+            pointer is not None and pointer["norm_key"] and str(card.get("norm_key") or "") != pointer["norm_key"]
         ):
             return self._missing("read_norm_card", "reader returned a different norm pointer", status="conflict")
+        if literal_code_read:
+            if not isinstance(card.get("norm_key"), str) or not card["norm_key"].strip():
+                return self._missing("read_norm_card", "reader returned no canonical norm key", status="conflict")
+            generation = card.get("normative_base_sha256")
+            if not isinstance(generation, str) or not re.fullmatch(r"[0-9a-f]{64}", generation):
+                return self._missing("read_norm_card", "reader returned no verified normative base generation",
+                                     status="source_unverified")
         if expected_generation and card.get("normative_base_sha256") != expected_generation:
             return self._missing("read_norm_card", "reader returned a different normative base generation", status="conflict")
-        if (verify_source or pointer.get("normative_base_sha256")) and any(card.get(name) != pointer[name] for name in (
+        if pointer is not None and (verify_source or pointer.get("normative_base_sha256")) and any(card.get(name) != pointer[name] for name in (
             "norm_key", "norm_code", "source_ref", "source_sha256", "edition", "base_type", "normative_base_sha256",
         ) if name in pointer):
             return self._missing("read_norm_card", "reader returned a different immutable norm pointer", status="conflict")
-        card = {**card, "nr_sp_candidates": nr_sp_service.model_candidates(code=pointer["norm_code"])}
+        card = {**card, "nr_sp_candidates": nr_sp_service.model_candidates(
+            code=card["norm_code"] if literal_code_read else requested_code)}
         content = _full_norm_card_content(card)
         card_meta = {
             **{name: card[name] for name in ("norm_key", "norm_code", "source_ref", "source_sha256", "edition", "base_type",
@@ -411,9 +444,11 @@ class ModelResearchToolService:
         return ModelResearchToolResult(payload={
             "schema": "les_tool_result_v1", "tool": "read_norm_card", "operation": "typed_exact_norm_read",
             "status": "ok", "inputs": [dict(args)], "result": {"card": card, "hits": [_chunk_payload(chunk)], "count": 1},
-            "sources": [{"source_ref": card.get("source_ref") or "", "norm_key": pointer["norm_key"]}],
+            "sources": [{"source_ref": card.get("source_ref") or "",
+                         "norm_key": card["norm_key"] if literal_code_read else pointer["norm_key"]}],
             "missing": list(result.get("missing") or []), "warnings": list(result.get("warnings") or []),
-            "trace": {"previously_shown_pointer": pointer}, "decision_required_from_model": True,
+            "trace": ({"literal_exact_request": dict(args)} if literal_code_read
+                      else {"previously_shown_pointer": pointer}), "decision_required_from_model": True,
         }, chunks=(chunk,))
 
     def _read_attachment_source(self, args: Mapping[str, Any]) -> ModelResearchToolResult:

@@ -6,6 +6,28 @@ from proxy.services import model_lsr_result_contract as contract
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 
 
+def test_undecided_document_instruction_advertises_shared_vor_fields_only_once():
+    # Repeating the same field list in both nested contracts consumes the
+    # evidence budget without offering the model another field or decision.
+    instruction = lsr_result_table_instruction()
+    fields = ", ".join(contract.VOR_RESULT_FIELDS)
+    assert instruction.count(fields) == 1
+    assert "КОНТРАКТ ВОР" in instruction and "КОНТРАКТ ЛСР" in instruction
+    assert "artifact_kind: vor" in instruction and "artifact_kind: lsr" in instruction
+
+
+def test_snapshot_transport_does_not_contradict_advertised_revision_requirement():
+    from proxy.services.chat_evidence_application_service import model_revision_transport_context
+    from proxy.services.model_workbook_terminal_transport_service import build_workbook_terminal_tool_schema
+
+    schema = build_workbook_terminal_tool_schema(["S!R2"], ["op_prior"], artifact_kind="lsr",
+        require_operation_identity=True)["function"]["parameters"]
+    assert "expected_revision" in schema["properties"]["decisions"]["items"]["required"]
+    instruction = model_revision_transport_context()["revision_transport_instruction"]
+    assert "необязательны" not in instruction
+    assert "operation_id" in instruction and "source_row" in instruction
+
+
 @pytest.mark.parametrize("instruction,marker", [
     (contract.model_vor_result_field_instruction, "Поля строки: "),
     (contract.model_lsr_result_field_instruction, "Поля ВОР: "),
@@ -36,7 +58,12 @@ def test_format_choice_precedes_markdown_hints_and_examples_do_not_override_it()
     instruction = lsr_result_table_instruction()
     examples = contract.model_lsr_result_field_instruction(include_examples=True)
 
-    assert instruction.index(shared) < instruction.index("Если выбран Markdown")
+    # The outer VOR section already advertises these exact fields. Its nested
+    # LSR section preserves every other byte of the ordinary shared contract.
+    field_line = "Поля ВОР: " + ", ".join(contract.VOR_RESULT_FIELDS) + ". "
+    assert shared.count(field_line) == 1
+    nested = shared.replace(field_line, "", 1)
+    assert instruction.index(nested) < instruction.index("Если выбран Markdown")
     assert "не разрешение менять явно запрошенный формат" in examples
     assert all(value in examples for value in contract.model_lsr_result_examples().values())
 
@@ -95,7 +122,9 @@ def test_result_table_contract_allows_delta_and_ordinary_text_without_weaker_fla
     shared = contract.model_lsr_result_field_instruction()
     instruction = lsr_result_table_instruction(sheet_clause="SHEET ", remaining_clause=" REMAINING")
 
-    assert shared in instruction
+    field_line = "Поля ВОР: " + ", ".join(contract.VOR_RESULT_FIELDS) + ". "
+    assert shared.count(field_line) == 1
+    assert shared.replace(field_line, "", 1) in instruction
     assert instruction.startswith("SHEET ") and instruction.endswith(" REMAINING")
     assert "допустимы Markdown или текст" in instruction
     assert "Без указания формата" in instruction

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sqlite3
 
@@ -134,3 +135,165 @@ def test_exact_card_missing_base_is_explicit(tmp_path):
 
     assert result["status"] == "missing"
     assert result["missing"] == ["normative base unavailable"]
+
+
+def _generation_base(tmp_path, monkeypatch, *, stored_count=19, consumption=True):
+    path = tmp_path / "База 'точных норм'.sqlite"
+    _exact_base(path, stored_count=stored_count, consumption=consumption)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    manifest = tmp_path / "Поколение нормативной базы.json"
+    manifest.write_text(json.dumps({"status": "passed", "base_sha256": digest}), encoding="utf-8")
+    monkeypatch.setenv("LES_SMETA_NORM_RAG_MANIFEST", str(manifest))
+    monkeypatch.setattr(norm_browser, "_base_path", lambda: path)
+    return path, manifest, digest
+
+
+def test_model_exact_code_reads_full_active_generation_without_search(tmp_path, monkeypatch):
+    path, _manifest, digest = _generation_base(tmp_path, monkeypatch)
+    before = path.read_bytes()
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_a, **_k: pytest.fail("no candidate search"))
+    monkeypatch.setattr(norm_browser, "_rag_cards_many", lambda *_a, **_k: pytest.fail("no model query rewrite"))
+
+    result = norm_browser.read_norm_card_exact(
+        norm_code="ГЭСНм08-02-001-01", require_generation=True,
+    )
+
+    assert result["status"] == "ok"
+    card = result["card"]
+    assert card["norm_code"] == "ГЭСНм08-02-001-01"
+    assert card["norm_key"] == "ГЭСНм:08-02-001-01"
+    assert card["normative_base_sha256"] == digest
+    assert card["source_hash_basis"] == "normative_sqlite_base_bytes"
+    assert card["source_ref"] == "source.xml#guid=norm-guid"
+    assert card["work_steps"] == ["Первый шаг", "Условие исходной карточки"]
+    assert card["measure_unit"] == "100 м"
+    assert card["resources_complete"] is True
+    assert len(card["resources"]) == card["resources_returned"] == 19
+    assert card["resources"][0]["per_unit"] == 0
+    assert card["resources"][17]["per_unit"] == 4.25
+    assert card["resources"][18]["name"] == ""
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("manifest_content", [
+    None,
+    "{invalid-json",
+    "[]",
+    '{"status":"failed","base_sha256":"' + "a" * 64 + '"}',
+    '{"status":"passed","base_sha256":"not-a-generation"}',
+    '{"status":"passed"}',
+])
+def test_model_exact_code_requires_a_passed_valid_generation(tmp_path, monkeypatch, manifest_content):
+    _path, manifest, _digest = _generation_base(tmp_path, monkeypatch)
+    if manifest_content is None:
+        manifest.unlink()
+    else:
+        manifest.write_text(manifest_content, encoding="utf-8")
+    monkeypatch.setattr(norm_browser, "_connect_base_readonly", lambda *_: pytest.fail("unverified generation must not be read"))
+
+    result = norm_browser.read_norm_card_exact(norm_code="ГЭСНм08-02-001-01", require_generation=True)
+
+    assert result["status"] == "source_unverified"
+    assert result["card"] is None
+    assert result["missing"]
+
+
+def test_model_exact_code_rejects_bytes_different_from_retained_generation(tmp_path, monkeypatch):
+    path, _manifest, _digest = _generation_base(tmp_path, monkeypatch)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE norms SET norm_name = 'Другая редакция карточки'")
+    monkeypatch.setattr(norm_browser, "_connect_base_readonly", lambda *_: pytest.fail("changed generation must not be read"))
+
+    result = norm_browser.read_norm_card_exact(norm_code="ГЭСНм08-02-001-01", require_generation=True)
+
+    assert result["status"] == "source_unverified"
+    assert result["card"] is None
+    assert result["missing"]
+
+
+def test_model_exact_code_discards_card_if_database_changes_during_read(tmp_path, monkeypatch):
+    path, _manifest, _digest = _generation_base(tmp_path, monkeypatch)
+    original = norm_browser._read_norm_card_connection
+
+    def read_then_change(conn, key):
+        result = original(conn, key)
+        with sqlite3.connect(path) as writer:
+            writer.execute("UPDATE resources SET per_unit = 999 WHERE id = 1")
+        return result
+
+    monkeypatch.setattr(norm_browser, "_read_norm_card_connection", read_then_change)
+
+    result = norm_browser.read_norm_card_exact(norm_code="ГЭСНм08-02-001-01", require_generation=True)
+
+    assert result["status"] == "conflict"
+    assert result["card"] is None
+    assert result["missing"]
+
+
+@pytest.mark.parametrize("change", ["remove", "different_generation", "same_generation_changed_manifest"])
+def test_model_exact_code_discards_card_if_manifest_changes_during_read(tmp_path, monkeypatch, change):
+    _path, manifest, digest = _generation_base(tmp_path, monkeypatch)
+    original = norm_browser._read_norm_card_connection
+
+    def read_then_change(conn, key):
+        result = original(conn, key)
+        if change == "remove":
+            manifest.unlink()
+        elif change == "different_generation":
+            manifest.write_text(json.dumps({"status": "passed", "base_sha256": "b" * 64}), encoding="utf-8")
+        else:
+            manifest.write_text(json.dumps({"status": "passed", "base_sha256": digest, "revision": 2}), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(norm_browser, "_read_norm_card_connection", read_then_change)
+
+    result = norm_browser.read_norm_card_exact(norm_code="ГЭСНм08-02-001-01", require_generation=True)
+
+    assert result["status"] == "conflict"
+    assert result["card"] is None
+    assert result["missing"]
+
+
+@pytest.mark.parametrize("code", [
+    "ГЭСН08-02-001-01", "ГЭСНм08-02-001-02", "08-02-001-01",
+    "ГЭСНм08-02-001", "монтаж ГЭСНм08-02-001-01",
+])
+def test_model_exact_code_never_substitutes_other_family_variant_or_partial_code(tmp_path, monkeypatch, code):
+    _generation_base(tmp_path, monkeypatch)
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_a, **_k: pytest.fail("no substitute search"))
+    monkeypatch.setattr(norm_browser, "_rag_cards_many", lambda *_a, **_k: pytest.fail("no substitute RAG"))
+
+    result = norm_browser.read_norm_card_exact(norm_code=code, require_generation=True)
+
+    assert result["status"] == "missing"
+    assert result["card"] is None
+    assert result["missing"]
+
+
+@pytest.mark.parametrize("stored_count,consumption", [(20, True), (19, False)])
+def test_verified_generation_does_not_hide_incomplete_resource_data(tmp_path, monkeypatch, stored_count, consumption):
+    _path, _manifest, digest = _generation_base(
+        tmp_path, monkeypatch, stored_count=stored_count, consumption=consumption,
+    )
+
+    result = norm_browser.read_norm_card_exact(norm_code="ГЭСНм08-02-001-01", require_generation=True)
+
+    assert result["status"] == "ok"
+    assert result["card"]["normative_base_sha256"] == digest
+    assert result["card"]["resources_returned"] == 19
+    assert result["card"]["resources_complete"] is False
+    assert result["warnings"]
+
+
+def test_explicit_generation_pin_keeps_legacy_read_without_manifest(tmp_path):
+    path = tmp_path / "legacy.sqlite"
+    _exact_base(path)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    result = norm_browser.read_norm_card_exact(
+        norm_code="ГЭСНм08-02-001-01", base_path=path, expected_base_sha256=digest,
+    )
+
+    assert result["status"] == "ok"
+    assert result["card"]["normative_base_sha256"] == digest
+    assert result["card"]["source_hash_basis"] == "normative_sqlite_base_bytes"

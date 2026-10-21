@@ -9,7 +9,7 @@ import pytest
 
 from proxy.services import chat_evidence_application_service as service
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
-from proxy.services.model_lsr_result_contract import model_vor_result_field_instruction
+from proxy.services.model_lsr_result_contract import VOR_RESULT_FIELDS, model_vor_result_field_instruction
 from proxy.services.openai_compatible_transport_service import InferenceResponse
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from tests import test_model_rag_sheet_evidence_reads as fixture
@@ -109,8 +109,10 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
         assert field in vor_section
     assert "не являются условиями создания ВОР" in vor_section
     assert vor not in instruction, "the full dedicated VOR contract is reserved for an explicit VOR"
+    field_line = "Поля ВОР: " + ", ".join(VOR_RESULT_FIELDS) + ". "
+    assert lsr.count(field_line) == 1
     assert instruction.split("КОНТРАКТ ЛСР — только при artifact_kind: lsr\n", 1)[1].split(
-        "\nКОНЕЦ КОНТРАКТА ЛСР", 1)[0] == lsr
+        "\nКОНЕЦ КОНТРАКТА ЛСР", 1)[0] == lsr.replace(field_line, "", 1)
     # The compact conditional carrier is mandatory and is never cut to fit.
     # It must not duplicate the complete VOR contract in a still-undecided turn.
     assert len(instruction) < len(lsr) + 1200

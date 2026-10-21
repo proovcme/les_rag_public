@@ -3,6 +3,32 @@
 ## 21.10.2026 — candidate983: модельные решения и техническая версия сохранения
 
 Source0.31.255/build983/native5.1.983; installed982/afd07ff9 сохраняется.
+Первый frozen983 `586ad14b`: canonical version/map/verify прошли, полный test
+7147passed/2failed/20skipped за955.14s; prepare остановился до установщика.
+Два прежних positive handoff при7500tokens теряли вторую карточку из-за
+повторённого списка ВОР. Список дедуплицирован; эти два unchanged-budget теста
+прошли. Новое schema описание сокращено без удаления optional полей.
+Related reader/contract/proof/native/handoff:374passed/27.33s; отдельный actual
+delivery identity:1passed/1.86s. Новый candidate commit/full gates/install/live
+ещё pending, старый receipt не считается успешным.
+Cross-generation ROOT2RED/1same-positive→3GREEN: unshown exact read не меняет
+уже показанное поколение; несколько поколений отклоняются до чтения.
+Расширенный related:518passed/2failed — оба остаточных теста требовали прежний
+дублированный список; утверждения сохраняют точное сравнение всех остальных
+байтов. Исправление test-only дополнительно14passed/2.27s, включая3generation.
+Новых пропусков, повышений budget и автоматических подтверждений не добавлено.
+Независимый review нашёл P2 формы полного шифра: backend принимает регистр/
+пробел/двоеточие, прежний display-string check отвергал правильную карточку.
+ROOT3presentationRED+1shown-source-bypassRED→165relatedGREEN/3.35s: только
+новый literal путь сравнивает полную квалифицированную identity; известный
+pointer, включая его presentation alias, проходит прежний immutable guard.
+Raw запрос сохраняется; иное семейство или вариант не подставляются.
+Независимый live982 audit доказал loss точного `ГЭСН11-01-011-01` после CE
+при одном typed exact candidate; показаны только siblings, старый reader
+запрещал чтение непоказанного кода. В983 existing reader допускает только
+literal full norm_code в smeta scope с immutable generation; read не выбирает
+применимость. Это отдельный дефект доступа, не основание объявлять всю модель
+или все нормы исправленными. RRF/CE/query ownership не менялись.
 Обычный model transport связывает техническую expected_revision с неизменным
 application snapshot, захваченным до ответа. Только точный выбранный моделью
 operation_id и тот же source; предметные поля не меняются. Исходные authored
@@ -23,7 +49,7 @@ native exchange при прежнем wire54000. Лимит/старый тес�
 новое объяснение ревизий для empty-update snapshot (backend snapshot/audit
 сохраняются). No-op2RED→GREEN, прежние wire54000positive/50000negative PASS.
 Краткие новые schema descriptions не повторяют полный неизменённый контракт.
-Phase975 final43passed/13.73s; прошлый broader283passed/1новое obsolete marker
+Phase975 на предыдущем этапе43passed/13.73s; прошлый broader283passed/1новое obsolete marker
 assertion скорректировано для empty snapshot. Полный canonical gate pending.
 Краткие перечни ВОР теперь включают уже поддерживаемые coverage,
 covered_by_work_id/evidence_refs; native terminal ЛСР описывает существующие

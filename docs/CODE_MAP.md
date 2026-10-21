@@ -2,6 +2,13 @@
 
 ## 983 — один перечень ВОР и явная native schema ЛСР
 
+`ModelResearchToolService._read_norm_card` → shown-pointer путь без изменений
+либо один explicit full norm_code в smeta scope →
+`norm_browser.read_norm_card_exact(require_generation=True)` → проверка actual
+SQLite SHA/manifest → прежний fullcard renderer →
+`bind_model_requested_read_evidence` → prepared/admission/delivery → собственный
+Qx.Hy. Поиск, ранжирование и профессиональные поля не меняются.
+
 `model_lsr_result_contract.VOR_RESULT_FIELDS` → dedicated/shared/conditional
 VOR instructions. `build_workbook_terminal_tool_schema` → optional derived
 volume/resource properties → прежний literal decoder/admission. Никакого

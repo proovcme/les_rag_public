@@ -2,6 +2,7 @@
 
 import json
 import hashlib
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -303,12 +304,269 @@ async def test_exact_norm_read_keeps_all_resource_consumption_and_nrsp_choices(m
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("args", [{"norm_key": "unknown"}, {"norm_code": NORM_CODE}, {"norm_key": ["invalid"]}])
+@pytest.mark.parametrize("args", [{"norm_key": "unknown"}, {"norm_key": ["invalid"]}])
 async def test_unshown_or_malformed_exact_norm_pointer_does_not_call_reader(args):
     result = await service(norm_card_reader=lambda **_: pytest.fail("unshown pointer must not read base")).execute(
         {"tool": "read_norm_card", "args": args})
     assert result.chunks == ()
     assert result.payload["status"] in {"missing", "conflict"}
+
+
+def literal_code_card(code=NORM_CODE):
+    return {
+        "norm_key": "actual-canonical-key", "norm_code": code,
+        "title": "Literal complete card", "measure_unit": "100 м²",
+        "work_steps": ["Literal source operation; preserve the stated conditions."],
+        "source_ref": "normative.db#guid=actual-canonical-key", "source_sha256": "b" * 64,
+        "edition": "source edition", "base_type": "source family",
+        "normative_base_sha256": "a" * 64, "source_hash_basis": "normative_sqlite_base_bytes",
+        "resources_complete": True, "resource_consumption_known": True,
+        "resource_count": 2, "resources_returned": 2,
+        "resources": [
+            {"kind": "material", "code": RESOURCE_CODE, "name": "Literal resource",
+             "unit": "кг", "per_unit": 17.25, "source_ref": "typed#resource-1"},
+            {"kind": "labor", "code": "1-100-30", "name": "Literal labor",
+             "unit": "чел.-ч", "per_unit": 3.125, "source_ref": "typed#resource-2"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_code", ["гэсн99-01-001-01", "ГЭСН 99-01-001-01", "ГЭСН:99-01-001-01"])
+async def test_literal_code_presentation_alias_keeps_the_requested_full_identity(request_code):
+    calls = []
+    card = literal_code_card()
+
+    def exact_reader(**kwargs):
+        calls.append(kwargs)
+        return {"status": "ok", "card": card}
+
+    reader = service(norm_card_reader=exact_reader)
+    result = await reader.execute({"tool": "read_norm_card", "args": {"norm_code": request_code}})
+    assert calls == [{"norm_code": request_code, "require_generation": True}]
+    assert result.payload["status"] == "ok" and len(result.chunks) == 1
+    assert result.chunks[0].meta["norm_code"] == NORM_CODE
+    assert result.payload["trace"]["literal_exact_request"] == {"norm_code": request_code}
+
+
+@pytest.mark.asyncio
+async def test_code_presentation_alias_does_not_bypass_a_shown_source_guard():
+    calls = []
+
+    def exact_reader(**kwargs):
+        calls.append(kwargs)
+        return {"status": "ok", "card": literal_code_card()}
+
+    reader = service(norm_card_reader=exact_reader)
+    reader.register_shown_norm_cards([{"meta": {
+        "norm_key": "actual-canonical-key", "norm_code": NORM_CODE,
+        "source_ref": "source.xml#guid=previously-shown-origin",
+        "normative_base_sha256": "a" * 64}}])
+    result = await reader.execute({"tool": "read_norm_card", "args": {"norm_code": "ГЭСН 99-01-001-01"}})
+    assert calls == [{"norm_key": "actual-canonical-key", "norm_code": NORM_CODE}]
+    assert result.payload["status"] == "conflict" and result.chunks == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [NORM_CODE, "ГЭСНм10-01-001-01", "ТЕРр61-01-001-01"])
+async def test_literal_full_code_reads_verified_card_without_a_search_or_a_fabricated_shown_pointer(code):
+    from proxy.services.model_resource_reference_service import shown_resource_record
+
+    calls = []
+    card = literal_code_card(code)
+    original = deepcopy(card)
+
+    def exact_reader(**kwargs):
+        calls.append(kwargs)
+        return {"status": "ok", "card": card, "missing": [], "warnings": []}
+
+    reader = service(
+        smeta_norm_retrieve=lambda *_a, **_k: pytest.fail("literal exact read must not search"),
+        norm_card_reader=exact_reader,
+    )
+    request = {"norm_code": code}
+    result = await reader.execute({"tool": "read_norm_card", "args": request})
+    assert calls == [{"norm_code": code, "require_generation": True}]
+    assert result.payload["status"] == "ok" and len(result.chunks) == 1
+    assert result.payload["inputs"] == [request]
+    assert result.payload["trace"]["literal_exact_request"] == request
+    assert "previously_shown_pointer" not in result.payload["trace"]
+    assert result.payload["sources"] == [{"source_ref": card["source_ref"], "norm_key": card["norm_key"]}]
+    assert card == original  # The reader's immutable source card is not enriched in place.
+    delivered = result.payload["result"]["card"]
+    assert {name: delivered[name] for name in original} == original
+    chunk = result.chunks[0]
+    assert chunk.meta["norm_key"] == card["norm_key"]
+    assert chunk.meta["normative_base_sha256"] == card["normative_base_sha256"]
+    assert chunk.meta["source_sha256"] == card["source_sha256"]
+    assert chunk.meta["source_hash_basis"] == "normative_sqlite_base_bytes"
+    assert chunk.meta["exact_card_read"] is True and chunk.meta["body_status"] == "full"
+    assert chunk.meta["minimum_evidence_body_chars"] == len(chunk.content)
+    assert code in chunk.content and card["work_steps"][0] in chunk.content
+    assert [shown_resource_record(chunk.meta, chunk.content, slot)
+            for slot in range(1, len(card["resources"]) + 1)] == card["resources"]
+
+
+@pytest.mark.asyncio
+async def test_literal_full_code_uses_the_generation_required_default_exact_backend(monkeypatch):
+    from proxy.smeta_core import norm_browser
+
+    calls = []
+
+    def exact_reader(**kwargs):
+        calls.append(kwargs)
+        return {"status": "ok", "card": literal_code_card(), "missing": [], "warnings": []}
+
+    monkeypatch.setattr(norm_browser, "read_norm_card_exact", exact_reader)
+    result = await service().execute({"tool": "read_norm_card", "args": {"norm_code": NORM_CODE}})
+    assert calls == [{"norm_code": NORM_CODE, "require_generation": True}]
+    assert result.payload["status"] == "ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("args", [
+    {"norm_code": "99-01-001-01"}, {"norm_code": "ГЭСН99-01-001"},
+    {"norm_code": "Please read " + NORM_CODE}, {"norm_code": NORM_CODE + " for this work"},
+    {"norm_code": NORM_CODE + "; ГЭСН99-01-002-01"}, {"norm_code": 990100101},
+    {"norm_code": [NORM_CODE]}, {"norm_code": NORM_CODE, "norm_key": "unshown-key"},
+    {"norm_code": NORM_CODE, "norm_key": ""}, {"norm_code": NORM_CODE, "q": "different request"},
+    {"norm_code": NORM_CODE, "evidence_ref": "Q1.H1"},
+])
+async def test_unshown_literal_code_read_refuses_nonliteral_partial_or_mixed_selectors(args):
+    result = await service(norm_card_reader=lambda **_: pytest.fail("invalid selector must not read base")).execute(
+        {"tool": "read_norm_card", "args": args})
+    assert result.payload["status"] in {"missing", "conflict"} and result.chunks == ()
+
+
+@pytest.mark.asyncio
+async def test_documents_only_profile_cannot_use_unshown_literal_norm_code_read():
+    result = await service(smeta_norm_retrieve=None,
+        norm_card_reader=lambda **_: pytest.fail("documents-only profile must not read normative base")).execute(
+            {"tool": "read_norm_card", "args": {"norm_code": NORM_CODE}})
+    assert result.payload["status"] in {"missing", "conflict"} and result.chunks == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shown,args", [
+    ([{"norm_key": "first", "norm_code": NORM_CODE, "source_ref": "typed#first"},
+      {"norm_key": "second", "norm_code": NORM_CODE, "source_ref": "typed#second"}],
+     {"norm_code": NORM_CODE}),
+    ([{"norm_key": "shown-key", "norm_code": NORM_CODE, "source_ref": "typed#shown"}],
+     {"norm_key": "foreign-key", "norm_code": NORM_CODE}),
+])
+async def test_literal_code_read_does_not_bypass_ambiguous_or_conflicting_shown_pointers(shown, args):
+    reader = service(norm_card_reader=lambda **_: pytest.fail("shown identity conflict must not retry by code"))
+    reader.register_shown_norm_cards(shown)
+    result = await reader.execute({"tool": "read_norm_card", "args": args})
+    assert result.payload["status"] == "conflict" and result.chunks == ()
+
+
+@pytest.mark.asyncio
+async def test_shown_generation_conflict_does_not_retry_as_an_unshown_literal_code():
+    calls = []
+
+    def exact_reader(**kwargs):
+        calls.append(kwargs)
+        return {"status": "ok", "card": literal_code_card()}
+
+    reader = service(norm_card_reader=exact_reader)
+    reader.register_shown_norm_cards([{
+        "norm_key": "actual-canonical-key", "norm_code": NORM_CODE,
+        "source_ref": "normative.db#guid=actual-canonical-key",
+        "meta": {"normative_base_sha256": "c" * 64},
+    }])
+    result = await reader.execute({"tool": "read_norm_card", "args": {"norm_code": NORM_CODE}})
+    assert calls == [{"norm_key": "actual-canonical-key", "norm_code": NORM_CODE}]
+    assert result.payload["status"] == "conflict" and result.chunks == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shown_generations,expected_status", [
+    (["a" * 64], "ok"),
+    (["b" * 64], "conflict"),
+    (["a" * 64, "b" * 64], "conflict"),
+], ids=["same-generation", "different-generation", "multiple-shown-generations"])
+async def test_unshown_literal_code_cannot_switch_the_generation_of_other_shown_norms(
+    shown_generations, expected_status,
+):
+    calls = []
+    card = literal_code_card()
+    original = deepcopy(card)
+
+    def exact_reader(**kwargs):
+        calls.append(kwargs)
+        return {"status": "ok", "card": card, "missing": [], "warnings": []}
+
+    reader = service(norm_card_reader=exact_reader)
+    reader.register_shown_norm_cards([
+        {"norm_key": f"other-shown-key-{index}", "norm_code": f"ГЭСН99-01-00{index + 2}-01",
+         "source_ref": f"typed#other-shown-{index}",
+         "meta": {"normative_base_sha256": generation}}
+        for index, generation in enumerate(shown_generations)
+    ])
+    result = await reader.execute({"tool": "read_norm_card", "args": {"norm_code": NORM_CODE}})
+    assert result.payload["status"] == expected_status
+    assert card == original
+    if len(set(shown_generations)) > 1:
+        assert calls == []  # An ambiguous turn generation cannot authorize any new exact read.
+    else:
+        assert len(calls) == 1
+        assert calls[0]["norm_code"] == NORM_CODE and calls[0]["require_generation"] is True
+    if expected_status == "ok":
+        assert len(result.chunks) == 1
+        assert result.chunks[0].meta["normative_base_sha256"] == shown_generations[0]
+        assert result.payload["trace"]["literal_exact_request"] == {"norm_code": NORM_CODE}
+    else:
+        assert result.chunks == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("generation", [None, "", "unverified", "a" * 63, "x" * 64])
+async def test_unshown_literal_code_requires_a_valid_verified_card_generation(generation):
+    card = literal_code_card()
+    if generation is None:
+        card.pop("normative_base_sha256")
+    else:
+        card["normative_base_sha256"] = generation
+    calls = []
+
+    def exact_reader(**kwargs):
+        calls.append(kwargs)
+        return {"status": "ok", "card": card}
+
+    result = await service(norm_card_reader=exact_reader).execute(
+        {"tool": "read_norm_card", "args": {"norm_code": NORM_CODE}})
+    assert calls == [{"norm_code": NORM_CODE, "require_generation": True}]
+    assert result.payload["status"] == "source_unverified" and result.chunks == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["missing", "conflict", "source_unverified"])
+async def test_literal_code_reader_failure_is_visible_without_substituting_or_searching(status):
+    calls = []
+
+    def exact_reader(**kwargs):
+        calls.append(kwargs)
+        return {"status": status, "card": None, "missing": ["literal backend reason"],
+                "warnings": ["literal backend warning"]}
+
+    result = await service(norm_card_reader=exact_reader).execute(
+        {"tool": "read_norm_card", "args": {"norm_code": NORM_CODE}})
+    assert calls == [{"norm_code": NORM_CODE, "require_generation": True}]
+    assert result.payload["status"] == status and result.chunks == ()
+    assert result.payload["missing"] == ["literal backend reason"]
+    assert result.payload["warnings"] == ["literal backend warning"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", [
+    {"norm_code": "ГЭСН99-01-002-01"}, {"norm_key": ""},
+])
+async def test_unshown_literal_code_read_rejects_a_different_code_or_missing_canonical_key(replacement):
+    card = {**literal_code_card(), **replacement}
+    result = await service(norm_card_reader=lambda **_: {"status": "ok", "card": card}).execute(
+        {"tool": "read_norm_card", "args": {"norm_code": NORM_CODE}})
+    assert result.payload["status"] == "conflict" and result.chunks == ()
 
 
 @pytest.mark.asyncio

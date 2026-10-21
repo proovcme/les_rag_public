@@ -1837,6 +1837,7 @@ def _evidence_cards(chunks: Sequence[Any]) -> dict[str, dict[str, Any]]:
 
 def lsr_result_table_instruction(
     *, sheet_clause: str = "", remaining_clause: str = "", artifact_kind: str = "",
+    vor_fields_already_shown: bool = False,
 ) -> str:
     if artifact_kind == "vor":
         return f"{sheet_clause}{model_vor_result_field_instruction()}{remaining_clause}"
@@ -1857,12 +1858,12 @@ def lsr_result_table_instruction(
             "Расчёт: calc_quantity, calc_unit, conversion_source с формулой и источником. "
             "Нормы/цены/НР/СП не являются условиями создания ВОР.\nКОНЕЦ КОНТРАКТА ВОР\n\n"
             "КОНТРАКТ ЛСР — только при artifact_kind: lsr\n"
-            + lsr_result_table_instruction(artifact_kind="lsr")
+            + lsr_result_table_instruction(artifact_kind="lsr", vor_fields_already_shown=True)
             + f"\nКОНЕЦ КОНТРАКТА ЛСР{remaining_clause}"
         )
     return (
         f"{sheet_clause}"
-        + model_lsr_result_field_instruction()
+        + model_lsr_result_field_instruction(include_vor_fields=not vor_fields_already_shown)
         + " "
         "Если выбран Markdown: Начни ответ с таблицы результата; пояснения — после таблицы. "
         "Неприменимые необязательные колонки можно не объявлять. Для объявленной "

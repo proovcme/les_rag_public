@@ -268,32 +268,32 @@ def build_workbook_terminal_tool_schema(
         row_properties.update({
             "calc_quantity": {
                 "type": ["number", "string", "null"],
-                "description": "Derived quantity; original quantity stays literal. Code applies the norm scale.",
+                "description": "Derived physical quantity.",
             },
             "calc_unit": {
                 "type": ["string", "null"],
-                "description": "Physical unit of calc_quantity.",
+                "description": "Physical unit.",
             },
             "conversion_factor": {
                 "type": ["number", "string", "null"],
-                "description": "Exact scalar: quantity * conversion_factor = calc_quantity.",
+                "description": "quantity * factor.",
             },
             "conversion_source": {
                 "type": ["string", "null"],
-                "description": "Shown formula and source for derived quantity/repetition.",
+                "description": "Formula/source.",
             },
             "resource_code": {
                 "type": ["string", "null"],
-                "description": "Exact model-selected resource code from cited evidence.",
+                "description": "Cited exact code.",
             },
             "resource_bindings": {
                 "type": ["array", "object", "string", "null"],
                 "items": {"type": "object", "additionalProperties": True},
-                "description": "Actions add/replace/exclude/reuse with target, quantity basis, reason and refs; see row contract.",
+                "description": "Actions; see row contract.",
             },
             "resource_review": {
                 "type": ["object", "string", "null"],
-                "description": "Review status, component reasons and separate_supply_reviews; see row contract.",
+                "description": "Review; see row contract.",
             },
         })
         row_properties["nr_sp_rule_id"] = {"type": ["string", "null"]}

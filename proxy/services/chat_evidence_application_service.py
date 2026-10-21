@@ -6450,8 +6450,8 @@ def model_revision_snapshot_from_checkpoint(state, *, packet_id, packet_locators
 
 def model_revision_transport_context() -> dict[str, str]:
     return {"revision_transport": "application_snapshot_v1", "revision_transport_instruction": (
-        "Служебную ревизию приложение связывает с исходным снимком. Верни точные operation_id и source_row; "
-        "expected_revision/base_revision/revision необязательны. Предметные поля определяешь ты.")}
+        "Сохрани точные operation_id и source_row. Не назначай новый revision: приложение свяжет "
+        "expected_revision с показанным снимком. Предметные поля определяешь ты.")}
 
 
 def bind_model_packet_revisions(rows, snapshot, trace, *, canonicalize_locator=None):

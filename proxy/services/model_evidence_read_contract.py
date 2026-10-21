@@ -10,7 +10,7 @@ def model_evidence_read_tool_schemas() -> list[dict[str, Any]]:
     definitions = (
         ("search_sources", "Search norms or explicitly selected documents. The query is executed verbatim.",
          {"q": {"type": "string"}, "target": {"type": "string", "enum": ["norms", "documents"]}}, ["q"]),
-        ("read_norm_card", "Read all resources and consumption of one previously shown exact norm card. Use literal evidence_ref alone, or norm_key/norm_code.",
+        ("read_norm_card", "Read a shown card by evidence_ref alone or norm_key; or request a full family-qualified norm_code alone. Never substitutes another norm.",
          {"evidence_ref": {"type": "string", "description": "Exact admitted inventory ref; use alone."},
           "norm_key": {"type": "string"}, "norm_code": {"type": "string"}}, []),
         ("search_pricebook_resources", "Search resource candidates in the application's bound region/quarter pricebook; this does not choose applicability.",
@@ -46,7 +46,7 @@ MODEL_EVIDENCE_READ_INSTRUCTION = (
     "непрочитанный указатель не доказывает отсутствие подходящей нормы. Если содержания "
     "не хватает для сравнения или определения расхода, вызови read_norm_card "
     "с буквальным evidence_ref уже показанного указателя нормы отдельно, без norm_key/norm_code; "
-    "либо с буквальным norm_key или norm_code уже показанной карточки. Для подбора поставки "
+    "либо с norm_key показанной карточки; либо с полным norm_code отдельно, даже если шифр не показан. Для подбора поставки "
     "используй search_pricebook_resources, для цены выбранного кода — read_resource_price. "
     "Книга региона и периода закреплена приложением, сам другую не выбирай. "
     "Для коммерческого предложения или другого документа в выбранном датасете используй "
@@ -85,7 +85,7 @@ def model_evidence_read_instruction(*, artifact_kind: str = "") -> str:
         "Если ты добровольно выбираешь норму как обоснование ВОР, проверь её применимость по целой "
         "карточке, составу и буквальным условиям. Индекс/указатель не является полной карточкой; "
         "недостающий состав и расход прочитай через read_norm_card с буквальным evidence_ref "
-        "уже показанного указателя отдельно либо с показанным norm_key/norm_code. "
+        "уже показанного указателя отдельно либо с показанным norm_key; либо с полным norm_code отдельно, даже если шифр не показан. "
         "Полнота ресурсов не доказывает применимость или показ всей техчасти. Признаки action_match, "
         "object_match, condition_match, unit_compatible, composition_covers заполняй значениями "
         "yes/no/unknown; пояснение пиши в coverage, а не вместо признака. "

@@ -915,7 +915,7 @@ def model_vor_result_field_instruction() -> str:
     )
 
 
-def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str:
+def model_lsr_result_field_instruction(*, include_examples: bool = False, include_vor_fields: bool = True) -> str:
     """Explain conditional row fields identically for Markdown, JSON and text."""
     instruction = (
         "Итоговые строки: соблюдай явно заданный пользователем формат. "
@@ -926,7 +926,7 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "(в корне JSON либо отдельной строкой); это тип результата, не тип исходника. "
         "В Markdown сохраняй объявленные "
         "ячейки, включая пустые, и экранируй | внутри значения. "
-        "Поля ВОР: " + ", ".join(VOR_RESULT_FIELDS) + ". "
+        + ("Поля ВОР: " + ", ".join(VOR_RESULT_FIELDS) + ". " if include_vor_fields else "") +
         "Для ВОР нормы, цены и поля norm_code/norm_status не обязательны. "
         "Не ставь MISSING и не меняй известную работу на unresolved лишь из-за отсутствия нормы или цены. "
         "Исходные основания ВОР укажи через source_row; evidence_refs добавляй, когда ссылаешься на показанное основание. "

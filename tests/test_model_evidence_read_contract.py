@@ -567,3 +567,62 @@ def test_old_saved_alias_collision_remains_literal_and_requires_immutable_bindin
     assert pinned["evidence_bindings"] == {"Q3.H1": "old-native"}
     assert pinned["_evidence_check"]["unresolved_refs"] == []
     assert [(chunk.content, chunk.meta) for chunk in chunks] == before
+def test_exact_code_reader_is_advertised_without_a_prior_search_requirement():
+    from proxy.services.model_evidence_read_contract import model_evidence_read_instruction, model_evidence_read_tool_schemas
+
+    reader = next(row["function"] for row in model_evidence_read_tool_schemas()
+                  if row["function"]["name"] == "read_norm_card")
+    assert "norm_code" in reader["parameters"]["properties"]
+    assert "full family-qualified norm_code alone" in reader["description"]
+    for kind in ("lsr", "vor", ""):
+        instruction = model_evidence_read_instruction(artifact_kind=kind)
+        assert "полным norm_code" in instruction and "не показан" in instruction
+
+
+@pytest.mark.asyncio
+async def test_requested_exact_code_gets_its_own_evidence_identity_only_after_delivery(monkeypatch):
+    from proxy.services import chat_evidence_application_service as application
+    from proxy.services import model_research_tool_service as research
+
+    monkeypatch.setattr(research.nr_sp_service, "model_candidates", lambda **_kw: [])
+    card = {"norm_key": "ГЭСН:02-01-001-01", "norm_code": "ГЭСН02-01-001-01",
+        "source_ref": "source.xml#guid=literal-exact-card", "source_sha256": "b" * 64,
+        "edition": "literal edition", "base_type": "ГЭСН", "title": "Literal requested operation",
+        "measure_unit": "м", "work_steps": ["Literal work composition"],
+        "normative_base_sha256": "a" * 64, "source_hash_basis": "normative_sqlite_base_bytes",
+        "resources": [{"kind": "labor", "code": "1-100-30", "name": "Literal worker",
+                       "unit": "чел.-ч", "per_unit": 0.5, "source_ref": "source.xml#guid=worker"}],
+        "resources_complete": True, "resource_consumption_known": True,
+        "resource_count": 1, "resources_returned": 1}
+
+    async def no_search(**_kwargs):
+        pytest.fail("an exact model request must not invoke semantic search")
+
+    tools = research.ModelResearchToolService(retrieve=no_search, frozen_dataset_ids=(), retrieval_kwargs={},
+        fallback=lambda *_args: pytest.fail("no fallback"),
+        smeta_norm_retrieve=lambda *_a, **_kw: pytest.fail("no candidate search"),
+        norm_card_reader=lambda **_kw: {"status": "ok", "card": card})
+    call = {"tool": "read_norm_card", "args": {"norm_code": card["norm_code"]}}
+    result = await tools.execute(call)
+    receipt = {"call": call, "status": "ok"}
+    _, chunks, _ = application.bind_model_requested_read_evidence(
+        [result], existing_chunks=[], evidence_namespace="model-literal-code", receipts=[receipt])
+    assert len(chunks) == 1 and chunks[0].meta["model_delivery_status"] == "prepared"
+    tools.register_shown_norm_cards(chunks)
+    assert tools.admitted_norm_references() == ()
+    preset = ModelExecutionPreset(preset_id="exact-card-delivery", model_family="fixture",
+        input_token_limit=10000, generation_reserve_tokens=0, safety_reserve_tokens=0,
+        normal_tool_count=5, max_tools=5, max_batch_items=5, parallel_read_limit=1,
+        reasoning_enabled=False, source_chain=("test",))
+    messages, _, inventory, bodies = application.govern_model_read_messages(
+        preset=preset, profile_prefix="original profile", request_payload="original task",
+        source_context=["literal source row"], chunks=chunks, receipts=[receipt])
+    assert inventory and bodies and card["norm_code"] in str(messages)
+    assert "Literal work composition" in str(messages)
+    application.confirm_model_read_delivery(chunks, [receipt], inventory_refs=inventory, body_refs=bodies)
+    tools.register_shown_norm_cards(chunks)
+    [pointer] = tools.admitted_norm_references()
+    assert pointer["evidence_ref"] == chunks[0].meta["model_evidence_ref"]
+    assert pointer["norm_code"] == card["norm_code"]
+    assert pointer["normative_base_sha256"] == card["normative_base_sha256"]
+    assert chunks[0].meta["model_delivery_status"] == "delivered"
