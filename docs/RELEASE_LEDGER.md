@@ -23,6 +23,13 @@ ROOT active-parent6RED и snapshot2RED/4positive→related11:79passed/13.44s.
 Verify12: version/compile/collect7111/architecture rc0; runtime-map regenerated
 с новым модулем,1270Python files/388product reachable/0parse warnings.
 Это не заменяет полный make test и установленный live gate982.
+Prepare01 на1a37be20 остановлен до сборки: main7088passed/3failed/20skipped,
+946.77s. Все3failure — прежний exact key set в phase975, ожидавший только
+previous answer. Он обновлён до ровно previous answer + сохранённый identity
+context; единственная доверенная phase, literal answer и native-chain проверки
+сохранены, дополнительно проверены2разных uncommitted адреса без revisions.
+Owner phase13:30passed/3.12s. Production-код при этой коррекции не менялся;
+полный повтор982 и установленная профессиональная проверка ещё обязательны.
 
 ## 21.10.2026 — exact981 установлен; база исправна, инженерный hint не прошёл
 

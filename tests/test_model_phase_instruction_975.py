@@ -276,8 +276,18 @@ async def test_actual_sheet_proof_uses_its_existing_literal_request_as_separate_
     assert len(saved_pending) == 1
     assert saved_pending[0]["proof_request"] == literal_phase
     assert saved_pending[0]["proof_previous_model_answer"] == answer
+    identity = saved_pending[0]["proof_operation_identity"]
+    assert set(identity) == {"schema", "instruction", "operations"}
+    assert identity["schema"] == "les.proof-operation-identities.v1"
+    operations = identity["operations"]
+    assert [item["source_row"] for item in operations] == ["S!R2", "S!R3"]
+    assert len({item["operation_id"] for item in operations}) == 2
+    assert all(item["identity_status"] == "uncommitted"
+               and item["committed"] is False and "expected_revision" not in item
+               for item in operations)
     for frame, request in zip(frames, proof_requests):
-        assert _proof_payloads(frame) == [{"proof_previous_model_answer": answer}], (
+        assert _proof_payloads(frame) == [{"proof_previous_model_answer": answer,
+                                         "proof_operation_identity": identity}], (
             "the prior answer remains complete data; the phase instruction has one trusted owner")
         phases = [section for section in frame["sections"] if section["kind"] == "phase_instruction"]
         assert len(phases) == 1 and phases[0]["items"] == 1

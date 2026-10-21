@@ -20,6 +20,12 @@ missing/no/unknown/yes/unpriced; ROOT8RED/2positive→10GREEN. Цена отде
 разрешают ровно один дополнительный application identity context и сохраняют
 исходный answer/phase/native/scope assertions; contract08:54passed/12.02s.
 Verify12:7111collected, compile/version/architecture rc0. Counts пересекаются.
+Full prepare01:7088passed/3failed/20skipped/946.77s. Три phase975 assertion
+разрешали только предыдущий answer. Теперь exact payload содержит также тот
+же checkpoint identity context; проверяются его schema,2разных uncommitted ID,
+source addresses и отсутствие выдуманных revisions. Прежние literal/phase/
+native-chain assertions сохранены. Owner phase13:30passed/3.12s; production
+не менялся, полный повтор и live gate остаются обязательными.
 
 ## 981 — полный основной gate и сортировка profile
 
