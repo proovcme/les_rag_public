@@ -17,6 +17,14 @@ ROOT RED4failed → related270passed/12.44s (`green_related02.xml`). Tests не
 Доказательства: `artifacts/offline_979/`; полный candidate gate и installed
 user journey выполняются отдельно. Новый test profile не добавлен.
 
+Первый full979:6964passed/20skipped/1failed (`prepare_console01/2_prepare.log`).
+Старый exact-key test `test_money_states_23` требовал прежние пять buckets.
+Теперь строго проверяет все шесть и role_unresolved.count0 у явных работ;
+`test_plain_lsr_gap_continuation_976` дополнительно требует count2 у двух
+unresolved операций. Ни один ключ/проверка сохранения не исключены. Related
+529passed/61.96s: `artifacts/offline_979/contract_followup02.xml`. Полный новый
+гейт и профессиональная live-приёмка этим результатом не заменяются.
+
 ## Кандидат978 — найденные кандидаты доходят до reranker
 
 Existing `test_smeta_norm_browser` проверяет непересекающиеся50+50карточек,

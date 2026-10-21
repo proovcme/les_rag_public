@@ -69,6 +69,7 @@ def test_unresolved_roles_stay_in_readiness_retry_ids_without_becoming_work(tmp_
     assert set(ready["research_locators"]) == {SOURCE, "Другой лист!R9"}
     assert rows[0]["operation_id"] not in ready["research_operation_ids"]
     assert ready["counts"]["works"] == 1 and ready["counts"]["unresolved"] == 2
+    assert ready["gap_states"]["role_unresolved"]["count"] == 2
     assert ready["estimate_complete"] is False
     assert "resume" in {item["id"] for item in ready["actions"]}
     assert rows == before

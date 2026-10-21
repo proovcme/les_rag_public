@@ -63,11 +63,12 @@ def test_gap_states_expose_the_named_buckets():
         ],
     )
     states = readiness["gap_states"]
-    # Since build 815 the not-ready states are five: a cipher that IS written but
-    # has no evidence behind it is kept apart from "no norm at all" (ADR-16 § 6).
+    # A written cipher without evidence remains distinct from "no norm at all"
+    # (ADR-16 § 6). Build 979 also keeps unresolved operation roles visible.
     assert set(states) == {
         "norm_missing",
         "norm_unsubstantiated",
+        "role_unresolved",
         "price_missing",
         "calculation_incomplete",
         "formula_cache_uncached",
@@ -78,6 +79,8 @@ def test_gap_states_expose_the_named_buckets():
     # norm_missing nor silently counted as applicable
     assert states["norm_unsubstantiated"]["count"] == 0
     assert "применимость" in states["norm_unsubstantiated"]["meaning"]
+    # Both source rows are explicitly works, so the separate role bucket is empty.
+    assert states["role_unresolved"]["count"] == 0
     # one resource has no price, but its norm is kept
     assert states["price_missing"]["count"] >= 1
     # one work row answers «позиция полностью рассчитана — нет» on its own

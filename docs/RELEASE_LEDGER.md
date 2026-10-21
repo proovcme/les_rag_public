@@ -30,6 +30,16 @@ Precommit verify/architecture4commands rc0,6985tests collected/53.51s:
 `customer_ready=false`; точность90%, полнота, скорость и универсальность
 этими техническими тестами не объявляются.
 
+Первый полный canonical prepare979 на `05cbe8f6` остановлен до сборки:
+6964passed/20skipped/1failed за941.89s. Единственный failure — прежний exact-set
+контракт `test_money_states_23`, ожидавший пять buckets без нового role_unresolved.
+Ожидание обновлено строго до шести keys и count0 для двух явных работ;
+unresolved fixture дополнен строгим count2. Product-код не менялся. Связанные
+потребители/продолжение/нулевые суммы/карточки:529passed/61.96s,
+`artifacts/offline_979/contract_followup02.xml`. Старый failed log сохранён в
+`artifacts/release_979_control/prepare_console01/2_prepare.log`; полный prepare
+для следующего frozen commit выполняется заново, прежний failure не объявлен PASS.
+
 ## 21.10.2026 — candidate978: полный bounded union до rerank; installed976
 
 Source0.31.250/build978/native5.1.978. Установлен0.31.248/build976,
