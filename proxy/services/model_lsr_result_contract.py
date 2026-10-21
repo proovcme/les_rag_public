@@ -34,7 +34,7 @@ OPTIONAL_FIELDS = (
     "coefficient", "coefficient_applies_to", "extra_ops", "missing_ops", "norm_components",
     "confirmed_price", "price_kind", "price_unit", "price_source",
     "price_currency", "price_vat", "price_period",
-    "resource_bindings", "resource_review", "covered_by_work_id",
+    "resource_bindings", "resource_review", "supply_resource_match", "covered_by_work_id",
     "resolves_proposal_id",
 )
 
@@ -949,6 +949,19 @@ def model_lsr_result_field_instruction(*, include_examples: bool = False) -> str
         "а не заголовок таблицы; evidence_refs относятся к той же карточке; применимость выбираешь ты. "
         "Если row_role имеет значение material, equipment или resource, "
         "верни поле resource_code из карточки с evidence_refs либо пусто. "
+        "Код расходника в монтажной норме не означает, что это исходное изделие поставки. "
+        "Для прямой поставки material/equipment с resource_code отдельно верни supply_resource_match: "
+        "{source_title, resource_code, decision, reason, source_refs}. "
+        "source_title дословно повторяет title этой операции, resource_code — её выбранный код; "
+        "source_refs — непустой список тех же ссылок, что evidence_refs этой операции, порядок неважен. "
+        "decision: yes/no/unknown; reason — конкретное основание соответствия выбранного ресурса "
+        "исходному изделию по его свойствам. Ты выбираешь и проверяешь это соответствие; "
+        "цена кода и его наличие среди ресурсов нормы не доказывают соответствие изделию. "
+        "При no/unknown или недостаточном основании сохрани строку, выбранный код и конкретный open_gap; "
+        "сумма остаётся предварительной. Не подставляй произвольный ресурс ради снятия пробела. "
+        "При изменении title, resource_code или evidence_refs пересмотри это утверждение явно; "
+        "прежнее yes не подтверждает изменённый выбор. В Markdown или тексте передавай "
+        "supply_resource_match как JSON-объект в одной ячейке или одноимённом поле. "
         "Для работы, целиком учтённой другой, сохрани строку и объём; covered_by_work_id — "
         "source_row родительской работы (R# того же листа) или её operation_id. "
         "Даже без собственного norm_code/norm_status обязательны coverage и evidence_refs этой строки. "

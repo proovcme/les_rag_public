@@ -113,6 +113,50 @@ TRANSPORT_ROW = {"source_row": "Section!R12", "row_role": "work", "title": "Lite
     "open_gap": "Literal unresolved condition"}
 
 
+def _supply_match_transport_row(decision="unknown"):
+    title = 'Изделие «А» с "кавычками" и е\u0301'
+    return {"source_row": "Section with spaces!R12", "row_role": "material",
+            "work_row": "Section with spaces!R11", "title": title, "unit": "м", "quantity": 0,
+            "norm_code": "", "norm_status": "", "resource_code": "11.22.33.44-0001",
+            "evidence_refs": ["Q7.H3"], "coverage": "Literal model decision; no code substitution",
+            "supply_resource_match": {"source_title": title, "resource_code": "11.22.33.44-0001",
+                "decision": decision, "reason": 'Буквальное основание «А»; источник с "кавычками"',
+                "source_refs": ["Q7.H3"]}}
+
+
+@pytest.mark.parametrize("format_name", ["json", "markdown", "text"])
+@pytest.mark.parametrize("decision", ["yes", "no", "unknown"])
+def test_supply_resource_match_nested_object_survives_all_result_formats_and_draft(format_name, decision):
+    from proxy.services.chat_evidence_application_service import parse_model_rag_result, compact_estimator_draft_rows
+
+    row = _supply_match_transport_row(decision)
+    if format_name == "json":
+        raw = json.dumps({"artifact_kind": "lsr", "rows": [row]}, ensure_ascii=False)
+    else:
+        values = {key: json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+                  for key, value in row.items()}
+        if format_name == "markdown":
+            raw = ("artifact_kind: lsr\n| " + " | ".join(row) + " |\n| "
+                   + " | ".join("---" for _ in row) + " |\n| " + " | ".join(values.values()) + " |")
+        else:
+            raw = "artifact_kind: lsr\n" + "\n".join(f"{key}: {value}" for key, value in values.items())
+
+    parsed = parse_model_rag_result(raw)
+
+    assert parsed is not None
+    actual, = parsed[1]
+    assert actual["supply_resource_match"] == row["supply_resource_match"]
+    assert actual["resource_code"] == row["resource_code"] and actual["quantity"] == 0
+    assert compact_estimator_draft_rows([actual])[0]["supply_resource_match"] == row["supply_resource_match"]
+
+
+def test_supply_resource_match_instruction_names_its_separate_resource_contract():
+    instruction = contract.model_lsr_result_field_instruction()
+    assert "supply_resource_match" in instruction
+    assert all(field in instruction for field in ("source_title", "resource_code", "decision", "reason", "source_refs"))
+    assert "yes/no/unknown" in instruction
+
+
 @pytest.mark.parametrize("format_name", ["json", "markdown", "text"])
 def test_explicit_work_coverage_survives_all_result_formats_and_draft(format_name):
     from proxy.services.chat_evidence_application_service import parse_model_rag_result, compact_estimator_draft_rows

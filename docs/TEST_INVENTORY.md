@@ -1,5 +1,53 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат980 — соответствие поставки и владение денежным подтверждением
+
+`test_lsr_repack_calculation_contract_980.py` добавлен в CURRENT_TESTS: версия
+фактического расчёта/replay, LSR-only execution identity, versioned repack args,
+точная projection даже `[]`, stale issued parent/child, сохранение старого файла,
+existing UI repack priority и reconnect. Совместный guard/transport/price gate:
+339passed/43.83s, `artifacts/offline_980/guard_green06.xml`. Соседние старые
+positive fixtures отдельно приводятся к явному current calculation contract;
+проверки конфликтов/overflow/неизменности строк не отменяются.
+
+Consumer08:474passed/1failed — один current final-event fixture без версии;
+исправлен только явной версией. Focused73passed/3.78s и architecture rc0
+(`architecture_green09.xml`). Capacity fixture теперь явно содержит40k native
+body при24k input; initial inventory должен дойти до инструмента, а полное
+тело — всё ещё переполнить предел. Positive B0/B1 wire54k, negative B1 wire50k
+и все assertions сохранены; производственные context guards не менялись.
+
+В существующих owner-файлах, без нового test profile:
+
+- `test_rim_lsr_trace_service.py`: cited/book-priced material/equipment без
+  match, с no/unknown, пустым reason и устаревшими title/code/refset сохраняют
+  строку, ресурс, количество и preliminary, но не confirmed/full amount.
+  Проверяются точный yes, порядок refs, quantity/unit-only overlay, в том числе
+  поверх модельного confirmed_price, actual operator price80/0 и последующее
+  изменение количества. Реальный trace→readiness возвращает финансовый пробел
+  в retry и сохраняет закрытого доверенного соседа.
+- `test_model_lsr_result_contract.py`, `test_model_workbook_terminal_transport_962.py`:
+  один объект supply_resource_match в JSON/native/табличном transport; title/code/
+  decision/reason/refs не превращаются в предметное решение приложения.
+- `test_resource_group_proof_932.py`: прямой supply debt без группы, stale yes,
+  буквальные показанные записи, единый proof/receipt, сохранение соседей и
+  operation/revision, ограничение4 с явным deferred count. Добавлены два случая
+  существующих алиасов «материал»/«оборудование» без переписывания роли.
+
+Доказательства в `artifacts/offline_980/`: transport GREEN142passed
+(`transport_green01.xml`); первый финансовый GREEN22passed
+(`supply_match_green01.xml`), пакет с quantity/unit overlay GREEN32passed
+(`operator_overlay_green01.xml`). Это отдельные гейты, их counts не суммируются
+в полную приёмку. OwnerGREEN03:316passed/10failed (`owner_green03.xml`),
+положительные fixtures дорабатываются; alias RED2failed (`alias_red01.xml`).
+Повторный guard gate339passed/43.83s (`guard_green06.xml`), repack/lineage/zero
+consumers155passed/11.59s (`repack_green07.xml`). Metadata/calculation contract
+прошёл RED→GREEN, включая reconnect; полный sheet capacity consumer проверяется
+отдельно. `repack_contract_red01.xml` и `repack_metadata_red02.xml` сохраняются
+как первоначальные RED-доказательства, не итоговая приёмка.
+Полный gate, установка и live980 не пройдены; точность норм/90% и готовность
+разных ВОР/ЛСР этими fixtures не доказываются.
+
 ## Кандидат979 — полные карточки и добор неопределённых решений
 
 Existing `test_model_rag_grouped_evidence_service` проверяет точный общий
@@ -14,16 +62,20 @@ ROOT RED4failed → related270passed/12.44s (`green_related02.xml`). Tests не
 выявил неверное ожидание входного alias ID в новом zero fixture; проверка
 исправлена на durable ID из сохранённого checkpoint, равенство всех строк до/после
 продолжения сохраняется. Product-код после этого не менялся.
-Доказательства: `artifacts/offline_979/`; полный candidate gate и installed
-user journey выполняются отдельно. Новый test profile не добавлен.
+Доказательства: `artifacts/offline_979/`; новый test profile не добавлен.
+По сверке с RELEASE_LEDGER полный979 завершён:6965passed/20skipped,
+exact installer технически принят, установлен commit babaf652. Свежие
+ordinary/B0979 не прошли профессиональную приёмку: цена книги не потеряна,
+но ordinary ошибочно подтвердил кабель по цене монтажной ленты, B0 не посчитал
+ни одной работы. Это основание узкого исправления980, а не customer PASS.
 
 Первый full979:6964passed/20skipped/1failed (`prepare_console01/2_prepare.log`).
 Старый exact-key test `test_money_states_23` требовал прежние пять buckets.
 Теперь строго проверяет все шесть и role_unresolved.count0 у явных работ;
 `test_plain_lsr_gap_continuation_976` дополнительно требует count2 у двух
 unresolved операций. Ни один ключ/проверка сохранения не исключены. Related
-529passed/61.96s: `artifacts/offline_979/contract_followup02.xml`. Полный новый
-гейт и профессиональная live-приёмка этим результатом не заменяются.
+529passed/61.96s: `artifacts/offline_979/contract_followup02.xml`. Это промежуточный
+гейт; итог полного979 и отрицательная профессиональная live-приёмка указаны выше.
 
 ## Кандидат978 — найденные кандидаты доходят до reranker
 

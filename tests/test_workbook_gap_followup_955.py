@@ -3,6 +3,7 @@ from copy import deepcopy
 
 import pytest
 
+from proxy.services import version_service
 from proxy.services.workbook_research_job_service import WorkbookResearchJobError, WorkbookResearchJobService
 
 
@@ -36,6 +37,7 @@ def baseline(tmp_path, *, shared=2):
         "declarations": ["lsr"], "errors": [], "authority": "result"})
     store.finish(job["job_id"], status="complete")
     store.record_packaging(job["job_id"], tool="build_lsr_workbook", revision_id="rev_before_955", draft=False,
+        resource_calc_version=version_service.RESOURCE_CALC_VERSION,
         price_basis={"actual_book": "sankt-peterburg_3kv2026", "actual_region": "Санкт-Петербург",
                      "actual_quarter": "3 квартал 2026 г.", "pricebook_sha256": "b" * 64, "match": "exact"})
     return store, store.get(job["job_id"])

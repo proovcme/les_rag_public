@@ -337,6 +337,7 @@ def _checkpoint_payload(checkpoint: WorkflowCheckpoint, *, resumed: bool) -> dic
 
 
 _CALCULATION_SNAPSHOT_FIELDS = (
+    "resource_calc_version",
     "pricing_status", "norms_status", "price_gaps", "price_basis", "norm_conflicts",
     "calculated_positions", "row_projection", "positions_built", "confirmed_amount",
     "preliminary_amount",
@@ -700,6 +701,10 @@ async def _build_workbook(
         if artifact_kind == "vor_workbook" and normalized.get("draft"):
             adapter_args["_draft"] = True
         generated = await _call_adapter(adapter, source_path, adapter_args, output_path, progress)
+        if artifact_kind == "lsr_workbook":
+            from proxy.services import version_service
+
+            generated = {**generated, "resource_calc_version": version_service.RESOURCE_CALC_VERSION}
         generated_path = Path(str(generated.get("file_path") or output_path))
         display_name = workbook_download_filename(
             artifact_kind=artifact_kind,

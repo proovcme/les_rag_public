@@ -670,6 +670,8 @@ def workbook_job_to_pending_progress(job: Any, pending: Any = None) -> dict[str,
             "tool": str(document.get("tool") or ""),
             "final_revision_id": str(document.get("final_revision_id") or ""),
             "draft_revision_id": str(document.get("draft_revision_id") or ""),
+            "resource_calc_version": str(document.get("resource_calc_version") or ""),
+            "calculation_refresh_required": bool(document.get("calculation_refresh_required")),
             "needs_document": bool(document.get("needs_document")),
             "recovery_reason": str(document.get("recovery_reason") or ""),
         }
@@ -773,6 +775,9 @@ def terminal_job_repair_plan(job: Any) -> dict[str, Any]:
     job_id = str(payload.get("job_id") or "").strip()
     if workbook_job_status(payload) != "complete":
         return {"mode": "resume", "job_id": job_id, "reason": ""}
+    if document.get("calculation_refresh_required"):
+        return {"mode": "repack", "job_id": job_id,
+                "reason": str(document.get("recovery_reason") or "После обновления требуется пересобрать файл без модели.")}
     if state == "ready" or str(document.get("final_revision_id") or "").strip():
         return {
             "mode": "document",
@@ -818,6 +823,9 @@ def format_terminal_assembly_notice(job: Any = None) -> str:
         )
     if mode == "repack":
         reason = str(plan.get("reason") or "финальная ревизия не собрана").rstrip(".")
+        if (payload.get("document") or {}).get("calculation_refresh_required"):
+            return (f"{reason}. Нажмите «Пересобрать файл»: решения и книга цен сохранятся. "
+                    "После пересчёта можно продолжить незакрытые позиции.")
         return (
             "Задание завершено, а файла пока нет: "
             f"{reason}. Кнопка «Пересобрать файл» в карточке задания собирает его "

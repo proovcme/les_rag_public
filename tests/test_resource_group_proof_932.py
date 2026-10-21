@@ -15,6 +15,7 @@ status.
 from __future__ import annotations
 
 import copy
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -314,3 +315,159 @@ def test_the_group_state_is_read_through_the_calculator_helper_not_a_second_rule
     assert found and calls == [(GROUP,)]
     assert rim.resource_group_state(dict(RESOURCE), _RecordingBook())["state"] \
         == "unresolved_resource_group"
+
+
+def _supply_match_fixture(*, index=1, decision=None):
+    from proxy.services.chat_evidence_application_service import bind_row_evidence_ids
+    from proxy.services.model_research_tool_service import _full_norm_card_content
+    from proxy.services.model_resource_reference_service import resource_slot_records
+
+    code, ref = f"11.22.33.44-000{index}", f"Q7.H{index}"
+    resource = {"kind": "material", "code": code,
+                "name": f"Буквальный ресурс из карточки «{index}»", "unit": "10 м", "per_unit": 0.5}
+    card = {"norm_key": f"literal-norm-{index}", "norm_code": f"ГЭСН99-01-001-0{index}",
+            "title": "Синтетическая работа", "measure_unit": "100 м", "source_ref": f"literal-base-{index}",
+            "source_sha256": "d" * 64, "work_steps": ["Буквальный состав работы"],
+            "resources": [resource], "resource_count": 1, "resources_returned": 1, "resources_complete": True}
+    meta = {**card, "resources": resource_slot_records(card), "model_evidence_ref": ref,
+            "global_evidence_id": f"literal-supply-card-{index}", "exact_card_read": True,
+            "model_delivery_status": "delivered", "body_status": "full"}
+    chunks = [SimpleNamespace(content=_full_norm_card_content(card), meta=meta, doc_name="smeta_norm_cards.v1")]
+    row = {"source_row": f"Секция А!R{10 + index}", "row_role": "material", "work_row": "Секция А!R2",
+           "title": f"Исходное изделие «{index}»", "unit": "м", "quantity": 84,
+           "resource_code": code, "evidence_refs": [ref], "coverage": "Дословное пояснение модели"}
+    if decision is not None:
+        row["supply_resource_match"] = {"source_title": row["title"], "resource_code": code,
+            "decision": decision, "reason": "Буквальное обоснование выбранного соответствия", "source_refs": [ref]}
+    return bind_row_evidence_ids([row], chunks)[0], chunks
+
+
+@pytest.mark.parametrize("role_alias", ["материал", "оборудование"])
+def test_existing_supply_role_aliases_reach_the_same_resource_match_proof(role_alias):
+    row, chunks = _supply_match_fixture()
+    row["row_role"] = role_alias
+    original = copy.deepcopy(row)
+
+    found = proof.unsubstantiated_supply_matches([row], chunks)
+
+    assert len(found) == 1
+    assert found[0]["locator"] == row["source_row"]
+    assert found[0]["source_title"] == row["title"]
+    assert found[0]["resource_code"] == row["resource_code"]
+    assert found[0]["resources"][0]["name"] == "Буквальный ресурс из карточки «1»"
+    assert row == original and row["row_role"] == role_alias
+
+
+@pytest.mark.parametrize("decision", [None, "no", "unknown"])
+def test_concrete_supply_match_debt_is_offered_without_any_norm_resource_group(decision):
+    row, chunks = _supply_match_fixture(decision=decision)
+    original = copy.deepcopy((row, chunks[0].content, chunks[0].meta))
+
+    found = proof.unsubstantiated_supply_matches([row], chunks)
+
+    assert len(found) == 1
+    literal = json.dumps(found, ensure_ascii=False)
+    for value in (row["source_row"], row["title"], row["resource_code"], "Q7.H1",
+                  "Буквальный ресурс из карточки «1»", "10 м"):
+        assert value in literal
+    assert (row, chunks[0].content, chunks[0].meta) == original
+    assert row["resource_code"] == "11.22.33.44-0001"
+
+
+@pytest.mark.parametrize("changed", ["title", "code", "refs", "empty_reason"])
+def test_stale_supply_yes_remains_a_proof_debt_without_rewriting_it(changed):
+    row, chunks = _supply_match_fixture(decision="yes")
+    assertion = row["supply_resource_match"]
+    if changed == "title":
+        assertion["source_title"] += " stale"
+    elif changed == "code":
+        assertion["resource_code"] = "different-literal-code"
+    elif changed == "refs":
+        assertion["source_refs"] = ["Q99.H9"]
+    else:
+        assertion["reason"] = " "
+    original = copy.deepcopy(row)
+
+    found = proof.unsubstantiated_supply_matches([row], chunks)
+
+    assert len(found) == 1 and row == original
+    assert row["supply_resource_match"]["decision"] == "yes"
+
+
+def test_exact_authored_supply_yes_and_rows_without_direct_supply_code_do_not_consume_proof_budget():
+    row, chunks = _supply_match_fixture(decision="yes")
+    untouched = [row, {**row, "row_role": "work", "supply_resource_match": None},
+                 {**row, "row_role": "header", "supply_resource_match": None},
+                 {key: value for key, value in row.items() if key not in {"resource_code", "supply_resource_match"}}]
+    original = copy.deepcopy(untouched)
+
+    assert proof.unsubstantiated_supply_matches(untouched, chunks) == []
+    assert untouched == original
+
+
+def test_supply_match_offer_is_bounded_and_reports_deferred_rows_in_the_same_proof():
+    row, chunks = _supply_match_fixture()
+    rows = [{**copy.deepcopy(row), "source_row": f"Секция А!R{index}", "title": f"Исходная поставка {index}"}
+            for index in range(10, 16)]
+    original = copy.deepcopy(rows)
+
+    found = proof.unsubstantiated_supply_matches(rows, chunks, max_matches=4)
+    message = proof.proof_request_message([], supply_matches=found)
+
+    assert len(found) == 4
+    assert all(item["detected_in_pass"] == 6 and item["deferred_in_pass"] == 2 for item in found)
+    assert "ещё 2" in message and "supply_resource_match" in message
+    assert rows == original
+    assert proof.unsubstantiated_supply_matches(rows, chunks, max_matches=0) == []
+
+
+def test_existing_resource_proof_message_and_receipt_include_literal_supply_mapping_without_group_debt():
+    row, chunks = _supply_match_fixture()
+    found = proof.unsubstantiated_supply_matches([row], chunks)
+    original = copy.deepcopy(found)
+
+    message = proof.proof_request_message([], supply_matches=found)
+    trace = {}
+    proof.record_proof_request(trace, sheet="Секция А", packet=[row["source_row"]], groups=[],
+                               supply_matches=found, answered=True, attempt=1)
+
+    assert message and all(field in message for field in (
+        "supply_resource_match", "source_title", "resource_code", "decision", "reason", "source_refs"))
+    for literal in (row["source_row"], row["title"], row["resource_code"],
+                    "Буквальный ресурс из карточки «1»", "10 м", "Q7.H1"):
+        assert literal in message
+    entry, = trace[proof.PROOF_REQUEST_TRACE]
+    assert entry["model_answered"] is True and entry["groups"] == []
+    assert entry["packet_attempt"] == 1
+    assert row["source_row"] in json.dumps(entry, ensure_ascii=False)
+    assert row["resource_code"] in json.dumps(entry, ensure_ascii=False)
+    assert found == original and row.get("supply_resource_match") is None
+    group_debt = proof.unresolved_groups(ROWS, [_card_chunk([RESOURCE])], pricebook=_book())
+    combined = proof.proof_request_message(group_debt, supply_matches=found)
+    assert GROUP in combined and "supply_resource_match" in combined
+
+
+def test_nested_supply_match_proof_update_uses_the_same_parser_and_preserves_neighbours_and_identity():
+    from proxy.services.chat_evidence_application_service import parse_model_rag_result, rows_after_proof_round
+
+    previous, old_chunks = _supply_match_fixture(decision="unknown")
+    previous.update(operation_id="owned-operation", revision=3)
+    corrected, new_chunks = _supply_match_fixture(index=2, decision="yes")
+    corrected.update(source_row=previous["source_row"], title=previous["title"], operation_id="owned-operation")
+    corrected["supply_resource_match"]["source_title"] = corrected["title"]
+    neighbour = {"source_row": "Секция А!R99", "row_role": "header", "title": "Сохранённый сосед",
+                 "operation_id": "other-owned-operation", "revision": 1}
+    old_rows = copy.deepcopy([previous, neighbour])
+    answer = json.dumps({"artifact_kind": "lsr", "rows": [corrected]}, ensure_ascii=False)
+    parsed = parse_model_rag_result(answer)
+    assert parsed is not None
+
+    merged, accepted = rows_after_proof_round(parsed_rows=parsed[1], previous_rows=old_rows,
+        chunks=[*old_chunks, *new_chunks], authored_answer=answer)
+
+    assert accepted and len(merged) == 2 and old_rows == [previous, neighbour]
+    actual = next(item for item in merged if item["operation_id"] == "owned-operation")
+    assert actual["revision"] == 3 and actual["resource_code"] == corrected["resource_code"]
+    assert actual["supply_resource_match"] == corrected["supply_resource_match"]
+    kept = next(item for item in merged if item["operation_id"] == "other-owned-operation")
+    assert all(kept[key] == value for key, value in neighbour.items())

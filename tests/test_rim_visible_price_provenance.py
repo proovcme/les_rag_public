@@ -15,6 +15,16 @@ def _supply(role="material", **extra):
             "resource_code": "selected-resource", **extra}
 
 
+def _matched_supply(**extra):
+    row = _supply(**extra)
+    row["supply_resource_match"] = {
+        "source_title": row["title"], "resource_code": row["resource_code"], "decision": "yes",
+        "reason": "The selected test-owned code is the authored source product.",
+        "source_refs": list(row["evidence_refs"]),
+    }
+    return row
+
+
 @pytest.mark.parametrize("role", ["material", "equipment"])
 def test_book_hit_without_resource_selection_evidence_stays_preliminary(role):
     authored = _supply(role)
@@ -30,7 +40,7 @@ def test_book_hit_without_resource_selection_evidence_stays_preliminary(role):
 
 
 def test_book_hit_with_resource_selection_evidence_remains_confirmed():
-    trace = build_lsr_trace_from_visible_rows([_supply(evidence_refs=["Q1.H1"])], pricebook=Book())
+    trace = build_lsr_trace_from_visible_rows([_matched_supply(evidence_refs=["Q1.H1"])], pricebook=Book())
     assert trace["summary"]["confirmed_amount"] == 300
     assert trace["summary"]["preliminary_amount"] == 0
     assert trace["row_bindings"][0]["position"]["evidence_refs"] == ["Q1.H1"]
@@ -55,7 +65,7 @@ def test_bound_unrelated_reference_does_not_prove_the_selected_resource(proof):
 
 
 def test_literally_cited_selected_resource_keeps_confirmed_book_money():
-    row = _supply(evidence_refs=["Q1.H1"], evidence_bindings={"Q1.H1": "immutable-card"},
+    row = _matched_supply(evidence_refs=["Q1.H1"], evidence_bindings={"Q1.H1": "immutable-card"},
                   _resource_evidence_check={"code_in_refs": True})
     trace = build_lsr_trace_from_visible_rows([row], pricebook=Book())
     assert trace["summary"]["confirmed_amount"] == 300

@@ -159,6 +159,7 @@ from proxy.services.lsr_resource_group_proof_service import (
     proof_request_message as resource_group_proof_request_message,
     record_proof_request as record_resource_group_proof_request,
     unresolved_groups as resource_group_proof_reads_needed,
+    unsubstantiated_supply_matches,
 )
 from proxy.services.model_rag_grouped_evidence_service import (
     EvidenceCard,
@@ -560,6 +561,11 @@ def workbook_repack_replay_arguments(
             or snapshot.get("source_sha256") != source_sha256
             or not isinstance(snapshot.get("price_basis"), Mapping)):
         return None
+    if tool == "build_lsr_workbook":
+        from proxy.services import version_service
+
+        if snapshot.get("resource_calc_version") != version_service.RESOURCE_CALC_VERSION:
+            return None
     arguments = snapshot.get("arguments")
     if (not isinstance(arguments, Mapping) or not isinstance(arguments.get("attachment_id"), str)
             or not arguments.get("attachment_id") or not isinstance(arguments.get("question"), str)
@@ -909,6 +915,8 @@ def model_packaging_record_arguments(
         # the parent the packager actually built on, not a guessed one
         "parent_revision_id": str(artifact.get("parent_revision_id") or ""),
         "price_basis": harvested.get("price_basis"),
+        **({"resource_calc_version": harvested["resource_calc_version"]}
+           if str(tool) == "build_lsr_workbook" and harvested.get("resource_calc_version") else {}),
         **({"financial_projection": list(harvested["row_projection"])}
            if str(tool) == "build_lsr_workbook" and isinstance(harvested.get("row_projection"), list) else {}),
     }
@@ -932,6 +940,20 @@ def begin_plain_lsr_gap_continuation(service, job, *, identity, question,
         return job
     from proxy.services.lsr_financial_feedback_service import financial_feedback_for_rows
     from proxy.services.rim_lsr_trace_service import source_confirmed_zero_work_charge_not_required
+    from proxy.services import version_service
+
+    # An old issued calculation may have called a supply complete under a
+    # weaker contract. Rebuild it from the saved decisions before choosing
+    # exact financial gaps; neither the old file nor model choices are edited.
+    latest_issued = next((event.get("payload") or {} for event in reversed(
+        service.list_events_with_lineage(job["job_id"], "workbook_packaged"))
+        if (event.get("payload") or {}).get("revision_id")), {})
+    if (latest_issued.get("tool") == "build_lsr_workbook"
+            and latest_issued.get("resource_calc_version") != version_service.RESOURCE_CALC_VERSION):
+        raise HTTPException(409, detail={"code": "LSR_CALCULATION_REFRESH_REQUIRED", "model_called": False,
+            "message": "После обновления сначала нажмите «Пересобрать файл». Сохранённые решения и книга цен "
+                       "будут пересчитаны без модели; затем можно продолжить только незакрытые позиции.",
+            "recovery": {"action": "repack", "endpoint": "/api/chat/repack-lsr", "job_id": job["job_id"]}})
 
     rows = list(job["accepted_rows"])
     # Pin before reading the issued financial observations: a newer packaging
@@ -1684,6 +1706,7 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         (
             "schema", "tool", "status", "code", "pricing_status", "norms_status",
             "calculated_positions", "confirmed_amount", "preliminary_amount",
+            "resource_calc_version",
             # § 4: «сколько позиций построено» and «сколько из них полностью
             # рассчитано» are two different numbers and must not be conflated here.
             "positions_built",
@@ -1727,7 +1750,7 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         # also travels back as the tool observation, and a 300-row document must not crowd
         # out the rows it describes (§ 2).
         projection = result.get("row_projection")
-        if isinstance(projection, list) and projection:
+        if isinstance(projection, list):
             safe["row_projection"] = [
                 _bounded_row_projection(row) for row in projection if isinstance(row, Mapping)
             ]
@@ -1807,6 +1830,7 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         "checkpoint": dict(checkpoint),
         "workbook_status": str(result.get("status") or ""),
         "pricing_status": str(result.get("pricing_status") or ""),
+        **({"resource_calc_version": result["resource_calc_version"]} if result.get("resource_calc_version") else {}),
         "document_issues": list(result.get("document_issues") or []),
         "norms_status": str(result.get("norms_status") or ""),
         "missing": list(result.get("missing") or []),
@@ -4534,6 +4558,7 @@ def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
             "price_year",
             "price_quarter",
             "resource_code",
+            "supply_resource_match",
             "resource_bindings",
             "resource_review",
             "_resource_binding_evidence_checks",
@@ -5399,7 +5424,7 @@ def parse_model_rag_result(
     json_rows = decode_model_result_rows(raw, diagnostics=transport_diagnostics)
     if diagnostics is not None:
         diagnostics.extend(transport_diagnostics)
-    resource_fields = {"resource_bindings", "resource_review"}
+    resource_fields = {"resource_bindings", "resource_review", "supply_resource_match"}
     numeric_fields = {
         "revision",
         "expected_revision",
@@ -5461,6 +5486,7 @@ def parse_model_rag_result(
         "calc_unit": "calc_unit",
         "confirmed_price": "confirmed_price",
         "resource_code": "resource_code",
+        "supply_resource_match": "supply_resource_match",
         "resource_bindings": "resource_bindings",
         "resource_review": "resource_review",
         "подтверждённая цена": "confirmed_price",
@@ -5947,6 +5973,7 @@ def parse_model_rag_result(
         "confirmed_price": "confirmed_price",
         "calc_unit": "calc_unit",
         "resource_code": "resource_code",
+        "supply_resource_match": "supply_resource_match",
         "resource_bindings": "resource_bindings",
         "resource_review": "resource_review",
         "price_source": "price_source",
@@ -12972,8 +12999,12 @@ async def _execute_chat_evidence_application(
                                 pricebook=model_pricebook(
                                     sheet_price_basis or model_requested_price_basis),
                             )
+                            proof_supply_matches = unsubstantiated_supply_matches(
+                                pass_rows,
+                                [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
+                            )
                             resume_group_proof = resuming_proof.get("purpose") == RESOURCE_GROUP_PROOF_PURPOSE
-                            if ((proof_groups and sheet_read_tools and not proof_context_failure
+                            if (((proof_groups or proof_supply_matches) and sheet_read_tools and not proof_context_failure
                                     and group_proof_attempts.get(fingerprint, 0) < 1) or resume_group_proof):
                                 group_proof_attempts[fingerprint] = 1
                                 group_answered = False
@@ -12981,7 +13012,8 @@ async def _execute_chat_evidence_application(
                                 group_usage: dict[str, Any] = {}
                                 try:
                                     group_message = (resuming_proof["proof_request"] if resume_group_proof else
-                                                     resource_group_proof_request_message(proof_groups))
+                                                     resource_group_proof_request_message(
+                                                         proof_groups, supply_matches=proof_supply_matches))
                                     sheet_proof_context = [{
                                         "proof_previous_model_answer": pass_answer,
                                         "proof_request": group_message,
@@ -13069,14 +13101,15 @@ async def _execute_chat_evidence_application(
                                 record_resource_group_proof_request(
                                     retrieval_trace, sheet=sheet_name, packet=packet,
                                     groups=proof_groups, answered=group_answered,
+                                    supply_matches=proof_supply_matches,
                                     attempt=group_proof_attempts[fingerprint],
                                     answer_parsed=group_answer_parsed,
                                     receipts=group_receipts,
                                 )
                                 logger.warning(
-                                    "[GROUP_PROOF] sheet=%s packet=%s groups=%s answered=%s "
+                                    "[GROUP_PROOF] sheet=%s packet=%s groups=%s supply_matches=%s answered=%s "
                                     "model_calls_after_request=%s answer_parsed=%s",
-                                    sheet_name, len(packet), len(proof_groups), group_answered,
+                                    sheet_name, len(packet), len(proof_groups), len(proof_supply_matches), group_answered,
                                     len(group_receipts), group_answer_parsed,
                                 )
                             expanded_packet = model_read_result_packet_locators(
@@ -15626,6 +15659,7 @@ async def _execute_chat_evidence_application(
                                             # much as its revision chain does: the
                                             # next turn inherits it from here (§ 4).
                                             price_basis=harvested.get("price_basis"),
+                                            resource_calc_version=harvested.get("resource_calc_version"),
                                             **({"financial_projection": list(harvested["row_projection"])}
                                                if packaging_tool == "build_lsr_workbook"
                                                and isinstance(harvested.get("row_projection"), list) else {}),

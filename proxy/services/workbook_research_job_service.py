@@ -1330,6 +1330,7 @@ class WorkbookResearchJobService:
         price_basis: Mapping[str, Any] | None = None,
         repack_request: Mapping[str, Any] | None = None,
         financial_projection: Sequence[Mapping[str, Any]] | None = None,
+        resource_calc_version: str | None = None,
     ) -> int:
         """Durable trace of a packaged workbook revision for this job.
 
@@ -1374,6 +1375,7 @@ class WorkbookResearchJobService:
                     "draft": bool(draft),
                     "parent_revision_id": str(parent_revision_id or ""),
                     "price_basis": basis,
+                    **({"resource_calc_version": str(resource_calc_version)} if resource_calc_version else {}),
                     **({"financial_feedback": feedback} if feedback is not None else {}),
                     **({"repack_request": dict(repack_request)} if isinstance(repack_request, Mapping) else {}),
                 },

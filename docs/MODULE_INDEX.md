@@ -1,5 +1,32 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 980 — доказательство соответствия поставки без нового предметного контура
+
+✅ Doc↔candidate source: `model_resource_binding_service.supply_resource_match_substantiated`
+проверяет scope модельного yes по текущим title/code/refs и обоснованию;
+`rim_lsr_trace_service` сохраняет неподтверждённый выбор и известную сумму
+предварительными с причиной `supply_resource_match_unsubstantiated`.
+`lsr_source_coverage_service.apply_confirmed_data/is_operator_confirmed_field`
+различает владение денежным полем и подтверждение только quantity/unit,
+сохраняя actual operator price, включая0, и прежний legacy editor contract.
+`lsr_resource_group_proof_service` включает прямые неподтверждённые поставки в
+существующий bounded resource proof, учитывает алиасы ролей, показанные записи
+и deferred budget; `chat_evidence_application_service` использует прежний
+parser/merge/ownership. JSON/native/табличный transport общий.
+Границы: [ЛСР](ALGO-lsr-assembly.md), [evidence flow](modules/rag-evidence-flow.md).
+🟡 Приёмка: transport142passed и финансовый пакет32passed — отдельные офлайн
+проверки; ownerGREEN03:316passed/10failed, positive fixtures дорабатываются.
+Совместный guard/transport/price gate339passed/43.83s; repack/lineage/zero
+consumers155passed/11.59s (`artifacts/offline_980/guard_green06.xml`,
+`repack_green07.xml`). Полный980 и live980 не подтверждены.
+`workbook_tool_service` хранит фактическую resource_calc_version0.7 в snapshot;
+`chat._execute_chat_workbook_tool` включает её только в LSR execution identity,
+repack пишет projection/version. `packaging_recovery_service` и
+`begin_plain_lsr_gap_continuation` выявляют старый расчёт перед добором;
+существующий UI repack/reconnect сохраняет флаг. Готовность продукта не заявляется.
+Установлен exact979/babaf652; ordinary/B0979 quality FAIL, customer_ready=false —
+сверено с [RELEASE_LEDGER](RELEASE_LEDGER.md).
+
 ## 979 — сохранный полный контекст и очередь неопределённых решений
 
 ✅ Doc↔candidate source: `complete_card_frontier_page` разделяет только точный
@@ -13,8 +40,10 @@ lossless cross-card factoring; identities/frontier/guards не ослаблен�
 Точки и ограничения: [evidence flow](modules/rag-evidence-flow.md),
 [ЛСР](ALGO-lsr-assembly.md). ROOT RED: prefix3failed/2fallback passed, role4failed;
 related270passed/12.44s, включая полные source/proof/zero/retry contracts.
-Кандидат и установленный продукт различаются: runtime976 восстановлен после
-ошибки окружения оператора при приёмке978; customer_ready=false.
+По сверке с RELEASE_LEDGER установлен exact979/commit babaf652 после успешной
+технической приёмки и проверки rollback. Ordinary/B0979 не прошли
+профессиональную приёмку; customer_ready=false. История восстановления976
+при ошибке окружения приёмки978 не является текущей версией runtime.
 
 ## 978 — сохранение найденных кандидатов до rerank
 

@@ -7,6 +7,7 @@ import json
 import pytest
 
 from proxy.services import chat_evidence_application_service as app
+from proxy.services import version_service
 from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from tests.test_workbook_gap_followup_955 import baseline, identity, SOURCE
@@ -169,7 +170,8 @@ def _price_only(tmp_path):
     current = store.replace_accepted_rows(original["job_id"], rows)
     material = current["accepted_rows"][1]
     store.record_packaging(current["job_id"], tool="build_lsr_workbook", revision_id="owned-price-only",
-        draft=False, price_basis=current["task_context"]["price_basis"], financial_projection=[{
+        draft=False, resource_calc_version=version_service.RESOURCE_CALC_VERSION,
+        price_basis=current["task_context"]["price_basis"], financial_projection=[{
             "operation_id": material["operation_id"], "locator": material["source_row"],
             "row_role": "material", "status": "bound", "position_calculated": False,
             "open_reasons": ["price_missing"]}])
@@ -230,7 +232,8 @@ def test_mixed_zero_and_unresolved_resume_only_returns_the_unresolved_operation(
         "declarations": ["lsr"], "errors": [], "authority": "result"})
     store.finish(original["job_id"], status="complete")
     store.record_packaging(original["job_id"], tool="build_lsr_workbook", revision_id="before-zero-gap-resume",
-        draft=False, price_basis={"actual_book": "sankt-peterburg_3kv2026", "pricebook_sha256": "b" * 64,
+        draft=False, resource_calc_version=version_service.RESOURCE_CALC_VERSION,
+        price_basis={"actual_book": "sankt-peterburg_3kv2026", "pricebook_sha256": "b" * 64,
                                   "match": "exact"})
     requested, child = _child(store, "Добери нормы")
     before = deepcopy(child)
@@ -285,7 +288,8 @@ def test_new_issued_revision_invalidates_price_targets_read_from_an_older_snapsh
     original_rows = deepcopy(child["accepted_rows"])
     def supersede(_job):
         store.record_packaging(child["job_id"], tool="build_lsr_workbook", revision_id="new-price-observation",
-            draft=False, price_basis=child["task_context"]["price_basis"], financial_projection=[])
+            draft=False, resource_calc_version=version_service.RESOURCE_CALC_VERSION,
+            price_basis=child["task_context"]["price_basis"], financial_projection=[])
         return old
     monkeypatch.setattr(store, "latest_financial_feedback", supersede)
     with pytest.raises(app.HTTPException) as error:
@@ -317,7 +321,8 @@ async def test_actual_plain_chat_continuation_dispatches_a_bounded_turn_and_pres
                 held_packet={"locators": ["S!R2", "S!R3"], "terminal_model_result_saved": True})
             self.record_artifact_kind(parent["job_id"], declaration=app.decode_model_artifact_kind("artifact_kind: lsr"))
             self.finish(parent["job_id"], status="complete")
-            self.record_packaging(parent["job_id"], tool="build_lsr_workbook", revision_id="owned-before", draft=False)
+            self.record_packaging(parent["job_id"], tool="build_lsr_workbook", revision_id="owned-before", draft=False,
+                resource_calc_version=version_service.RESOURCE_CALC_VERSION)
             state.update(store=self, parent=deepcopy(self.get(parent["job_id"])), reopens=[])
         return original_begin(self, incoming, **kwargs)
     def reopen(self, job_id, *args, **kwargs):

@@ -304,11 +304,33 @@ def apply_confirmed_data(
 
 
 def _apply_overlay_fields(item: dict[str, Any], patch: Mapping[str, Any]) -> None:
+    # A row-level confirmation is not ownership of every pre-existing value.
+    # Preserve legacy editor-owned rows, but record field ownership for every
+    # new overlay so a quantity edit cannot approve a model-written price.
+    owned = item.get("_operator_confirmed_fields")
+    if isinstance(owned, (list, tuple)):
+        owned = {key for key in owned if key in _CONFIRMED_KEYS}
+    elif str(item.get("confirmed_by") or "").strip() == "operator":
+        owned = {key for key in _CONFIRMED_KEYS if key in item}
+    else:
+        owned = set()
     for key in _CONFIRMED_KEYS:
         if key not in patch or patch.get(key) in (None, ""):
             continue
         item[key] = patch[key]
+        owned.add(key)
+    item["_operator_confirmed_fields"] = sorted(owned)
     item["confirmed_by"] = "operator"
+
+
+def is_operator_confirmed_field(row: Mapping[str, Any], field: str) -> bool:
+    """Read application-owned field confirmation, retaining the legacy editor contract."""
+    if str(row.get("confirmed_by") or "").strip() != "operator":
+        return False
+    if "_operator_confirmed_fields" not in row:
+        return True
+    fields = row.get("_operator_confirmed_fields")
+    return isinstance(fields, (list, tuple)) and field in fields
 
 
 def locators_with_separate_supply(rows: Sequence[Mapping[str, Any]]) -> set[str]:

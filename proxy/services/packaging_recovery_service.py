@@ -149,6 +149,8 @@ def describe_packaging_document(
     packaged_tools: set[str] = set()
     final_basis: dict[str, Any] = {}
     last_basis: dict[str, Any] = {}
+    final_calculation_version = ""
+    last_calculation_version = ""
     first_for_book: dict[str, str] = {}
     for event in events or ():
         if not isinstance(event, Mapping):
@@ -170,6 +172,7 @@ def describe_packaging_document(
         if event_tool and event_tool != tool:
             continue
         packaged_tools.add(event_tool or tool)
+        last_calculation_version = str(payload.get("resource_calc_version") or "")
         recorded = _recorded_price_basis(payload, revision_id)
         if recorded:
             first_for_book.setdefault(recorded["pricebook"], revision_id)
@@ -178,6 +181,7 @@ def describe_packaging_document(
             draft_revision = revision_id
         else:
             final_revision = revision_id
+            final_calculation_version = last_calculation_version
             if recorded:
                 final_basis = recorded
 
@@ -229,6 +233,17 @@ def describe_packaging_document(
             ),
         }
 
+    calculation_version = final_calculation_version if final_revision else last_calculation_version
+    calculation_refresh_required = False
+    if tool == "build_lsr_workbook" and (final_revision or draft_revision):
+        from proxy.services import version_service
+
+        calculation_refresh_required = calculation_version != version_service.RESOURCE_CALC_VERSION
+        if calculation_refresh_required:
+            needs_document = True
+            recovery_reason = ("После обновления требуется пересобрать файл из сохранённых решений "
+                               "и той же книги цен без вызова модели. Прежняя ревизия остаётся доступной.")
+
     return {
         "schema": SCHEMA,
         "state": state,
@@ -237,6 +252,8 @@ def describe_packaging_document(
         "artifact_kind": artifact_kind,
         "final_revision_id": final_revision,
         "draft_revision_id": draft_revision,
+        **({"resource_calc_version": calculation_version,
+            "calculation_refresh_required": calculation_refresh_required} if tool == "build_lsr_workbook" else {}),
         # The basis the document itself carries: the finished revision's when
         # there is one, otherwise the last revision that bound a book.  A
         # continuation turn inherits it instead of re-deriving it from its own

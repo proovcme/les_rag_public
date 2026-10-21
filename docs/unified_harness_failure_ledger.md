@@ -1,5 +1,25 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 21.10.2026 —979: цена ресурса не доказывает соответствие исходной поставке
+
+Exact install/rollback/reinstall accepted; full6965passed/20skipped и328updater.
+Но свежий ordinary979 доставил cable row CSV!R9 по цене01.7.06.07-0002
+«Лента монтажная, тип ЛМ-5»:576.49confirmed, Проверка!F5=да. Модель сама
+вернула этот код и признала в coverage, что карточка содержит ленту, не кабель.
+Binder доказал лишь code_in_refs=true; direct supply RIM не имел отдельного
+resource/source match assertion. Norm-match flags нельзя переиспользовать:
+для поставок они N/A. Модельное решение сохраняется; финансовое подтверждение
+должно отдельно требовать явного модельного соответствия с неизменной identity.
+
+Paired B0 на том же source/model/profile/book также не посчитал ни одной работы;
+0confirmed, guessed resource codes с code_in_refs=false остановлены. Поэтому
+нельзя объяснять всё только packet scheduler или отсутствием цены/порчей базы.
+Ordinary дополнительно ошибочно EXACT40мм по20мм; NR/SP container hashes
+перепутаны моделью с literal rule IDs, resolve честно отказал.
+Evidence: `artifacts/live_979/candidate979_ordinary01/`, `candidate979_b0_01/`.
+План: `docs/superpowers/plans/2026-10-21-supply-resource-match.md`.
+Профессиональный PASS OPEN; расширение RAG evidence не равно точности90%.
+
 ## 21.10.2026 —979: роль выпала из добора, header дублировался в полном evidence
 
 Свежий ordinary976 доставил7строк/0confirmed за312.781s. Readiness исключал

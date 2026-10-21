@@ -575,9 +575,14 @@ async def repack_lsr_without_model(req: LsrRepackRequest, _user=Depends(require_
                 # the rebuilt file is the document's newest basis; store it so a
                 # later continuation inherits it instead of asking again (§ 4)
                 price_basis=harvested.get("price_basis"),
+                resource_calc_version=harvested.get("resource_calc_version"),
+                **({"financial_projection": payload["row_projection"]}
+                   if repack_tool == "build_lsr_workbook" and isinstance(payload.get("row_projection"), list) else {}),
                 repack_request={"schema": "les.workbook-repack-request.v1",
                     "request_identity": request_identity, "source_sha256": source_sha256,
-                    "arguments": repack_args, "price_basis": dict(harvested.get("price_basis") or {})},
+                    "arguments": repack_args, "price_basis": dict(harvested.get("price_basis") or {}),
+                    **({"resource_calc_version": harvested["resource_calc_version"]}
+                       if repack_tool == "build_lsr_workbook" and harvested.get("resource_calc_version") else {})},
             )
             artifact["document_state"] = service.document_state(job_id)
         except (WorkbookResearchJobError, OSError) as error:
@@ -1545,6 +1550,10 @@ async def _execute_chat_workbook_tool(
         "args": args,
         "profile_revision_id": str(request_context.get("profile_revision_id") or ""),
     }
+    if tool_name == "build_lsr_workbook":
+        from proxy.services import version_service
+
+        identity_payload["resource_calc_version"] = version_service.RESOURCE_CALC_VERSION
     document_issues = [dict(item) for item in request_context.get("document_issues") or ()
                        if isinstance(item, dict)]
     if document_issues:

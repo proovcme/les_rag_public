@@ -263,6 +263,20 @@ def build_workbook_terminal_tool_schema(
         for name in MATCH_FIELDS:
             row_properties[name] = {"type": ["string", "null"], "enum": ["yes", "no", "unknown", "", None]}
         row_properties["nr_sp_rule_id"] = {"type": ["string", "null"]}
+        row_properties["supply_resource_match"] = {
+            "type": ["object", "null"], "additionalProperties": False,
+            "description": ("The model's explicit match of this source product to its selected resource; "
+                            "a resource code's quoted price or presence in a norm does not prove product identity."),
+            "required": ["source_title", "resource_code", "decision", "reason", "source_refs"],
+            "properties": {
+                "source_title": {"type": "string", "description": "Exact title of this decision row."},
+                "resource_code": {"type": "string", "description": "Exact selected resource_code of this row."},
+                "decision": {"type": "string", "enum": ["yes", "no", "unknown"]},
+                "reason": {"type": "string"},
+                "source_refs": {"type": "array", "items": {"type": "string"},
+                                "description": "Same nonempty reference set as this row's evidence_refs."},
+            },
+        }
         row["allOf"] = [{
             "if": {"required": ["row_role", "norm_code"], "properties": {
                 "row_role": {"enum": ["work"]}, "norm_code": {"type": "string", "minLength": 1}}},

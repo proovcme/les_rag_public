@@ -1,5 +1,80 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 — candidate980: соответствие поставки и пересчёт прежних ЛСР
+
+Source0.31.252/build980/native5.1.980, calculation contract0.7. Installed пока979
+`babaf65274d7335c3d58e2643e547b190ecc6605`; обновление ещё не выполнялось.
+Неподтверждённое соответствие выбранного ресурса исходному изделию сохраняет
+код/строку/цену, но оставляет сумму preliminary и возвращает exact operation
+в финансовый добор. Модельное утверждение supply_resource_match передаётся
+общим parser/native contract и прежним bounded resource proof; код не выбирает
+замену и не подтверждает профессиональное yes самостоятельно.
+Уточнение количества/единицы не даёт владение прежней модельной ценой:
+trusted overlay учитывает реально подтверждённые поля, actual price80/0 сохранён.
+
+Новая версия расчёта входит только в LSR execution key. Старый checkpoint
+сохраняет свою версию; existing no-model repack создаёт новый расчёт и пишет
+точную financial projection. Старые issued расчёты доступны как прежние файлы,
+но перед финансовым добором требуют технического пересчёта той же книги.
+Версия/признак проходят durable/reconnect/UI action; VOR key не меняется.
+
+RED наблюдались до исправлений:18false financial completeness,6false operator
+ownership,2role aliases,5repack boundary,7metadata,1reconnect. Совместный
+targeted GREEN339passed/43.83s: `artifacts/offline_980/guard_green06.xml`.
+Это пересекающиеся targeted suites, counts не суммируются. Repack/lineage/zero
+155passed/11.59s. Related consumer08:474passed/1failed — positive final event
+не называл текущую версию расчёта; fixture дополнена явной версией без изменения
+assertions. Повторный focused gate73passed/3.78s и architecture rc0.
+Native-capacity fixtures имеют24k input и явное40k полное тело, чтобы проверять
+overflow чтения, а не ранний inventory; positive B0/B1 wire54k и negative B1
+50k сохранены. Production guards не изменялись. Полный canonical gate,
+exact installer и live980 ещё не приняты. `customer_ready=false`; no public release.
+Precommit verify03:version/compile/collect7074/architecture — все4rc0,
+`artifacts/offline_980/verify_precommit03/receipt.json`. Candidate фиксируется
+для полного canonical prepare; этот факт не заменяет исполнение7074тестов.
+
+## 21.10.2026 — installed979 принят технически; качество ordinary/B0 не принято
+
+Installed0.31.251/build979, commit `babaf65274d7335c3d58e2643e547b190ecc6605`.
+Canonical prepare02:6965passed/20skipped, updater328passed, verify/architecture/
+active-baseline/public rc0. Exact NSIS SHA
+`842ed1dd3964da3c956cb938d518b4375a884b7c39735a8da1a951ced8999964`.
+Acceptance `3f3d98877ed44215bf3445746a91c20b`:accepted, install→976 rollback→979
+reinstall, user_data_untouched=true. Квитанция:
+`artifacts/release_979_control/artifacts/477476d105cb3b461564908f/acceptance/3f3d98877ed44215bf3445746a91c20b.json`.
+
+Fresh ordinary: `artifacts/live_979/candidate979_ordinary01`,654.047s/5calls,
+7accepted/0remaining, XLSX SHA
+`3d6954094d9c126e16214745ed6c3011a04e2bba147ca9a4adb4da7a353981b8`.
+Модель выбрала3нормы и сохранила исходные количества/родителей, но стяжку40мм
+назвала EXACT по20мм без добавки. Материал «кабель» связала с ценой монтажной
+ленты01.7.06.07-0002: ЛСР РИМ!B74/J74/L74,576.49 ошибочно confirmed;
+все3работы неполны. Общая плашка PRICED_PARTIAL верна, доверие к этой поставке — нет.
+Книга СПб IIIкв2026 exact, SHA242568… не потеряна. NRSP container IDs модель
+перепутала с literal rule IDs; ставки не подставлены произвольно.
+
+Модель сформулировала16queries против5 у fresh976; все исполнены дословно.
+CE380.071s против76.700s, generation118.285s против138.878s. Рост нагрузки
+обусловлен одновременно новыми queries и более полным pool, не одной правкой.
+Первый answer:96указателей/30тел/24полных нормативных карточки/66deferred bodies;
+после native read25полных. Не объявлять96полностью доставленными карточками.
+Новая shared-header supplement ветвь в этом прогоне не наблюдалась.
+
+Paired B0_DIRECT: `artifacts/live_979/candidate979_b0_01`,222.468s/2calls,
+тот же source/question/profile/connection/book, XLSX SHA
+`696d39fb84e1feb4d03623f6e7ba72c16ec2fb2b19907777ac1933f654a8a4bc`.
+0confirmed/0preliminary, ни одной рассчитанной работы. Source quantities
+сохранены, неподтверждённые guessed resource codes остановлены code_in_refs=false.
+`normative_generation_conflict` стяжки здесь означает отсутствие подтверждённых
+ключа/SHA выбранной нормы, а не доказанную смену редакции базы.
+
+Ни ordinary, ни B0 не дают профессионального PASS/90%. Новый измеренный P1 —
+direct supply с правильной ценой выбранного кода получает финансовую полноту
+без отдельного модельного утверждения соответствия исходному изделию. Пять
+norm-match flags к поставкам не относятся. Узкий план исправления:
+`docs/superpowers/plans/2026-10-21-supply-resource-match.md`.
+`customer_ready=false`; no public release. Данные/индекс/manifest не менялись.
+
 ## 21.10.2026 — candidate979 после свежего отрицательного baseline976
 
 Source0.31.251/build979/native5.1.979; установлен и восстановлен976,

@@ -29,7 +29,7 @@ APP_VERSION = PRODUCT_VERSION
 LES_VERSION = PRODUCT_VERSION
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
-RESOURCE_CALC_VERSION = "0.6"
+RESOURCE_CALC_VERSION = "0.7"
 
 # Корни для проверки divergence. Без env безопаснее считать корнем фактический
 # code tree, чем публиковать чужой platform-specific путь.

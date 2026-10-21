@@ -27,6 +27,39 @@ RESOURCE_REVIEW_FIELDS = frozenset({
 })
 
 
+def supply_resource_match_substantiated(row: Mapping[str, Any]) -> bool:
+    """Check the scope of a model's product-match assertion, not its semantics.
+
+    A book proves a selected code's price. Only the model or a trusted engineer
+    can assert that this resource is the source product. Bind the assertion to
+    the current authored title/code and the same cited set, so an old yes cannot
+    silently follow an edited choice. Existing delivery/code-in-refs checks are
+    independent and remain mandatory at the calculation boundary.
+    """
+    match = row.get("supply_resource_match")
+    if not isinstance(match, Mapping):
+        return False
+    if str(match.get("decision") or "").strip().casefold() != "yes":
+        return False
+    for field, current in (("source_title", row.get("title")),
+                           ("resource_code", row.get("resource_code"))):
+        value = match.get(field)
+        if (not isinstance(value, str) or not value.strip()
+                or not isinstance(current, str) or value.strip() != current.strip()):
+            return False
+    if not isinstance(match.get("reason"), str) or not match["reason"].strip():
+        return False
+    try:
+        asserted_refs = _strings(match.get("source_refs"))
+        current_refs = _strings(row.get("evidence_refs"))
+    except ValueError:
+        return False
+    return bool(asserted_refs) and (
+        {ref.strip().casefold() for ref in asserted_refs}
+        == {ref.strip().casefold() for ref in current_refs}
+    )
+
+
 def separate_supply_review_evidence_checks(
     row: Mapping[str, Any], bindings: Mapping[str, str], cards: Mapping[str, str],
     body_shown: Mapping[str, bool], *, first_bind: bool = True,

@@ -1603,6 +1603,8 @@ def test_completed_job_without_packaging_reports_durable_pending_document(tmp_pa
 
 
 def test_final_packaging_flips_the_completed_job_document_to_ready(tmp_path) -> None:
+    from proxy.services import version_service
+
     service = WorkbookResearchJobService(tmp_path / "meta.db")
     job = service.begin_or_resume(_identity(service))
     service.record_packet(
@@ -1616,7 +1618,8 @@ def test_final_packaging_flips_the_completed_job_document_to_ready(tmp_path) -> 
     )
     service.finish(job["job_id"], status="complete")
     service.record_packaging(
-        job["job_id"], tool="build_lsr_workbook", revision_id="rev_final", draft=False
+        job["job_id"], tool="build_lsr_workbook", revision_id="rev_final", draft=False,
+        resource_calc_version=version_service.RESOURCE_CALC_VERSION,
     )
 
     stored = service.get(job["job_id"])

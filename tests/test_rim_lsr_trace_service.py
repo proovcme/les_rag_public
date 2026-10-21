@@ -1166,6 +1166,329 @@ class _ChosenBook:
         return None if price is None else {"price_current": price, **({"unit": self._units[code]} if code in self._units else {})}
 
 
+def _cited_book_supply(role):
+    code = "SYNTH-SUPPLY-42"
+    title = "Изделие модели Ω"
+    refs = ["Q1.H1", "Q2.H3"]
+    return {
+        "source_row": "Поставки Ω!R3",
+        "operation_id": "supply-operation",
+        "row_role": role,
+        "work_row": "Поставки Ω!R2",
+        "title": title,
+        "resource_code": code,
+        "unit": "шт",
+        "quantity": 4,
+        "evidence_refs": list(refs),
+        "evidence_bindings": {ref: f"owned-evidence-{ref}" for ref in refs},
+        "_resource_evidence_check": {
+            "resource_code": code,
+            "cited_resource_codes": [code],
+            "code_in_refs": True,
+        },
+        "supply_resource_match": {
+            "source_title": title,
+            "resource_code": code,
+            "decision": "yes",
+            "reason": "Выбранное исполнение соответствует исходной поставке по приведённым карточкам.",
+            "source_refs": list(refs),
+        },
+    }
+
+
+@pytest.mark.parametrize("role", ["material", "equipment"])
+@pytest.mark.parametrize("proof_case", [
+    "missing",
+    "unknown",
+    "no",
+    "empty_reason",
+    "blank_reason",
+    "stale_selected_code",
+    "stale_title",
+    "stale_refset",
+    "empty_source_refs",
+])
+def test_book_priced_supply_without_current_model_match_stays_preliminary(role, proof_case):
+    """A cited price keeps known money, but cannot prove the selected product fits."""
+    from copy import deepcopy
+
+    row = _cited_book_supply(role)
+    if proof_case == "missing":
+        row.pop("supply_resource_match")
+    else:
+        field, value = {
+            "unknown": ("decision", "unknown"),
+            "no": ("decision", "no"),
+            "empty_reason": ("reason", ""),
+            "blank_reason": ("reason", "   "),
+            "stale_selected_code": ("resource_code", "SYNTH-PREVIOUS-17"),
+            "stale_title": ("source_title", "Другое исполнение модели Ω"),
+            "stale_refset": ("source_refs", ["Q1.H1", "Q9.H9"]),
+            "empty_source_refs": ("source_refs", []),
+        }[proof_case]
+        row["supply_resource_match"][field] = value
+    original = deepcopy(row)
+
+    trace = build_lsr_trace_from_visible_rows(
+        [row],
+        pricebook=_ChosenBook({row["resource_code"]: 125.0},
+                              units={row["resource_code"]: "шт"}),
+    )
+    binding = trace["row_bindings"][0]
+    position = trace["sections"][0]["positions"][0]
+    summary = position["summary"]
+    resource = next(item for item in position["rows"] if item["type"].startswith("resource"))
+
+    assert row == original
+    assert binding["source_row"] == original
+    assert binding["status"] == "bound"
+    assert resource["columns"]["2"] == row["resource_code"]
+    assert resource["columns"]["3"] == row["title"]
+    assert resource["columns"]["7"] == 4
+    assert resource["source"] == "fgis_current"
+    assert summary["known_amount"] == 500.0
+    assert "supply_resource_match_unsubstantiated" in summary["completeness_reasons"]
+    assert not any(str(reason).startswith("price_missing:") for reason in summary["completeness_reasons"])
+    assert summary["amount_status"] == "partial"
+    assert summary["full_amount"] is None
+    assert trace["summary"]["confirmed_amount"] == 0.0
+    assert trace["summary"]["preliminary_amount"] == 500.0
+    assert trace["summary"]["full_amount"] is None
+    assert trace["summary"]["result_status"] == "priced_partial"
+
+
+@pytest.mark.parametrize("role", ["material", "equipment"])
+@pytest.mark.parametrize("reverse_refs", [False, True])
+def test_book_priced_supply_with_current_model_match_is_complete(role, reverse_refs):
+    from copy import deepcopy
+
+    row = _cited_book_supply(role)
+    if reverse_refs:
+        row["supply_resource_match"]["source_refs"].reverse()
+    original = deepcopy(row)
+    trace = build_lsr_trace_from_visible_rows(
+        [row],
+        pricebook=_ChosenBook({row["resource_code"]: 125.0},
+                              units={row["resource_code"]: "шт"}),
+    )
+    summary = trace["sections"][0]["positions"][0]["summary"]
+
+    assert row == original
+    assert trace["row_bindings"][0]["source_row"] == original
+    assert "supply_resource_match_unsubstantiated" not in summary["completeness_reasons"]
+    assert summary["amount_status"] == "complete"
+    assert summary["full_amount"] == 500.0
+    assert trace["summary"]["confirmed_amount"] == 500.0
+    assert trace["summary"]["preliminary_amount"] == 0.0
+    assert trace["summary"]["result_status"] == "priced_final"
+
+
+@pytest.mark.parametrize("role", ["material", "equipment"])
+@pytest.mark.parametrize("overlay", [
+    {"quantity": 6},
+    {"unit": "шт"},
+    {"quantity": 6, "unit": "шт"},
+], ids=["quantity-only", "unit-only", "quantity-and-unit"])
+def test_quantity_or_unit_confirmation_does_not_confirm_book_supply_selection(role, overlay):
+    from copy import deepcopy
+
+    row = _cited_book_supply(role)
+    row.pop("supply_resource_match")
+    original = deepcopy(row)
+    trace = build_lsr_trace_from_visible_rows(
+        [row],
+        pricebook=_ChosenBook({row["resource_code"]: 125.0},
+                              units={row["resource_code"]: "шт"}),
+        confirmed_data={row["source_row"]: overlay},
+    )
+    binding = trace["row_bindings"][0]
+    position = trace["sections"][0]["positions"][0]
+    summary = position["summary"]
+    resource = next(item for item in position["rows"] if item["type"].startswith("resource"))
+    expected_quantity = overlay.get("quantity", row["quantity"])
+
+    assert row == original
+    assert binding["source_row"]["confirmed_by"] == "operator"
+    assert "confirmed_price" not in binding["source_row"]
+    assert binding["source_row"]["resource_code"] == row["resource_code"]
+    assert resource["columns"]["7"] == expected_quantity
+    assert resource["source"] == "fgis_current"
+    assert summary["known_amount"] == expected_quantity * 125.0
+    assert "supply_resource_match_unsubstantiated" in summary["completeness_reasons"]
+    assert summary["full_amount"] is None
+    assert trace["summary"]["confirmed_amount"] == 0.0
+    assert trace["summary"]["preliminary_amount"] == expected_quantity * 125.0
+    assert trace["summary"]["result_status"] == "priced_partial"
+
+
+@pytest.mark.parametrize("role", ["material", "equipment"])
+@pytest.mark.parametrize("overlay", [
+    {"quantity": 6},
+    {"unit": "шт"},
+    {"quantity": 6, "unit": "шт"},
+], ids=["quantity-only", "unit-only", "quantity-and-unit"])
+def test_quantity_overlay_cannot_own_a_model_authored_supply_price(role, overlay):
+    from copy import deepcopy
+
+    row = _cited_book_supply(role)
+    row.pop("supply_resource_match")
+    row.update(confirmed_price=80.0, price_source="operator")
+    original = deepcopy(row)
+    trace = build_lsr_trace_from_visible_rows(
+        [row],
+        pricebook=_ChosenBook({row["resource_code"]: 125.0},
+                              units={row["resource_code"]: "шт"}),
+        confirmed_data={row["source_row"]: overlay},
+    )
+    binding = trace["row_bindings"][0]
+    summary = trace["sections"][0]["positions"][0]["summary"]
+
+    assert row == original
+    assert binding["source_row"]["confirmed_price"] == 80.0
+    assert binding["source_row"]["resource_code"] == row["resource_code"]
+    assert "supply_resource_match" not in binding["source_row"]
+    assert "supply_resource_match_unsubstantiated" in summary["completeness_reasons"]
+    assert summary["amount_status"] == "partial"
+    assert summary["full_amount"] is None
+    assert trace["summary"]["confirmed_amount"] == 0.0
+    assert trace["summary"]["preliminary_amount"] > 0.0
+    assert trace["summary"]["result_status"] == "priced_partial"
+
+
+@pytest.mark.parametrize("role", ["material", "equipment"])
+@pytest.mark.parametrize("unit_price", [80.0, 0.0], ids=["positive-price", "explicit-zero-price"])
+def test_actual_operator_unit_price_can_confirm_supply_without_model_match(role, unit_price):
+    from copy import deepcopy
+
+    row = _cited_book_supply(role)
+    row.pop("supply_resource_match")
+    original = deepcopy(row)
+    trace = build_lsr_trace_from_visible_rows(
+        [row],
+        pricebook=_ChosenBook({row["resource_code"]: 125.0},
+                              units={row["resource_code"]: "шт"}),
+        confirmed_data={row["source_row"]: {
+            "confirmed_price": unit_price,
+            "price_source": "operator",
+        }},
+    )
+    binding = trace["row_bindings"][0]
+    summary = trace["sections"][0]["positions"][0]["summary"]
+    expected_amount = row["quantity"] * unit_price
+
+    assert row == original
+    assert binding["source_row"]["confirmed_by"] == "operator"
+    assert binding["source_row"]["confirmed_price"] == unit_price
+    assert binding["source_row"]["resource_code"] == row["resource_code"]
+    assert "supply_resource_match_unsubstantiated" not in summary["completeness_reasons"]
+    assert summary["amount_status"] == "complete"
+    assert summary["full_amount"] == expected_amount
+    assert trace["summary"]["confirmed_amount"] == expected_amount
+    assert trace["summary"]["preliminary_amount"] == 0.0
+    assert trace["summary"]["result_status"] == "priced_final"
+
+
+@pytest.mark.parametrize("role", ["material", "equipment"])
+@pytest.mark.parametrize("unit_price", [80.0, 0.0], ids=["positive-price", "explicit-zero-price"])
+def test_later_quantity_edit_keeps_an_actual_operator_supply_price(role, unit_price):
+    from copy import deepcopy
+    from proxy.services.lsr_source_coverage_service import apply_confirmed_data
+
+    row = _cited_book_supply(role)
+    row.pop("supply_resource_match")
+    trusted_rows = apply_confirmed_data([row], {row["source_row"]: {
+        "confirmed_price": unit_price,
+        "price_source": "operator",
+    }})
+    original = deepcopy(trusted_rows)
+    trace = build_lsr_trace_from_visible_rows(
+        trusted_rows,
+        pricebook=_ChosenBook({row["resource_code"]: 125.0},
+                              units={row["resource_code"]: "шт"}),
+        confirmed_data={row["source_row"]: {"quantity": 6}},
+    )
+    binding = trace["row_bindings"][0]
+    summary = trace["sections"][0]["positions"][0]["summary"]
+
+    assert trusted_rows == original
+    assert binding["source_row"]["confirmed_price"] == unit_price
+    assert binding["source_row"]["quantity"] == 6
+    assert "supply_resource_match_unsubstantiated" not in summary["completeness_reasons"]
+    assert summary["amount_status"] == "complete"
+    assert summary["full_amount"] == 6 * unit_price
+    assert trace["summary"]["confirmed_amount"] == 6 * unit_price
+    assert trace["summary"]["preliminary_amount"] == 0.0
+
+
+@pytest.mark.parametrize("role", ["material", "equipment"])
+def test_unsubstantiated_supply_reaches_readiness_retry_without_reopening_trusted_neighbor(role):
+    from copy import deepcopy
+    from proxy.services.lsr_result_readiness_service import build_lsr_result_readiness
+    from proxy.services.lsr_workbook_adapter_service import collect_lsr_workbook_gaps
+
+    supply = _cited_book_supply(role)
+    supply.pop("supply_resource_match")
+    parent = {
+        "source_row": supply["work_row"],
+        "operation_id": "pending-parent-work",
+        "row_role": "work",
+        "title": "Работа по установке изделий",
+        "unit": "шт",
+        "quantity": 1,
+        "norm_code": "",
+        "norm_status": "MISSING",
+        "open_gap": "Норма работы пока не выбрана.",
+    }
+    trusted = {
+        "source_row": "Поставки Ω!R4",
+        "operation_id": "trusted-neighbor",
+        "row_role": "material",
+        "work_row": parent["source_row"],
+        "title": "Поставка с подтверждённой ценой инженера",
+        "unit": "шт",
+        "quantity": 2,
+        "confirmed_price": 80.0,
+        "price_source": "operator",
+        "confirmed_by": "operator",
+    }
+    rows = [parent, supply, trusted]
+    original = deepcopy(rows)
+    basis = {"actual_book": "synthetic_selected_book", "match": "exact",
+             "pricebook_sha256": "b" * 64}
+    trace = build_lsr_trace_from_visible_rows(
+        rows,
+        pricebook=_ChosenBook({supply["resource_code"]: 125.0},
+                              units={supply["resource_code"]: "шт"}),
+    )
+    summary = trace["summary"]
+    readiness = build_lsr_result_readiness(
+        packaged=True,
+        rows=rows,
+        missing=collect_lsr_workbook_gaps(trace),
+        pricing_status=summary["result_status"],
+        row_projection=trace["row_projection"],
+        calculated_positions=summary["calculated_positions"],
+        confirmed_amount=summary["confirmed_amount"],
+        preliminary_amount=summary["preliminary_amount"],
+        price_basis=basis,
+        catalog_work_count=1,
+        job_status="complete",
+    )
+    binding = trace["row_bindings"][1]
+    assert "supply_resource_match_unsubstantiated" in binding["readiness"]["open_reasons"]
+    assert readiness["estimate_complete"] is False
+    assert set(readiness["research_operation_ids"]) == {parent["operation_id"], supply["operation_id"]}
+    assert set(readiness["research_locators"]) == {parent["source_row"], supply["source_row"]}
+    assert trusted["operation_id"] not in readiness["research_operation_ids"]
+    assert trusted["source_row"] not in readiness["research_locators"]
+    assert any(action["id"] == "resume" for action in readiness["actions"])
+    assert readiness["counts"]["confirmed_amount"] == 160.0
+    assert readiness["counts"]["preliminary_amount"] == 500.0
+    assert trace["row_bindings"][2]["readiness"]["position_calculated"] is True
+    assert binding["source_row"]["resource_code"] == supply["resource_code"]
+    assert rows == original
+
+
 def test_resources_priced_from_the_chosen_book_are_confirmed_final():
     """The priced-final path ADR-16 § 7 requires: every counted rate is owned.
 
@@ -1219,6 +1542,13 @@ def test_material_priced_from_the_chosen_book_is_confirmed_money():
                 "unit": "м.п",
                 "quantity": 30,
                 "evidence_refs": ["selected-resource-card"],
+                "supply_resource_match": {
+                    "source_title": "Лоток лестничный",
+                    "resource_code": "01.7.15.06-0111",
+                    "decision": "yes",
+                    "reason": "Выбранный ресурс соответствует указанному исполнению поставки.",
+                    "source_refs": ["selected-resource-card"],
+                },
             }
         ],
         pricebook=_ChosenBook({"01.7.15.06-0111": 100.0}, units={"01.7.15.06-0111": "м.п"}),

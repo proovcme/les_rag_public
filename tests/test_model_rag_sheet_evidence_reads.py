@@ -108,7 +108,8 @@ async def test_budget_stop_after_terminal_packet_delivers_partial_workbook_witho
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("variant, wire_budget", [
-    ("B0_DIRECT", 50000), ("B1_CANDIDATE", 50000), ("B1_CANDIDATE", 54000),
+    # Both positive variants have room for the current required native protocol.
+    ("B0_DIRECT", 54000), ("B1_CANDIDATE", 50000), ("B1_CANDIDATE", 54000),
 ])
 async def test_remote_wire_budget_defers_discovery_bodies_but_keeps_exact_reads(tmp_path, monkeypatch, variant, wire_budget):
     if variant == "B1_CANDIDATE" and wire_budget == 50000:
@@ -227,15 +228,24 @@ async def test_resumed_new_read_preserves_prior_receipts(tmp_path, monkeypatch):
     assert after[0]["model_delivery_status"] == "delivered"
 
 
+def _supply_resource_match(title, code, refs):
+    """The synthetic model explicitly matches its own source product and shown code."""
+    return {"source_title": title, "resource_code": code, "decision": "yes",
+            "reason": "The shown test-owned resource is this source product with the same unit.",
+            "source_refs": [refs] if isinstance(refs, str) else list(refs)}
+
+
 def _answer(*, refs=("Q1.H1", "Q2.H1")):
     first, second = refs
+    first_match = json.dumps(_supply_resource_match("Cable A", RESOURCE_A, [first]))
+    second_match = json.dumps(_supply_resource_match("Cable B", RESOURCE_B, [second]))
     return (
         "artifact_kind: lsr\n"
         "Model-authored final rows\n\n"
-        "| source_row | row_role | title | unit | quantity | norm_code | resource_code | evidence_refs |\n"
-        "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
-        f"| S!R2 | material | Cable A | m | 12 | — | {RESOURCE_A} | {first} |\n"
-        f"| S!R3 | material | Cable B | m | 3 | — | {RESOURCE_B} | {second} |"
+        "| source_row | row_role | title | unit | quantity | norm_code | resource_code | evidence_refs | supply_resource_match |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        f"| S!R2 | material | Cable A | m | 12 | — | {RESOURCE_A} | {first} | {first_match} |\n"
+        f"| S!R3 | material | Cable B | m | 3 | — | {RESOURCE_B} | {second} | {second_match} |"
     )
 
 
@@ -451,9 +461,11 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
         if json_final:
             answer = json.dumps({"artifact_kind": "lsr", "rows": [
                 {"source_row": "S!R2", "row_role": "material", "title": "Cable A", "unit": "m",
-                 "quantity": 12, "norm_code": "", "resource_code": RESOURCE_A, "evidence_refs": [refs[0]]},
+                 "quantity": 12, "norm_code": "", "resource_code": RESOURCE_A, "evidence_refs": [refs[0]],
+                 "supply_resource_match": _supply_resource_match("Cable A", RESOURCE_A, [refs[0]])},
                 {"source_row": "S!R3", "row_role": "material", "title": "Cable B", "unit": "m",
-                 "quantity": 3, "norm_code": "", "resource_code": RESOURCE_B, "evidence_refs": [refs[1]]}]})
+                 "quantity": 3, "norm_code": "", "resource_code": RESOURCE_B, "evidence_refs": [refs[1]],
+                 "supply_resource_match": _supply_resource_match("Cable B", RESOURCE_B, [refs[1]])}]})
         if packet_index:
             answer = answer.replace("S!R2", f"S!R{2 + packet_index * 2}").replace("S!R3", f"S!R{3 + packet_index * 2}")
         if partial_final and packet_index == 0:
@@ -475,7 +487,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                     "Наименование": "Different authored title", "unit": "m", "quantity": 12,
                     "norm_code": "", "resource_code": RESOURCE_A, "evidence_refs": [refs[0]]})
             unique = {"source_row": "S!R3", "row_role": "material", "title": "Cable B", "unit": "m",
-                      "quantity": 3, "norm_code": "", "resource_code": RESOURCE_B, "evidence_refs": [refs[1]]}
+                      "quantity": 3, "norm_code": "", "resource_code": RESOURCE_B, "evidence_refs": [refs[1]],
+                      "supply_resource_match": _supply_resource_match("Cable B", RESOURCE_B, [refs[1]])}
             answer = '{"artifact_kind":"lsr","rows":[' + conflict + ',' + json.dumps(unique) + ']}'
         return InferenceResponse(text="" if empty_final else answer, tool_calls=(),
                                  finish_reason="length" if empty_final else "stop",
@@ -629,7 +642,8 @@ async def _run_sheet(tmp_path, monkeypatch, *, reads, variant="B1_CANDIDATE", un
                                 shown_ref = item["evidence_ref"]
             assert shown_ref
             rows = [{"source_row": locator, "row_role": "material", "title": title, "unit": "m",
-                     "quantity": quantity, "norm_code": "", "resource_code": resource, "evidence_refs": shown_ref}]
+                     "quantity": quantity, "norm_code": "", "resource_code": resource, "evidence_refs": shown_ref,
+                     "supply_resource_match": _supply_resource_match(title, resource, [shown_ref])}]
             return InferenceResponse(text=json.dumps({"artifact_kind": "lsr", "rows": rows}), tool_calls=(),
                                      finish_reason="stop", usage={"completion_tokens": 80})
         responses.append(corrected_response)
@@ -829,8 +843,10 @@ async def test_bounded_inventory_reserves_native_growth_and_finishes_after_third
 async def test_actual_native_results_exceeding_bound_pause_without_false_final(tmp_path, monkeypatch, variant):
     # The exact card itself must exceed the bound, independently of how much
     # lossless sharing saves on repeated unread inventory fields.
+    # Admit the current required protocol and initial inventory first, so the
+    # exercised overflow belongs to the real native body, not that inventory.
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, variant=variant,
-                           query_count=35, input_token_limit=20_000,
+                           query_count=35, input_token_limit=24_000,
                            candidate_padding=1200, native_read_batch=True, exact_resource_padding=40_000)
     assert len(run.requests) == 2 and len(run.responses) == 1
     assert len(run.exact_reads) == 1 and not run.executions
@@ -855,7 +871,7 @@ async def test_native_capacity_stop_keeps_reason_and_does_not_call_offered_rows_
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 
     run = await _run_sheet(tmp_path, monkeypatch, reads=True, packet_count=2,
-                           query_count=35, input_token_limit=20_000,
+                           query_count=35, input_token_limit=24_000,
                            candidate_padding=1200, native_read_batch=True, exact_resource_padding=40_000)
     trace = run.result["retrieval_trace"]
     job = WorkbookResearchJobService().get(trace["workbook_research_job"]["job_id"])
@@ -879,8 +895,8 @@ async def test_resumed_zero_decision_job_can_cite_saved_native_reads_and_preserv
     from dataclasses import replace
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 
-    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35, input_token_limit=20_000,
-                           candidate_padding=1200, native_read_batch=True)
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35, input_token_limit=24_000,
+                           candidate_padding=1200, native_read_batch=True, exact_resource_padding=40_000)
     store = WorkbookResearchJobService()
     job_id = run.result["retrieval_trace"]["workbook_research_job"]["job_id"]
     paused = store.get(job_id)
@@ -924,7 +940,7 @@ async def test_resumed_zero_decision_job_can_cite_saved_native_reads_and_preserv
 async def test_native_capacity_resume_reuses_literal_queries_and_exposes_unchanged_overflow(tmp_path, monkeypatch):
     from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 
-    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35, input_token_limit=20_000,
+    run = await _run_sheet(tmp_path, monkeypatch, reads=True, query_count=35, input_token_limit=24_000,
                            candidate_padding=1200, native_read_batch=True, exact_resource_padding=40_000)
     job_id = run.result["retrieval_trace"]["workbook_research_job"]["job_id"]
     store = WorkbookResearchJobService()
@@ -1073,7 +1089,7 @@ async def test_malformed_packet_keeps_raw_pending_and_advances_only_unseen_sourc
     assert trace["model_result"]["packaged"] is has_draft
     diagnostic = trace["model_result_transport_diagnostics"][0]
     assert diagnostic["code"] == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH"
-    assert diagnostic["expected_cells"] == 8 and diagnostic["actual_cells"] == 7
+    assert diagnostic["expected_cells"] == 9 and diagnostic["actual_cells"] == 8
     assert diagnostic["decision"]["source_row"] == "S!R2"
     assert f"| {RESOURCE_A} |" in diagnostic["decision"]["raw_line"]
     from proxy.services.workbook_research_job_service import WorkbookResearchIdentity, WorkbookResearchJobService

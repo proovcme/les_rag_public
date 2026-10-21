@@ -1066,8 +1066,10 @@ def _visible_price_owner(row: Mapping[str, Any]) -> tuple[str, str]:
     model result. A model-written token ``price_source=operator`` is a claim,
     not that confirmation. A commercial source needs its explicit reference.
     """
+    from proxy.services.lsr_source_coverage_service import is_operator_confirmed_field
+
     source = str(row.get("price_source") or "").strip()
-    if str(row.get("confirmed_by") or "").strip() == "operator":
+    if is_operator_confirmed_field(row, "confirmed_price"):
         return source or "operator", "operator"
     if "_price_evidence_check" in row:
         check = row["_price_evidence_check"]
@@ -1405,6 +1407,10 @@ def build_position_trace(
     if position.get("resource_selection_unsubstantiated"):
         flags.append("соответствие выбранного ресурса строке не подтверждено ссылкой на источник")
         completeness_reasons.append("resource_selection_unsubstantiated")
+    if position.get("supply_resource_match_unsubstantiated"):
+        flags.append("Соответствие выбранного ресурса исходному изделию не подтверждено моделью; "
+                     "найденная цена сама по себе этого не доказывает")
+        completeness_reasons.append("supply_resource_match_unsubstantiated")
     if position.get("supply_price_kind_conflict"):
         flags.append("цена поставки требует уточнения: для материала или оборудования допустима только цена за единицу")
         completeness_reasons.append("supply_price_kind_conflict")
@@ -3010,6 +3016,15 @@ def positions_from_visible_lsr_rows(
                         )
                     )
                 )
+            )
+            from proxy.services.model_resource_binding_service import supply_resource_match_substantiated
+
+            # An operator quantity/unit edit also stamps confirmed_by. Only an
+            # actual owned price (including zero) confirms the monetary choice.
+            operator_price_confirmed = price_owner == "operator" and price is not None
+            position["supply_resource_match_unsubstantiated"] = (
+                bool(resource["code"]) and not operator_price_confirmed
+                and not supply_resource_match_substantiated(row)
             )
             position["supply_price_kind_conflict"] = (
                 "price_kind" in row and str(row.get("price_kind") or "").strip() != "unit_price"

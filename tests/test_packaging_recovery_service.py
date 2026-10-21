@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+from proxy.services import version_service
 from proxy.services.packaging_recovery_service import (
     describe_packaging_document,
     packaging_fault,
@@ -32,7 +33,9 @@ def _packaged(revision_id: str, *, draft: bool = False, tool: str = "build_lsr_w
     return {
         "sequence": 1,
         "event_type": "workbook_packaged",
-        "payload": {"tool": tool, "revision_id": revision_id, "draft": draft},
+        "payload": {"tool": tool, "revision_id": revision_id, "draft": draft,
+                    **({"resource_calc_version": version_service.RESOURCE_CALC_VERSION}
+                       if tool == "build_lsr_workbook" else {})},
     }
 
 
@@ -113,7 +116,8 @@ def test_research_document_target_survives_restart_and_source_scope_projection(t
     restarted = WorkbookResearchJobService(database)
     assert restarted.get(job["job_id"])["document"]["artifact_kind"] == f"{kind}_workbook"
     assert restarted.document_state(job["job_id"])["tool"] == f"build_{kind}_workbook"
-    service.record_packaging(job["job_id"], tool=f"build_{kind}_workbook", revision_id="old-file", draft=False)
+    service.record_packaging(job["job_id"], tool=f"build_{kind}_workbook", revision_id="old-file", draft=False,
+        **({"resource_calc_version": version_service.RESOURCE_CALC_VERSION} if kind == "lsr" else {}))
     expanded = restarted.begin_or_resume(identity, source_locators=["S!R2", "S!R3"])
     assert expanded["document"]["artifact_kind"] == f"{kind}_workbook"
     assert expanded["document"]["tool"] == f"build_{kind}_workbook"
@@ -541,6 +545,8 @@ def _fake_packaging(_real, revision_id: str, *, failed: bool = False):
                 "schema": "les.workbook_tool_result.v1",
                 "tool": call.get("tool"),
                 "status": "complete",
+                **({"resource_calc_version": version_service.RESOURCE_CALC_VERSION}
+                   if call.get("tool") == "build_lsr_workbook" else {}),
                 "artifact": {
                     "schema": "les.artifact_revision.v1",
                     "artifact_id": "art_1",

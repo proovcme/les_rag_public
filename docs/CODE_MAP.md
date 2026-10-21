@@ -1,5 +1,18 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 980 — точное подтверждение поставки и версия расчёта
+
+`model_lsr_result_contract`/native schema → общий parser/accepted decisions →
+`supply_resource_match_substantiated` → RIM preliminary/retry без подмены выбора.
+`is_operator_confirmed_field` отделяет подтверждение цены от quantity-only edit.
+Тот же bounded resource proof получает непроверенные прямые поставки.
+`version_service.RESOURCE_CALC_VERSION` → LSR execution identity → фактический
+adapter result/calculation snapshot → packaging metadata/financial projection.
+`packaging_recovery_service` → durable/reconnect refresh flag → existing no-model
+repack; plain continuation проверяет last-issued lineage до financial gaps.
+Source980; installed exact979/babaf652, professional quality OPEN. Точные факты:
+[RELEASE_LEDGER](RELEASE_LEDGER.md), [MODULE_INDEX](MODULE_INDEX.md).
+
 ## 978 — bounded retrieval pool и диагностическая трасса
 
 `norm_browser.browse_norms_many`: depth50/channel → full deduplicated union≤100

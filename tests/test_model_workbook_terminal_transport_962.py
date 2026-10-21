@@ -216,6 +216,44 @@ def test_explicit_known_workbook_kind_has_one_literal_native_carrier(kind):
     assert result.trace["artifact_kind"] == kind
 
 
+@pytest.mark.parametrize("representation", ["string", "mapping", "typed_native"])
+def test_native_lsr_supply_resource_match_reaches_the_shared_row_parser_and_draft(representation):
+    from tests.test_model_lsr_result_contract import _supply_match_transport_row
+    from proxy.services.chat_evidence_application_service import parse_model_rag_result, compact_estimator_draft_rows
+
+    authored = _supply_match_transport_row("unknown")
+    arguments = {"attachment_id": "read_owned", "decisions": [authored]}
+    raw = json.dumps(arguments, ensure_ascii=False)
+    if representation == "typed_native":
+        native = NativeToolCall("supply_match", "build_lsr_workbook", raw)
+    else:
+        native = call(arguments if representation == "mapping" else raw, name="build_lsr_workbook")
+    original = deepcopy(arguments)
+
+    result = decode_workbook_terminal_response([native], artifact_kind="lsr")
+    parsed = parse_model_rag_result(result.text)
+
+    assert result.envelope["rows"] == [authored] and arguments == original
+    assert parsed is not None
+    actual, = parsed[1]
+    assert actual["supply_resource_match"] == authored["supply_resource_match"]
+    assert compact_estimator_draft_rows([actual])[0]["supply_resource_match"] == authored["supply_resource_match"]
+
+
+def test_native_lsr_schema_exposes_typed_supply_resource_match_without_requiring_norm_flags_for_materials():
+    from proxy.services.model_workbook_terminal_transport_service import build_workbook_terminal_tool_schema
+
+    schema = build_workbook_terminal_tool_schema(["S!R2"], artifact_kind="lsr")["function"]["parameters"]
+    row = schema["properties"]["decisions"]["items"]
+    match = row["properties"]["supply_resource_match"]
+    fields = {"source_title", "resource_code", "decision", "reason", "source_refs"}
+    assert set(match["properties"]) == fields
+    assert set(match["properties"]["decision"]["enum"]) == {"yes", "no", "unknown"}
+    assert match["properties"]["source_refs"]["type"] == "array"
+    assert match["properties"]["source_refs"]["items"]["type"] == "string"
+    assert not set(row.get("required", [])) & {"action_match", "object_match", "condition_match", "composition_covers"}
+
+
 @pytest.mark.parametrize("declared,actual", [("lsr", "vor"), ("vor", "lsr")])
 def test_known_native_function_cannot_override_model_declared_document_kind(declared, actual):
     native = [call({"decisions": rows()}, name=f"build_{actual}_workbook")]
