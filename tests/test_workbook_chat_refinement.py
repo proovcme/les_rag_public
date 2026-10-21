@@ -238,6 +238,10 @@ async def test_actual_review_preserves_accepted_baseline_until_a_valid_model_rev
     authored = [{**{key: row[key] for key in fields if key in row}, "expected_revision": row["revision"]}
                 for row in published]
     authored[1]["title"] = "Model changed second title"
+    from test_model_rag_sheet_evidence_reads import _supply_resource_match
+    for row in authored:
+        row["supply_resource_match"] = _supply_resource_match(
+            row["title"], row["resource_code"], row["evidence_refs"])
     frame_rows = []
 
     def prior_in_frame(frame):

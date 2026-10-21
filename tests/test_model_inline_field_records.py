@@ -125,7 +125,8 @@ async def test_inline_terminal_rows_reach_real_workbook_without_an_extra_model_c
             ("S!R2", "Cable A", fixture.RESOURCE_A, 12, refs[0]),
             ("S!R3", "Cable B", fixture.RESOURCE_B, 3, refs[1])):
             row = {"source_row": locator, "row_role": "material", "title": title,
-                   "unit": "m", "quantity": quantity, "resource_code": code, "evidence_refs": [ref]}
+                    "unit": "m", "quantity": quantity, "resource_code": code, "evidence_refs": [ref],
+                    "supply_resource_match": fixture._supply_resource_match(title, code, [ref])}
             records.append(prefix + separator.join(key + ": " + json.dumps(value) for key, value in row.items()))
         return "artifact_kind: lsr\n" + "\n".join(records)
 

@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 981 — итоговый тип документа ограничивает финансовый proof
+
+✅ Doc↔source: active sheet pass использует текущую `artifact_kind_declaration`
+после result parse для `financial_lsr`. Группы, supply match и pending group
+resume не создают ценовых обязательств у модельной ВОР с кодом изделия.
+QueryVOR→resultLSR остаётся допустимым и получает тот же bounded proof.
+Точка: `chat_evidence_application_service` перед `resource_group_proof_reads_needed`;
+регрессии в `test_model_artifact_kind_authority`. ROOT2RED/1positive→3GREEN.
+Full980 не прошёл; source981/installed979 различаются. Точные проверки и
+ограничения — [RELEASE_LEDGER](RELEASE_LEDGER.md).
+
 ## 980 — доказательство соответствия поставки без нового предметного контура
 
 ✅ Doc↔candidate source: `model_resource_binding_service.supply_resource_match_substantiated`

@@ -66,3 +66,14 @@
 - [x] Старый issued parent/child требует технического no-model repack до financial gap reopening; raw decisions/book/overrides сохраняются. Existing UI action/reconnect сохраняют флаг и прежний файл.
 - [x] Guard/transport/price339passed и repack/lineage/zero155passed; receipts в `artifacts/offline_980/`. Counts пересекаются и не складываются в приёмку.
 - [ ] Полный canonical gate, exact980 installer и новые installed B0/B1/engineer hint controls.
+
+## Коррекция границы результата — candidate981
+
+Full980:32failed/7022passed/20skipped/953.45s; installer не создан. Отрицательные
+логи сохраняются. Positive authored supply fixtures, строгая разрешённая дельта
+инструкции и размер required context исправляются без отмены assertions.
+Новый proof ошибочно принимал код изделия модельной VOR как финансовый долг.
+ROOT2RED/1positive→3GREEN; current result declaration теперь ограничивает
+groups/supply/resume финансового proof итоговой LSR. Related54passed/6.67s.
+QueryVOR→resultLSR остаётся разрешённым. Финальный target теперь981, не980;
+новый canonical gate, exact installer и профессиональный live контроль pending.

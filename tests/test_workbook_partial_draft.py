@@ -10,7 +10,7 @@ from proxy.routers import chat
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from proxy.services.chat_evidence_application_service import workbook_document_issues
 from proxy.services.openai_compatible_transport_service import InferenceResponse
-from test_model_rag_sheet_evidence_reads import NORM_CODE, NORM_CODE_B, _run_sheet
+from test_model_rag_sheet_evidence_reads import NORM_CODE, NORM_CODE_B, RESOURCE_A, _run_sheet
 from tests.test_norm_card_proof_request_930 import SECOND_NORM_ANSWER
 
 
@@ -33,7 +33,30 @@ def _assert_draft(payload, readiness, root: Path, raw_line: str):
         text = "\n".join(str(cell.value) for sheet in workbook for row in sheet for cell in row if cell.value is not None)
         assert "РАСЧЁТ НЕ ЗАВЕРШЁН (PRICED_PARTIAL)" in text
         assert "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH" in text
-        assert "S!R2" in text and raw_line in text
+        assert "S!R2" in text
+        # Document issues are stored as JSON in the actual warning cells. Decode
+        # that carrier before comparing the literal proposal, including its JSON.
+        stored_proposals = []
+        for sheet in workbook:
+            for row in sheet:
+                if (len(row) < 4 or row[2].value != "warning"
+                        or row[0].value not in {"MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH", "MODEL_PROPOSAL_UNAPPLIED"}):
+                    continue
+                issue = json.loads(row[3].value)
+                proposal = issue.get("diagnostic") or issue.get("proposal") or {}
+                if proposal.get("code") == "MODEL_RESULT_TABLE_ROW_WIDTH_MISMATCH":
+                    stored_proposals.append(proposal)
+        assert stored_proposals
+        for proposal in stored_proposals:
+            assert proposal["expected_cells"] == 9 and proposal["actual_cells"] == 8
+            decision = proposal["decision"]
+            assert decision["raw_line"] == raw_line
+            assert decision["source_row"] == "S!R2"
+            assert decision["raw_cells"][:7] == ["S!R2", "material", "Cable A", "m", "12", "—", RESOURCE_A]
+            assert len(decision["table_header"]) == 9 and len(decision["raw_cells"]) == 8
+            match = json.loads(decision["raw_cells"][7])
+            assert match["source_title"] == "Cable A" and match["resource_code"] == RESOURCE_A
+            assert match["decision"] == "yes" and match["reason"] and match["source_refs"]
         assert "ИЗВЕСТНАЯ РАССЧИТАННАЯ ЧАСТЬ" in text
     finally:
         workbook.close()

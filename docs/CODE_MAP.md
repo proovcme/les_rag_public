@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 981 — модельный result type перед финансовым proof
+
+`update_model_artifact_kind(..., phase="result")` → актуальная
+`artifact_kind_declaration` → `financial_lsr` → группы/supply/resume proof.
+Итоговый VOR с кодом изделия не создаёт финансового шага. Query target не
+перекрывает итоговый LSR. Source981; installed979; детали и проверка в ledger.
+
 ## 980 — точное подтверждение поставки и версия расчёта
 
 `model_lsr_result_contract`/native schema → общий parser/accepted decisions →

@@ -253,7 +253,8 @@ async def test_declared_lsr_schema_never_advertises_optional_vor_terminal(tmp_pa
 
 
 def _lsr_rows():
-    return [{**row, "row_role": "material", "resource_code": code, "norm_code": "", "evidence_refs": [ref]}
+    return [{**row, "row_role": "material", "resource_code": code, "norm_code": "", "evidence_refs": [ref],
+             "supply_resource_match": fixture._supply_resource_match(row["title"], code, [ref])}
             for row, code, ref in zip(_rows(), (fixture.RESOURCE_A, fixture.RESOURCE_B), ("Q1.H1", "Q2.H1"))]
 
 

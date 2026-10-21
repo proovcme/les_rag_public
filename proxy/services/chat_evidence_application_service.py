@@ -12989,6 +12989,11 @@ async def _execute_chat_evidence_application(
                             # calculated position.  One bounded round names the members and asks
                             # the model to choose; the application never chooses for it, and what
                             # stays unresolved keeps its existing gap and no confirmed money.
+                            # An item code in a model-authored VOR does not
+                            # create a pricing obligation. The latest result
+                            # declaration owns the target, not the query proposal.
+                            financial_lsr = (artifact_kind_declaration.get("status") == "declared"
+                                             and artifact_kind_declaration.get("artifact_kind") == "lsr")
                             proof_groups = resource_group_proof_reads_needed(
                                 pass_rows,
                                 [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
@@ -12998,12 +13003,13 @@ async def _execute_chat_evidence_application(
                                 # family until after the position was already packaged.
                                 pricebook=model_pricebook(
                                     sheet_price_basis or model_requested_price_basis),
-                            )
+                            ) if financial_lsr else []
                             proof_supply_matches = unsubstantiated_supply_matches(
                                 pass_rows,
                                 [*prior_page_chunks, *saved_read_chunks, *model_evidence_chunks],
-                            )
-                            resume_group_proof = resuming_proof.get("purpose") == RESOURCE_GROUP_PROOF_PURPOSE
+                            ) if financial_lsr else []
+                            resume_group_proof = (financial_lsr
+                                and resuming_proof.get("purpose") == RESOURCE_GROUP_PROOF_PURPOSE)
                             if (((proof_groups or proof_supply_matches) and sheet_read_tools and not proof_context_failure
                                     and group_proof_attempts.get(fingerprint, 0) < 1) or resume_group_proof):
                                 group_proof_attempts[fingerprint] = 1

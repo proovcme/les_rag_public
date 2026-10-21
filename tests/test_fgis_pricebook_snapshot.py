@@ -68,7 +68,12 @@ def test_typed_evidence_and_real_calculation_use_the_updated_official_snapshot(t
     hit = evidence["result"]["hits"][0]
     row = {"source_row": "S!R2", "row_role": "material", "title": "Literal chosen resource",
            "unit": "m", "quantity": 3, "resource_code": CODE, "evidence_refs": ["Q1.H1"],
-           "evidence_bindings": {"Q1.H1": hit["meta"]["global_evidence_id"]}}
+           "evidence_bindings": {"Q1.H1": hit["meta"]["global_evidence_id"]},
+           "supply_resource_match": {
+               "source_title": "Literal chosen resource", "resource_code": CODE,
+               "decision": "yes", "reason": "The cited book resource names this supplied item.",
+               "source_refs": ["Q1.H1"],
+           }}
     book = prices.get_pricebook(str(path))
     trace = build_lsr_trace_from_visible_rows([row], pricebook=book)
     assert book.source_sha256 == hit["meta"]["pricebook_sha256"]
@@ -153,7 +158,12 @@ async def test_durable_book_hash_survives_real_workbook_contract_and_blocks_chan
     identity = evidence["result"]["hits"][0]["meta"]["global_evidence_id"]
     decisions = [{"source_row": "S!R2", "row_role": "material", "title": "Literal chosen resource",
                   "unit": "m", "quantity": 3, "resource_code": CODE, "evidence_refs": ["Q1.H1"],
-                  "evidence_bindings": {"Q1.H1": identity}}]
+                  "evidence_bindings": {"Q1.H1": identity},
+                  "supply_resource_match": {
+                      "source_title": "Literal chosen resource", "resource_code": CODE,
+                      "decision": "yes", "reason": "The cited book resource names this supplied item.",
+                      "source_refs": ["Q1.H1"],
+                  }}]
     original_decisions = copy.deepcopy(decisions)
     context = {"session_id": "frozen-book", "question": "Собери ЛСР", "dataset_ids": [],
                "attachment_id": attachment["attachment_id"], "profile_revision_id": "fixture",

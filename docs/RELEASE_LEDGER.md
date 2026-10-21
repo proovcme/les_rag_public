@@ -1,5 +1,34 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 — candidate981: финансовая проверка только для итоговой ЛСР
+
+Source0.31.253/build981/native5.1.981, calculation contract0.7. Installed979
+не изменён. Full980/75804dac завершён32failed/7022passed/20skipped за953.45s;
+prepare остановился до installer, полный лог сохранён:
+`artifacts/release_980_control/prepare_console01/2_prepare.log`.
+Ошибки разбираются отдельно: positive supply fixtures без нового утверждения,
+строго закреплённый текст разрешённого contract delta, размер required context
+в positive shadow fixture и представление raw JSON в диагностическом XLSX.
+Assertions/guards не отключаются; до нового полного PASS установки нет.
+
+Независимый source review обнаружил cross-route дефект нового proof: код изделия
+в ВОР мог создавать вопрос о цене. Воспроизведён2RED/1positive. Теперь группы,
+прямые поставки и resume финансового proof допустимы только при текущем
+model-declared `artifact_kind=lsr/status=declared` после разбора результата.
+Предложение поиска не владеет итоговым типом: queryVOR→resultLSR по-прежнему
+запускает проверку. Код не выбирает тип по содержимому вопроса.
+GREEN3passed/2.99s: `artifacts/offline_980/kind_green01.xml`; raw rows/коды
+сохранены. Это regression, не профессиональная live-приёмка.
+Все32 отказа full980 воспроизведены/разобраны. Related kind54passed/6.67s,
+finance/strict-contract75passed/5.83s, transport/review/draft414passed/29.03s:
+`artifacts/offline_981/{kind_related02,finance_contract03,transport_owner04}.xml`.
+Исторические SHA инструкций не заменены: снимаются только точные новые абзац
+и поле с count==1. Warning-cell JSON декодируется и raw_line/raw_cells проверяются
+точным равенством; invalid предложение не убирается. Два positive shadow
+budgets7500 сохраняют required-context guard. Нет skip или отмены assertions.
+Counts пересекаются; новый полный frozen gate всё ещё обязателен.
+`customer_ready=false`; no public release, базы/индекс/профиль не менялись.
+
 ## 21.10.2026 — candidate980: соответствие поставки и пересчёт прежних ЛСР
 
 Source0.31.252/build980/native5.1.980, calculation contract0.7. Installed пока979

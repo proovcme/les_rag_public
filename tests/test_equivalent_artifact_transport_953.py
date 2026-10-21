@@ -133,7 +133,8 @@ async def test_matching_forms_keep_lsr_prices_and_native_read_route(tmp_path, mo
     def authored_reply(*, refs=("Q1.H1", "Q2.H1")):
         rows = [{"source_row": locator, "row_role": "material", "title": title, "unit": "m",
                  "quantity": quantity, "norm_code": "", "resource_code": code,
-                 "evidence_refs": [ref]}
+                 "evidence_refs": [ref],
+                 "supply_resource_match": sheet_fixture._supply_resource_match(title, code, [ref])}
                 for locator, title, quantity, code, ref in [
                     ("S!R2", "Cable A", 12, sheet_fixture.RESOURCE_A, refs[0]),
                     ("S!R3", "Cable B", 3, sheet_fixture.RESOURCE_B, refs[1])]]

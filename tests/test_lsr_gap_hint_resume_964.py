@@ -261,6 +261,8 @@ async def test_actual_native_result_after_scoped_hint_revises_only_the_requested
         research_operation_ids=[old[1]["operation_id"]],preserve_accepted=True,repack=False,
         review_instruction="Check only the open resource description",expected_retry_state=fresh["retry_state_sha256"]),_user=SimpleNamespace())
     revised={**old[1],"expected_revision":old[1]["revision"],"title":"Explicit model revised description"}
+    revised["supply_resource_match"] = fixture._supply_resource_match(
+        revised["title"], revised["resource_code"], revised["evidence_refs"])
     native=fixture._native("build_lsr_workbook",attachment_id=parent["identity"]["attachment_id"],decisions=[revised])
     run.responses.extend([
         InferenceResponse(text=json.dumps({"artifact_kind":"lsr","queries":["Literal resource search"]}),tool_calls=(),finish_reason="stop",usage={}),

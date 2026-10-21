@@ -55,8 +55,13 @@ def test_forged_global_binding_is_preserved_without_creating_resource_proof():
 
 
 def test_literal_resource_in_shown_typed_card_confirms_only_that_identifier():
-    card = _card(f"Resource: {SELECTED}\nUnit: m", resources=[{"code": SELECTED}])
-    bound = bind_row_evidence_ids([_row()], [card])
+    card = _card(f"Resource: {SELECTED}\nName: Authored supply\nUnit: m", resources=[{"code": SELECTED}])
+    row = _row(supply_resource_match={
+        "source_title": "Authored supply", "resource_code": SELECTED,
+        "decision": "yes", "reason": "The shown typed resource names this supplied item.",
+        "source_refs": ["Q1.H1"],
+    })
+    bound = bind_row_evidence_ids([row], [card])
     assert bound[0]["_resource_evidence_check"]["code_in_refs"] is True
     trace = build_lsr_trace_from_visible_rows(bound, pricebook=Book())
     assert trace["summary"]["confirmed_amount"] == 300

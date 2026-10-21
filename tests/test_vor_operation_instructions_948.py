@@ -14,6 +14,32 @@ from proxy.services.model_lsr_result_contract import (
 )
 
 
+def _strip_authorized_supply_match_980_delta(instruction):
+    """Remove only the reviewed literal addition, keeping every old byte pin."""
+    addition = (
+        "Код расходника в монтажной норме не означает, что это исходное изделие поставки. "
+        "Для прямой поставки material/equipment с resource_code отдельно верни supply_resource_match: "
+        "{source_title, resource_code, decision, reason, source_refs}. "
+        "source_title дословно повторяет title этой операции, resource_code — её выбранный код; "
+        "source_refs — непустой список тех же ссылок, что evidence_refs этой операции, порядок неважен. "
+        "decision: yes/no/unknown; reason — конкретное основание соответствия выбранного ресурса "
+        "исходному изделию по его свойствам. Ты выбираешь и проверяешь это соответствие; "
+        "цена кода и его наличие среди ресурсов нормы не доказывают соответствие изделию. "
+        "При no/unknown или недостаточном основании сохрани строку, выбранный код и конкретный open_gap; "
+        "сумма остаётся предварительной. Не подставляй произвольный ресурс ради снятия пробела. "
+        "При изменении title, resource_code или evidence_refs пересмотри это утверждение явно; "
+        "прежнее yes не подтверждает изменённый выбор. В Markdown или тексте передавай "
+        "supply_resource_match как JSON-объект в одной ячейке или одноимённом поле. "
+    )
+    current_tail = "resource_review, supply_resource_match, resolves_proposal_id."
+    previous_tail = "resource_review, resolves_proposal_id."
+    assert instruction.count(addition) == 1
+    assert instruction.count(current_tail) == 1
+    previous = instruction.replace(addition, "", 1).replace(current_tail, previous_tail, 1)
+    assert "supply_resource_match" not in previous
+    return previous
+
+
 def test_only_explicit_vor_target_receives_dedicated_operation_contract():
     instruction = model_vor_result_field_instruction()
     assert lsr_result_table_instruction(artifact_kind="vor") == instruction
@@ -32,6 +58,7 @@ def test_only_explicit_vor_target_receives_dedicated_operation_contract():
 @pytest.mark.parametrize("kind", ["lsr", "both", "unknown", "VOR"])
 def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(kind):
     instruction = lsr_result_table_instruction(artifact_kind=kind)
+    previous_instruction = _strip_authorized_supply_match_980_delta(instruction)
     old_phrase = "nr_sp_rule_id выбирай из карточки по известным условиям; при неизвестных — "
     new_phrase = (
         "nr_sp_rule_id дословно копируй из rule_id внутри каталога по известным условиям; "
@@ -51,13 +78,15 @@ def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(
                   '{"norm_code", "evidence_refs"}; иначе оставь ячейку пустой. ')
     assert instruction.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
     assert stale_rule not in instruction
-    numeric_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
+    previous_fields = tuple(field for field in OPTIONAL_FIELDS if field != "supply_resource_match")
+    numeric_tail = ", ".join(field for field in previous_fields if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
     previous_tail = ", ".join(field for field in OPTIONAL_FIELDS
-                              if field not in LSR_DESCRIBED_OPTIONAL_FIELDS - {"norm_components"})
-    assert instruction.count(numeric_tail) == 1
+                              if field != "supply_resource_match"
+                              and field not in LSR_DESCRIBED_OPTIONAL_FIELDS - {"norm_components"})
+    assert previous_instruction.count(numeric_tail) == 1
     anchor = "Лучше честный MISSING, чем случайный шифр из выдачи."
     assert instruction.count(anchor) == 1
-    before_components = instruction.replace(LSR_DERIVED_VOLUME_INSTRUCTION, old968_rule, 1).replace(numeric_tail, previous_tail, 1)
+    before_components = previous_instruction.replace(LSR_DERIVED_VOLUME_INSTRUCTION, old968_rule, 1).replace(numeric_tail, previous_tail, 1)
     before_components = before_components.replace(anchor, stale_rule + anchor, 1)
     assert hashlib.sha256(before_components.encode("utf-8")).hexdigest() == (
         "8c64fc2bd26b07eb2a3eb99b9a11cff6d61fb7585c12a05d237982acde2f83c5"
@@ -68,7 +97,7 @@ def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(
     assert instruction.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
     before_repetition_clarification = before_components.replace(old968_rule, "", 1)
     current_tail = previous_tail
-    old_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in {"resource_bindings", "calc_unit"})
+    old_tail = ", ".join(field for field in previous_fields if field not in {"resource_bindings", "calc_unit"})
     assert before_repetition_clarification.count(current_tail) == 1
     before_repetition_clarification = before_repetition_clarification.replace(current_tail, old_tail, 1)
     assert hashlib.sha256(before_repetition_clarification.encode("utf-8")).hexdigest() == (

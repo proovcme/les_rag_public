@@ -3522,7 +3522,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 # truthful markers add 392 wire chars; target declarations add
                 # shared instruction framing. Keep whole-card handoff assertions.
                 # Exact capacity rejection is covered by the marker boundary test.
-                input_tokens=(7000 if scenario in {
+                input_tokens=(7500 if scenario in {
                     "active_model_rag_result", "active_model_rag_recovery",
                 } else 6000),
                 preset_id="active-preset",

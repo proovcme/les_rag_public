@@ -13,6 +13,7 @@ from proxy.services.model_lsr_result_contract import model_vor_result_field_inst
 from proxy.services.openai_compatible_transport_service import InferenceResponse
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from tests import test_model_rag_sheet_evidence_reads as fixture
+from tests.test_vor_operation_instructions_948 import _strip_authorized_supply_match_980_delta
 
 
 LITERAL_QUERIES = ["[S!R2] Cable A literal [variant Ω]", '"S!R3 Cable B literal"']
@@ -91,6 +92,7 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
                                               remaining_clause="\nREMAINING_PACKET")
     vor = model_vor_result_field_instruction()
     lsr = lsr_result_table_instruction(artifact_kind="lsr")
+    previous_lsr = _strip_authorized_supply_match_980_delta(lsr)
     assert instruction.startswith("CURRENT_PACKET\n") and instruction.endswith("\nREMAINING_PACKET")
     assert instruction.count("CURRENT_PACKET") == instruction.count("REMAINING_PACKET") == 1
     assert "Тип документа определяешь ты" in instruction
@@ -125,13 +127,15 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
                   '{"norm_code", "evidence_refs"}; иначе оставь ячейку пустой. ')
     assert lsr.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
     assert stale_rule not in lsr
-    numeric_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
+    previous_fields = tuple(field for field in OPTIONAL_FIELDS if field != "supply_resource_match")
+    numeric_tail = ", ".join(field for field in previous_fields if field not in LSR_DESCRIBED_OPTIONAL_FIELDS)
     previous_tail = ", ".join(field for field in OPTIONAL_FIELDS
-                              if field not in LSR_DESCRIBED_OPTIONAL_FIELDS - {"norm_components"})
-    assert lsr.count(numeric_tail) == 1
+                              if field != "supply_resource_match"
+                              and field not in LSR_DESCRIBED_OPTIONAL_FIELDS - {"norm_components"})
+    assert previous_lsr.count(numeric_tail) == 1
     anchor = "Лучше честный MISSING, чем случайный шифр из выдачи."
     assert lsr.count(anchor) == 1
-    before_components = lsr.replace(LSR_DERIVED_VOLUME_INSTRUCTION, old968_rule, 1).replace(numeric_tail, previous_tail, 1)
+    before_components = previous_lsr.replace(LSR_DERIVED_VOLUME_INSTRUCTION, old968_rule, 1).replace(numeric_tail, previous_tail, 1)
     before_components = before_components.replace(anchor, stale_rule + anchor, 1)
     assert hashlib.sha256(before_components.encode("utf-8")).hexdigest() == (
         "8c64fc2bd26b07eb2a3eb99b9a11cff6d61fb7585c12a05d237982acde2f83c5"
@@ -142,7 +146,7 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
     assert lsr.count(LSR_DERIVED_VOLUME_INSTRUCTION) == 1
     before_repetition_clarification = before_components.replace(old968_rule, "", 1)
     current_tail = previous_tail
-    old_tail = ", ".join(field for field in OPTIONAL_FIELDS if field not in {"resource_bindings", "calc_unit"})
+    old_tail = ", ".join(field for field in previous_fields if field not in {"resource_bindings", "calc_unit"})
     assert before_repetition_clarification.count(current_tail) == 1
     before_repetition_clarification = before_repetition_clarification.replace(current_tail, old_tail, 1)
     assert hashlib.sha256(before_repetition_clarification.encode("utf-8")).hexdigest() == (

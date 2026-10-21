@@ -1,5 +1,21 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат981 — отделение финансового proof от ВОР
+
+`test_model_artifact_kind_authority`: две query proposals vor/lsr → итоговая
+VOR с работой и дочерним материалом с кодом изделия не вызывают финансовый
+оборот, сохраняют обе строки и создают ВОР. Обратный queryVOR→resultLSR без
+supply approval по-прежнему вызывает ровно один прежний proof. ROOT RED2failed/
+1passed → GREEN3passed/2.99s (`artifacts/offline_980/kind_red01.xml`,
+`kind_green01.xml`). Full980:32failed/7022passed/20skipped/953.45s; отказ не
+скрыт, installer не собран/не установлен. Positive fixtures и exact instruction
+delta приводятся к новому контракту отдельно. Полный981/live pending.
+Related kind54passed/6.67s, finance/strict contract75passed/5.83s и
+transport/review/draft414passed/29.03s, `artifacts/offline_981/`.
+Все32 full980 failures сопоставлены с трассировками. Сохраняются прежние SHA,
+exact price/quantity/ID assertions и отрицательные guards; JSON warning carrier
+проверяется после декодирования точным сравнением исходных строк/ячеек.
+
 ## Кандидат980 — соответствие поставки и владение денежным подтверждением
 
 `test_lsr_repack_calculation_contract_980.py` добавлен в CURRENT_TESTS: версия

@@ -1,5 +1,23 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 21.10.2026 —981: финансовый proof не принадлежит ВОР
+
+Новый980 collector принимал material/equipment с кодом изделия независимо от
+итогового model artifact kind. Общая sheet-pass ветка не была LSR-only.
+ROOT2RED/1positive воспроизвели лишний третий вызов у законченной ВОР;
+981 проверяет актуальную result declaration перед groups/supply/resume proof.
+QueryVOR→resultLSR не блокируется. GREEN3passed, related54passed/6.67s:
+`artifacts/offline_980/kind_green01.xml`, `artifacts/offline_981/kind_related02.xml`.
+Full980 был отклонён32failed/7022passed/20skipped; его installer не выпускался.
+
+Отдельная сверка live979 опровергла отсутствие нужной добавки: norm11-01-011-02
+полностью delivered в Q1.H1/Q2.H5/Q3.H2 (1893символа,5ресурсов), база20мм —
+Q3.H6 (2013символов,6ресурсов). Модель признала потребность +20мм, но оставила
+norm_components=null. Evidence: `artifacts/live_979/candidate979_ordinary01/job_after.json`.
+Отдельный table-tool/автоматический sibling expansion в active read interface
+не предоставлен, но это не причина этого пропуска: нужная карточка уже показана.
+Ошибку нельзя закрыть переиндексацией или объявлением модели квалифицированной.
+
 ## 21.10.2026 —979: цена ресурса не доказывает соответствие исходной поставке
 
 Exact install/rollback/reinstall accepted; full6965passed/20skipped и328updater.

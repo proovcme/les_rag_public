@@ -68,6 +68,11 @@ def test_compatible_scale_and_explicit_area_conversions_are_calculated_once(
     quantity, source_unit, price_unit, extra, expected, priced_qty,
 ):
     row = _row(quantity=quantity, unit=source_unit, price_unit=price_unit, **extra)
+    row["supply_resource_match"] = {
+        "source_title": row["title"], "resource_code": row["resource_code"],
+        "decision": "yes", "reason": "The cited quote covers the authored supply; its quantity conversion is stated separately.",
+        "source_refs": list(row["evidence_refs"]),
+    }
     original = deepcopy(row)
     trace = service.build_lsr_trace_from_visible_rows([row])
     assert trace["summary"]["known_amount"] == expected

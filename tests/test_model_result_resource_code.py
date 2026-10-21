@@ -1,6 +1,7 @@
 """Keep an authored resource identifier through the visible result transport."""
 
 import copy
+import json
 
 import pytest
 
@@ -103,13 +104,18 @@ def test_authored_resource_code_reaches_chosen_book_and_rendered_money(tmp_path,
     catalog = catalog_service.load_tabular_source_catalog(source_path)
     monkeypatch.setattr(catalog_service, "load_catalog_from_attachment_id", lambda _: catalog)
 
+    resource_match = json.dumps({
+        "source_title": "Model-authored resource", "resource_code": RESOURCE_CODE,
+        "decision": "yes", "reason": "The shown resource names this supplied item.",
+        "source_refs": ["Q1.H1"],
+    })
     answer = (
-        "| source_row | row_role | title | unit | quantity | norm_code | resource_code | evidence_refs |\n"
-        "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
-        f"| Source sheet!R2 | material | Model-authored resource | m | 12 | — | {RESOURCE_CODE} | Q1.H1 |"
+        "| source_row | row_role | title | unit | quantity | norm_code | resource_code | evidence_refs | supply_resource_match |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        f"| Source sheet!R2 | material | Model-authored resource | m | 12 | — | {RESOURCE_CODE} | Q1.H1 | {resource_match} |"
     )
     evidence = SimpleNamespace(
-        content=f"Resource: {RESOURCE_CODE}\nUnit: m\nReference-only price: 777",
+        content=f"Resource: {RESOURCE_CODE}\nName: Model-authored resource\nUnit: m\nReference-only price: 777",
         doc_name="Synthetic resource evidence",
         meta={"model_evidence_ref": "Q1.H1", "global_evidence_id": "selected-resource-card",
               "resource_code": RESOURCE_CODE},
