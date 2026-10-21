@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+## 978 — bounded retrieval pool и диагностическая трасса
+
+`norm_browser.browse_norms_many`: depth50/channel → full deduplicated union≤100
+→ measured `_rerank_cards` без повторной fusion → visible cap. `smeta_rerank_ab_probe.run_probe` хранит
+structured before/after cards и полные traces; CLI принимает literal UTF-8 query file.
+Source candidate978; installed976. Детали: `docs/modules/rag-evidence-flow.md`.
+`ModelResearchToolService.cache_contract` v2 → incompatible cache miss/redeclare;
+`is_plain_continuation_question` → kind-aware APP restore/review → existing LSR gap queue.
+
 ## 976 — plain continuation → существующая очередь открытых операций
 
 `claim_or_join_sheet_pass` → owner-only `begin_plain_lsr_gap_continuation` →

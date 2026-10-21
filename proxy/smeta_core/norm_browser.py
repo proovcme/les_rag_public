@@ -1093,9 +1093,8 @@ def _rerank_cards(
     cards: list[dict[str, Any]],
     *,
     limit: int,
-    fuse_with_input: bool = True,
 ) -> tuple[list[dict[str, Any]], bool, str]:
-    """Fuse cross-encoder order with hybrid retrieval and expose transport failure."""
+    """Rank the preserved retrieval pool once; expose transport failure."""
     if os.getenv("LES_SMETA_NORM_RERANK", "true").strip().casefold() not in {
         "1", "true", "yes", "on",
     }:
@@ -1138,10 +1137,9 @@ def _rerank_cards(
             ).rerank(
                 query,
                 chunks,
-                # RRF needs the measured rank of the whole input pool. Keeping
-                # only the visible head invents the remaining CE order from the
-                # original retrieval order and can erase every CE head result.
-                top_k=len(cards) if fuse_with_input else min(limit, len(cards)),
+                # Keep the actual order of the scored pool. A partial backend
+                # response is completed only by the unchanged retrieval tail.
+                top_k=len(cards),
             )
         )
         order = [
@@ -1163,15 +1161,10 @@ def _rerank_cards(
     reordered = [cards[index] for index in valid_order]
     used = set(valid_order)
     reordered.extend(card for index, card in enumerate(cards) if index not in used)
-    if not fuse_with_input:
-        # An official catalog is ordered by code, not by relevance.  Its input
-        # order must never be treated as an independent ranking signal.
-        return reordered[:limit], True, "ok"
-    # A cross-encoder is a second relevance signal, not an oracle. Preserve
-    # the independent typed+dense+sparse RRF evidence by fusing both complete
-    # rankings. This prevents a technically healthy but semantically weak
-    # reranker from erasing a strong retrieval head.
-    return _rrf_cards(cards, reordered, limit=limit), True, "ok"
+    # Native/typed fusion already happened before CE. Fusing that input again
+    # here suppresses measured CE-head cards solely for their earlier rank.
+    # Applicability remains the model's decision, not a retrieval verdict.
+    return reordered[:limit], True, "ok"
 
 
 def _fts_prefix(term: str) -> str:
@@ -1546,7 +1539,6 @@ def rank_norm_catalog_collections(
         str(query or ""),
         cards,
         limit=max(1, min(len(cards), 100)),
-        fuse_with_input=False,
     )
     query_variants = _query_variants(query, stage="collection") or [str(query or "")]
     rerank_rank = {
@@ -1673,7 +1665,6 @@ def rank_norm_catalog_tables(
         str(query or ""),
         cards,
         limit=max(1, min(int(limit), 100)),
-        fuse_with_input=False,
     )
     visible_cards = []
     for rank, card in enumerate(ranked, start=1):
@@ -1761,7 +1752,10 @@ def browse_norms_many(
 ) -> dict[str, dict[str, Any]]:
     tool_started = perf_counter()
     bounded_limit = max(1, min(int(limit), 50))
-    pool_limit = min(50, max(bounded_limit, bounded_limit * 4, 24))
+    # Visible topK is a presentation limit, not retrieval depth. Otherwise a
+    # six-card request can never assess candidates found by the same query at
+    # native ranks25..50. Both channels already have this bounded maximum.
+    pool_limit = 50
     path = Path(base_path) if base_path is not None else _base_path()
     generation = _retained_rag_generation(path) if hydrate_resources else ""
     integrity = normative_base_integrity(base_path=path)
@@ -1875,7 +1869,13 @@ def browse_norms_many(
         # Qdrant performs dense+sparse RRF internally; fuse that hybrid ranking
         # with the independent typed/FTS safety channel through RRF as well.
         # No channel is allowed to become a hidden selector for the model.
-        fused = _rrf_cards(lexical, rag_cards, limit=pool_limit) if rag_cards else lexical
+        # Preserve every returned candidate until reranking. Truncating the
+        # union to one channel's depth discards native/typed tails before the
+        # cross-encoder can assess them; the final response remains bounded.
+        fused = (
+            _rrf_cards(lexical, rag_cards, limit=len(lexical) + len(rag_cards))
+            if rag_cards else lexical
+        )
         cards = fused[:bounded_limit]
         reranked = False
         rerank_status = "not_attempted"
@@ -1890,7 +1890,7 @@ def browse_norms_many(
             )
             rerank_ms += (perf_counter() - rerank_started) * 1000
             if reranked:
-                backend = f"{backend}+bge_rerank_rrf"
+                backend = f"{backend}+bge_rerank"
             else:
                 backend = f"{backend}+rerank_{rerank_status}"
         else:

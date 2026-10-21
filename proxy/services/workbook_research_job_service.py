@@ -49,6 +49,7 @@ RESUMABLE_STATUSES = {"running", "paused", "failed", "cancelled"}
 _PLAIN_CONTINUATION_QUESTIONS = frozenset({
     "продолжи", "продолжить", "continue",
     "продолжи это же задание по тому же прикреплённому документу",
+    "добери нормы", "найди недостающие нормы", "продолжи незакрытые строки",
 })
 _PLAIN_CONTINUATION_HASHES = frozenset(
     hashlib.sha256((form + suffix).encode("utf-8")).hexdigest()
@@ -587,6 +588,16 @@ class WorkbookResearchIdentity:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def is_plain_continuation_question(question: Any, *, artifact_kind: str | None = None) -> bool:
+    """Recognize only explicit finite resume commands, never a free-form remark."""
+    text = str(question or "").strip().rstrip(".! ").casefold()
+    if artifact_kind is not None and text in {"добери нормы", "найди недостающие нормы"}:
+        # After VOR or an unknown target this is a new model-owned requirement,
+        # not permission to silently return the old document or force an LSR.
+        return artifact_kind == "lsr"
+    return text in _PLAIN_CONTINUATION_QUESTIONS
+
+
 def _is_plain_continuation(
     identity: WorkbookResearchIdentity, task_context: Mapping[str, Any] | None,
 ) -> bool:
@@ -595,7 +606,7 @@ def _is_plain_continuation(
         # Incoming text must describe this request, rather than inherited context.
         if hashlib.sha256(question.encode("utf-8")).hexdigest() != identity.question_sha256:
             return False
-        return question.strip().rstrip(".! ").casefold() in _PLAIN_CONTINUATION_QUESTIONS
+        return is_plain_continuation_question(question)
     # Older callers pass only the identity. Recognise literal continuation hashes
     # without changing the identity format or guessing an explicit task's intent.
     return identity.question_sha256 in _PLAIN_CONTINUATION_HASHES

@@ -17,20 +17,33 @@ from types import SimpleNamespace
 
 def job():
     return {"continues_job_id": "parent", "accepted_rows": [{"source_row": "Лист 1!R14"}],
-            "task_context": {"original_question": "Собери ЛСР, Москва, 3 квартал 2026"}}
+            "task_context": {"original_question": "Собери ЛСР, Москва, 3 квартал 2026",
+                             "artifact_kind_declaration": {"artifact_kind": "lsr"}}}
 
 
 @pytest.mark.parametrize("question", ["Продолжи", "Продолжить!", "continue",
+    "Добери нормы", "Найди недостающие нормы", "Продолжи незакрытые строки",
     "Продолжи это же задание по тому же прикреплённому документу.",
     "Собери ЛСР, Москва, 3 квартал 2026"])
 def test_plain_resume_does_not_restart_model_research(question):
     assert not workbook_chat_review_needed(question, job())
 
 
-@pytest.mark.parametrize("question", ["Добери нормы", "Перепроверь позиции 14, 15",
+@pytest.mark.parametrize("question", ["Добери нормы для строки 14", "Перепроверь позиции 14, 15",
     "Для первой работы изменились условия монтажа", "Продолжи, учти новое замечание"])
 def test_freeform_remark_is_not_silently_repacked(question):
     assert workbook_chat_review_needed(question, job())
+
+
+@pytest.mark.parametrize("question", ["Добери нормы", "Найди недостающие нормы"])
+@pytest.mark.parametrize("kind", ["vor", "", "lsr"])
+def test_norm_gap_command_does_not_silently_repack_a_vor(question, kind):
+    from proxy.services.workbook_research_job_service import is_plain_continuation_question
+
+    current = job()
+    current["task_context"]["artifact_kind_declaration"] = {"artifact_kind": kind}
+    assert is_plain_continuation_question(question, artifact_kind=kind) is (kind == "lsr")
+    assert workbook_chat_review_needed(question, current) is (kind != "lsr")
 
 
 def test_estimator_response_contract_requests_every_applicability_flag_without_a_skill():
@@ -50,15 +63,15 @@ def test_previous_decisions_keep_all_five_flags_and_citations_for_the_normal_mod
 
 def test_legacy_parent_without_task_text_still_hears_a_new_remark():
     current = job()
-    current["task_context"]["original_question"] = "Добери нормы"
+    current["task_context"]["original_question"] = "Перепроверь все нормы"
     event = {"payload": {"parent_question_sha256": hashlib.sha256("Собери ЛСР".encode()).hexdigest()}}
-    assert workbook_chat_review_needed("Добери нормы", current, [event])
+    assert workbook_chat_review_needed("Перепроверь все нормы", current, [event])
 
 
 def test_review_is_durable_without_model_planning_and_preserves_operator_data(tmp_path):
     service = WorkbookResearchJobService(tmp_path / "meta.db")
     identity = service.identity(session_id="s", attachment_id="read_doc", source_sha256="a" * 64,
-        dataset_ids=[], profile_revision_id="p", model_identity="35b", question="Добери нормы")
+        dataset_ids=[], profile_revision_id="p", model_identity="35b", question="Перепроверь все нормы")
     current = service.begin_or_resume(identity)
     rows = [{"source_row": "Лист 1!R14", "title": "Первая работа", "row_role": "work"},
             {"source_row": "Лист 1!R15", "title": "Вторая работа", "row_role": "work"}]
@@ -67,7 +80,7 @@ def test_review_is_durable_without_model_planning_and_preserves_operator_data(tm
     service.record_overrides(current["job_id"], {"Лист 1!R14": {"confirmed_price": 123}})
     service.finish(current["job_id"], status="complete")
     saved_rows = service.get(current["job_id"])["accepted_rows"]
-    reopened = begin_workbook_chat_review(service, current, "Добери нормы", ["Лист 1!R14", "Лист 1!R15"])
+    reopened = begin_workbook_chat_review(service, current, "Перепроверь все нормы", ["Лист 1!R14", "Лист 1!R15"])
     assert reopened["accepted_rows"] == saved_rows
     assert service.pending_research_operation_ids(reopened) == {row["operation_id"] for row in saved_rows}
     assert reopened["remaining"] == ["Лист 1!R14", "Лист 1!R15"]
@@ -78,7 +91,7 @@ def test_review_is_durable_without_model_planning_and_preserves_operator_data(tm
     assert events[-1]["payload"]["chat_review"]["review_scope"] == "document"
     assert events[-1]["payload"]["prior_rows"] == saved_rows
     repeated = job()
-    assert not workbook_chat_review_needed("Добери нормы", repeated, events)
+    assert not workbook_chat_review_needed("Перепроверь все нормы", repeated, events)
 
 
 def _review_checkpoint(tmp_path):

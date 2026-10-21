@@ -1,5 +1,23 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 21.10.2026 —978: pre-CE truncation устранён в candidate; качество OPEN
+
+После measured native50 outer typed/native cap выбрасывал карточки до reranker;
+при visible6 оба канала дополнительно ограничивались24. Candidate978 использует
+depth50 независимо от visible и сохраняет union≤100 до rerank.
+Source comparison01 подтвердил full unionreachCE и подавление20из48CE-head
+повторным RRF; этот повтор удалён. Generic pool RED2 /CE-order RED3 →
+related78passed/3.38s. Source comparison02 подтвердил final CE-order,
+все8RAG/CE ok, inputs_unchanged=true; raw reranked cost71.063→183.911s.
+Related callers228passed/20.91s. Техническая сохранность не является
+профессиональным PASS: cable/primer recall остаётся OPEN.
+Manifest fingerprint drift и general653/658 не исправлялись переписыванием
+метаданных и не объявлены причиной текущей слабой выдачи. Installed остаётся976.
+Fixed candidate cache v2 не повторяет устаревший shortlist/zero-hit после смены
+ранжирования; superseded и accepted сохраняются. Exact norm-gap commands после
+LSR идут в existing gaps, после VOR — к модели с новым требованием.
+RED cache5/gap3/kind6 → related111passed/18.62s; customer_ready=false.
+
 ## 20.10.2026 —977: потери shortlist и metadata drift, OPEN
 
 Installed976/f6c31aa4: typed/named norm index49818, active/base SHA совпадают.

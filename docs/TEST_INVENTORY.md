@@ -1,5 +1,25 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## Кандидат978 — найденные кандидаты доходят до reranker
+
+Existing `test_smeta_norm_browser` проверяет непересекающиеся50+50карточек,
+native tail в visible response после оценки, одинаковый pool для visible6/50,
+dedup identity, measured CE-order без повторной fusion и disabled/error/partial
+fallback (remaining input tail без вымышленных CE ranks). Existing
+`test_smeta_rerank_ab_probe` проверяет полные stage traces/structured cards,
+literal Unicode/пробелы в UTF-8 queries-file и invalid/conflicting CLI inputs.
+ROOT pool RED2failed/1passed; probe RED2failed/6passed; CE-order RED3failed;
+related GREEN78passed/3.38s:
+`artifacts/offline_978/green_ce_order_related.xml`. Крупный test profile не добавлен.
+Independent probe lookup RED1 после реальных normalized keys → related
+norm/core/action callers228passed/20.91s (`green_final_related.xml`).
+Полный978 gate/installed live не выполнены; эти тесты не доказывают применимость.
+Existing ownership/held tests проверяют oldv1 empty/card → fresh literal search,
+currentv2 replay и archived cache без потери авторских решений/дополнительного
+model cycle. Existing gap/refinement tests проверяют finite aliases, exact IDs,
+closed shared source и normal remarks; VOR/unknown target не становится plain
+norm resume. RED cache5/gap3/kind6 → related111passed/18.62s.
+
 ## Кандидат977 — сохранённый файл, ожидание ревизии и печатная форма
 
 Расширены существующие файлы; новый test profile/framework не добавлен.

@@ -1,5 +1,29 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 978 — сохранение найденных кандидатов до rerank
+
+✅ Doc↔candidate source: `norm_browser.browse_norms_many` использует независимый
+от visible topK pool50 каждого канала и передаёт в reranker полный deduplicated
+typed/native union (не более100). После CE его измеренный порядок больше не
+перезаписывается повторным RRF; literal queries, native RRF, фильтры, visible
+cap50 и технические fallback сохранены. Подробности:
+[evidence flow](modules/rag-evidence-flow.md). Existing
+`smeta_rerank_ab_probe` сохраняет структурированные карточки/полные traces и
+читает literal UTF-8 queries-file; новых CE calls не добавлено.
+ROOT regression pool RED2 и CE-order RED3 → related78passed/3.38s.
+Оба live source comparison8queries завершены, корпус/source неизменны;
+после CE-order fix все8RAG/CE ok и фактический head соответствует CE.
+Independent review обнаружил и закрыл whitespace-key bug диагностического probe:
+literal query сохранён, lookup использует browser key. Related callers228passed/20.91s;
+installed candidate/профессиональная готовность не подтверждены. Индекс,
+manifest, нормативная БД и пользовательские решения не изменены.
+`ModelResearchToolService.cache_contract` → smeta_literal_query_v2: прежние
+shortlists/zero-hit не маскируют текущий authored search; accepted evidence
+сохраняется, old cache уходит в superseded. Exact команды добора используют
+единый recognizer и существующую LSR gap queue; после ВОР norm-only команда
+остаётся замечанием модели. RED cache5/gap3/kind6 → related111passed/18.62s.
+Ownership/CAS, price basis, pending proof и explicit review сохранены.
+
 ## 977 — сохранённый checkpoint при ошибке нового обновления
 
 ✅ Doc↔candidate source: paused ЛСР с accepted rows получает промежуточный файл

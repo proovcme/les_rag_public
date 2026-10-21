@@ -1,5 +1,83 @@
 # RAG evidence flow
 
+## 978 — retrieval depth не зависит от visible topK
+
+`browse_norms_many` сохраняет прежние literal model queries, native Qdrant
+dense+sparse RRF и typed/FTS. Каждый канал получает existing bounded depth50;
+до reranker сохраняется полный deduplicated union, не более100карточек.
+Раньше visible6 давал depth24, затем union ещё раз обрезался до24/50 до CE.
+В измеренном model fan query это удаляло native candidates28/43 до оценки.
+Теперь response limit применяется после rerank; disabled,
+error и partial backend fallback, identity, exact readers и model ownership
+не изменены. Полная выбранная official table по-прежнему не ранжируется.
+
+Existing `tools/smeta_rerank_ab_probe.py` пишет `before_cards`/`after_cards`
+(norm_key/code/title/unit) и полные `before_trace`/`after_trace`; `--queries-file`
+принимает непустой UTF-8 JSON array строк без переписывания запросов и исключает
+одновременный `--query`. Вывод консоли краткий; полные данные остаются в JSON.
+Probe не создаёт дополнительных CE calls и явно не квалифицирует применимость.
+ROOT pool RED2failed/1passed; CE-order RED3failed → related78passed/3.38s.
+
+Повторный RRF после CE удалён. Он не был новым источником evidence, а второй
+раз применял прежний retrieval rank, подавляя измеренный CE-order. Сохраняется
+полный валидный order CE; отсутствующие/invalid/duplicate indices заполняются
+только оставшимся исходным хвостом. При ошибке остаётся прежний input-order.
+Внутренний `fuse_with_input` убран из helper и двух catalog callsites; catalog
+и прежде использовал прямой CE. Backend marker теперь `+bge_rerank`.
+
+Source comparison01:8literal запросов, все RAG/CE status=ok,
+inputs_unchanged=true,269.899s,16CEcalls без generation. CE получил весь union:
+99/100/100/86/61/50/50/97. Cached order reconstruction воспроизвёл оба RRF;
+повторная fusion вытесняла20из48 CE-head карточек из visible6. Pure CE сохранил
+приемлемые наборы унитазов/кладки и увеличил число вентиляционных карточек.
+Это не точность20/48 и не доказательство применимости: масса/тип вентилятора
+не заданы, кабельные запросы/грунтование остаются слабыми уже до CE.
+Evidence: `artifacts/retrieval_978/source_comparison01/receipt.json`;
+Source comparison02 проверил фактически изменённый final order:
+8queries/16CE, все status=ok, inputs_unchanged=true,263.738s.
+Суммарный reranked stage baseline71.063s/candidate183.911s (~2.59x)
+при увеличенном pool. Это техническая цена recall, не end-to-end ускорение.
+Кабель/грунтование по-прежнему не квалифицированы; bigger pool и прямой CE
+не объявлены универсальным решением. Read-only exact title inspection базы
+(`base_title_inspection01.json`, base_unchanged=true) также не подтверждает
+применимость строки только по слову «кабель» или «огрунтовка».
+
+Independent review нашёл whitespace lookup дефект самого probe: browser keys
+используют query.strip(), тогда как вызов/аудит сохраняют literal query.
+Lookup согласован с этим ключом; тест имитирует реальные normalized keys и
+проверяет status/trace, а не только успешный CLI exit. ROOT RED1→GREEN;
+related norm/core/action callers228passed/20.91s.
+
+Технические первоисточники: [Qdrant hybrid/rerank](https://qdrant.tech/documentation/search/hybrid-queries/),
+[BAAI CE contract](https://huggingface.co/BAAI/bge-reranker-v2-m3).
+
+Изменения устраняют техническое отбрасывание, но не доказывают профессиональную
+точность и может увеличить CPU-время CE. Source comparison с тем же индексом,
+embedding и local reranker находится в `artifacts/retrieval_978/`; installed
+baseline/candidate/rollback и документы остаются обязательными до готовности.
+Расхождение manifest fingerprint и frozen general generation counts отдельно
+остаётся OPEN: metadata не переписана ради green, поиск этим не сертифицирован.
+
+### 978 — продолжение использует текущий retrieval contract
+
+`ModelResearchToolService.cache_contract` для норм — smeta_literal_query_v2;
+общий shared_native_query_v1 не менялся. Старые hits, включая нулевые, не
+подменяют текущие literal model queries. Existing research_cache_entry сохраняет
+предыдущий узел в superseded; accepted rows/evidence/citations не удаляются.
+Incompatible held-plan требует model redeclaration, не скрытого повторного
+исполнения старого плана. Owned pending proof сохраняет уже выданные ссылки.
+ROOT cache RED5failed/1passed → related18passed/9.77s.
+
+Единый `is_plain_continuation_question` разделяет finite resume commands и
+свободное замечание. «Добери нормы», «Найди недостающие нормы» при известной ЛСР
+используют existing owner-only gap queue; «Продолжи незакрытые строки» — resume.
+Номер строки, изменение объёма или пересмотр закрытых строк остаются review.
+Для ВОР/unknown target norm-only команды передаются модели как новое требование;
+restore/terminal barrier/header не возвращают прежнюю ВОР как выполненный добор.
+Тип ЛСР кодом не назначается. Storage lineage/scope compatibility остаётся общей.
+Принятые решения, точные open operation IDs, price basis, evidence, pending
+proof и CAS guards сохраняются. RED gap3/kind6 → related111passed/18.62s.
+
 ## 977 — сохранённый черновик отделён от ошибки нового model result
 
 Ошибка свежего model update не делает ранее принятый checkpoint недоступным.

@@ -18,7 +18,7 @@ from tests.test_model_query_packet_failure_boundary import _unsupported_declarat
 
 
 OLD = ["historical original Ω", "historical derived zero-hit Ж", "historical unknown"]
-CURRENT = "smeta_literal_query_v1"
+CURRENT = "smeta_literal_query_v2"
 NEW_HELD = "S!R3 — model-authored fresh query Ω"
 NEW_LATER = "S!R4 — model-authored later query Ж"
 
@@ -91,7 +91,7 @@ async def _seeded_run(tmp_path, monkeypatch, case):
             cache[OLD[1]] = []  # Current zero-hit is complete cache, not a reason for a fresh search.
         job = self.record_search_cache(job["job_id"], cache, cache_contract=CURRENT)
         if case == "stale":
-            job = self.record_search_cache(job["job_id"], {OLD[1]: [hit]}, cache_contract="obsolete-query-contract")
+            job = self.record_search_cache(job["job_id"], {OLD[1]: [hit]}, cache_contract="smeta_literal_query_v1")
         held = {"sheet": "S", "locators": ["S!R3"], "queries": OLD, "query_offset": 12,
                 "query_addresses": {q: ["S!R3"] for q in OLD}, "literal_legacy_extension": {"text": "KEEP_RAW Ω"}}
         if case != "failure":

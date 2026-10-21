@@ -23,6 +23,13 @@ def _top(result: dict, depth: int) -> list[str]:
     ]
 
 
+def _cards(result: dict) -> list[dict]:
+    return [
+        {key: card.get(key) for key in ("norm_key", "norm_code", "title", "measure_unit")}
+        for card in result.get("cards") or []
+    ]
+
+
 def run_probe(
     queries: list[str],
     *,
@@ -43,8 +50,11 @@ def run_probe(
     statuses: set[str] = set()
     moved = 0
     for query in queries:
-        raw = before.get(query, {})
-        ranked = after.get(query, {})
+        # Browser dictionary keys omit outer whitespace; keep the literal
+        # query in the request/audit rather than losing a successful result.
+        key = query.strip()
+        raw = before.get(key, {})
+        ranked = after.get(key, {})
         status = str(
             (ranked.get("retrieval_trace") or {}).get("rerank_status")
             or "missing"
@@ -66,6 +76,10 @@ def run_probe(
             "query": query,
             "before": top_raw,
             "after": top_ranked,
+            "before_cards": _cards(raw),
+            "after_cards": _cards(ranked),
+            "before_trace": dict(raw.get("retrieval_trace") or {}),
+            "after_trace": dict(ranked.get("retrieval_trace") or {}),
             "top1_changed": changed,
             "rerank_status": status,
             "rag_status": str(rag_trace.get("status") or ""),
@@ -76,6 +90,9 @@ def run_probe(
     quality_rows = [row for row in rows if row["quality_match"] is not None]
     return {
         "schema": "les.smeta.rerank-ab.v1",
+        "diagnostic_only": True,
+        "qualification": False,
+        "note": "Retrieval measurement only; candidate visibility and order do not establish norm applicability.",
         "queries": len(queries),
         "limit": limit,
         "rerank_status": sorted(statuses),
@@ -93,7 +110,12 @@ def main() -> int:
     parser.add_argument("--collection", default="")
     parser.add_argument("--limit", type=int, default=8)
     parser.add_argument("--depth", type=int, default=3)
-    parser.add_argument("--query", action="append", default=[])
+    query_input = parser.add_mutually_exclusive_group()
+    query_input.add_argument("--query", action="append", default=[])
+    query_input.add_argument(
+        "--queries-file", type=Path,
+        help="UTF-8 JSON array of literal queries; cannot be combined with --query.",
+    )
     parser.add_argument(
         "--expect-after",
         action="append",
@@ -120,7 +142,19 @@ def main() -> int:
     if args.collection:
         os.environ["LES_SMETA_NORM_RAG_COLLECTION"] = args.collection
 
-    queries = args.query or DEFAULT_QUERIES
+    if args.queries_file:
+        try:
+            queries = json.loads(args.queries_file.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            parser.error(f"cannot read --queries-file: {error}")
+        if (
+            not isinstance(queries, list)
+            or not queries
+            or not all(isinstance(query, str) and query.strip() for query in queries)
+        ):
+            parser.error("--queries-file must contain a nonempty JSON array of nonempty strings")
+    else:
+        queries = args.query or DEFAULT_QUERIES
     if args.expect_after and len(args.expect_after) != len(queries):
         parser.error("--expect-after must be provided once for every query")
     expected_terms = {
@@ -141,7 +175,9 @@ def main() -> int:
         encoding="utf-8",
     )
     tmp.replace(args.report_path)
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    summary = {key: value for key, value in report.items() if key != "rows"}
+    summary["report_path"] = str(args.report_path)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
     if args.require_ok and report["rerank_status"] != ["ok"]:
         return 1
     if args.require_hybrid and any(row["rag_status"] != "ok" for row in report["rows"]):

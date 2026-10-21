@@ -1,5 +1,52 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 — candidate978: полный bounded union до rerank; installed976
+
+Source0.31.250/build978/native5.1.978. Установлен0.31.248/build976,
+commit `f6c31aa44b08975330ee48fed6548127f4dfdc85`, свежий GET `/api/version`
+показывает alignment=aligned/98files. Candidate977 `b4766993` ранее прошёл
+полный offline gate (6926passed/20skipped), но не устанавливался.
+
+978 отвязывает depth50 каналов от visible topK и сохраняет полный deduplicated
+union до reranker (≤100). Измеренный CE-order больше не перезаписывается
+повторным RRF; при ошибке сохраняется input-order, partial ответ дополняет
+неизменённый input tail. Семантика запросов/решений сохранена.
+Индексы/manifest/БД не менялись. ROOT RED2failed/1passed:
+`artifacts/offline_978/red_candidate_pool2.xml`; pool/probe/related GREEN:
+78passed/3.22s, `artifacts/offline_978/green_probe_and_pool.xml`.
+CE-order RED3failed → related78passed/3.38s:
+`artifacts/offline_978/{red_ce_order,green_ce_order_related}.xml`.
+Existing AB probe расширен full traces/card identity и UTF-8 query input;
+это диагностика, не приёмка применимости норм. Source comparison01 на8literal
+запросах:269.899s, все RAG/CE ok, inputs_unchanged=true. Full union дошёл до CE,
+но повторный RRF вытеснял20из48CE-head карточек. Cached controls не выявили
+регрессии набора унитазов/кладки при прямом CE; cable/primer recall остаётся OPEN.
+Comparison02 после фактической правки CE-order завершён:263.738s,
+все8RAG/CE ok, inputs_unchanged=true. Сумма reranked stage71.063→183.911s
+(~2.59x) из-за расширенного pool; это не end-to-end ускорение.
+Independent review исправил normalized-key lookup диагностического probe,
+RED1→related norm/core/action callers228passed/20.91s.
+Cache contract норм повышен до smeta_literal_query_v2: старые cards/zero-hit
+не маскируют новый model-owned search, superseded/accepted evidence сохранены.
+Exact команды добора ЛСР открывают только existing gap IDs; norm-only команда
+после ВОР остаётся remark для модели, без принудительного LSR/тихой переупаковки.
+ROOT cache RED5/gap RED3/kind RED6 → related111passed/18.62s:
+`artifacts/offline_978/green_resume_kind_related.xml`.
+Precommit canonical verify/architecture:4commands rc0,6976tests collected;
+`artifacts/offline_978/verify_precommit02/receipt.json`.
+Первый setup-only запуск остановился до тестов из-за offline hatchling cache;
+повтор использует существующие зависимости (`UV_NO_SYNC=1`), без установки пакетов.
+Оба source controls
+с установленными dependencies не являются installed candidate acceptance.
+Полный978 gate и installed cycle
+ещё не выполнены. `customer_ready=false`.
+
+Повторная проверка прежнего money trace976 не выявила потери выбранной книги:
+в обоих B0/B1 match=exact/sankt-peterburg_3kv2026. Две фактические цены песка/
+цемента связались;0confirmed объясняется строковыми norm applicability/proof,
+неисполняемой поправкой толщины, unresolved resources/NRSP и пересечением поставки.
+Это не доказательство арифметического дефекта и не подтверждение полноты pricebook.
+
 ## 20.10.2026 — подготовка977; exact976 установлен, live-добор остаётся отрицательным
 
 Установлен exact0.31.248/build976/native5.1.976.0,

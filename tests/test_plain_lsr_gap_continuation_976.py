@@ -11,9 +11,9 @@ from proxy.services.workbook_research_job_service import WorkbookResearchJobServ
 from tests.test_workbook_gap_followup_955 import baseline, identity, SOURCE
 
 
-def _child(store):
-    requested = identity(store, "Продолжи")
-    return requested, store.begin_or_resume(requested, task_context={"original_question": "Продолжи"})
+def _child(store, question="Продолжи"):
+    requested = identity(store, question)
+    return requested, store.begin_or_resume(requested, task_context={"original_question": question})
 
 
 def _continue(store, job, requested, *, owner=True, question="Продолжи", catalog=None):
@@ -21,11 +21,16 @@ def _continue(store, job, requested, *, owner=True, question="Продолжи",
         owns_sheet_pass=owner, source_catalog=catalog)
 
 
-def test_plain_continue_reopens_exact_open_ids_and_retains_closed_shared_source(tmp_path):
+@pytest.mark.parametrize("question", [
+    "Продолжи", "Добери нормы", "Найди недостающие нормы", "Продолжи незакрытые строки",
+])
+def test_plain_continue_reopens_exact_open_ids_and_retains_closed_shared_source(tmp_path, question):
     store, original = baseline(tmp_path)
-    requested, child = _child(store)
+    requested, child = _child(store, question)
     before = deepcopy(child)
-    current = _continue(store, child, requested)
+    assert store.is_plain_continuation(requested, {"original_question": question})
+    assert not app.workbook_chat_review_needed(question, child)
+    current = _continue(store, child, requested, question=question)
     expected = {row["operation_id"] for row in before["accepted_rows"][1:]}
     assert store.pending_research_operation_ids(current) == expected
     assert store.pending_research_locators(current) == {SOURCE, "Другой лист!R9"}
@@ -35,9 +40,30 @@ def test_plain_continue_reopens_exact_open_ids_and_retains_closed_shared_source(
     assert current["continues_job_id"] == original["job_id"]
     note = store.list_events(current["job_id"], "locators_reopened")[-1]["payload"]
     assert note["preserve_accepted"] is True and set(note["research_operation_ids"]) == expected
-    assert note["chat_review"]["message"] == "Продолжи" and note["chat_review"]["review_scope"] == "operations"
+    assert note["chat_review"]["message"] == question and note["chat_review"]["review_scope"] == "operations"
     assert {row["operation_id"] for row in note["prior_rows"]} == expected
-    assert not app.workbook_chat_review_needed("Продолжи", current)
+    assert not app.workbook_chat_review_needed(question, current)
+
+
+@pytest.mark.parametrize("question", [
+    "Добери нормы для строки 14",
+    "Найди недостающие нормы и проверь норму закрытой строки 14",
+    "Продолжи незакрытые строки, измени объём строки 15 на 20 м",
+    "Добери нормы; пересмотри уже закрытые строки",
+])
+def test_explicit_engineer_remarks_do_not_become_plain_gap_continuations(tmp_path, monkeypatch, question):
+    store, _ = baseline(tmp_path)
+    requested, child = _child(store, question)
+    before = deepcopy(child)
+    assert not store.is_plain_continuation(requested, {"original_question": question})
+    assert app.workbook_chat_review_needed(question, child)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("an explicit remark must retain the existing document-review path")
+
+    monkeypatch.setattr(store, "reopen_locators", forbidden)
+    assert _continue(store, child, requested, question=question) is child
+    assert child == before
 
 
 @pytest.mark.parametrize("blocked", ["not_owner", "non_plain", "vor", "remaining", "proof", "held", "pending", "full_ready",

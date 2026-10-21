@@ -139,7 +139,7 @@ async def test_cached_query_result_is_visible_without_inventing_fresh_rrf_or_rer
     def begin(self, identity, **kwargs):
         job = original(self, identity, **kwargs)
         return self.record_search_cache(job["job_id"], {QUERIES[0]: []},
-                                        cache_contract="smeta_literal_query_v1")
+                                        cache_contract="smeta_literal_query_v2")
 
     monkeypatch.setattr(WorkbookResearchJobService, "begin_or_resume", begin)
     observed = _observe_execution_payloads(monkeypatch)
@@ -153,3 +153,72 @@ async def test_cached_query_result_is_visible_without_inventing_fresh_rrf_or_rer
                           "status": "missing", "result": {"count": 0, "cached": True}}
     _assert_execution_projection(results[1:], observed)
     assert len(observed) == 1, "only a real reader call can supply execution measurement"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_hit", [False, True], ids=["empty-result", "with-card"])
+@pytest.mark.parametrize("cache_contract,replay", [
+    ("smeta_literal_query_v1", False),
+    ("smeta_literal_query_v2", True),
+], ids=["old-ranking-contract", "current-ranking-contract"])
+async def test_sheet_model_query_replays_only_the_current_norm_ranking_contract(
+        tmp_path, monkeypatch, with_hit, cache_contract, replay):
+    original = WorkbookResearchJobService.begin_or_resume
+    stale_marker = "previous-ranking-card-body"
+    cached_hits = [{
+        "content": stale_marker,
+        "doc_name": "Previously returned norm card",
+        "score": 1.0,
+        "meta": {"norm_code": "TEST-OLD", "norm_key": "TEST:OLD", "source_ref": "test-base"},
+    }] if with_hit else []
+
+    def begin(self, identity, **kwargs):
+        job = original(self, identity, **kwargs)
+        return self.record_search_cache(job["job_id"], {QUERIES[0]: cached_hits},
+                                        cache_contract=cache_contract)
+
+    monkeypatch.setattr(WorkbookResearchJobService, "begin_or_resume", begin)
+    observed = _observe_execution_payloads(monkeypatch)
+    run = await _run_frame(tmp_path, monkeypatch, cap=2, reads=False,
+        question=QUESTION, query_declaration=json.dumps({"artifact_kind": "lsr", "queries": QUERIES}),
+        final_answer=json.dumps({"artifact_kind": "lsr", "rows": ROWS}))
+
+    assert run.queries == (QUERIES[1:] if replay else QUERIES), (
+        "an old ranking result, including zero hits, cannot replace the model's current literal search")
+    assert len(run.requests) == 2 and not run.responses, "cache invalidation must not add a model cycle"
+    results = run.result["retrieval_trace"]["tool_loop"].get("results", [])
+    if replay:
+        assert results[0] == {"schema": "les_tool_result_v1", "tool": "search_sources",
+                              "status": "ok" if with_hit else "missing",
+                              "result": {"count": int(with_hit), "cached": True}}
+        _assert_execution_projection(results[1:], observed)
+        assert len(observed) == 1
+    else:
+        _assert_execution_projection(results, observed)
+        assert len(observed) == len(QUERIES)
+        assert all(stale_marker not in str(request.messages) for request in run.requests)
+
+    job = WorkbookResearchJobService().get(run.result["retrieval_trace"]["workbook_research_job"]["job_id"])
+    for actual, authored in zip(job["accepted_rows"], ROWS, strict=True):
+        assert {key: actual[key] for key in authored} == authored
+    if not replay:
+        entry = job["query_cache"][QUERIES[0]]
+        assert entry["contract"] == "smeta_literal_query_v2"
+        assert {"contract": cache_contract, "hits": cached_hits} in entry["superseded"]
+
+
+@pytest.mark.parametrize("dedicated,expected", [
+    (True, "smeta_literal_query_v2"),
+    (False, "shared_native_query_v1"),
+])
+def test_norm_ranking_contract_changes_without_probing_or_changing_shared_retrieval(dedicated, expected):
+    from proxy.services.model_research_tool_service import ModelResearchToolService
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("reading the algorithm cache contract must not query an index or service")
+
+    reader = ModelResearchToolService(
+        retrieve=forbidden, frozen_dataset_ids=("selected-dataset",), retrieval_kwargs={},
+        fallback=forbidden, smeta_norm_retrieve=forbidden if dedicated else None)
+
+    assert reader.cache_contract == expected

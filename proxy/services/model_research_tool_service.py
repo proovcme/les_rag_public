@@ -507,9 +507,10 @@ class ModelResearchToolService:
 
     @property
     def cache_contract(self) -> str:
-        # The old dedicated reader expanded source labels through a vocabulary.
-        # Such cached hits (including empty results) must never mask a literal search.
-        return "smeta_literal_query_v1" if self._smeta_norm_retrieve is not None else "shared_native_query_v1"
+        # v2 preserves the full pool before CE and the measured CE order. Hits
+        # (including empty ones) from the old ranking must not mask a current
+        # model-authored search. Accepted decisions/evidence remain independent.
+        return "smeta_literal_query_v2" if self._smeta_norm_retrieve is not None else "shared_native_query_v1"
 
     async def execute(self, call: Mapping[str, Any]) -> ModelResearchToolResult:
         if not isinstance(call, Mapping) or not isinstance(call.get("args", {}), Mapping):

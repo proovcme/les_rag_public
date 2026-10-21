@@ -431,10 +431,77 @@ def test_browse_keeps_wide_pool_until_reranker(monkeypatch, tmp_path):
 
     result = norm_browser.browse_norms("обычная работа", limit=5, base_path=tmp_path / "base.sqlite")
 
-    assert seen["input"] == 24
+    assert seen["input"] == 40
     assert len(result["cards"]) == 5
-    assert result["retrieval_trace"]["fusion_candidates"] == 24
+    assert result["retrieval_trace"]["fusion_candidates"] == 40
     assert result["retrieval_trace"]["reranked"] is True
+
+
+def test_browse_visible_limit_never_removes_native_tail_before_rerank(monkeypatch, tmp_path):
+    from proxy.smeta_core import norm_browser
+
+    lexical = [
+        {"norm_key": f"l:{i:02}", "norm_code": f"L-{i}", "title": f"lex {i}"}
+        for i in range(50)
+    ]
+    native = [
+        {"norm_key": f"n:{i:02}", "norm_code": f"N-{i}", "title": f"native {i}"}
+        for i in range(50)
+    ]
+    retrieval_limits = []
+    assessed = []
+
+    def typed(_query, *, limit, **_kwargs):
+        retrieval_limits.append(("typed", limit))
+        return lexical[:limit]
+
+    def rag(queries, *, limit, **_kwargs):
+        retrieval_limits.append(("native", limit))
+        return {query: native[:limit] for query in queries}
+
+    def rerank(query, cards, *, limit):
+        assert query == "literal model query"
+        assessed.append([card["norm_key"] for card in cards])
+        # A candidate at the native channel's tail must be available to assess.
+        ranked = sorted(cards, key=lambda card: card["norm_key"] != "n:49")
+        return ranked[:limit], True, "ok"
+
+    monkeypatch.setattr(norm_browser, "_typed_cards", typed)
+    monkeypatch.setattr(norm_browser, "_rag_cards_many", rag)
+    monkeypatch.setattr(norm_browser, "_rerank_cards", rerank)
+    monkeypatch.setattr(norm_browser, "normative_base_integrity", lambda **_kwargs: {})
+
+    results = [norm_browser.browse_norms(
+        "literal model query", limit=limit, base_path=tmp_path / "base.sqlite",
+    ) for limit in (6, 50)]
+
+    assert all(limit == 50 for _channel, limit in retrieval_limits)
+    assert len(assessed[0]) == 100
+    assert assessed[0] == assessed[1]
+    assert results[0]["cards"] == results[1]["cards"][:6]
+    assert results[0]["cards"][0]["norm_key"] == "n:49"
+    assert [len(result["cards"]) for result in results] == [6, 50]
+    assert all(result["selection_owner"] == "model_or_user" for result in results)
+
+
+def test_browse_union_deduplicates_without_changing_native_identity(monkeypatch, tmp_path):
+    from proxy.smeta_core import norm_browser
+
+    shared = {"norm_key": "same", "norm_code": "N-1", "title": "same card"}
+    lexical = [shared, {"norm_key": "lex", "norm_code": "L-1"}]
+    native = [dict(shared), {"norm_key": "native", "norm_code": "N-2"}]
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_a, **_k: lexical)
+    monkeypatch.setattr(norm_browser, "_rag_cards_many", lambda queries, **_k: {q: native for q in queries})
+    monkeypatch.setattr(norm_browser, "normative_base_integrity", lambda **_kwargs: {})
+
+    result = norm_browser.browse_norms_many(
+        ["literal"], limit=50, base_path=tmp_path / "base.sqlite", rerank=False,
+    )["literal"]
+
+    assert [card["norm_key"] for card in result["cards"]] == ["same", "lex", "native"]
+    assert result["cards"][0] is shared
+    assert result["retrieval_trace"]["fusion_candidates"] == 3
+    assert result["retrieval_trace"]["rerank_status"] == "disabled_by_caller"
 
 
 def test_mass_triage_runs_reranker_for_every_document_row(monkeypatch, tmp_path):
@@ -629,10 +696,10 @@ def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
 
     assert used is True
     assert status == "ok"
-    assert [item["norm_code"] for item in ranked] == ["N-0", "N-1", "N-4", "N-2"]
+    assert [item["norm_code"] for item in ranked] == ["N-4", "N-0", "N-1", "N-2"]
 
 
-def test_reranker_is_fused_with_original_rrf_instead_of_erasing_it(monkeypatch):
+def test_reranker_measured_order_is_not_overwritten_by_a_second_rrf(monkeypatch):
     from proxy.smeta_core import norm_browser
     monkeypatch.setenv("RERANKER_ENABLED", "true")
     monkeypatch.setenv("LES_SMETA_NORM_RERANK", "true")
@@ -662,10 +729,12 @@ def test_reranker_is_fused_with_original_rrf_instead_of_erasing_it(monkeypatch):
 
     assert used is True
     assert status == "ok"
-    assert {item["norm_code"] for item in ranked[:3]} & {"GOOD-1", "GOOD-2"}
+    # A relevance ranking is evidence for the model, not an applicability verdict.
+    # The harness must not silently override the configured reranker's order.
+    assert [item["norm_code"] for item in ranked] == ["NOISE-3", "NOISE-2", "NOISE-1"]
 
 
-def test_reranker_fusion_uses_every_measured_rank_not_a_synthetic_tail(monkeypatch):
+def test_reranker_preserves_every_measured_rank_before_the_visible_limit(monkeypatch):
     from proxy.smeta_core import norm_browser
     monkeypatch.setenv("RERANKER_ENABLED", "true")
     monkeypatch.setenv("LES_SMETA_NORM_RERANK", "true")
@@ -687,12 +756,10 @@ def test_reranker_fusion_uses_every_measured_rank_not_a_synthetic_tail(monkeypat
     monkeypatch.setattr(norm_browser, "select_reranker_cls", lambda: ReversedReranker)
     ranked, used, status = norm_browser._rerank_cards("query", cards, limit=6)
 
-    assert requested == [(24, 24)], "fusion needs the actual order of all scored candidates"
+    assert requested == [(24, 24)], "the returned order describes all scored candidates"
     assert used is True and status == "ok"
     assert len(ranked) == 6
-    assert "N-23" in {card["norm_code"] for card in ranked}
-    assert "N-00" in {card["norm_code"] for card in ranked}
-    assert ranked == norm_browser._rrf_cards(cards, list(reversed(cards)), limit=6)
+    assert ranked == list(reversed(cards))[:6]
 
 
 def test_reranker_timeout_falls_back_and_preserves_raw_order(monkeypatch):

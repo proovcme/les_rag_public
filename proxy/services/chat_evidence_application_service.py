@@ -124,6 +124,7 @@ from proxy.services.model_answer_table_service import (
 )
 from proxy.services.workbook_research_job_service import (
     WorkbookResearchJobError, WorkbookResearchJobService, source_conflict_resolutions,
+    is_plain_continuation_question,
 )
 from proxy.services.model_result_packet_service import admit_model_result_packet
 from proxy.services.model_lsr_result_contract import (
@@ -989,10 +990,8 @@ def workbook_chat_review_needed(question, job, events=()) -> bool:
         and (event.get("payload") or {}).get("parent_question_sha256")
     ]
     same_question = digest == parent_digests[-1] if parent_digests else text == original
-    if not text or same_question or text in {
-        "продолжи", "продолжить", "continue",
-        "продолжи это же задание по тому же прикреплённому документу",
-    }:
+    kind = str(((job.get("task_context") or {}).get("artifact_kind_declaration") or {}).get("artifact_kind") or "")
+    if not text or same_question or is_plain_continuation_question(question, artifact_kind=kind):
         return False
     return not any(
         (event.get("payload") or {}).get("chat_review", {}).get("request_sha256") == digest
@@ -11129,6 +11128,8 @@ async def _execute_chat_evidence_application(
                             research_job_service = None
                             research_job = None
                     if (research_job is not None and research_job_service is not None
+                            and is_plain_continuation_question(req.question, artifact_kind=str(
+                                ((research_job.get("task_context") or {}).get("artifact_kind_declaration") or {}).get("artifact_kind") or ""))
                             and research_job_service.is_plain_continuation(
                                 research_identity, {"original_question": str(req.question or "")})):
                         artifact_kind_declaration = update_model_artifact_kind(
@@ -11221,6 +11222,8 @@ async def _execute_chat_evidence_application(
                     )
                     terminal_packet_locators = WorkbookResearchJobService.terminal_packet_locators(stored_held)
                     if (research_job_service is not None and research_job is not None
+                            and is_plain_continuation_question(req.question, artifact_kind=str(
+                                ((research_job.get("task_context") or {}).get("artifact_kind_declaration") or {}).get("artifact_kind") or ""))
                             and research_job_service.is_plain_continuation(
                                 research_identity, {"original_question": str(req.question or "")})):
                         # A new explicit resume may reach sources with no saved decision.
@@ -15528,6 +15531,8 @@ async def _execute_chat_evidence_application(
                             packaging_question = str(req.question or "")
                             if (packaging_tool == "build_vor_workbook"
                                     and research_job_service is not None and research_job is not None
+                                    and is_plain_continuation_question(packaging_question, artifact_kind=str(
+                                        ((research_job.get("task_context") or {}).get("artifact_kind_declaration") or {}).get("artifact_kind") or ""))
                                     and research_job_service.is_plain_continuation(
                                         research_identity, {"original_question": packaging_question})):
                                 packaging_question = str(
