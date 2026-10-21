@@ -5969,6 +5969,7 @@
         "tests/test_model_lsr_result_contract.py",
         "tests/test_model_packet_document_context_954.py",
         "tests/test_model_query_commentary_transport.py",
+        "tests/test_model_query_reasoning.py",
         "tests/test_model_query_rejected_visible_diagnostics.py",
         "tests/test_model_query_wrapper_963.py",
         "tests/test_model_quoted_text_scalar_964.py",
@@ -13129,7 +13130,7 @@
     },
     {
       "inbound": [],
-      "lines": 79,
+      "lines": 82,
       "module": "tests.test_lsr_measure_scale_instruction",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
@@ -13962,7 +13963,7 @@
     },
     {
       "inbound": [],
-      "lines": 70,
+      "lines": 73,
       "module": "tests.test_model_document_kind_availability_963",
       "outbound": [
         "proxy/services/lsr_norm_quality_gate_service.py",
@@ -14060,7 +14061,7 @@
     },
     {
       "inbound": [],
-      "lines": 97,
+      "lines": 100,
       "module": "tests.test_model_exact_card_read_policy",
       "outbound": [
         "proxy/services/lsr_norm_quality_gate_service.py",
@@ -14601,12 +14602,13 @@
     },
     {
       "inbound": [],
-      "lines": 283,
+      "lines": 287,
       "module": "tests.test_model_query_reasoning",
       "outbound": [
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/chat_profile_service.py",
         "proxy/services/model_execution_preset_service.py",
+        "proxy/services/model_lsr_result_contract.py",
         "proxy/services/openai_compatible_transport_service.py",
         "proxy/services/runtime_config_registry_service.py",
         "proxy/services/workbook_research_job_service.py",
@@ -24127,7 +24129,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 870,
     "tracked_python_files": 1270,
-    "tracked_python_lines": 435387
+    "tracked_python_lines": 435400
   },
   "warnings": []
 }

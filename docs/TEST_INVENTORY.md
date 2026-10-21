@@ -2,6 +2,13 @@
 
 ## 983 — реклама существующих структурных полей
 
+Все17модулей, использующих shared result instruction:5obsolete inclusion
+assertions RED/248positive→253passed/25.03s. Удаление единственной повторной
+строки полей ВОР допускается только в объединённом wrapper; standalone LSR и
+все прочие байты остаются прежними. Настоящие answer/native-read контексты
+содержат ровно один полный вариант контракта, query его не получает.
+Полный второй gate был явно остановлен после обнаруженного отказа, не принят.
+
 Новый exact-code контракт: `test_smeta_exact_norm_card` — require_generation
 19RED/14positive→33GREEN; настоящая SQLite, полный ресурсный состав, manifest
 и bytes до/после, прежний explicit pin. `test_model_research_evidence_actions`

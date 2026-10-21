@@ -11,7 +11,7 @@ from proxy.services.lsr_norm_quality_gate_service import (
     lsr_verifier_instruction,
 )
 from proxy.services.model_evidence_read_contract import MODEL_EVIDENCE_READ_INSTRUCTION
-from proxy.services.model_lsr_result_contract import model_lsr_result_field_instruction
+from proxy.services.model_lsr_result_contract import VOR_RESULT_FIELDS, model_lsr_result_field_instruction
 
 
 _MEASURE_RULE = "unit_compatible сравнивает физическую величину, а не масштаб измерителя"
@@ -30,7 +30,10 @@ def test_active_result_contract_explains_scale_without_changing_source_or_other_
     assert "не дели quantity" in instruction
     assert "не дублируй этот масштаб в calc_quantity/conversion_factor" in instruction
     assert "другой физической величине" in instruction and "conversion_source" in instruction
-    assert instruction in lsr_result_table_instruction()
+    assert instruction in lsr_result_table_instruction(artifact_kind="lsr")
+    duplicated = "Поля ВОР: " + ", ".join(VOR_RESULT_FIELDS) + ". "
+    assert instruction.count(duplicated) == 1
+    assert instruction.replace(duplicated, "", 1) in lsr_result_table_instruction()
 
 
 def test_resource_quantity_requires_card_consumption_or_proven_formula_not_relabelled_work():

@@ -9,7 +9,7 @@ import pytest
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 from proxy.services.model_evidence_read_contract import MODEL_EVIDENCE_READ_INSTRUCTION, model_evidence_read_tool_schemas
 from proxy.services.model_lsr_result_contract import (
-    model_lsr_resource_decision_instruction, model_lsr_result_field_instruction,
+    VOR_RESULT_FIELDS, model_lsr_resource_decision_instruction, model_lsr_result_field_instruction,
 )
 
 
@@ -49,7 +49,10 @@ def test_result_contract_distinguishes_full_card_identity_from_table_provenance(
     assert _CARD_REFERENCE in identity_instruction
     assert _SOURCE_PROVENANCE in identity_instruction
     assert "не заменяет идентификатор конкретной карточки" in identity_instruction
-    assert instruction in lsr_result_table_instruction()
+    assert instruction in lsr_result_table_instruction(artifact_kind="lsr")
+    duplicated = "Поля ВОР: " + ", ".join(VOR_RESULT_FIELDS) + ". "
+    assert instruction.count(duplicated) == 1
+    assert instruction.replace(duplicated, "", 1) in lsr_result_table_instruction()
     # The clarification explains technical identity; it still leaves selection
     # and applicability to the author of the result.
     assert "применимость выбираешь ты" in instruction

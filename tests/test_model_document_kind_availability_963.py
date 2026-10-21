@@ -5,7 +5,7 @@ import json
 import pytest
 
 from proxy.services.model_evidence_read_contract import model_evidence_read_tool_schemas
-from proxy.services.model_lsr_result_contract import model_vor_result_field_instruction
+from proxy.services.model_lsr_result_contract import VOR_RESULT_FIELDS, model_vor_result_field_instruction
 from proxy.services.lsr_norm_quality_gate_service import lsr_result_table_instruction
 from tests import test_model_rag_sheet_evidence_reads as fixture
 from tests.test_vor_native_terminal_workflow_962 import MARKER, _native_response, _lsr_rows, _rows
@@ -51,7 +51,10 @@ def test_missing_type_keeps_compact_conditional_vor_contract_and_literal_lsr_con
         assert requirement in vor
     assert model_vor_result_field_instruction() in lsr_result_table_instruction(artifact_kind="vor")
     lsr_start = instruction.index("КОНТРАКТ ЛСР")
-    assert lsr_result_table_instruction(artifact_kind="lsr") in instruction[lsr_start:]
+    standalone = lsr_result_table_instruction(artifact_kind="lsr")
+    duplicated = "Поля ВОР: " + ", ".join(VOR_RESULT_FIELDS) + ". "
+    assert standalone.count(duplicated) == 1
+    assert standalone.replace(duplicated, "", 1) in instruction[lsr_start:]
     assert "отсутствие декларации в запросном ходе не означает выбор ЛСР" in instruction
     assert "чтение/объяснение — без типа и строк документа" in instruction
 

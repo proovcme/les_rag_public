@@ -3,6 +3,14 @@
 ## 21.10.2026 — candidate983: модельные решения и техническая версия сохранения
 
 Source0.31.255/build983/native5.1.983; installed982/afd07ff9 сохраняется.
+Второй frozen983 `62507e49`: version/map/verify прошли,7228collected. Полный
+test остановлен ROOT после первого obsolete whole-contract assertion:
+`artifacts/release_983_control/prepare_console02/interrupted.json` явно не
+является acceptance. Все17тестовых модулей-потребителей контракта проверены
+вместе:5old inclusion assertions RED/248positive→253passed/25.03s после
+test-only согласования ровно одной duplicated field line. Все остальные байты,
+явный standalone LSR и каждый настоящий answer/native-read контекст проверяются
+строго. Product code с62507e49 не менялся; следующий frozen gate ещё pending.
 Первый frozen983 `586ad14b`: canonical version/map/verify прошли, полный test
 7147passed/2failed/20skipped за955.14s; prepare остановился до установщика.
 Два прежних positive handoff при7500tokens теряли вторую карточку из-за

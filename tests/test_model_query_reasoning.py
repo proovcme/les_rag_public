@@ -8,6 +8,7 @@ import pytest
 
 from proxy.services import chat_evidence_application_service as chat_service
 from proxy.services import model_execution_preset_service as presets
+from proxy.services.model_lsr_result_contract import VOR_RESULT_FIELDS
 from proxy.services.runtime_config_registry_service import runtime_factor_rows
 from sovushka.pages import profiles as profiles_page
 from tests.test_model_rag_sheet_evidence_reads import _run_sheet
@@ -59,7 +60,10 @@ async def test_query_has_no_workbook_fields_and_each_decision_has_one_contract(t
              for request in run.requests]
     assert len(texts) == 4 and not run.responses
     assert fields not in texts[0], "query-only inference must not request final workbook fields"
-    assert all(text.count(fields) == 1 for text in texts[1:]), "answer/native-read phases must keep one complete field contract"
+    duplicated = "Поля ВОР: " + ", ".join(VOR_RESULT_FIELDS) + ". "
+    assert fields.count(duplicated) == 1
+    nested = fields.replace(duplicated, "", 1)
+    assert all(text.count(fields) + text.count(nested) == 1 for text in texts[1:]), "answer/native-read phases must keep one complete field contract"
     assert len(run.executions) == 1 and run.result["answer"]
 
 
