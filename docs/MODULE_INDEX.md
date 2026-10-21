@@ -1,5 +1,33 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+## 982 — кандидат: адрес непринятой операции между proof rounds
+
+✅ Doc↔source: `proof_operation_identity_service` выдаёт отдельные временные
+адреса новым модельным строкам только внутри существующего proof. Active
+`_start_sheet_proof` сохраняет exact rows/issued map/context в optional pending
+snapshot; resume повторно использует адреса, а перед обычным admission снимает
+их только по собственной выдаче и тому же source. Durable IDs/CAS неизменны.
+Unknown IDs/source mismatch не получают разрешения. Context показывает именно
+сохранённый revision, а не предложенный будущий. Ни названия, ни нормы, ни
+ресурсы для объединения операций не сравниваются.
+`rim_lsr_trace_service`/`rim_trace_xlsx_service` поясняют существующий supply
+match debt по-русски, отдельно от факта наличия цены. Арифметика не изменена.
+Helper35passed и active checkpoint2RED→2GREEN; renderer8RED/2positive→10GREEN.
+🟡 Полный gate982, installed acceptance и профессиональные документы pending;
+installed981/fd17b383 — отдельная контрольная точка. См. [ЛСР](ALGO-lsr-assembly.md).
+
+## 981 — фактическая установленная проверка
+
+✅ Installed981/fd17b383: полный canonical gate и exact NSIS acceptance прошли.
+No-model repack фактически применил calc0.7: старые решения/книга сохранены,
+ложное confirmed поставки снято; проверены реальные XLSX и projection.
+Read-only SQLite/Qdrant контроль не выявил повреждения нормативной базы.
+🟡 Engineer hint создал сохранный draft, но не исправил ЛСР: duplicate source
+добавки, неприменённые revisions и самостоятельные ошибки модели остаются.
+Недостающий human text supply-match в XLSX отдельно выявлен физической проверкой.
+Точные receipts, границы доказательств и customer_ready=false:
+[RELEASE_LEDGER](RELEASE_LEDGER.md).
+
 ## 981 — итоговый тип документа ограничивает финансовый proof
 
 ✅ Doc↔source: active sheet pass использует текущую `artifact_kind_declaration`

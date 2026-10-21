@@ -3307,7 +3307,8 @@ def sheet_pass_keep_rows(
     for row in on_sheet:
         identity_blocked = any(
             error in {f"unknown_operation_id:{row.get('source_row')}:{row.get('operation_id')}",
-                      f"operation_source_mismatch:{row.get('source_row')}:{row.get('operation_id')}"}
+                      f"operation_source_mismatch:{row.get('source_row')}:{row.get('operation_id')}",
+                      f"uncommitted_parent_reference:{_decision_identity_sha(row)}"}
             for error in blocking
         )
         if identity_blocked or (model_rag_row_kind(row) == "work" and _sheet_pass_row_blocked(
@@ -3352,6 +3353,8 @@ def _sheet_pass_row_blocked(
             continue
         prefix, rest = text.split(":", 1)
         rest = rest.strip()
+        if prefix == "uncommitted_parent_reference" and rest == _decision_identity_sha(row):
+            return True
         if prefix in {
             "missing_evidence_ref",
             "source_quantity_mismatch",
@@ -3398,6 +3401,7 @@ def sheet_pass_rejected_row_proposals(
             f"source_quantity_mismatch:{key}", f"source_unit_mismatch:{key}",
             f"duplicate_source_row:{key}", f"unknown_operation_id:{key}:{operation_id}",
             f"operation_source_mismatch:{key}:{operation_id}",
+            f"uncommitted_parent_reference:{_decision_identity_sha(row)}",
         } and (not str(error).startswith(("source_quantity_mismatch:", "source_unit_mismatch:"))
                or not source_measure_proven)]
         if not row_errors:
@@ -7842,6 +7846,7 @@ def validate_model_rag_result_structure(
     existing_operation_rows: Sequence[Mapping[str, Any]] | None = None,
     review_operation_rows: Sequence[Mapping[str, Any]] = (),
     artifact_kind: str = "",
+    uncommitted_operation_ids: Sequence[str] = (),
 ) -> list[str]:
     """Validate references before packaging without changing model decisions."""
 
@@ -7856,6 +7861,7 @@ def validate_model_rag_result_structure(
             + ",".join(list(source_incomplete_locators)[:8])
         )
     observed_keys: set[tuple[str, str, str, str]] = set()
+    uncommitted_ids = {str(value).strip() for value in uncommitted_operation_ids if str(value).strip()}
     known_operations = {
         str(row.get("operation_id")): row for row in model_rag_existing_operation_rows(
             existing_operation_rows or (), review_operation_rows)
@@ -7884,6 +7890,11 @@ def validate_model_rag_result_structure(
         if source_key in observed_keys:
             errors.append(f"duplicate_source_row:{source_row}")
         observed_keys.add(source_key)
+        if any(str(row.get(field) or "").strip() in uncommitted_ids
+               for field in ("work_row", "covered_by_work_id")):
+            # A proof-only address is not a durable parent. Preserve the
+            # literal proposal, reject only this row and never guess its link.
+            errors.append(f"uncommitted_parent_reference:{_decision_identity_sha(row)}")
         operation_id = str(row.get("operation_id") or "").strip()
         if operation_id and existing_operation_rows is not None:
             prior = known_operations.get(operation_id)
@@ -12607,11 +12618,30 @@ async def _execute_chat_evidence_application(
                                         contract.update(tools=sheet_read_tools, tool_choice=None)
                                 return contract
 
+                            proof_operation_identities: dict[str, Any] = {}
+
                             async def _start_sheet_proof(*, purpose):
                                 nonlocal sheet_proof_purpose, sheet_norm_proof_plan, research_job
+                                nonlocal pass_rows, proof_operation_identities
+                                from proxy.services.proof_operation_identity_service import (
+                                    proof_operation_context,
+                                    stage_proof_operations,
+                                )
                                 sheet_proof_purpose = purpose
+                                if resuming_proof.get("purpose") == purpose:
+                                    saved_rows = resuming_proof.get("proof_rows")
+                                    saved_ids = resuming_proof.get("proof_operation_identities")
+                                    if isinstance(saved_rows, list) and isinstance(saved_ids, Mapping):
+                                        pass_rows = [dict(row) for row in saved_rows if isinstance(row, Mapping)]
+                                        proof_operation_identities = dict(saved_ids)
+                                pass_rows, proof_operation_identities = stage_proof_operations(
+                                    pass_rows, proof_operation_identities)
+                                sheet_proof_context[-1]["proof_operation_identity"] = proof_operation_context(
+                                    pass_rows, proof_operation_identities,
+                                    model_rag_existing_operation_rows(accumulated_rows, review_prior_rows))
                                 # Save the completed public answer BEFORE counting/admission or
-                                # another model await. No row is admitted and no ID is assigned.
+                                # another model await. No row or durable ID/revision is admitted.
+                                # Only issued proof-local addresses survive this checkpoint.
                                 if research_job_service is not None and research_job is not None:
                                     identity = research_job.get("identity") or {}
                                     held = model_rag_evidence_page_state(
@@ -12628,6 +12658,8 @@ async def _execute_chat_evidence_application(
                                                       "model_connection_revision_id", "source_frame_contract_sha256")}},
                                         "execution_preset": pending_proof_execution_preset(answer_execution_preset),
                                         **sheet_proof_context[-1], "finish_reason": last_finish or "stop", "attempt": 1,
+                                        "proof_rows": pass_rows,
+                                        "proof_operation_identities": proof_operation_identities,
                                         "packet_attempt": packet_attempts[fingerprint],
                                         "query_hits": [[query, [durable_research_hit(hit) for hit in hits]] for query, hits in pass_hits],
                                         "admitted_evidence_refs": [
@@ -13118,6 +13150,8 @@ async def _execute_chat_evidence_application(
                                     sheet_name, len(packet), len(proof_groups), len(proof_supply_matches), group_answered,
                                     len(group_receipts), group_answer_parsed,
                                 )
+                            from proxy.services.proof_operation_identity_service import restore_proof_operations
+                            pass_rows = restore_proof_operations(pass_rows, proof_operation_identities)
                             expanded_packet = model_read_result_packet_locators(
                                 packet, rows=pass_rows, receipts=read_receipts, catalog=source_catalog,
                                 existing_rows=model_rag_existing_operation_rows(accumulated_rows, review_prior_rows),
@@ -13137,6 +13171,7 @@ async def _execute_chat_evidence_application(
                                 answer_truncated=last_truncated,
                                 existing_operation_rows=accumulated_rows,
                                 review_operation_rows=review_prior_rows,
+                                uncommitted_operation_ids=tuple(proof_operation_identities),
                                 artifact_kind=(str(artifact_kind_declaration.get("artifact_kind") or "")
                                                if artifact_kind_declaration.get("status") == "declared" else ""),
                             )

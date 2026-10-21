@@ -77,3 +77,38 @@ ROOT2RED/1positive→3GREEN; current result declaration теперь огран�
 groups/supply/resume финансового proof итоговой LSR. Related54passed/6.67s.
 QueryVOR→resultLSR остаётся разрешённым. Финальный target теперь981, не980;
 новый canonical gate, exact installer и профессиональный live контроль pending.
+
+## Установленная контрольная точка981 и следующий ограниченный ремонт
+
+- [x] Exact981/fd17b383: main7057passed, updater328passed, local full NSIS,
+  install/rollback/reinstall accepted. Это не gate профессионального качества.
+- [x] Read-only SQLite quick_check и Qdrant49818: повреждение/потеря базы не найдены.
+- [x] Старый979 файл пересчитан без модели: raw7decisions/book сохранены,
+  confirmed576.49 переведены в preliminary, calc0.7. Физический XLSX проверен.
+- [x] Натуральный engineer hint: model5calls/573.718s; физический расчёт не улучшен.
+  Raw добавка есть, но proof размножает anonymous new proposal; literal wrong
+  expected_revision2 не принимается против durable1. Модель также не сдала
+  числовую кратность4 и вновь назвала монтажную ленту кабелем.
+- [x] Понятное пояснение supply match в реальном XLSX: ROOT8RED/2positive→10GREEN.
+- [x] Стабилизировать только transport identity непринятых операций ВНУТРИ
+  существующего bounded proof, без semantic/title/code dedup и без нового цикла.
+  До proof приложение выдаёт каждой новой строке временный непрозрачный ID;
+  mapping и current proof rows сохраняются в existing pending checkpoint.
+  Модель получает эти ID и immutable durable base revisions. Между proof rounds
+  обновление адресуется ID, а не новым empty-ID proposal. До admission временные
+  ID снимаются только по собственному issued mapping и тому же source locator;
+  durable IDs/revisions, CAS и предметные поля не меняются. Unknown/forged ID и
+  literal expected_revision2 остаются ошибками. Одинаковые новые строки не
+  сливаются эвристикой: сами ограничения duplicate admission не ослабляются.
+- [x] RED→GREEN helper/merge/restart + actual sheet proof/checkpoint regression,
+  related gates. В новых proof frames нет выдуманного revision2.
+  Временные parent IDs не становятся durable связями: role-independent
+  child-only guard сохраняет proposal, а соседей не блокирует. ROOT
+  active-parent6RED и malformed state2RED→related79GREEN; context54GREEN.
+- [ ] Bundle candidate982, документация/version/runtime-map/verify/test,
+  exact installer и установленный B0/B1/натуральное замечание. До этого
+  installed981, customer_ready=false; не объявлять новые исправления установленными.
+- [ ] После транспортной проверки отдельно измерить применимость норм,
+  множители, НР/СП, прямые поставки, ВОР из разных файлов и большой вход.
+  Код не исправляет ошибочный профессиональный yes и не извлекает множитель
+  из coverage; readiness не подтверждается одним успешным сохранением файла.

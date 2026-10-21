@@ -46,6 +46,35 @@ def _validate(rows, catalog, **kwargs):
     )
 
 
+@pytest.mark.parametrize("role", ["work", "material", "equipment"])
+@pytest.mark.parametrize("link", ["work_row", "covered_by_work_id"])
+def test_proof_parent_link_rejection_is_role_independent_and_retained_for_only_the_child(catalog, role, link):
+    from proxy.services.proof_operation_identity_service import restore_proof_operations, stage_proof_operations
+
+    parent = {"source_row": "S!R2", "operation_id": "", "row_role": "work",
+              "title": "Literal new parent", "quantity": 37.5, "unit": "м2", "norm_code": ""}
+    staged, issued = stage_proof_operations([parent])
+    child = {"source_row": "S!R2", "operation_id": "", "row_role": role,
+             "title": "Literal linked operation", "quantity": 37.5, "unit": "м2",
+             "norm_code": "", link: staged[0]["operation_id"]}
+    sibling = {"source_row": "S!R2", "row_role": "work", "title": "Literal unaffected sibling",
+               "quantity": 37.5, "unit": "м2", "norm_code": ""}
+    rows = restore_proof_operations([*staged, child, sibling], issued)
+    original = copy.deepcopy(rows)
+    errors = _validate(rows, catalog, validate_evidence_refs=False,
+                       uncommitted_operation_ids=set(issued))
+
+    kept = app.sheet_pass_keep_rows(rows, sheet="S", catalog=catalog, errors=errors, artifact_kind="lsr")
+    proposals = app.sheet_pass_rejected_row_proposals(
+        rows, kept_rows=kept, sheet="S", catalog=catalog, errors=errors, packet_locators=["S!R2"])
+
+    assert rows == original
+    assert kept == [parent, sibling], "an unresolved child reference never blocks a valid sibling"
+    assert len(proposals) == 1 and proposals[0]["decision"] == child
+    assert proposals[0]["code"] == "MODEL_RESULT_SOURCE_CONFLICT"
+    assert any(error.startswith("uncommitted_parent_reference:") for error in proposals[0]["errors"])
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_shared_source_keeps_equivalent_base_and_saves_only_invalid_quantity(catalog, reverse):
     base, additional = _rows()

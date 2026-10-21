@@ -1,5 +1,26 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+## 982 — proof-local identity и действительный XLSX
+
+Existing canonical owners: `test_model_proof_turn_integrity.py` — новые8cases
+для выдачи/снятия адресов, JSON restart, изменённых resource bindings без
+дублирования и immutable durable revision. ROOT8RED→35relatedGREEN вместе
+с прежним `test_proof_role_identity_972.py`; distinct operations не сливаются.
+`test_pending_proof_checkpoint_975.py`:2active RED→2GREEN на norm/resource
+pause/resume, same issued IDs, прежние запросы/evidence, отсутствие раннего
+admission и временных IDs в принятой ревизии.
+`test_rim_lsr_trace_service.py`:10real-XLSX cases material/equipment ×
+missing/no/unknown/yes/unpriced; ROOT8RED/2positive→10GREEN. Цена отдельно от
+соответствия изделия; значения, исходные поля и summary не меняются.
+Эти counts пересекаются с последующими gates и не складываются в приёмку.
+Полный982gate/installed B0/B1/professional quality ещё pending.
+Дополнительно: active keep/proposal material/equipment/work ×2parent links —
+6RED; malformed checkpoint map/source/fields/native context/base —2RED/4positive.
+Связный owner11:79passed/13.44s. Старые strict proof payload assertions теперь
+разрешают ровно один дополнительный application identity context и сохраняют
+исходный answer/phase/native/scope assertions; contract08:54passed/12.02s.
+Verify12:7111collected, compile/version/architecture rc0. Counts пересекаются.
+
 ## 981 — полный основной gate и сортировка profile
 
 `artifacts/release_981_control/prepare_console01/2_prepare.log`: main7057passed/

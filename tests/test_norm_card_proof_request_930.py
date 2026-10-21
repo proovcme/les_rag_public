@@ -148,7 +148,16 @@ async def test_the_read_that_proves_the_chosen_card_is_the_models_own(tmp_path, 
                 continue
             if isinstance(payload, dict) and "proof_previous_model_answer" in payload:
                 proof_payloads.append(payload)
-    assert proof_payloads == [{"proof_previous_model_answer": SECOND_NORM_ANSWER}]
+    assert len(proof_payloads) == 1
+    assert set(proof_payloads[0]) == {"proof_previous_model_answer", "proof_operation_identity"}
+    assert proof_payloads[0]["proof_previous_model_answer"] == SECOND_NORM_ANSWER
+    identities = proof_payloads[0]["proof_operation_identity"]
+    assert set(identities) == {"schema", "instruction", "operations"}
+    assert identities["schema"] == "les.proof-operation-identities.v1"
+    assert {item["source_row"] for item in identities["operations"]} == {"S!R2", "S!R3"}
+    assert len({item["operation_id"] for item in identities["operations"]}) == 2
+    assert all(item["committed"] is False and "expected_revision" not in item
+               for item in identities["operations"])
     assert len(phase_requests) == 1 and NORM_CODE_B in phase_requests[0]
     phase_message = {"role": "user", "content": phase_requests[0]}
     assert proof_turn.messages[-1] == phase_message

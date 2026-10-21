@@ -1414,19 +1414,24 @@ class WorkbookResearchJobService:
     ) -> dict[str, Any]:
         """Save a completed answer before proof, without admitting its operations.
 
-        Only the completed public answer and literal evidence are checkpointed.
+        Only the completed public answer, literal evidence and application-owned
+        proof addresses are checkpointed; these addresses admit no decisions.
         A later human continuation starts the pending proof with saved reads;
         previous-turn native protocol/reasoning is never serialized here.
         """
         pending = held_packet.get("pending_proof")
         allowed = {"schema", "purpose", "scope", "execution_preset", "proof_previous_model_answer",
                    "proof_request", "finish_reason", "attempt", "packet_attempt", "query_hits",
-                   "admitted_evidence_refs", "source_incomplete_locators", "leftover_queries"}
+                   "admitted_evidence_refs", "source_incomplete_locators", "leftover_queries",
+                   "proof_rows", "proof_operation_identities", "proof_operation_identity"}
         if (not isinstance(pending, Mapping) or set(pending) - allowed
                 or pending.get("schema") != "les.pending-workbook-proof.v1"
                 or pending.get("purpose") not in {"sheet_pass_norm_proof", "sheet_pass_resource_group_proof"}
                 or any(not isinstance(pending.get(key), str) or not pending[key].strip()
                        for key in ("proof_previous_model_answer", "proof_request", "finish_reason"))):
+            raise WorkbookResearchJobError("PENDING_PROOF_FIELDS_INVALID")
+        from proxy.services.proof_operation_identity_service import proof_operation_snapshot_valid
+        if not proof_operation_snapshot_valid(pending):
             raise WorkbookResearchJobError("PENDING_PROOF_FIELDS_INVALID")
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")

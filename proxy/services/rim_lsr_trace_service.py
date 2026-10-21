@@ -758,6 +758,10 @@ OPERATION_READINESS_FIELDS = (
 )
 
 
+SUPPLY_RESOURCE_MATCH_EXPLANATION = (
+    "соответствие исходного изделия выбранному ресурсу не обосновано"
+)
+
 #: Each of the seven questions, worded once for the operator, with what its open
 #: state means.  The «Проверка» sheet, the remarks block of the delivered file and the
 #: readiness card all read these words, so one question is phrased one way in the whole
@@ -909,6 +913,9 @@ def operation_open_questions(
                     detail = (
                         f"сумма открыта из-за двойного учёта ({', '.join(conflicts[:2])})"
                     )
+            if ("supply_resource_match_unsubstantiated" in reasons
+                    and name in {"structure_calculated", "position_calculated"}):
+                detail += f"; {SUPPLY_RESOURCE_MATCH_EXPLANATION}; сумма предварительная"
             blockers.append(
                 {
                     "code": locator,

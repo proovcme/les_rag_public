@@ -133,6 +133,42 @@ def test_checkpoint_never_persists_prior_native_reasoning_or_protocol_chain_975(
     assert public["accepted_rows"] == before["accepted_rows"]
 
 
+@pytest.mark.parametrize("damage", ["missing_map_entry", "moved_source", "missing_rows",
+    "native_context", "nonempty_original_id", "invented_base_revision"])
+def test_proof_address_snapshot_rejects_inconsistent_or_protocol_state_atomically_982(tmp_path, damage):
+    from proxy.services.proof_operation_identity_service import (
+        proof_operation_context,
+        stage_proof_operations,
+    )
+
+    store, _, before = _job(tmp_path)
+    pending = _checkpoint(before)
+    rows, issued = stage_proof_operations([deepcopy(NEW)])
+    pending.update(proof_rows=rows, proof_operation_identities=issued,
+                   proof_operation_identity=proof_operation_context(rows, issued, before["accepted_rows"]))
+    identifier = next(iter(issued))
+    if damage == "missing_map_entry":
+        pending["proof_operation_identities"] = {}
+    elif damage == "moved_source":
+        issued[identifier]["source_row"] = "S!R99"
+    elif damage == "missing_rows":
+        pending.pop("proof_rows")
+    elif damage == "native_context":
+        pending["proof_operation_identity"]["native_exchanges"] = [{"role": "assistant", "content": OPAQUE}]
+    elif damage == "nonempty_original_id":
+        issued[identifier].update(operation_id_present=True, original_operation_id="op_foreign")
+    else:
+        pending["proof_operation_identity"]["operations"][0]["expected_revision"] = 2
+
+    with pytest.raises(WorkbookResearchJobError, match="PENDING_PROOF_FIELDS_INVALID"):
+        _writer(store)(before["job_id"], held_packet=_held(pending), evidence=[EVIDENCE])
+
+    after = store.get(before["job_id"])
+    assert after["held_packet"] == before["held_packet"]
+    assert after["accepted_rows"] == before["accepted_rows"]
+    assert OPAQUE not in json.dumps(after, ensure_ascii=False)
+
+
 def test_normal_packet_admission_clears_pending_proof_once_and_preserves_prior_operations_975(tmp_path):
     store, _, before = _job(tmp_path)
     writer = _writer(store)
@@ -219,6 +255,54 @@ async def test_invalid_native_terminal_keeps_preproof_answer_for_explicit_resume
     assert len(run.executions) == 1 and not run.responses
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,stop_at", [("norm", 3), ("resource_group", 5)])
+async def test_uncommitted_proof_addresses_are_checkpointed_and_reused_after_resume_982(
+    tmp_path, monkeypatch, kind, stop_at,
+):
+    is_group = kind == "resource_group"
+    if is_group:
+        _group_book(monkeypatch)
+    answer = WORK_ANSWER if is_group else SECOND_NORM_ANSWER
+    run = await _run_sheet(
+        tmp_path, monkeypatch, reads=is_group, distinct_norms=not is_group,
+        group_char_budget=None if is_group else 7000, final_answer=answer,
+        budget_stop_at=stop_at,
+        proof_replies=[InferenceResponse(text=answer, tool_calls=(), finish_reason="stop", usage={})],
+    )
+    assert run.result["status"] == 429
+    store = WorkbookResearchJobService()
+    current = store.get(run.result["error"]["job_id"])
+    pending = current["held_packet"]["pending_proof"]
+    assert current["accepted_rows"] == [], "proof addresses do not admit decisions"
+    assert pending["proof_previous_model_answer"] == answer
+    staged = pending["proof_rows"]
+    issued = pending["proof_operation_identities"]
+    identifiers = {row["operation_id"] for row in staged}
+    assert len(identifiers) == len(staged) == len(issued) == 2
+    assert identifiers == set(issued)
+    from proxy.services.proof_operation_identity_service import restore_proof_operations
+    restored = restore_proof_operations(staged, issued)
+    assert all("operation_id" not in row for row in restored)
+    assert [row["source_row"] for row in restored] == ["S!R2", "S!R3"]
+    queries, calls = list(run.queries), len(run.requests)
+
+    resumed = await run.resume_same_request(question="Продолжи это же задание по тому же прикреплённому документу.")
+
+    assert run.queries == queries and len(run.requests) == calls + 1
+    delivered = _proof_payload(run.requests[-1])["proof_operation_identity"]
+    assert delivered["schema"] == "les.proof-operation-identities.v1"
+    assert {row["operation_id"] for row in delivered["operations"]} == identifiers
+    assert all(row["committed"] is False and "expected_revision" not in row
+               for row in delivered["operations"])
+    final = store.get(resumed["retrieval_trace"]["workbook_research_job"]["job_id"])
+    assert "pending_proof" not in final["held_packet"]
+    assert len(final["accepted_rows"]) == 2
+    assert all(row["operation_id"] not in identifiers for row in final["accepted_rows"])
+    assert all(row["revision"] == 1 for row in final["accepted_rows"])
+    assert len(run.executions) == 1 and not run.responses
+
+
 async def _pause_during_proof(tmp_path, monkeypatch, kind, *, after_read=False):
     entered, cleaned = asyncio.Event(), asyncio.Event()
     seen, hung = [], []
@@ -283,7 +367,11 @@ async def test_actual_completed_answer_resumes_only_its_pending_proof_after_paus
     assert before["accepted_rows"] == [] and run.executions == []
     assert pending["proof_previous_model_answer"] == answer and pending["finish_reason"] == "stop"
     assert isinstance(pending["proof_request"], str) and pending["proof_request"]
-    assert _proof_payload(interrupted) == {"proof_previous_model_answer": answer}
+    proof_payload = {"proof_previous_model_answer": answer,
+                     "proof_operation_identity": pending["proof_operation_identity"]}
+    assert _proof_payload(interrupted) == proof_payload
+    assert set(proof_payload["proof_operation_identity"]) == {"schema", "instruction", "operations"}
+    assert proof_payload["proof_operation_identity"]["schema"] == "les.proof-operation-identities.v1"
     phase_message = {"role": "user", "content": pending["proof_request"]}
     assert sum(message == phase_message for message in interrupted.messages) == 1
     if after_read:
@@ -314,7 +402,7 @@ async def test_actual_completed_answer_resumes_only_its_pending_proof_after_paus
     assert run.queries == queries_before, "no fresh search or query model turn is allowed for this pending packet"
     assert len(seen) == requests_before + 1, "one existing pending proof, no initial answer or extra automatic proof loop"
     resumed_request = seen[-1]
-    assert _proof_payload(resumed_request) == {"proof_previous_model_answer": answer}
+    assert _proof_payload(resumed_request) == proof_payload
     assert resumed_request.messages[-1] == phase_message
     assert sum(message == phase_message for message in resumed_request.messages) == 1
     assert not any(message.get("role") in {"assistant", "tool"} for message in resumed_request.messages)

@@ -572,6 +572,7 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
     from proxy.services.rim_lsr_trace_service import (
         OPERATION_QUESTIONS,
         PRICE_REASON_PREFIXES,
+        SUPPLY_RESOURCE_MATCH_EXPLANATION,
         price_action_label,
     )
 
@@ -620,6 +621,7 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
         position = item.get("position")
         position = position if isinstance(position, Mapping) else {}
         open_reasons = [str(value) for value in (readiness.get("open_reasons") or [])]
+        supply_match_unsubstantiated = "supply_resource_match_unsubstantiated" in open_reasons
         # § 4 (tracker #54): the calculator's own per-resource decisions come first,
         # because they state the price that was actually used.  A route that never
         # reached the calculator can only show the resources it proposed itself.
@@ -663,6 +665,9 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
             derivation = str(entry.get("code_derivation") or "")
             if derivation:
                 unit_note += f" — {derivation}"
+            if (supply_match_unsubstantiated
+                    and identity == str(model_row.get("resource_code") or "").strip()):
+                unit_note += f" — {SUPPLY_RESOURCE_MATCH_EXPLANATION}; сумма предварительная"
             resource_lines.append(
                 f"{entry.get('kind') or '?'} {identity} "
                 f"{entry.get('qty') if entry.get('qty') is not None else ''} "
@@ -740,6 +745,7 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
                 # ladder's own statement and stays visible where it was before.
                 + ([f"цены={_readiness_label(readiness.get('prices_provided'))}"]
                    if readiness.get("prices_provided") is not None else [])
+                + ([SUPPLY_RESOURCE_MATCH_EXPLANATION] if supply_match_unsubstantiated else [])
             ),
             item.get("code"),
             item.get("selection_kind") or ("covered_by " + str(item.get("covered_by_work_id")) if item.get("covered_by_work_id") else "")

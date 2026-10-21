@@ -1,5 +1,22 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 21.10.2026 —982 source: новые операции размножались внутри proof
+
+Installed981 engineer hint, `artifacts/live_981/hint01/`: raw terminal8rows
+с одной добавкой; после двух proof parsed_rows10 и duplicate_source_row:R3.
+`rows_after_proof_round` воспринимал каждый повтор empty operation_id как
+ещё одну новую операцию. Различающиеся refs/resource bindings не являются
+основанием угадывать её identity по названию или норме.
+Candidate982 выдаёт proof-local app ID, сохраняет mapping в existing pending
+checkpoint и показывает immutable durable base revisions. До admission адрес
+снимается по issued map/source; CAS не исправляет literal2 на1. Parent links
+на временные IDs отклоняются child-only и сохраняются как proposals.
+Helper35, contract54, active-state/parent/source79passed; verify7111collected,
+architecture rc0. Installed982 B0/B1 и физическое исправление ЛСР ещё pending.
+Это source repair, не закрытие профессиональной приёмки. Модельные ошибки
+кратности/ресурса и ранжирование недоставленного варианта нормы остаются
+отдельными измеряемыми вопросами. SQLite/Qdrant read-only контроль исправен.
+
 ## 21.10.2026 —981: финансовый proof не принадлежит ВОР
 
 Новый980 collector принимал material/equipment с кодом изделия независимо от

@@ -1284,6 +1284,86 @@ def test_book_priced_supply_with_current_model_match_is_complete(role, reverse_r
 
 
 @pytest.mark.parametrize("role", ["material", "equipment"])
+@pytest.mark.parametrize("match_case", ["missing", "no", "unknown", "yes", "unpriced"])
+def test_supply_match_debt_is_explained_in_real_xlsx_without_hiding_price_presence(
+        tmp_path, role, match_case):
+    """The engineer sees an unproved product match separately from a missing price."""
+    from copy import deepcopy
+    from openpyxl import load_workbook
+    from proxy.services.rim_trace_xlsx_service import render_lsr_xlsx
+
+    row = _cited_book_supply(role)
+    if match_case == "missing":
+        row.pop("supply_resource_match")
+    elif match_case != "yes":
+        row["supply_resource_match"]["decision"] = (
+            "unknown" if match_case == "unpriced" else match_case)
+    original = deepcopy(row)
+    priced = match_case != "unpriced"
+    complete = match_case == "yes"
+    trace = build_lsr_trace_from_visible_rows(
+        [row], pricebook=_ChosenBook(
+            {row["resource_code"]: 125.0} if priced else {},
+            units={row["resource_code"]: "шт"}))
+    summary_before = deepcopy(trace["summary"])
+    position = trace["sections"][0]["positions"][0]
+    resource = next(item for item in position["rows"] if item["type"].startswith("resource"))
+    columns_before = deepcopy(resource["columns"])
+    assert trace["summary"]["confirmed_amount"] == (500.0 if complete else 0.0)
+    assert trace["summary"]["preliminary_amount"] == (500.0 if priced and not complete else 0.0)
+    assert position["summary"]["known_amount"] == (500.0 if priced else 0.0)
+    assert trace["row_bindings"][0]["source_row"] == original
+
+    out = render_lsr_xlsx(trace, tmp_path / f"supply-{role}-{match_case}.xlsx")
+    workbook = load_workbook(out, data_only=True)
+    try:
+        review = workbook["Проверка"]
+        headers = {cell.value: index for index, cell in enumerate(review[1]) if cell.value}
+        review_rows = list(review.iter_rows(min_row=2))
+        authored_rows = [cells for cells in review_rows
+                         if cells[headers["Строка"]].value == row["source_row"]
+                         and cells[headers["№ позиции"]].value == 1]
+        assert len(authored_rows) == 1
+        readiness = str(authored_rows[0][headers["Готовность строки"]].value)
+        resources = str(authored_rows[0][headers["Решения по ресурсам"]].value)
+        blockers = [str(cells[3].value) for cells in review_rows
+                    if cells[0].value == row["source_row"] and cells[2].value == "blocker"]
+        reason = "соответствие исходного изделия выбранному ресурсу не обосновано"
+        if complete:
+            assert reason not in readiness.casefold()
+            assert reason not in resources.casefold()
+            assert not any(reason in text.casefold() for text in blockers)
+            assert "цены=да" in readiness and "позиция полностью рассчитана=да" in readiness
+        else:
+            assert reason in readiness.casefold()
+            assert reason in resources.casefold()
+            assert any(reason in text.casefold() for text in blockers)
+            assert "цены=нет" in readiness and "позиция полностью рассчитана=нет" in readiness
+        if priced:
+            assert "цена есть" in resources and "цена не задана" not in resources
+            if not complete:
+                assert "сумма предварительная" in resources.casefold()
+        else:
+            assert "цена есть" not in resources and "цена найдена" not in resources
+
+        exported_resources = [cells for cells in workbook.worksheets[0]
+                              if cells[1].value == row["resource_code"]]
+        assert len(exported_resources) == 1
+        exported = exported_resources[0]
+        assert exported[2].value == row["title"]
+        assert exported[3].value == row["unit"]
+        assert exported[6].value == row["quantity"] == 4
+        assert exported[9].value == (125.0 if priced else None)
+        assert exported[11].value == (500.0 if priced else None)
+    finally:
+        workbook.close()
+    assert row == original
+    assert trace["row_bindings"][0]["source_row"] == original
+    assert trace["summary"] == summary_before
+    assert resource["columns"] == columns_before
+
+
+@pytest.mark.parametrize("role", ["material", "equipment"])
 @pytest.mark.parametrize("overlay", [
     {"quantity": 6},
     {"unit": "шт"},

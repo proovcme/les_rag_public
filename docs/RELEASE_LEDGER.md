@@ -1,5 +1,75 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 — candidate982: proof identity и объяснение предварительной цены
+
+Source0.31.254/build982/native5.1.982; installed exact981/fd17b383 не менялся.
+В существующий bounded proof добавлены временные app-owned адреса непринятых
+операций и optional checkpoint state. Это устраняет причину накопления новых
+blank-ID кандидатов через чтения, не сливая решения по предметным полям и не
+ослабляя CAS. Фактическое модельное соблюдение адресов ещё требует live gate.
+Helper ROOT8RED→35relatedGREEN; active checkpoint2RED→2GREEN. Старые snapshots
+сохранены отдельным контрактом; неизвестные IDs не получают допуск.
+Пояснение supply-match в реальном XLSX:8RED/2positive→10GREEN, цены/суммы/флаги
+не менялись. Полные982verify/test, installer, B0/B1 и документы пока pending.
+customer_ready=false; source исправление не объявляется уже установленным.
+ROOT related07:278passed/6failed —2новых теста без required expected_source_rows
+и4старых strict payload assertions, не учитывавших новый identity context.
+Исправлены только тестовые аргументы/точная разрешённая форма; raw answer,
+scope/preset/native-protocol guards и strict key sets сохранены. Contract08:
+54passed/12.02s. Независимый review нашёл временные parent links: actual keep
+для material/equipment и retained-proposal whitelist дополнены child-specific
+ошибкой, без расширения quantity/evidence guards на эти роли.
+ROOT active-parent6RED и snapshot2RED/4positive→related11:79passed/13.44s.
+Verify12: version/compile/collect7111/architecture rc0; runtime-map regenerated
+с новым модулем,1270Python files/388product reachable/0parse warnings.
+Это не заменяет полный make test и установленный live gate982.
+
+## 21.10.2026 — exact981 установлен; база исправна, инженерный hint не прошёл
+
+Installed0.31.253/build981/native5.1.981: `fd17b3835a596f5e838989ffa824eb3e9c5003a9`.
+Prepare02: version/runtime-map/verify/architecture/active-baseline rc0,
+main7057passed/20skipped/5warnings за941.03s; updater328passed/22.35s,
+public-check PASS. Локальный full NSIS498159945bytes,
+SHA`02d3c18ce29c3cffb2f5167786c7bd9e5868fae61d9cb05260eb3df47623b3f4`.
+Artifact`6f09d74ed225ec021c86c6ae`, acceptance`9132c70676934942a260d2db7af72848`
+accepted: install/rollback/reinstall и технические smoke, userdata untouched.
+Это техническая приёмка exact installer, не профессиональная готовность.
+
+Read-only контроль `artifacts/live_981/database_readonly01.json`: SQLite
+quick_check=ok, foreign_key_check без нарушений,49818norms/504891resources;
+SHA`be3c4c61ad3486f0d3a4a0477aa2e42396d69212263141d7d6f2eb19b0afddb3`
+не изменился. Qdrant alias les_smeta_norm_cards: green/49818points,
+named dense+bm25_sparse. Ни миграции, ни reindex, ни inference в этой проверке нет.
+Это не доказательство качества каждого запроса или применимости каждой нормы.
+
+No-model repack старого979 job `wrj_87c6cecb95ab497e93addd64b5febbb6`
+создал calc0.7 revision`rev_23893bbfea45423eaa3d373ff67e497c`,
+XLSX SHA`209342d7272786c62a18b6b07c559f1a1a6c73288a4513e50494750b73a4572b`.
+Реальный файл независимо проверен ZIP/XML: старые confirmed576.49 сняты,
+теперь confirmed0/preliminary37253.18; прежние7accepted rows и книга
+СПб3кв2026/SHA242568…7bc2 буквально сохранены. Неверный модельный выбор
+ленты для кабеля не подменён приложением; его цена стала предварительной,
+projection R9 содержит supply_resource_match_unsubstantiated. В XLSX пока
+не хватает понятного пояснения именно этой причины; это отдельный export gap.
+
+Естественное замечание в том же чате: `artifacts/live_981/hint01/`,
+573.718s/5model calls, job`wrj_2243570b3b974996b76fa64ef3413b76` paused,
+7accepted/4remaining. XLSX SHA`2eea28a308353893c0e3a3abf5e299f5b5300baff6981be98c0d95d10af31fab`.
+Физическая ЛСР не улучшилась: все суммы/позиции/формулы прежние, кроме текста
+происхождения книги вA13. Raw terminal result содержит добавку11-01-011-02,
+но она неприменена с duplicate_source_row:R3;4updates вернули expected_revision2
+при durable revision1. Причина появления этих revisions ещё разбирается.
+Модель отдельно не сдала множитель4 для +20мм как calc_quantity/coefficient,
+а неверный код ленты вновь объявила кабелем. Исправление transport/revision
+само по себе профессиональные ошибки не устраняет.
+
+По прежнему979 контролю конкретная147-01 не была доставлена ни fullcard, ни
+pointer; Q5 «ГЭСН8.01.016 Прокладка кабеля в лотках» показал147-11/147-10/398-02.
+Напротив, добавка11-01-011-02 была доставлена fullcard в979, но отсутствовала
+в его terminal JSON. Причины поиска и причины итогового выбора различаются.
+Installed981 B0/B1 quality, ВОР и большой вход заново не квалифицированы.
+customer_ready=false; исправленная финансовая честность не равна готовой ЛСР.
+
 ## 21.10.2026 —981 main PASS, updater остановил порядок test profile
 
 Frozen981/fa3f56af:version/runtime-map/verify/architecture/active-baseline rc0,
