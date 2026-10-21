@@ -22,6 +22,11 @@ stage/resume. Родительские ссылки остаются durable; в
 Installed983/25930277 технически принят точным установщиком; профессиональные
 ordinary/B0/hint не приняты. Source984 ещё не установлен. Факты и ограничения:
 [RELEASE_LEDGER](RELEASE_LEDGER.md).
+Первый full984 остановлен:7250 passed/7 failed/20 skipped; исправляются только
+ожидания двух reviewed фраз и proof schema, без ослабления прочих assertions.
+Baseline v2 с СПб II/III и Москвой IIIкв проверен отдельно; exact installer pending.
+Test-only повтор327 passed/40.50s сохраняет strict schema/byte checks и отдельно
+проверяет unknown→authoredLSR→full proof terminal. Новый full gate pending.
 
 ## 983 — согласованность advertised полей ВОР/ЛСР
 

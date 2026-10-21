@@ -54,6 +54,29 @@ def _strip_authorized_supply_match_980_delta(instruction):
     return previous
 
 
+def _strip_authorized_identity_and_volume_984_delta(instruction):
+    """Reverse only 984's two reviewed literal phrases before the old byte pins."""
+    current_volume = (
+        "Масштаб измерителя нормы код применяет один раз; не дели quantity и "
+        "не дублируй этот масштаб в calc_quantity/conversion_factor. "
+        "conversion_source: кратность той же физической величины либо перевод к другой физической величине. "
+    )
+    previous_volume = (
+        "Масштаб измерителя нормы код применяет один раз; не дели quantity и "
+        "не дублируй этот масштаб в calc_quantity/conversion_factor. Эти поля вместе "
+        "с conversion_source нужны для обоснованного перехода к другой физической величине "
+        "(фасовка, геометрия, расход), а не для масштаба измерителя нормы. "
+    )
+    current_identity = (
+        "нормы/пояснения — пересмотр прежней операции. source_row может повторяться для дополнительной операции; "
+        "непустой operation_id — один раз в результате. "
+    )
+    previous_identity = "нормы/пояснения — пересмотр прежней операции, дополнительная работа — новая. "
+    assert instruction.count(current_volume) == instruction.count(current_identity) == 1
+    assert previous_volume not in instruction and previous_identity not in instruction
+    return instruction.replace(current_volume, previous_volume, 1).replace(current_identity, previous_identity, 1)
+
+
 def test_only_explicit_vor_target_receives_dedicated_operation_contract():
     instruction = model_vor_result_field_instruction()
     assert lsr_result_table_instruction(artifact_kind="vor") == instruction
@@ -72,8 +95,8 @@ def test_only_explicit_vor_target_receives_dedicated_operation_contract():
 @pytest.mark.parametrize("kind", ["lsr", "both", "unknown", "VOR"])
 def test_existing_lsr_instruction_changes_only_authorized967_968_clarifications(kind):
     instruction = lsr_result_table_instruction(artifact_kind=kind)
-    previous_instruction = _strip_authorized_vor_field_list_delta(
-        _strip_authorized_supply_match_980_delta(instruction))
+    previous_instruction = _strip_authorized_identity_and_volume_984_delta(
+        _strip_authorized_vor_field_list_delta(_strip_authorized_supply_match_980_delta(instruction)))
     old_phrase = "nr_sp_rule_id выбирай из карточки по известным условиям; при неизвестных — "
     new_phrase = (
         "nr_sp_rule_id дословно копируй из rule_id внутри каталога по известным условиям; "

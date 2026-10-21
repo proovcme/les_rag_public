@@ -180,6 +180,38 @@ def _request_projection(request):
         "temperature": request.temperature, "reasoning_enabled": request.reasoning_enabled})
 
 
+def _assert_restored_proof_tools(initial, final):
+    from tests.test_pending_proof_checkpoint_975 import _proof_payload
+
+    context = _proof_payload(final)["proof_operation_identity"]
+    proof_ids = [row["operation_id"] for row in context["operations"]
+                 if row["identity_status"] == "uncommitted"]
+    assert proof_ids and len(proof_ids) == len(set(proof_ids))
+    expected = deepcopy(_plain(initial.tools))
+    terminal = next(tool for tool in expected if tool["function"]["name"] == "build_lsr_workbook")
+    row = terminal["function"]["parameters"]["properties"]["decisions"]["items"]
+    properties = row["properties"]
+    old_ids = properties["operation_id"]["enum"]
+    durable_ids = [value for value in old_ids if isinstance(value, str) and value]
+    properties["operation_id"]["enum"] = list(dict.fromkeys([
+        *(value for value in old_ids if value is not None), *proof_ids,
+    ])) + ([None] if None in old_ids else [])
+    parent = properties["covered_by_work_id"]
+    parent["enum"] = [value for value in properties["work_row"]["enum"] if value is not None]
+    if "null" in parent.get("type", []):
+        parent["enum"].append(None)
+    if "expected_revision" in row["required"]:
+        row["required"] = [field for field in row["required"] if field != "expected_revision"]
+        if durable_ids:
+            row.setdefault("allOf", []).append({
+                "if": {"required": ["operation_id"],
+                       "properties": {"operation_id": {"enum": durable_ids}}},
+                "then": {"required": ["expected_revision"]},
+            })
+    # Every read tool and every other terminal byte/field remain unchanged.
+    assert _plain(final.tools) == expected
+
+
 @pytest.mark.asyncio
 async def test_two_selected_refs_missing_then_ok_restore_default_and_preserve_model_rows(
         tmp_path, monkeypatch):
@@ -215,6 +247,8 @@ async def test_two_selected_refs_missing_then_ok_restore_default_and_preserve_mo
         f"| S!R3 | work | Literal B | m | 3 | {NORM_CODE_B} | — | Q2.H1 |")
     run = await _run_sheet(tmp_path, monkeypatch, reads=False, distinct_norms=True,
         group_char_budget=7000, final_answer=answer, wire_budget_bytes=300000,
+        query_declaration=json.dumps({"artifact_kind": "lsr",
+            "queries": ["S!R2 — Cable A", "S!R3 — Cable B"]}, ensure_ascii=False),
         proof_replies=[
             InferenceResponse(text="", tool_calls=(_native_read("Q1.H1", "proof-A"),), finish_reason="tool_calls", usage={}),
             InferenceResponse(text="", tool_calls=(_native_read("Q2.H1", "proof-B"),), finish_reason="tool_calls", usage={}),
@@ -231,7 +265,8 @@ async def test_two_selected_refs_missing_then_ok_restore_default_and_preserve_mo
         parameters = request.tools[0]["function"]["parameters"]
         assert parameters["required"] == ["evidence_ref"] and parameters["additionalProperties"] is False
         assert parameters["properties"]["evidence_ref"]["enum"] == expected
-    assert final.tool_choice is None and final.tools == normal.tools
+    assert final.tool_choice is None
+    _assert_restored_proof_tools(normal, final)
     assert attempted == [{"evidence_ref": "Q1.H1"}, {"evidence_ref": "Q2.H1"}]
     assert {m.get("tool_call_id") for m in final.messages if m.get("role") == "tool"} == {"proof-A", "proof-B"}
     assert json.dumps(answer, ensure_ascii=False) in "\n".join(
@@ -311,12 +346,15 @@ async def test_ignored_choice_or_unsupported_protocol_keeps_literal_unread_rows(
         monkeypatch.setattr(app, "BoundModelChatRunner", runner)
     run = await _run_sheet(tmp_path, monkeypatch, reads=False, distinct_norms=True,
         group_char_budget=7000, final_answer=SECOND_NORM_ANSWER,
+        query_declaration=json.dumps({"artifact_kind": "lsr",
+            "queries": ["S!R2 — Cable A", "S!R3 — Cable B"]}, ensure_ascii=False),
         proof_replies=[InferenceResponse(text=SECOND_NORM_ANSWER, tool_calls=(),
                                         finish_reason="stop", usage={})])
     assert len(run.requests) == 3 and not run.responses and not run.exact_reads
     initial, final = run.requests[1:]
     if native_chat:
-        assert final.tool_choice is None and final.tools == initial.tools
+        assert final.tool_choice is None
+        _assert_restored_proof_tools(initial, final)
     else:
         assert final.tool_choice == CHOICE and len(final.tools) == 1
     trace = run.result["retrieval_trace"]

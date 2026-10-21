@@ -1,5 +1,43 @@
 # RELEASE_LEDGER — где мы сейчас (единый источник состояния)
 
+## 21.10.2026 — первый полный gate984 остановил выпуск; проверен состав baseline
+
+Frozen `0a392d77`: architecture/active-baseline/version/map/verify прошли;
+полный test — 7250 passed/7 failed/20 skipped/956.19s. Installer не строился.
+Лог: `artifacts/release_984_control/prepare_console01/2_prepare.log`.
+Пять отказов — прежние byte pins двух явно изменённых фраз identity/volume;
+два — сравнение proof tool schema до выдачи временных ID. Тестовые ожидания
+согласуются только с этими изменениями; старые SHA и все остальные поля,
+порядок чтений, количество вызовов и сохранность строк остаются проверяемыми.
+Первый targeted повтор: 278 passed/2 failed/27.36s — KeyError в новом test helper
+на отсутствующем optional covered_by_work_id; это ещё не зелёный gate.
+Уточнение причины: начальная декларация этих fixtures не называла тип документа,
+поэтому её tools были technical-only; объявленная моделью ЛСР закономерно получает
+полный terminal. Два forced-read fixtures теперь явно объявляют ЛСР с прежними
+запросами, сохраняя строгое сравнение остальных tools. Исходный путь unknown→LSR
+не потерян: actual native roundtrip975 дополнительно проверяет обе начальные
+technical carriers, затем один полный LSR terminal и те же пять read tools.
+ROOT повтор всех17 instruction consumers + explicit proof + pending checkpoint:
+327 passed/40.50s (`artifacts/offline_984/contract_consumers_green02.xml`).
+Независимый повторный review не обнаружил actionable P1/P2. Product code после
+`0a392d77` не менялся; следующему commit нужен свежий полный gate, не перенос PASS.
+
+Отдельная проверка clean-install обнаружила: прежний baseline v1 содержит
+только СПб IIкв2026. Данные IIIкв в текущем user state не доказывают их наличие
+в установщике. Для следующего exact artifact выбран существующий baseline v2
+`artifacts/live_946/release-inputs/LES-smeta-baseline-v2-spb2q-spb3q-msk3q-20261015.zip`,
+SHA `c2711b3b098bd5f92b6273a17e0bbae34b6097eca1b08f8712bf03c512a3ad6b`:
+те же canonical нормы/FSEM, книги СПб II/III и Москва IIIкв2026. Все девять
+payload проверены; происхождение обеих книг IIIкв сверено с receipts первичных
+выгрузок ФГИС ЦС. Qdrant-индекс не входит в этот архив; готовность чистого
+компьютера с внешними Qdrant/embedding отдельно не подтверждена.
+
+У сохранённого пользовательского профиля обнаружены две устаревшие общие
+формулировки о JSON/Markdown; активный профиль не менялся. Простая замена
+на factory также меняет output reserve с 32768 до 4096 и потому не является
+сравнением только стиля. Ни новый профиль, ни новый installer пока не приняты.
+Installed983, customer_ready=false. Старый failed gate не переиспользуется.
+
 ## 21.10.2026 — exact983 установлен; candidate984: атомарность операций
 
 Установлен `259302774927f8556500778a4516b680212845a1`, product0.31.255/

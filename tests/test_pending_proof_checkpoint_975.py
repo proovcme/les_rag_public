@@ -283,7 +283,8 @@ async def test_actual_norm_proof_terminal_advertises_staged_ids_before_and_after
 
 @pytest.mark.asyncio
 async def test_actual_proof_native_terminal_captures_and_restores_the_advertised_addresses_984(tmp_path, monkeypatch):
-    from proxy.services.model_lsr_result_contract import MATCH_FIELDS
+    from proxy.services.model_evidence_read_contract import model_evidence_read_tool_schemas
+    from proxy.services.model_lsr_result_contract import BASE_FIELDS, MATCH_FIELDS, SELECTED_NORM_FIELDS
     from proxy.services.structured_extract import validate
 
     captured, authored = [], []
@@ -319,6 +320,22 @@ async def test_actual_proof_native_terminal_captures_and_restores_the_advertised
     run = await _run_sheet(tmp_path, monkeypatch, reads=False, distinct_norms=True,
         group_char_budget=7000, final_answer=answer, proof_replies=[native_proof_reply])
     assert len(run.requests) == 3 and len(captured) == 1 and not run.responses
+    # The query did not declare a kind. Only the authored LSR answer promotes
+    # the two compact carriers to one complete LSR carrier for its proof.
+    readers = model_evidence_read_tool_schemas()
+    initial_tools = list(run.requests[1].tools)
+    assert initial_tools[:len(readers)] == readers
+    assert [tool["function"]["name"] for tool in initial_tools[len(readers):]] == [
+        "build_vor_workbook", "build_lsr_workbook"]
+    initial_lsr = initial_tools[-1]["function"]["parameters"]["properties"]["decisions"]["items"]
+    assert "norm_code" not in initial_lsr["properties"]
+    proof_tools = list(captured[0].tools)
+    assert proof_tools[:len(readers)] == readers
+    assert [tool["function"]["name"] for tool in proof_tools[len(readers):]] == ["build_lsr_workbook"]
+    proof_row = proof_tools[-1]["function"]["parameters"]["properties"]["decisions"]["items"]
+    assert set(BASE_FIELDS + SELECTED_NORM_FIELDS) <= set(proof_row["properties"])
+    assert any(set(BASE_FIELDS + SELECTED_NORM_FIELDS) <= set(clause.get("then", {}).get("required", []))
+               for clause in proof_row["allOf"])
     ids = _assert_staged_terminal_schema_matches_proof_context(captured[0])
     terminal_trace = [item for item in run.result["retrieval_trace"]["workbook_terminal_transport"]
                       if item["purpose"] == "sheet_pass_norm_proof"]

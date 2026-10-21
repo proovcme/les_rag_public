@@ -14,6 +14,7 @@ from proxy.services.openai_compatible_transport_service import InferenceResponse
 from proxy.services.workbook_research_job_service import WorkbookResearchJobService
 from tests import test_model_rag_sheet_evidence_reads as fixture
 from tests.test_vor_operation_instructions_948 import (
+    _strip_authorized_identity_and_volume_984_delta,
     _strip_authorized_supply_match_980_delta,
     _strip_authorized_vor_field_list_delta,
 )
@@ -95,8 +96,8 @@ def test_undeclared_document_contract_has_two_explicit_conditional_sections():
                                               remaining_clause="\nREMAINING_PACKET")
     vor = model_vor_result_field_instruction()
     lsr = lsr_result_table_instruction(artifact_kind="lsr")
-    previous_lsr = _strip_authorized_vor_field_list_delta(
-        _strip_authorized_supply_match_980_delta(lsr))
+    previous_lsr = _strip_authorized_identity_and_volume_984_delta(
+        _strip_authorized_vor_field_list_delta(_strip_authorized_supply_match_980_delta(lsr)))
     assert instruction.startswith("CURRENT_PACKET\n") and instruction.endswith("\nREMAINING_PACKET")
     assert instruction.count("CURRENT_PACKET") == instruction.count("REMAINING_PACKET") == 1
     assert "Тип документа определяешь ты" in instruction

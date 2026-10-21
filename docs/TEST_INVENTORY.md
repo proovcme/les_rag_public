@@ -15,6 +15,15 @@ schema1RED устранён; прежние54k positive/50k negative и scale ke
 Related повтор с прежними wire/7500-token positives:641passed/48.60s;
 полный frozen984 gate ещё pending. Профессиональное качество
 установленной983 проверено отдельно и не принято; см. RELEASE_LEDGER.
+Первый full `0a392d77`:7250 passed/7 failed/20 skipped/956.19s; публикации/
+установщика нет. Семь отказов — строгое сравнение прежнего instruction/schema;
+test-only согласование сохраняет прочие byte pins, forced reads и budget checks.
+Первый targeted повтор278passed/2failed выявил optional-field KeyError в test
+helper; до его проверки новый полный gate не считается зелёным.
+ROOT повтор:327 passed/40.50s, все17 instruction consumers и actual proof/resume.
+Forced-read fixtures явно называют LSR с прежними запросами; unknown→authoredLSR
+проверяется отдельно в existing native roundtrip975:2technical carriers→1fullLSR,
+те же5readers, actual issued IDs, schema validation и store admission.
 
 ## 983 — реклама существующих структурных полей
 
